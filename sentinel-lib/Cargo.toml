@@ -1,0 +1,10 @@
+[package]
+name = "sentinel-lib"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Shared library for SentinelD common functionality."
+
+[lib]
+path = "src/lib.rs"
