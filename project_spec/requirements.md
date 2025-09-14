@@ -2,7 +2,11 @@
 
 ## Abstract
 
-This document defines the functional and non-functional requirements for SentinelD, addressing critical architecture issues identified in the review process. Requirements are organized by component with measurable acceptance criteria and verification strategies. Special emphasis is placed on addressing database performance bottlenecks, SQL injection prevention, resource management, and deployment consistency.
+This document defines the functional and non-functional requirements for SentinelD, addressing
+critical architecture issues identified in the review process. Requirements are organized by
+component with measurable acceptance criteria and verification strategies. Special emphasis is
+placed on addressing database performance bottlenecks, SQL injection prevention, resource
+management, and deployment consistency.
 
 ## How to Read This Document
 
@@ -13,7 +17,8 @@ This document provides measurable requirements for SentinelD implementation. See
 - [Project Structure](structure.md) - Workspace layout and module organization
 - [Tasks & Milestones](tasks.md) - Development phases and priorities
 
-**Verification Strategy**: Each requirement includes specific acceptance criteria and test methods (Unit/Integration/Performance).
+**Verification Strategy**: Each requirement includes specific acceptance criteria and test methods
+(Unit/Integration/Performance).
 
 ---
 
@@ -23,7 +28,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-1.1: Cross-Platform Process Enumeration
 
-**Requirement**: procmond must enumerate all accessible system processes on Linux, macOS, and Windows using a unified interface with platform-specific optimizations.
+**Requirement**: procmond must enumerate all accessible system processes on Linux, macOS, and
+Windows using a unified interface with platform-specific optimizations.
 
 **Acceptance Criteria**:
 
@@ -41,7 +47,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-1.2: Executable Integrity Verification
 
-**Requirement**: procmond must compute SHA-256 hashes of executable files to enable tamper detection.
+**Requirement**: procmond must compute SHA-256 hashes of executable files to enable tamper
+detection.
 
 **Acceptance Criteria**:
 
@@ -59,7 +66,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-1.3: Batched Database Writes with Backpressure
 
-**Requirement**: procmond must write process data using batched transactions with configurable backpressure policies to prevent resource exhaustion.
+**Requirement**: procmond must write process data using batched transactions with configurable
+backpressure policies to prevent resource exhaustion.
 
 **Acceptance Criteria**:
 
@@ -81,7 +89,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-1.4: Privilege Management
 
-**Requirement**: procmond must operate with minimal required privileges and drop them immediately after initialization.
+**Requirement**: procmond must operate with minimal required privileges and drop them immediately
+after initialization.
 
 **Acceptance Criteria**:
 
@@ -104,7 +113,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-2.1: SQL Rule Validation and Execution
 
-**Requirement**: sentinelagent must execute SQL-based detection rules with comprehensive security validation to prevent injection attacks.
+**Requirement**: sentinelagent must execute SQL-based detection rules with comprehensive security
+validation to prevent injection attacks.
 
 **Acceptance Criteria**:
 
@@ -127,7 +137,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-2.2: Sandboxed Detection Execution
 
-**Requirement**: Detection rules must execute in a sandboxed environment with resource limits and isolation.
+**Requirement**: Detection rules must execute in a sandboxed environment with resource limits and
+isolation.
 
 **Acceptance Criteria**:
 
@@ -151,7 +162,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-2.3: Alert Generation and Management
 
-**Requirement**: sentinelagent must generate structured alerts from detection results with deduplication and context.
+**Requirement**: sentinelagent must generate structured alerts from detection results with
+deduplication and context.
 
 **Acceptance Criteria**:
 
@@ -172,7 +184,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-2.4: Rule Management and Hot-Reloading
 
-**Requirement**: sentinelagent must support loading, validating, and hot-reloading detection rules from multiple sources.
+**Requirement**: sentinelagent must support loading, validating, and hot-reloading detection rules
+from multiple sources.
 
 **Acceptance Criteria**:
 
@@ -196,7 +209,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-3.1: Multi-Channel Alert Delivery
 
-**Requirement**: sentinelagent must deliver alerts through multiple channels with reliability guarantees and delivery tracking.
+**Requirement**: sentinelagent must deliver alerts through multiple channels with reliability
+guarantees and delivery tracking.
 
 **Acceptance Criteria**:
 
@@ -214,7 +228,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-3.2: Delivery Reliability and Circuit Breaking
 
-**Requirement**: Alert delivery must be resilient to failures with circuit breakers, retries, and dead letter queues.
+**Requirement**: Alert delivery must be resilient to failures with circuit breakers, retries, and
+dead letter queues.
 
 **Acceptance Criteria**:
 
@@ -240,7 +255,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-4.1: Data Querying and Export
 
-**Requirement**: sentinelcli must provide flexible SQL-based querying of historical process data with multiple output formats.
+**Requirement**: sentinelcli must provide flexible SQL-based querying of historical process data
+with multiple output formats.
 
 **Acceptance Criteria**:
 
@@ -259,7 +275,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-4.2: Rule Management Operations
 
-**Requirement**: sentinelcli must provide comprehensive rule management capabilities including validation, testing, and import/export.
+**Requirement**: sentinelcli must provide comprehensive rule management capabilities including
+validation, testing, and import/export.
 
 **Acceptance Criteria**:
 
@@ -278,7 +295,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-4.3: System Health and Diagnostics
 
-**Requirement**: sentinelcli must provide comprehensive system diagnostics and health monitoring capabilities.
+**Requirement**: sentinelcli must provide comprehensive system diagnostics and health monitoring
+capabilities.
 
 **Acceptance Criteria**:
 
@@ -299,7 +317,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-5.1: Cryptographic Audit Chain
 
-**Requirement**: All components must maintain a tamper-evident audit ledger using cryptographic chaining for compliance and forensics.
+**Requirement**: All components must maintain a tamper-evident audit ledger using cryptographic
+chaining for compliance and forensics.
 
 **Acceptance Criteria**:
 
@@ -318,11 +337,13 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-5.2: Audit Event Recording
 
-**Requirement**: Components must record security-relevant events in the audit ledger with structured context.
+**Requirement**: Components must record security-relevant events in the audit ledger with structured
+context.
 
 **Acceptance Criteria**:
 
-- ✅ Record events: process_scan_start, process_scan_complete, rule_execute, alert_generate, config_change
+- ✅ Record events: process_scan_start, process_scan_complete, rule_execute, alert_generate,
+  config_change
 - ✅ Include structured event data (JSON format)
 - ✅ Associate events with specific component (procmond, sentinelagent, sentinelcli)
 - ✅ Maintain event ordering and timestamps (millisecond precision)
@@ -338,7 +359,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-6.1: No External Dependencies
 
-**Requirement**: All core functionality must operate without internet connectivity or external services.
+**Requirement**: All core functionality must operate without internet connectivity or external
+services.
 
 **Acceptance Criteria**:
 
@@ -357,7 +379,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### FR-6.2: Bundle-Based Distribution
 
-**Requirement**: Configuration, rules, and data must support bundle-based distribution for airgapped environments.
+**Requirement**: Configuration, rules, and data must support bundle-based distribution for airgapped
+environments.
 
 **Acceptance Criteria**:
 
@@ -382,14 +405,15 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### NFR-1.1: Process Enumeration Performance
 
-**Requirement**: Process enumeration must meet strict performance targets under normal and stressed conditions.
+**Requirement**: Process enumeration must meet strict performance targets under normal and stressed
+conditions.
 
 **Targets**:
 
-- **Baseline**: Complete enumeration of 1,000 processes in <2 seconds
-- **Scale**: Complete enumeration of 10,000 processes in <5 seconds
-- **CPU Impact**: <5% sustained CPU usage during continuous monitoring
-- **Memory Impact**: <100MB resident memory under normal operation
+- **Baseline**: Complete enumeration of 1,000 processes in \<2 seconds
+- **Scale**: Complete enumeration of 10,000 processes in \<5 seconds
+- **CPU Impact**: \<5% sustained CPU usage during continuous monitoring
+- **Memory Impact**: \<100MB resident memory under normal operation
 
 **Acceptance Criteria**:
 
@@ -406,13 +430,14 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### NFR-1.2: Database Write Performance
 
-**Requirement**: Database write operations must achieve high throughput while maintaining data integrity.
+**Requirement**: Database write operations must achieve high throughput while maintaining data
+integrity.
 
 **Targets**:
 
 - **Write Rate**: >1,000 process records per second sustained
 - **Batch Efficiency**: >5,000 records per second in batch mode
-- **Transaction Latency**: <100ms for 1,000-record batches
+- **Transaction Latency**: \<100ms for 1,000-record batches
 - **Concurrent Read**: No blocking of read operations during writes
 
 **Acceptance Criteria**:
@@ -436,16 +461,16 @@ This document provides measurable requirements for SentinelD implementation. See
 
 **Targets**:
 
-- **Rule Latency**: <100ms per rule execution (median)
+- **Rule Latency**: \<100ms per rule execution (median)
 - **Concurrent Rules**: Support 20+ concurrent rule executions
 - **Query Timeout**: Hard limit at 30 seconds per rule
-- **Memory per Rule**: <64MB memory usage per sandboxed execution
+- **Memory per Rule**: \<64MB memory usage per sandboxed execution
 
 **Acceptance Criteria**:
 
 - ✅ Meet latency targets with realistic process datasets
 - ✅ Handle complex analytical queries within timeout
-- ✅ Sandbox overhead <20% performance penalty
+- ✅ Sandbox overhead \<20% performance penalty
 - ✅ Resource cleanup after rule completion
 
 **Verification**:
@@ -460,9 +485,9 @@ This document provides measurable requirements for SentinelD implementation. See
 
 **Targets**:
 
-- **Delivery Latency**: <1 second from detection to sink delivery
+- **Delivery Latency**: \<1 second from detection to sink delivery
 - **Parallel Delivery**: Support 100+ concurrent alert deliveries
-- **Circuit Recovery**: <30 seconds to detect and recover from sink failures
+- **Circuit Recovery**: \<30 seconds to detect and recover from sink failures
 - **Success Rate**: >99% delivery success under normal conditions
 
 **Acceptance Criteria**:
@@ -482,7 +507,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### NFR-2.1: SQL Injection Prevention
 
-**Requirement**: The system must be completely immune to SQL injection attacks through comprehensive input validation.
+**Requirement**: The system must be completely immune to SQL injection attacks through comprehensive
+input validation.
 
 **Acceptance Criteria**:
 
@@ -522,7 +548,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### NFR-2.3: Resource Security
 
-**Requirement**: System must prevent resource exhaustion attacks and gracefully handle resource pressure.
+**Requirement**: System must prevent resource exhaustion attacks and gracefully handle resource
+pressure.
 
 **Acceptance Criteria**:
 
@@ -564,7 +591,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### NFR-3.1: Data Integrity
 
-**Requirement**: System must ensure data integrity under all operating conditions including failures and restarts.
+**Requirement**: System must ensure data integrity under all operating conditions including failures
+and restarts.
 
 **Acceptance Criteria**:
 
@@ -588,7 +616,7 @@ This document provides measurable requirements for SentinelD implementation. See
 **Targets**:
 
 - **Uptime**: >99.9% availability during normal operation
-- **Recovery Time**: <30 seconds restart after failure
+- **Recovery Time**: \<30 seconds restart after failure
 - **Graceful Shutdown**: Complete shutdown within 60 seconds
 - **Data Loss**: Zero data loss for committed transactions
 
@@ -658,7 +686,8 @@ This document provides measurable requirements for SentinelD implementation. See
 - ✅ Configuration via files, environment variables, and CLI arguments
 - ✅ Offline installation and operation support
 
-**Critical Issue Mitigation**: Addresses "Container Deployment Contradiction" from architecture review.
+**Critical Issue Mitigation**: Addresses "Container Deployment Contradiction" from architecture
+review.
 
 **Verification**:
 
@@ -748,7 +777,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 #### NFR-6.2: Testing Requirements
 
-**Requirement**: Comprehensive testing strategy must validate all functionality and performance characteristics.
+**Requirement**: Comprehensive testing strategy must validate all functionality and performance
+characteristics.
 
 **Acceptance Criteria**:
 
@@ -771,7 +801,8 @@ This document provides measurable requirements for SentinelD implementation. See
 
 ### Database Write Bottlenecks
 
-**Problem**: SQLite single-writer limitation with unbounded queue growth leads to system failure under load.
+**Problem**: SQLite single-writer limitation with unbounded queue growth leads to system failure
+under load.
 
 **Solution Requirements**:
 
@@ -874,25 +905,33 @@ This document provides measurable requirements for SentinelD implementation. See
 
 ### Traceability Matrix
 
-Each requirement maps to specific test cases and verification methods. This traceability ensures comprehensive validation and enables impact analysis for changes.
+Each requirement maps to specific test cases and verification methods. This traceability ensures
+comprehensive validation and enables impact analysis for changes.
 
 **Example Traceability**:
 
-- FR-1.1 (Process Enumeration) → `unit_tests::enumeration`, `integration_tests::platform_compat`, `perf_tests::enum_benchmark`
-- NFR-1.2 (Database Performance) → `perf_tests::write_throughput`, `load_tests::sustained_writes`, `regression_tests::db_perf`
+- FR-1.1 (Process Enumeration) → `unit_tests::enumeration`, `integration_tests::platform_compat`,
+  `perf_tests::enum_benchmark`
+- NFR-1.2 (Database Performance) → `perf_tests::write_throughput`, `load_tests::sustained_writes`,
+  `regression_tests::db_perf`
 
 ---
 
 ## Conclusion
 
-This requirements specification addresses all critical architecture issues identified in the review process while establishing measurable acceptance criteria for functional and non-functional requirements. The emphasis on performance, security, and reliability ensures that SentinelD will be suitable for production security operations environments.
+This requirements specification addresses all critical architecture issues identified in the review
+process while establishing measurable acceptance criteria for functional and non-functional
+requirements. The emphasis on performance, security, and reliability ensures that SentinelD will be
+suitable for production security operations environments.
 
 Key requirement themes include:
 
-1. **Security-First**: Comprehensive SQL injection prevention, privilege separation, and input validation
+1. **Security-First**: Comprehensive SQL injection prevention, privilege separation, and input
+   validation
 2. **Performance-Conscious**: Specific targets for throughput, latency, and resource usage
 3. **Reliability-Focused**: Data integrity, high availability, and graceful error handling
 4. **Operationally-Aware**: Cross-platform consistency, deployment flexibility, and observability
 5. **Quality-Driven**: Automated enforcement of code quality and comprehensive testing
 
-The verification strategy ensures all requirements are measurable and testable, providing confidence in the system's fitness for security-critical production environments.
+The verification strategy ensures all requirements are measurable and testable, providing confidence
+in the system's fitness for security-critical production environments.

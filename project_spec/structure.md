@@ -2,7 +2,9 @@
 
 ## Abstract
 
-This document defines the workspace layout, module organization, and architectural boundaries for the SentinelD project. It establishes coding standards, feature flags, database schema design, and data flow patterns that support the three-component security architecture with privilege separation.
+This document defines the workspace layout, module organization, and architectural boundaries for
+the SentinelD project. It establishes coding standards, feature flags, database schema design, and
+data flow patterns that support the three-component security architecture with privilege separation.
 
 ## How to Read This Document
 
@@ -13,7 +15,8 @@ This document provides the structural blueprint for SentinelD implementation. Se
 - [Requirements](requirements.md) - Functional and non-functional requirements
 - [Tasks & Milestones](tasks.md) - Development phases and priorities
 
-**Note on Diagrams**: Architecture diagrams use Mermaid format. For previews, copy diagram code to <https://mermaid.live>.
+**Note on Diagrams**: Architecture diagrams use Mermaid format. For previews, copy diagram code to
+<https://mermaid.live>.
 
 ---
 
@@ -142,11 +145,11 @@ SentinelD/
 [workspace]
 resolver = "3"
 members = [
-    "procmond",
-    "sentinelagent",
-    "sentinelcli",
-    "sentinel-lib",
-    # "sentinel-detexec",  # Future enhancement
+  "procmond",
+  "sentinelagent",
+  "sentinelcli",
+  "sentinel-lib",
+  # "sentinel-detexec",  # Future enhancement
 ]
 default-members = ["procmond", "sentinelagent", "sentinelcli", "sentinel-lib"]
 
@@ -158,12 +161,12 @@ license = "Apache-2.0"
 description = "SentinelD: Security-focused process monitoring system"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"     # Memory safety guarantee
-warnings = "deny"          # Zero-warnings policy
+unsafe_code = "forbid" # Memory safety guarantee
+warnings = "deny"      # Zero-warnings policy
 
 [workspace.lints.clippy]
-all = "deny"              # Strict clippy enforcement
-pedantic = "warn"         # Additional style recommendations
+all = "deny"      # Strict clippy enforcement
+pedantic = "warn" # Additional style recommendations
 
 [workspace.dependencies]
 # Core runtime
@@ -185,18 +188,19 @@ insta = "1.34"
 
 ### sentinel-lib (Shared Core Library)
 
-**Primary Purpose**: Provides common functionality shared across all components while maintaining security boundaries.
+**Primary Purpose**: Provides common functionality shared across all components while maintaining
+security boundaries.
 
 ```rust
 // src/lib.rs - Public API surface
-pub mod config;      // Configuration management
-pub mod models;      // Core data structures
-pub mod storage;     // Database abstractions
-pub mod detection;   // SQL-based detection engine
-pub mod alerting;    // Multi-channel alert delivery
-pub mod crypto;      // Cryptographic audit functions
-pub mod telemetry;   // Logging and metrics
-pub mod ipc;         // Inter-process communication
+pub mod alerting; // Multi-channel alert delivery
+pub mod config; // Configuration management
+pub mod crypto; // Cryptographic audit functions
+pub mod detection; // SQL-based detection engine
+pub mod ipc;
+pub mod models; // Core data structures
+pub mod storage; // Database abstractions
+pub mod telemetry; // Logging and metrics // Inter-process communication
 
 // Feature-gated modules
 #[cfg(feature = "metrics")]
@@ -235,7 +239,8 @@ pub trait AlertSink {
 
 ### procmond (Privileged Process Collector)
 
-**Primary Purpose**: Minimal privileged component focused solely on process data collection with immediate privilege dropping.
+**Primary Purpose**: Minimal privileged component focused solely on process data collection with
+immediate privilege dropping.
 
 ```rust
 // src/main.rs - Binary entrypoint
@@ -324,7 +329,8 @@ impl BatchWriter {
 
 ### sentinelagent (Detection Orchestrator)
 
-**Primary Purpose**: User-space component that executes detection rules, manages alerts, and coordinates system health.
+**Primary Purpose**: User-space component that executes detection rules, manages alerts, and
+coordinates system health.
 
 ```rust
 // src/scheduler.rs - Detection scheduling
@@ -402,7 +408,8 @@ impl AlertDispatcher {
 
 ### sentinelcli (Operator Interface)
 
-**Primary Purpose**: User-friendly command-line interface for querying data, managing configuration, and system operations.
+**Primary Purpose**: User-friendly command-line interface for querying data, managing configuration,
+and system operations.
 
 ```rust
 // src/main.rs - CLI entrypoint with color handling
@@ -971,7 +978,10 @@ impl Config {
         let mut builder = ConfigBuilder::new();
 
         // 1. Load defaults
-        builder = builder.add_source(File::from_str(include_str!("defaults.yaml"), FileFormat::Yaml));
+        builder = builder.add_source(File::from_str(
+            include_str!("defaults.yaml"),
+            FileFormat::Yaml,
+        ));
 
         // 2. System configuration
         if let Ok(system_path) = Self::system_config_path() {
@@ -1010,15 +1020,20 @@ impl Config {
 
 ## Conclusion
 
-The SentinelD project structure establishes clear architectural boundaries while supporting the three-component security model. The workspace layout separates concerns appropriately, with the shared `sentinel-lib` providing secure abstractions for cross-component functionality.
+The SentinelD project structure establishes clear architectural boundaries while supporting the
+three-component security model. The workspace layout separates concerns appropriately, with the
+shared `sentinel-lib` providing secure abstractions for cross-component functionality.
 
 Key structural decisions include:
 
 1. **Privilege Separation**: Clear boundaries between privileged collector and user-space components
-2. **Shared Library**: Common functionality encapsulated in `sentinel-lib` with trait-based abstractions
-3. **Database Architecture**: Dual-store design with separate event and audit storage for performance and integrity
+2. **Shared Library**: Common functionality encapsulated in `sentinel-lib` with trait-based
+   abstractions
+3. **Database Architecture**: Dual-store design with separate event and audit storage for
+   performance and integrity
 4. **Feature Flags**: Platform-specific and optional functionality can be selectively compiled
 5. **Resource Management**: Bounded resources and cooperative scheduling prevent resource exhaustion
 6. **Observability**: Comprehensive tracing and metrics integration throughout the codebase
 
-This structure addresses the critical architecture issues identified in the review while providing a maintainable and extensible foundation for future development.
+This structure addresses the critical architecture issues identified in the review while providing a
+maintainable and extensible foundation for future development.

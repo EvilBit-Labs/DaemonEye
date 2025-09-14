@@ -2,14 +2,18 @@
 
 ## Abstract
 
-This document provides the complete task breakdown, milestone planning, and development phases for the SentinelD project. It translates the functional and non-functional requirements into concrete deliverables organized across four major milestones leading to a production-ready v1.0 release.
+This document provides the complete task breakdown, milestone planning, and development phases for
+the SentinelD project. It translates the functional and non-functional requirements into concrete
+deliverables organized across four major milestones leading to a production-ready v1.0 release.
 
 ## How to Read This Document
 
-- **Cross-references**: Links to [product.md](./product.md), [tech.md](./tech.md), [structure.md](./structure.md), and [requirements.md](./requirements.md)
+- **Cross-references**: Links to [product.md](./product.md), [tech.md](./tech.md),
+  [structure.md](./structure.md), and [requirements.md](./requirements.md)
 - **Diagrams**: Uses Mermaid for milestone dependencies and project timeline visualization
 - **Task priorities**: P0 (blocking) → P1 (important) → P2 (nice-to-have)
-- **Definition of Done**: Each task includes specific acceptance criteria, testing requirements, and quality gates
+- **Definition of Done**: Each task includes specific acceptance criteria, testing requirements, and
+  quality gates
 
 ## Milestone Overview
 
@@ -44,7 +48,8 @@ gantt
 
 ## v0.1 — MVP Snapshot + CLI (Foundation)
 
-**Goal**: Cross-platform baseline with core functionality, complete CLI interface, and robust testing foundation.
+**Goal**: Cross-platform baseline with core functionality, complete CLI interface, and robust
+testing foundation.
 
 **Success Metrics**:
 
@@ -57,9 +62,7 @@ gantt
 
 #### TASK-001: Project Workspace Setup
 
-**Priority**: P0
-**Effort**: 3 days
-**Owner**: UncleSp1d3r
+**Priority**: P0 **Effort**: 3 days **Owner**: UncleSp1d3r
 
 **Description**: Initialize Rust workspace with proper structure and tooling.
 
@@ -83,9 +86,7 @@ gantt
 
 #### TASK-002: Configuration Management
 
-**Priority**: P0
-**Effort**: 5 days
-**Dependencies**: TASK-001
+**Priority**: P0 **Effort**: 5 days **Dependencies**: TASK-001
 
 **Description**: Implement hierarchical configuration with environment overrides.
 
@@ -108,9 +109,7 @@ gantt
 
 #### TASK-003: Database Foundation (SQLite + WAL)
 
-**Priority**: P0
-**Effort**: 7 days
-**Dependencies**: TASK-002
+**Priority**: P0 **Effort**: 7 days **Dependencies**: TASK-002
 
 **Description**: Implement SQLite storage with WAL mode and optimized settings.
 
@@ -135,9 +134,7 @@ gantt
 
 #### TASK-004: Snapshot Collector (sysinfo baseline)
 
-**Priority**: P0
-**Effort**: 10 days
-**Dependencies**: TASK-003
+**Priority**: P0 **Effort**: 10 days **Dependencies**: TASK-003
 
 **Description**: Cross-platform process enumeration using sysinfo crate.
 
@@ -147,7 +144,7 @@ gantt
 - [ ] Collect: PID, PPID, name, cmdline, user, start_time, CPU, memory
 - [ ] Privilege handling: run with minimum required, drop after init
 - [ ] Graceful handling of process disappearance during enumeration
-- [ ] Performance target: <5s for 10,000+ processes
+- [ ] Performance target: \<5s for 10,000+ processes
 
 **Definition of Done**:
 
@@ -160,9 +157,7 @@ gantt
 
 #### TASK-005: WAL Writer with Backpressure
 
-**Priority**: P0
-**Effort**: 8 days
-**Dependencies**: TASK-004
+**Priority**: P0 **Effort**: 8 days **Dependencies**: TASK-004
 
 **Description**: Implement batching WAL writer with backpressure handling.
 
@@ -187,9 +182,7 @@ gantt
 
 #### TASK-006: Core CLI Structure
 
-**Priority**: P0
-**Effort**: 6 days
-**Dependencies**: TASK-005
+**Priority**: P0 **Effort**: 6 days **Dependencies**: TASK-005
 
 **Description**: Implement sentinelcli with query, export, and health commands.
 
@@ -212,9 +205,7 @@ gantt
 
 #### TASK-007: Query and Export Functionality
 
-**Priority**: P0
-**Effort**: 5 days
-**Dependencies**: TASK-006
+**Priority**: P0 **Effort**: 5 days **Dependencies**: TASK-006
 
 **Description**: Implement flexible query interface and data export capabilities.
 
@@ -239,9 +230,7 @@ gantt
 
 #### TASK-008: Foundation Documentation
 
-**Priority**: P1
-**Effort**: 4 days
-**Dependencies**: TASK-007
+**Priority**: P1 **Effort**: 4 days **Dependencies**: TASK-007
 
 **Description**: Complete core documentation with Mermaid diagrams.
 
@@ -264,9 +253,7 @@ gantt
 
 #### TASK-009: Testing Infrastructure
 
-**Priority**: P1
-**Effort**: 6 days
-**Dependencies**: TASK-008
+**Priority**: P1 **Effort**: 6 days **Dependencies**: TASK-008
 
 **Description**: Comprehensive testing setup with performance and snapshot testing.
 
@@ -302,9 +289,7 @@ gantt
 
 #### TASK-010: SQL Parser and Validator
 
-**Priority**: P0
-**Effort**: 10 days
-**Dependencies**: TASK-009
+**Priority**: P0 **Effort**: 10 days **Dependencies**: TASK-009
 
 **Description**: Implement safe SQL subset parser with AST validation.
 
@@ -327,9 +312,7 @@ gantt
 
 #### TASK-011: Prepared Statement Executor
 
-**Priority**: P0
-**Effort**: 8 days
-**Dependencies**: TASK-010
+**Priority**: P0 **Effort**: 8 days **Dependencies**: TASK-010
 
 **Description**: Safe SQL execution with prepared statements and resource limits.
 
@@ -354,9 +337,7 @@ gantt
 
 #### TASK-012: Detection Executor Process
 
-**Priority**: P0
-**Effort**: 12 days
-**Dependencies**: TASK-011
+**Priority**: P0 **Effort**: 12 days **Dependencies**: TASK-011
 
 **Description**: Separate sandbox process for detection execution.
 
@@ -379,9 +360,7 @@ gantt
 
 #### TASK-013: Rule Store and Management
 
-**Priority**: P0
-**Effort**: 6 days
-**Dependencies**: TASK-012
+**Priority**: P0 **Effort**: 6 days **Dependencies**: TASK-012
 
 **Description**: Rule storage, validation, and lifecycle management.
 
@@ -406,9 +385,7 @@ gantt
 
 #### TASK-014: Alert Sink Implementation
 
-**Priority**: P0
-**Effort**: 8 days
-**Dependencies**: TASK-013
+**Priority**: P0 **Effort**: 8 days **Dependencies**: TASK-013
 
 **Description**: Multi-channel alert delivery with retry and backoff.
 
@@ -431,9 +408,7 @@ gantt
 
 #### TASK-015: Alert Orchestration
 
-**Priority**: P0
-**Effort**: 5 days
-**Dependencies**: TASK-014
+**Priority**: P0 **Effort**: 5 days **Dependencies**: TASK-014
 
 **Description**: Alert scheduling, routing, and rate limiting.
 
@@ -462,16 +437,14 @@ gantt
 
 - Tamper-evident audit ledger with cryptographic chaining
 - Privilege minimization on all platforms
-- Performance targets met: >1000 records/sec, <5% CPU, <100MB RAM
+- Performance targets met: >1000 records/sec, \<5% CPU, \<100MB RAM
 - Split event/audit stores with different durability levels
 
 ### Tamper-Evident Audit (P0 - Blocking)
 
 #### TASK-016: Cryptographic Ledger
 
-**Priority**: P0
-**Effort**: 10 days
-**Dependencies**: TASK-015
+**Priority**: P0 **Effort**: 10 days **Dependencies**: TASK-015
 
 **Description**: Implement tamper-evident audit ledger with cryptographic chaining.
 
@@ -494,9 +467,7 @@ gantt
 
 #### TASK-017: Event/Audit Store Split
 
-**Priority**: P0
-**Effort**: 8 days
-**Dependencies**: TASK-016
+**Priority**: P0 **Effort**: 8 days **Dependencies**: TASK-016
 
 **Description**: Separate high-performance event store from audit ledger.
 
@@ -521,9 +492,7 @@ gantt
 
 #### TASK-018: Cross-Platform Privilege Management
 
-**Priority**: P0
-**Effort**: 12 days
-**Dependencies**: TASK-017
+**Priority**: P0 **Effort**: 12 days **Dependencies**: TASK-017
 
 **Description**: Implement minimal privilege requirements across all platforms.
 
@@ -546,9 +515,7 @@ gantt
 
 #### TASK-019: Resource Security Hardening
 
-**Priority**: P0
-**Effort**: 6 days
-**Dependencies**: TASK-018
+**Priority**: P0 **Effort**: 6 days **Dependencies**: TASK-018
 
 **Description**: Implement comprehensive resource limits and security controls.
 
@@ -573,9 +540,7 @@ gantt
 
 #### TASK-020: Database Performance Optimization
 
-**Priority**: P1
-**Effort**: 8 days
-**Dependencies**: TASK-019
+**Priority**: P1 **Effort**: 8 days **Dependencies**: TASK-019
 
 **Description**: Optimize SQLite performance for high write loads.
 
@@ -598,18 +563,16 @@ gantt
 
 #### TASK-021: System Resource Optimization
 
-**Priority**: P1
-**Effort**: 5 days
-**Dependencies**: TASK-020
+**Priority**: P1 **Effort**: 5 days **Dependencies**: TASK-020
 
 **Description**: Optimize CPU and memory usage across all components.
 
 **Acceptance Criteria**:
 
-- [ ] CPU usage <5% under normal monitoring load
-- [ ] Memory usage <100MB RSS across all components
-- [ ] Process enumeration <5s for 10,000+ processes
-- [ ] Alert latency <100ms per detection rule
+- [ ] CPU usage \<5% under normal monitoring load
+- [ ] Memory usage \<100MB RSS across all components
+- [ ] Process enumeration \<5s for 10,000+ processes
+- [ ] Alert latency \<100ms per detection rule
 - [ ] Efficient async task scheduling
 
 **Definition of Done**:
@@ -636,9 +599,7 @@ gantt
 
 #### TASK-022: Linux eBPF Integration (Optional)
 
-**Priority**: P1
-**Effort**: 15 days
-**Dependencies**: TASK-021
+**Priority**: P1 **Effort**: 15 days **Dependencies**: TASK-021
 
 **Description**: Implement eBPF-based process event capture on Linux.
 
@@ -661,9 +622,7 @@ gantt
 
 #### TASK-023: Windows ETW/WMI Integration
 
-**Priority**: P1
-**Effort**: 12 days
-**Dependencies**: TASK-021
+**Priority**: P1 **Effort**: 12 days **Dependencies**: TASK-021
 
 **Description**: Implement Windows Event Tracing and WMI integration.
 
@@ -686,9 +645,7 @@ gantt
 
 #### TASK-024: macOS EndpointSecurity Integration
 
-**Priority**: P1
-**Effort**: 10 days
-**Dependencies**: TASK-021
+**Priority**: P1 **Effort**: 10 days **Dependencies**: TASK-021
 
 **Description**: Implement macOS EndpointSecurity framework integration.
 
@@ -713,9 +670,7 @@ gantt
 
 #### TASK-025: Feature Flag Architecture
 
-**Priority**: P0
-**Effort**: 5 days
-**Dependencies**: TASK-024
+**Priority**: P0 **Effort**: 5 days **Dependencies**: TASK-024
 
 **Description**: Implement comprehensive feature flag system with graceful degradation.
 
@@ -738,9 +693,7 @@ gantt
 
 #### TASK-026: Platform Documentation and Deployment
 
-**Priority**: P1
-**Effort**: 6 days
-**Dependencies**: TASK-025
+**Priority**: P1 **Effort**: 6 days **Dependencies**: TASK-025
 
 **Description**: Complete platform-specific documentation and deployment guides.
 
@@ -763,7 +716,8 @@ gantt
 
 ## v1.0 — GA Cross-Platform Hardened Release (Production)
 
-**Goal**: Production-ready release with comprehensive testing, documentation, and deployment tooling.
+**Goal**: Production-ready release with comprehensive testing, documentation, and deployment
+tooling.
 
 **Success Metrics**:
 
@@ -776,9 +730,7 @@ gantt
 
 #### TASK-027: Full Integration Testing
 
-**Priority**: P0
-**Effort**: 10 days
-**Dependencies**: TASK-026
+**Priority**: P0 **Effort**: 10 days **Dependencies**: TASK-026
 
 **Description**: Comprehensive end-to-end testing across all platforms and scenarios.
 
@@ -801,9 +753,7 @@ gantt
 
 #### TASK-028: Compliance and Security Audit
 
-**Priority**: P0
-**Effort**: 8 days
-**Dependencies**: TASK-027
+**Priority**: P0 **Effort**: 8 days **Dependencies**: TASK-027
 
 **Description**: Security audit and compliance documentation preparation.
 
@@ -828,9 +778,7 @@ gantt
 
 #### TASK-029: Operator Documentation
 
-**Priority**: P0
-**Effort**: 6 days
-**Dependencies**: TASK-028
+**Priority**: P0 **Effort**: 6 days **Dependencies**: TASK-028
 
 **Description**: Complete operator documentation and runbooks.
 
@@ -853,9 +801,7 @@ gantt
 
 #### TASK-030: API and Developer Documentation
 
-**Priority**: P1
-**Effort**: 4 days
-**Dependencies**: TASK-029
+**Priority**: P1 **Effort**: 4 days **Dependencies**: TASK-029
 
 **Description**: Complete API documentation and developer resources.
 
@@ -880,9 +826,7 @@ gantt
 
 #### TASK-031: Deployment Packaging
 
-**Priority**: P0
-**Effort**: 8 days
-**Dependencies**: TASK-030
+**Priority**: P0 **Effort**: 8 days **Dependencies**: TASK-030
 
 **Description**: Production deployment packaging and automation.
 
@@ -905,9 +849,7 @@ gantt
 
 #### TASK-032: Upgrade and Migration
 
-**Priority**: P0
-**Effort**: 5 days
-**Dependencies**: TASK-031
+**Priority**: P0 **Effort**: 5 days **Dependencies**: TASK-031
 
 **Description**: Upgrade procedures and data migration tooling.
 
@@ -1005,11 +947,11 @@ gantt
 
 ### Technical Metrics
 
-- **Process Enumeration**: <5 seconds for 10,000+ processes
+- **Process Enumeration**: \<5 seconds for 10,000+ processes
 - **Database Write Rate**: >1000 records/second sustained
-- **Memory Usage**: <100MB RSS across all components
-- **CPU Usage**: <5% under normal monitoring load
-- **Alert Latency**: <100ms per detection rule execution
+- **Memory Usage**: \<100MB RSS across all components
+- **CPU Usage**: \<5% under normal monitoring load
+- **Alert Latency**: \<100ms per detection rule execution
 
 ### Security Metrics
 
@@ -1021,7 +963,7 @@ gantt
 ### Operational Metrics
 
 - **Cross-Platform Support**: 100% feature parity where possible
-- **Installation Success**: <5 minute fresh installation on all platforms
+- **Installation Success**: \<5 minute fresh installation on all platforms
 - **Configuration Errors**: Clear, actionable error messages for all scenarios
 - **Upgrade Success**: Zero data loss during version upgrades
 
@@ -1104,8 +1046,14 @@ graph TD
 
 ## Conclusion
 
-This task breakdown provides a comprehensive roadmap from MVP to production-ready release. Each milestone builds incrementally on previous work while maintaining security, performance, and reliability focus throughout development.
+This task breakdown provides a comprehensive roadmap from MVP to production-ready release. Each
+milestone builds incrementally on previous work while maintaining security, performance, and
+reliability focus throughout development.
 
-The prioritization ensures that core security boundaries and performance targets are established early, with advanced platform features added in later phases. Risk mitigation strategies address the most critical technical and project risks that could impact timeline or security posture.
+The prioritization ensures that core security boundaries and performance targets are established
+early, with advanced platform features added in later phases. Risk mitigation strategies address the
+most critical technical and project risks that could impact timeline or security posture.
 
-Regular milestone reviews and metric validation will ensure the project stays on track to deliver a production-ready security monitoring solution that meets the needs of SOC analysts, security operators, and infrastructure teams.
+Regular milestone reviews and metric validation will ensure the project stays on track to deliver a
+production-ready security monitoring solution that meets the needs of SOC analysts, security
+operators, and infrastructure teams.

@@ -2,11 +2,16 @@
 
 ## Abstract
 
-SentinelD is a security-focused, high-performance process monitoring system designed for cybersecurity professionals, threat hunters, and security operations centers. Built as a complete Rust rewrite of a proven Python prototype, SentinelD delivers enterprise-grade performance with audit-grade integrity through tamper-evident storage, offline-first operation, and SQL-based detection rules.
+SentinelD is a security-focused, high-performance process monitoring system designed for
+cybersecurity professionals, threat hunters, and security operations centers. Built as a complete
+Rust rewrite of a proven Python prototype, SentinelD delivers enterprise-grade performance with
+audit-grade integrity through tamper-evident storage, offline-first operation, and SQL-based
+detection rules.
 
 ## How to Read This Document
 
-This document provides the product vision and architecture overview for SentinelD. For implementation details, see:
+This document provides the product vision and architecture overview for SentinelD. For
+implementation details, see:
 
 - [Technical Stack](tech.md) - Technologies, patterns, and design decisions
 - [Project Structure](structure.md) - Workspace layout and module organization
@@ -15,23 +20,32 @@ This document provides the product vision and architecture overview for Sentinel
 
 ### Mermaid Diagrams
 
-This document uses Mermaid for visual diagrams. In supported editors, these render automatically. For preview, copy the diagram code to <https://mermaid.live>.
+This document uses Mermaid for visual diagrams. In supported editors, these render automatically.
+For preview, copy the diagram code to <https://mermaid.live>.
 
 ---
 
 ## Mission & Value Proposition
 
-**Mission**: Provide security operations teams with a reliable, high-performance process monitoring solution that operates independently of external dependencies while maintaining audit-grade integrity and operator-centric workflows.
+**Mission**: Provide security operations teams with a reliable, high-performance process monitoring
+solution that operates independently of external dependencies while maintaining audit-grade
+integrity and operator-centric workflows.
 
-**Core Value**: Transform chaotic process monitoring into structured, actionable security intelligence with performance, reliability, and security as first-class concerns.
+**Core Value**: Transform chaotic process monitoring into structured, actionable security
+intelligence with performance, reliability, and security as first-class concerns.
 
 ### Unique Value Propositions
 
-1. **Audit-Grade Integrity**: Tamper-evident, cryptographically chained logs suitable for compliance and forensics
-2. **Offline-First Operation**: Full functionality without internet access, perfect for airgapped environments
-3. **Operator-Centric Design**: Built for operators, by operators, with workflows optimized for contested environments
-4. **Security-First Architecture**: Privilege separation, sandboxed execution, and minimal attack surface
-5. **High Performance**: <5% CPU overhead while monitoring 10,000+ processes with sub-second enumeration
+1. **Audit-Grade Integrity**: Tamper-evident, cryptographically chained logs suitable for compliance
+   and forensics
+2. **Offline-First Operation**: Full functionality without internet access, perfect for airgapped
+   environments
+3. **Operator-Centric Design**: Built for operators, by operators, with workflows optimized for
+   contested environments
+4. **Security-First Architecture**: Privilege separation, sandboxed execution, and minimal attack
+   surface
+5. **High Performance**: \<5% CPU overhead while monitoring 10,000+ processes with sub-second
+   enumeration
 
 ---
 
@@ -54,7 +68,7 @@ This document uses Mermaid for visual diagrams. In supported editors, these rend
 #### System Reliability Engineers & Platform Teams
 
 - Need: Low-overhead monitoring that doesn't impact production systems
-- Value: <5% CPU usage, bounded memory, graceful degradation
+- Value: \<5% CPU usage, bounded memory, graceful degradation
 - Pain Point: Resource-hungry monitoring that becomes the problem
 
 #### Blue Team Security Engineers
@@ -275,9 +289,9 @@ Input validation prevents configuration-based attacks
 
 #### Low Operational Overhead
 
-- <5% CPU utilization during continuous monitoring
-- <100MB memory footprint under normal operation
-- <5 seconds to enumerate 10,000+ processes
+- \<5% CPU utilization during continuous monitoring
+- \<100MB memory footprint under normal operation
+- \<5 seconds to enumerate 10,000+ processes
 - Graceful degradation under resource pressure
 
 #### Rapid Deployment & Operations
@@ -422,18 +436,18 @@ Input validation prevents configuration-based attacks
 
 ### Performance Metrics
 
-- CPU utilization: <5% sustained during monitoring
-- Memory usage: <100MB resident under normal operation
-- Process enumeration: <5 seconds for 10,000+ processes
+- CPU utilization: \<5% sustained during monitoring
+- Memory usage: \<100MB resident under normal operation
+- Process enumeration: \<5 seconds for 10,000+ processes
 - Database write rate: >1,000 records/second
-- Alert latency: <100ms per detection rule execution
+- Alert latency: \<100ms per detection rule execution
 
 ### Reliability Metrics
 
 - System uptime: >99.9% availability
 - Alert delivery: >99% success rate with retry
 - Data integrity: 100% tamper detection rate
-- Recovery time: <30 seconds from failure
+- Recovery time: \<30 seconds from failure
 
 ### Security Metrics
 
@@ -444,7 +458,7 @@ Input validation prevents configuration-based attacks
 
 ### Operational Metrics
 
-- Deployment time: <15 minutes from package to production
+- Deployment time: \<15 minutes from package to production
 - Configuration validation: 100% of invalid configs detected
 - Cross-platform parity: Feature availability across Linux/macOS/Windows
 - Documentation coverage: 100% of public APIs documented
@@ -477,6 +491,14 @@ Input validation prevents configuration-based attacks
 
 ## Conclusion
 
-SentinelD addresses a critical gap in the security operations toolchain by providing a high-performance, security-first process monitoring solution that operates reliably in both connected and airgapped environments. The combination of audit-grade integrity, operator-centric design, and minimal overhead makes it ideal for security-conscious organizations that need reliable process monitoring without compromising system performance or security posture.
+SentinelD addresses a critical gap in the security operations toolchain by providing a
+high-performance, security-first process monitoring solution that operates reliably in both
+connected and airgapped environments. The combination of audit-grade integrity, operator-centric
+design, and minimal overhead makes it ideal for security-conscious organizations that need reliable
+process monitoring without compromising system performance or security posture.
 
-The three-component architecture with privilege separation ensures that the system remains secure even under adverse conditions, while the SQL-based detection engine provides the flexibility needed for evolving threat landscapes. With tamper-evident logging and offline-first operation, SentinelD meets the stringent requirements of compliance-driven environments and contested operational scenarios.
+The three-component architecture with privilege separation ensures that the system remains secure
+even under adverse conditions, while the SQL-based detection engine provides the flexibility needed
+for evolving threat landscapes. With tamper-evident logging and offline-first operation, SentinelD
+meets the stringent requirements of compliance-driven environments and contested operational
+scenarios.

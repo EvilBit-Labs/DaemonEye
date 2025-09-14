@@ -2,7 +2,11 @@
 
 ## Abstract
 
-This document details the technical stack, architecture patterns, and implementation approaches for SentinelD. It covers language choices, core crates, cross-platform strategies, security measures, and performance optimizations. The technical decisions prioritize memory safety, security boundaries, and operational reliability while addressing critical architecture issues identified in the review process.
+This document details the technical stack, architecture patterns, and implementation approaches for
+SentinelD. It covers language choices, core crates, cross-platform strategies, security measures,
+and performance optimizations. The technical decisions prioritize memory safety, security
+boundaries, and operational reliability while addressing critical architecture issues identified in
+the review process.
 
 ## How to Read This Document
 
@@ -13,7 +17,8 @@ This document provides the technical implementation strategy for SentinelD. See 
 - [Requirements](requirements.md) - Functional and non-functional requirements
 - [Tasks & Milestones](tasks.md) - Development phases and priorities
 
-**Note on Diagrams**: Architecture diagrams use Mermaid format. For previews, copy diagram code to <https://mermaid.live>.
+**Note on Diagrams**: Architecture diagrams use Mermaid format. For previews, copy diagram code to
+<https://mermaid.live>.
 
 ---
 
@@ -28,7 +33,9 @@ This document provides the technical implementation strategy for SentinelD. See 
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Quality**: `warnings = "deny"` with `cargo clippy -- -D warnings`
 
-**Rationale**: Rust provides memory safety guarantees essential for security-critical process monitoring. The 2024 edition enables latest language features while the MSRV ensures reasonable ecosystem compatibility.
+**Rationale**: Rust provides memory safety guarantees essential for security-critical process
+monitoring. The 2024 edition enables latest language features while the MSRV ensures reasonable
+ecosystem compatibility.
 
 ### Async Runtime Foundation
 
@@ -95,7 +102,7 @@ PRAGMA defensive = ON;               -- Additional safety checks
 #### Hierarchical Configuration System
 
 ```toml
-config = "0.14"           # Multi-format config loading
+config = "0.14"                                                            # Multi-format config loading
 figment = { version = "0.10", features = ["toml", "json", "yaml", "env"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -114,8 +121,8 @@ serde_json = "1.0"
 #### Structured Error Management
 
 ```toml
-anyhow = "1.0"        # Application error context
-thiserror = "1.0"     # Library error definitions
+anyhow = "1.0"    # Application error context
+thiserror = "1.0" # Library error definitions
 ```
 
 #### Pattern Implementation
@@ -149,7 +156,7 @@ clap = { version = "4.0", features = ["derive", "completion"] }
 #### Phase 1: Cross-Platform Baseline
 
 ```toml
-sysinfo = "0.30"          # Unified process enumeration
+sysinfo = "0.30" # Unified process enumeration
 ```
 
 #### Platform-Specific Enhancements
@@ -294,9 +301,9 @@ let results = stmt.query_and_then(params, |row| {
 
 ```toml
 # Optional separate detection executor
-nix = "0.27"              # Linux: seccomp, namespaces
-windows = "0.52"          # Windows: job objects, restricted tokens
-libc = "0.2"             # macOS: resource limits, sandbox
+nix = "0.27"     # Linux: seccomp, namespaces
+windows = "0.52" # Windows: job objects, restricted tokens
+libc = "0.2"     # macOS: resource limits, sandbox
 ```
 
 #### Security Boundaries
@@ -313,8 +320,8 @@ pub struct DetectionExecutor {
     // Read-only database snapshot
     db_path: PathBuf,
     // Resource limits
-    memory_limit: usize,     // 64MB default
-    time_limit: Duration,    // 30s default
+    memory_limit: usize,  // 64MB default
+    time_limit: Duration, // 30s default
     // Cancellation support
     cancel_token: CancellationToken,
 }
@@ -329,10 +336,10 @@ pub struct DetectionExecutor {
 #### Cryptographic Foundation
 
 ```toml
-blake3 = "1.5"           # Fast cryptographic hashing
-ed25519-dalek = "2.0"    # Optional digital signatures
-hmac = "0.12"            # Message authentication
-subtle = "2.4"           # Constant-time comparisons
+blake3 = "1.5"        # Fast cryptographic hashing
+ed25519-dalek = "2.0" # Optional digital signatures
+hmac = "0.12"         # Message authentication
+subtle = "2.4"        # Constant-time comparisons
 ```
 
 #### Audit Chain Structure
@@ -342,11 +349,11 @@ subtle = "2.4"           # Constant-time comparisons
 pub struct AuditEntry {
     sequence: u64,
     timestamp: SystemTime,
-    actor: String,           // Component performing action
-    action: String,          // Operation type
-    payload_hash: [u8; 32],  // BLAKE3 of event data
-    prev_hash: [u8; 32],     // Previous entry hash
-    entry_hash: [u8; 32],    // This entry's hash
+    actor: String,               // Component performing action
+    action: String,              // Operation type
+    payload_hash: [u8; 32],      // BLAKE3 of event data
+    prev_hash: [u8; 32],         // Previous entry hash
+    entry_hash: [u8; 32],        // This entry's hash
     signature: Option<[u8; 64]>, // Optional Ed25519 signature
 }
 ```
@@ -357,7 +364,7 @@ pub struct AuditEntry {
 pub fn verify_audit_chain(entries: &[AuditEntry]) -> Result<bool> {
     for (i, entry) in entries.iter().enumerate() {
         // Verify hash chain
-        if i > 0 && entry.prev_hash != entries[i-1].entry_hash {
+        if i > 0 && entry.prev_hash != entries[i - 1].entry_hash {
             return Ok(false);
         }
 
@@ -390,7 +397,7 @@ pub struct BatchWriter {
 }
 
 pub enum BackpressurePolicy {
-    DropOldest,              // Evict oldest records
+    DropOldest,                 // Evict oldest records
     BlockWithTimeout(Duration), // Block up to timeout
     SpillToDisk(PathBuf),       // Overflow to disk
     AdaptiveThrottling,         // Reduce collection rate
@@ -455,15 +462,15 @@ pub struct RetryPolicy {
 ```rust
 pub struct CircuitBreaker {
     state: Arc<Mutex<CircuitState>>,
-    failure_threshold: u32,    // 5 failures default
+    failure_threshold: u32,     // 5 failures default
     recovery_timeout: Duration, // 30s default
     success_threshold: u32,     // 2 successes for recovery
 }
 
 pub enum CircuitState {
-    Closed,    // Normal operation
-    Open,      // Failing fast
-    HalfOpen,  // Testing recovery
+    Closed,   // Normal operation
+    Open,     // Failing fast
+    HalfOpen, // Testing recovery
 }
 ```
 
@@ -477,8 +484,8 @@ pub enum CircuitState {
 
 ```rust
 pub struct ResourceManager {
-    memory_budget: usize,           // 100MB default
-    channel_capacity: usize,        // 10000 items default
+    memory_budget: usize,          // 100MB default
+    channel_capacity: usize,       // 10000 items default
     task_pool_size: usize,         // CPU cores * 2
     collection_concurrency: usize, // 4 concurrent collectors
 }
@@ -561,10 +568,10 @@ alert_retry_attempts_total: Counter
 ```toml
 # Cargo.toml - Release optimization
 [profile.release]
-lto = "thin"                # Link-time optimization
-codegen-units = 1          # Better optimization
-panic = "abort"            # Smaller binary
-strip = "symbols"          # Remove debug symbols
+lto = "thin"      # Link-time optimization
+codegen-units = 1 # Better optimization
+panic = "abort"   # Smaller binary
+strip = "symbols" # Remove debug symbols
 ```
 
 #### Cross-Platform Packaging
@@ -617,19 +624,19 @@ WantedBy=multi-user.target
 
 ```toml
 # Unit and integration testing
-tokio-test = "0.4"        # Async test utilities
-tempfile = "3.8"          # Temporary file management
-assert_cmd = "2.0"        # CLI integration tests
-predicates = "3.0"        # Output validation
+tokio-test = "0.4" # Async test utilities
+tempfile = "3.8"   # Temporary file management
+assert_cmd = "2.0" # CLI integration tests
+predicates = "3.0" # Output validation
 
 # Property-based testing
-proptest = "1.4"          # Generative testing
+proptest = "1.4" # Generative testing
 
 # Performance testing
 criterion = { version = "0.5", features = ["html_reports"] }
 
 # Snapshot testing
-insta = "1.34"            # Output snapshot testing
+insta = "1.34" # Output snapshot testing
 ```
 
 #### Testing Strategy Implementation
@@ -702,9 +709,9 @@ strategy:
 ```toml
 [workspace.dependencies]
 # Pin critical security dependencies
-rusqlite = "=0.31.0"      # Exact version for security
-ring = "=0.17.5"          # Crypto exact version
-ed25519-dalek = "=2.0.0"  # Signature exact version
+rusqlite = "=0.31.0"     # Exact version for security
+ring = "=0.17.5"         # Crypto exact version
+ed25519-dalek = "=2.0.0" # Signature exact version
 ```
 
 #### Security Scanning Integration
@@ -765,14 +772,22 @@ pub struct CredentialManager {
 
 ## Conclusion
 
-The SentinelD technical stack prioritizes security, performance, and reliability through careful technology selection and architectural patterns. The Rust foundation provides memory safety, while the layered security approach addresses critical vulnerabilities identified in the architecture review.
+The SentinelD technical stack prioritizes security, performance, and reliability through careful
+technology selection and architectural patterns. The Rust foundation provides memory safety, while
+the layered security approach addresses critical vulnerabilities identified in the architecture
+review.
 
 Key technical decisions include:
 
-1. **Database Strategy**: Dual-store architecture with separate event and audit databases to balance performance and integrity requirements
-2. **Security Framework**: Defense-in-depth with AST validation, sandboxed execution, and privilege separation
+1. **Database Strategy**: Dual-store architecture with separate event and audit databases to balance
+   performance and integrity requirements
+2. **Security Framework**: Defense-in-depth with AST validation, sandboxed execution, and privilege
+   separation
 3. **Resource Management**: Bounded channels and cooperative scheduling prevent resource exhaustion
-4. **Cross-Platform Support**: Progressive enhancement with graceful degradation for platform-specific features
-5. **Quality Assurance**: Comprehensive testing strategy with performance benchmarks and security validation
+4. **Cross-Platform Support**: Progressive enhancement with graceful degradation for
+   platform-specific features
+5. **Quality Assurance**: Comprehensive testing strategy with performance benchmarks and security
+   validation
 
-This technical foundation addresses the critical issues identified in the architecture review while providing a scalable platform for future enhancements.
+This technical foundation addresses the critical issues identified in the architecture review while
+providing a scalable platform for future enhancements.
