@@ -11,14 +11,20 @@
 
 ### Database Layer
 
-- **SQLite**: rusqlite with bundled SQLite, WAL mode for performance
-- **Features**: unlock_notify, hooks, column_decltype for enhanced functionality
+- **redb**: Pure Rust embedded database for optimal performance and security
+- **Features**: Concurrent access, ACID transactions, zero-copy deserialization
 - **Configuration**: Separate event store and audit ledger with different durability settings
 
 ### CLI Framework
 
 - **clap v4**: Derive macros with shell completions (bash, zsh, fish, PowerShell)
 - **Terminal**: Automatic color detection, NO_COLOR and TERM=dumb support
+
+### IPC Communication
+
+- **Protocol**: Custom protobuf over Unix sockets (Linux/macOS) and named pipes (Windows)
+- **Features**: Async message handling, automatic reconnection with exponential backoff
+- **Security**: Connection authentication and optional encryption
 
 ### Configuration Management
 
@@ -57,7 +63,7 @@ just coverage     # Generate coverage report with tarpaulin
 
 # Component execution
 just run-procmond --once --verbose      # Run process monitor
-just run-sentinelcli --help             # Run CLI interface  
+just run-sentinelcli --help             # Run CLI interface
 just run-sentinelagent --config /path   # Run orchestrator agent
 ```
 
@@ -104,13 +110,28 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 
 - **Phase 1**: sysinfo crate for unified cross-platform baseline
 - **Phase 2**: Platform-specific enhancements (eBPF, ETW, EndpointSecurity)
+- **Phase 3**: Kernel-level real-time monitoring (Enterprise tier)
 - **Fallback**: Graceful degradation when enhanced features unavailable
+
+### Kernel Monitoring (Enterprise Tier)
+
+- **Linux**: eBPF programs for real-time process and syscall monitoring
+- **Windows**: ETW integration for kernel events and registry monitoring
+- **macOS**: EndpointSecurity framework for process and file system events
+- **Network**: Platform-specific network event correlation
 
 ### Privilege Management
 
 - **Linux**: CAP_SYS_PTRACE, immediate capability dropping
 - **Windows**: SeDebugPrivilege, token restriction after init
 - **macOS**: Minimal entitlements, sandbox compatibility
+
+### Enterprise Security Features
+
+- **Authentication**: mTLS with certificate chain validation
+- **Code Signing**: SLSA Level 3 provenance, Cosign signatures
+- **Compliance**: NIST, ISO 27001, CIS framework mappings
+- **Threat Intelligence**: STIX/TAXII integration, quarterly rule packs
 
 ## Testing Strategy
 
@@ -120,6 +141,7 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 - **Async Testing**: tokio-test for async runtime testing utilities
 - **CLI Testing**: insta for snapshot testing of CLI outputs and behavior
 - **Integration Testing**: assert_cmd and predicates for comprehensive CLI validation
+- **Property Testing**: proptest for generative testing of edge cases and invariants
 
 ### Testing Approach
 
@@ -131,7 +153,7 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 
 ### Coverage & Quality
 
-- **Target Coverage**: 90% line coverage across the codebase
-- **Coverage Tools**: tarpaulin for coverage measurement and reporting
+- **Target Coverage**: >85% code coverage across the codebase
+- **Coverage Tools**: llvm-cov for coverage measurement and reporting
 - **Snapshot Testing**: insta for deterministic CLI output validation
 - **CI Matrix**: Test across Linux, macOS, Windows with multiple Rust versions (stable, beta, MSRV)
