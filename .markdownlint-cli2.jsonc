@@ -2,6 +2,7 @@
     "config": {
         "default": true,
         "heading-increment": true,
+        "line-length": false,
         "ul-style": {
             "style": "consistent"
         },

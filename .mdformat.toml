@@ -11,7 +11,7 @@ exclude = [
 ]
 validate = true
 number = true
-wrap = 100 # Consistent with Prettier's printWidth
+wrap = "no"
 end_of_line = "lf"
 extensions = [
     "gfm",
