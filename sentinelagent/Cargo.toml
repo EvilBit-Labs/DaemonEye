@@ -1,0 +1,18 @@
+[package]
+name = "sentinelagent"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Agent component for SentinelD."
+
+[dependencies]
+sentinel-lib = { path = "../sentinel-lib" }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+
+[[bin]]
+name = "sentinelagent"
+path = "src/main.rs"
