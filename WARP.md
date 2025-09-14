@@ -2,9 +2,7 @@
 
 This file provides guidance to WARP (warp.dev) when working with code in this repository.
 
-**SentinelD** is a security-focused, high-performance process monitoring system built in Rust 2024
-Edition. This guide provides actionable commands and architectural context for WARP/Cursor users
-working on this security-critical workspace.
+**SentinelD** is a security-focused, high-performance process monitoring system built in Rust 2024 Edition. This guide provides actionable commands and architectural context for WARP/Cursor users working on this security-critical workspace.
 
 ## Essential Development Commands
 
@@ -230,8 +228,7 @@ fn cli_displays_help() {
 
 #### End-to-End Testing (Optional)
 
-Compose full scenarios: procmond collection → database population → agent rule execution → CLI
-querying
+Compose full scenarios: procmond collection → database population → agent rule execution → CLI querying
 
 ### Testing Tools and Libraries
 
@@ -255,8 +252,7 @@ RUST_BACKTRACE=1 cargo test --workspace -- --nocapture
 
 ## Justfile Integration
 
-The project uses `just` as a task runner with DRY principles. Current recipes follow the pattern of
-composing larger tasks from smaller ones:
+The project uses `just` as a task runner with DRY principles. Current recipes follow the pattern of composing larger tasks from smaller ones:
 
 ### Core Recipes
 
@@ -336,5 +332,4 @@ just fmt && just lint
 
 ---
 
-**Note**: This is a security-critical system. All changes must maintain the principle of least
-privilege and undergo thorough security review before deployment.
+**Note**: This is a security-critical system. All changes must maintain the principle of least privilege and undergo thorough security review before deployment.
