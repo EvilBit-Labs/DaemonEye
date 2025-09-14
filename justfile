@@ -40,3 +40,32 @@ run-sentinelcli *args:
 
 run-sentinelagent *args:
     @cargo run -p sentinelagent -- {{ args }}
+
+# Distribution commands
+dist:
+    @cargo dist build
+
+dist-check:
+    @cargo dist check
+
+dist-plan:
+    @cargo dist plan
+
+install:
+    @cargo install --path sentinel
+
+# Release commands
+release:
+    @cargo release
+
+release-dry-run:
+    @cargo release --dry-run
+
+release-patch:
+    @cargo release patch
+
+release-minor:
+    @cargo release minor
+
+release-major:
+    @cargo release major
