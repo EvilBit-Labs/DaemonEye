@@ -2,7 +2,9 @@
 
 This file provides guidance to WARP (warp.dev) when working with code in this repository.
 
-**SentinelD** is a security-focused, high-performance process monitoring system built in Rust 2024 Edition. This guide provides actionable commands and architectural context for WARP/Cursor users working on this security-critical workspace.
+**SentinelD** is a security-focused, high-performance process monitoring system built in Rust 2024
+Edition. This guide provides actionable commands and architectural context for WARP/Cursor users
+working on this security-critical workspace.
 
 ## Essential Development Commands
 
@@ -122,21 +124,25 @@ flowchart LR
 ### Component Responsibilities
 
 - **procmond**: Privileged process collector with minimal attack surface
+
   - Collects process metadata with optional elevated privileges
   - Writes to tamper-evident SQLite database via sentinel-lib
   - Runs with least necessary privileges, drops elevation after init
 
 - **sentinelagent**: User-space orchestrator for detection and alerting
+
   - Executes SQL-based detection rules against collected data
   - Delivers alerts via multiple channels (syslog, webhook, email)
   - Outbound-only network connections, no listening ports
 
 - **sentinelcli**: Command-line interface for operators
+
   - Query historical process data with flexible SQL interface
   - Export results in JSON or human-readable formats
   - Configuration and system health checking
 
 - **sentinel-lib**: Shared library providing core functionality
+
   - Configuration management with hierarchical override support
   - Data models and storage abstractions (SQLite WAL mode)
   - Process collection services and detection engine
@@ -224,7 +230,8 @@ fn cli_displays_help() {
 
 #### End-to-End Testing (Optional)
 
-Compose full scenarios: procmond collection → database population → agent rule execution → CLI querying
+Compose full scenarios: procmond collection → database population → agent rule execution → CLI
+querying
 
 ### Testing Tools and Libraries
 
@@ -248,7 +255,8 @@ RUST_BACKTRACE=1 cargo test --workspace -- --nocapture
 
 ## Justfile Integration
 
-The project uses `just` as a task runner with DRY principles. Current recipes follow the pattern of composing larger tasks from smaller ones:
+The project uses `just` as a task runner with DRY principles. Current recipes follow the pattern of
+composing larger tasks from smaller ones:
 
 ### Core Recipes
 
@@ -328,4 +336,5 @@ just fmt && just lint
 
 ---
 
-**Note**: This is a security-critical system. All changes must maintain the principle of least privilege and undergo thorough security review before deployment.
+**Note**: This is a security-critical system. All changes must maintain the principle of least
+privilege and undergo thorough security review before deployment.

@@ -4,7 +4,9 @@
 
 ## Project Overview
 
-**SentinelD** is a high-performance, security-focused process monitoring system built in Rust 2024 Edition. It's a complete rewrite of the Python prototype, designed for cybersecurity professionals, threat hunters, and security operations centers.
+**SentinelD** is a high-performance, security-focused process monitoring system built in Rust 2024
+Edition. It's a complete rewrite of the Python prototype, designed for cybersecurity professionals,
+threat hunters, and security operations centers.
 
 ### Architecture Principles
 
@@ -15,7 +17,8 @@ SentinelD follows a **three-component security architecture**:
 3. **SentinelCLI**: Command-line interface for queries and configuration
 4. **sentinel-lib**: Shared library providing common functionality across components
 
-This separation ensures **robust security** by isolating privileged operations from network functionality.
+This separation ensures **robust security** by isolating privileged operations from network
+functionality.
 
 ---
 
@@ -61,11 +64,11 @@ anyhow = "1.0"
 
 ### Performance Requirements
 
-- **CPU Usage**: <5% sustained during continuous monitoring
-- **Memory Usage**: <100MB resident under normal operation
-- **Process Enumeration**: <5s for 10,000+ processes
+- **CPU Usage**: \<5% sustained during continuous monitoring
+- **Memory Usage**: \<100MB resident under normal operation
+- **Process Enumeration**: \<5s for 10,000+ processes
 - **Database Operations**: >1000 records/sec write rate
-- **Alert Latency**: <100ms per detection rule
+- **Alert Latency**: \<100ms per detection rule
 
 ### Security Requirements
 
@@ -186,7 +189,8 @@ CREATE TABLE processes (
 
 ### Migration Strategy
 
-Use embedded migrations with `sqlx::migrate!` for schema versioning. Migrations are stored in the `migrations/` directory and executed automatically on application startup:
+Use embedded migrations with `sqlx::migrate!` for schema versioning. Migrations are stored in the
+`migrations/` directory and executed automatically on application startup:
 
 ```rust
 use sqlx::migrate;
@@ -291,15 +295,15 @@ app:
   batch_size: 1000
 
 database:
-  path: "/var/lib/procmond/processes.sqlite"
+  path: /var/lib/procmond/processes.sqlite
   retention_days: 30
 
 alerting:
   sinks:
-    - type: "syslog"
-      facility: "daemon"
-    - type: "webhook"
-      url: "https://alerts.example.com/api"
+    - type: syslog
+      facility: daemon
+    - type: webhook
+      url: https://alerts.example.com/api
 ```
 
 ---
@@ -436,15 +440,15 @@ procmond_alert_deliveries_total{sink="stdout|syslog|webhook"}
 
 When generating code for SentinelD:
 
-1. **Always use Rust 2024 Edition** in Cargo.toml files
-2. **Implement comprehensive error handling** with thiserror
-3. **Use async/await patterns** with Tokio runtime
-4. **Include comprehensive tests** with assert_cmd for CLI testing
-5. **Follow the service layer pattern** with trait definitions
-6. **Implement proper logging** with tracing framework
-7. **Use workspace inheritance** for common dependencies
-8. **Include performance considerations** in implementation
-9. **Follow security best practices** with input validation
+01. **Always use Rust 2024 Edition** in Cargo.toml files
+02. **Implement comprehensive error handling** with thiserror
+03. **Use async/await patterns** with Tokio runtime
+04. **Include comprehensive tests** with assert_cmd for CLI testing
+05. **Follow the service layer pattern** with trait definitions
+06. **Implement proper logging** with tracing framework
+07. **Use workspace inheritance** for common dependencies
+08. **Include performance considerations** in implementation
+09. **Follow security best practices** with input validation
 10. **Document all public APIs** with rustdoc comments
 
 ---
@@ -481,4 +485,6 @@ When generating code for SentinelD:
 
 ---
 
-**Remember**: SentinelD is a security-focused system. Always prioritize security, performance, and reliability in implementation decisions. When in doubt, choose the more secure and observable approach.
+**Remember**: SentinelD is a security-focused system. Always prioritize security, performance, and
+reliability in implementation decisions. When in doubt, choose the more secure and observable
+approach.
