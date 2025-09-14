@@ -48,7 +48,6 @@ pub enum CollectionError {
 
 ## Error Testing
 
-- Test all error conditions
+- Test all error conditions and recovery paths
 - Validate error messages and context
-- Test error recovery paths
-- Use `assert_cmd` to test CLI error handling
+- Use `assert_cmd` for CLI error testing

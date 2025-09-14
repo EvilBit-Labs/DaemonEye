@@ -1,0 +1,252 @@
+---
+globs: **/*.rs
+---
+
+# Database and Storage Standards for SentinelD
+
+## Primary Database: redb
+
+### Core Features
+
+- **Pure Rust**: Embedded database for optimal performance and security
+- **Concurrent Access**: ACID transactions with zero-copy deserialization
+- **Configuration**: Separate event store and audit ledger with different durability settings
+- **Performance**: >1,000 records/sec write rate with sub-millisecond read latency
+
+### Database Schema Design
+
+#### Core Tables
+
+```sql
+-- Process snapshots with comprehensive metadata
+CREATE TABLE processes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id INTEGER NOT NULL,
+    collection_time INTEGER NOT NULL,
+    pid INTEGER NOT NULL,
+    ppid INTEGER,
+    name TEXT NOT NULL,
+    executable_path TEXT,
+    command_line TEXT,
+    executable_hash TEXT,
+    start_time INTEGER,
+    cpu_usage REAL,
+    memory_usage INTEGER,
+    status TEXT,
+    FOREIGN KEY (scan_id) REFERENCES scans(id)
+);
+
+-- Collection cycle metadata and statistics
+CREATE TABLE scans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_time INTEGER NOT NULL,
+    end_time INTEGER,
+    process_count INTEGER,
+    duration_ms INTEGER,
+    status TEXT
+);
+
+-- Rule definitions with versioning
+CREATE TABLE detection_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    sql_query TEXT NOT NULL,
+    severity TEXT,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER
+);
+
+-- Generated alerts with execution context
+CREATE TABLE alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id INTEGER NOT NULL,
+    scan_id INTEGER NOT NULL,
+    severity TEXT NOT NULL,
+    message TEXT NOT NULL,
+    process_matches TEXT, -- JSON array of matching processes
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (rule_id) REFERENCES detection_rules(id),
+    FOREIGN KEY (scan_id) REFERENCES scans(id)
+);
+
+-- Delivery tracking with retry information
+CREATE TABLE alert_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_id INTEGER NOT NULL,
+    sink_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempts INTEGER DEFAULT 0,
+    last_attempt INTEGER,
+    next_retry INTEGER,
+    error_message TEXT,
+    FOREIGN KEY (alert_id) REFERENCES alerts(id)
+);
+
+-- Tamper-evident cryptographic chain
+CREATE TABLE audit_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    event_data TEXT NOT NULL,
+    hash_chain TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    signature TEXT
+);
+```
+
+#### Business/Enterprise Tables
+
+```sql
+-- Agent registration and status tracking
+CREATE TABLE agents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT UNIQUE NOT NULL,
+    hostname TEXT,
+    ip_address TEXT,
+    last_seen INTEGER,
+    status TEXT,
+    version TEXT
+);
+
+-- mTLS connection management and certificates
+CREATE TABLE agent_connections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL,
+    certificate_fingerprint TEXT,
+    connected_at INTEGER,
+    last_activity INTEGER,
+    status TEXT,
+    FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
+);
+
+-- Centralized event aggregation from multiple agents
+CREATE TABLE fleet_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    event_data TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
+);
+
+-- Curated rule pack management and distribution
+CREATE TABLE rule_packs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    description TEXT,
+    rules TEXT NOT NULL, -- JSON array of rules
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER
+);
+
+-- Compliance framework mappings
+CREATE TABLE compliance_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    framework TEXT NOT NULL, -- NIST, ISO27001, CIS
+    control_id TEXT NOT NULL,
+    rule_id INTEGER NOT NULL,
+    mapping_type TEXT, -- direct, partial, related
+    FOREIGN KEY (rule_id) REFERENCES detection_rules(id)
+);
+
+-- Network activity correlation (Enterprise tier)
+CREATE TABLE network_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id INTEGER,
+    connection_type TEXT,
+    local_address TEXT,
+    remote_address TEXT,
+    port INTEGER,
+    protocol TEXT,
+    timestamp INTEGER NOT NULL,
+    FOREIGN KEY (process_id) REFERENCES processes(id)
+);
+
+-- Kernel-level event monitoring (Enterprise tier)
+CREATE TABLE kernel_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    process_id INTEGER,
+    syscall_number INTEGER,
+    arguments TEXT, -- JSON array
+    result INTEGER,
+    timestamp INTEGER NOT NULL,
+    FOREIGN KEY (process_id) REFERENCES processes(id)
+);
+```
+
+## Access Patterns
+
+### Component-Specific Access
+
+- **Event Store**: redb with concurrent access and ACID transactions
+- **Audit Ledger**: redb with write-only access for procmond
+- **Detection Queries**: Read-only database connections for rule execution
+- **Indexing**: Optimized for time-series queries and rule execution
+
+### Performance Optimization
+
+- **Indexing Strategy**: Time-based indexes for efficient querying
+- **Batch Operations**: Bulk inserts for process data collection
+- **Connection Pooling**: Efficient database connection management
+- **Query Optimization**: Prepared statements and query plan analysis
+
+## Data Migration
+
+### Schema Versioning
+
+- Use embedded migrations with version tracking
+- Automatic schema updates on application startup
+- Backward compatibility for data migration
+- Rollback support for failed migrations
+
+### Migration Strategy
+
+```rust
+use redb::Database;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let db = Database::create("processes.redb")?;
+
+    // Run migrations
+    migrate_database(&db).await?;
+
+    // Application logic...
+    Ok(())
+}
+```
+
+## Security Considerations
+
+### Data Protection
+
+- **Encryption at Rest**: Optional database encryption for sensitive deployments
+- **Access Control**: Component-specific database access patterns
+- **Audit Logging**: Comprehensive database operation logging
+- **Data Retention**: Configurable retention policies
+
+### SQL Injection Prevention
+
+- **AST Validation**: sqlparser crate for query structure validation
+- **Prepared Statements**: All queries use parameterized statements only
+- **Sandboxed Execution**: Read-only database connections for detection engine
+- **Query Whitelist**: Only SELECT statements with approved functions allowed
+
+## Backup and Recovery
+
+### Backup Strategy
+
+- **Automated Backups**: Regular database snapshots
+- **Incremental Backups**: Efficient storage of changes
+- **Cross-Platform**: Consistent backup format across platforms
+- **Verification**: Backup integrity checking
+
+### Recovery Procedures
+
+- **Point-in-Time Recovery**: Restore to specific timestamps
+- **Partial Recovery**: Restore specific tables or time ranges
+- **Disaster Recovery**: Complete system restoration procedures
+- **Testing**: Regular recovery procedure validation

@@ -6,13 +6,11 @@ globs: **/*.rs
 
 ## Performance Requirements
 
-As specified in [AGENTS.md](mdc:AGENTS.md):
-
 - **CPU Usage**: <5% sustained during continuous monitoring
 - **Memory Usage**: <100MB resident under normal operation
 - **Process Enumeration**: <5s for 10,000+ processes
-- **Database Operations**: >1000 records/sec write rate
-- **Alert Latency**: <100ms per detection rule
+- **Database Operations**: >1,000 records/sec write rate
+- **Alert Latency**: <100ms per detection rule execution
 
 ## Async Design
 
@@ -23,10 +21,10 @@ As specified in [AGENTS.md](mdc:AGENTS.md):
 
 ## Database Performance
 
-- Use SQLite with WAL mode for concurrent operations
-- Implement prepared statements for repeated queries
-- Use batch operations for bulk inserts
-- Implement proper indexing strategies
+- Use redb embedded database for optimal performance and security
+- Implement concurrent access with ACID transactions
+- Use zero-copy deserialization for efficiency
+- Implement proper indexing strategies for time-series queries
 
 ## Memory Management
 
@@ -45,6 +43,5 @@ As specified in [AGENTS.md](mdc:AGENTS.md):
 ## Monitoring and Metrics
 
 - Implement Prometheus metrics for operational monitoring
-- Track performance metrics as specified in [AGENTS.md](mdc:AGENTS.md)
 - Monitor resource usage and alert on thresholds
 - Provide performance optimization hints

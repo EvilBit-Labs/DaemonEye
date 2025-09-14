@@ -6,7 +6,7 @@ globs: Cargo.toml
 
 ## Workspace Configuration
 
-- Always use **Rust 2024 Edition** as specified in the workspace package
+- Always use **Rust 2024 Edition** (MSRV: 1.85+) as specified in the workspace package
 - Use resolver version "3" for dependency resolution
 - Enforce `unsafe_code = "forbid"` and `warnings = "deny"` at workspace level
 
@@ -17,11 +17,14 @@ globs: Cargo.toml
   - `tokio = { version = "1.0", features = ["full"] }`
   - `clap = { version = "4.0", features = ["derive", "completion"] }`
   - `serde = { version = "1.0", features = ["derive"] }`
-  - `sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }`
+  - `redb = "2.0"` (primary database)
   - `sysinfo = "0.30"`
   - `tracing = "0.1"`
   - `thiserror = "1.0"`
   - `anyhow = "1.0"`
+  - `cargo-nextest = "0.9"` (test runner)
+  - `proptest = "1.0"` (property testing)
+  - `insta = "1.0"` (snapshot testing)
 
 ## Member Crates
 

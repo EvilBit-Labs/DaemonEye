@@ -6,19 +6,24 @@ globs: **/*.rs
 
 ## Security Architecture
 
-SentinelD follows a **three-component security architecture**:
+SentinelD follows a **multi-tier security architecture** with strict privilege separation and enterprise extensions.
 
-- **ProcMonD**: Privileged process monitoring daemon with minimal attack surface
-- **SentinelAgent**: User-space process for alerting and network operations
-- **SentinelCLI**: Command-line interface for queries and configuration
-
-## Security Requirements
+## Core Security Requirements
 
 - **Principle of Least Privilege**: Components run with minimal required permissions
-- **SQL Injection Prevention**: Use parameterized queries and prepared statements
+- **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only
 - **Credential Management**: No hardcoded credentials, prefer environment variables
 - **Input Validation**: Comprehensive validation with detailed error messages
 - **Attack Surface Minimization**: No network listening, outbound-only connections
+
+## Advanced Security Features
+
+- **Cryptographic Integrity**: BLAKE3 hashing for audit chains
+- **AST Validation**: sqlparser crate for query structure validation
+- **Sandboxed Execution**: Read-only database connections for detection engine
+- **Query Whitelist**: Only SELECT statements with approved functions allowed
+- **mTLS Authentication**: Certificate chain validation for enterprise components
+- **Code Signing**: SLSA Level 3 provenance, Cosign signatures (Enterprise tier)
 
 ## Data Protection
 

@@ -1,0 +1,121 @@
+---
+globs: **/*.rs
+---
+
+# Enterprise Features for SentinelD
+
+## Multi-Tier Architecture
+
+SentinelD supports **three deployment tiers**:
+
+### Free Tier
+
+- Standalone agent deployment (procmond + sentinelagent + sentinelcli)
+- Local process monitoring and detection
+- Basic alerting and data export
+
+### Business Tier ($199/site)
+
+- **Security Center**: Centralized management and aggregation
+- **Enterprise Integrations**: Splunk, Elasticsearch, Kafka connectors
+- **Curated Rule Packs**: Pre-built detection rules for common threats
+- **Container Support**: Kubernetes DaemonSet deployment
+- **Code Signing**: Signed installers for Windows/macOS
+
+### Enterprise Tier (Custom Pricing)
+
+- **Kernel-Level Monitoring**: Real-time eBPF/ETW/EndpointSecurity
+- **Federated Architecture**: Multi-tier Security Center hierarchy
+- **Advanced SIEM Integration**: STIX/TAXII, compliance mappings
+- **Hardened Security**: SLSA provenance, Cosign signatures
+- **Network Correlation**: Process-to-network event correlation
+
+## IPC Communication
+
+### Protocol Design
+
+- **Transport**: Unix domain sockets (Linux/macOS), named pipes (Windows)
+- **Format**: Custom protobuf messages for DetectionTask and DetectionResult
+- **Security**: Connection authentication and optional encryption
+- **Reliability**: Automatic reconnection with exponential backoff
+
+### Message Types
+
+```rust
+// DetectionTask - sent from sentinelagent to procmond
+message DetectionTask {
+    string rule_id = 1;
+    string query = 2;
+    int64 timeout_ms = 3;
+    map<string, string> parameters = 4;
+}
+
+// DetectionResult - sent from procmond to sentinelagent
+message DetectionResult {
+    string rule_id = 1;
+    bool matched = 2;
+    repeated ProcessMatch matches = 3;
+    string error_message = 4;
+    int64 execution_time_ms = 5;
+}
+```
+
+## Kernel Monitoring (Enterprise Tier)
+
+### Platform-Specific Implementation
+
+- **Linux**: eBPF programs for real-time process and syscall monitoring
+- **Windows**: ETW integration for kernel events and registry monitoring
+- **macOS**: EndpointSecurity framework for process and file system events
+- **Network**: Platform-specific network event correlation
+
+### Privilege Management
+
+- **Linux**: CAP_SYS_PTRACE, immediate capability dropping
+- **Windows**: SeDebugPrivilege, token restriction after init
+- **macOS**: Minimal entitlements, sandbox compatibility
+
+## Security Center Features
+
+### Centralized Management
+
+- **Fleet Management**: Multi-agent deployment and monitoring
+- **Rule Distribution**: Centralized rule pack management
+- **Data Aggregation**: Hierarchical event collection
+- **Web GUI**: Operator interface for management
+
+### Authentication & Authorization
+
+- **mTLS Authentication**: Certificate chain validation
+- **Role-Based Access**: Granular permission management
+- **Audit Logging**: Comprehensive access tracking
+
+## Compliance & Standards
+
+### Security Frameworks
+
+- **NIST**: Cybersecurity framework mappings
+- **ISO 27001**: Information security management
+- **CIS**: Critical security controls
+
+### Code Signing & Provenance
+
+- **SLSA Level 3**: Supply chain security
+- **Cosign Signatures**: Container and binary signing
+- **Hardware Security**: Hardware-backed signing keys
+
+## Network Integration
+
+### SIEM Connectors
+
+- **Splunk**: HEC and REST API integration
+- **Elasticsearch**: Elastic Common Schema (ECS) mapping
+- **Kafka**: High-throughput event streaming
+- **STIX/TAXII**: Threat intelligence integration
+
+### Alert Delivery
+
+- **Multi-Channel**: stdout, syslog, webhooks, email
+- **Retry Logic**: Exponential backoff with circuit breaking
+- **Delivery Audit**: Comprehensive delivery tracking
+- **Rate Limiting**: Configurable backpressure handling

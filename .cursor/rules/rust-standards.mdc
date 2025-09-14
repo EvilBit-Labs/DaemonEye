@@ -6,7 +6,7 @@ alwaysApply: false
 
 ## Language and Edition
 
-- Always use **Rust 2024 Edition** as specified in [Cargo.toml](mdc:Cargo.toml)
+- Always use **Rust 2024 Edition** (MSRV: 1.85+) as specified in [Cargo.toml](mdc:Cargo.toml)
 - Follow the workspace configuration in [Cargo.toml](mdc:Cargo.toml) with `unsafe_code = "forbid"` and `warnings = "deny"`
 
 ## Code Quality Requirements
@@ -16,22 +16,6 @@ alwaysApply: false
 - **Formatting**: Use standard `rustfmt` with 119 character line length
 - **Error Handling**: Use `thiserror` for structured errors, `anyhow` for error context
 - **Async**: Async-first design using Tokio runtime
-
-## Performance Standards
-
-- CPU Usage: <5% sustained during continuous monitoring
-- Memory Usage: <100MB resident under normal operation
-- Process Enumeration: <5s for 10,000+ processes
-- Database Operations: >1000 records/sec write rate
-- Alert Latency: <100ms per detection rule
-
-## Security Requirements
-
-- Principle of Least Privilege: Components run with minimal required permissions
-- SQL Injection Prevention: Use parameterized queries and prepared statements
-- No hardcoded credentials, prefer environment variables
-- Comprehensive input validation with detailed error messages
-- Attack Surface Minimization: No network listening, outbound-only connections
 
 ## Code Organization
 
@@ -43,5 +27,4 @@ alwaysApply: false
 ## Testing Requirements
 
 - Include comprehensive tests with assert_cmd for CLI testing
-- Use three-tier testing architecture: unit, integration, and end-to-end tests
 - Test organization should follow the pattern in [AGENTS.md](mdc:AGENTS.md)

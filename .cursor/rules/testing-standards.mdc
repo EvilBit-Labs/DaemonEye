@@ -6,17 +6,21 @@ alwaysApply: false
 
 ## Testing Architecture
 
-Follow the **three-tier testing architecture**:
+Follow the **comprehensive testing strategy**:
 
-1. **Unit Tests**: Test individual components with mocked dependencies
-2. **Integration Tests**: Use testcontainers for database operations
-3. **End-to-End Tests**: Full system testing with sample data
+1. **Unit Tests**: Algorithms and core logic only, minimal scope
+2. **Integration Tests**: Primary testing approach with minimal mocking
+3. **Property Testing**: proptest for generative testing of edge cases
+4. **Fuzz Testing**: Extensive fuzzing for security-critical components
+5. **Performance Testing**: Criterion benchmarks with regression detection
 
 ## Test Organization
 
-- Place integration tests in `tests/` directories
-- Use `assert_cmd` for CLI testing as specified in [Cargo.toml](mdc:Cargo.toml)
-- Use `predicates` for test assertions
+- Use cargo-nextest for faster, more reliable test execution
+- Use tokio-test for async runtime testing utilities
+- Use insta for snapshot testing of CLI outputs and behavior
+- Use assert_cmd and predicates for comprehensive CLI validation
+- Use proptest for generative testing of edge cases and invariants
 - Follow the pattern in [AGENTS.md](mdc:AGENTS.md):
 
 ```rust
@@ -48,13 +52,13 @@ mod tests {
 
 ## Database Testing
 
-- Use testcontainers for database operations
+- Test redb database operations with concurrent access
 - Test migrations and schema changes
 - Validate data integrity and constraints
+- Test ACID transaction properties
 
 ## Performance Testing
 
-- Test performance requirements as specified in [AGENTS.md](mdc:AGENTS.md)
-- CPU Usage: <5% sustained during continuous monitoring
-- Memory Usage: <100MB resident under normal operation
-- Process Enumeration: <5s for 10,000+ processes
+- Test performance requirements with Criterion benchmarks
+- Validate CPU, memory, and latency targets
+- Include regression detection in CI

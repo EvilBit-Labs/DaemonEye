@@ -6,16 +6,28 @@ alwaysApply: true
 
 ## Project Architecture
 
-SentinelD is a **three-component security architecture** workspace:
+SentinelD is a **multi-tier security architecture** workspace supporting:
+
+**Core Components:**
 
 1. **procmond/**: Process monitoring daemon (privileged collector)
 2. **sentinelagent/**: User-space orchestrator for alerting and network operations
 3. **sentinelcli/**: Command-line interface for queries and configuration
 4. **sentinel-lib/**: Shared library providing common functionality
 
+**Enterprise Components:**
+5. **security-center/**: Centralized management (Business/Enterprise tiers)
+6. **project_specs/**: Project documentation and specifications
+
+**Deployment Tiers:**
+
+- **Free Tier**: Standalone agents (procmond + sentinelagent + sentinelcli)
+- **Business Tier**: + Security Center + Enterprise integrations
+- **Enterprise Tier**: + Kernel monitoring + Federated architecture + Advanced SIEM
+
 ## Workspace Configuration
 
-- **Language**: Rust 2024 Edition (MSRV: 1.70+)
+- **Language**: Rust 2024 Edition (MSRV: 1.85+)
 - **Resolver**: Version 3 as specified in [Cargo.toml](mdc:Cargo.toml)
 - **Members**: procmond, sentinelcli, sentinelagent, sentinel-lib
 - **Linting**: Zero warnings policy with `unsafe_code = "forbid"`
@@ -38,5 +50,3 @@ SentinelD is a **three-component security architecture** workspace:
 
 - Isolate privileged operations (procmond) from network functionality (sentinelagent)
 - Follow principle of least privilege
-- Implement comprehensive input validation
-- Use parameterized queries to prevent SQL injection
