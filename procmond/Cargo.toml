@@ -5,11 +5,18 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Process monitoring daemon for SentinelD."
+description = "Process monitoring daemon for SentinelD"
+repository.workspace = true
+homepage.workspace = true
 publish = false
 
 [dependencies]
+# Shared library
 sentinel-lib = { path = "../sentinel-lib" }
+
+# Process monitoring specific dependencies
+tokio.workspace = true
+sysinfo.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true

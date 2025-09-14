@@ -5,12 +5,23 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "CLI interface for SentinelD."
+description = "CLI interface for SentinelD"
+repository.workspace = true
+homepage.workspace = true
 publish = false
 
 [dependencies]
-sentinel-lib = { workspace = true }
+# Shared library
+sentinel-lib = { path = "../sentinel-lib" }
+
+# CLI specific dependencies
+clap.workspace = true
+sqlx.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
 predicates.workspace = true
+
+[[bin]]
+name = "sentinelcli"
+path = "src/main.rs"

@@ -1,0 +1,69 @@
+# cargo-release configuration for SentinelD
+
+[workspace]
+# Only release the distribution package
+members = ["sentinel"]
+
+# Version bump strategy
+version-bump = "patch" # patch, minor, major, or auto
+
+# Pre-release checks
+[workspace.pre-release]
+# Run tests before release
+test = true
+
+# Run linting before release
+lint = true
+
+# Build before release
+build = true
+
+# Post-release actions
+[workspace.post-release]
+# Push tags after release
+push = true
+
+# Push to remote after release
+push-remote = "origin"
+
+# GitHub release configuration
+[workspace.github]
+# Create GitHub release
+release = true
+
+# Release title template
+release-title = "Release {{version}}"
+
+# Release body template
+release-body = """
+## What's Changed
+
+{{changelog}}
+
+## Installation
+
+```bash
+# Install via cargo
+cargo install sentinel
+
+# Or download from GitHub releases
+# https://github.com/EvilBit-Labs/SentinelD/releases/tag/{{tag}}
+```
+
+## Binaries
+
+- `procmond` - Process monitoring daemon
+- `sentinelcli` - CLI interface
+- `sentinelagent` - Orchestrator agent
+"""
+
+# Changelog configuration
+[workspace.changelog]
+# Generate changelog
+enabled = true
+
+# Changelog file
+file = "CHANGELOG.md"
+
+# Changelog format
+format = "markdown"

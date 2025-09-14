@@ -5,7 +5,18 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Shared library for SentinelD common functionality."
+description = "Shared library for SentinelD common functionality"
+repository.workspace = true
+homepage.workspace = true
+publish = false
 
-[lib]
-path = "src/lib.rs"
+[dependencies]
+# Core dependencies used by all components
+serde.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true

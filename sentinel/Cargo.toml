@@ -1,0 +1,48 @@
+[package]
+name = "sentinel"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = true
+
+[package.metadata.wix]
+upgrade-guid = "C447BDE5-2A00-43F3-A75B-EC69BA427B7E"
+path-guid = "B39EF01E-BA27-4430-8770-8D16E84BB0F3"
+license = false
+eula = false
+
+# Include all binaries from workspace members
+[[bin]]
+name = "procmond"
+path = "src/bin/procmond.rs"
+
+[[bin]]
+name = "sentinelcli"
+path = "src/bin/sentinelcli.rs"
+
+[[bin]]
+name = "sentinelagent"
+path = "src/bin/sentinelagent.rs"
+
+[dependencies]
+# Re-export the shared library
+sentinel-lib = { path = "../sentinel-lib" }
+
+# Include all dependencies that any binary might need
+tokio.workspace = true
+clap.workspace = true
+serde.workspace = true
+sqlx.workspace = true
+sysinfo.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
