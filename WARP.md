@@ -300,7 +300,6 @@ just fmt && just lint
 - **No Auto-Commits**: Never commit code automatically; present diffs for UncleSp1d3r approval
 - **Conventional Commits**: Use conventional commit format when changes are approved
 - **Mermaid Diagrams**: Standard for all visual documentation
-- **Color Handling**: Commands respect `NO_COLOR=1` and `TERM=dumb` environment variables
 - **Testing**: Always use stable output modes in tests (`NO_COLOR=1 TERM=dumb`)
 
 ## Common Development Scenarios
