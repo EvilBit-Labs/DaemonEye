@@ -1,0 +1,10 @@
+# Using Ubuntu 22.04 base for all runners to match most workflows and ensure reproducible builds
+-P ubuntu-22.04=catthehacker/ubuntu:act-22.04
+-P ubuntu-latest=catthehacker/ubuntu:act-22.04
+-P macos-13=catthehacker/ubuntu:act-22.04
+-P macos-latest=catthehacker/ubuntu:act-22.04
+-P windows-2022=catthehacker/ubuntu:act-22.04
+-P windows-latest=catthehacker/ubuntu:act-22.04
+--container-architecture linux/amd64
+--pull=false
+--no-skip-checkout

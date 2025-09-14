@@ -77,9 +77,15 @@ jobs:
                 include:
                     - os: ubuntu-latest
                       platform: "Linux"
+                    - os: ubuntu-22.04
+                      platform: "Linux"
                     - os: macos-latest
                       platform: "macOS"
+                    - os: macos-13
+                      platform: "macOS"
                     - os: windows-latest
+                      platform: "Windows"
+                    - os: windows-2022
                       platform: "Windows"
         runs-on: ${{ matrix.os }}
         needs: quality
