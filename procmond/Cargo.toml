@@ -1,0 +1,18 @@
+[package]
+name = "procmond"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Process monitoring daemon for SentinelD."
+
+[dependencies]
+sentinel-lib = { path = "../sentinel-lib" }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+
+[[bin]]
+name = "procmond"
+path = "src/main.rs"
