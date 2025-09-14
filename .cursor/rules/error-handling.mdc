@@ -1,0 +1,54 @@
+---
+globs: **/*.rs
+---
+
+# Error Handling Standards for SentinelD
+
+## Error Types
+
+Use `thiserror` for structured error types as specified in [AGENTS.md](mdc:AGENTS.md):
+
+```rust
+#[derive(Debug, Error)]
+pub enum CollectionError {
+    #[error("Permission denied accessing process {pid}")]
+    PermissionDenied { pid: u32 },
+
+    #[error("Process {pid} no longer exists")]
+    ProcessNotFound { pid: u32 },
+
+    #[error("I/O error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+```
+
+## Error Context
+
+- Use `anyhow` for error context and chaining
+- Provide detailed error messages with actionable suggestions
+- Include relevant context information (PIDs, file paths, etc.)
+
+## Error Propagation
+
+- Use `?` operator for error propagation
+- Convert between error types using `From` implementations
+- Avoid `unwrap()` and `expect()` in production code
+
+## Security Considerations
+
+- Don't expose sensitive information in error messages
+- Use structured logging for error details
+- Implement proper error boundaries
+
+## Error Recovery
+
+- Implement graceful degradation when possible
+- Provide fallback mechanisms for constrained environments
+- Continue with reduced functionality when elevated privileges unavailable
+
+## Error Testing
+
+- Test all error conditions
+- Validate error messages and context
+- Test error recovery paths
+- Use `assert_cmd` to test CLI error handling

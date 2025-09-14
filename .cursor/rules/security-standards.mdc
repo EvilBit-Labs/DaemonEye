@@ -1,0 +1,49 @@
+---
+globs: **/*.rs
+---
+
+# Security Standards for SentinelD
+
+## Security Architecture
+
+SentinelD follows a **three-component security architecture**:
+
+- **ProcMonD**: Privileged process monitoring daemon with minimal attack surface
+- **SentinelAgent**: User-space process for alerting and network operations
+- **SentinelCLI**: Command-line interface for queries and configuration
+
+## Security Requirements
+
+- **Principle of Least Privilege**: Components run with minimal required permissions
+- **SQL Injection Prevention**: Use parameterized queries and prepared statements
+- **Credential Management**: No hardcoded credentials, prefer environment variables
+- **Input Validation**: Comprehensive validation with detailed error messages
+- **Attack Surface Minimization**: No network listening, outbound-only connections
+
+## Data Protection
+
+- Optional command-line redaction for privacy
+- Configurable field masking in logs
+- Secure credential storage (OS keychain integration)
+- Database encryption support for sensitive deployments
+
+## Privilege Management
+
+- Run with minimal required privileges by default
+- Optional elevated mode for enhanced metadata collection
+- Automatic privilege dropping after initialization
+- Comprehensive audit logging
+
+## Code Safety
+
+- `unsafe_code = "forbid"` enforced at workspace level
+- Use safe Rust patterns throughout
+- Validate all external inputs
+- Implement proper error boundaries
+
+## Security Testing
+
+- Test privilege escalation scenarios
+- Validate input sanitization
+- Test error handling for security-sensitive operations
+- Verify no sensitive data leakage in logs

@@ -1,0 +1,42 @@
+---
+alwaysApply: true
+---
+
+# SentinelD Workspace Structure
+
+## Project Architecture
+
+SentinelD is a **three-component security architecture** workspace:
+
+1. **procmond/**: Process monitoring daemon (privileged collector)
+2. **sentinelagent/**: User-space orchestrator for alerting and network operations
+3. **sentinelcli/**: Command-line interface for queries and configuration
+4. **sentinel-lib/**: Shared library providing common functionality
+
+## Workspace Configuration
+
+- **Language**: Rust 2024 Edition (MSRV: 1.70+)
+- **Resolver**: Version 3 as specified in [Cargo.toml](mdc:Cargo.toml)
+- **Members**: procmond, sentinelcli, sentinelagent, sentinel-lib
+- **Linting**: Zero warnings policy with `unsafe_code = "forbid"`
+
+## Key Files
+
+- [Cargo.toml](mdc:Cargo.toml): Workspace configuration and shared dependencies
+- [justfile](mdc:justfile): Task runner with DRY principles
+- [rust-toolchain.toml](mdc:rust-toolchain.toml): Rust toolchain specification
+- [AGENTS.md](mdc:AGENTS.md): Comprehensive project configuration and standards
+
+## Development Workflow
+
+- Use `just` commands for all development tasks
+- Run `just lint` before committing (includes fmt-check and clippy)
+- Use `just test` for running all tests
+- Use `just build` for building the workspace
+
+## Security Principles
+
+- Isolate privileged operations (procmond) from network functionality (sentinelagent)
+- Follow principle of least privilege
+- Implement comprehensive input validation
+- Use parameterized queries to prevent SQL injection

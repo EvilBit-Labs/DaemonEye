@@ -1,0 +1,47 @@
+---
+globs: *.md,*.rs
+---
+
+# Documentation Standards for SentinelD
+
+## Code Documentation
+
+- Document all public APIs with rustdoc comments
+- Use `///` for public items and `//!` for module-level documentation
+- Include examples in documentation where appropriate
+- Follow standard rustdoc conventions
+
+## README and Project Documentation
+
+- Keep [README.md](mdc:README.md) up to date with current project status
+- Include clear installation and usage instructions
+- Document the three-component security architecture
+- Provide examples of common use cases
+
+## Configuration Documentation
+
+- Document all configuration options in [AGENTS.md](mdc:AGENTS.md)
+- Include examples of configuration files
+- Explain the hierarchical configuration precedence
+- Document environment variables and their purposes
+
+## API Documentation
+
+- Use comprehensive rustdoc comments for all public interfaces
+- Include error conditions and return values
+- Provide usage examples for complex APIs
+- Document performance characteristics where relevant
+
+## Security Documentation
+
+- Document security considerations and threat model
+- Explain privilege requirements for each component
+- Include security best practices and recommendations
+- Document data protection and privacy features
+
+## Development Documentation
+
+- Keep [AGENTS.md](mdc:AGENTS.md) as the source of truth for project standards
+- Document the development workflow and testing strategy
+- Include performance requirements and benchmarks
+- Document the migration strategy from Python prototype

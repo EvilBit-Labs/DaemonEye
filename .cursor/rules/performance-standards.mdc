@@ -1,0 +1,50 @@
+---
+globs: **/*.rs
+---
+
+# Performance Standards for SentinelD
+
+## Performance Requirements
+
+As specified in [AGENTS.md](mdc:AGENTS.md):
+
+- **CPU Usage**: <5% sustained during continuous monitoring
+- **Memory Usage**: <100MB resident under normal operation
+- **Process Enumeration**: <5s for 10,000+ processes
+- **Database Operations**: >1000 records/sec write rate
+- **Alert Latency**: <100ms per detection rule
+
+## Async Design
+
+- Use async-first design with Tokio runtime
+- Implement proper task spawning and management
+- Use connection pooling for database operations
+- Implement backpressure handling
+
+## Database Performance
+
+- Use SQLite with WAL mode for concurrent operations
+- Implement prepared statements for repeated queries
+- Use batch operations for bulk inserts
+- Implement proper indexing strategies
+
+## Memory Management
+
+- Use efficient data structures
+- Implement proper cleanup and resource management
+- Monitor memory usage in production
+- Use streaming for large data sets
+
+## Process Collection
+
+- Use `sysinfo` crate for cross-platform process enumeration
+- Implement platform-specific optimizations where beneficial
+- Handle permission denied gracefully with partial data collection
+- Use efficient data structures for process information
+
+## Monitoring and Metrics
+
+- Implement Prometheus metrics for operational monitoring
+- Track performance metrics as specified in [AGENTS.md](mdc:AGENTS.md)
+- Monitor resource usage and alert on thresholds
+- Provide performance optimization hints

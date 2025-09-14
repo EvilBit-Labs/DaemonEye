@@ -1,0 +1,63 @@
+---
+globs: src/main.rs,src/cli.rs
+---
+
+# CLI Design Standards for SentinelD
+
+## Command Structure
+
+Use clap v4 with derive macros as specified in [AGENTS.md](mdc:AGENTS.md):
+
+```rust
+#[derive(Parser)]
+#[command(name = "procmond", about = "Process monitoring daemon")]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+
+    #[arg(short, long)]
+    pub config: Option<PathBuf>,
+
+    #[arg(short, long, default_value = "info")]
+    pub log_level: String,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    Run(RunCommand),
+    Config(ConfigCommand),
+    Rules(RulesCommand),
+    // Additional commands...
+}
+```
+
+## Output Formatting
+
+- Support both human-readable and JSON output
+- Use `--json` flag for machine-readable output
+- Respect `NO_COLOR` and `TERM=dumb` for color handling
+- Provide clear error messages with actionable suggestions
+
+## Configuration Management
+
+Support hierarchical configuration with precedence:
+
+1. Command-line flags (highest precedence)
+2. Environment variables (`PROCMOND_*`)
+3. User configuration file (`~/.config/procmond/config.yaml`)
+4. System configuration file (`/etc/procmond/config.yaml`)
+5. Embedded defaults (lowest precedence)
+
+## Error Handling
+
+- Use structured error types with thiserror
+- Provide detailed error messages
+- Include actionable suggestions for common issues
+- Test error conditions with assert_cmd
+
+## Testing
+
+- Use `assert_cmd` for CLI testing
+- Test both success and error cases
+- Validate output format and content
+- Test argument parsing and validation

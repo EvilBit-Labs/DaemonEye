@@ -1,0 +1,39 @@
+---
+globs: justfile
+---
+
+# Justfile Standards for SentinelD
+
+## Task Runner Principles
+
+Use DRY principles in justfile recipes as specified in [AGENTS.md](mdc:AGENTS.md).
+
+## Core Commands
+
+- `just fmt`: Format all code with `cargo fmt --all`
+- `just fmt-check`: Check formatting without modifying files
+- `just lint-rust`: Run rustfmt check and clippy with zero warnings policy
+- `just lint-just`: Lint the justfile itself
+- `just lint`: Run all linting (rust + justfile)
+- `just build`: Build the entire workspace
+- `just check`: Check the workspace without building
+- `just test`: Run all tests in the workspace
+
+## Component-Specific Commands
+
+- `just run-procmond args=''`: Run the procmond binary
+- `just run-sentinelcli args=''`: Run the sentinelcli binary
+- `just run-sentinelagent args=''`: Run the sentinelagent binary
+
+## Shell Configuration
+
+- Use `set shell := ["bash", "-eu", "-o", "pipefail", "-c"]` for strict error handling
+- Ensure all commands fail fast on errors
+- Use proper argument passing with `{{ args }}`
+
+## Development Workflow
+
+- Always run `just lint` before committing
+- Use `just test` to validate changes
+- Use `just build` to check compilation
+- Use component-specific run commands for testing individual binaries

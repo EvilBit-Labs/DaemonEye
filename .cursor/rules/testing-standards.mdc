@@ -1,0 +1,60 @@
+---
+globs: tests/**/*.rs,**/*test*.rs
+alwaysApply: false
+---
+# Testing Standards for SentinelD
+
+## Testing Architecture
+
+Follow the **three-tier testing architecture**:
+
+1. **Unit Tests**: Test individual components with mocked dependencies
+2. **Integration Tests**: Use testcontainers for database operations
+3. **End-to-End Tests**: Full system testing with sample data
+
+## Test Organization
+
+- Place integration tests in `tests/` directories
+- Use `assert_cmd` for CLI testing as specified in [Cargo.toml](mdc:Cargo.toml)
+- Use `predicates` for test assertions
+- Follow the pattern in [AGENTS.md](mdc:AGENTS.md):
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_cmd::prelude::*;
+    use predicates::prelude::*;
+
+    #[tokio::test]
+    async fn test_process_collection() {
+        // Test implementation
+    }
+}
+```
+
+## CLI Testing
+
+- Use `assert_cmd` for testing command-line interfaces
+- Test both success and error cases
+- Validate output format (human-readable and JSON)
+- Test argument parsing and validation
+
+## Async Testing
+
+- Use `#[tokio::test]` for async test functions
+- Test error handling with proper error types
+- Use `tokio::time::timeout` for testing timeouts
+
+## Database Testing
+
+- Use testcontainers for database operations
+- Test migrations and schema changes
+- Validate data integrity and constraints
+
+## Performance Testing
+
+- Test performance requirements as specified in [AGENTS.md](mdc:AGENTS.md)
+- CPU Usage: <5% sustained during continuous monitoring
+- Memory Usage: <100MB resident under normal operation
+- Process Enumeration: <5s for 10,000+ processes

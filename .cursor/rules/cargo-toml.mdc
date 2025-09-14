@@ -1,0 +1,43 @@
+---
+globs: Cargo.toml
+---
+
+# Cargo.toml Standards for SentinelD
+
+## Workspace Configuration
+
+- Always use **Rust 2024 Edition** as specified in the workspace package
+- Use resolver version "3" for dependency resolution
+- Enforce `unsafe_code = "forbid"` and `warnings = "deny"` at workspace level
+
+## Dependencies
+
+- Use workspace inheritance for shared dependencies
+- Key dependencies should match the specification in [AGENTS.md](mdc:AGENTS.md):
+  - `tokio = { version = "1.0", features = ["full"] }`
+  - `clap = { version = "4.0", features = ["derive", "completion"] }`
+  - `serde = { version = "1.0", features = ["derive"] }`
+  - `sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }`
+  - `sysinfo = "0.30"`
+  - `tracing = "0.1"`
+  - `thiserror = "1.0"`
+  - `anyhow = "1.0"`
+
+## Member Crates
+
+- **procmond**: Process monitoring daemon (bin)
+- **sentinelcli**: CLI interface (bin)
+- **sentinelagent**: Orchestrator agent (bin)
+- **sentinel-lib**: Shared library
+
+## Shared Test Dependencies
+
+- Use `assert_cmd = "2.0.17"` for CLI testing
+- Use `predicates = "3.1.3"` for test assertions
+- Reference via `*.workspace = true` in member crates
+
+## Package Metadata
+
+- Use consistent versioning across workspace
+- Include proper license (Apache-2.0)
+- Provide clear descriptions for each component
