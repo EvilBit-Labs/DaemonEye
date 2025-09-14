@@ -24,16 +24,16 @@ This separation ensures **robust security**: ProcMonD remains isolated and harde
 
 ## 🎯 Key Features
 
-| Feature | Description |
-|---------|-------------|
-| 🦀 **Rust Performance** | Memory-safe, high-performance rewrite with <5% CPU overhead |
-| 🔍 **Cross-Platform** | Linux, macOS, and Windows support with native OS integration |
-| 📊 **SQL Detection Engine** | Flexible anomaly detection using standard SQL queries |
-| 🗄️ **Audit-Grade Integrity** | Tamper-evident, hash-chained, verifiable log storage |
-| 📡 **Multi-Channel Alerting** | stdout, syslog, webhooks, email with delivery guarantees |
-| ⚡ **High-Performance** | Handle 10k+ processes with bounded queues and backpressure |
-| 🔐 **Security-First Design** | Principle of least privilege, sandboxed rule execution |
-| 🌐 **Offline-Capable** | No external dependencies for core functionality |
+| Feature                       | Description                                                  |
+| ----------------------------- | ------------------------------------------------------------ |
+| 🦀 **Rust Performance**       | Memory-safe, high-performance rewrite with \<5% CPU overhead |
+| 🔍 **Cross-Platform**         | Linux, macOS, and Windows support with native OS integration |
+| 📊 **SQL Detection Engine**   | Flexible anomaly detection using standard SQL queries        |
+| 🗄️ **Audit-Grade Integrity**  | Tamper-evident, hash-chained, verifiable log storage         |
+| 📡 **Multi-Channel Alerting** | stdout, syslog, webhooks, email with delivery guarantees     |
+| ⚡ **High-Performance**       | Handle 10k+ processes with bounded queues and backpressure   |
+| 🔐 **Security-First Design**  | Principle of least privilege, sandboxed rule execution       |
+| 🌐 **Offline-Capable**        | No external dependencies for core functionality              |
 
 ## 🚀 Getting Started
 
@@ -99,13 +99,13 @@ procmond self-check --verbose
 
 ## 📤 Alert Integration
 
-| Channel | Format | Use Case |
-|---------|--------|----------|
-| **stdout/stderr** | JSON, Plain Text | Development, debugging |
-| **Syslog** | RFC5424, JSON | SIEM integration |
-| **Webhooks** | JSON POST | Security orchestration |
-| **Email** | HTML, Plain Text | Incident notifications |
-| **File Output** | JSON, CEF | Log aggregation, archival |
+| Channel           | Format           | Use Case                  |
+| ----------------- | ---------------- | ------------------------- |
+| **stdout/stderr** | JSON, Plain Text | Development, debugging    |
+| **Syslog**        | RFC5424, JSON    | SIEM integration          |
+| **Webhooks**      | JSON POST        | Security orchestration    |
+| **Email**         | HTML, Plain Text | Incident notifications    |
+| **File Output**   | JSON, CEF        | Log aggregation, archival |
 
 ## ⚙️ Technology Stack
 
@@ -124,7 +124,7 @@ This project follows strict Rust coding standards:
 - **Formatting:** `rustfmt` with consistent code style
 - **Testing:** Comprehensive unit and integration test coverage
 - **Safety:** `unsafe_code = "forbid"` in workspace lints
-- **Performance:** <100MB memory, <5% CPU, <5s for 10k+ processes
+- **Performance:** \<100MB memory, \<5% CPU, \<5s for 10k+ processes
 
 ### Available Commands
 

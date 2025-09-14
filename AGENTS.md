@@ -4,9 +4,7 @@
 
 ## Project Overview
 
-**SentinelD** is a high-performance, security-focused process monitoring system built in Rust 2024
-Edition. It's a complete rewrite of the Python prototype, designed for cybersecurity professionals,
-threat hunters, and security operations centers.
+**SentinelD** is a high-performance, security-focused process monitoring system built in Rust 2024 Edition. It's a complete rewrite of the Python prototype, designed for cybersecurity professionals, threat hunters, and security operations centers.
 
 ### Architecture Principles
 
@@ -17,8 +15,7 @@ SentinelD follows a **three-component security architecture**:
 3. **SentinelCLI**: Command-line interface for queries and configuration
 4. **sentinel-lib**: Shared library providing common functionality across components
 
-This separation ensures **robust security** by isolating privileged operations from network
-functionality.
+This separation ensures **robust security** by isolating privileged operations from network functionality.
 
 ---
 
@@ -189,8 +186,7 @@ CREATE TABLE processes (
 
 ### Migration Strategy
 
-Use embedded migrations with `sqlx::migrate!` for schema versioning. Migrations are stored in the
-`migrations/` directory and executed automatically on application startup:
+Use embedded migrations with `sqlx::migrate!` for schema versioning. Migrations are stored in the `migrations/` directory and executed automatically on application startup:
 
 ```rust
 use sqlx::migrate;
@@ -485,6 +481,4 @@ When generating code for SentinelD:
 
 ---
 
-**Remember**: SentinelD is a security-focused system. Always prioritize security, performance, and
-reliability in implementation decisions. When in doubt, choose the more secure and observable
-approach.
+**Remember**: SentinelD is a security-focused system. Always prioritize security, performance, and reliability in implementation decisions. When in doubt, choose the more secure and observable approach.
