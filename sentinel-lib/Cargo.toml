@@ -4,6 +4,7 @@ edition.workspace = true
 version.workspace = true
 authors.workspace = true
 license.workspace = true
+rust-version.workspace = true
 description = "Shared library for SentinelD common functionality."
 
 [lib]

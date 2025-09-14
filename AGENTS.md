@@ -23,7 +23,7 @@ This separation ensures **robust security** by isolating privileged operations f
 
 ### Core Technologies
 
-- **Language**: Rust 2024 Edition (MSRV: 1.70+)
+- **Language**: Rust 2024 Edition (MSRV: 1.85+)
 - **Async Runtime**: Tokio for I/O and task management
 - **Database**: SQLite 3.42+ with WAL mode for concurrent operations
 - **CLI Framework**: clap v4 with derive macros and shell completions
@@ -186,7 +186,23 @@ CREATE TABLE processes (
 
 ### Migration Strategy
 
-Use embedded migrations with rusqlite_migration for schema versioning.
+Use embedded migrations with `sqlx::migrate!` for schema versioning. Migrations are stored in the `migrations/` directory and executed automatically on application startup:
+
+```rust
+use sqlx::migrate;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let database_url = std::env::var("DATABASE_URL")?;
+    let pool = sqlx::SqlitePool::connect(&database_url).await?;
+
+    // Run migrations
+    migrate!("./migrations").run(&pool).await?;
+
+    // Application logic...
+    Ok(())
+}
+```
 
 ---
 

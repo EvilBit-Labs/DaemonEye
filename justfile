@@ -1,4 +1,4 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set shell := ["bash", "-eu", "-o", "pipefail", "-c", "--"]
 
 default:
     @just help
@@ -32,11 +32,11 @@ check:
 test:
     @cargo test --workspace
 
-run-procmond args='':
+run-procmond *args:
     @cargo run -p procmond -- {{ args }}
 
-run-sentinelcli args='':
+run-sentinelcli *args:
     @cargo run -p sentinelcli -- {{ args }}
 
-run-sentinelagent args='':
+run-sentinelagent *args:
     @cargo run -p sentinelagent -- {{ args }}

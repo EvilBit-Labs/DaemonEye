@@ -4,7 +4,9 @@ edition.workspace = true
 version.workspace = true
 authors.workspace = true
 license.workspace = true
+rust-version.workspace = true
 description = "Process monitoring daemon for SentinelD."
+publish = false
 
 [dependencies]
 sentinel-lib = { path = "../sentinel-lib" }

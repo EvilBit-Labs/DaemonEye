@@ -39,7 +39,7 @@ This separation ensures **robust security**: ProcMonD remains isolated and harde
 
 ### Prerequisites
 
-- Rust 1.87+ (2024 Edition support)
+- Rust 1.85+ (2024 Edition support)
 - Just task runner
 - SQLite 3.42+
 
@@ -136,9 +136,9 @@ just test         # Run all tests
 just build        # Build workspace
 
 # Component execution
-just run-procmond [args]      # Run process monitor
-just run-sentinelcli [args]   # Run CLI interface
-just run-sentinelagent [args] # Run orchestrator agent
+just run-procmond --once --verbose      # Run process monitor with flags
+just run-sentinelcli --help             # Run CLI interface
+just run-sentinelagent --config /path   # Run orchestrator agent
 ```
 
 ## 👥 Target Users
@@ -166,4 +166,3 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 ---
 
 **SentinelD** — When your process monitoring actually matters. 🛡️
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.

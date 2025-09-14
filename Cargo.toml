@@ -8,9 +8,13 @@ edition = "2024"
 version = "0.1.0"
 authors = ["UncleSp1d3r", "Krypdo3"]
 license = "Apache-2.0"
+rust-version = "1.85"
 description = "SentinelD: multi-crate Rust workspace (procmond, sentinelcli, sentinelagent, sentinel-lib)."
 
 [workspace.dependencies]
+# Shared library
+sentinel-lib = { path = "sentinel-lib", version = "0.1.0" }
+
 # Shared test utilities (use in members via `*.workspace = true`)
 assert_cmd = "2.0.17"
 predicates = "3.1.3"
