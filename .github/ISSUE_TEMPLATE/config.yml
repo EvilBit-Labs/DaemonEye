@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🛡️ Security Vulnerability
+    url: https://github.com/EvilBit-Labs/SentinelD/security/advisories/new
+    about: Report a security vulnerability privately using GitHub's security advisory system
+  - name: 💬 General Discussion
+    url: https://github.com/EvilBit-Labs/SentinelD/discussions
+    about: Ask questions, share ideas, or discuss SentinelD with the community
+  - name: 📚 Documentation
+    url: https://evilbitlabs.io/sentineld/docs
+    about: Check our documentation for answers to common questions
+  - name: 📧 Contact Support
+    url: https://evilbitlabs.io/contact
+    about: Contact our support team for assistance

@@ -1,0 +1,200 @@
+name: 🔒 Security Report
+description: Report a security vulnerability in SentinelD
+title: "[Security]: "
+labels: ["security", "needs-triage"]
+assignees: []
+
+body:
+    - type: markdown
+      attributes:
+          value: |
+              **⚠️ IMPORTANT: This form is for reporting security vulnerabilities only.**
+
+              For general security questions or concerns, please contact us at support@evilbitlabs.io.
+
+              **Please do not use this form for:**
+              - General security questions
+              - Feature requests related to security
+              - Questions about security best practices
+              - Non-security bugs
+
+    - type: markdown
+      attributes:
+          value: |
+              ## 🔐 Security Reporting Process
+
+              We take security seriously and appreciate your responsible disclosure. Please review our [Security Policy](https://github.com/EvilBit-Labs/SentinelD/blob/main/SECURITY.md) before submitting.
+
+              **For critical vulnerabilities, please contact us directly at support@evilbitlabs.io with the subject `[SECURITY] Critical Vulnerability Report`.**
+
+    - type: dropdown
+      id: severity
+      attributes:
+          label: Severity Level
+          description: How severe is this security vulnerability?
+          options:
+              - Low (Minor security issue)
+              - Medium (Significant security impact)
+              - High (Serious security vulnerability)
+              - Critical (Immediate security threat)
+      validations:
+          required: true
+
+    - type: dropdown
+      id: component
+      attributes:
+          label: Affected Component
+          description: Which SentinelD component is affected?
+          options:
+              - procmond (Process Collector)
+              - sentinelagent (Orchestrator)
+              - sentinelcli (CLI Interface)
+              - sentinel-lib (Shared Library)
+              - Security Center (Business/Enterprise)
+              - Build System / Dependencies
+              - Documentation
+              - Multiple Components
+              - Other
+      validations:
+          required: true
+
+    - type: input
+      id: version
+      attributes:
+          label: SentinelD Version
+          description: What version of SentinelD is affected?
+          placeholder: "e.g., 0.1.0, commit hash, or 'latest'"
+      validations:
+          required: true
+
+    - type: dropdown
+      id: vulnerability_type
+      attributes:
+          label: Vulnerability Type
+          description: What type of security vulnerability is this?
+          options:
+              - Memory Safety Issue
+              - Privilege Escalation
+              - Information Disclosure
+              - Denial of Service
+              - Authentication Bypass
+              - Authorization Issue
+              - Input Validation
+              - Cryptographic Issue
+              - Network Security
+              - Other
+      validations:
+          required: true
+
+    - type: textarea
+      id: description
+      attributes:
+          label: Vulnerability Description
+          description: |
+              Provide a clear and detailed description of the security vulnerability.
+          placeholder: "Describe the security vulnerability in detail..."
+      validations:
+          required: true
+
+    - type: textarea
+      id: impact
+      attributes:
+          label: Security Impact
+          description: |
+              What is the potential security impact of this vulnerability?
+          placeholder: |
+              - What can an attacker do?
+              - What data or systems are at risk?
+              - What are the potential consequences?
+      validations:
+          required: true
+
+    - type: textarea
+      id: reproduction
+      attributes:
+          label: Steps to Reproduce
+          description: |
+              Provide detailed steps to reproduce the vulnerability. Be specific but avoid including exploit code.
+          placeholder: |
+              1. Step one
+              2. Step two
+              3. Step three
+              4. Observe the vulnerability
+      validations:
+          required: true
+
+    - type: textarea
+      id: environment
+      attributes:
+          label: Environment Details
+          description: |
+              Provide details about the environment where the vulnerability was discovered.
+          placeholder: |
+              - Operating System:
+              - Architecture:
+              - Rust version:
+              - Dependencies:
+              - Configuration:
+              - Any other relevant details...
+      validations:
+          required: true
+
+    - type: textarea
+      id: proof_of_concept
+      attributes:
+          label: Proof of Concept
+          description: |
+              If you have a proof of concept, please describe it here (without including actual exploit code).
+          placeholder: "Describe your proof of concept approach..."
+
+    - type: textarea
+      id: mitigation
+      attributes:
+          label: Suggested Mitigation
+          description: |
+              If you have suggestions for how to fix this vulnerability, please describe them.
+          placeholder: "Describe any mitigation strategies you can think of..."
+
+    - type: dropdown
+      id: disclosure_timeline
+      attributes:
+          label: Disclosure Timeline
+          description: Do you have any specific timeline requirements for disclosure?
+          options:
+              - No specific timeline
+              - 30 days
+              - 60 days
+              - 90 days
+              - Other (please specify in additional info)
+      validations:
+          required: true
+
+    - type: textarea
+      id: additional_info
+      attributes:
+          label: Additional Information
+          description: |
+              Any other information that might be relevant to understanding or fixing this vulnerability.
+          placeholder: "Any additional context, references, or information..."
+
+    - type: checkboxes
+      id: responsible_disclosure
+      attributes:
+          label: Responsible Disclosure Agreement
+          description: By submitting this security report, you agree to our responsible disclosure process.
+          options:
+              - label: I agree to follow responsible disclosure practices
+              - label: I will not publicly disclose this vulnerability until it has been fixed
+              - label: I will allow reasonable time for the fix to be developed and deployed
+              - label: I understand that this report will be kept confidential until coordinated disclosure
+      validations:
+          required: true
+
+    - type: checkboxes
+      id: terms
+      attributes:
+          label: Code of Conduct
+          description: By submitting this issue, you agree to follow our Code of Conduct.
+          options:
+              - label: I agree to follow this project's Code of Conduct
+                required: true

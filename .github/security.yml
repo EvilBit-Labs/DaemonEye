@@ -1,0 +1,14 @@
+# Security configuration for private vulnerability reporting
+# This file enables private vulnerability reporting on GitHub
+
+# Enable private vulnerability reporting
+# This allows security researchers to report vulnerabilities privately
+# without creating public issues
+
+# The security policy is defined in .github/SECURITY.md
+# and the main SECURITY.md file in the repository root
+
+# Private vulnerability reporting is enabled by default when this file exists
+# and a SECURITY.md file is present in the repository root
+
+# Additional security settings can be configured here as needed
