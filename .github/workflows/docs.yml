@@ -25,7 +25,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
-              uses: taiki-e/checkout-action@v1
+              uses: actions/checkout@v5
 
             - name: Setup Rust
               uses: dtolnay/rust-toolchain@stable

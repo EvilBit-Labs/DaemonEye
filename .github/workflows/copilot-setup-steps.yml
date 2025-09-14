@@ -29,7 +29,7 @@ jobs:
         # If you do not check out your code, Copilot will do this for you.
         steps:
             - name: Checkout code
-              uses: taiki-e/checkout-action@v1
+              uses: actions/checkout@v5
 
             - uses: actions-rust-lang/setup-rust-toolchain@v1
               with:
