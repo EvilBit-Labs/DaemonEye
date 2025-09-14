@@ -1,0 +1,18 @@
+[package]
+name = "sentinelcli"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CLI interface for SentinelD."
+
+[dependencies]
+sentinel-lib = { path = "../sentinel-lib" }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+
+[[bin]]
+name = "sentinelcli"
+path = "src/main.rs"
