@@ -100,6 +100,41 @@ impl StdoutSink {
 
 #[async_trait]
 impl AlertSink for StdoutSink {
+    /// Sends the alert to stdout using the sink's configured output format and returns a DeliveryResult.
+    ///
+    /// The alert is formatted according to `self.format`:
+    /// - `Json`: pretty-prints the alert as JSON (may produce `AlertingError::SerializationError`).
+    /// - `Yaml`: serializes to YAML (maps YAML errors to `AlertingError::YamlSerializationError`).
+    /// - `Human`: a concise human-readable single-line string using `severity`, `detection_rule_id`, `title`, and `description`.
+    /// - `Csv`: a single-line CSV with `id,severity,detection_rule_id,title,description`.
+    ///
+    /// Returns a `DeliveryResult` containing the sink name, success=true, the delivery timestamp, and the elapsed duration in milliseconds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use chrono::Utc;
+    /// use tokio::runtime::Runtime;
+    ///
+    /// // Construct a minimal Alert and a StdoutSink (types from the crate)
+    /// let alert = crate::models::Alert {
+    ///     id: "a1".into(),
+    ///     title: "Test".into(),
+    ///     severity: crate::models::AlertSeverity::Info,
+    ///     description: "Example".into(),
+    ///     detection_rule_id: "rule-1".into(),
+    ///     process: crate::models::ProcessRecord::default(),
+    ///     deduplication_key: "key".into(),
+    ///     created_at: Utc::now(),
+    /// };
+    /// let sink = crate::sinks::StdoutSink::new("stdout-test".into(), crate::sinks::OutputFormat::Human);
+    ///
+    /// // Run the async send
+    /// let rt = Runtime::new().unwrap();
+    /// let res = rt.block_on(async { sink.send(&alert).await.unwrap() });
+    /// assert_eq!(res.sink_name, "stdout-test");
+    /// assert!(res.success);
+    /// ```
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 
@@ -159,6 +194,41 @@ impl FileSink {
 
 #[async_trait]
 impl AlertSink for FileSink {
+    /// Appends the given alert to the configured file using the sink's OutputFormat and returns a DeliveryResult with timing and delivery metadata.
+    ///
+    /// The alert is serialized according to `self.format`:
+    /// - `Json`: pretty-printed JSON
+    /// - `Human`: single-line human readable string including severity, detection rule ID, title, and description
+    /// - `Yaml`: YAML (errors are mapped to `AlertingError::YamlSerializationError`)
+    /// - `Csv`: comma-separated values (id,severity,detection_rule_id,title,description)
+    ///
+    /// Returns an error if serialization fails or the file cannot be opened/written.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tokio::runtime::Runtime;
+    /// use std::path::PathBuf;
+    ///
+    /// // create a runtime for the async example
+    /// let rt = Runtime::new().unwrap();
+    /// rt.block_on(async {
+    ///     // construct a file sink (FileSink::new(name, path, format))
+    ///     let sink = crate::sinks::FileSink::new("test-sink".into(), PathBuf::from("/tmp/alerts.log"), crate::OutputFormat::Human);
+    ///
+    ///     // construct an Alert (use the crate's Alert constructor)
+    ///     let alert = crate::models::Alert::new(
+    ///         "Example alert",
+    ///         crate::models::AlertSeverity::Medium,
+    ///         "An example description",
+    ///         "rule-123",
+    ///         crate::models::ProcessRecord::default(),
+    ///     );
+    ///
+    ///     let result = sink.send(&alert).await.unwrap();
+    ///     assert!(result.success);
+    /// });
+    /// ```
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 
@@ -435,7 +505,20 @@ impl AlertManager {
         Ok(delivery_results)
     }
 
-    /// Check if an alert is a duplicate.
+    /// Returns true if the given alert's deduplication key was seen within the manager's deduplication window.
+    ///
+    /// This checks `recent_alerts` for `alert.deduplication_key` and compares the stored timestamp to
+    /// the current time using `dedup_window_seconds`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut mgr = AlertManager::new();
+    /// let alert = Alert::new("Title", AlertSeverity::Info, "Desc", "rule-1", ProcessRecord::default());
+    /// // Record the alert now; it should be considered a duplicate immediately afterwards.
+    /// mgr.record_alert(&alert);
+    /// assert!(mgr.is_duplicate(&alert));
+    /// ```
     fn is_duplicate(&self, alert: &Alert) -> bool {
         if let Some(last_seen) = self.recent_alerts.get(&alert.deduplication_key) {
             let now = chrono::Utc::now();
@@ -464,7 +547,25 @@ impl AlertManager {
         }
     }
 
-    /// Record an alert for deduplication and rate limiting.
+    /// Record the given alert for deduplication and rate-limiting.
+    ///
+    /// Inserts or updates the alert's `deduplication_key` in the manager's
+    /// `recent_alerts` map with the current UTC timestamp. When the map grows
+    /// beyond 1000 entries this function prunes entries older than one hour to
+    /// bound memory usage.
+    ///
+    /// This is used by the sending pipeline to (1) detect duplicates within the
+    /// configured deduplication window and (2) help enforce rate limits.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use sentinel_lib::{AlertManager, Alert, ProcessRecord, AlertSeverity};
+    /// let mut mgr = AlertManager::new();
+    /// let process = ProcessRecord::default();
+    /// let alert = Alert::new("Title", AlertSeverity::Info, "Desc", "rule-1", process);
+    /// mgr.record_alert(&alert);
+    /// ```
     fn record_alert(&mut self, alert: &Alert) {
         self.recent_alerts
             .insert(alert.deduplication_key.clone(), chrono::Utc::now());
