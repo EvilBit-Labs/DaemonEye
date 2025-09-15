@@ -95,10 +95,30 @@ pub trait ProcessCollectionService: Send + Sync {
 ### Development Commands
 
 ```bash
-just lint          # Runs fmt-check + clippy + lint-just (required before commit)
-just test          # Run all tests with cargo-nextest
-just build         # Build entire workspace
-just run-procmond  # Execute individual components
+just lint                # Lint all components (fmt-check + clippy + lint-just)
+just test                # Run all tests (cargo-nextest preferred)
+just build               # Build entire workspace
+
+# Procmond component
+just lint-procmond       # Lint procmond only
+just test-procmond       # Test procmond only
+just build-procmond      # Build procmond only
+just run-procmond        # Run procmond (with args)
+
+# Agent component
+just lint-agent          # Lint sentinelagent only
+just test-agent          # Test sentinelagent only
+just build-agent         # Build sentinelagent only
+just run-sentinelagent   # Run sentinelagent (with args)
+
+# CLI component
+just lint-cli            # Lint sentinelcli only
+just test-cli            # Test sentinelcli only
+just build-cli           # Build sentinelcli only
+just run-sentinelcli     # Run sentinelcli (with args)
+
+# CI aggregate (recommended for CI)
+just ci                  # Run lint/test/build for all components (CI gate)
 ```
 
 ### Testing Standards
