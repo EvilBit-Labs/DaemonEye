@@ -17,6 +17,34 @@ tracing.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 
+# Async runtime
+tokio.workspace = true
+
+# Database
+redb = "3.0.1"
+
+# Serialization
+serde_json = "1.0.145"
+serde_yaml = "0.9.33"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async traits
+async-trait = "0.1.89"
+
+# Cryptographic hashing
+blake3 = "1.8.2"
+
+# Futures utilities
+futures = "0.3.31"
+
+# System information
+sysinfo.workspace = true
+
+# Additional dependencies for tests
+tempfile = "3.22.0"
+
 [dev-dependencies]
 assert_cmd.workspace = true
 predicates.workspace = true
