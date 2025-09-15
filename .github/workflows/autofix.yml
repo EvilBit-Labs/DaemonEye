@@ -27,8 +27,6 @@ jobs:
               uses: taiki-e/install-action@v2
               with:
                   tool: cargo-audit
-            - name: 📦 Install Node.js dependencies
-              run: npm ci
 
             # Fix rust code
             - run: cargo clippy --fix --workspace
