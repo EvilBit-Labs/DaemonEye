@@ -1,0 +1,46 @@
+---
+globs: .github/workflows/*.yml,.github/workflows/*.yaml
+description: Security best practices for GitHub Actions workflows
+---
+
+# GitHub Actions Security Rules
+
+## Secret Management
+
+- **NEVER** hardcode secrets in workflow files
+- Use `${{ secrets.SECRET_NAME }}` for all sensitive data
+- Prefer environment-specific secrets for deployment environments
+- Enable GitHub's built-in secret scanning for the repository
+
+## GITHUB_TOKEN Permissions
+
+- Set explicit `permissions` at workflow level with least privilege principle
+- Default to `contents: read` unless write access is absolutely required
+- Override permissions at job level only when necessary
+- Example:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write  # Only if needed
+```
+
+## OpenID Connect (OIDC)
+
+- Use OIDC for cloud authentication instead of long-lived credentials
+- Configure trust policies in cloud providers (AWS, Azure, GCP)
+- Use actions like `aws-actions/configure-aws-credentials@v4`
+
+## Security Scanning
+
+- Integrate dependency review with `dependency-review-action`
+- Use SAST tools (CodeQL, SonarQube) with critical findings blocking builds
+- Enable secret scanning and credential leak prevention
+- Implement container image signing (Cosign, Notary) for deployments
+
+## Action Security
+
+- Pin actions to full commit SHA or major version tags (e.g., `@v4`)
+- Avoid `main` or `latest` tags
+- Audit marketplace actions before use
+- Use `dependabot` for action version updates

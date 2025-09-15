@@ -1,0 +1,59 @@
+---
+globs: .github/workflows/*.yml,.github/workflows/*.yaml
+description: Common GitHub Actions issues and troubleshooting patterns
+---
+
+# GitHub Actions Troubleshooting Rules
+
+## Workflow Not Triggering
+
+- Verify `on` triggers match expected events
+- Check `paths` and `branches` filters are correct
+- Review `if` conditions for false evaluations
+- Use `always()` debug steps to inspect context variables
+- Check `concurrency` settings for blocking runs
+
+## Permission Errors
+
+- Review `permissions` block for `GITHUB_TOKEN` scope
+- Verify environment secrets access and manual approvals
+- Check OIDC trust policy configuration for cloud providers
+- Ensure secret names match exactly (`secrets.MY_SECRET`)
+
+## Caching Issues
+
+- Validate cache keys use `hashFiles()` for dependency changes
+- Check `path` matches actual dependency locations
+- Use `restore-keys` for fallback scenarios
+- Debug with `actions/cache/restore` and `lookup-only: true`
+
+## Long Running Workflows
+
+- Profile execution times using workflow run summary
+- Combine `run` commands with `&&` to reduce overhead
+- Implement effective caching for dependencies
+- Use matrix strategies for parallelization
+- Consider breaking large workflows into smaller ones
+
+## Flaky Tests
+
+- Ensure test isolation and cleanup between tests
+- Use explicit waits instead of arbitrary `sleep` commands
+- Standardize CI environment to match local development
+- Use stable selectors in E2E tests (`data-testid` attributes)
+- Configure screenshots and videos on test failure
+
+## Deployment Failures
+
+- Review deployment logs for error messages
+- Validate environment variables and configuration
+- Check runtime dependencies and network connectivity
+- Implement post-deployment health checks
+- Have rollback strategy ready for immediate execution
+
+## Debugging Techniques
+
+- Use `${{ toJson(github) }}` to inspect context
+- Add debug steps with `if: always()` for cleanup
+- Enable verbose logging with `ACTIONS_STEP_DEBUG: true`
+- Use workflow run artifacts for detailed analysis

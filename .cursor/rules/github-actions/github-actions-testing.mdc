@@ -1,0 +1,59 @@
+---
+globs: .github/workflows/*.yml,.github/workflows/*.yaml
+description: Testing strategy and best practices for GitHub Actions
+---
+
+# GitHub Actions Testing Rules
+
+## Test Pipeline Structure
+
+- Run unit tests early in the pipeline (fastest feedback)
+- Follow with integration tests using `services` for dependencies
+- Run E2E tests against staging environment when possible
+- Include performance/load tests for critical applications
+
+## Unit Testing
+
+- Use language-specific test runners (Jest, Pytest, Go testing, etc.)
+- Integrate code coverage tools with minimum thresholds
+- Publish test results as JUnit XML reports
+- Parallelize unit tests for faster execution
+
+## Integration Testing
+
+- Use `services` to provision databases, message queues, APIs
+- Example:
+
+```yaml
+services:
+  postgres:
+    image: postgres:13
+    env:
+      POSTGRES_PASSWORD: postgres
+    options: >-
+      --health-cmd pg_isready
+      --health-interval 10s
+      --health-timeout 5s
+      --health-retries 5
+```
+
+## E2E Testing
+
+- Use modern frameworks (Cypress, Playwright, Selenium)
+- Run against staging environment for maximum fidelity
+- Implement flakiness mitigation with explicit waits and retries
+- Capture screenshots and videos on failure for debugging
+
+## Test Reporting
+
+- Upload comprehensive test reports as artifacts
+- Use GitHub Checks/Annotations for inline PR feedback
+- Integrate with external dashboards (SonarQube, Codecov)
+- Add workflow status badges to README
+
+## Performance Testing
+
+- Set clear performance thresholds and fail builds if exceeded
+- Compare against established baselines
+- Run less frequently than unit/integration tests
+- Use tools like JMeter, k6, or Artillery
