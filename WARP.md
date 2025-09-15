@@ -263,13 +263,23 @@ just fmt-check    # Check formatting (CI-friendly)
 
 # Linting (composed recipe)
 just lint         # Runs fmt-check + clippy + lint-just
-just lint-rust    # Clippy with strict warnings
+just lint-rust    # Clippy with strict warnings (all features)
+just lint-rust-min # Clippy with strict warnings (minimal features)
 just lint-just    # Lint justfile syntax
 
+# Security Audits
+just audit        # Security advisory audit (cargo-audit if available)
+just deny         # License/advisory checks (cargo-deny if available)
+
 # Building and Testing
-just build        # Build workspace
-just check        # Quick check without build
-just test         # Run all tests
+just build         # Build workspace
+just build-release # Build workspace (release mode)
+just check         # Quick check without build
+just test          # Run all tests
+just test-ci       # Run tests (nextest if available, fallback to cargo test)
+
+# CI Parity Check
+just ci-check      # Full local CI parity: format, lint (all/minimal), test, build, security audits
 
 # Component Execution
 just run-procmond [args]      # Run procmond with optional args
@@ -284,10 +294,28 @@ just run-sentinelagent [args] # Run sentinelagent with optional args
 - Use consistent argument patterns with defaults
 - Include `lint-just` recipe to validate justfile syntax
 
+### Optional Tools Installation
+
+For enhanced functionality, install these optional cargo tools:
+
+```bash
+# Faster test runner (used by test-ci and ci-check)
+cargo install cargo-nextest
+
+# Security advisory audit (used by audit and ci-check)
+cargo install cargo-audit
+
+# License and dependency checks (used by deny and ci-check)
+cargo install cargo-deny
+```
+
 ### Example Usage
 
 ```bash
-# Full CI pipeline
+# Full CI parity check
+just ci-check
+
+# Full CI pipeline (traditional)
 just lint && just build && just test
 
 # Component development

@@ -36,19 +36,19 @@ tokio = { version = "1.0", features = [
 clap = { version = "4.0", features = ["derive"] }
 
 # Serialization
-serde = { version = "1.0.222", features = ["derive"] }
+serde = { version = "1.0.223", features = ["derive"] }
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "sqlite"] }
 
 # Process enumeration
-sysinfo = "0.30"
+sysinfo = "0.37.0"
 
 # Logging
 tracing = "0.1"
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0.16"
 anyhow = "1.0"
 
 # Shared test utilities
