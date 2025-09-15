@@ -83,12 +83,15 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 
 ## Security Architecture
 
-### SQL Injection Prevention
+### SQL-to-IPC Architecture
 
-- **AST Validation**: sqlparser crate for query structure validation
-- **Prepared Statements**: All queries use parameterized statements only
-- **Sandboxed Execution**: Read-only database connections for detection engine
-- **Query Whitelist**: Only SELECT statements with approved functions allowed
+- **Detection Rule Processing**: SQL detection rules are never executed directly against live processes
+- **AST Analysis**: sqlparser extracts collection requirements from SQL AST to generate protobuf tasks
+- **Task Translation**: sentinelagent translates complex SQL queries into simple collection tasks for procmond
+- **Overcollection Strategy**: procmond may overcollect data due to granularity limitations, then SQL runs against stored data
+- **Privilege Separation**: Only procmond touches live processes; SQL execution remains in userspace
+- **Query Validation**: Only SELECT statements with approved functions allowed in detection engine
+- **Prepared Statements**: All database queries use parameterized statements only
 
 ### Cryptographic Components
 
