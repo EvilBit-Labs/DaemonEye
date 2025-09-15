@@ -1,10 +1,25 @@
 ---
 mode: agent
+model: GPT-5 (copilot)
 description: Update the llms.txt file in the root folder to reflect changes in documentation or specifications following the llms.txt specification at https://llmstxt.org/
 tools: [githubRepo, createFile, editFiles, search, runCommands, runTasks, usages, think, problems, changes, testFailure, openSimpleBrowser, fetch, extensions, todos, brave_web_search, get-library-docs, resolve-library-id, search_code]
 ---
 
 # Update LLMs.txt File
+
+> SCOPE LIMITATION (IMPORTANT – READ FIRST)
+>
+> When executing this prompt you MUST restrict all repository content analysis exclusively to the already-provided attachments for `#file:../../spec/` `#file:../../docs` (including their subpaths such as `docs/src/` and `spec/*.md`), and the root `AGENTS.md` file. Treat those attachments as complete and authoritative for the purpose of updating `llms.txt`.
+>
+> DO NOT attempt to read, open, or re-scan any other project files (e.g. `AGENTS.md`, `WARP.md`, other `.github/` instructions, source code, lockfiles, coverage reports) even if tools are available. Avoid recursive or repeated attempts to fetch additional instruction files. If a step below would normally "scan the repo", interpret it narrowly: only enumerate Markdown files inside the provided `docs` and `spec` attachment trees plus top-level root Markdown files that are already known (you may assume `README.md`, `LICENSE`, `SECURITY.md` exist without re-reading them unless their content is required for a description — which it is not).
+>
+> If a tool invocation would cause broader traversal, SKIP it and proceed using the attachment lists. This prevents infinite loops and unnecessary I/O. The change detection algorithm should operate purely on:
+>
+> 1. Root-level Markdown files (assumed: `README.md`, `SECURITY.md`, `LICENSE`, and you MAY read `AGENTS.md` for authoritative project rules)
+> 2. `spec/*.md`
+> 3. `docs/src/**/*.md`
+>
+> Ignore generated HTML in `docs/book/` and any non-Markdown assets. Treat them as excluded artifacts automatically. Do not add them to `llms.txt`.
 
 Update the existing `llms.txt` file in the root of the repository to reflect changes in documentation, specifications, or repository structure. This file provides high-level guidance to large language models (LLMs) on where to find relevant content for understanding the repository's purpose and specifications.
 
@@ -30,6 +45,8 @@ If any critical invariant fails (see Invariants) you MUST adjust before finalizi
 ## Primary Directive
 
 Update the existing `llms.txt` file to maintain accuracy and compliance with the llms.txt specification while reflecting current repository structure and content. The file must remain optimized for LLM consumption while staying human-readable.
+
+NOTE ON SCOPE ENFORCEMENT: All subsequent references to "scan", "enumerate", or "discover" files are to be interpreted under the Scope Limitation above. Do not widen scope.
 
 ## Analysis and Planning Phase
 
@@ -210,14 +227,14 @@ Minimal (small repo): 1 H1, 1 blockquote, 1 Documentation section with 3–6 ite
 
 Run prior to output:
 
-1. Structure: H1 present, sections valid order, no empty bullet lists.
-2. Links: All resolve locally (simulate exists check).
-3. Duplicates: None across all sections.
-4. Descriptions: \<=140 chars, purposeful, no filler adjectives.
-5. Coverage: Core orientation (README), architecture, security, specification, configuration included.
-6. Exclusions: No build artifacts / binaries / coverage / target / vendor.
-7. Determinism: Sorting rule applied consistently.
-8. Delta sanity: NEW and STALE sets reviewed; renames handled.
+1. Structure: Single H1, ordered sections, no empty lists.
+2. Links: All referenced relative paths exist (limit scope to root *.md, spec/*.md, docs/src/\*\*/\*.md).
+3. No duplicates: A file appears in exactly one section.
+4. Descriptions: \<=140 chars, concise, no trailing period unless multi-sentence.
+5. Coverage: Include `README.md`, `AGENTS.md`, key `spec/*.md`, core `docs/src/*.md` (architecture, security, deployment).
+6. Exclusions: Omit generated `docs/book/**`, binaries, coverage, `target/`, lockfiles.
+7. Ordering: Deterministic (alphabetical or intentional logical grouping documented in comments if used).
+8. Delta sanity: NEW and STALE sets evaluated under constrained scope.
 
 ---
 
