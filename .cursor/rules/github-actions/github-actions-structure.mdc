@@ -1,0 +1,66 @@
+---
+globs: .github/workflows/*.yml,.github/workflows/*.yaml
+description: Workflow structure and organization best practices
+---
+
+# GitHub Actions Structure Rules
+
+## Workflow Organization
+
+- Use clear, descriptive workflow names
+- Organize workflows by purpose (build, test, deploy, security)
+- Use consistent naming conventions (e.g., `build-and-test.yml`, `deploy-prod.yml`)
+- Keep workflows focused and modular
+
+## Triggers and Concurrency
+
+- Use appropriate `on` triggers for each workflow purpose
+- Implement `concurrency` for critical workflows to prevent race conditions
+- Use `workflow_dispatch` for manual triggers with input parameters
+- Example:
+
+```yaml
+name: Build and Test
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+## Job Structure
+
+- Define jobs with clear, descriptive names
+- Use `needs` to establish proper dependencies
+- Leverage `outputs` for inter-job communication
+- Use `if` conditions for conditional execution
+
+## Step Organization
+
+- Use descriptive step names for better logging
+- Combine related commands with `&&` for efficiency
+- Use `name` for every step
+- Set appropriate `timeout-minutes` for long-running jobs
+
+## Reusable Workflows
+
+- Create reusable workflows for common patterns
+- Use `workflow_call` for cross-project consistency
+- Pass inputs and secrets explicitly
+- Document reusable workflow parameters
+
+## Error Handling
+
+- Implement retry logic for flaky operations
+- Use `if: always()` for cleanup steps
+- Provide clear error messages and debugging information
+- Set appropriate job timeouts

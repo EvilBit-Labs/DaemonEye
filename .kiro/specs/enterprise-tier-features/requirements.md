@@ -12,15 +12,15 @@ This document outlines the requirements for implementing Enterprise tier feature
 
 #### Acceptance Criteria
 
-1. WHEN running on Linux with eBPF support THEN the system SHALL subscribe to real-time process creation, termination, and syscall events through eBPF programs
-2. WHEN running on Windows THEN the system SHALL subscribe to real-time ETW events for process lifecycle, registry modifications, and file system changes
-3. WHEN running on macOS THEN the system SHALL subscribe to real-time EndpointSecurity events for process execution, file system activity, and network connections
-4. WHEN kernel events are received THEN the system SHALL process them with sub-millisecond latency from event occurrence to detection rule evaluation
-5. WHEN real-time event subscription is active THEN the system SHALL eliminate polling overhead and provide continuous monitoring without periodic scans
-6. WHEN kernel-level monitoring is not available THEN the system SHALL gracefully fall back to userspace polling-based monitoring without service interruption
-7. WHEN kernel events are captured THEN the system SHALL correlate them with userspace events to provide complete process lifecycle visibility
-8. WHEN syscall tracing is enabled THEN the system SHALL monitor security-relevant system calls (execve, fork, clone, ptrace, mmap) in real-time
-9. IF the system lacks required kernel monitoring privileges THEN the system SHALL log appropriate warnings and continue with available monitoring capabilities
+01. WHEN running on Linux with eBPF support THEN the system SHALL subscribe to real-time process creation, termination, and syscall events through eBPF programs
+02. WHEN running on Windows THEN the system SHALL subscribe to real-time ETW events for process lifecycle, registry modifications, and file system changes
+03. WHEN running on macOS THEN the system SHALL subscribe to real-time EndpointSecurity events for process execution, file system activity, and network connections
+04. WHEN kernel events are received THEN the system SHALL process them with sub-millisecond latency from event occurrence to detection rule evaluation
+05. WHEN real-time event subscription is active THEN the system SHALL eliminate polling overhead and provide continuous monitoring without periodic scans
+06. WHEN kernel-level monitoring is not available THEN the system SHALL gracefully fall back to userspace polling-based monitoring without service interruption
+07. WHEN kernel events are captured THEN the system SHALL correlate them with userspace events to provide complete process lifecycle visibility
+08. WHEN syscall tracing is enabled THEN the system SHALL monitor security-relevant system calls (execve, fork, clone, ptrace, mmap) in real-time
+09. IF the system lacks required kernel monitoring privileges THEN the system SHALL log appropriate warnings and continue with available monitoring capabilities
 10. WHEN cross-platform deployments are active THEN the system SHALL normalize real-time events from different platforms into a unified data model
 
 ### Requirement 2
@@ -93,7 +93,7 @@ This document outlines the requirements for implementing Enterprise tier feature
 
 #### Acceptance Criteria
 
-1. WHEN monitoring 10,000+ processes THEN the system SHALL maintain <2% CPU overhead per monitored endpoint
+1. WHEN monitoring 10,000+ processes THEN the system SHALL maintain \<2% CPU overhead per monitored endpoint
 2. WHEN processing 100,000+ events per minute THEN the central collector SHALL maintain sub-second query response times
 3. WHEN storage reaches 80% capacity THEN the system SHALL automatically archive old data and alert administrators
 4. WHEN system resources are constrained THEN the system SHALL prioritize critical detection rules and gracefully degrade non-essential features
@@ -162,13 +162,13 @@ This document outlines the requirements for implementing Enterprise tier feature
 
 #### Acceptance Criteria
 
-1. WHEN deploying on Linux THEN the system SHALL support Ubuntu 16.04 LTS+, RHEL/CentOS 7.6+, SLES 12 SP3+, and Debian 9+ with appropriate kernel versions for eBPF functionality
-2. WHEN deploying on Windows THEN the system SHALL support Windows Server 2012+, Windows 7+, Windows 10+, and Windows 11 with ETW functionality, and Windows Server 2008 R2+ with limited ETW support
-3. WHEN deploying on macOS THEN the system SHALL support macOS 11.0 (Big Sur)+, macOS 12.0 (Monterey)+, and macOS 13.0 (Ventura)+ with EndpointSecurity framework
-4. WHEN kernel-level monitoring is required THEN the system SHALL support eBPF tracepoints on Linux kernels 4.7+ (full support on 5.4+), ETW kernel events on Windows 7+/Server 2008 R2+, and EndpointSecurity on macOS 11.0+
-5. WHEN container environments are used THEN the system SHALL support Docker 20.10+, Kubernetes 1.20+, and OpenShift 4.8+ with appropriate security contexts
-6. WHEN cloud deployments are required THEN the system SHALL support AWS EC2, Azure VMs, Google Cloud Compute, and hybrid cloud environments
-7. WHEN architecture compatibility is needed THEN the system SHALL support x86_64 (Intel/AMD) and ARM64 (Apple Silicon, AWS Graviton) architectures
-8. IF unsupported platform versions are detected THEN the system SHALL provide clear compatibility warnings and graceful feature degradation
-9. WHEN deploying on older Linux distributions THEN the system SHALL support RHEL/CentOS 7.6+ (kernel 3.10 with eBPF backports), Ubuntu 16.04+ (kernel 4.4+), and Debian 9+ (kernel 4.9+) with appropriate feature limitations
+01. WHEN deploying on Linux THEN the system SHALL support Ubuntu 16.04 LTS+, RHEL/CentOS 7.6+, SLES 12 SP3+, and Debian 9+ with appropriate kernel versions for eBPF functionality
+02. WHEN deploying on Windows THEN the system SHALL support Windows Server 2012+, Windows 7+, Windows 10+, and Windows 11 with ETW functionality, and Windows Server 2008 R2+ with limited ETW support
+03. WHEN deploying on macOS THEN the system SHALL support macOS 11.0 (Big Sur)+, macOS 12.0 (Monterey)+, and macOS 13.0 (Ventura)+ with EndpointSecurity framework
+04. WHEN kernel-level monitoring is required THEN the system SHALL support eBPF tracepoints on Linux kernels 4.7+ (full support on 5.4+), ETW kernel events on Windows 7+/Server 2008 R2+, and EndpointSecurity on macOS 11.0+
+05. WHEN container environments are used THEN the system SHALL support Docker 20.10+, Kubernetes 1.20+, and OpenShift 4.8+ with appropriate security contexts
+06. WHEN cloud deployments are required THEN the system SHALL support AWS EC2, Azure VMs, Google Cloud Compute, and hybrid cloud environments
+07. WHEN architecture compatibility is needed THEN the system SHALL support x86_64 (Intel/AMD) and ARM64 (Apple Silicon, AWS Graviton) architectures
+08. IF unsupported platform versions are detected THEN the system SHALL provide clear compatibility warnings and graceful feature degradation
+09. WHEN deploying on older Linux distributions THEN the system SHALL support RHEL/CentOS 7.6+ (kernel 3.10 with eBPF backports), Ubuntu 16.04+ (kernel 4.4+), and Debian 9+ (kernel 4.9+) with appropriate feature limitations
 10. WHEN eBPF features are unavailable THEN the system SHALL gracefully degrade to userspace process monitoring while maintaining core security functionality

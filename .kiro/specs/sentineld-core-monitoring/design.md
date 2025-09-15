@@ -24,14 +24,14 @@ SentinelD consists of three main components that work together to provide compre
 │ • Protobuf IPC  │    │ • Alerting      │    │ • Config mgmt   │
 │                 │    │ • Network comm  │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                        
-         ▼                       ▼                        
-┌─────────────────┐    ┌─────────────────┐                
-│  Audit Ledger   │    │   Event Store   │                
-│ (Hash-chained)  │    │     (redb)      │                
-│ procmond write  │    │  sentinelagent  │                
-│     only        │    │    managed      │                
-└─────────────────┘    └─────────────────┘                
+         │                       │
+         ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐
+│  Audit Ledger   │    │   Event Store   │
+│ (Merkle Tree)   │    │     (redb)      │
+│ procmond write  │    │  sentinelagent  │
+│     only        │    │    managed      │
+└─────────────────┘    └─────────────────┘
 
 IPC Protocol: Custom Protobuf over Unix Sockets/Named Pipes
 Communication: sentinelcli ↔ sentinelagent ↔ procmond
@@ -43,12 +43,14 @@ Service Management: sentinelagent manages procmond lifecycle
 The system implements a pipeline processing model with clear phases and strict component separation:
 
 1. **Collection Phase**: procmond enumerates processes and computes hashes
-2. **IPC Communication**: procmond receives simple detection tasks via protobuf over IPC
-3. **Audit Logging**: procmond writes to tamper-evident audit ledger (write-only)
-4. **Rule Translation**: sentinelagent translates complex SQL rules into simple detection tasks
-5. **Detection Phase**: sentinelagent executes SQL rules against event store data
-6. **Alert Generation**: Structured alerts with deduplication and context
-7. **Delivery Phase**: Multi-channel alert delivery with reliability guarantees
+2. **SQL-to-IPC Translation**: sentinelagent uses sqlparser to extract collection requirements from SQL AST
+3. **Task Generation**: Complex SQL detection rules translated into simple protobuf collection tasks
+4. **IPC Communication**: procmond receives simple detection tasks via protobuf over IPC
+5. **Overcollection Strategy**: procmond may overcollect data due to granularity limitations
+6. **Audit Logging**: procmond writes to tamper-evident audit ledger (write-only; redb + rs-merkle Merkle tree)
+7. **Detection Phase**: sentinelagent executes original SQL rules against collected/stored data
+8. **Alert Generation**: Structured alerts with deduplication and context
+9. **Delivery Phase**: Multi-channel alert delivery with reliability guarantees
 
 **Key Architectural Principles**:
 
@@ -148,7 +150,10 @@ pub trait DetectionEngine {
 
 - Operates in user space with minimal privileges
 - Manages redb event store (read/write access)
-- Translates complex SQL rules into simple protobuf tasks for procmond
+- **SQL-to-IPC Translation**: Uses sqlparser to analyze SQL detection rules and extract collection requirements
+- **Task Generation**: Translates complex SQL queries into simple protobuf collection tasks for procmond
+- **Overcollection Handling**: May request broader data collection than SQL requires, then applies SQL filtering to stored data
+- **Privilege Separation**: SQL execution never directly touches live processes; only simple collection tasks sent via IPC
 - Outbound-only network connections for alert delivery
 - Sandboxed rule execution with resource limits
 - IPC client for communication with procmond
@@ -350,12 +355,124 @@ The system uses redb (pure Rust embedded database) for optimal performance and s
 - `alerts`: Generated alerts with execution context
 - `alert_deliveries`: Delivery tracking with retry information
 
-**Audit Ledger**:
+**Audit Ledger** (redb + rs-merkle, CT-style Merkle log):
 
-- `audit_ledger`: Tamper-evident cryptographic chain
-- Each entry contains: timestamp, actor, action, payload_hash, previous_hash, entry_hash
-- BLAKE3 hashing for performance and security
-- Optional Ed25519 signatures for enhanced integrity
+The audit ledger is an append-only Merkle tree backed by `redb` rather than a relational schema. It provides tamper-evident logging with inclusion proofs and periodic signed checkpoints.
+
+Key Concepts:
+
+- Append-only sequence of canonical JSON leaf entries.
+- BLAKE3 used for leaf hashing (uniform algorithm per lineage).
+- Incremental Merkle root updated each append (`O(log n)` path).
+- Inclusion proofs (sibling hash list) generated on demand; optionally cached.
+- Periodic checkpoints `(tree_size, root_hash[, signature])` persisted for rapid recovery & external audit.
+- Optional Ed25519 signatures over `(tree_size || root_hash)` for auditor trust anchoring.
+- Air‑gap export: Signed checkpoints + sampled proofs can be exported for offline verification.
+
+redb Logical Layout (conceptual):
+
+- `AUDIT_LEDGER (u64 -> AuditEntry)`
+- `AUDIT_CHECKPOINTS (u64 tree_size -> Checkpoint)`
+
+Simplified Data Structures (illustrative):
+
+```rust
+#[derive(Serialize, Deserialize, Clone)]
+struct AuditEntry {
+    id: u64,    // monotonic
+    ts_ms: i64, // epoch millis
+    actor: String,
+    action: String,
+    payload: serde_json::Value,
+    leaf_hash: [u8; 32],                    // BLAKE3(canonical_leaf)
+    tree_size: u64,                         // size AFTER insertion
+    root_hash: [u8; 32],                    // Merkle root at tree_size
+    inclusion_proof: Option<Vec<[u8; 32]>>, // optional cached siblings
+    checkpoint_sig: Option<Vec<u8>>,        // optional signature at this state
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Checkpoint {
+    tree_size: u64,
+    root_hash: [u8; 32],
+    created_at_ms: i64,
+    signature: Option<Vec<u8>>, // Ed25519(tree_size || root_hash)
+}
+```
+
+rs-merkle Integration (minimal sketch):
+
+```rust
+use blake3;
+use rs_merkle::{Hasher, MerkleProof, MerkleTree};
+
+#[derive(Clone, Debug)]
+struct Blake3Hasher;
+impl Hasher for Blake3Hasher {
+    type Hash = [u8; 32];
+    fn hash(data: &[u8]) -> Self::Hash {
+        *blake3::hash(data).as_bytes()
+    }
+}
+
+fn canonical_leaf(actor: &str, action: &str, payload: &serde_json::Value, ts_ms: i64) -> Vec<u8> {
+    // Fixed key order for stability; if stronger guarantees needed adopt RFC 8785 canonical JSON.
+    serde_json::to_vec(&serde_json::json!({"a": actor, "ac": action, "p": payload, "ts": ts_ms}))
+        .unwrap()
+}
+
+fn append(
+    tree: &mut MerkleTree<Blake3Hasher>,
+    leaves: &mut Vec<[u8; 32]>,
+    actor: &str,
+    action: &str,
+    payload: &serde_json::Value,
+    ts_ms: i64,
+) -> (u64, [u8; 32], Vec<[u8; 32]>) {
+    let leaf_bytes = canonical_leaf(actor, action, payload, ts_ms);
+    let leaf_hash = Blake3Hasher::hash(&leaf_bytes);
+    tree.insert(leaf_hash).commit();
+    leaves.push(leaf_hash);
+    let size = leaves.len() as u64;
+    let root = tree.root().expect("root present after append");
+    let proof = tree.proof(&[(size - 1) as usize]);
+    (size, root, proof.proof_hashes().to_vec())
+}
+
+fn verify(
+    root: [u8; 32],
+    index: u64,
+    total: u64,
+    leaf_hash: [u8; 32],
+    siblings: &[[u8; 32]],
+) -> bool {
+    let proof = MerkleProof::<Blake3Hasher>::new(siblings.to_vec());
+    proof.verify(root, &[index as usize], &[leaf_hash], total as usize)
+}
+```
+
+Operational Flow:
+
+- Append Path: canonicalize → hash → insert → commit → record root → (optional) store proof.
+- Checkpoint: every N appends or T seconds persist `(tree_size, root_hash[, signature])`.
+- Recovery: load max checkpoint, replay subsequent entries, validate root; enter safe mode if mismatch.
+- Proof Serving: regenerate on demand if not cached (logarithmic complexity).
+- Pruning: logical tombstone retains leaf hash; full physical pruning requires rebuild under maintenance.
+
+Security Invariants:
+
+1. Canonical serialization stability; change requires full tree rebuild + lineage reset.
+2. Single monotonic root sequence; no forks outside controlled offline maintenance.
+3. Uniform hash algorithm (BLAKE3) per lineage.
+4. Signed checkpoints (if enabled) anchor external trust.
+5. Inclusion verification inputs: `(root, leaf_index, total_leaves_at_checkpoint, leaf_hash, siblings[])`.
+
+Future Enhancements:
+
+- Domain separation tags for leaf vs internal nodes (e.g., `BLAKE3("SD_LEAF" || data)`).
+- Multi-proof batching for range forensic queries.
+- RFC 8785 canonical JSON implementation for cross-implementation determinism.
+- Streaming proof generation API for bulk verification.
 
 ## Error Handling
 
@@ -370,13 +487,16 @@ The system implements a layered error handling approach using Rust's type system
 pub enum CollectionError {
     #[error("Process enumeration failed: {source}")]
     EnumerationFailed { source: std::io::Error },
-    
+
     #[error("Hash computation failed for {path}: {source}")]
-    HashComputationFailed { path: PathBuf, source: std::io::Error },
-    
+    HashComputationFailed {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
     #[error("Database write failed: {source}")]
     DatabaseWriteFailed { source: rusqlite::Error },
-    
+
     #[error("Backpressure policy triggered: {policy}")]
     BackpressureTriggered { policy: String },
 }
@@ -385,12 +505,14 @@ pub enum CollectionError {
 pub enum DetectionError {
     #[error("SQL validation failed: {reason}")]
     SqlValidationFailed { reason: String },
-    
+
     #[error("Rule execution timeout: {rule_id}")]
     RuleExecutionTimeout { rule_id: String },
-    
+
     #[error("Alert generation failed: {source}")]
-    AlertGenerationFailed { source: Box<dyn std::error::Error + Send + Sync> },
+    AlertGenerationFailed {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 ```
 
@@ -519,7 +641,7 @@ prop_compose! {
 // Only in procmond, highly structured and isolated
 mod unsafe_platform_specific {
     use std::ffi::c_void;
-    
+
     /// SAFETY: This function is only called with valid process handles
     /// and all invariants are documented and tested
     pub unsafe fn get_process_memory_info(handle: *const c_void) -> Result<MemoryInfo> {
@@ -562,17 +684,17 @@ pub struct SqlValidator {
 impl SqlValidator {
     pub fn validate_query(&self, sql: &str) -> Result<ValidationResult> {
         let ast = self.parser.parse_sql(sql)?;
-        
+
         for statement in &ast {
             match statement {
                 Statement::Query(query) => self.validate_select_query(query)?,
                 _ => return Err(ValidationError::ForbiddenStatement),
             }
         }
-        
+
         Ok(ValidationResult::Valid)
     }
-    
+
     fn validate_select_query(&self, query: &Query) -> Result<()> {
         // Validate SELECT body, WHERE clauses, functions, etc.
         // Reject any non-whitelisted constructs
@@ -603,16 +725,16 @@ impl PrivilegeManager {
         // Platform-specific privilege escalation
         #[cfg(target_os = "linux")]
         self.request_linux_capabilities()?;
-        
+
         #[cfg(target_os = "windows")]
         self.request_windows_privileges()?;
-        
+
         #[cfg(target_os = "macos")]
         self.request_macos_entitlements()?;
-        
+
         Ok(())
     }
-    
+
     pub async fn drop_privileges(&mut self) -> Result<()> {
         // Immediate privilege drop after initialization
         self.drop_all_elevated_privileges()?;
@@ -625,39 +747,22 @@ impl PrivilegeManager {
 
 ### Cryptographic Integrity
 
-**Audit Chain Implementation**:
+Refer to the earlier **Audit Ledger (redb + rs-merkle, CT-style Merkle log)** section for full data structures and code sketch. This subsection summarizes cryptographic guarantees without duplicating implementation details:
 
-```rust
-pub struct AuditChain {
-    hasher: blake3::Hasher,
-    signer: Option<ed25519_dalek::Keypair>,
-    previous_hash: Option<blake3::Hash>,
-}
+Core Guarantees:
 
-impl AuditChain {
-    pub fn append_entry(&mut self, entry: &AuditEntry) -> Result<AuditRecord> {
-        let entry_data = serde_json::to_vec(entry)?;
-        let entry_hash = blake3::hash(&entry_data);
-        
-        let record = AuditRecord {
-            sequence: self.next_sequence(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64,
-            actor: entry.actor.clone(),
-            action: entry.action.clone(),
-            payload_hash: entry_hash,
-            previous_hash: self.previous_hash,
-            entry_hash: self.compute_entry_hash(&entry_hash)?,
-            signature: self.sign_entry(&entry_hash)?,
-        };
-        
-        self.previous_hash = Some(record.entry_hash);
-        Ok(record)
-    }
-    
-    pub fn verify_chain(&self, records: &[AuditRecord]) -> Result<VerificationResult> {
-        // Verify hash chain integrity and signatures
-    }
-}
-```
+- Append-only sequencing with monotonic `tree_size` mapped to Merkle roots.
+- Canonical JSON leaf serialization → BLAKE3 leaf hash → rs-merkle insertion.
+- Inclusion proofs (logarithmic sibling path) verifiable offline using `(root, index, total, leaf_hash, siblings[])`.
+- Periodic checkpoints (root + tree_size [+ signature]) enable rapid recovery & external attestation.
+- Optional Ed25519 signatures provide trust anchor continuity across exports / air‑gapped validation.
 
-This design provides a robust foundation for implementing SentinelD's core monitoring functionality while maintaining security, performance, and reliability requirements.
+Security Invariants:
+
+1. Single linear history (no forks) outside controlled maintenance rebuilds.
+2. Uniform hash algorithm per lineage (BLAKE3) with potential future domain separation tags.
+3. Checkpoint verification failure forces safe-mode replay / halt before accepting new appends.
+4. Proof regeneration does not mutate state; cached proofs are an optimization only.
+5. Canonical format change requires full rebuild and lineage version bump.
+
+See also: `database-standards.mdc` for operational procedures (recovery, pruning, checkpoint export) and future enhancements roadmap.

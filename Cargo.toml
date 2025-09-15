@@ -1,12 +1,6 @@
 [workspace]
 resolver = "3"
-members = [
-    "procmond",
-    "sentinelcli",
-    "sentinelagent",
-    "sentinel-lib",
-    "sentinel",
-]
+members = ["procmond", "sentinel-lib", "sentinelagent", "sentinelcli"]
 default-members = ["procmond", "sentinelcli", "sentinelagent", "sentinel-lib"]
 
 [workspace.package]
@@ -20,8 +14,30 @@ repository = "https://github.com/EvilBit-Labs/SentinelD"
 homepage = "https://evilbitlabs.io/sentineld"
 
 [workspace.dependencies]
+anyhow = "1.0.99"
+
+# Shared test utilities
+assert_cmd = "2.0.17"
+
+# CLI framework
+clap = { version = "4.0", features = ["derive"] }
+predicates = "3.1.3"
+
+# Database
+redb = "3.0.1"
+
+# Serialization
+serde = { version = "1.0.223", features = ["derive"] }
+serde_json = "1.0"
+
+# Process enumeration
+sysinfo = "0.37.0"
+tempfile = "3.0"
+
+# Error handling
+thiserror = "2.0.16"
 # Core async runtime
-tokio = { version = "1.0", features = [
+tokio = { version = "1.47.1", features = [
     "rt",
     "rt-multi-thread",
     "net",
@@ -30,30 +46,13 @@ tokio = { version = "1.0", features = [
     "process",
     "macros",
     "sync",
+    "fs",
+    "signal",          # needed for ctrl_c graceful shutdown
 ] }
 
-# CLI framework
-clap = { version = "4.0", features = ["derive"] }
-
-# Serialization
-serde = { version = "1.0.222", features = ["derive"] }
-
-# Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
-
-# Process enumeration
-sysinfo = "0.30"
-
 # Logging
-tracing = "0.1"
-
-# Error handling
-thiserror = "1.0"
-anyhow = "1.0"
-
-# Shared test utilities
-assert_cmd = "2.0.17"
-predicates = "3.1.3"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

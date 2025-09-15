@@ -45,9 +45,6 @@ jobs:
             - name: Run clippy (default features)
               run: cargo clippy -- -D warnings
 
-            - name: Run clippy (minimal features)
-              run: cargo clippy --default-features -- -D warnings
-
     test:
         runs-on: ubuntu-latest
         needs: quality

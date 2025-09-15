@@ -1,0 +1,202 @@
+---
+globs: **/Dockerfile,**/Dockerfile.*,**/*.dockerfile,**/docker-compose*.yml,**/docker-compose*.yaml
+description: Container security best practices and hardening standards
+---
+
+# Container Security Standards
+
+## Security Principles
+
+### Immutability
+
+- **Never modify running containers in production**
+- Create new images for any changes
+- Use semantic versioning for image tags
+- Enable instant rollbacks by switching image tags
+
+### Least Privilege
+
+- **Run containers as non-root user by default**
+- Drop unnecessary Linux capabilities
+- Use read-only filesystems where possible
+- Implement proper resource limits
+
+### Defense in Depth
+
+- Multiple security controls at different layers
+- Image signing and verification
+- Regular security scanning
+- Network isolation and policies
+
+## Required Security Measures
+
+### User Security
+
+```dockerfile
+# Create dedicated non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN chown -R appuser:appgroup /app
+USER appuser
+
+# Ensure proper permissions
+VOLUME ["/app/data"]
+```
+
+### Capability Restrictions
+
+```dockerfile
+# Drop unnecessary capabilities
+RUN setcap -r /usr/bin/node
+
+# Runtime: --cap-drop=ALL --security-opt=no-new-privileges
+```
+
+### Image Security
+
+- **Use minimal base images** to reduce attack surface
+- **Regularly scan for vulnerabilities** using Trivy, Clair, or Snyk
+- **Sign images** with Cosign or Docker Content Trust
+- **Verify image integrity** before deployment
+
+### Secret Management
+
+```dockerfile
+# NEVER include secrets in image layers
+# BAD: COPY secrets.txt /app/secrets.txt
+
+# GOOD: Use runtime secrets
+# Application reads from environment variables or mounted files
+```
+
+## Security Scanning Integration
+
+### CI/CD Security Pipeline
+
+```yaml
+# Example GitHub Actions security scanning
+- name: Run Hadolint
+  run: |
+    docker run --rm -i hadolint/hadolint < Dockerfile
+
+- name: Scan image for vulnerabilities
+  run: |
+    docker build -t myapp .
+    trivy image myapp
+```
+
+### Required Security Tools
+
+- **Hadolint**: Dockerfile linting and best practices
+- **Trivy/Clair/Snyk**: Vulnerability scanning
+- **Cosign**: Image signing and verification
+- **Docker Content Trust**: Image integrity verification
+
+## Runtime Security
+
+### Resource Limits
+
+```yaml
+# Docker Compose example
+services:
+  app:
+    image: myapp:latest
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+```
+
+### Network Security
+
+- Use defined container networks
+- Implement network policies
+- Avoid host networking when possible
+- Use service discovery for inter-container communication
+
+### Health Checks
+
+```dockerfile
+# Implement comprehensive health checks
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl --fail http://localhost:8080/health || exit 1
+```
+
+## Security Prohibitions
+
+### Never Include in Images
+
+- Secrets, API keys, passwords
+- Private keys or certificates
+- Database credentials
+- Environment-specific configurations
+- Development tools or debug utilities
+
+### Anti-Patterns to Avoid
+
+```dockerfile
+# BAD: Running as root
+# Missing USER directive
+
+# BAD: Including secrets
+COPY .env /app/.env
+COPY secrets/ /app/secrets/
+
+# BAD: Using latest tags
+FROM node:latest
+
+# BAD: Installing unnecessary packages
+RUN apt-get install -y vim nano curl wget
+```
+
+## Compliance Requirements
+
+### Image Signing
+
+```bash
+# Sign images with Cosign
+cosign sign -key cosign.key myregistry.com/myapp:v1.0.0
+
+# Verify images
+cosign verify -key cosign.pub myregistry.com/myapp:v1.0.0
+```
+
+### Audit Trail
+
+- Maintain image build logs
+- Document security scanning results
+- Track image vulnerabilities over time
+- Implement security policy enforcement
+
+## Security Checklist
+
+- [ ] Non-root user defined and used
+- [ ] Minimal base image with specific version
+- [ ] No secrets in image layers
+- [ ] Security scanning integrated in CI
+- [ ] Image signing implemented
+- [ ] Resource limits defined
+- [ ] Health checks implemented
+- [ ] Network isolation configured
+- [ ] Capabilities properly restricted
+- [ ] Regular security updates scheduled
+
+## Incident Response
+
+### Security Breach Response
+
+1. Immediately stop affected containers
+2. Analyze compromised images
+3. Rebuild from clean base images
+4. Update security policies
+5. Conduct post-incident review
+
+### Vulnerability Management
+
+- Regular vulnerability scanning
+- Automated security updates
+- Critical vulnerability response procedures
+- Security patch deployment strategy

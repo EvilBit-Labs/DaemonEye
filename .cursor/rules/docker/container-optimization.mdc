@@ -1,0 +1,307 @@
+---
+globs: **/Dockerfile,**/Dockerfile.*,**/*.dockerfile,**/docker-compose*.yml,**/docker-compose*.yaml
+description: Container optimization and performance best practices
+---
+
+# Container Optimization Standards
+
+## Performance Principles
+
+### Image Size Optimization
+
+- **Minimize final image size** for faster builds, pulls, and deployments
+- Use multi-stage builds to exclude build dependencies
+- Choose minimal base images (alpine, slim, distroless)
+- Clean up temporary files in the same layer
+
+### Build Time Optimization
+
+- **Leverage Docker layer caching** effectively
+- Order instructions from least to most frequently changing
+- Use `.dockerignore` to exclude unnecessary files
+- Parallelize independent build stages
+
+### Runtime Performance
+
+- **Optimize for fast startup** and low resource usage
+- Use appropriate base images for your workload
+- Implement efficient health checks
+- Monitor and tune resource limits
+
+## Image Size Optimization
+
+### Multi-Stage Build Strategy
+
+```dockerfile
+# Stage 1: Dependencies
+FROM node:18-alpine AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+# Stage 2: Build
+FROM node:18-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Stage 3: Production
+FROM node:18-alpine AS production
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/package*.json ./
+USER node
+EXPOSE 3000
+CMD ["node", "dist/main.js"]
+```
+
+### Layer Optimization
+
+```dockerfile
+# BAD: Multiple inefficient layers
+FROM ubuntu:20.04
+RUN apt-get update
+RUN apt-get install -y python3 python3-pip
+RUN pip3 install flask
+RUN apt-get clean
+RUN rm -rf /var/lib/apt/lists/*
+
+# GOOD: Optimized layers with cleanup
+FROM ubuntu:20.04
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip && \
+    pip3 install flask && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+```
+
+### .dockerignore Optimization
+
+```dockerignore
+# Exclude unnecessary files
+.git*
+node_modules
+dist
+build
+*.log
+coverage
+.nyc_output
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+*.md
+docs/
+test/
+tests/
+spec/
+__tests__/
+```
+
+## Build Performance
+
+### Layer Caching Strategy
+
+```dockerfile
+# Copy dependency files first (changes less frequently)
+COPY package*.json ./
+RUN npm ci
+
+# Copy source code last (changes more frequently)
+COPY src/ ./src/
+COPY public/ ./public/
+```
+
+### Parallel Build Stages
+
+```dockerfile
+# Independent stages can run in parallel
+FROM node:18-alpine AS frontend-build
+# ... frontend build steps
+
+FROM node:18-alpine AS backend-build
+# ... backend build steps
+
+FROM node:18-alpine AS production
+COPY --from=frontend-build /app/dist ./frontend
+COPY --from=backend-build /app/dist ./backend
+```
+
+## Runtime Optimization
+
+### Resource Efficiency
+
+```yaml
+# Docker Compose resource optimization
+services:
+  app:
+    image: myapp:latest
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    # Optimize for specific workload
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=256
+```
+
+### Health Check Optimization
+
+```dockerfile
+# Lightweight health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+```
+
+### Memory Optimization
+
+```dockerfile
+# Optimize for memory usage
+ENV NODE_OPTIONS="--max-old-space-size=256"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+```
+
+## Performance Monitoring
+
+### Metrics Collection
+
+```yaml
+services:
+  app:
+    image: myapp:latest
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port=9090"
+      - "prometheus.path=/metrics"
+    environment:
+      - METRICS_ENABLED=true
+      - METRICS_PORT=9090
+```
+
+### Logging Optimization
+
+```yaml
+services:
+  app:
+    image: myapp:latest
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
+```
+
+## Optimization Checklist
+
+### Image Optimization
+
+- [ ] Multi-stage build implemented
+- [ ] Minimal base image used
+- [ ] Layers optimized and combined
+- [ ] Temporary files cleaned up
+- [ ] .dockerignore comprehensive
+- [ ] Build cache leveraged effectively
+
+### Runtime Optimization
+
+- [ ] Resource limits appropriate
+- [ ] Health checks lightweight
+- [ ] Memory usage optimized
+- [ ] Startup time minimized
+- [ ] Monitoring configured
+- [ ] Logging optimized
+
+### Build Optimization
+
+- [ ] Layer caching maximized
+- [ ] Parallel builds used
+- [ ] Build context minimized
+- [ ] Dependencies cached
+- [ ] Build time acceptable
+
+## Performance Targets
+
+### Image Size Targets
+
+- **Base images**: < 50MB for minimal images
+- **Application images**: < 200MB for typical applications
+- **Build time**: < 5 minutes for standard builds
+- **Pull time**: < 30 seconds for optimized images
+
+### Runtime Targets
+
+- **Startup time**: < 10 seconds for application containers
+- **Memory usage**: < 512MB for typical applications
+- **CPU usage**: < 50% sustained under normal load
+- **Health check**: < 1 second response time
+
+## Anti-Patterns to Avoid
+
+### Size Issues
+
+```dockerfile
+# BAD: Including unnecessary tools
+RUN apt-get install -y vim nano curl wget git
+
+# BAD: Not cleaning up
+RUN apt-get update && apt-get install -y package
+# Missing cleanup
+
+# BAD: Copying everything
+COPY . .
+# Should use .dockerignore
+```
+
+### Performance Issues
+
+```dockerfile
+# BAD: Inefficient health check
+HEALTHCHECK CMD curl -f http://localhost:8080/health || exit 1
+# Missing timeout and retry configuration
+
+# BAD: No resource limits
+# Missing memory and CPU limits in docker-compose
+```
+
+### Build Issues
+
+```dockerfile
+# BAD: Poor layer ordering
+COPY . .
+RUN npm ci
+# Dependencies should be copied first
+```
+
+## Troubleshooting Performance
+
+### Large Image Size
+
+- Use `docker history <image>` to analyze layers
+- Implement multi-stage builds
+- Switch to smaller base images
+- Clean up temporary files
+
+### Slow Builds
+
+- Optimize layer caching order
+- Use `.dockerignore` effectively
+- Parallelize independent stages
+- Use build cache mounts
+
+### High Memory Usage
+
+- Review resource limits
+- Optimize application memory usage
+- Use appropriate base images
+- Monitor memory leaks

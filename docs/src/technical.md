@@ -53,7 +53,7 @@ graph LR
 - **Language**: Rust 2024 Edition
 - **Runtime**: Tokio async runtime
 - **Event Store**: redb (pure Rust embedded database)
-- **Audit Ledger**: Hash-chained log file
+- **Audit Ledger**: Certificate Transparency-style Merkle tree
 - **IPC**: Custom Protobuf over Unix Sockets
 - **CLI**: clap v4 with derive macros
 - **Configuration**: figment with hierarchical loading

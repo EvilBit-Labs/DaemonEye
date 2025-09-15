@@ -11,7 +11,7 @@ Detect and alert on suspicious system activity through continuous process monito
 - **Audit-Grade Integrity**: Tamper-evident, cryptographically chained logs suitable for compliance and forensics
 - **Offline-First Operation**: Full functionality without internet access, perfect for airgapped environments
 - **Security-First Architecture**: Privilege separation, sandboxed execution, and minimal attack surface
-- **High Performance**: <5% CPU overhead while monitoring 10,000+ processes with sub-second enumeration
+- **High Performance**: \<5% CPU overhead while monitoring 10,000+ processes with sub-second enumeration
 - **Operator-Centric Design**: Built for operators, by operators, with workflows optimized for contested environments
 
 ## Three-Component Architecture

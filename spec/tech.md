@@ -75,27 +75,33 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 
 ## Performance Requirements
 
-- **CPU Usage**: <5% sustained during continuous monitoring
-- **Memory Usage**: <100MB resident under normal operation
-- **Process Enumeration**: <5 seconds for 10,000+ processes
+- **CPU Usage**: \<5% sustained during continuous monitoring
+- **Memory Usage**: \<100MB resident under normal operation
+- **Process Enumeration**: \<5 seconds for 10,000+ processes
 - **Database Operations**: >1,000 records/second write rate
-- **Alert Latency**: <100ms per detection rule execution
+- **Alert Latency**: \<100ms per detection rule execution
 
 ## Security Architecture
 
-### SQL Injection Prevention
+### SQL-to-IPC Architecture
 
-- **AST Validation**: sqlparser crate for query structure validation
-- **Prepared Statements**: All queries use parameterized statements only
-- **Sandboxed Execution**: Read-only database connections for detection engine
-- **Query Whitelist**: Only SELECT statements with approved functions allowed
+- **Detection Rule Processing**: SQL detection rules are never executed directly against live processes
+- **AST Analysis**: sqlparser extracts collection requirements from SQL AST to generate protobuf tasks
+- **Task Translation**: sentinelagent translates complex SQL queries into simple collection tasks for procmond
+- **Overcollection Strategy**: procmond may overcollect data due to granularity limitations, then SQL runs against stored data
+- **Privilege Separation**: Only procmond touches live processes; SQL execution remains in userspace
+- **Query Validation**: Only SELECT statements with approved functions allowed in detection engine
+- **Prepared Statements**: All database queries use parameterized statements only
 
 ### Cryptographic Components
 
-- **Hashing**: BLAKE3 for fast cryptographic hashing
-- **Signatures**: Optional Ed25519 for audit chain signing
-- **Integrity**: HMAC for message authentication
-- **Chain Verification**: Tamper-evident audit logging with hash chains
+- **Audit Ledger**: Certificate Transparency-style append-only log with Merkle tree structure
+- **Hashing**: BLAKE3 for fast cryptographic hashing and Merkle tree construction
+- **Merkle Trees**: `rs-merkle` for efficient inclusion/exclusion proofs and batch verification
+- **Signatures**: Optional Ed25519 for audit entry signing and periodic root hash attestation
+- **Integrity**: HMAC for message authentication and tamper detection
+- **Verification**: Logarithmic proof sizes for efficient audit trail validation
+- **Airgap Support**: Periodic root hash checkpoints for manual external verification
 
 ### Resource Management
 

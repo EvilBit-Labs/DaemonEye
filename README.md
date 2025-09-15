@@ -16,7 +16,7 @@ SentinelD/
 
 ### Component Roles
 
-- **:lock: ProcMonD (Collector):** Runs with elevated privileges, focused solely on process monitoring with minimal attack surface. Writes to tamper-evident audit ledger and communicates via protobuf IPC with sentinelagent.
+- **:lock: ProcMonD (Collector):** Runs with elevated privileges, focused solely on process monitoring with minimal attack surface. Writes to Certificate Transparency-style audit ledger and communicates via protobuf IPC with sentinelagent.
 - **:satellite: SentinelAgent (Orchestrator):** Operates in user space with minimal privileges. Manages procmond lifecycle, executes SQL detection rules, and handles alert delivery. Translates complex SQL rules into simple protobuf tasks for procmond.
 - **:computer: SentinelCLI:** Local command-line interface for data queries, result exports, and service configuration. Communicates with sentinelagent for all operations.
 
@@ -24,16 +24,16 @@ This separation ensures **robust security**: ProcMonD remains isolated and harde
 
 ## :dart: Key Features
 
-| Feature                       | Description                                                  |
-| ----------------------------- | ------------------------------------------------------------ |
-| :crab: **Rust Performance**       | Memory-safe, high-performance rewrite with \<5% CPU overhead |
-| :mag: **Cross-Platform**         | Linux, macOS, and Windows support with native OS integration |
-| :chart_with_upwards_trend: **SQL Detection Engine**   | Flexible anomaly detection using standard SQL queries        |
-| :file_cabinet: **Audit-Grade Integrity**  | Tamper-evident, hash-chained, verifiable log storage         |
-| :satellite: **Multi-Channel Alerting** | stdout, syslog, webhooks, email with delivery guarantees     |
-| :zap: **High-Performance**       | Handle 10k+ processes with bounded queues and backpressure   |
-| :lock: **Security-First Design**  | Principle of least privilege, sandboxed rule execution       |
-| :globe_with_meridians: **Offline-Capable**        | No external dependencies for core functionality              |
+| Feature                                             | Description                                                      |
+| --------------------------------------------------- | ---------------------------------------------------------------- |
+| :crab: **Rust Performance**                         | Memory-safe, high-performance rewrite with \<5% CPU overhead     |
+| :mag: **Cross-Platform**                            | Linux, macOS, and Windows support with native OS integration     |
+| :chart_with_upwards_trend: **SQL Detection Engine** | Flexible anomaly detection using standard SQL queries            |
+| :file_cabinet: **Audit-Grade Integrity**            | Certificate Transparency-style Merkle tree with inclusion proofs |
+| :satellite: **Multi-Channel Alerting**              | stdout, syslog, webhooks, email with delivery guarantees         |
+| :zap: **High-Performance**                          | Handle 10k+ processes with bounded queues and backpressure       |
+| :lock: **Security-First Design**                    | Principle of least privilege, sandboxed rule execution           |
+| :globe_with_meridians: **Offline-Capable**          | No external dependencies for core functionality                  |
 
 ## :gift: Free Forever
 

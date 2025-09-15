@@ -8,7 +8,46 @@ globs: Cargo.toml
 
 - Always use **Rust 2024 Edition** (MSRV: 1.85+) as specified in the workspace package
 - Use resolver version "3" for dependency resolution
-- Enforce `unsafe_code = "forbid"` and `warnings = "deny"` at workspace level
+- Enforce lint policy via the canonical manifest lint configuration (RFC 3389) using `[workspace.lints.rust]` so all member crates inherit a single source of truth
+  - Member crates must include a `[lints]` table with `workspace = true` to opt into workspace-defined lints
+  - We forbid unsafe code globally and deny all warnings to preserve security and signal quality
+
+Example (root `Cargo.toml` excerpt):
+
+```toml
+[workspace]
+resolver = "3"
+members = [
+  "procmond",
+  "sentinelagent",
+  "sentinelcli",
+  "sentinel-lib",
+]
+
+[workspace.package]
+edition = "2024"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+warnings = "deny"
+
+# (Optional) You may add specific future-incompatible or style lints here as they stabilize.
+
+```
+
+Each member crate enables inheritance (e.g. in `sentinel-lib/Cargo.toml`):
+
+```toml
+[package]
+name = "sentinel-lib"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+```
+
+Reference: RFC 3389 (Workspace Lint Configuration) for standardized manifest-based lint declarations.
 
 ## Dependencies
 

@@ -75,11 +75,11 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 
 ## Performance Requirements
 
-- **CPU Usage**: <5% sustained during continuous monitoring
-- **Memory Usage**: <100MB resident under normal operation
-- **Process Enumeration**: <5 seconds for 10,000+ processes
+- **CPU Usage**: \<5% sustained during continuous monitoring
+- **Memory Usage**: \<100MB resident under normal operation
+- **Process Enumeration**: \<5 seconds for 10,000+ processes
 - **Database Operations**: >1,000 records/second write rate
-- **Alert Latency**: <100ms per detection rule execution
+- **Alert Latency**: \<100ms per detection rule execution
 
 ## Security Architecture
 
@@ -93,9 +93,9 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 ### Cryptographic Components
 
 - **Hashing**: BLAKE3 for fast cryptographic hashing
-- **Signatures**: Optional Ed25519 for audit chain signing
+- **Signatures**: Optional Ed25519 for audit entry signing
 - **Integrity**: HMAC for message authentication
-- **Chain Verification**: Tamper-evident audit logging with hash chains
+- **Verification**: Certificate Transparency-style Merkle tree with inclusion proofs
 
 ### Resource Management
 

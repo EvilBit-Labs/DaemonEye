@@ -1,0 +1,309 @@
+---
+globs: **/Dockerfile,**/Dockerfile.*,**/*.dockerfile,**/docker-compose*.yml,**/docker-compose*.yaml
+description: Container troubleshooting and debugging best practices
+---
+
+# Container Troubleshooting Standards
+
+## Common Issues and Solutions
+
+### Build Issues
+
+#### Large Image Size
+
+**Symptoms**: Slow builds, high storage usage, slow deployments
+**Solutions**:
+
+- Use `docker history <image>` to analyze layers
+- Implement multi-stage builds
+- Switch to minimal base images (alpine, slim)
+- Clean up temporary files in same RUN command
+- Use `.dockerignore` to exclude unnecessary files
+
+#### Slow Builds
+
+**Symptoms**: Long CI/CD times, developer productivity impact
+**Solutions**:
+
+- Optimize layer caching by ordering instructions correctly
+- Use `.dockerignore` to reduce build context
+- Parallelize independent build stages
+- Use build cache mounts for dependencies
+- Consider using `docker build --no-cache` for troubleshooting
+
+#### Build Failures
+
+**Symptoms**: Build process exits with errors
+**Solutions**:
+
+- Check base image availability and tags
+- Verify all dependencies are available
+- Review build logs for specific error messages
+- Test build steps individually
+- Ensure proper file permissions and paths
+
+### Runtime Issues
+
+#### Container Not Starting
+
+**Symptoms**: Container exits immediately, fails to start
+**Solutions**:
+
+- Check `CMD` and `ENTRYPOINT` instructions
+- Review container logs: `docker logs <container_id>`
+- Verify all dependencies are present in final image
+- Check resource limits and availability
+- Ensure proper file permissions for non-root user
+
+#### Permission Issues
+
+**Symptoms**: Permission denied errors, file access issues
+**Solutions**:
+
+- Verify file/directory permissions in the image
+- Ensure non-root user has necessary permissions
+- Check mounted volume permissions
+- Review user ID mapping in docker-compose
+- Use `docker exec` to debug inside container
+
+#### Network Connectivity Issues
+
+**Symptoms**: Services can't communicate, external connections fail
+**Solutions**:
+
+- Verify exposed ports (`EXPOSE`) and published ports (`-p`)
+- Check container network configuration
+- Review firewall rules and security groups
+- Ensure service names are correct for internal communication
+- Test network connectivity with `docker exec`
+
+### Performance Issues
+
+#### High Memory Usage
+
+**Symptoms**: Container consumes excessive memory, system instability
+**Solutions**:
+
+- Review and adjust memory limits
+- Optimize application memory usage
+- Use appropriate base images
+- Monitor for memory leaks
+- Implement memory-efficient coding practices
+
+#### High CPU Usage
+
+**Symptoms**: Container consumes excessive CPU, affects other services
+**Solutions**:
+
+- Set appropriate CPU limits
+- Optimize application code
+- Review health check frequency
+- Monitor CPU usage patterns
+- Consider horizontal scaling
+
+#### Slow Startup
+
+**Symptoms**: Containers take too long to become ready
+**Solutions**:
+
+- Optimize application startup sequence
+- Use lightweight health checks
+- Minimize image size
+- Pre-warm application caches
+- Review dependency loading
+
+## Debugging Techniques
+
+### Container Inspection
+
+```bash
+# Inspect container configuration
+docker inspect <container_id>
+
+# View container logs
+docker logs <container_id>
+
+# Execute commands in running container
+docker exec -it <container_id> /bin/sh
+
+# Check container processes
+docker top <container_id>
+
+# Monitor resource usage
+docker stats <container_id>
+```
+
+### Image Analysis
+
+```bash
+# Analyze image layers
+docker history <image_name>
+
+# Check image size
+docker images <image_name>
+
+# Inspect image configuration
+docker inspect <image_name>
+
+# Scan for vulnerabilities
+trivy image <image_name>
+```
+
+### Network Debugging
+
+```bash
+# List networks
+docker network ls
+
+# Inspect network
+docker network inspect <network_name>
+
+# Test connectivity
+docker exec <container_id> ping <target_host>
+
+# Check port binding
+docker port <container_id>
+```
+
+## Monitoring and Observability
+
+### Health Check Debugging
+
+```yaml
+# Comprehensive health check
+services:
+  app:
+    image: myapp:latest
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+### Logging Configuration
+
+```yaml
+# Structured logging
+services:
+  app:
+    image: myapp:latest
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
+    environment:
+      - LOG_LEVEL=debug
+      - LOG_FORMAT=json
+```
+
+### Metrics Collection
+
+```yaml
+# Prometheus metrics
+services:
+  app:
+    image: myapp:latest
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port=9090"
+      - "prometheus.path=/metrics"
+    environment:
+      - METRICS_ENABLED=true
+```
+
+## Troubleshooting Checklist
+
+### Build Issues
+
+- [ ] Check base image availability
+- [ ] Verify dependency installation
+- [ ] Review layer optimization
+- [ ] Check .dockerignore configuration
+- [ ] Analyze build logs for errors
+
+### Runtime Issues
+
+- [ ] Verify container startup command
+- [ ] Check resource limits
+- [ ] Review file permissions
+- [ ] Test network connectivity
+- [ ] Monitor container logs
+
+### Performance Issues
+
+- [ ] Check resource usage patterns
+- [ ] Optimize application code
+- [ ] Review health check configuration
+- [ ] Monitor startup time
+- [ ] Analyze memory usage
+
+## Common Error Messages
+
+### Build Errors
+
+```text
+Error: failed to solve: failed to compute cache key
+→ Check base image availability and tags
+
+Error: failed to copy files
+→ Verify source paths and permissions
+
+Error: failed to execute command
+→ Check command syntax and dependencies
+```
+
+### Runtime Errors
+
+```text
+Error: permission denied
+→ Check file permissions and user configuration
+
+Error: address already in use
+→ Check port conflicts and binding
+
+Error: no such file or directory
+→ Verify file paths and volume mounts
+```
+
+### Network Errors
+
+```text
+Error: connection refused
+→ Check service availability and port configuration
+
+Error: name resolution failed
+→ Verify DNS configuration and service names
+
+Error: network unreachable
+→ Check network configuration and firewall rules
+```
+
+## Prevention Strategies
+
+### Proactive Monitoring
+
+- Implement comprehensive health checks
+- Set up resource monitoring
+- Use structured logging
+- Monitor build performance
+- Track image vulnerabilities
+
+### Best Practices
+
+- Use minimal base images
+- Implement proper error handling
+- Follow security best practices
+- Regular dependency updates
+- Comprehensive testing
+
+### Documentation
+
+- Document common issues and solutions
+- Maintain troubleshooting runbooks
+- Keep configuration examples updated
+- Share knowledge across teams
+- Regular training and updates

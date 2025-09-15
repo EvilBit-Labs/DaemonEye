@@ -1,7 +1,5 @@
 # AI Coding Assistant Configuration: SentinelD
 
-**Rules of Engagement for AI Coding Assistants**
-
 ---
 
 ## Purpose and Scope
@@ -176,8 +174,14 @@ sequenceDiagram
 [workspace.dependencies]
 # Core async runtime
 tokio = { version = "1.0", features = [
-    "rt", "rt-multi-thread", "net", "io-util",
-    "time", "process", "macros", "sync"
+  "rt",
+  "rt-multi-thread",
+  "net",
+  "io-util",
+  "time",
+  "process",
+  "macros",
+  "sync",
 ] }
 
 # CLI framework
@@ -198,6 +202,11 @@ tracing = "0.1"
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
+
+# Cryptographic components
+rs-merkle = "1.4"
+blake3 = "1.5"
+ed25519-dalek = "2.1"
 
 # Testing
 assert_cmd = "2.0"
@@ -233,13 +242,13 @@ insta = "1.0"
 - **Credential Management**: Environment variables or OS keychain, never hardcode secrets
 - **Input Validation**: Comprehensive validation with detailed error messages
 - **Attack Surface Minimization**: No network listening, outbound-only connections
-- **Audit Trail**: Tamper-evident audit logging with BLAKE3 cryptographic integrity
+- **Audit Trail**: Certificate Transparency-style Merkle tree with BLAKE3 cryptographic integrity
 
 ### Advanced Security Features (Enterprise Tier)
 
 - **mTLS Authentication**: Certificate chain validation for enterprise components
 - **Code Signing**: SLSA Level 3 provenance, Cosign signatures
-- **Cryptographic Integrity**: BLAKE3 hashing for audit chains
+- **Cryptographic Integrity**: Merkle tree with inclusion proofs and periodic checkpoints
 - **Sandboxed Execution**: Read-only database connections for detection engine
 - **Query Whitelist**: Only SELECT statements with approved functions allowed
 
@@ -327,6 +336,13 @@ cargo bench  # Run criterion benchmarks
 - Include `lint-just` recipe to validate justfile syntax with `just --fmt --check --unstable`
 - No hardcoded paths outside project directory for portability
 
+### Git Workflow
+
+- Use conventional commits format
+- Create feature branches for new work
+- Ensure all tests pass before merging
+- No commits without explicit permission
+
 ## Code Organization and Architecture
 
 ### Workspace Structure
@@ -347,15 +363,17 @@ SentinelD/
 ### Module Organization (sentinel-lib)
 
 ```rust
-pub mod config;      // Configuration management
-pub mod models;      // Core data structures
-pub mod storage;     // Database abstractions (redb)
-pub mod detection;   // SQL-based detection engine
-pub mod alerting;    // Multi-channel alert delivery
-pub mod crypto;      // Cryptographic audit functions
-pub mod telemetry;   // Performance metrics and health
-pub mod kernel;      // Kernel-level monitoring (Enterprise)
-pub mod network;     // Network correlation (Enterprise)
+//! Sentinel library modules for core functionality
+
+pub mod alerting; // Multi-channel alert delivery
+pub mod config; // Configuration management
+pub mod crypto; // Cryptographic audit functions
+pub mod detection; // SQL-based detection engine
+pub mod kernel; // Kernel-level monitoring (Enterprise)
+pub mod models; // Core data structures
+pub mod network;
+pub mod storage; // Database abstractions (redb)
+pub mod telemetry; // Performance metrics and health // Network correlation (Enterprise)
 ```
 
 ### Service Layer Pattern
@@ -363,6 +381,20 @@ pub mod network;     // Network correlation (Enterprise)
 Implement clear separation of concerns with trait-based service interfaces:
 
 ```rust
+use async_trait::async_trait;
+use std::error::Error;
+
+// Example types for documentation
+struct CollectionResult;
+struct SystemInfo;
+struct CollectionError;
+struct ScanContext;
+struct Alert;
+struct DetectionError;
+struct DetectionRule;
+struct DeliveryResult;
+struct HealthStatus;
+
 #[async_trait]
 pub trait ProcessCollectionService: Send + Sync {
     async fn collect_processes(&self) -> Result<CollectionResult, CollectionError>;
@@ -377,7 +409,7 @@ pub trait DetectionService: Send + Sync {
 
 #[async_trait]
 pub trait AlertSink: Send + Sync {
-    async fn send(&self, alert: &Alert) -> Result<DeliveryResult>;
+    async fn send(&self, alert: &Alert) -> Result<DeliveryResult, Box<dyn Error + Send + Sync>>;
     async fn health_check(&self) -> HealthStatus;
     fn name(&self) -> &str;
 }
@@ -542,6 +574,31 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 Use strongly-typed structures with serde for serialization:
 
 ```rust
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+// Example types for documentation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProcessStatus {
+    Running,
+    Sleeping,
+    Stopped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RuleType {
+    ProcessMonitor,
+    NetworkMonitor,
+    FileSystemMonitor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskParameters {
+    pub filter: String,
+    pub threshold: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProcessInfo {
     pub pid: u32,
@@ -571,6 +628,8 @@ pub struct DetectionTask {
 Use thiserror for structured error types:
 
 ```rust
+use thiserror::Error;
+
 #[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("Permission denied accessing process {pid}")]
@@ -580,7 +639,7 @@ pub enum CollectionError {
     ProcessNotFound { pid: u32 },
 
     #[error("Database operation failed: {0}")]
-    DatabaseError(#[from] redb::Error),
+    DatabaseError(String), // Simplified for documentation
 
     #[error("IPC communication failed: {0}")]
     IpcError(String),
@@ -592,12 +651,24 @@ pub enum CollectionError {
 #### Core Tables (redb)
 
 ```rust
+// Example redb table definitions for documentation
+use redb::TableDefinition;
+
+// Example types for documentation
+struct ScanMetadata;
+struct DetectionRule;
+struct Alert;
+struct AlertDelivery;
+struct AuditEntry;
+
 // Event Store schema
 const PROCESSES_TABLE: TableDefinition<u64, ProcessInfo> = TableDefinition::new("processes");
 const SCANS_TABLE: TableDefinition<u64, ScanMetadata> = TableDefinition::new("scans");
-const DETECTION_RULES_TABLE: TableDefinition<String, DetectionRule> = TableDefinition::new("detection_rules");
+const DETECTION_RULES_TABLE: TableDefinition<String, DetectionRule> =
+    TableDefinition::new("detection_rules");
 const ALERTS_TABLE: TableDefinition<u64, Alert> = TableDefinition::new("alerts");
-const ALERT_DELIVERIES_TABLE: TableDefinition<u64, AlertDelivery> = TableDefinition::new("alert_deliveries");
+const ALERT_DELIVERIES_TABLE: TableDefinition<u64, AlertDelivery> =
+    TableDefinition::new("alert_deliveries");
 
 // Audit Ledger schema (separate database)
 const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::new("audit_ledger");
@@ -607,19 +678,30 @@ const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::ne
 
 ```rust
 // Additional tables for Business/Enterprise tiers
+use redb::TableDefinition;
+
+// Example types for documentation
+struct AgentInfo;
+struct ConnectionInfo;
+struct FleetEvent;
+struct RulePack;
+struct NetworkEvent;
+struct KernelEvent;
+
 const AGENTS_TABLE: TableDefinition<String, AgentInfo> = TableDefinition::new("agents");
-const AGENT_CONNECTIONS_TABLE: TableDefinition<String, ConnectionInfo> = TableDefinition::new("agent_connections");
+const AGENT_CONNECTIONS_TABLE: TableDefinition<String, ConnectionInfo> =
+    TableDefinition::new("agent_connections");
 const FLEET_EVENTS_TABLE: TableDefinition<u64, FleetEvent> = TableDefinition::new("fleet_events");
 const RULE_PACKS_TABLE: TableDefinition<String, RulePack> = TableDefinition::new("rule_packs");
-const NETWORK_EVENTS_TABLE: TableDefinition<u64, NetworkEvent> = TableDefinition::new("network_events"); // Enterprise
-const KERNEL_EVENTS_TABLE: TableDefinition<u64, KernelEvent> = TableDefinition::new("kernel_events"); // Enterprise
+const NETWORK_EVENTS_TABLE: TableDefinition<u64, NetworkEvent> =
+    TableDefinition::new("network_events"); // Enterprise
+const KERNEL_EVENTS_TABLE: TableDefinition<u64, KernelEvent> =
+    TableDefinition::new("kernel_events"); // Enterprise
 ```
 
 ---
 
-## Testing Strategy
-
-### Three-Tier Testing Architecture
+## Test Organization and Examples
 
 1. **Unit Tests**: Test individual components with mocked dependencies
 2. **Integration Tests**: Use testcontainers for database operations
@@ -636,7 +718,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_collection() {
-        // Test implementation
+        // Example test implementation
+        let result = "test output";
+        assert_eq!(result, "test output");
     }
 }
 ```
@@ -650,6 +734,19 @@ mod tests {
 Use clap v4 with derive macros:
 
 ```rust
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+// Example command structures for documentation
+#[derive(Debug)]
+struct RunCommand;
+
+#[derive(Debug)]
+struct ConfigCommand;
+
+#[derive(Debug)]
+struct RulesCommand;
+
 #[derive(Parser)]
 #[command(name = "procmond", about = "Process monitoring daemon")]
 pub struct Cli {
@@ -668,7 +765,6 @@ pub enum Commands {
     Run(RunCommand),
     Config(ConfigCommand),
     Rules(RulesCommand),
-    // Additional commands...
 }
 ```
 
@@ -722,9 +818,17 @@ alerting:
 Use trait-based plugin system:
 
 ```rust
+use async_trait::async_trait;
+use std::error::Error;
+
+// Example types for documentation
+struct Alert;
+struct DeliveryResult;
+struct HealthStatus;
+
 #[async_trait]
 pub trait AlertSink: Send + Sync {
-    async fn send(&self, alert: &Alert) -> Result<DeliveryResult>;
+    async fn send(&self, alert: &Alert) -> Result<DeliveryResult, Box<dyn Error + Send + Sync>>;
     async fn health_check(&self) -> HealthStatus;
     fn name(&self) -> &str;
 }
@@ -736,36 +840,6 @@ pub trait AlertSink: Send + Sync {
 - Retry logic with exponential backoff
 - Circuit breaking for failing sinks
 - Delivery audit trail
-
----
-
-## Development Workflow
-
-### Task Runner (just)
-
-Use DRY principles in justfile recipes:
-
-```just
-fmt:
-  @cargo fmt --all
-
-lint:
-  @just fmt-check
-  @cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-test:
-  @cargo test --workspace
-
-build:
-  @cargo build --workspace
-```
-
-### Git Workflow
-
-- Use conventional commits format
-- Create feature branches for new work
-- Ensure all tests pass before merging
-- No commits without explicit permission
 
 ---
 
@@ -794,13 +868,6 @@ build:
 - Automatic privilege dropping after initialization
 - Comprehensive audit logging
 
-### Data Protection
-
-- Optional command-line redaction for privacy
-- Configurable field masking in logs
-- Secure credential storage (OS keychain integration)
-- Database encryption support for sensitive deployments
-
 ---
 
 ## Observability and Monitoring
@@ -810,10 +877,20 @@ build:
 Support Prometheus metrics for operational monitoring:
 
 ```rust
-procmond_collection_duration_seconds{status="success|error"}
-procmond_processes_collected_total
-procmond_alerts_generated_total{severity="low|medium|high|critical"}
-procmond_alert_deliveries_total{sink="stdout|syslog|webhook"}
+// Example Prometheus metrics for documentation
+// These would be defined using a metrics library like prometheus
+
+// procmond_collection_duration_seconds{status="success|error"}
+// procmond_processes_collected_total
+// procmond_alerts_generated_total{severity="low|medium|high|critical"}
+// procmond_alert_deliveries_total{sink="stdout|syslog|webhook"}
+
+struct PrometheusMetrics {
+    collection_duration: String,
+    processes_collected: String,
+    alerts_generated: String,
+    alert_deliveries: String,
+}
 ```
 
 ### Health Checks
@@ -964,7 +1041,23 @@ When generating code for SentinelD:
 
 ### Code Documentation
 
-```rust
+````rust
+use std::error::Error;
+
+// Example types for documentation
+struct ProcessCollector;
+struct CollectionResult {
+    processes: Vec<ProcessInfo>,
+}
+struct ProcessInfo;
+struct CollectionError;
+
+impl ProcessCollector {
+    pub fn new() -> Self {
+        ProcessCollector
+    }
+}
+
 /// Collects process information with optional elevated privileges.
 ///
 /// This function enumerates all accessible processes on the system and
@@ -985,12 +1078,11 @@ When generating code for SentinelD:
 ///
 /// # Examples
 ///
-/// ```rust
-/// use sentinel_lib::collector::ProcessCollectionService;
-///
-/// let service = ProcessCollector::new();
-/// let result = service.collect_processes().await?;
-/// assert!(result.processes.len() > 0);
+/// ```rust,no_run
+/// // Example usage (no_run attribute prevents execution during doc tests)
+/// // let service = ProcessCollector::new();
+/// // let result = service.collect_processes().await?;
+/// // assert!(result.processes.len() > 0);
 /// ```
 ///
 /// # Errors
@@ -999,8 +1091,13 @@ When generating code for SentinelD:
 /// - System-level permission issues
 /// - Resource exhaustion scenarios
 /// - Database connectivity problems
-pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionError>
-```
+pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionError> {
+    // Implementation would go here
+    Ok(CollectionResult {
+        processes: vec![],
+    })
+}
+````
 
 ### Project Documentation Structure
 
@@ -1015,15 +1112,15 @@ pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionErro
 
 ### Primary Authorities
 
-| Section | Source Documents | Purpose |
-|---------|-----------------|----------|
-| **Architecture** | [.kiro/steering/structure.md](./.kiro/steering/structure.md) | Component organization, security boundaries |
-| **Technology Stack** | [.kiro/steering/tech.md](./.kiro/steering/tech.md) | Technology choices, dependencies |
-| **Product Features** | [.kiro/steering/product.md](./.kiro/steering/product.md) | Feature tiers, business requirements |
-| **Core Requirements** | [.kiro/specs/sentineld-core-monitoring/requirements.md](./.kiro/specs/sentineld-core-monitoring/requirements.md) | Functional requirements |
-| **Business Features** | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md) | Business tier specifications |
-| **Enterprise Features** | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md) | Enterprise tier specifications |
-| **Development Workflow** | [WARP.md](./WARP.md) | Commands, justfile recipes, testing |
+| Section                  | Source Documents                                                                                                 | Purpose                                     |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| **Architecture**         | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                     | Component organization, security boundaries |
+| **Technology Stack**     | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                               | Technology choices, dependencies            |
+| **Product Features**     | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                         | Feature tiers, business requirements        |
+| **Core Requirements**    | [.kiro/specs/sentineld-core-monitoring/requirements.md](./.kiro/specs/sentineld-core-monitoring/requirements.md) | Functional requirements                     |
+| **Business Features**    | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md)       | Business tier specifications                |
+| **Enterprise Features**  | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md)   | Enterprise tier specifications              |
+| **Development Workflow** | [WARP.md](./WARP.md)                                                                                             | Commands, justfile recipes, testing         |
 
 ### Cross-References
 

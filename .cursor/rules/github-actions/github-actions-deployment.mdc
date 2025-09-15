@@ -1,0 +1,60 @@
+---
+globs: .github/workflows/*.yml,.github/workflows/*.yaml
+description: Deployment strategies and best practices for GitHub Actions
+---
+
+# GitHub Actions Deployment Rules
+
+## Environment Management
+
+- Use GitHub `environments` for staging and production
+- Configure environment protection rules with manual approvals
+- Set appropriate branch restrictions for each environment
+- Example:
+
+```yaml
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.example.com
+    steps:
+      - name: Deploy to staging
+        run: ./deploy-script.sh
+```
+
+## Deployment Types
+
+- **Rolling Update**: Default for most applications
+- **Blue/Green**: For zero-downtime releases with instant rollback
+- **Canary**: Gradual rollout to small user subset
+- **Dark Launch**: Deploy code but hide features behind flags
+
+## Production Deployment
+
+- Require manual approvals for production deployments
+- Implement automated rollback strategies
+- Set up comprehensive monitoring and alerting
+- Use emergency deployment pipeline for critical hotfixes
+
+## Rollback Strategy
+
+- Store previous successful build artifacts for quick recovery
+- Implement automated rollback triggers based on monitoring
+- Create comprehensive runbooks for manual intervention
+- Test rollback procedures regularly
+
+## Post-Deployment Validation
+
+- Implement automated smoke tests after deployment
+- Set up health checks and monitoring
+- Configure alerts for deployment issues
+- Use circuit breakers for external dependencies
+
+## Artifact Management
+
+- Version all build artifacts and container images
+- Use immutable infrastructure principles
+- Implement image signing and verification
+- Store artifacts with appropriate retention policies

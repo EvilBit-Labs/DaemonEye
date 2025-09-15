@@ -65,8 +65,8 @@ graph TB
 
 - ES_EVENT_TYPE_NOTIFY_EXEC for process execution
 - ES_EVENT_TYPE_NOTIFY_FORK for process creation
-- ES_EVENT_TYPE_NOTIFY_FILE_* for file system monitoring
-- ES_EVENT_TYPE_NOTIFY_NETWORK_* for network activity
+- ES_EVENT_TYPE_NOTIFY_FILE\_\* for file system monitoring
+- ES_EVENT_TYPE_NOTIFY_NETWORK\_\* for network activity
 
 #### 2. Federated Security Center Architecture
 

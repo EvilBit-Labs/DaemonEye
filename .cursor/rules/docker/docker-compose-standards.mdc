@@ -1,0 +1,308 @@
+---
+globs: **/docker-compose*.yml,**/docker-compose*.yaml
+description: Docker Compose and container orchestration best practices
+---
+
+# Docker Compose Standards
+
+## Core Principles
+
+### Service Isolation
+
+- **Define separate networks** for different application tiers
+- Use internal networks for backend services
+- Implement proper service discovery
+- Avoid host networking when possible
+
+### Resource Management
+
+- **Always set resource limits** for all services
+- Define both requests and limits
+- Monitor resource usage and adjust accordingly
+- Implement resource quotas for multi-tenant environments
+
+### Configuration Management
+
+- Use environment variables for configuration
+- Externalize sensitive data using secrets
+- Support multiple environments (dev, staging, prod)
+- Validate configuration at startup
+
+## Required Service Configuration
+
+### Resource Management
+
+```yaml
+services:
+  app:
+    image: myapp:latest
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+```
+
+### Network Configuration
+
+```yaml
+services:
+  web:
+    image: nginx
+    networks:
+      - frontend
+      - backend
+
+  api:
+    image: myapi
+    networks:
+      - backend
+
+networks:
+  frontend:
+  backend:
+    internal: true
+```
+
+### Health Checks
+
+```yaml
+services:
+  app:
+    image: myapp:latest
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+## Security Standards
+
+### Secrets Management
+
+```yaml
+services:
+  database:
+    image: postgres:13
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+
+secrets:
+  db_password:
+    external: true
+```
+
+### User Security
+
+```yaml
+services:
+  app:
+    image: myapp:latest
+    user: "1000:1000"  # Non-root user
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache
+```
+
+## Persistent Storage
+
+### Volume Configuration
+
+```yaml
+services:
+  database:
+    image: postgres:13
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres.conf:/etc/postgresql/postgresql.conf:ro
+
+volumes:
+  postgres_data:
+    driver: local
+```
+
+### Volume Best Practices
+
+- Use named volumes for persistent data
+- Avoid bind mounts for production data
+- Implement backup strategies for volumes
+- Use read-only mounts for configuration files
+
+## Environment Configuration
+
+### Multi-Environment Support
+
+```yaml
+# docker-compose.yml (base)
+services:
+  app:
+    image: myapp:${TAG:-latest}
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - DATABASE_URL=${DATABASE_URL}
+
+# docker-compose.override.yml (development)
+services:
+  app:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      - NODE_ENV=development
+```
+
+### Environment Variables
+
+```yaml
+services:
+  app:
+    image: myapp:latest
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - LOG_LEVEL=info
+    env_file:
+      - .env.production
+```
+
+## Logging and Monitoring
+
+### Logging Configuration
+
+```yaml
+services:
+  app:
+    image: myapp:latest
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+### Monitoring Integration
+
+```yaml
+services:
+  app:
+    image: myapp:latest
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port=9090"
+      - "prometheus.path=/metrics"
+```
+
+## Development vs Production
+
+### Development Configuration
+
+```yaml
+# docker-compose.dev.yml
+services:
+  app:
+    build: .
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - DEBUG=true
+    ports:
+      - "3000:3000"
+      - "9229:9229"  # Debug port
+```
+
+### Production Configuration
+
+```yaml
+# docker-compose.prod.yml
+services:
+  app:
+    image: myapp:${TAG}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+```
+
+## Quality Checklist
+
+- [ ] Resource limits defined for all services
+- [ ] Network isolation implemented
+- [ ] Health checks configured
+- [ ] Secrets management implemented
+- [ ] Non-root users specified
+- [ ] Persistent volumes configured
+- [ ] Environment variables externalized
+- [ ] Logging configuration set
+- [ ] Multi-environment support
+- [ ] Security scanning integrated
+
+## Anti-Patterns to Avoid
+
+### Security Issues
+
+```yaml
+# BAD: Running as root
+services:
+  app:
+    image: myapp:latest
+    # Missing user specification
+
+# BAD: Exposing secrets
+services:
+  app:
+    image: myapp:latest
+    environment:
+      - DATABASE_PASSWORD=secret123
+```
+
+### Resource Issues
+
+```yaml
+# BAD: No resource limits
+services:
+  app:
+    image: myapp:latest
+    # Missing resource limits
+
+# BAD: Host networking
+services:
+  app:
+    image: myapp:latest
+    network_mode: host
+```
+
+### Configuration Issues
+
+```yaml
+# BAD: Hardcoded configuration
+services:
+  app:
+    image: myapp:latest
+    environment:
+      - DATABASE_URL=postgres://user:pass@localhost:5432/db
+```
+
+## Troubleshooting
+
+### Common Issues
+
+- **Service not starting**: Check health checks and resource limits
+- **Network connectivity**: Verify network configuration and service names
+- **Permission errors**: Ensure proper user configuration
+- **Volume mounting**: Check volume paths and permissions
+- **Environment variables**: Validate configuration and secrets

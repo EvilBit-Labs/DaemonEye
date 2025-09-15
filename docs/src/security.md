@@ -412,7 +412,7 @@ SentinelD helps meet various security standards:
 1. **Audit Logging**:
 
    - Comprehensive event logging
-   - Tamper-evident logs
+   - Certificate Transparency-style audit ledger
    - Long-term retention
 
 2. **Access Controls**:

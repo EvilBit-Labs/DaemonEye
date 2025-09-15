@@ -1,0 +1,62 @@
+---
+globs: .github/workflows/*.yml,.github/workflows/*.yaml
+description: Performance optimization for GitHub Actions workflows
+---
+
+# GitHub Actions Performance Rules
+
+## Caching Strategy
+
+- Use `actions/cache@v5` for package manager dependencies
+- Design effective cache keys using `hashFiles()` for optimal hit rates
+- Use `restore-keys` for fallback to older compatible caches
+- Example:
+
+```yaml
+- name: Cache dependencies
+  uses: actions/cache@v5
+  with:
+    path: |
+      ~/.npm
+      ./node_modules
+    key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+    restore-keys: |
+      ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}-
+      ${{ runner.os }}-node-
+```
+
+## Matrix Strategies
+
+- Use `strategy.matrix` for parallel testing across environments
+- Configure `fail-fast: false` for comprehensive test reporting
+- Use `include`/`exclude` to fine-tune matrix combinations
+- Example:
+
+```yaml
+strategy:
+  fail-fast: false
+  matrix:
+    os: [ubuntu-latest, windows-latest]
+    node-version: [16.x, 18.x, 20.x]
+```
+
+## Checkout Optimization
+
+- Use `fetch-depth: 1` for most builds (only latest commit)
+- Only use `fetch-depth: 0` when full Git history is required
+- Set `submodules: false` unless explicitly needed
+- Optimize Git LFS usage if large files are present
+
+## Artifact Management
+
+- Use `actions/upload-artifact@v3` and `actions/download-artifact@v3`
+- Set appropriate `retention-days` for storage cost management
+- Upload test reports, coverage reports, and build outputs as artifacts
+- Use artifacts for inter-job communication instead of rebuilding
+
+## Job Organization
+
+- Break large workflows into smaller, focused jobs
+- Use `needs` to define clear dependencies between jobs
+- Leverage `outputs` for efficient data passing between jobs
+- Use `if` conditions for conditional execution

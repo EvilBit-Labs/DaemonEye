@@ -55,6 +55,10 @@ jobs:
               with:
                   tool: mdbook-admonish,mdbook-mermaid,mdbook-linkcheck,mdbook-toc,mdbook-open-on-gh,mdbook-tabs,mdbook-i18n-helpers
 
+            - name: Run just install
+              run: |
+                  just install-tools
+
             - name: Setup summary
               run: |
                   echo "✅ SentinelD development environment setup complete!"
