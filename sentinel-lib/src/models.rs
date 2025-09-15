@@ -1,15 +1,17 @@
 //! Core data models for SentinelD.
 //!
 //! This module defines the primary data structures used throughout the system:
-//! - ProcessRecord: Comprehensive process metadata
+//! - ProcessRecord: Comprehensive process metadata with builder pattern
 //! - Alert: Structured alert information with severity levels
 //! - DetectionRule: SQL-based detection rules with metadata
 //! - SystemInfo: System-level information and capabilities
+//! - Strongly-typed IDs for better type safety and preventing ID confusion
 
 use chrono::{DateTime, Utc};
 // use redb::{RedbKey, RedbValue}; // TODO: Re-enable when we fix redb integration
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use thiserror::Error;
 
 /// Process collection and validation errors.
@@ -55,6 +57,131 @@ pub enum DetectionError {
 
     #[error("Rule validation failed: {0}")]
     ValidationError(String),
+}
+
+/// Strongly-typed process ID to prevent confusion with other numeric IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ProcessId(pub u32);
+
+/// Strongly-typed rule ID to prevent confusion with other string IDs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RuleId(pub String);
+
+/// Strongly-typed alert ID to prevent confusion with other string IDs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AlertId(pub String);
+
+/// Strongly-typed scan ID for tracking collection operations.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ScanId(pub String);
+
+impl ProcessId {
+    /// Create a new process ID.
+    pub fn new(pid: u32) -> Self {
+        Self(pid)
+    }
+
+    /// Get the raw process ID value.
+    pub fn value(&self) -> u32 {
+        self.0
+    }
+}
+
+impl RuleId {
+    /// Create a new rule ID.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Get the raw rule ID value.
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AlertId {
+    /// Create a new alert ID.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Get the raw alert ID value.
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl ScanId {
+    /// Create a new scan ID.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Get the raw scan ID value.
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ProcessId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for RuleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for AlertId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for ScanId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+// Implement From traits for string literals
+impl From<&str> for AlertId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<&str> for RuleId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<&str> for ScanId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for AlertId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<String> for RuleId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<String> for ScanId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
 }
 
 /// Process status enumeration.
@@ -109,9 +236,9 @@ impl std::str::FromStr for AlertSeverity {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProcessRecord {
     /// Process ID
-    pub pid: u32,
+    pub pid: ProcessId,
     /// Parent Process ID
-    pub ppid: Option<u32>,
+    pub ppid: Option<ProcessId>,
     /// Process name
     pub name: String,
     /// Full executable path
@@ -140,7 +267,7 @@ impl ProcessRecord {
     /// Create a new process record with minimal required fields.
     pub fn new(pid: u32, name: String) -> Self {
         Self {
-            pid,
+            pid: ProcessId::new(pid),
             ppid: None,
             name,
             executable_path: None,
@@ -154,6 +281,11 @@ impl ProcessRecord {
             collection_time: Utc::now(),
             metadata: HashMap::new(),
         }
+    }
+
+    /// Create a new process record builder.
+    pub fn builder() -> ProcessRecordBuilder {
+        ProcessRecordBuilder::new()
     }
 
     /// Get a deduplication key for this process record.
@@ -172,11 +304,161 @@ impl ProcessRecord {
     }
 }
 
+/// Builder for creating ProcessRecord instances with a fluent API.
+#[derive(Debug, Default)]
+pub struct ProcessRecordBuilder {
+    pid: Option<ProcessId>,
+    ppid: Option<ProcessId>,
+    name: Option<String>,
+    executable_path: Option<String>,
+    command_line: Option<String>,
+    start_time: Option<DateTime<Utc>>,
+    cpu_usage: Option<f64>,
+    memory_usage: Option<u64>,
+    status: Option<ProcessStatus>,
+    executable_hash: Option<String>,
+    hash_algorithm: Option<String>,
+    collection_time: Option<DateTime<Utc>>,
+    metadata: HashMap<String, String>,
+}
+
+impl ProcessRecordBuilder {
+    /// Create a new process record builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the process ID.
+    pub fn pid(mut self, pid: ProcessId) -> Self {
+        self.pid = Some(pid);
+        self
+    }
+
+    /// Set the process ID from a raw u32.
+    pub fn pid_raw(mut self, pid: u32) -> Self {
+        self.pid = Some(ProcessId::new(pid));
+        self
+    }
+
+    /// Set the parent process ID.
+    pub fn ppid(mut self, ppid: ProcessId) -> Self {
+        self.ppid = Some(ppid);
+        self
+    }
+
+    /// Set the parent process ID from a raw u32.
+    pub fn ppid_raw(mut self, ppid: u32) -> Self {
+        self.ppid = Some(ProcessId::new(ppid));
+        self
+    }
+
+    /// Set the process name.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Set the executable path.
+    pub fn executable_path(mut self, path: impl Into<String>) -> Self {
+        self.executable_path = Some(path.into());
+        self
+    }
+
+    /// Set the command line.
+    pub fn command_line(mut self, cmd: impl Into<String>) -> Self {
+        self.command_line = Some(cmd.into());
+        self
+    }
+
+    /// Set the start time.
+    pub fn start_time(mut self, time: DateTime<Utc>) -> Self {
+        self.start_time = Some(time);
+        self
+    }
+
+    /// Set the CPU usage.
+    pub fn cpu_usage(mut self, usage: f64) -> Self {
+        self.cpu_usage = Some(usage);
+        self
+    }
+
+    /// Set the memory usage.
+    pub fn memory_usage(mut self, usage: u64) -> Self {
+        self.memory_usage = Some(usage);
+        self
+    }
+
+    /// Set the process status.
+    pub fn status(mut self, status: ProcessStatus) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    /// Set the executable hash.
+    pub fn executable_hash(mut self, hash: impl Into<String>) -> Self {
+        self.executable_hash = Some(hash.into());
+        self
+    }
+
+    /// Set the hash algorithm.
+    pub fn hash_algorithm(mut self, algorithm: impl Into<String>) -> Self {
+        self.hash_algorithm = Some(algorithm.into());
+        self
+    }
+
+    /// Set the collection time.
+    pub fn collection_time(mut self, time: DateTime<Utc>) -> Self {
+        self.collection_time = Some(time);
+        self
+    }
+
+    /// Add metadata.
+    pub fn metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
+    }
+
+    /// Add multiple metadata entries.
+    pub fn metadata_map(mut self, metadata: HashMap<String, String>) -> Self {
+        self.metadata.extend(metadata);
+        self
+    }
+
+    /// Build the ProcessRecord.
+    pub fn build(self) -> Result<ProcessRecord, ProcessError> {
+        let pid = self.pid.ok_or_else(|| ProcessError::InvalidData {
+            message: "Process ID is required".to_string(),
+        })?;
+
+        let name = self.name.ok_or_else(|| ProcessError::InvalidData {
+            message: "Process name is required".to_string(),
+        })?;
+
+        Ok(ProcessRecord {
+            pid,
+            ppid: self.ppid,
+            name,
+            executable_path: self.executable_path,
+            command_line: self.command_line,
+            start_time: self.start_time,
+            cpu_usage: self.cpu_usage,
+            memory_usage: self.memory_usage,
+            status: self
+                .status
+                .unwrap_or(ProcessStatus::Unknown("unknown".to_string())),
+            executable_hash: self.executable_hash,
+            hash_algorithm: self.hash_algorithm,
+            collection_time: self.collection_time.unwrap_or_else(Utc::now),
+            metadata: self.metadata,
+        })
+    }
+}
+
 /// Structured alert information.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Alert {
     /// Unique alert identifier
-    pub id: String,
+    pub id: AlertId,
     /// Alert severity level
     pub severity: AlertSeverity,
     /// Alert title/summary
@@ -186,7 +468,7 @@ pub struct Alert {
     /// Alert category/type
     pub category: String,
     /// Source detection rule ID
-    pub rule_id: Option<String>,
+    pub rule_id: Option<RuleId>,
     /// Affected process information
     pub affected_process: Option<ProcessRecord>,
     /// Additional context data
@@ -202,12 +484,16 @@ pub struct Alert {
 impl Alert {
     /// Create a new alert with required fields.
     pub fn new(
-        id: String,
+        id: impl Into<AlertId>,
         severity: AlertSeverity,
-        title: String,
-        description: String,
-        category: String,
+        title: impl Into<String>,
+        description: impl Into<String>,
+        category: impl Into<String>,
     ) -> Self {
+        let id = id.into();
+        let title = title.into();
+        let description = description.into();
+        let category = category.into();
         let dedup_key = format!("{}:{}:{}", severity, category, title);
         Self {
             id,
@@ -247,7 +533,7 @@ impl Alert {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DetectionRule {
     /// Unique rule identifier
-    pub id: String,
+    pub id: RuleId,
     /// Rule name/title
     pub name: String,
     /// Rule description
@@ -277,20 +563,20 @@ pub struct DetectionRule {
 impl DetectionRule {
     /// Create a new detection rule.
     pub fn new(
-        id: String,
-        name: String,
-        description: String,
-        sql_query: String,
-        category: String,
+        id: impl Into<RuleId>,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        sql_query: impl Into<String>,
+        category: impl Into<String>,
         severity: AlertSeverity,
     ) -> Self {
         let now = Utc::now();
         Self {
-            id,
-            name,
-            description,
-            sql_query,
-            category,
+            id: id.into(),
+            name: name.into(),
+            description: description.into(),
+            sql_query: sql_query.into(),
+            category: category.into(),
             severity,
             version: "1.0.0".to_string(),
             author: "system".to_string(),
@@ -432,7 +718,7 @@ mod tests {
     #[test]
     fn test_process_record_creation() {
         let process = ProcessRecord::new(1234, "test-process".to_string());
-        assert_eq!(process.pid, 1234);
+        assert_eq!(process.pid, ProcessId::new(1234));
         assert_eq!(process.name, "test-process");
         assert_eq!(
             process.status,
@@ -441,14 +727,33 @@ mod tests {
     }
 
     #[test]
+    fn test_process_record_builder() {
+        let process = ProcessRecord::builder()
+            .pid_raw(1234)
+            .name("test-process")
+            .cpu_usage(50.0)
+            .memory_usage(1024)
+            .status(ProcessStatus::Running)
+            .build()
+            .unwrap();
+
+        assert_eq!(process.pid, ProcessId::new(1234));
+        assert_eq!(process.name, "test-process");
+        assert_eq!(process.cpu_usage, Some(50.0));
+        assert_eq!(process.memory_usage, Some(1024));
+        assert_eq!(process.status, ProcessStatus::Running);
+    }
+
+    #[test]
     fn test_alert_creation() {
         let alert = Alert::new(
-            "alert-1".to_string(),
+            "alert-1",
             AlertSeverity::High,
-            "Test Alert".to_string(),
-            "This is a test alert".to_string(),
-            "test".to_string(),
+            "Test Alert",
+            "This is a test alert",
+            "test",
         );
+        assert_eq!(alert.id, AlertId::new("alert-1"));
         assert_eq!(alert.severity, AlertSeverity::High);
         assert_eq!(alert.title, "Test Alert");
     }
@@ -456,11 +761,11 @@ mod tests {
     #[test]
     fn test_detection_rule_validation() {
         let rule = DetectionRule::new(
-            "rule-1".to_string(),
-            "Test Rule".to_string(),
-            "Test detection rule".to_string(),
-            "SELECT * FROM processes WHERE name = 'test'".to_string(),
-            "test".to_string(),
+            "rule-1",
+            "Test Rule",
+            "Test detection rule",
+            "SELECT * FROM processes WHERE name = 'test'",
+            "test",
             AlertSeverity::Medium,
         );
         assert!(rule.validate_sql().is_ok());
@@ -469,11 +774,11 @@ mod tests {
     #[test]
     fn test_detection_rule_validation_invalid() {
         let rule = DetectionRule::new(
-            "rule-1".to_string(),
-            "Test Rule".to_string(),
-            "Test detection rule".to_string(),
-            "DROP TABLE processes".to_string(),
-            "test".to_string(),
+            "rule-1",
+            "Test Rule",
+            "Test detection rule",
+            "DROP TABLE processes",
+            "test",
             AlertSeverity::Medium,
         );
         assert!(rule.validate_sql().is_err());

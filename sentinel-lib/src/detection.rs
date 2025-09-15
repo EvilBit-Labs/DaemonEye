@@ -49,7 +49,7 @@ impl DetectionEngine {
         rule.validate_sql()
             .map_err(|e| DetectionEngineError::SqlValidationError(e.to_string()))?;
 
-        self.rules.insert(rule.id.clone(), rule);
+        self.rules.insert(rule.id.value().to_string(), rule);
         Ok(())
     }
 
