@@ -13,6 +13,7 @@
 //! - Network correlation and kernel monitoring (Enterprise)
 
 pub mod alerting;
+pub mod collection;
 pub mod config;
 pub mod crypto;
 pub mod detection;
