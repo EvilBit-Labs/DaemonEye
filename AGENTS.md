@@ -1,7 +1,5 @@
 # AI Coding Assistant Configuration: SentinelD
 
-**Rules of Engagement for AI Coding Assistants**
-
 ---
 
 ## Purpose and Scope
