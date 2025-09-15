@@ -31,21 +31,22 @@ pub enum CollectionError {
     PermissionDenied { pid: u32 },
     #[error("Database operation failed: {0}")]
     DatabaseError(#[from] sqlx::Error),
-    #[error("I/O operation failed: {0}")]
-    IoError(#[from] std::io::Error),
+    #[error("I/O operation failed: {context}: {source}")]
+    IoError {
+        #[source]
+        source: std::io::Error,
+        context: String,
+    },
 }
 
-// Adding context manually with anyhow when #[from] isn't sufficient
-use anyhow::Context;
-
 fn read_process_config(path: &Path) -> Result<ProcessConfig, CollectionError> {
-    let content = std::fs::read_to_string(path)
-        .context(format!("Failed to read process config from {}", path.display()))
-        .map_err(|e| CollectionError::IoError(
-            std::io::Error::new(std::io::ErrorKind::Other, e)
-        ))?;
+    let content = std::fs::read_to_string(path).map_err(|e| CollectionError::IoError {
+        source: e,
+        context: format!("reading process config from {}", path.display()),
+    })?;
 
     // Parse content...
+    let _ = content; // placeholder to show content use
     Ok(ProcessConfig {})
 }
 ```
@@ -141,23 +142,27 @@ just ci                  # Run lint/test/build for all components (CI gate)
 **IPC Transport Limits and Rules:**
 
 - **Task Generation Caps**:
+
   - Max 100 tasks per SQL query (default: 50)
   - Max 16KB per protobuf message (default: 8KB)
   - Max 10-second IPC timeout per request (default: 5s)
   - Behavior on exceedance: Reject query with `ValidationError::ComplexityExceeded`
 
 - **Message Framing**:
+
   - Length-delimited protobuf messages with varint prefixes
   - Messages MUST include sequence numbers for ordering
   - Mandatory CRC32 checksums for corruption detection
 
 - **Backpressure Semantics**:
+
   - Credit-based flow control: procmond grants collection credits to sentinelagent
   - Default credit limit: 1000 pending process records
   - ACK/NACK responses required for credit replenishment
   - Windowing: Max 10 concurrent collection tasks in-flight
 
 - **DoS Prevention**:
+
   - Rate limiting: Max 100 queries/minute per detection rule
   - Memory bounds: 64MB total IPC buffer allocation
   - Timeout escalation: 5s → 10s → connection reset
@@ -201,19 +206,21 @@ just ci                  # Run lint/test/build for all components (CI gate)
 All external input must be validated with detailed error messages:
 
 ```rust
-use sqlparser::{dialect::SQLiteDialect, parser::Parser, ast::Statement};
+use sqlparser::{ast::Statement, dialect::SQLiteDialect, parser::Parser};
 
 pub fn validate_detection_rule(rule: &str) -> Result<Vec<Statement>, ValidationError> {
     let dialect = SQLiteDialect {};
-    let statements = Parser::parse_sql(&dialect, rule)
-        .map_err(|e| ValidationError::InvalidSql { reason: e.to_string() })?;
+    let statements =
+        Parser::parse_sql(&dialect, rule).map_err(|e| ValidationError::InvalidSql {
+            reason: e.to_string(),
+        })?;
 
     // Validation checks for security and complexity limits
     for statement in &statements {
         // 1. Only SELECT statements allowed
         if !matches!(statement, Statement::Query(_)) {
             return Err(ValidationError::ForbiddenStatement {
-                statement_type: format!("{:?}", statement)
+                statement_type: format!("{:?}", statement),
             });
         }
 
@@ -229,21 +236,265 @@ pub fn validate_detection_rule(rule: &str) -> Result<Vec<Statement>, ValidationE
 
 fn validate_banned_functions(statement: &Statement) -> Result<(), ValidationError> {
     const BANNED_FUNCTIONS: &[&str] = &[
-        "load_extension", "fts3_tokenizer", "zipfile", "fsdir",
-        "readfile", "writefile", "edit", "shell"
+        "load_extension",
+        "fts3_tokenizer",
+        "zipfile",
+        "fsdir",
+        "readfile",
+        "writefile",
+        "edit",
+        "shell",
     ];
 
-    // Check for banned function names in SQL AST
-    // Implementation would recursively walk the AST checking function calls
+    // (Omitted here – example focuses on complexity enforcement)
     Ok(())
-}fn validate_query_complexity(statement: &Statement) -> Result<(), ValidationError> {
-    // Enforce limits: max 5 joins, max 3 nested subqueries, max 50 projections
+}
+
+fn validate_query_complexity(statement: &Statement) -> Result<(), ValidationError> {
+    use sqlparser::ast::{
+        Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
+    };
+
+    // Limits derived from SentinelD security / DoS prevention policy
     const MAX_JOINS: usize = 5;
     const MAX_SUBQUERIES: usize = 3;
     const MAX_PROJECTIONS: usize = 50;
 
-    // Implementation would analyze AST structure and count complexity metrics
-    // Return specific ValidationError for each limit violation
+    // Helper: count joins inside a SELECT's FROM clause
+    fn count_joins_in_from(from: &[TableWithJoins]) -> usize {
+        from.iter().map(|twj| twj.joins.len()).sum()
+    }
+
+    // Helper: recurse through SetExpr collecting counts
+    fn walk_setexpr(
+        set_expr: &SetExpr,
+        join_count: &mut usize,
+        subquery_count: &mut usize,
+        projection_count: &mut usize,
+    ) {
+        match set_expr {
+            SetExpr::Select(boxed_select) => {
+                let Select {
+                    from,
+                    projection,
+                    selection,
+                    group_by,
+                    having,
+                    ..
+                } = &**boxed_select;
+                *join_count += count_joins_in_from(from);
+                *projection_count += projection.len();
+
+                // Inspect table factors for derived tables (subqueries)
+                for twj in from {
+                    match &twj.relation {
+                        TableFactor::Derived { subquery, .. }
+                        | TableFactor::TableFunction {
+                            expr: Expr::Subquery(subquery),
+                            ..
+                        } => {
+                            *subquery_count += 1; // Count this subquery itself
+                            walk_query(subquery, join_count, subquery_count, projection_count);
+                        }
+                        TableFactor::Table { .. }
+                        | TableFactor::UNNEST { .. }
+                        | TableFactor::Func { .. }
+                        | TableFactor::NestedJoin { .. }
+                        | TableFactor::Series { .. }
+                        | TableFactor::JsonTable { .. } => {}
+                        _ => {}
+                    }
+                }
+
+                // Recurse into expressions that may hold subqueries
+                if let Some(expr) = selection {
+                    walk_expr(expr, join_count, subquery_count, projection_count);
+                }
+                for expr in group_by {
+                    walk_expr(expr, join_count, subquery_count, projection_count);
+                }
+                if let Some(expr) = having {
+                    walk_expr(expr, join_count, subquery_count, projection_count);
+                }
+                for item in projection {
+                    if let SelectItem::ExprWithAlias { expr, .. } | SelectItem::UnnamedExpr(expr) =
+                        item
+                    {
+                        walk_expr(expr, join_count, subquery_count, projection_count);
+                    }
+                }
+            }
+            SetExpr::Query(q) => {
+                walk_query(q, join_count, subquery_count, projection_count);
+            }
+            SetExpr::SetOperation { left, right, .. } => {
+                walk_setexpr(left, join_count, subquery_count, projection_count);
+                walk_setexpr(right, join_count, subquery_count, projection_count);
+            }
+            SetExpr::Values(_) | SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Table(_) => {}
+        }
+    }
+
+    // Helper: recurse into Query (which wraps a SetExpr and optional ORDER / LIMIT etc.)
+    fn walk_query(
+        query: &Query,
+        join_count: &mut usize,
+        subquery_count: &mut usize,
+        projection_count: &mut usize,
+    ) {
+        walk_setexpr(&query.body, join_count, subquery_count, projection_count);
+        // ORDER BY expressions
+        for obe in &query.order_by {
+            walk_expr(&obe.expr, join_count, subquery_count, projection_count);
+        }
+        // LIMIT / OFFSET expressions
+        if let Some(limit) = &query.limit {
+            walk_expr(limit, join_count, subquery_count, projection_count);
+        }
+        if let Some(offset) = &query.offset {
+            walk_expr(&offset.value, join_count, subquery_count, projection_count);
+        }
+        if let Some(fetch) = &query.fetch {
+            if let Some(expr) = &fetch.with_ties {
+                walk_expr(expr, join_count, subquery_count, projection_count);
+            }
+        }
+    }
+
+    // Helper: walk expressions to discover embedded subqueries
+    fn walk_expr(
+        expr: &Expr,
+        join_count: &mut usize,
+        subquery_count: &mut usize,
+        projection_count: &mut usize,
+    ) {
+        use sqlparser::ast::Expr::*;
+        match expr {
+            Subquery(q) | ScalarSubquery(q) => {
+                *subquery_count += 1;
+                walk_query(q, join_count, subquery_count, projection_count);
+            }
+            Exists {
+                expr: box Subquery(q),
+                ..
+            } => {
+                *subquery_count += 1;
+                walk_query(q, join_count, subquery_count, projection_count);
+            }
+            InSubquery { subquery, .. } => {
+                *subquery_count += 1;
+                walk_query(subquery, join_count, subquery_count, projection_count);
+            }
+            BinaryOp { left, right, .. }
+            | Like {
+                expr: left,
+                pattern: right,
+                ..
+            }
+            | SimilarTo {
+                expr: left,
+                pattern: right,
+                ..
+            } => {
+                walk_expr(left, join_count, subquery_count, projection_count);
+                walk_expr(right, join_count, subquery_count, projection_count);
+            }
+            UnaryOp { expr, .. }
+            | Cast { expr, .. }
+            | TryCast { expr, .. }
+            | Extract { expr, .. }
+            | Collate { expr, .. }
+            | Nested(expr) => {
+                walk_expr(expr, join_count, subquery_count, projection_count);
+            }
+            Function(f) => {
+                for arg in &f.args {
+                    if let sqlparser::ast::FunctionArg::Unnamed(arg_expr) = arg {
+                        if let sqlparser::ast::FunctionArgExpr::Expr(e) = arg_expr {
+                            walk_expr(e, join_count, subquery_count, projection_count);
+                        }
+                    }
+                }
+            }
+            Case {
+                operand,
+                conditions,
+                results,
+                else_result,
+                ..
+            } => {
+                if let Some(op) = operand {
+                    walk_expr(op, join_count, subquery_count, projection_count);
+                }
+                for c in conditions {
+                    walk_expr(c, join_count, subquery_count, projection_count);
+                }
+                for r in results {
+                    walk_expr(r, join_count, subquery_count, projection_count);
+                }
+                if let Some(er) = else_result {
+                    walk_expr(er, join_count, subquery_count, projection_count);
+                }
+            }
+            Tuple(exprs) | Array(exprs) => {
+                for e in exprs {
+                    walk_expr(e, join_count, subquery_count, projection_count);
+                }
+            }
+            Between {
+                expr, low, high, ..
+            } => {
+                walk_expr(expr, join_count, subquery_count, projection_count);
+                walk_expr(low, join_count, subquery_count, projection_count);
+                walk_expr(high, join_count, subquery_count, projection_count);
+            }
+            InList { expr, list, .. } => {
+                walk_expr(expr, join_count, subquery_count, projection_count);
+                for e in list {
+                    walk_expr(e, join_count, subquery_count, projection_count);
+                }
+            }
+            MapAccess { column, keys } => {
+                walk_expr(column, join_count, subquery_count, projection_count);
+                for k in keys {
+                    walk_expr(k, join_count, subquery_count, projection_count);
+                }
+            }
+            // Many other variants are leaf or literals; ignore safely.
+            _ => {}
+        }
+    }
+
+    // Only enforce for SELECT queries (we already filtered earlier) but stay defensive.
+    if let Statement::Query(query) = statement {
+        let mut joins = 0usize;
+        let mut subs = 0usize;
+        let mut projections = 0usize;
+        walk_query(query, &mut joins, &mut subs, &mut projections);
+
+        if joins > MAX_JOINS {
+            return Err(ValidationError::ComplexityExceeded {
+                metric: "joins".to_string(),
+                limit: MAX_JOINS,
+                actual: joins,
+            });
+        }
+        if subs > MAX_SUBQUERIES {
+            return Err(ValidationError::ComplexityExceeded {
+                metric: "subqueries".to_string(),
+                limit: MAX_SUBQUERIES,
+                actual: subs,
+            });
+        }
+        if projections > MAX_PROJECTIONS {
+            return Err(ValidationError::ComplexityExceeded {
+                metric: "projections".to_string(),
+                limit: MAX_PROJECTIONS,
+                actual: projections,
+            });
+        }
+    }
+
     Ok(())
 }
 ```
