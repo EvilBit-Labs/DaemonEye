@@ -11,6 +11,27 @@ help:
     @just --list
 
 # =============================================================================
+# SETUP AND INITIALIZATION
+# =============================================================================
+
+# Development setup
+setup:
+    cd {{justfile_dir()}}
+    rustup component add rustfmt clippy llvm-tools-preview rust-src
+    cargo install cargo-nextest --locked || echo "cargo-nextest already installed"
+
+# Install development tools (extended setup)
+install-tools:
+    cargo install cargo-llvm-cov --locked || echo "cargo-llvm-cov already installed"
+    cargo install cargo-audit --locked || echo "cargo-audit already installed"
+    cargo install cargo-deny --locked || echo "cargo-deny already installed"
+    cargo install cargo-dist --locked || echo "cargo-dist already installed"
+
+# Install mdBook and plugins for documentation
+docs-install:
+    cargo install mdbook mdbook-admonish mdbook-mermaid mdbook-linkcheck mdbook-toc mdbook-open-on-gh mdbook-tabs mdbook-i18n-helpers
+
+# =============================================================================
 # FORMATTING AND LINTING
 # =============================================================================
 
@@ -39,6 +60,27 @@ lint:
     @just lint-rust
     @just lint-just
 
+# Run clippy with fixes
+fix:
+    cargo clippy --fix --allow-dirty --allow-staged
+
+# Quick development check
+check: pre-commit-run
+    just lint
+    just test-no-docker
+
+pre-commit-run:
+    pre-commit run -a
+
+# Format a single file (for pre-commit hooks)
+format-files +FILES:
+    npx prettier --write --config .prettierrc.json {{FILES}}
+
+megalinter:
+    cd {{justfile_dir()}}
+    npx mega-linter-runner --flavor rust
+
+
 # =============================================================================
 # BUILDING AND TESTING
 # =============================================================================
@@ -48,9 +90,6 @@ build:
 
 build-release:
     @cargo build --workspace --all-features --release
-
-check:
-    @cargo check --workspace
 
 test:
     @cargo test --workspace
@@ -93,36 +132,7 @@ deny:
 # =============================================================================
 
 # Full local CI parity check
-ci-check:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # CI-like environment
-    export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
-    export CI=true
-
-    echo "==> 1/7: Justfile format check"
-    just lint-just
-
-    echo "==> 2/7: Format check (rustfmt)"
-    just fmt-check
-
-    echo "==> 3/7: Lint (clippy, all features)"
-    just lint-rust
-
-    echo "==> 4/7: Lint (clippy, minimal features)"
-    just lint-rust-min
-
-    echo "==> 5/7: Tests (cargo nextest if available, else cargo test)"
-    just test-ci
-
-    echo "==> 6/7: Build release"
-    just build-release
-
-    echo "==> 7/7: Security audits (cargo-audit)"
-    just audit
-
-    echo "==> CI check completed successfully! ✅"
+ci-check: fmt-check lint-rust lint-rust-min test-ci build-release audit
 
 # =============================================================================
 # DEVELOPMENT AND EXECUTION
