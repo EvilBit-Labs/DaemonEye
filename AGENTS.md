@@ -336,6 +336,13 @@ cargo bench  # Run criterion benchmarks
 - Include `lint-just` recipe to validate justfile syntax with `just --fmt --check --unstable`
 - No hardcoded paths outside project directory for portability
 
+### Git Workflow
+
+- Use conventional commits format
+- Create feature branches for new work
+- Ensure all tests pass before merging
+- No commits without explicit permission
+
 ## Code Organization and Architecture
 
 ### Workspace Structure
@@ -694,9 +701,7 @@ const KERNEL_EVENTS_TABLE: TableDefinition<u64, KernelEvent> =
 
 ---
 
-## Testing Strategy
-
-### Three-Tier Testing Architecture
+## Test Organization and Examples
 
 1. **Unit Tests**: Test individual components with mocked dependencies
 2. **Integration Tests**: Use testcontainers for database operations
@@ -838,36 +843,6 @@ pub trait AlertSink: Send + Sync {
 
 ---
 
-## Development Workflow
-
-### Task Runner (just)
-
-Use DRY principles in justfile recipes:
-
-```just
-fmt:
-  @cargo fmt --all
-
-lint:
-  @just fmt-check
-  @cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-test:
-  @cargo test --workspace
-
-build:
-  @cargo build --workspace
-```
-
-### Git Workflow
-
-- Use conventional commits format
-- Create feature branches for new work
-- Ensure all tests pass before merging
-- No commits without explicit permission
-
----
-
 ## Platform Considerations
 
 ### Cross-Platform Compatibility
@@ -892,13 +867,6 @@ build:
 - Optional elevated mode for enhanced metadata collection
 - Automatic privilege dropping after initialization
 - Comprehensive audit logging
-
-### Data Protection
-
-- Optional command-line redaction for privacy
-- Configurable field masking in logs
-- Secure credential storage (OS keychain integration)
-- Database encryption support for sensitive deployments
 
 ---
 
