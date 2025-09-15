@@ -15,33 +15,33 @@ graph TB
     subgraph "Business Tier Architecture"
         SC[Security Center Server]
         GUI[Web GUI Frontend]
-        
+
         subgraph "Agent Node 1"
             PM1[procmond]
             SA1[sentinelagent]
             CLI1[sentinelcli]
         end
-        
+
         subgraph "Agent Node 2"
             PM2[procmond]
             SA2[sentinelagent]
             CLI2[sentinelcli]
         end
-        
+
         subgraph "External Integrations"
             SPLUNK[Splunk HEC]
             ELASTIC[Elasticsearch]
             KAFKA[Kafka]
         end
     end
-    
+
     SA1 -.->|mTLS| SC
     SA2 -.->|mTLS| SC
     GUI -->|HTTPS| SC
     SC -->|HTTP/HTTPS| SPLUNK
     SC -->|HTTP/HTTPS| ELASTIC
     SC -->|TCP| KAFKA
-    
+
     PM1 --> SA1
     PM2 --> SA2
 ```
@@ -59,13 +59,13 @@ graph LR
         SA2[sentinelagent-2]
         SA3[sentinelagent-3]
     end
-    
+
     subgraph "SIEM Infrastructure"
         SPLUNK[Splunk HEC]
         ELASTIC[Elasticsearch]
         KAFKA[Kafka]
     end
-    
+
     SA1 -->|Direct| SPLUNK
     SA2 -->|Direct| ELASTIC
     SA3 -->|Direct| KAFKA
@@ -80,15 +80,15 @@ graph LR
         SA2[sentinelagent-2]
         SA3[sentinelagent-3]
     end
-    
+
     SC[Security Center]
-    
+
     subgraph "SIEM Infrastructure"
         SPLUNK[Splunk HEC]
         ELASTIC[Elasticsearch]
         KAFKA[Kafka]
     end
-    
+
     SA1 -->|mTLS| SC
     SA2 -->|mTLS| SC
     SA3 -->|mTLS| SC
@@ -106,19 +106,19 @@ graph LR
         SA2[sentinelagent-2]
         SA3[sentinelagent-3]
     end
-    
+
     SC[Security Center]
-    
+
     subgraph "SIEM Infrastructure"
         SPLUNK[Splunk HEC]
         ELASTIC[Elasticsearch]
         KAFKA[Kafka]
     end
-    
+
     SA1 -->|Direct| SPLUNK
     SA2 -->|Direct| ELASTIC
     SA3 -->|Direct| KAFKA
-    
+
     SA1 -.->|Also to SC| SC
     SA2 -.->|Also to SC| SC
     SA3 -.->|Also to SC| SC
@@ -166,14 +166,14 @@ Existing sentinelagent instances gain:
 
 ```rust
 pub mod security_center {
-    pub mod agent_registry;     // Agent authentication and management
-    pub mod data_aggregator;    // Central data collection and storage
-    pub mod rule_distributor;   // Rule pack management and distribution
-    pub mod integration_hub;    // External system connectors
-    pub mod web_api;           // REST API for GUI frontend
-    pub mod database;          // PostgreSQL connection pool and migrations
-    pub mod observability;     // OpenTelemetry tracing and Prometheus metrics
-    pub mod health;           // Health checks and system monitoring
+    pub mod agent_registry; // Agent authentication and management
+    pub mod data_aggregator; // Central data collection and storage
+    pub mod database; // PostgreSQL connection pool and migrations
+    pub mod health;
+    pub mod integration_hub; // External system connectors
+    pub mod observability; // OpenTelemetry tracing and Prometheus metrics
+    pub mod rule_distributor; // Rule pack management and distribution
+    pub mod web_api; // REST API for GUI frontend // Health checks and system monitoring
 }
 ```
 
@@ -214,22 +214,22 @@ pub mod security_center {
 ```yaml
 # rule-pack-malware-ttps.yaml
 metadata:
-  name: "Malware TTPs"
-  version: "1.2.0"
-  description: "Common malware tactics, techniques, and procedures"
-  author: "SentinelD Security Team"
-  signature: "ed25519:base64-signature"
+  name: Malware TTPs
+  version: 1.2.0
+  description: Common malware tactics, techniques, and procedures
+  author: SentinelD Security Team
+  signature: ed25519:base64-signature
 
 rules:
-  - id: "process-hollowing-detection"
-    name: "Process Hollowing Detection"
-    description: "Detects potential process hollowing attacks"
+  - id: process-hollowing-detection
+    name: Process Hollowing Detection
+    description: Detects potential process hollowing attacks
     sql: |
-      SELECT * FROM process_snapshots 
+      SELECT * FROM process_snapshots
       WHERE executable_path != mapped_image_path
       AND parent_pid IN (SELECT pid FROM process_snapshots WHERE name = 'explorer.exe')
-    severity: "high"
-    tags: ["process-hollowing", "malware", "defense-evasion"]
+    severity: high
+    tags: [process-hollowing, malware, defense-evasion]
 ```
 
 **Rule Pack Validation:**
@@ -262,14 +262,14 @@ impl SplunkHecConnector {
             index: self.index.as_deref(),
             event: serde_json::to_value(event)?,
         };
-        
+
         let response = self.client
             .post(&self.endpoint)
             .header("Authorization", format!("Splunk {}", self.token.expose_secret()))
             .json(&hec_event)
             .send()
             .await?;
-            
+
         response.error_for_status()?;
         Ok(())
     }
@@ -288,7 +288,7 @@ pub struct ElasticsearchConnector {
 impl ElasticsearchConnector {
     pub async fn bulk_index(&self, events: &[ProcessAlert]) -> Result<(), ConnectorError> {
         let mut body = Vec::new();
-        
+
         for event in events {
             let index_name = self.resolve_index_name(&event.timestamp);
             let action = json!({
@@ -300,13 +300,13 @@ impl ElasticsearchConnector {
             body.push(action);
             body.push(serde_json::to_value(event)?);
         }
-        
+
         let response = self.client
             .bulk(BulkParts::None)
             .body(body)
             .send()
             .await?;
-            
+
         self.handle_bulk_response(response).await
     }
 }
@@ -329,7 +329,7 @@ impl CefFormatter {
             Self::build_extensions(alert)
         )
     }
-    
+
     fn build_extensions(alert: &ProcessAlert) -> String {
         format!(
             "rt={} src={} suser={} sproc={} cs1Label=Command Line cs1={} cs2Label=Parent Process cs2={}",
@@ -360,10 +360,11 @@ impl StixExporter {
             pid: process.pid,
             name: process.name.clone(),
             command_line: process.command_line.clone(),
-            parent_ref: process.parent_pid.map(|ppid| 
-                format!("process--{}", self.get_parent_uuid(ppid))
-            ),
-            binary_ref: Some(format!("file--{}", 
+            parent_ref: process
+                .parent_pid
+                .map(|ppid| format!("process--{}", self.get_parent_uuid(ppid))),
+            binary_ref: Some(format!(
+                "file--{}",
                 self.create_file_object(&process.executable_path).id
             )),
         }
@@ -373,8 +374,7 @@ impl StixExporter {
 
 ### Licensing Architecture
 
-**Dual-License Strategy:**
-The SentinelD project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
+**Dual-License Strategy:** The SentinelD project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
 
 - **Core Components**: Apache 2.0 licensed (procmond, sentinelagent, sentinelcli, sentinel-lib)
 - **Business Tier Features**: Commercial license required (Security Center, GUI, enhanced connectors, curated rules)
@@ -398,16 +398,17 @@ pub struct LicenseValidator {
 impl LicenseValidator {
     pub fn validate_license(&self, license: &str) -> Result<LicenseInfo, LicenseError> {
         let license_data: LicenseData = serde_json::from_str(license)?;
-        
+
         // Verify cryptographic signature
         let signature = ed25519_dalek::Signature::from_bytes(&license_data.signature)?;
-        self.public_key.verify_strict(&license_data.payload, &signature)?;
-        
+        self.public_key
+            .verify_strict(&license_data.payload, &signature)?;
+
         // Validate site restrictions (hostname/domain matching)
         if !self.validate_site_restrictions(&license_data)? {
             return Err(LicenseError::SiteRestriction);
         }
-        
+
         Ok(LicenseInfo {
             tier: license_data.tier,
             site_id: license_data.site_id,
@@ -423,8 +424,7 @@ impl LicenseValidator {
 - **Business Tier**: Separate distribution channel with license keys
 - **Hybrid Builds**: Single binary with runtime feature activation based on license
 
-**Graceful Degradation:**
-When business tier license is invalid or expired:
+**Graceful Degradation:** When business tier license is invalid or expired:
 
 1. Security Center gracefully shuts down non-essential services
 2. Agents continue operating with core functionality
@@ -455,38 +455,38 @@ spec:
       hostPID: true
       hostNetwork: true
       containers:
-      - name: procmond
-        image: sentineld/procmond:latest
-        securityContext:
-          privileged: true
-          capabilities:
-            add: ["SYS_PTRACE"]
-        volumeMounts:
-        - name: proc
-          mountPath: /host/proc
-          readOnly: true
-        - name: data
-          mountPath: /var/lib/sentineld
-      - name: sentinelagent
-        image: sentineld/sentinelagent:latest
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 1000
-        volumeMounts:
-        - name: data
-          mountPath: /var/lib/sentineld
-        - name: config
-          mountPath: /etc/sentineld
+        - name: procmond
+          image: sentineld/procmond:latest
+          securityContext:
+            privileged: true
+            capabilities:
+              add: [SYS_PTRACE]
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/sentineld
+        - name: sentinelagent
+          image: sentineld/sentinelagent:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/sentineld
+            - name: config
+              mountPath: /etc/sentineld
       volumes:
-      - name: proc
-        hostPath:
-          path: /proc
-      - name: data
-        hostPath:
-          path: /var/lib/sentineld
-      - name: config
-        configMap:
-          name: sentineld-config
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: data
+          hostPath:
+            path: /var/lib/sentineld
+        - name: config
+          configMap:
+            name: sentineld-config
 ```
 
 ### Web GUI Frontend
@@ -600,87 +600,79 @@ CREATE INDEX idx_agent_metrics_agent_id ON agent_metrics(agent_id);
 # Business tier configuration extensions
 business_tier:
   license:
-    key: "business-license-key"
-    validation_endpoint: null  # Offline validation only
-  
+    key: business-license-key
+    validation_endpoint:       # Offline validation only
   security_center:
     enabled: true
-    bind_address: "0.0.0.0:8443"
+    bind_address: 0.0.0.0:8443
     tls:
-      cert_path: "/etc/sentineld/tls/server.crt"
-      key_path: "/etc/sentineld/tls/server.key"
-      ca_path: "/etc/sentineld/tls/ca.crt"
-    
+      cert_path: /etc/sentineld/tls/server.crt
+      key_path: /etc/sentineld/tls/server.key
+      ca_path: /etc/sentineld/tls/ca.crt
     database:
-      url: "postgresql://sentineld:${DB_PASSWORD}@localhost:5432/sentineld_security_center"
+      url: 
+        postgresql://sentineld:${DB_PASSWORD}@localhost:5432/sentineld_security_center
       max_connections: 20
       min_connections: 5
-      connection_timeout: "30s"
-      idle_timeout: "10m"
-      max_lifetime: "1h"
-      
+      connection_timeout: 30s
+      idle_timeout: 10m
+      max_lifetime: 1h
   rule_packs:
     auto_update: true
     sources:
-      - name: "official"
-        url: "https://rules.sentineld.com/packs/"
-        signature_key: "ed25519:public-key"
-        
+      - name: official
+        url: https://rules.sentineld.com/packs/
+        signature_key: ed25519:public-key
   output_connectors:
     # Routing strategy: "direct", "proxy", or "hybrid"
-    routing_strategy: "hybrid"
-    
+    routing_strategy: hybrid
+
     # When routing_strategy is "proxy", agents send to Security Center only
     # When "direct", agents send directly to configured sinks
     # When "hybrid", agents send to both Security Center AND direct sinks
-    
     splunk_hec:
       enabled: false
-      endpoint: "https://splunk.example.com:8088/services/collector"
-      token: "${SPLUNK_HEC_TOKEN}"
-      index: "sentineld"
-      source_type: "sentineld:alert"
+      endpoint: https://splunk.example.com:8088/services/collector
+      token: ${SPLUNK_HEC_TOKEN}
+      index: sentineld
+      source_type: sentineld:alert
       # Available on both agents and Security Center
-      
     elasticsearch:
       enabled: false
-      hosts: ["https://elastic.example.com:9200"]
-      username: "${ELASTIC_USERNAME}"
-      password: "${ELASTIC_PASSWORD}"
-      index_pattern: "sentineld-{YYYY.MM.DD}"
+      hosts: [https://elastic.example.com:9200]
+      username: ${ELASTIC_USERNAME}
+      password: ${ELASTIC_PASSWORD}
+      index_pattern: sentineld-{YYYY.MM.DD}
       # Available on both agents and Security Center
-      
     kafka:
       enabled: false
-      brokers: ["kafka.example.com:9092"]
-      topic: "sentineld.alerts"
-      security_protocol: "SASL_SSL"
-      sasl_mechanism: "PLAIN"
+      brokers: [kafka.example.com:9092]
+      topic: sentineld.alerts
+      security_protocol: SASL_SSL
+      sasl_mechanism: PLAIN
       # Available on both agents and Security Center
-      
   gui:
     enabled: false
-    bind_address: "0.0.0.0:8080"
-    session_timeout: "24h"
+    bind_address: 0.0.0.0:8080
+    session_timeout: 24h
     max_sessions: 100
-    
+
   observability:
     tracing:
       enabled: true
-      endpoint: "http://jaeger:14268/api/traces"
-      service_name: "sentineld-security-center"
+      endpoint: http://jaeger:14268/api/traces
+      service_name: sentineld-security-center
       sample_rate: 0.1
-      
+
     metrics:
       enabled: true
-      bind_address: "0.0.0.0:9090"
-      path: "/metrics"
-      
+      bind_address: 0.0.0.0:9090
+      path: /metrics
     health_checks:
       enabled: true
-      bind_address: "0.0.0.0:8081"
-      liveness_path: "/health/live"
-      readiness_path: "/health/ready"
+      bind_address: 0.0.0.0:8081
+      liveness_path: /health/live
+      readiness_path: /health/ready
 ```
 
 ## Error Handling
@@ -746,10 +738,10 @@ impl RetryPolicy {
     {
         let mut attempt = 0;
         let mut delay = self.base_delay;
-        
+
         loop {
             attempt += 1;
-            
+
             match f().await {
                 Ok(result) => return Ok(result),
                 Err(error) if attempt >= self.max_attempts => return Err(error),
@@ -761,7 +753,7 @@ impl RetryPolicy {
                         error = ?error,
                         "Retry attempt failed, backing off"
                     );
-                    
+
                     tokio::time::sleep(delay).await;
                     delay = std::cmp::min(
                         Duration::from_millis(
@@ -801,30 +793,30 @@ impl RetryPolicy {
 async fn test_agent_registration_flow() {
     let security_center = test_security_center().await;
     let agent_cert = generate_test_certificate();
-    
+
     // Test agent registration
     let registration_result = security_center
         .register_agent(agent_cert.clone())
         .await;
-    
+
     assert!(registration_result.is_ok());
-    
+
     // Test subsequent authentication
     let auth_result = security_center
         .authenticate_agent(&agent_cert.fingerprint())
         .await;
-    
+
     assert!(auth_result.is_ok());
 }
 
 #[tokio::test]
 async fn test_rule_pack_distribution() {
     let (security_center, mut agent) = test_setup().await;
-    
+
     // Deploy rule pack to Security Center
     let rule_pack = create_test_rule_pack();
     security_center.deploy_rule_pack(rule_pack.clone()).await.unwrap();
-    
+
     // Verify agent receives rule pack
     let received_rules = agent.wait_for_rule_update().await;
     assert_eq!(received_rules.len(), rule_pack.rules.len());
@@ -837,7 +829,7 @@ async fn test_rule_pack_distribution() {
 #[tokio::test]
 async fn test_splunk_hec_connector_with_retry() {
     let mock_server = MockServer::start().await;
-    
+
     // Configure mock to fail first two requests, succeed on third
     Mock::given(method("POST"))
         .and(path("/services/collector"))
@@ -845,22 +837,22 @@ async fn test_splunk_hec_connector_with_retry() {
         .up_to_n_times(2)
         .mount(&mock_server)
         .await;
-        
+
     Mock::given(method("POST"))
         .and(path("/services/collector"))
         .respond_with(ResponseTemplate::new(200))
         .mount(&mock_server)
         .await;
-    
+
     let connector = SplunkHecConnector::new(
         mock_server.uri().parse().unwrap(),
         "test-token".into(),
         RetryPolicy::default()
     );
-    
+
     let alert = create_test_alert();
     let result = connector.send_event(&alert).await;
-    
+
     assert!(result.is_ok());
 }
 ```
@@ -871,7 +863,7 @@ async fn test_splunk_hec_connector_with_retry() {
 #[tokio::test]
 async fn test_security_center_load_handling() {
     let security_center = test_security_center().await;
-    
+
     // Simulate 100 concurrent agents sending alerts
     let tasks: Vec<_> = (0..100)
         .map(|i| {
@@ -885,12 +877,12 @@ async fn test_security_center_load_handling() {
             })
         })
         .collect();
-    
+
     // Wait for all tasks to complete
     for task in tasks {
         task.await.unwrap();
     }
-    
+
     // Verify all alerts were processed
     let total_alerts = security_center.get_alert_count().await;
     assert_eq!(total_alerts, 100_000);
@@ -902,7 +894,7 @@ async fn test_security_center_load_handling() {
 **Prometheus Metrics:**
 
 ```rust
-use prometheus::{Counter, Histogram, Gauge, Registry};
+use prometheus::{Counter, Gauge, Histogram, Registry};
 
 pub struct SecurityCenterMetrics {
     pub agents_connected: Gauge,
@@ -919,18 +911,24 @@ impl SecurityCenterMetrics {
         let metrics = Self {
             agents_connected: Gauge::new(
                 "sentineld_agents_connected",
-                "Number of currently connected agents"
-            ).unwrap(),
+                "Number of currently connected agents",
+            )
+            .unwrap(),
             alerts_received_total: Counter::new(
                 "sentineld_alerts_received_total",
-                "Total number of alerts received from agents"
-            ).unwrap(),
+                "Total number of alerts received from agents",
+            )
+            .unwrap(),
             // ... other metrics
         };
-        
-        registry.register(Box::new(metrics.agents_connected.clone())).unwrap();
-        registry.register(Box::new(metrics.alerts_received_total.clone())).unwrap();
-        
+
+        registry
+            .register(Box::new(metrics.agents_connected.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(metrics.alerts_received_total.clone()))
+            .unwrap();
+
         metrics
     }
 }
@@ -947,17 +945,17 @@ pub async fn process_alert(&self, alert: Alert) -> Result<(), ProcessingError> {
     let span = Span::current();
     span.set_attribute("alert.severity", alert.severity.to_string());
     span.set_attribute("alert.hostname", alert.hostname.clone());
-    
+
     info!("Processing alert from agent");
-    
+
     // Store in database with tracing
     self.store_alert(&alert).await?;
-    
+
     // Forward to connectors with tracing
     self.forward_to_connectors(&alert).await?;
-    
+
     self.metrics.alerts_processed_total.inc();
-    
+
     Ok(())
 }
 ```
@@ -992,11 +990,11 @@ pub async fn readiness_check(&self) -> HealthStatus {
 async fn test_invalid_certificate_rejection() {
     let security_center = test_security_center().await;
     let invalid_cert = generate_invalid_certificate();
-    
+
     let result = security_center
         .register_agent(invalid_cert)
         .await;
-    
+
     assert!(matches!(result, Err(SecurityCenterError::InvalidCertificate(_))));
 }
 
@@ -1004,22 +1002,21 @@ async fn test_invalid_certificate_rejection() {
 async fn test_rule_pack_signature_validation() {
     let security_center = test_security_center().await;
     let mut rule_pack = create_test_rule_pack();
-    
+
     // Tamper with rule pack content
     rule_pack.content = "malicious content".to_string();
-    
+
     let result = security_center
         .deploy_rule_pack(rule_pack)
         .await;
-    
+
     assert!(matches!(result, Err(SecurityCenterError::InvalidSignature)));
 }
 ```
 
 ## Licensing Architecture
 
-**Dual-License Strategy:**
-The SentinelD project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
+**Dual-License Strategy:** The SentinelD project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
 
 - **Core Components**: Apache 2.0 licensed (procmond, sentinelagent, sentinelcli, sentinel-lib)
 - **Business Tier Features**: Commercial license required (Security Center, GUI, enhanced connectors, curated rules)
@@ -1042,16 +1039,17 @@ pub struct LicenseValidator {
 impl LicenseValidator {
     pub fn validate_license(&self, license: &str) -> Result<LicenseInfo, LicenseError> {
         let license_data: LicenseData = serde_json::from_str(license)?;
-        
+
         // Verify cryptographic signature
         let signature = ed25519_dalek::Signature::from_bytes(&license_data.signature)?;
-        self.public_key.verify_strict(&license_data.payload, &signature)?;
-        
+        self.public_key
+            .verify_strict(&license_data.payload, &signature)?;
+
         // Validate site restrictions (hostname/domain matching)
         if !self.validate_site_restrictions(&license_data)? {
             return Err(LicenseError::SiteRestriction);
         }
-        
+
         Ok(LicenseInfo {
             tier: license_data.tier,
             site_id: license_data.site_id,
@@ -1070,7 +1068,7 @@ impl LicenseValidator {
   "issued_at": "2024-01-15T00:00:00Z",
   "features": [
     "security_center",
-    "enhanced_connectors", 
+    "enhanced_connectors",
     "curated_rules",
     "gui_frontend",
     "container_deployment"
@@ -1085,8 +1083,7 @@ impl LicenseValidator {
 - **Business Tier**: Separate distribution channel with license keys
 - **Hybrid Builds**: Single binary with runtime feature activation based on license
 
-**Graceful Degradation:**
-When business tier license is invalid or missing:
+**Graceful Degradation:** When business tier license is invalid or missing:
 
 1. Security Center features are disabled (compile-time gated out)
 2. Agents continue operating with core Apache 2.0 functionality
