@@ -1,5 +1,5 @@
 [workspace]
-members = ["cargo:sentinel"]
+members = ["cargo:."]
 
 # Config for 'dist'
 [dist]
