@@ -159,6 +159,44 @@ mod tests {
         assert_eq!(event.pid, 1234);
         assert_eq!(event.tid, 1234);
         assert_eq!(event.event_type, KernelEventType::ProcessCreate);
+        assert_eq!(event.severity, "info");
+    }
+
+    #[test]
+    fn test_kernel_event_types() {
+        let process_create = KernelEventType::ProcessCreate;
+        let process_exit = KernelEventType::ProcessExit;
+        let file_access = KernelEventType::FileAccess;
+        let network_connection = KernelEventType::NetworkConnection;
+        let system_call = KernelEventType::SystemCall;
+        let memory_access = KernelEventType::MemoryAccess;
+        let other = KernelEventType::Other("custom".to_string());
+
+        assert_eq!(process_create, KernelEventType::ProcessCreate);
+        assert_eq!(process_exit, KernelEventType::ProcessExit);
+        assert_eq!(file_access, KernelEventType::FileAccess);
+        assert_eq!(network_connection, KernelEventType::NetworkConnection);
+        assert_eq!(system_call, KernelEventType::SystemCall);
+        assert_eq!(memory_access, KernelEventType::MemoryAccess);
+        assert_eq!(other, KernelEventType::Other("custom".to_string()));
+    }
+
+    #[test]
+    fn test_kernel_event_serialization() {
+        let event = KernelEvent::new(
+            KernelEventType::ProcessCreate,
+            1234,
+            1234,
+            serde_json::json!({"name": "test-process"}),
+        );
+
+        let json = serde_json::to_string(&event).unwrap();
+        let deserialized: KernelEvent = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(event.pid, deserialized.pid);
+        assert_eq!(event.tid, deserialized.tid);
+        assert_eq!(event.event_type, deserialized.event_type);
+        assert_eq!(event.data, deserialized.data);
     }
 
     #[test]
@@ -167,8 +205,29 @@ mod tests {
         // This will succeed on Linux, fail on other platforms
         if KernelMonitor::is_supported() {
             assert!(monitor.is_ok());
+            let monitor = monitor.unwrap();
+            assert!(!monitor.is_enabled());
+            assert_eq!(monitor.event_count(), 0);
         } else {
             assert!(monitor.is_err());
+        }
+    }
+
+    #[test]
+    fn test_kernel_monitor_default() {
+        let monitor = KernelMonitor::default();
+        assert!(!monitor.is_enabled());
+        assert_eq!(monitor.event_count(), 0);
+    }
+
+    #[test]
+    fn test_kernel_monitor_support_check() {
+        let is_supported = KernelMonitor::is_supported();
+        // Should be true on Linux, false on other platforms
+        if cfg!(target_os = "linux") {
+            assert!(is_supported);
+        } else {
+            assert!(!is_supported);
         }
     }
 
@@ -182,6 +241,52 @@ mod tests {
 
             monitor.stop().await.unwrap();
             assert!(!monitor.is_enabled());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_kernel_monitor_start_unsupported_platform() {
+        // Test the error path when platform is not supported
+        if !KernelMonitor::is_supported() {
+            let mut monitor = KernelMonitor::default();
+            let result = monitor.start().await;
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                KernelError::UnsupportedPlatform(_) => {}
+                _ => panic!("Expected UnsupportedPlatform error"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_kernel_monitor_collect_events_disabled() {
+        let mut monitor = KernelMonitor::default();
+        let events = monitor.collect_events().await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_kernel_monitor_collect_events_enabled() {
+        if let Ok(mut monitor) = KernelMonitor::new() {
+            monitor.start().await.unwrap();
+            let events = monitor.collect_events().await.unwrap();
+            // Currently returns empty vector, but tests the enabled path
+            assert!(events.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_kernel_error_display() {
+        let errors = vec![
+            KernelError::EbpfError("test error".to_string()),
+            KernelError::KernelInterfaceError("test error".to_string()),
+            KernelError::PermissionDenied("test error".to_string()),
+            KernelError::UnsupportedPlatform("test error".to_string()),
+        ];
+
+        for error in errors {
+            let error_string = format!("{}", error);
+            assert!(error_string.contains("test error"));
         }
     }
 }

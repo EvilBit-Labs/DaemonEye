@@ -49,7 +49,7 @@ impl DetectionEngine {
         rule.validate_sql()
             .map_err(|e| DetectionEngineError::SqlValidationError(e.to_string()))?;
 
-        self.rules.insert(rule.id.value().to_string(), rule);
+        self.rules.insert(rule.id.raw().to_string(), rule);
         Ok(())
     }
 
@@ -93,18 +93,17 @@ impl DetectionEngine {
         let mut alerts = Vec::new();
 
         // Simple pattern matching based on rule category
-        match rule.category.as_str() {
+        match rule.metadata.category.as_deref().unwrap_or("unknown") {
             "suspicious_process" => {
                 for process in processes {
                     if process.name.contains("suspicious") {
                         let alert = Alert::new(
-                            format!("alert-{}-{}", rule.id, process.pid),
-                            rule.severity.clone(),
+                            rule.severity,
                             format!("Suspicious process detected: {}", process.name),
                             format!("Process {} matches suspicious pattern", process.name),
-                            rule.category.clone(),
-                        )
-                        .with_process(process.clone());
+                            rule.id.raw().to_string(),
+                            process.clone(),
+                        );
 
                         alerts.push(alert);
                     }
@@ -115,13 +114,12 @@ impl DetectionEngine {
                     if let Some(cpu_usage) = process.cpu_usage {
                         if cpu_usage > 80.0 {
                             let alert = Alert::new(
-                                format!("alert-{}-{}", rule.id, process.pid),
-                                rule.severity.clone(),
+                                rule.severity,
                                 format!("High CPU usage detected: {}%", cpu_usage),
                                 format!("Process {} is using {}% CPU", process.name, cpu_usage),
-                                rule.category.clone(),
-                            )
-                            .with_process(process.clone());
+                                rule.id.raw().to_string(),
+                                process.clone(),
+                            );
 
                             alerts.push(alert);
                         }
@@ -187,6 +185,12 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_detection_engine_default() {
+        let engine = DetectionEngine::default();
+        assert_eq!(engine.get_rules().len(), 0);
+    }
+
+    #[tokio::test]
     async fn test_rule_loading() {
         let mut engine = DetectionEngine::new();
         let rule = DetectionRule::new(
@@ -200,6 +204,105 @@ mod tests {
 
         assert!(engine.load_rule(rule).is_ok());
         assert_eq!(engine.get_rules().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_rule_loading_duplicate_id() {
+        let mut engine = DetectionEngine::new();
+        let rule1 = DetectionRule::new(
+            "rule-1".to_string(),
+            "Test Rule 1".to_string(),
+            "Test detection rule 1".to_string(),
+            "SELECT * FROM processes WHERE name = 'test1'".to_string(),
+            "test1".to_string(),
+            AlertSeverity::Medium,
+        );
+        let rule2 = DetectionRule::new(
+            "rule-1".to_string(),
+            "Test Rule 2".to_string(),
+            "Test detection rule 2".to_string(),
+            "SELECT * FROM processes WHERE name = 'test2'".to_string(),
+            "test2".to_string(),
+            AlertSeverity::High,
+        );
+
+        assert!(engine.load_rule(rule1).is_ok());
+        assert!(engine.load_rule(rule2).is_ok()); // This will overwrite the first rule
+        assert_eq!(engine.get_rules().len(), 1);
+
+        // Verify the second rule overwrote the first
+        let loaded_rule = engine.get_rule("rule-1").unwrap();
+        assert_eq!(loaded_rule.name, "Test Rule 2");
+        assert_eq!(loaded_rule.severity, AlertSeverity::High);
+    }
+
+    #[tokio::test]
+    async fn test_rule_loading_invalid_sql() {
+        let mut engine = DetectionEngine::new();
+        let rule = DetectionRule::new(
+            "rule-1".to_string(),
+            "Test Rule".to_string(),
+            "Test detection rule".to_string(),
+            "INVALID SQL QUERY".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        assert!(engine.load_rule(rule).is_err());
+        assert_eq!(engine.get_rules().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_rule_removal() {
+        let mut engine = DetectionEngine::new();
+        let rule = DetectionRule::new(
+            "rule-1".to_string(),
+            "Test Rule".to_string(),
+            "Test detection rule".to_string(),
+            "SELECT * FROM processes WHERE name = 'test'".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        engine.load_rule(rule).unwrap();
+        assert_eq!(engine.get_rules().len(), 1);
+
+        assert!(engine.remove_rule("rule-1").is_some());
+        assert_eq!(engine.get_rules().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_rule_removal_nonexistent() {
+        let mut engine = DetectionEngine::new();
+        assert!(engine.remove_rule("nonexistent-rule").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_rule_enable_disable() {
+        let mut engine = DetectionEngine::new();
+        let rule = DetectionRule::new(
+            "rule-1".to_string(),
+            "Test Rule".to_string(),
+            "Test detection rule".to_string(),
+            "SELECT * FROM processes WHERE name = 'test'".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        engine.load_rule(rule).unwrap();
+        assert!(engine.get_rules()[0].enabled);
+
+        engine.set_rule_enabled("rule-1", false).unwrap();
+        assert!(!engine.get_rules()[0].enabled);
+
+        engine.set_rule_enabled("rule-1", true).unwrap();
+        assert!(engine.get_rules()[0].enabled);
+    }
+
+    #[tokio::test]
+    async fn test_rule_enable_disable_nonexistent() {
+        let mut engine = DetectionEngine::new();
+        assert!(engine.set_rule_enabled("nonexistent-rule", false).is_err());
     }
 
     #[tokio::test]
@@ -226,5 +329,132 @@ mod tests {
             alerts[0].title,
             "Suspicious process detected: suspicious-process"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rule_execution_no_matches() {
+        let mut engine = DetectionEngine::new();
+        let rule = DetectionRule::new(
+            "rule-1".to_string(),
+            "Suspicious Process Rule".to_string(),
+            "Detects suspicious processes".to_string(),
+            "SELECT * FROM processes WHERE name LIKE '%suspicious%'".to_string(),
+            "suspicious_process".to_string(),
+            AlertSeverity::High,
+        );
+
+        engine.load_rule(rule).unwrap();
+
+        let process = ProcessRecord::new(1234, "normal-process".to_string());
+        let processes = vec![process];
+
+        let alerts = engine.execute_rules(&processes).await.unwrap();
+        assert_eq!(alerts.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_rule_execution_disabled_rule() {
+        let mut engine = DetectionEngine::new();
+        let rule = DetectionRule::new(
+            "rule-1".to_string(),
+            "Suspicious Process Rule".to_string(),
+            "Detects suspicious processes".to_string(),
+            "SELECT * FROM processes WHERE name LIKE '%suspicious%'".to_string(),
+            "suspicious_process".to_string(),
+            AlertSeverity::High,
+        );
+
+        engine.load_rule(rule).unwrap();
+        engine.set_rule_enabled("rule-1", false).unwrap();
+
+        let mut process = ProcessRecord::new(1234, "suspicious-process".to_string());
+        process.name = "suspicious-process".to_string();
+        let processes = vec![process];
+
+        let alerts = engine.execute_rules(&processes).await.unwrap();
+        assert_eq!(alerts.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_rule_execution_multiple_rules() {
+        let mut engine = DetectionEngine::new();
+
+        let rule1 = DetectionRule::new(
+            "rule-1".to_string(),
+            "Suspicious Process Rule".to_string(),
+            "Detects suspicious processes".to_string(),
+            "SELECT * FROM processes WHERE name LIKE '%suspicious%'".to_string(),
+            "suspicious_process".to_string(),
+            AlertSeverity::High,
+        );
+
+        let rule2 = DetectionRule::new(
+            "rule-2".to_string(),
+            "High CPU Rule".to_string(),
+            "Detects high CPU processes".to_string(),
+            "SELECT * FROM processes WHERE cpu_usage > 80".to_string(),
+            "high_cpu".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        engine.load_rule(rule1).unwrap();
+        engine.load_rule(rule2).unwrap();
+
+        let mut process1 = ProcessRecord::new(1234, "suspicious-process".to_string());
+        process1.name = "suspicious-process".to_string();
+        process1.cpu_usage = Some(90.0);
+
+        let mut process2 = ProcessRecord::new(5678, "normal-process".to_string());
+        process2.name = "normal-process".to_string();
+        process2.cpu_usage = Some(50.0);
+
+        let processes = vec![process1, process2];
+
+        let alerts = engine.execute_rules(&processes).await.unwrap();
+        assert_eq!(alerts.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_rule_execution_empty_processes() {
+        let mut engine = DetectionEngine::new();
+        let rule = DetectionRule::new(
+            "rule-1".to_string(),
+            "Test Rule".to_string(),
+            "Test detection rule".to_string(),
+            "SELECT * FROM processes WHERE name = 'test'".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        engine.load_rule(rule).unwrap();
+
+        let processes = vec![];
+        let alerts = engine.execute_rules(&processes).await.unwrap();
+        assert_eq!(alerts.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_rule_execution_no_rules() {
+        let engine = DetectionEngine::new();
+        let process = ProcessRecord::new(1234, "test-process".to_string());
+        let processes = vec![process];
+
+        let alerts = engine.execute_rules(&processes).await.unwrap();
+        assert_eq!(alerts.len(), 0);
+    }
+
+    #[test]
+    fn test_detection_engine_error_display() {
+        let errors = vec![
+            DetectionEngineError::ExecutionError("test error".to_string()),
+            DetectionEngineError::SqlValidationError("test error".to_string()),
+            DetectionEngineError::Timeout,
+            DetectionEngineError::ResourceLimitExceeded("test error".to_string()),
+        ];
+
+        for error in errors {
+            let error_string = format!("{}", error);
+            assert!(!error_string.is_empty());
+        }
     }
 }

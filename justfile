@@ -130,8 +130,16 @@ deny:
 # CI AND QUALITY ASSURANCE
 # =============================================================================
 
+# Generate coverage report
+coverage:
+    cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+# Check coverage thresholds
+coverage-check:
+    cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info --fail-under-lines 85
+
 # Full local CI parity check
-ci-check: fmt-check lint-rust lint-rust-min test-ci build-release audit
+ci-check: fmt-check lint-rust lint-rust-min test-ci build-release audit coverage-check
 
 # =============================================================================
 # DEVELOPMENT AND EXECUTION

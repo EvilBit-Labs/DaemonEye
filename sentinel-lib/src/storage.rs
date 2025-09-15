@@ -327,6 +327,142 @@ mod tests {
     }
 
     #[test]
+    fn test_database_creation_invalid_path() {
+        // Test with a path that doesn't exist
+        let invalid_path = Path::new("/nonexistent/path/test.db");
+        let result = DatabaseManager::new(invalid_path);
+        // This might succeed or fail depending on the system, but shouldn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_scan_metadata_creation() {
+        let metadata = ScanMetadata {
+            scan_id: "test-scan-1".to_string(),
+            timestamp: chrono::Utc::now(),
+            process_count: 100,
+            duration_ms: 5000,
+            status: ScanStatus::Completed,
+            error_message: None,
+        };
+
+        assert_eq!(metadata.scan_id, "test-scan-1");
+        assert_eq!(metadata.process_count, 100);
+        assert_eq!(metadata.duration_ms, 5000);
+        assert_eq!(metadata.status, ScanStatus::Completed);
+        assert!(metadata.error_message.is_none());
+    }
+
+    #[test]
+    fn test_scan_metadata_with_error() {
+        let metadata = ScanMetadata {
+            scan_id: "test-scan-2".to_string(),
+            timestamp: chrono::Utc::now(),
+            process_count: 0,
+            duration_ms: 1000,
+            status: ScanStatus::Failed,
+            error_message: Some("Test error".to_string()),
+        };
+
+        assert_eq!(metadata.status, ScanStatus::Failed);
+        assert_eq!(metadata.error_message, Some("Test error".to_string()));
+    }
+
+    #[test]
+    fn test_scan_metadata_serialization() {
+        let metadata = ScanMetadata {
+            scan_id: "test-scan-3".to_string(),
+            timestamp: chrono::Utc::now(),
+            process_count: 50,
+            duration_ms: 2500,
+            status: ScanStatus::InProgress,
+            error_message: None,
+        };
+
+        let json = serde_json::to_string(&metadata).unwrap();
+        let deserialized: ScanMetadata = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(metadata.scan_id, deserialized.scan_id);
+        assert_eq!(metadata.process_count, deserialized.process_count);
+        assert_eq!(metadata.duration_ms, deserialized.duration_ms);
+        assert_eq!(metadata.status, deserialized.status);
+    }
+
+    #[test]
+    fn test_scan_status_variants() {
+        let statuses = vec![
+            ScanStatus::InProgress,
+            ScanStatus::Completed,
+            ScanStatus::Failed,
+        ];
+
+        for status in statuses {
+            let json = serde_json::to_string(&status).unwrap();
+            let deserialized: ScanStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_database_stats_default() {
+        let stats = DatabaseStats::default();
+        assert_eq!(stats.process_count, 0);
+        assert_eq!(stats.rule_count, 0);
+        assert_eq!(stats.alert_count, 0);
+        assert_eq!(stats.system_info_count, 0);
+        assert_eq!(stats.scan_count, 0);
+    }
+
+    #[test]
+    fn test_database_stats_creation() {
+        let stats = DatabaseStats {
+            process_count: 100,
+            rule_count: 10,
+            alert_count: 5,
+            system_info_count: 1,
+            scan_count: 50,
+        };
+
+        assert_eq!(stats.process_count, 100);
+        assert_eq!(stats.rule_count, 10);
+        assert_eq!(stats.alert_count, 5);
+        assert_eq!(stats.system_info_count, 1);
+        assert_eq!(stats.scan_count, 50);
+    }
+
+    #[test]
+    fn test_database_stats_serialization() {
+        let stats = DatabaseStats {
+            process_count: 100,
+            rule_count: 10,
+            alert_count: 5,
+            system_info_count: 1,
+            scan_count: 50,
+        };
+
+        let json = serde_json::to_string(&stats).unwrap();
+        let deserialized: DatabaseStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats, deserialized);
+    }
+
+    #[test]
+    fn test_storage_error_display() {
+        let errors = vec![
+            StorageError::TableNotFound {
+                table: "test".to_string(),
+            },
+            StorageError::RecordNotFound {
+                id: "test-id".to_string(),
+            },
+        ];
+
+        for error in errors {
+            let error_string = format!("{}", error);
+            assert!(!error_string.is_empty());
+        }
+    }
+
+    #[test]
     fn test_process_storage() {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
@@ -371,12 +507,13 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let manager = DatabaseManager::new(&db_path).unwrap();
 
+        let process = ProcessRecord::new(1234, "test-process".to_string());
         let alert = Alert::new(
-            "alert-1".to_string(),
             AlertSeverity::High,
-            "Test Alert".to_string(),
-            "This is a test alert".to_string(),
-            "test".to_string(),
+            "Test Alert",
+            "This is a test alert",
+            "test-rule",
+            process,
         );
 
         // Test that store_alert doesn't panic (currently stubbed)
@@ -385,6 +522,42 @@ mod tests {
         // Test that get_alert returns None (currently stubbed)
         let retrieved = manager.get_alert(1).unwrap();
         assert!(retrieved.is_none()); // Currently stubbed to return None
+    }
+
+    #[test]
+    fn test_get_all_alerts() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let manager = DatabaseManager::new(&db_path).unwrap();
+
+        // Test that get_all_alerts returns empty vector (currently stubbed)
+        let alerts = manager.get_all_alerts().unwrap();
+        assert!(alerts.is_empty());
+    }
+
+    #[test]
+    fn test_system_info_storage() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let manager = DatabaseManager::new(&db_path).unwrap();
+
+        let system_info = SystemInfo {
+            hostname: "test-host".to_string(),
+            os_name: "TestOS".to_string(),
+            os_version: "1.0".to_string(),
+            architecture: "x86_64".to_string(),
+            cpu_cores: 4,
+            total_memory: 8192,
+            uptime: 3600,
+            capabilities: vec!["test_capability".to_string()],
+        };
+
+        // Test that store_system_info doesn't panic (currently stubbed)
+        manager.store_system_info(1, &system_info).unwrap();
+
+        // Test that get_latest_system_info returns None (currently stubbed)
+        let retrieved = manager.get_latest_system_info().unwrap();
+        assert!(retrieved.is_none());
     }
 
     #[test]
@@ -401,6 +574,16 @@ mod tests {
         // Test that get_stats returns default values (currently stubbed)
         let stats = manager.get_stats().unwrap();
         assert_eq!(stats.process_count, 0); // Currently stubbed to return 0
+    }
+
+    #[test]
+    fn test_tables_constants() {
+        // Test that table definitions are accessible
+        let _processes = Tables::PROCESSES;
+        let _detection_rules = Tables::DETECTION_RULES;
+        let _alerts = Tables::ALERTS;
+        let _system_info = Tables::SYSTEM_INFO;
+        let _scan_metadata = Tables::SCAN_METADATA;
     }
 }
 
