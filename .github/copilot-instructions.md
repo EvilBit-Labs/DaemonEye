@@ -166,12 +166,14 @@ just ci                  # Run lint/test/build for all components (CI gate)
 ### Privilege Separation with OS Enforcement
 
 **Concrete Access Definitions:**
+
 - **Write-only audit ledger**: Process can append (`O_WRONLY|O_APPEND`) but not read previous entries
 - **Read-only CLI**: No write syscalls to modify store; only read operations (`O_RDONLY`)
 
 **OS Enforcement Mechanisms:**
 
 **procmond (Privileged Collector):**
+
 - Dedicated Unix user/group: `sentineld-proc:sentineld-proc`
 - Audit ledger: `open(path, O_WRONLY|O_APPEND|O_CREAT, 0600)` with owner-only write
 - Drop capabilities: `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE` after init, retain minimal set
@@ -179,6 +181,7 @@ just ci                  # Run lint/test/build for all components (CI gate)
 - Seccomp filter: Whitelist only required syscalls (write, openat, close)
 
 **sentinelagent (Detection Engine):**
+
 - Dedicated Unix user/group: `sentineld-agent:sentineld-agent`
 - Event store: Standard R/W access with `open(path, O_RDWR)`
 - Mount options: `/var/lib/sentineld` with `nodev,nosuid,noexec`
@@ -186,6 +189,7 @@ just ci                  # Run lint/test/build for all components (CI gate)
 - Filesystem ACLs: Read access to audit ledger, no write permissions
 
 **sentinelcli (Query Interface):**
+
 - Dedicated Unix user/group: `sentineld-cli:sentineld-cli`
 - Database access: `open(path, O_RDONLY)` only
 - Seccomp filter: Block write, unlink, rename syscalls on database files
