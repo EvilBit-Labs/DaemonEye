@@ -1,0 +1,138 @@
+---
+globs: **/Dockerfile,**/Dockerfile.*,**/*.dockerfile
+description: Dockerfile best practices and standards for creating optimized, secure container images
+---
+
+# Dockerfile Standards
+
+## Core Principles
+
+### Multi-Stage Builds (Required)
+
+- **Always use multi-stage builds** for compiled languages and applications with heavy build dependencies
+- Separate build-time dependencies from runtime dependencies
+- Name build stages descriptively: `AS build`, `AS test`, `AS production`
+- Copy only necessary artifacts between stages using `COPY --from=<stage>`
+
+### Base Image Selection
+
+- **Prefer minimal base images**: `alpine`, `slim`, `distroless` variants
+- Use specific version tags, never `latest` in production
+- Choose official images from Docker Hub or cloud providers
+- Regularly update base images for security patches
+
+### Layer Optimization
+
+- Order instructions from least to most frequently changing
+- Combine related `RUN` commands to minimize layers
+- Clean up temporary files in the same `RUN` command
+- Use multi-line commands with `\` for readability
+
+### Security Requirements
+
+- **Always create and use non-root user**
+- Use `USER` directive to run application as non-root
+- Create dedicated user: `RUN addgroup -S appgroup && adduser -S appuser -G appgroup`
+- Set proper file permissions for the non-root user
+
+## Required Instructions
+
+### User Definition
+
+```dockerfile
+# Create non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN chown -R appuser:appgroup /app
+USER appuser
+```
+
+### Port Documentation
+
+```dockerfile
+# Document application ports
+EXPOSE 8080
+```
+
+### Health Checks
+
+```dockerfile
+# Implement health checks for orchestration
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl --fail http://localhost:8080/health || exit 1
+```
+
+### Environment Variables
+
+```dockerfile
+# Set default values, allow runtime override
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV LOG_LEVEL=info
+```
+
+## File Management
+
+### dockerignore Requirements
+
+- **Always create comprehensive `.dockerignore`**
+- Exclude: `.git*`, `node_modules`, build artifacts, development files
+- Exclude: IDE files, OS files, documentation, test files
+- Review and update regularly as project evolves
+
+### COPY Strategy
+
+- Copy dependency files before source code for better caching
+- Use specific paths instead of `COPY . .` when possible
+- Copy only necessary files for each build stage
+
+## Command Execution
+
+### CMD vs ENTRYPOINT
+
+- Use `ENTRYPOINT` for executable, `CMD` for arguments
+- Prefer exec form `["command", "arg1"]` over shell form
+- Example: `ENTRYPOINT ["/app/start.sh"]` with `CMD ["--config", "prod.conf"]`
+
+## Security Prohibitions
+
+### Never Include
+
+- Secrets, private keys, or credentials in image layers
+- Sensitive configuration files
+- Development tools in production images
+- Unnecessary packages or utilities
+
+### Anti-Patterns to Avoid
+
+```dockerfile
+# BAD: Including secrets
+COPY secrets.txt /app/secrets.txt
+
+# BAD: Multiple inefficient layers
+RUN apt-get update
+RUN apt-get install -y package
+RUN apt-get clean
+
+# BAD: Running as root
+# Missing USER directive
+```
+
+## Quality Checklist
+
+- [ ] Multi-stage build implemented
+- [ ] Minimal base image used with specific version
+- [ ] Layers optimized (combined RUN commands)
+- [ ] Comprehensive `.dockerignore` present
+- [ ] Non-root user defined and used
+- [ ] EXPOSE instruction documents ports
+- [ ] HEALTHCHECK implemented
+- [ ] Environment variables used for configuration
+- [ ] No secrets in image layers
+- [ ] Security scanning integrated in CI
+
+## Performance Targets
+
+- **Image Size**: Minimize final image size
+- **Build Time**: Optimize for fast builds with proper layer caching
+- **Security**: Zero critical vulnerabilities in base images
+- **Maintainability**: Clear, readable Dockerfile structure
