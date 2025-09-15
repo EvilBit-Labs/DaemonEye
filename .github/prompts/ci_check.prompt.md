@@ -1,7 +1,7 @@
 ---
 mode: agent
 model: Auto (copilot)
-tools: ['githubRepo', 'edit', 'search', 'new', 'runCommands', 'runTasks', 'usages', 'vscodeAPI', 'think', 'problems', 'changes', 'testFailure', 'openSimpleBrowser', 'fetch', 'extensions', 'todos', 'memory']
+tools: [githubRepo, edit, search, new, runCommands, runTasks, usages, vscodeAPI, think, problems, changes, testFailure, openSimpleBrowser, fetch, extensions, todos, memory]
 description: Ensure code changes pass all CI checks before merging.
 ---
 

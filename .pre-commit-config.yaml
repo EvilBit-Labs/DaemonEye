@@ -58,7 +58,7 @@ repos:
 
     # 📝 Commit message linting (commit-msg only, not blocking push)
     - repo: https://github.com/commitizen-tools/commitizen
-      rev: v4.3.0
+      rev: v4.9.0
       hooks:
           - id: commitizen
             stages: [commit-msg]
@@ -83,10 +83,10 @@ repos:
                 - mdformat-tables
                 - mdformat-web
                 - mdformat-wikilink
-                - mdformat-ruff
                 - mdformat-gfm-alerts
                 - mdformat-rustfmt
                 - mdformat-toc
+            files: \.(md|mdx)$
 
     # 🔒 Security audit for Rust dependencies (moved to CI)
     - repo: local

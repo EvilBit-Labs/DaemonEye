@@ -4,10 +4,10 @@
 
 SentinelD follows semantic versioning (SemVer) with security updates provided for the current major version and the previous major version.
 
-| Version | Supported          | Notes                                    |
-| ------- | ------------------ | ---------------------------------------- |
-| 0.1.x   | :white_check_mark: | Current development version              |
-| < 0.1   | :x:                | Pre-release versions not supported       |
+| Version | Supported          | Notes                              |
+| ------- | ------------------ | ---------------------------------- |
+| 0.1.x   | :white_check_mark: | Current development version        |
+| < 0.1   | :x:                | Pre-release versions not supported |
 
 **Note**: As SentinelD is currently in pre-1.0 development, we focus security updates on the latest 0.1.x series. Once we reach 1.0, we will support the current major version and one previous major version.
 
@@ -136,5 +136,4 @@ For general security questions or concerns:
 
 ---
 
-**Last Updated**: September 2025
-**Next Review**: September 2026
+**Last Updated**: September 2025 **Next Review**: September 2026
