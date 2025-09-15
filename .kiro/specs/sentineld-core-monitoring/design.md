@@ -24,14 +24,14 @@ SentinelD consists of three main components that work together to provide compre
 │ • Protobuf IPC  │    │ • Alerting      │    │ • Config mgmt   │
 │                 │    │ • Network comm  │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                        
-         ▼                       ▼                        
-┌─────────────────┐    ┌─────────────────┐                
-│  Audit Ledger   │    │   Event Store   │                
-│ (Hash-chained)  │    │     (redb)      │                
-│ procmond write  │    │  sentinelagent  │                
-│     only        │    │    managed      │                
-└─────────────────┘    └─────────────────┘                
+         │                       │
+         ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐
+│  Audit Ledger   │    │   Event Store   │
+│ (Hash-chained)  │    │     (redb)      │
+│ procmond write  │    │  sentinelagent  │
+│     only        │    │    managed      │
+└─────────────────┘    └─────────────────┘
 
 IPC Protocol: Custom Protobuf over Unix Sockets/Named Pipes
 Communication: sentinelcli ↔ sentinelagent ↔ procmond
@@ -43,12 +43,14 @@ Service Management: sentinelagent manages procmond lifecycle
 The system implements a pipeline processing model with clear phases and strict component separation:
 
 1. **Collection Phase**: procmond enumerates processes and computes hashes
-2. **IPC Communication**: procmond receives simple detection tasks via protobuf over IPC
-3. **Audit Logging**: procmond writes to tamper-evident audit ledger (write-only)
-4. **Rule Translation**: sentinelagent translates complex SQL rules into simple detection tasks
-5. **Detection Phase**: sentinelagent executes SQL rules against event store data
-6. **Alert Generation**: Structured alerts with deduplication and context
-7. **Delivery Phase**: Multi-channel alert delivery with reliability guarantees
+2. **SQL-to-IPC Translation**: sentinelagent uses sqlparser to extract collection requirements from SQL AST
+3. **Task Generation**: Complex SQL detection rules translated into simple protobuf collection tasks
+4. **IPC Communication**: procmond receives simple detection tasks via protobuf over IPC
+5. **Overcollection Strategy**: procmond may overcollect data due to granularity limitations
+6. **Audit Logging**: procmond writes to tamper-evident audit ledger (write-only)
+7. **Detection Phase**: sentinelagent executes original SQL rules against collected/stored data
+8. **Alert Generation**: Structured alerts with deduplication and context
+9. **Delivery Phase**: Multi-channel alert delivery with reliability guarantees
 
 **Key Architectural Principles**:
 
@@ -148,7 +150,10 @@ pub trait DetectionEngine {
 
 - Operates in user space with minimal privileges
 - Manages redb event store (read/write access)
-- Translates complex SQL rules into simple protobuf tasks for procmond
+- **SQL-to-IPC Translation**: Uses sqlparser to analyze SQL detection rules and extract collection requirements
+- **Task Generation**: Translates complex SQL queries into simple protobuf collection tasks for procmond
+- **Overcollection Handling**: May request broader data collection than SQL requires, then applies SQL filtering to stored data
+- **Privilege Separation**: SQL execution never directly touches live processes; only simple collection tasks sent via IPC
 - Outbound-only network connections for alert delivery
 - Sandboxed rule execution with resource limits
 - IPC client for communication with procmond
@@ -370,13 +375,13 @@ The system implements a layered error handling approach using Rust's type system
 pub enum CollectionError {
     #[error("Process enumeration failed: {source}")]
     EnumerationFailed { source: std::io::Error },
-    
+
     #[error("Hash computation failed for {path}: {source}")]
     HashComputationFailed { path: PathBuf, source: std::io::Error },
-    
+
     #[error("Database write failed: {source}")]
     DatabaseWriteFailed { source: rusqlite::Error },
-    
+
     #[error("Backpressure policy triggered: {policy}")]
     BackpressureTriggered { policy: String },
 }
@@ -385,10 +390,10 @@ pub enum CollectionError {
 pub enum DetectionError {
     #[error("SQL validation failed: {reason}")]
     SqlValidationFailed { reason: String },
-    
+
     #[error("Rule execution timeout: {rule_id}")]
     RuleExecutionTimeout { rule_id: String },
-    
+
     #[error("Alert generation failed: {source}")]
     AlertGenerationFailed { source: Box<dyn std::error::Error + Send + Sync> },
 }
@@ -519,7 +524,7 @@ prop_compose! {
 // Only in procmond, highly structured and isolated
 mod unsafe_platform_specific {
     use std::ffi::c_void;
-    
+
     /// SAFETY: This function is only called with valid process handles
     /// and all invariants are documented and tested
     pub unsafe fn get_process_memory_info(handle: *const c_void) -> Result<MemoryInfo> {
@@ -562,17 +567,17 @@ pub struct SqlValidator {
 impl SqlValidator {
     pub fn validate_query(&self, sql: &str) -> Result<ValidationResult> {
         let ast = self.parser.parse_sql(sql)?;
-        
+
         for statement in &ast {
             match statement {
                 Statement::Query(query) => self.validate_select_query(query)?,
                 _ => return Err(ValidationError::ForbiddenStatement),
             }
         }
-        
+
         Ok(ValidationResult::Valid)
     }
-    
+
     fn validate_select_query(&self, query: &Query) -> Result<()> {
         // Validate SELECT body, WHERE clauses, functions, etc.
         // Reject any non-whitelisted constructs
@@ -603,16 +608,16 @@ impl PrivilegeManager {
         // Platform-specific privilege escalation
         #[cfg(target_os = "linux")]
         self.request_linux_capabilities()?;
-        
+
         #[cfg(target_os = "windows")]
         self.request_windows_privileges()?;
-        
+
         #[cfg(target_os = "macos")]
         self.request_macos_entitlements()?;
-        
+
         Ok(())
     }
-    
+
     pub async fn drop_privileges(&mut self) -> Result<()> {
         // Immediate privilege drop after initialization
         self.drop_all_elevated_privileges()?;
@@ -638,7 +643,7 @@ impl AuditChain {
     pub fn append_entry(&mut self, entry: &AuditEntry) -> Result<AuditRecord> {
         let entry_data = serde_json::to_vec(entry)?;
         let entry_hash = blake3::hash(&entry_data);
-        
+
         let record = AuditRecord {
             sequence: self.next_sequence(),
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64,
@@ -649,11 +654,11 @@ impl AuditChain {
             entry_hash: self.compute_entry_hash(&entry_hash)?,
             signature: self.sign_entry(&entry_hash)?,
         };
-        
+
         self.previous_hash = Some(record.entry_hash);
         Ok(record)
     }
-    
+
     pub fn verify_chain(&self, records: &[AuditRecord]) -> Result<VerificationResult> {
         // Verify hash chain integrity and signatures
     }
