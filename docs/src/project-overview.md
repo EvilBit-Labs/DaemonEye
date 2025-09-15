@@ -14,7 +14,7 @@ Detect and alert on suspicious system activity through continuous process monito
 
 ### **Audit-Grade Integrity**
 
-- Tamper-evident, cryptographically chained logs suitable for compliance and forensics
+- Certificate Transparency-style Merkle tree with inclusion proofs suitable for compliance and forensics
 - BLAKE3 hashing for fast, cryptographically secure hash computation
 - Optional Ed25519 signatures for enhanced integrity verification
 - Append-only audit ledger with monotonic sequence numbers
@@ -57,7 +57,7 @@ SentinelD implements a **three-component security architecture** with strict pri
 - **Security**: Runs with elevated privileges, drops them immediately after initialization
 - **Network**: No network access whatsoever
 - **Database**: Write-only access to audit ledger
-- **Features**: Process enumeration, executable hashing, tamper-evident logging
+- **Features**: Process enumeration, executable hashing, Certificate Transparency-style audit ledger
 
 ### 2. **sentinelagent** (Detection Orchestrator)
 
@@ -143,11 +143,11 @@ SentinelD implements a **three-component security architecture** with strict pri
 - **SIEM Integration**: Splunk HEC, Elasticsearch, CEF format
 - **Enterprise Integration**: STIX/TAXII feeds, federated Security Centers
 
-#### Tamper-Evident Audit Logging
+#### Certificate Transparency Audit Logging
 
 - Cryptographic integrity for forensic analysis
-- Hash-chained audit trail with BLAKE3
-- Optional Ed25519 digital signatures
+- Certificate Transparency-style Merkle tree with rs-merkle
+- Ed25519 digital signatures and inclusion proofs
 - Millisecond-precision timestamps
 
 #### Resource-Bounded Operation

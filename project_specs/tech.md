@@ -95,10 +95,13 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 
 ### Cryptographic Components
 
-- **Hashing**: BLAKE3 for fast cryptographic hashing
-- **Signatures**: Optional Ed25519 for audit chain signing
-- **Integrity**: HMAC for message authentication
-- **Chain Verification**: Tamper-evident audit logging with hash chains
+- **Audit Ledger**: Certificate Transparency-style append-only log with Merkle tree structure
+- **Hashing**: BLAKE3 for fast cryptographic hashing and Merkle tree construction
+- **Merkle Trees**: `rs-merkle` for efficient inclusion/exclusion proofs and batch verification
+- **Signatures**: Optional Ed25519 for audit entry signing and periodic root hash attestation
+- **Integrity**: HMAC for message authentication and tamper detection
+- **Verification**: Logarithmic proof sizes for efficient audit trail validation
+- **Airgap Support**: Periodic root hash checkpoints for manual external verification
 
 ### Resource Management
 

@@ -4,10 +4,10 @@
 
 SentinelD follows semantic versioning (SemVer) with security updates provided for the current major version and the previous major version.
 
-| Version | Supported          | Notes                                    |
-| ------- | ------------------ | ---------------------------------------- |
-| 0.1.x   | :white_check_mark: | Current development version              |
-| < 0.1   | :x:                | Pre-release versions not supported       |
+| Version | Supported          | Notes                              |
+| ------- | ------------------ | ---------------------------------- |
+| 0.1.x   | :white_check_mark: | Current development version        |
+| < 0.1   | :x:                | Pre-release versions not supported |
 
 **Note**: As SentinelD is currently in pre-1.0 development, we focus security updates on the latest 0.1.x series. Once we reach 1.0, we will support the current major version and one previous major version.
 
@@ -26,7 +26,7 @@ SentinelD implements a **three-component security architecture** with strict pri
 - **Privilege Separation**: Only procmond runs with elevated privileges when necessary
 - **Defense in Depth**: Multiple security layers and validation points
 - **Zero Trust**: No implicit trust between components or external systems
-- **Audit Trail**: Comprehensive logging and tamper-evident audit chains
+- **Audit Trail**: Certificate Transparency-style Merkle tree with cryptographic integrity
 
 ## Security Features
 
@@ -37,13 +37,13 @@ SentinelD implements a **three-component security architecture** with strict pri
 - **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only
 - **Credential Management**: Environment variables or OS keychain, never hardcode secrets
 - **Attack Surface Minimization**: No network listening, outbound-only connections
-- **Audit Trail**: Tamper-evident audit logging with cryptographic integrity
+- **Audit Trail**: Certificate Transparency-style audit ledger with BLAKE3 and Merkle trees
 
 ### Advanced Security Features (Enterprise Tier)
 
 - **mTLS Authentication**: Certificate chain validation for enterprise components
 - **Code Signing**: SLSA Level 3 provenance, Cosign signatures
-- **Cryptographic Integrity**: BLAKE3 hashing for audit chains
+- **Cryptographic Integrity**: Merkle tree with inclusion proofs and periodic checkpoints
 - **Sandboxed Execution**: Read-only database connections for detection engine
 - **Query Whitelist**: Only SELECT statements with approved functions allowed
 
@@ -136,5 +136,4 @@ For general security questions or concerns:
 
 ---
 
-**Last Updated**: September 2025
-**Next Review**: September 2026
+**Last Updated**: September 2025 **Next Review**: September 2026

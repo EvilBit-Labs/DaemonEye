@@ -18,7 +18,7 @@ SentinelD is offered in three distinct tiers, each designed to meet different or
 - ✅ **Process Monitoring**: Cross-platform process enumeration and monitoring
 - ✅ **SQL Detection Engine**: Flexible rule creation using standard SQL queries
 - ✅ **Multi-Channel Alerting**: stdout, syslog, webhook, email, file output
-- ✅ **Audit Logging**: Tamper-evident cryptographic audit chains
+- ✅ **Audit Logging**: Certificate Transparency-style Merkle tree with inclusion proofs
 - ✅ **Offline Operation**: Full functionality without internet access
 - ✅ **CLI Interface**: Comprehensive command-line management tools
 - ✅ **Configuration Management**: Hierarchical configuration system

@@ -73,11 +73,34 @@ just run-procmond  # Execute individual components
 - `procmond` may overcollect data (granularity limitations), then SQL runs against stored data
 - This ensures privilege separation: only `procmond` touches live processes, SQL stays in userspace
 
-### Privilege Separation
+### Privilege Separation with OS Enforcement
 
-- `procmond`: Write-only audit ledger, IPC server for simple protobuf tasks
-- `sentinelagent`: Read/write event store, translates SQL rules to protobuf
-- `sentinelcli`: Read-only database access, no network
+**Concrete Access Definitions:**
+- **Write-only audit ledger**: Process can append (`O_WRONLY|O_APPEND`) but not read previous entries
+- **Read-only CLI**: No write syscalls to modify store; only read operations (`O_RDONLY`)
+
+**OS Enforcement Mechanisms:**
+
+**procmond (Privileged Collector):**
+- Dedicated Unix user/group: `sentineld-proc:sentineld-proc`
+- Audit ledger: `open(path, O_WRONLY|O_APPEND|O_CREAT, 0600)` with owner-only write
+- Drop capabilities: `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE` after init, retain minimal set
+- SELinux/AppArmor: Block read syscalls on audit ledger files
+- Seccomp filter: Whitelist only required syscalls (write, openat, close)
+
+**sentinelagent (Detection Engine):**
+- Dedicated Unix user/group: `sentineld-agent:sentineld-agent`
+- Event store: Standard R/W access with `open(path, O_RDWR)`
+- Mount options: `/var/lib/sentineld` with `nodev,nosuid,noexec`
+- Network: Outbound-only via iptables rules, no listening sockets
+- Filesystem ACLs: Read access to audit ledger, no write permissions
+
+**sentinelcli (Query Interface):**
+- Dedicated Unix user/group: `sentineld-cli:sentineld-cli`
+- Database access: `open(path, O_RDONLY)` only
+- Seccomp filter: Block write, unlink, rename syscalls on database files
+- No network capabilities, filesystem read-only except for temp output files
+- Group membership: Add to `sentineld-agent` group for IPC communication only
 
 ### Input Validation
 
@@ -92,7 +115,9 @@ pub async fn validate_detection_rule(rule: &str) -> Result<ParsedRule, Validatio
 
 ## Key Dependencies & Patterns
 
-- **Database**: SQLx with SQLite for event storage + audit ledger separation
+- **Database**: redb pure Rust embedded database for event storage
+- **Audit Ledger**: Certificate Transparency-style Merkle tree with BLAKE3 hashing for tamper-evident logging
+- **Cryptographic Integrity**: `rs-merkle` for efficient inclusion proofs, Ed25519 for optional signatures
 - **CLI**: clap v4 with derive macros, support `--json` output + `NO_COLOR`
 - **Async**: Tokio runtime with structured logging via `tracing`
 - **Process enumeration**: `sysinfo` crate with platform-specific optimizations

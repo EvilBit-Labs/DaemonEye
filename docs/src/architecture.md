@@ -40,7 +40,7 @@ graph TB
 
     subgraph "Data Stores"
         ES[Event Store<br/>redb]
-        AL2[Audit Ledger<br/>Hash-chained]
+        AL2[Audit Ledger<br/>Certificate Transparency]
     end
 
     subgraph "External Systems"
@@ -75,7 +75,7 @@ graph TB
 
 - **Process Enumeration**: Cross-platform process data collection using sysinfo crate
 - **Executable Hashing**: SHA-256 hash computation for integrity verification
-- **Audit Logging**: Tamper-evident logging with cryptographic chains
+- **Audit Logging**: Certificate Transparency-style Merkle tree with inclusion proofs
 - **IPC Communication**: Simple protobuf-based communication with sentinelagent
 
 **Security Boundaries**:
@@ -283,12 +283,12 @@ message DetectionResult {
 - **Features**: WAL mode, concurrent access, embedded database
 - **Schema**: process_snapshots, scans, detection_rules, alerts
 
-### **Audit Ledger (Hash-chained)**
+### **Audit Ledger (Certificate Transparency)**
 
-- **Purpose**: Tamper-evident audit trail using hash-chained log file
+- **Purpose**: Tamper-evident audit trail using Certificate Transparency-style Merkle tree
 - **Access**: procmond write-only
-- **Features**: Hash-chained log file with BLAKE3 hashing
-- **Implementation**: Append-only log with cryptographic integrity
+- **Features**: Merkle tree with BLAKE3 hashing and Ed25519 signatures
+- **Implementation**: rs-merkle for inclusion proofs and periodic checkpoints
 
 ## Security Architecture
 

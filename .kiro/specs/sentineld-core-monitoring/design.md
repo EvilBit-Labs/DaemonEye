@@ -28,7 +28,7 @@ SentinelD consists of three main components that work together to provide compre
          ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐
 │  Audit Ledger   │    │   Event Store   │
-│ (Hash-chained)  │    │     (redb)      │
+│ (Merkle Tree)   │    │     (redb)      │
 │ procmond write  │    │  sentinelagent  │
 │     only        │    │    managed      │
 └─────────────────┘    └─────────────────┘
@@ -355,12 +355,15 @@ The system uses redb (pure Rust embedded database) for optimal performance and s
 - `alerts`: Generated alerts with execution context
 - `alert_deliveries`: Delivery tracking with retry information
 
-**Audit Ledger**:
+**Audit Ledger** (Certificate Transparency Style):
 
-- `audit_ledger`: Tamper-evident cryptographic chain
-- Each entry contains: timestamp, actor, action, payload_hash, previous_hash, entry_hash
-- BLAKE3 hashing for performance and security
-- Optional Ed25519 signatures for enhanced integrity
+- `audit_entries`: Append-only log entries with BLAKE3 hashing
+- `merkle_tree_nodes`: Merkle tree structure for efficient verification proofs
+- `checkpoints`: Periodic signed root hash snapshots for external verification
+- Each entry contains: sequence, timestamp, actor, action, entry_hash, tree_size, root_hash
+- Inclusion proofs: Logarithmic-size cryptographic proofs for entry verification
+- Optional Ed25519 signatures for checkpoint attestation and enhanced integrity
+- Airgap support: Exportable checkpoints for manual external verification
 
 ## Error Handling
 
@@ -630,37 +633,63 @@ impl PrivilegeManager {
 
 ### Cryptographic Integrity
 
-**Audit Chain Implementation**:
+**Certificate Transparency-Style Audit Ledger**:
 
 ```rust
-pub struct AuditChain {
-    hasher: blake3::Hasher,
+pub struct AuditLedger {
+    merkle_tree: MerkleTree<Blake3>,
+    log_entries: Vec<AuditEntry>,
+    checkpoint_interval: usize,
     signer: Option<ed25519_dalek::Keypair>,
-    previous_hash: Option<blake3::Hash>,
+    current_tree_size: usize,
 }
 
-impl AuditChain {
+impl AuditLedger {
     pub fn append_entry(&mut self, entry: &AuditEntry) -> Result<AuditRecord> {
         let entry_data = serde_json::to_vec(entry)?;
         let entry_hash = blake3::hash(&entry_data);
 
+        // Add to Merkle tree for efficient proofs
+        self.merkle_tree.push(entry_hash.as_bytes());
+        self.log_entries.push(entry.clone());
+        self.current_tree_size += 1;
+
         let record = AuditRecord {
-            sequence: self.next_sequence(),
+            sequence: self.current_tree_size - 1,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64,
             actor: entry.actor.clone(),
             action: entry.action.clone(),
-            payload_hash: entry_hash,
-            previous_hash: self.previous_hash,
-            entry_hash: self.compute_entry_hash(&entry_hash)?,
-            signature: self.sign_entry(&entry_hash)?,
+            entry_hash,
+            tree_size: self.current_tree_size,
+            root_hash: self.merkle_tree.root(),
+            signature: self.sign_checkpoint_if_needed()?,
         };
 
-        self.previous_hash = Some(record.entry_hash);
         Ok(record)
     }
 
-    pub fn verify_chain(&self, records: &[AuditRecord]) -> Result<VerificationResult> {
-        // Verify hash chain integrity and signatures
+    pub fn generate_inclusion_proof(&self, index: usize) -> Result<InclusionProof> {
+        // Generate logarithmic-size proof for entry verification
+        self.merkle_tree.generate_proof(index)
+    }
+
+    pub fn verify_inclusion(&self, entry: &AuditEntry, proof: &InclusionProof) -> Result<bool> {
+        // Verify entry inclusion with Certificate Transparency semantics
+        self.merkle_tree.verify_proof(entry, proof)
+    }
+
+    pub fn create_checkpoint(&mut self) -> Result<SignedCheckpoint> {
+        // Periodic checkpoint for external verification (airgap export)
+        let checkpoint = Checkpoint {
+            tree_size: self.current_tree_size,
+            root_hash: self.merkle_tree.root(),
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64,
+        };
+
+        Ok(SignedCheckpoint {
+            checkpoint,
+            signature: self.signer.as_ref().map(|s| s.sign(&checkpoint.to_bytes())),
+        })
     }
 }
 ```

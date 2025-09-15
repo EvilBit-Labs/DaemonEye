@@ -174,8 +174,14 @@ sequenceDiagram
 [workspace.dependencies]
 # Core async runtime
 tokio = { version = "1.0", features = [
-    "rt", "rt-multi-thread", "net", "io-util",
-    "time", "process", "macros", "sync"
+  "rt",
+  "rt-multi-thread",
+  "net",
+  "io-util",
+  "time",
+  "process",
+  "macros",
+  "sync",
 ] }
 
 # CLI framework
@@ -196,6 +202,11 @@ tracing = "0.1"
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
+
+# Cryptographic components
+rs-merkle = "1.4"
+blake3 = "1.5"
+ed25519-dalek = "2.1"
 
 # Testing
 assert_cmd = "2.0"
@@ -231,13 +242,13 @@ insta = "1.0"
 - **Credential Management**: Environment variables or OS keychain, never hardcode secrets
 - **Input Validation**: Comprehensive validation with detailed error messages
 - **Attack Surface Minimization**: No network listening, outbound-only connections
-- **Audit Trail**: Tamper-evident audit logging with BLAKE3 cryptographic integrity
+- **Audit Trail**: Certificate Transparency-style Merkle tree with BLAKE3 cryptographic integrity
 
 ### Advanced Security Features (Enterprise Tier)
 
 - **mTLS Authentication**: Certificate chain validation for enterprise components
 - **Code Signing**: SLSA Level 3 provenance, Cosign signatures
-- **Cryptographic Integrity**: BLAKE3 hashing for audit chains
+- **Cryptographic Integrity**: Merkle tree with inclusion proofs and periodic checkpoints
 - **Sandboxed Execution**: Read-only database connections for detection engine
 - **Query Whitelist**: Only SELECT statements with approved functions allowed
 
@@ -345,15 +356,15 @@ SentinelD/
 ### Module Organization (sentinel-lib)
 
 ```rust
-pub mod config;      // Configuration management
-pub mod models;      // Core data structures
-pub mod storage;     // Database abstractions (redb)
-pub mod detection;   // SQL-based detection engine
-pub mod alerting;    // Multi-channel alert delivery
-pub mod crypto;      // Cryptographic audit functions
-pub mod telemetry;   // Performance metrics and health
-pub mod kernel;      // Kernel-level monitoring (Enterprise)
-pub mod network;     // Network correlation (Enterprise)
+pub mod alerting; // Multi-channel alert delivery
+pub mod config; // Configuration management
+pub mod crypto; // Cryptographic audit functions
+pub mod detection; // SQL-based detection engine
+pub mod kernel; // Kernel-level monitoring (Enterprise)
+pub mod models; // Core data structures
+pub mod network;
+pub mod storage; // Database abstractions (redb)
+pub mod telemetry; // Performance metrics and health // Network correlation (Enterprise)
 ```
 
 ### Service Layer Pattern
@@ -593,9 +604,11 @@ pub enum CollectionError {
 // Event Store schema
 const PROCESSES_TABLE: TableDefinition<u64, ProcessInfo> = TableDefinition::new("processes");
 const SCANS_TABLE: TableDefinition<u64, ScanMetadata> = TableDefinition::new("scans");
-const DETECTION_RULES_TABLE: TableDefinition<String, DetectionRule> = TableDefinition::new("detection_rules");
+const DETECTION_RULES_TABLE: TableDefinition<String, DetectionRule> =
+    TableDefinition::new("detection_rules");
 const ALERTS_TABLE: TableDefinition<u64, Alert> = TableDefinition::new("alerts");
-const ALERT_DELIVERIES_TABLE: TableDefinition<u64, AlertDelivery> = TableDefinition::new("alert_deliveries");
+const ALERT_DELIVERIES_TABLE: TableDefinition<u64, AlertDelivery> =
+    TableDefinition::new("alert_deliveries");
 
 // Audit Ledger schema (separate database)
 const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::new("audit_ledger");
@@ -606,11 +619,14 @@ const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::ne
 ```rust
 // Additional tables for Business/Enterprise tiers
 const AGENTS_TABLE: TableDefinition<String, AgentInfo> = TableDefinition::new("agents");
-const AGENT_CONNECTIONS_TABLE: TableDefinition<String, ConnectionInfo> = TableDefinition::new("agent_connections");
+const AGENT_CONNECTIONS_TABLE: TableDefinition<String, ConnectionInfo> =
+    TableDefinition::new("agent_connections");
 const FLEET_EVENTS_TABLE: TableDefinition<u64, FleetEvent> = TableDefinition::new("fleet_events");
 const RULE_PACKS_TABLE: TableDefinition<String, RulePack> = TableDefinition::new("rule_packs");
-const NETWORK_EVENTS_TABLE: TableDefinition<u64, NetworkEvent> = TableDefinition::new("network_events"); // Enterprise
-const KERNEL_EVENTS_TABLE: TableDefinition<u64, KernelEvent> = TableDefinition::new("kernel_events"); // Enterprise
+const NETWORK_EVENTS_TABLE: TableDefinition<u64, NetworkEvent> =
+    TableDefinition::new("network_events"); // Enterprise
+const KERNEL_EVENTS_TABLE: TableDefinition<u64, KernelEvent> =
+    TableDefinition::new("kernel_events"); // Enterprise
 ```
 
 ---
@@ -962,7 +978,7 @@ When generating code for SentinelD:
 
 ### Code Documentation
 
-```rust
+````rust
 /// Collects process information with optional elevated privileges.
 ///
 /// This function enumerates all accessible processes on the system and
@@ -998,7 +1014,7 @@ When generating code for SentinelD:
 /// - Resource exhaustion scenarios
 /// - Database connectivity problems
 pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionError>
-```
+````
 
 ### Project Documentation Structure
 
@@ -1013,15 +1029,15 @@ pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionErro
 
 ### Primary Authorities
 
-| Section | Source Documents | Purpose |
-|---------|-----------------|----------|
-| **Architecture** | [.kiro/steering/structure.md](./.kiro/steering/structure.md) | Component organization, security boundaries |
-| **Technology Stack** | [.kiro/steering/tech.md](./.kiro/steering/tech.md) | Technology choices, dependencies |
-| **Product Features** | [.kiro/steering/product.md](./.kiro/steering/product.md) | Feature tiers, business requirements |
-| **Core Requirements** | [.kiro/specs/sentineld-core-monitoring/requirements.md](./.kiro/specs/sentineld-core-monitoring/requirements.md) | Functional requirements |
-| **Business Features** | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md) | Business tier specifications |
-| **Enterprise Features** | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md) | Enterprise tier specifications |
-| **Development Workflow** | [WARP.md](./WARP.md) | Commands, justfile recipes, testing |
+| Section                  | Source Documents                                                                                                 | Purpose                                     |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| **Architecture**         | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                     | Component organization, security boundaries |
+| **Technology Stack**     | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                               | Technology choices, dependencies            |
+| **Product Features**     | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                         | Feature tiers, business requirements        |
+| **Core Requirements**    | [.kiro/specs/sentineld-core-monitoring/requirements.md](./.kiro/specs/sentineld-core-monitoring/requirements.md) | Functional requirements                     |
+| **Business Features**    | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md)       | Business tier specifications                |
+| **Enterprise Features**  | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md)   | Enterprise tier specifications              |
+| **Development Workflow** | [WARP.md](./WARP.md)                                                                                             | Commands, justfile recipes, testing         |
 
 ### Cross-References
 
