@@ -43,7 +43,22 @@ impl DetectionEngine {
         }
     }
 
-    /// Load a detection rule.
+    /// Loads a detection rule into the engine.
+    ///
+    /// Validates the rule's SQL using `rule.validate_sql()` and, on success,
+    /// inserts the rule into the engine's rule map keyed by `rule.id.raw().to_string()`.
+    /// If a rule with the same ID already exists it will be overwritten.
+    ///
+    /// On validation failure this returns `DetectionEngineError::SqlValidationError`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use sentinel_lib::detection::{DetectionEngine, DetectionRule};
+    /// let mut engine = DetectionEngine::new();
+    /// // Construct a DetectionRule `rule` appropriate for your codebase...
+    /// // engine.load_rule(rule).unwrap();
+    /// ```
     pub fn load_rule(&mut self, rule: DetectionRule) -> Result<(), DetectionEngineError> {
         // Validate the rule before loading
         rule.validate_sql()
@@ -77,7 +92,32 @@ impl DetectionEngine {
         Ok(alerts)
     }
 
-    /// Execute a single rule against process data.
+    /// Execute a single detection rule against a slice of process records.
+    ///
+    /// This is a placeholder implementation that interprets the rule by its
+    /// metadata.category and generates Alerts for matching processes:
+    /// - "suspicious_process": produces an alert for any process whose name
+    ///   contains the substring "suspicious".
+    /// - "high_cpu": produces an alert for any process with cpu_usage > 80.0.
+    /// - other/unknown categories produce no alerts.
+    ///
+    /// Returns a vector of generated Alert objects or a DetectionEngineError on failure.
+    /// (Current implementation does not return errors; the Result wrapper is preserved
+    /// for future, real SQL-based execution.)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // Example (illustrative): run inside an async context
+    /// # async fn _example() {
+    /// # use sentinel_lib::{DetectionEngine, DetectionRule, ProcessRecord};
+    /// let engine = DetectionEngine::new();
+    /// let rule = DetectionRule::mock_suspicious_rule(); // illustrative constructor
+    /// let processes = vec![ ProcessRecord::mock("suspicious-binary", 123, Some(5.0)) ];
+    /// let alerts = engine.execute_rule(&rule, &processes).await.unwrap();
+    /// assert!(!alerts.is_empty());
+    /// # }
+    /// ```
     async fn execute_rule(
         &self,
         rule: &DetectionRule,

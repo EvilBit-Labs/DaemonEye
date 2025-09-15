@@ -13,18 +13,43 @@ use thiserror::Error;
 pub struct ProcessId(u32);
 
 impl ProcessId {
-    /// Create a new process ID.
+    /// Create a new ProcessId from a raw numeric PID.
+    ///
+    /// This constructs the strongly-typed `ProcessId` newtype wrapping the given
+    /// process identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let pid = ProcessId::new(1234);
+    /// assert_eq!(pid.raw(), 1234);
+    /// ```
     pub fn new(pid: u32) -> Self {
         Self(pid)
     }
 
-    /// Get the raw process ID value.
+    /// Returns the underlying u32 process identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let pid = ProcessId::new(1234);
+    /// assert_eq!(pid.raw(), 1234);
+    /// ```
     pub fn raw(&self) -> u32 {
         self.0
     }
 }
 
 impl fmt::Display for ProcessId {
+    /// Formats the ProcessId as its numeric PID string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let pid = ProcessId::new(1234);
+    /// assert_eq!(pid.to_string(), "1234");
+    /// ```
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -48,6 +73,20 @@ pub enum ProcessStatus {
 }
 
 impl fmt::Display for ProcessStatus {
+    /// Formats the process status as a human-readable, lowercase string.
+    ///
+    /// `Running`, `Sleeping`, `Stopped`, `Zombie`, and `Traced` are rendered as
+    /// `"running"`, `"sleeping"`, `"stopped"`, `"zombie"`, and `"traced"`
+    /// respectively. `Unknown(s)` is rendered as `unknown(<s>)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::models::process::ProcessStatus;
+    ///
+    /// assert_eq!(format!("{}", ProcessStatus::Running), "running");
+    /// assert_eq!(format!("{}", ProcessStatus::Unknown("custom".into())), "unknown(custom)");
+    /// ```
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProcessStatus::Running => write!(f, "running"),
@@ -98,7 +137,27 @@ pub struct ProcessRecord {
 }
 
 impl ProcessRecord {
-    /// Create a new process record with minimal required fields.
+    /// Create a new ProcessRecord with the minimal required fields: `pid` and `name`.
+    ///
+    /// The returned record initializes optional fields to sensible defaults:
+    /// - `status` is set to `ProcessStatus::Unknown("unknown")`.
+    /// - `collection_time` is set to the current UTC time.
+    /// - `ppid`, `executable_path`, `command_line`, `start_time`, `cpu_usage`,
+    ///   `memory_usage`, `executable_hash`, `hash_algorithm`, `user_id`, and `group_id`
+    ///   are `None`.
+    /// - `environment_vars` and `metadata` are empty maps.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let rec = ProcessRecord::new(1234, "test-process".to_string());
+    /// assert_eq!(rec.pid.raw(), 1234);
+    /// assert_eq!(rec.name, "test-process");
+    /// match rec.status {
+    ///     ProcessStatus::Unknown(ref s) => assert_eq!(s, "unknown"),
+    ///     _ => panic!("unexpected status"),
+    /// }
+    /// ```
     pub fn new(pid: u32, name: String) -> Self {
         Self {
             pid: ProcessId::new(pid),
@@ -120,7 +179,20 @@ impl ProcessRecord {
         }
     }
 
-    /// Create a builder for constructing process records.
+    /// Returns a new ProcessRecordBuilder for fluent construction of a ProcessRecord.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let record = sentinel_lib::models::process::ProcessRecord::builder()
+    ///     .pid_raw(1234)
+    ///     .name("example-process")
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(record.pid.raw(), 1234);
+    /// assert_eq!(record.name, "example-process");
+    /// ```
     pub fn builder() -> ProcessRecordBuilder {
         ProcessRecordBuilder::new()
     }
@@ -148,54 +220,181 @@ pub struct ProcessRecordBuilder {
 }
 
 impl ProcessRecordBuilder {
-    /// Create a new builder.
+    /// Creates a new ProcessRecordBuilder with default (empty) state.
+    ///
+    /// The returned builder can be used with the fluent setter methods to populate
+    /// fields and then finalize into a `ProcessRecord` with `build()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = ProcessRecordBuilder::new();
+    /// let record = builder
+    ///     .pid_raw(1234)
+    ///     .name("example")
+    ///     .build()
+    ///     .unwrap();
+    /// assert_eq!(record.pid.raw(), 1234);
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set the process ID.
+    /// Set the raw process ID on the builder.
+    ///
+    /// This sets the builder's `pid` to the given numeric process identifier and
+    /// returns the builder for fluent chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let record = ProcessRecordBuilder::new()
+    ///     .pid_raw(1234)
+    ///     .name("test-process")
+    ///     .build()
+    ///     .unwrap();
+    /// assert_eq!(record.pid.raw(), 1234);
+    /// ```
     pub fn pid_raw(mut self, pid: u32) -> Self {
         self.pid = Some(pid);
         self
     }
 
-    /// Set the parent process ID.
+    /// Set the parent process ID for the builder.
+    ///
+    /// This sets the `ppid` field on the `ProcessRecordBuilder` to the given `ProcessId`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let rec = ProcessRecord::builder()
+    ///     .pid_raw(1)
+    ///     .name("proc")
+    ///     .ppid(ProcessId::new(2))
+    ///     .build()
+    ///     .unwrap();
+    /// assert_eq!(rec.ppid.unwrap().raw(), 2);
+    /// ```
     pub fn ppid(mut self, ppid: ProcessId) -> Self {
         self.ppid = Some(ppid);
         self
     }
 
-    /// Set the process name.
+    /// Sets the process name on the builder and returns the updated builder for chaining.
+    ///
+    /// This value will be used as the `name` field of the resulting `ProcessRecord` produced by
+    /// `build()`. Calling this replaces any previously set name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = ProcessRecordBuilder::new().pid_raw(42).name("my-process");
+    /// let record = builder.build().unwrap();
+    /// assert_eq!(record.name, "my-process");
+    /// ```
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    /// Set the executable path.
+    /// Sets the builder's executable path for the process.
+    ///
+    /// The provided value is converted into a `PathBuf` and stored as the
+    /// process's `executable_path`. Returns the modified builder to allow
+    /// method chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// let record = ProcessRecord::builder()
+    ///     .pid_raw(1)
+    ///     .name("example")
+    ///     .executable_path("/usr/bin/example")
+    ///     .build()
+    ///     .unwrap();
+    /// assert_eq!(record.executable_path, Some(PathBuf::from("/usr/bin/example")));
+    /// ```
     pub fn executable_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.executable_path = Some(path.into());
         self
     }
 
-    /// Set the command line.
+    /// Sets the process command-line for the builder.
+    ///
+    /// This assigns the full command-line string that will be stored on the resulting
+    /// `ProcessRecord`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let record = ProcessRecordBuilder::new()
+    ///     .pid_raw(1234)
+    ///     .name("myproc")
+    ///     .command_line("/usr/bin/myproc --flag")
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(record.command_line.as_deref(), Some("/usr/bin/myproc --flag"));
+    /// ```
     pub fn command_line(mut self, cmd: impl Into<String>) -> Self {
         self.command_line = Some(cmd.into());
         self
     }
 
-    /// Set the start time.
+    /// Sets the process start time on the builder and returns the builder for chaining.
+    ///
+    /// The provided `SystemTime` will be stored as the record's `start_time` when the
+    /// `ProcessRecord` is built.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::SystemTime;
+    /// let builder = ProcessRecordBuilder::new().start_time(SystemTime::now());
+    /// ```
     pub fn start_time(mut self, time: SystemTime) -> Self {
         self.start_time = Some(time);
         self
     }
 
-    /// Set the CPU usage.
+    /// Sets the CPU usage value on the builder.
+    ///
+    /// The value is stored as an `f64` and will be placed into the resulting
+    /// `ProcessRecord`'s `cpu_usage` field. Callers decide the unit/semantics (commonly a percentage).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let record = ProcessRecord::builder()
+    ///     .pid_raw(1234)
+    ///     .name("example".to_string())
+    ///     .cpu_usage(12.5)
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(record.cpu_usage, Some(12.5));
+    /// ```
     pub fn cpu_usage(mut self, usage: f64) -> Self {
         self.cpu_usage = Some(usage);
         self
     }
 
-    /// Set the memory usage.
+    /// Set the memory usage (in bytes) on the builder and return the builder for chaining.
+    ///
+    /// The value is stored as bytes in the resulting `ProcessRecord`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let record = ProcessRecord::builder()
+    ///     .pid_raw(1234)
+    ///     .name("example")
+    ///     .memory_usage(10_485_760) // 10 MiB
+    ///     .build()
+    ///     .unwrap();
+    /// assert_eq!(record.memory_usage, Some(10_485_760));
+    /// ```
     pub fn memory_usage(mut self, usage: u64) -> Self {
         self.memory_usage = Some(usage);
         self
@@ -207,61 +406,210 @@ impl ProcessRecordBuilder {
         self
     }
 
-    /// Set the executable hash.
+    /// Sets the executable hash to include in the built ProcessRecord.
+    ///
+    /// The provided value is stored as a String (commonly a hex-encoded digest such as SHA-256).
+    /// Accepts any type convertible into `String` and returns the builder for fluent chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let rec = ProcessRecordBuilder::new()
+    ///     .pid_raw(1234)
+    ///     .name("svc".to_string())
+    ///     .executable_hash("abc123")
+    ///     .build()
+    ///     .unwrap();
+    /// assert_eq!(rec.executable_hash.as_deref(), Some("abc123"));
+    /// ```
     pub fn executable_hash(mut self, hash: impl Into<String>) -> Self {
         self.executable_hash = Some(hash.into());
         self
     }
 
-    /// Set the hash algorithm.
+    /// Sets the hash algorithm name to record for the process executable and returns the builder for chaining.
+    ///
+    /// The provided algorithm (for example `"sha256"`) will be stored in the resulting `ProcessRecord`'s
+    /// `hash_algorithm` field.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = ProcessRecordBuilder::new().hash_algorithm("sha256");
+    /// let record = builder.pid_raw(1).name("proc").build().unwrap();
+    /// assert_eq!(record.hash_algorithm.as_deref(), Some("sha256"));
+    /// ```
     pub fn hash_algorithm(mut self, algorithm: impl Into<String>) -> Self {
         self.hash_algorithm = Some(algorithm.into());
         self
     }
 
-    /// Set the collection time.
+    /// Set the collection timestamp to use for the resulting `ProcessRecord` and return the builder for chaining.
+    ///
+    /// If not provided, `build()` will default the collection time to `Utc::now()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use chrono::Utc;
+    ///
+    /// let builder = ProcessRecord::builder()
+    ///     .pid_raw(1)
+    ///     .name("svc".into())
+    ///     .collection_time(Utc::now());
+    /// // `builder` can be chained further or passed to `build()`
+    /// ```
     pub fn collection_time(mut self, time: DateTime<Utc>) -> Self {
         self.collection_time = Some(time);
         self
     }
 
-    /// Set the user ID.
+    /// Set the effective user ID for the process record being built and return the builder for chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = ProcessRecordBuilder::new().pid_raw(1000).name("proc".into()).user_id(1001);
+    /// let record = builder.build().unwrap();
+    /// assert_eq!(record.user_id, Some(1001));
+    /// ```
     pub fn user_id(mut self, user_id: u32) -> Self {
         self.user_id = Some(user_id);
         self
     }
 
-    /// Set the group ID.
+    /// Set the process group ID on the builder and return the builder for chaining.
+    ///
+    /// This assigns the optional `group_id` field used when building a `ProcessRecord`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let rec = ProcessRecord::builder()
+    ///     .pid_raw(1)
+    ///     .name("proc")
+    ///     .group_id(1000)
+    ///     .build()
+    ///     .unwrap();
+    /// assert_eq!(rec.group_id, Some(1000));
+    /// ```
     pub fn group_id(mut self, group_id: u32) -> Self {
         self.group_id = Some(group_id);
         self
     }
 
-    /// Add an environment variable.
+    /// Adds or updates a single environment variable on the builder, returning the builder for chaining.
+    ///
+    /// If the key already exists, its value is overwritten.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let record = ProcessRecord::builder()
+    ///     .pid_raw(1)
+    ///     .name("test")
+    ///     .env_var("PATH", "/usr/bin")
+    ///     .build()
+    ///     .unwrap();
+    /// assert_eq!(record.environment_vars.get("PATH").map(String::as_str), Some("/usr/bin"));
+    /// ```
     pub fn env_var(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.environment_vars.insert(key.into(), value.into());
         self
     }
 
-    /// Add multiple environment variables.
+    /// Merge multiple environment variables into the builder's environment map, overriding any existing keys.
+    ///
+    /// The provided map's entries are inserted into the builder's `environment_vars`; if a key already exists it will be replaced by the new value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let mut vars = HashMap::new();
+    /// vars.insert("PATH".to_string(), "/usr/bin".to_string());
+    /// vars.insert("RUST_LOG".to_string(), "debug".to_string());
+    ///
+    /// let builder = crate::models::process::ProcessRecord::builder()
+    ///     .pid_raw(123)
+    ///     .name("example".into())
+    ///     .env_vars(vars);
+    ///
+    /// // building will include the merged environment variables
+    /// let record = builder.build().unwrap();
+    /// assert_eq!(record.environment_vars.get("RUST_LOG").map(String::as_str), Some("debug"));
+    /// ```
     pub fn env_vars(mut self, vars: HashMap<String, String>) -> Self {
         self.environment_vars.extend(vars);
         self
     }
 
-    /// Add a metadata entry.
+    /// Adds or updates a metadata key/value pair on the builder.
+    ///
+    /// If the key already exists, its value is replaced. Returns the builder to allow method chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = ProcessRecord::builder().metadata("role", "worker").metadata("env", "prod");
+    /// let record = builder.pid_raw(1).name("svc".into()).build().unwrap();
+    /// assert_eq!(record.metadata.get("role").map(String::as_str), Some("worker"));
+    /// assert_eq!(record.metadata.get("env").map(String::as_str), Some("prod"));
+    /// ```
     pub fn metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
         self
     }
 
-    /// Add multiple metadata entries.
+    /// Extends the builder's metadata map with the given entries and returns the builder.
+    ///
+    /// Incoming entries are inserted into the builder's metadata; values for keys that already
+    /// exist in the builder are overwritten by the new entries.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let mut m = HashMap::new();
+    /// m.insert("k".to_string(), "v".to_string());
+    ///
+    /// let builder = sentinel_lib::models::process::ProcessRecordBuilder::new()
+    ///     .metadata_map(m)
+    ///     .name("proc".to_string())
+    ///     .pid_raw(1);
+    /// ```
     pub fn metadata_map(mut self, metadata: HashMap<String, String>) -> Self {
         self.metadata.extend(metadata);
         self
     }
 
-    /// Build the ProcessRecord.
+    /// Builds a `ProcessRecord` from the builder.
+    ///
+    /// The builder must have both `pid` and `name` set; if either is missing this
+    /// function returns `Err(ProcessError::MissingField("<field>"))`.
+    ///
+    /// Fields not provided are filled with sensible defaults:
+    /// - `status` defaults to `ProcessStatus::Unknown("unknown")`
+    /// - `collection_time` defaults to `Utc::now()`
+    ///
+    /// # Returns
+    ///
+    /// `Ok(ProcessRecord)` on success, or `Err(ProcessError::MissingField(...))` if a
+    /// required field is missing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let record = ProcessRecordBuilder::new()
+    ///     .pid_raw(1234)
+    ///     .name("example")
+    ///     .build()
+    ///     .unwrap();
+    /// assert_eq!(record.pid.raw(), 1234);
+    /// assert_eq!(record.name, "example");
+    /// ```
     pub fn build(self) -> Result<ProcessRecord, ProcessError> {
         let pid = self.pid.ok_or(ProcessError::MissingField("pid"))?;
         let name = self.name.ok_or(ProcessError::MissingField("name"))?;
@@ -311,13 +659,34 @@ pub struct SystemInfo {
 }
 
 impl Default for SystemInfo {
+    /// Returns the default SystemInfo (equivalent to `SystemInfo::new()`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let info = SystemInfo::default();
+    /// assert_eq!(info.os_name, "unknown");
+    /// assert_eq!(info.capabilities.len(), 0);
+    /// ```
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl SystemInfo {
-    /// Create a new system info instance.
+    /// Creates a new SystemInfo initialized with unknown/zero defaults.
+    ///
+    /// The returned instance uses "unknown" for string fields, zeros for numeric fields,
+    /// and an empty capabilities list. Use the builder-like `with_capability` to add capabilities.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let info = SystemInfo::new();
+    /// assert_eq!(info.os_name, "unknown");
+    /// assert_eq!(info.total_memory, 0);
+    /// assert!(info.capabilities.is_empty());
+    /// ```
     pub fn new() -> Self {
         Self {
             os_name: "unknown".to_string(),
@@ -331,7 +700,18 @@ impl SystemInfo {
         }
     }
 
-    /// Add a capability to the system.
+    /// Appends a capability to the SystemInfo and returns the modified value for chaining.
+    ///
+    /// This consumes `self`, adds the provided capability string to the `capabilities` vector,
+    /// and returns the updated `SystemInfo`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let info = sentinel_lib::models::process::SystemInfo::new()
+    ///     .with_capability("net-monitor");
+    /// assert!(info.capabilities.contains(&"net-monitor".to_string()));
+    /// ```
     pub fn with_capability(mut self, capability: impl Into<String>) -> Self {
         self.capabilities.push(capability.into());
         self

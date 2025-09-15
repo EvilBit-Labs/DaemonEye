@@ -14,18 +14,40 @@ use crate::models::process::ProcessRecord;
 pub struct AlertId(u64);
 
 impl AlertId {
-    /// Create a new alert ID.
+    /// Create a new AlertId from a raw numeric identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let aid = AlertId::new(42);
+    /// assert_eq!(aid.raw(), 42);
+    /// ```
     pub fn new(id: u64) -> Self {
         Self(id)
     }
 
-    /// Get the raw alert ID value.
+    /// Return the underlying numeric value of the `AlertId`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let id = AlertId::new(42);
+    /// assert_eq!(id.raw(), 42);
+    /// ```
     pub fn raw(&self) -> u64 {
         self.0
     }
 }
 
 impl fmt::Display for AlertId {
+    /// Formats the AlertId as its underlying numeric ID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let id = crate::models::alert::AlertId::new(42);
+    /// assert_eq!(id.to_string(), "42");
+    /// ```
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -45,6 +67,18 @@ pub enum AlertSeverity {
 }
 
 impl fmt::Display for AlertSeverity {
+    /// Formats the `AlertSeverity` as a lowercase string.
+    ///
+    /// This is the `Display` implementation used when converting a severity to text
+    /// (e.g., via `to_string()` or formatting macros).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::models::alert::AlertSeverity;
+    /// assert_eq!(AlertSeverity::Low.to_string(), "low");
+    /// assert_eq!(AlertSeverity::Critical.to_string(), "critical");
+    /// ```
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AlertSeverity::Low => write!(f, "low"),
@@ -58,6 +92,20 @@ impl fmt::Display for AlertSeverity {
 impl std::str::FromStr for AlertSeverity {
     type Err = String;
 
+    /// Parses a case-insensitive string into an `AlertSeverity`.
+    ///
+    /// Accepts `"low"`, `"medium"`, `"high"`, and `"critical"` (any letter case) and returns the
+    /// corresponding `AlertSeverity` variant. Returns an `Err(String)` describing the invalid input
+    /// for any other value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::str::FromStr;
+    /// let s = "High";
+    /// let sev = AlertSeverity::from_str(s).unwrap();
+    /// assert_eq!(sev, AlertSeverity::High);
+    /// ```
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "low" => Ok(AlertSeverity::Low),
@@ -83,35 +131,86 @@ pub struct AlertContext {
 }
 
 impl AlertContext {
-    /// Create a new alert context.
+    /// Creates a new, empty AlertContext.
+    ///
+    /// The returned context has an empty `data` map, no `tags`, and `source` and `confidence` set to `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ctx = sentinel_lib::models::alert::AlertContext::new();
+    /// assert!(ctx.data.is_empty());
+    /// assert!(ctx.tags.is_empty());
+    /// assert!(ctx.source.is_none());
+    /// assert!(ctx.confidence.is_none());
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Add a context data entry.
+    /// Adds a key/value pair to the context's data map and returns the modified context for chaining.
+    ///
+    /// The provided `key` and `value` are converted into `String` and inserted into `self.data`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ctx = AlertContext::new().with_data("user", "alice");
+    /// assert_eq!(ctx.data.get("user").map(|s| s.as_str()), Some("alice"));
+    /// ```
     pub fn with_data(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.data.insert(key.into(), value.into());
         self
     }
 
-    /// Add a tag.
+    /// Appends a tag to the context's tags vector and returns the modified context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ctx = crate::models::alert::AlertContext::new().with_tag("suspicious");
+    /// assert_eq!(ctx.tags, vec!["suspicious".to_string()]);
+    /// ```
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.tags.push(tag.into());
         self
     }
 
-    /// Set the source.
+    /// Sets the context source and returns the modified context.
+    ///
+    /// This is a builder-style method that assigns the provided `source` string to the
+    /// context's `source` field and returns `self` for chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ctx = crate::models::alert::AlertContext::new().with_source("kernel");
+    /// assert_eq!(ctx.source.as_deref(), Some("kernel"));
+    /// ```
     pub fn with_source(mut self, source: impl Into<String>) -> Self {
         self.source = Some(source.into());
         self
     }
 
-    /// Set the confidence level.
+    /// Sets the context confidence level after validating it is finite and within [0.0, 1.0].
+    ///
+    /// Returns an error if `confidence` is NaN, infinite, or outside the inclusive range 0.0..=1.0.
     ///
     /// # Errors
     ///
-    /// Returns `AlertError::InvalidConfidence` if the confidence value is not finite
+    /// Returns `AlertError::InvalidConfidence(confidence)` when the provided value is not finite
     /// or not within the valid range [0.0, 1.0].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ctx = AlertContext::new();
+    /// let ctx = ctx.with_confidence(0.85).expect("valid confidence");
+    /// assert_eq!(ctx.confidence, Some(0.85));
+    ///
+    /// let err = AlertContext::new().with_confidence(f64::NAN).unwrap_err();
+    /// matches!(err, AlertError::InvalidConfidence(_));
+    /// ```
     pub fn with_confidence(mut self, confidence: f64) -> Result<Self, AlertError> {
         if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
             return Err(AlertError::InvalidConfidence(confidence));
@@ -145,7 +244,22 @@ pub struct Alert {
 }
 
 impl Alert {
-    /// Create a new alert with required fields.
+    /// Create a new alert with the required fields.
+    ///
+    /// The returned Alert will have:
+    /// - a freshly generated UUID (`id`),
+    /// - `timestamp` set to the current system time,
+    /// - `deduplication_key` built as `<severity>:<detection_rule_id>:<title>`,
+    /// - an empty `AlertContext`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let proc = ProcessRecord::default();
+    /// let alert = Alert::new(AlertSeverity::High, "CPU spike", "High CPU usage observed", "rule-123", proc);
+    /// assert_eq!(alert.severity, AlertSeverity::High);
+    /// assert!(alert.deduplication_key.contains("CPU spike"));
+    /// ```
     pub fn new(
         severity: AlertSeverity,
         title: impl Into<String>,
@@ -170,13 +284,38 @@ impl Alert {
         }
     }
 
-    /// Add context data to the alert.
+    /// Adds a key/value pair to the alert's context data and returns the modified alert.
+    ///
+    /// The provided `key` and `value` are converted to `String` and inserted into `self.context.data`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let alert = /* an existing Alert */ alert.with_context_data("user", "alice");
+    /// // now alert.context.data.get("user") == Some(&"alice".to_string())
+    /// ```
     pub fn with_context_data(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.context.data.insert(key.into(), value.into());
         self
     }
 
-    /// Add a tag to the alert.
+    /// Adds a tag to the alert's context and returns the modified Alert.
+    ///
+    /// The tag is appended to `self.context.tags`. This method consumes the alert
+    /// and returns an updated instance so it can be used in builder-style chains.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let alert = Alert::new(
+    ///     AlertSeverity::Low,
+    ///     "title",
+    ///     "desc",
+    ///     "rule-1",
+    ///     process_record,
+    /// ).with_tag("network");
+    /// assert!(alert.context.tags.contains(&"network".to_string()));
+    /// ```
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.context.tags.push(tag.into());
         self
@@ -188,12 +327,23 @@ impl Alert {
         self
     }
 
-    /// Set the confidence level.
+    /// Set the confidence level on this context (or alert) if the value is valid.
+    ///
+    /// The confidence must be a finite floating-point number inside the inclusive range
+    /// [0.0, 1.0]. On success this returns `Ok(self)` with `self.context.confidence` set
+    /// to `Some(confidence)`.
     ///
     /// # Errors
     ///
-    /// Returns `AlertError::InvalidConfidence` if the confidence value is not finite
-    /// or not within the valid range [0.0, 1.0].
+    /// Returns `AlertError::InvalidConfidence(confidence)` when `confidence` is non-finite
+    /// (NaN or infinite) or outside the [0.0, 1.0] range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ctx = AlertContext::new().with_confidence(0.85).unwrap();
+    /// assert_eq!(ctx.confidence, Some(0.85));
+    /// ```
     pub fn with_confidence(mut self, confidence: f64) -> Result<Self, AlertError> {
         if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
             return Err(AlertError::InvalidConfidence(confidence));
@@ -202,7 +352,19 @@ impl Alert {
         Ok(self)
     }
 
-    /// Get the alert age in seconds.
+    /// Returns the alert's age in whole seconds.
+    ///
+    /// The value is computed as the duration elapsed since the alert's stored `timestamp`.
+    /// If the system clock reports an error (e.g., the timestamp is in the future or
+    /// elapsed cannot be computed), this returns `0`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // given an Alert instance `alert`:
+    /// let age = alert.age_seconds();
+    /// println!("alert age: {}s", age);
+    /// ```
     pub fn age_seconds(&self) -> u64 {
         self.timestamp.elapsed().map(|d| d.as_secs()).unwrap_or(0)
     }

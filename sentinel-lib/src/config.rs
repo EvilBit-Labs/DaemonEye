@@ -128,6 +128,23 @@ impl Default for DatabaseConfig {
 }
 
 impl Default for AlertingConfig {
+    /// Creates the default AlertingConfig.
+    ///
+    /// Defaults:
+    /// - `sinks`: empty list
+    /// - `dedup_window_seconds`: 300
+    /// - `max_alerts_per_minute`: `None`
+    /// - `recent_threshold_seconds`: 3600
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = AlertingConfig::default();
+    /// assert!(cfg.sinks.is_empty());
+    /// assert_eq!(cfg.dedup_window_seconds, 300);
+    /// assert!(cfg.max_alerts_per_minute.is_none());
+    /// assert_eq!(cfg.recent_threshold_seconds, 3600);
+    /// ```
     fn default() -> Self {
         Self {
             sinks: vec![],
@@ -223,7 +240,36 @@ impl ConfigLoader {
         Ok(config)
     }
 
-    /// Apply environment variable overrides.
+    /// Apply environment variable overrides to a Config using the loader's component name as a prefix.
+    ///
+    /// Environment variables are read with the prefix derived from `self.component` converted to
+    /// uppercase (e.g. component "procmond" => "PROCMOND_SCAN_INTERVAL_MS"). When present, the
+    /// following variables override their corresponding config fields:
+    ///
+    /// - `{PREFIX}_SCAN_INTERVAL_MS` -> `config.app.scan_interval_ms` (parsed as integer)
+    /// - `{PREFIX}_BATCH_SIZE` -> `config.app.batch_size` (parsed as integer)
+    /// - `{PREFIX}_LOG_LEVEL` -> `config.logging.level` (string)
+    /// - `{PREFIX}_LOG_FORMAT` -> `config.logging.format` (string)
+    /// - `{PREFIX}_DATABASE_PATH` -> `config.database.path` (string -> `PathBuf`)
+    /// - `{PREFIX}_RECENT_THRESHOLD_SECONDS` -> `config.alerting.recent_threshold_seconds` (parsed as integer)
+    ///
+    /// Parsing failures for numeric values are ignored and leave the existing config value unchanged.
+    /// The function returns a new `Config` with any applied overrides; it does not modify external state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::env;
+    /// // create a loader for component "procmond"
+    /// let loader = crate::config::ConfigLoader::new("procmond".into());
+    /// let mut cfg = crate::config::Config::default();
+    ///
+    /// // override scan interval via environment
+    /// env::set_var("PROCMOND_SCAN_INTERVAL_MS", "45000");
+    ///
+    /// let cfg = loader.apply_env_overrides(cfg);
+    /// assert_eq!(cfg.app.scan_interval_ms, 45000);
+    /// ```
     fn apply_env_overrides(&self, mut config: Config) -> Config {
         // Apply component-specific environment variables
         let prefix = self.component.to_uppercase();
