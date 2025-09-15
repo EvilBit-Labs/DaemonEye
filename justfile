@@ -16,7 +16,7 @@ help:
 
 # Development setup
 setup:
-    cd {{justfile_dir()}}
+    cd {{ justfile_dir() }}
     rustup component add rustfmt clippy llvm-tools-preview rust-src
     cargo install cargo-nextest --locked || echo "cargo-nextest already installed"
 
@@ -74,12 +74,11 @@ pre-commit-run:
 
 # Format a single file (for pre-commit hooks)
 format-files +FILES:
-    npx prettier --write --config .prettierrc.json {{FILES}}
+    npx prettier --write --config .prettierrc.json {{ FILES }}
 
 megalinter:
-    cd {{justfile_dir()}}
+    cd {{ justfile_dir() }}
     npx mega-linter-runner --flavor rust
-
 
 # =============================================================================
 # BUILDING AND TESTING

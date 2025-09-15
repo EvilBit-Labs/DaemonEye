@@ -615,6 +615,12 @@ impl DetectionRule {
 
         Ok(())
     }
+
+    /// Add metadata to the rule.
+    pub fn with_metadata(mut self, key: String, value: String) -> Self {
+        self.metadata.insert(key, value);
+        self
+    }
 }
 
 /// System information and capabilities.
@@ -791,6 +797,130 @@ mod tests {
             AlertSeverity::High
         );
         assert!("invalid".parse::<AlertSeverity>().is_err());
+    }
+
+    #[test]
+    fn test_process_record_serialization() {
+        let process = ProcessRecord::builder()
+            .pid_raw(1234)
+            .name("test-process")
+            .executable_path("/usr/bin/test")
+            .command_line("test --arg value")
+            .cpu_usage(25.5)
+            .memory_usage(1024 * 1024)
+            .status(ProcessStatus::Running)
+            .executable_hash("sha256:abc123")
+            .hash_algorithm("sha256")
+            .build()
+            .unwrap();
+
+        // Test JSON serialization
+        let json = serde_json::to_string(&process).unwrap();
+        let deserialized: ProcessRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(process, deserialized);
+
+        // Test that the JSON contains expected fields
+        assert!(json.contains("\"pid\":1234"));
+        assert!(json.contains("\"name\":\"test-process\""));
+        assert!(json.contains("\"executable_path\":\"/usr/bin/test\""));
+    }
+
+    #[test]
+    fn test_alert_serialization() {
+        let alert = Alert::new(
+            "alert-123",
+            AlertSeverity::Critical,
+            "Test Alert",
+            "This is a test alert for serialization",
+            "test-category",
+        )
+        .with_context("key1".to_string(), "value1".to_string())
+        .with_tags(vec!["tag1".to_string(), "tag2".to_string()]);
+
+        // Test JSON serialization
+        let json = serde_json::to_string(&alert).unwrap();
+        let deserialized: Alert = serde_json::from_str(&json).unwrap();
+        assert_eq!(alert, deserialized);
+
+        // Test that the JSON contains expected fields
+        assert!(json.contains("\"severity\":\"Critical\""));
+        assert!(json.contains("\"title\":\"Test Alert\""));
+        assert!(json.contains("\"category\":\"test-category\""));
+    }
+
+    #[test]
+    fn test_detection_rule_serialization() {
+        let rule = DetectionRule::new(
+            "rule-456",
+            "Test Rule",
+            "A test detection rule",
+            "SELECT * FROM processes WHERE name = 'suspicious'",
+            "malware",
+            AlertSeverity::High,
+        )
+        .with_metadata("author".to_string(), "test-user".to_string())
+        .with_metadata("version".to_string(), "1.0.0".to_string());
+
+        // Test JSON serialization
+        let json = serde_json::to_string(&rule).unwrap();
+        let deserialized: DetectionRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, deserialized);
+
+        // Test that the JSON contains expected fields
+        assert!(json.contains("\"id\":\"rule-456\""));
+        assert!(json.contains("\"name\":\"Test Rule\""));
+        assert!(
+            json.contains("\"sql_query\":\"SELECT * FROM processes WHERE name = 'suspicious'\"")
+        );
+    }
+
+    #[test]
+    fn test_system_info_serialization() {
+        let system_info = SystemInfo::new(
+            "Linux".to_string(),
+            "5.4.0-74-generic".to_string(),
+            "x86_64".to_string(),
+            8 * 1024 * 1024 * 1024, // 8GB
+            4,                      // 4 cores
+            86400,                  // 1 day uptime
+        )
+        .with_capability("process_monitoring".to_string())
+        .with_capability("file_access".to_string());
+
+        // Test JSON serialization
+        let json = serde_json::to_string(&system_info).unwrap();
+        let deserialized: SystemInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(system_info, deserialized);
+
+        // Test that the JSON contains expected fields
+        assert!(json.contains("\"os_name\":\"Linux\""));
+        assert!(json.contains("\"architecture\":\"x86_64\""));
+        assert!(json.contains("\"total_memory\":8589934592"));
+    }
+
+    #[test]
+    fn test_strongly_typed_ids_serialization() {
+        let pid = ProcessId::new(1234);
+        let rule_id = RuleId::new("rule-123");
+        let alert_id = AlertId::new("alert-456");
+        let scan_id = ScanId::new("scan-789");
+
+        // Test JSON serialization for all ID types
+        let pid_json = serde_json::to_string(&pid).unwrap();
+        let rule_id_json = serde_json::to_string(&rule_id).unwrap();
+        let alert_id_json = serde_json::to_string(&alert_id).unwrap();
+        let scan_id_json = serde_json::to_string(&scan_id).unwrap();
+
+        // Test deserialization
+        let deserialized_pid: ProcessId = serde_json::from_str(&pid_json).unwrap();
+        let deserialized_rule_id: RuleId = serde_json::from_str(&rule_id_json).unwrap();
+        let deserialized_alert_id: AlertId = serde_json::from_str(&alert_id_json).unwrap();
+        let deserialized_scan_id: ScanId = serde_json::from_str(&scan_id_json).unwrap();
+
+        assert_eq!(pid, deserialized_pid);
+        assert_eq!(rule_id, deserialized_rule_id);
+        assert_eq!(alert_id, deserialized_alert_id);
+        assert_eq!(scan_id, deserialized_scan_id);
     }
 }
 

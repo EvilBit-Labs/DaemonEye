@@ -8,7 +8,7 @@
   - Implement structured logging with tracing ecosystem and JSON formatting
   - _Requirements: 6.4, 10.1_
 
-- [ ] 2. Implement core data models and serialization - [#34](https://github.com/EvilBit-Labs/SentinelD/issues/34)
+- [x] 2. Implement core data models and serialization - [#34](https://github.com/EvilBit-Labs/SentinelD/issues/34)
 
   - Create ProcessRecord struct with comprehensive metadata fields (PID, PPID, name, executable_path, etc.)
   - Implement Alert struct with severity levels, deduplication keys, and context information
