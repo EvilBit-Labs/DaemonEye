@@ -27,3 +27,6 @@ tempfile.workspace = true
 [[bin]]
 name = "procmond"
 path = "src/main.rs"
+
+[package.metadata.cargo-machete]
+ignored = ["sysinfo"]

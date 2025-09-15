@@ -11,6 +11,8 @@ fn prints_expected_greeting() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cmd = Command::cargo_bin("sentinelagent")?;
     cmd.env("SENTINELAGENT_DATABASE_PATH", db_path.to_str().unwrap());
+    // Enable test mode so the agent exits immediately after startup banner.
+    cmd.env("SENTINELAGENT_TEST_MODE", "1");
     cmd.assert().success().stdout(predicate::str::contains(
         "sentinelagent started successfully",
     ));

@@ -823,10 +823,12 @@ name = "sentinelagent"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "futures",
  "predicates",
  "sentinel-lib",
  "tempfile",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 
