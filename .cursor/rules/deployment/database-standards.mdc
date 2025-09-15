@@ -49,26 +49,14 @@ CREATE TABLE scans (
 -- Rule definitions with versioning
 CREATE TABLE detection_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT,
-    sql_query TEXT NOT NULL,
-    severity TEXT,
     enabled BOOLEAN DEFAULT TRUE,
     created_at INTEGER NOT NULL,
     updated_at INTEGER
-);
-
--- Generated alerts with execution context
-CREATE TABLE alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     rule_id INTEGER NOT NULL,
     scan_id INTEGER NOT NULL,
     severity TEXT NOT NULL,
     message TEXT NOT NULL,
-    process_matches TEXT, -- JSON array of matching processes
-    created_at INTEGER NOT NULL,
-    FOREIGN KEY (rule_id) REFERENCES detection_rules(id),
-    FOREIGN KEY (scan_id) REFERENCES scans(id)
 );
 
 -- Delivery tracking with retry information
@@ -84,16 +72,155 @@ CREATE TABLE alert_deliveries (
     FOREIGN KEY (alert_id) REFERENCES alerts(id)
 );
 
--- Tamper-evident cryptographic chain
-CREATE TABLE audit_ledger (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type TEXT NOT NULL,
-    event_data TEXT NOT NULL,
-    hash_chain TEXT NOT NULL,
-    timestamp INTEGER NOT NULL,
-    signature TEXT
-);
+-- Merkle Tree Audit Ledger (redb + rs-merkle)
+-- The audit ledger is not implemented as an SQL table; instead we use a redb key-value layout
+-- with deterministic key ordering (monotonic u64 keys) and a parallel Merkle accumulator.
+-- Schema (conceptual):
+--   Table: AUDIT_LEDGER (key: u64 sequence id, value: AuditEntry)
+--   Table: AUDIT_CHECKPOINTS (key: u64 tree_size, value: Checkpoint)
+-- Types:
+--   struct AuditEntry {
+--       id: u64,                     // monotonically increasing
+--       event_type: String,
+--       event_data: String,          // canonical JSON string
+--       timestamp: i64,              // epoch millis
+--       leaf_hash: [u8; 32],         // BLAKE3 hash of canonical leaf
+--       tree_size: u64,              // size AFTER insertion (1-based)
+--       tree_root: [u8; 32],         // Merkle root at tree_size
+--       inclusion_proof: Vec<[u8;32]>, // sibling hashes (can be reconstructed; optional cache)
+--       signature: Option<Vec<u8>>,  // per-entry optional signature
+--       checkpoint_signature: Option<Vec<u8>>, // optional Ed25519 signature over checkpoint (tree_size || tree_root)
+--   }
+--   struct Checkpoint {
+--       tree_size: u64,
+--       tree_root: [u8;32],
+--       signed: bool,
+--       checkpoint_signature: Option<Vec<u8>>,
+--       created_at: i64,
+--   }
+-- redb Definitions (Rust):
+--   const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::new("audit_ledger");
+--   const AUDIT_CHECKPOINTS_TABLE: TableDefinition<u64, Checkpoint> = TableDefinition::new("audit_checkpoints");
+-- Implementation Notes:
+--   * All writes use a write transaction; append-only id = last_id + 1.
+--   * Merkle tree maintained incrementally using rs-merkle; we keep an in-memory vector of leaf hashes
+--     (bounded by retention policy) and optionally persist periodic checkpoints for fast restore.
+--   * On startup: load latest checkpoint (max tree_size), rebuild remaining leaves' branch up to current head.
+--   * Inclusion proofs for historical entries can be generated on demand; we may cache them for frequently
+--     queried entries by writing back the inclusion_proof vector (idempodent update allowed).
+--   * For tamper-evidence: periodically (e.g., every N entries or T seconds) produce a signed checkpoint and
+--     store it in AUDIT_CHECKPOINTS; external auditors can request (tree_size, tree_root, signature) tuple.
+-- Migration From Legacy hash_chain Table (previous simple chaining):
+--   1. Stream legacy rows ordered by id. For each row:
+--        a. Canonicalize: canonical_leaf = json!({"t":event_type,"d":event_data,"ts":timestamp}).to_string()
+--        b. leaf_hash = blake3::hash(canonical_leaf.as_bytes()).as_bytes().clone()
+--        c. Push leaf_hash into incremental rs-merkle MerkleTree (or MerkleTreeBuilder) collecting current root.
+--        d. tree_size = index + 1; tree_root = current_root.
+--        e. Optionally generate inclusion proof now: tree.proof(&[index]).proof_hashes().collect()
+--        f. Insert AuditEntry with computed fields; signature & checkpoint_signature remain None unless legacy signing existed.
+--   2. After all imported, emit an initial checkpoint (tree_size, tree_root, optional signature) to AUDIT_CHECKPOINTS.
+--   3. Mark legacy store read-only then retire after validation.
+-- Validation:
+--   * Re-derive a random sample of inclusion proofs and verify vs stored tree_root.
+--   * Recompute aggregate root from all stored leaf_hash entries; MUST equal latest checkpoint tree_root.
+-- Retention / Pruning:
 ```
+
+### Merkle Audit Ledger: Native rs-merkle Representation
+
+The audit ledger is implemented natively with `redb` + `rs-merkle` + `blake3`. Below is an illustrative (non-production) Rust sketch showing append, proof generation, verification, and checkpoint emission. This replaces any prior SQL representation.
+
+```rust
+use rs_merkle::{MerkleTree, MerkleProof, Hasher};
+use blake3;
+
+// Blake3 Hasher adapter for rs-merkle
+#[derive(Clone, Debug)]
+struct Blake3Hasher;
+impl Hasher for Blake3Hasher {
+    type Hash = [u8; 32];
+    fn hash(data: &[u8]) -> Self::Hash { *blake3::hash(data).as_bytes() }
+}
+
+/// Canonical leaf serialization.
+/// event_data_json MUST already be canonical JSON (object or primitive) with stable ordering.
+/// A future enhancement may adopt an RFC 8785 canonical JSON implementation for stronger guarantees.
+fn canonical_leaf(event_type: &str, event_data_json: &str, timestamp_ms: i64) -> String {
+    // Minimal JSON object with fixed key order (t,d,ts). We assume event_data_json is valid JSON.
+    // NOTE: No trailing spaces, no pretty formatting.
+    format!("{{\"t\":\"{event_type}\",\"d\":{event_data_json},\"ts\":{timestamp_ms}}}")
+}
+
+/// Append a new event; returns (leaf_index, tree_size, root_hash, sibling_hashes)
+fn append_event(
+    tree: &mut MerkleTree<Blake3Hasher>,
+    leaves: &mut Vec<[u8;32]>,
+    event_type: &str,
+    event_data_json: &str,
+    ts_ms: i64,
+) -> anyhow::Result<(u64, u64, [u8;32], Vec<[u8;32]>)> {
+    let serialized = canonical_leaf(event_type, event_data_json, ts_ms);
+    let leaf_hash = Blake3Hasher::hash(serialized.as_bytes());
+    tree.insert(leaf_hash).commit();
+    leaves.push(leaf_hash);
+    let tree_size = leaves.len() as u64;
+    let idx = tree_size - 1;
+    let root = tree.root().expect("root must exist after insertion");
+    let proof = tree.proof(&[idx as usize]);
+    let siblings = proof.proof_hashes().to_vec();
+    Ok((idx, tree_size, root, siblings))
+}
+
+/// Verify inclusion proof
+fn verify_inclusion(
+    root: [u8;32],
+    leaf_index: u64,
+    total_leaves: u64,
+    leaf_hash: [u8;32],
+    siblings: &[[u8;32]],
+) -> bool {
+    let proof = MerkleProof::<Blake3Hasher>::new(siblings.to_vec());
+    proof.verify(root, &[leaf_index as usize], &[leaf_hash], total_leaves as usize)
+}
+
+/// Emit a checkpoint (optionally sign (tree_size || root) with Ed25519 externally)
+fn emit_checkpoint(tree: &MerkleTree<Blake3Hasher>, leaves: &[[u8;32]]) -> Option<(u64, [u8;32])> {
+    let root = tree.root()?;
+    Some((leaves.len() as u64, root))
+}
+```
+
+Key Operational Points:
+
+- Append Path: canonicalize leaf -> hash -> insert -> commit -> derive root -> store entry + (optionally) proof.
+- Proofs: Stored only as optimization; can be recomputed on demand (O(log n)).
+- Checkpoints: Periodic `(tree_size, root)` persisted + optional Ed25519 signature for external auditors.
+- Startup Recovery: Load latest checkpoint, replay subsequent leaves from `AUDIT_LEDGER` to confirm root.
+- Consistency Check: Randomly sample entries, recompute proof, verify against checkpoint root.
+- Pruning: Logical (tombstone payload but retain leaf hash) vs full rebuild (maintenance window) for physical removal.
+
+Security Invariants:
+
+1. Canonical serialization stability (any change requires full tree rebuild & checkpoint reset).
+2. Single monotonic lineage of root hashes; no forks except during offline maintenance in sealed mode.
+3. Hash Algorithm Uniformity: Entire tree lineage uses BLAKE3; algorithm change forms a new lineage namespace.
+4. Checkpoint Authenticity: Verifiers trust only signed checkpoints (if signatures enabled).
+5. Inclusion Proof Verification Inputs: `(root, leaf_index, total_leaves_at_checkpoint, leaf_hash, siblings[])`.
+
+Future Enhancements:
+
+- Domain separation tags for leaf/internal nodes (e.g., `BLAKE3("SD_LEAF" || data)`).
+- Multi-proof batching for forensic range queries.
+- Streaming proof API for large verification sets.
+- Pluggable canonical JSON normalizer (RFC 8785) for cryptographic interoperability.
+
+```text
+// Potential domain separation (illustrative)
+// fn hash_leaf(bytes: &[u8]) -> [u8;32] { *blake3::hash(&[b"SD_LEAF".as_slice(), bytes].concat()).as_bytes() }
+// fn hash_internal(l: &[u8;32], r: &[u8;32]) -> [u8;32] { *blake3::hash(&[b"SD_INT", l, r].concat()).as_bytes() }
+```
+
+This native section ensures the documentation reflects the true implementation approach (embedded KV + Merkle accumulator) with no implication of a relational schema.
 
 #### Business/Enterprise Tables
 

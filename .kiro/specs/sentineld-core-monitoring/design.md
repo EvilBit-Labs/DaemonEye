@@ -47,7 +47,7 @@ The system implements a pipeline processing model with clear phases and strict c
 3. **Task Generation**: Complex SQL detection rules translated into simple protobuf collection tasks
 4. **IPC Communication**: procmond receives simple detection tasks via protobuf over IPC
 5. **Overcollection Strategy**: procmond may overcollect data due to granularity limitations
-6. **Audit Logging**: procmond writes to tamper-evident audit ledger (write-only)
+6. **Audit Logging**: procmond writes to tamper-evident audit ledger (write-only; redb + rs-merkle Merkle tree)
 7. **Detection Phase**: sentinelagent executes original SQL rules against collected/stored data
 8. **Alert Generation**: Structured alerts with deduplication and context
 9. **Delivery Phase**: Multi-channel alert delivery with reliability guarantees
@@ -355,15 +355,124 @@ The system uses redb (pure Rust embedded database) for optimal performance and s
 - `alerts`: Generated alerts with execution context
 - `alert_deliveries`: Delivery tracking with retry information
 
-**Audit Ledger** (Certificate Transparency Style):
+**Audit Ledger** (redb + rs-merkle, CT-style Merkle log):
 
-- `audit_entries`: Append-only log entries with BLAKE3 hashing
-- `merkle_tree_nodes`: Merkle tree structure for efficient verification proofs
-- `checkpoints`: Periodic signed root hash snapshots for external verification
-- Each entry contains: sequence, timestamp, actor, action, entry_hash, tree_size, root_hash
-- Inclusion proofs: Logarithmic-size cryptographic proofs for entry verification
-- Optional Ed25519 signatures for checkpoint attestation and enhanced integrity
-- Airgap support: Exportable checkpoints for manual external verification
+The audit ledger is an append-only Merkle tree backed by `redb` rather than a relational schema. It provides tamper-evident logging with inclusion proofs and periodic signed checkpoints.
+
+Key Concepts:
+
+- Append-only sequence of canonical JSON leaf entries.
+- BLAKE3 used for leaf hashing (uniform algorithm per lineage).
+- Incremental Merkle root updated each append (`O(log n)` path).
+- Inclusion proofs (sibling hash list) generated on demand; optionally cached.
+- Periodic checkpoints `(tree_size, root_hash[, signature])` persisted for rapid recovery & external audit.
+- Optional Ed25519 signatures over `(tree_size || root_hash)` for auditor trust anchoring.
+- Air‑gap export: Signed checkpoints + sampled proofs can be exported for offline verification.
+
+redb Logical Layout (conceptual):
+
+- `AUDIT_LEDGER (u64 -> AuditEntry)`
+- `AUDIT_CHECKPOINTS (u64 tree_size -> Checkpoint)`
+
+Simplified Data Structures (illustrative):
+
+```rust
+#[derive(Serialize, Deserialize, Clone)]
+struct AuditEntry {
+    id: u64,    // monotonic
+    ts_ms: i64, // epoch millis
+    actor: String,
+    action: String,
+    payload: serde_json::Value,
+    leaf_hash: [u8; 32],                    // BLAKE3(canonical_leaf)
+    tree_size: u64,                         // size AFTER insertion
+    root_hash: [u8; 32],                    // Merkle root at tree_size
+    inclusion_proof: Option<Vec<[u8; 32]>>, // optional cached siblings
+    checkpoint_sig: Option<Vec<u8>>,        // optional signature at this state
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Checkpoint {
+    tree_size: u64,
+    root_hash: [u8; 32],
+    created_at_ms: i64,
+    signature: Option<Vec<u8>>, // Ed25519(tree_size || root_hash)
+}
+```
+
+rs-merkle Integration (minimal sketch):
+
+```rust
+use blake3;
+use rs_merkle::{Hasher, MerkleProof, MerkleTree};
+
+#[derive(Clone, Debug)]
+struct Blake3Hasher;
+impl Hasher for Blake3Hasher {
+    type Hash = [u8; 32];
+    fn hash(data: &[u8]) -> Self::Hash {
+        *blake3::hash(data).as_bytes()
+    }
+}
+
+fn canonical_leaf(actor: &str, action: &str, payload: &serde_json::Value, ts_ms: i64) -> Vec<u8> {
+    // Fixed key order for stability; if stronger guarantees needed adopt RFC 8785 canonical JSON.
+    serde_json::to_vec(&serde_json::json!({"a": actor, "ac": action, "p": payload, "ts": ts_ms}))
+        .unwrap()
+}
+
+fn append(
+    tree: &mut MerkleTree<Blake3Hasher>,
+    leaves: &mut Vec<[u8; 32]>,
+    actor: &str,
+    action: &str,
+    payload: &serde_json::Value,
+    ts_ms: i64,
+) -> (u64, [u8; 32], Vec<[u8; 32]>) {
+    let leaf_bytes = canonical_leaf(actor, action, payload, ts_ms);
+    let leaf_hash = Blake3Hasher::hash(&leaf_bytes);
+    tree.insert(leaf_hash).commit();
+    leaves.push(leaf_hash);
+    let size = leaves.len() as u64;
+    let root = tree.root().expect("root present after append");
+    let proof = tree.proof(&[(size - 1) as usize]);
+    (size, root, proof.proof_hashes().to_vec())
+}
+
+fn verify(
+    root: [u8; 32],
+    index: u64,
+    total: u64,
+    leaf_hash: [u8; 32],
+    siblings: &[[u8; 32]],
+) -> bool {
+    let proof = MerkleProof::<Blake3Hasher>::new(siblings.to_vec());
+    proof.verify(root, &[index as usize], &[leaf_hash], total as usize)
+}
+```
+
+Operational Flow:
+
+- Append Path: canonicalize → hash → insert → commit → record root → (optional) store proof.
+- Checkpoint: every N appends or T seconds persist `(tree_size, root_hash[, signature])`.
+- Recovery: load max checkpoint, replay subsequent entries, validate root; enter safe mode if mismatch.
+- Proof Serving: regenerate on demand if not cached (logarithmic complexity).
+- Pruning: logical tombstone retains leaf hash; full physical pruning requires rebuild under maintenance.
+
+Security Invariants:
+
+1. Canonical serialization stability; change requires full tree rebuild + lineage reset.
+2. Single monotonic root sequence; no forks outside controlled offline maintenance.
+3. Uniform hash algorithm (BLAKE3) per lineage.
+4. Signed checkpoints (if enabled) anchor external trust.
+5. Inclusion verification inputs: `(root, leaf_index, total_leaves_at_checkpoint, leaf_hash, siblings[])`.
+
+Future Enhancements:
+
+- Domain separation tags for leaf vs internal nodes (e.g., `BLAKE3("SD_LEAF" || data)`).
+- Multi-proof batching for range forensic queries.
+- RFC 8785 canonical JSON implementation for cross-implementation determinism.
+- Streaming proof generation API for bulk verification.
 
 ## Error Handling
 
@@ -380,7 +489,10 @@ pub enum CollectionError {
     EnumerationFailed { source: std::io::Error },
 
     #[error("Hash computation failed for {path}: {source}")]
-    HashComputationFailed { path: PathBuf, source: std::io::Error },
+    HashComputationFailed {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("Database write failed: {source}")]
     DatabaseWriteFailed { source: rusqlite::Error },
@@ -398,7 +510,9 @@ pub enum DetectionError {
     RuleExecutionTimeout { rule_id: String },
 
     #[error("Alert generation failed: {source}")]
-    AlertGenerationFailed { source: Box<dyn std::error::Error + Send + Sync> },
+    AlertGenerationFailed {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 ```
 
@@ -633,65 +747,22 @@ impl PrivilegeManager {
 
 ### Cryptographic Integrity
 
-**Certificate Transparency-Style Audit Ledger**:
+Refer to the earlier **Audit Ledger (redb + rs-merkle, CT-style Merkle log)** section for full data structures and code sketch. This subsection summarizes cryptographic guarantees without duplicating implementation details:
 
-```rust
-pub struct AuditLedger {
-    merkle_tree: MerkleTree<Blake3>,
-    log_entries: Vec<AuditEntry>,
-    checkpoint_interval: usize,
-    signer: Option<ed25519_dalek::Keypair>,
-    current_tree_size: usize,
-}
+Core Guarantees:
 
-impl AuditLedger {
-    pub fn append_entry(&mut self, entry: &AuditEntry) -> Result<AuditRecord> {
-        let entry_data = serde_json::to_vec(entry)?;
-        let entry_hash = blake3::hash(&entry_data);
+- Append-only sequencing with monotonic `tree_size` mapped to Merkle roots.
+- Canonical JSON leaf serialization → BLAKE3 leaf hash → rs-merkle insertion.
+- Inclusion proofs (logarithmic sibling path) verifiable offline using `(root, index, total, leaf_hash, siblings[])`.
+- Periodic checkpoints (root + tree_size [+ signature]) enable rapid recovery & external attestation.
+- Optional Ed25519 signatures provide trust anchor continuity across exports / air‑gapped validation.
 
-        // Add to Merkle tree for efficient proofs
-        self.merkle_tree.push(entry_hash.as_bytes());
-        self.log_entries.push(entry.clone());
-        self.current_tree_size += 1;
+Security Invariants:
 
-        let record = AuditRecord {
-            sequence: self.current_tree_size - 1,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64,
-            actor: entry.actor.clone(),
-            action: entry.action.clone(),
-            entry_hash,
-            tree_size: self.current_tree_size,
-            root_hash: self.merkle_tree.root(),
-            signature: self.sign_checkpoint_if_needed()?,
-        };
+1. Single linear history (no forks) outside controlled maintenance rebuilds.
+2. Uniform hash algorithm per lineage (BLAKE3) with potential future domain separation tags.
+3. Checkpoint verification failure forces safe-mode replay / halt before accepting new appends.
+4. Proof regeneration does not mutate state; cached proofs are an optimization only.
+5. Canonical format change requires full rebuild and lineage version bump.
 
-        Ok(record)
-    }
-
-    pub fn generate_inclusion_proof(&self, index: usize) -> Result<InclusionProof> {
-        // Generate logarithmic-size proof for entry verification
-        self.merkle_tree.generate_proof(index)
-    }
-
-    pub fn verify_inclusion(&self, entry: &AuditEntry, proof: &InclusionProof) -> Result<bool> {
-        // Verify entry inclusion with Certificate Transparency semantics
-        self.merkle_tree.verify_proof(entry, proof)
-    }
-
-    pub fn create_checkpoint(&mut self) -> Result<SignedCheckpoint> {
-        // Periodic checkpoint for external verification (airgap export)
-        let checkpoint = Checkpoint {
-            tree_size: self.current_tree_size,
-            root_hash: self.merkle_tree.root(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64,
-        };
-
-        Ok(SignedCheckpoint {
-            checkpoint,
-            signature: self.signer.as_ref().map(|s| s.sign(&checkpoint.to_bytes())),
-        })
-    }
-}
-```
-
-This design provides a robust foundation for implementing SentinelD's core monitoring functionality while maintaining security, performance, and reliability requirements.
+See also: `database-standards.mdc` for operational procedures (recovery, pruning, checkpoint export) and future enhancements roadmap.
