@@ -210,36 +210,36 @@
   - Write metrics accuracy tests and Prometheus scraping compatibility verification
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
-- [ ] 18. Create comprehensive test suite and quality assurance
-- [ ] 18.1 Implement unit test coverage
+- [ ] 18. Create comprehensive test suite and quality assurance - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
+- [ ] 18.1 Implement unit test coverage - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
   - Add unit tests for all core functionality targeting >85% code coverage
   - Set up llvm-cov for code coverage measurement and reporting
   - Create test utilities and mock objects for isolated testing
   - Write unit tests for error handling and edge cases
   - _Requirements: All requirements verification_
 
-- [ ] 18.2 Add integration and CLI testing
+- [ ] 18.2 Add integration and CLI testing - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
   - Implement integration tests with assert_cmd for CLI testing
   - Add cross-component interaction tests for IPC communication
   - Create end-to-end workflow tests for complete monitoring scenarios
   - Write snapshot tests with insta for CLI output validation
   - _Requirements: All requirements verification_
 
-- [ ] 18.3 Create performance and property-based testing
+- [ ] 18.3 Create performance and property-based testing - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
   - Add performance tests with criterion for regression detection
   - Implement property-based tests with proptest for edge case discovery
   - Create load testing scenarios for high-volume process monitoring
   - Write benchmark tests for critical performance paths
   - _Requirements: All requirements verification_
 
-- [ ] 18.4 Set up CI matrix and quality gates
+- [ ] 18.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
   - Configure CI matrix testing across Linux, macOS, Windows
   - Add multiple Rust version testing (stable, beta, MSRV)
   - Set up quality gates with clippy, rustfmt, and security auditing
   - Create automated test reporting and coverage tracking
   - _Requirements: All requirements verification_
 
-- [ ] 19. Add advanced security testing and validation
+- [ ] 19. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/SentinelD/issues/62)
   - Implement comprehensive SQL injection prevention testing with malicious input vectors
   - Add privilege boundary verification tests for all components
   - Create input validation fuzzing with cargo-fuzz for security-critical components
@@ -247,29 +247,29 @@
   - Write penetration testing scenarios for IPC protocol and component boundaries
   - _Requirements: 3.5, 6.4, 6.5_
 
-- [ ] 20. Integrate components and implement end-to-end workflows
-- [ ] 20.1 Wire IPC communication between components
+- [ ] 20. Integrate components and implement end-to-end workflows - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
+- [ ] 20.1 Wire IPC communication between components - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
   - Connect procmond IPC server with sentinelagent IPC client
   - Implement task distribution and result collection workflows
   - Add proper error handling and reconnection logic
   - Write integration tests for IPC communication reliability
   - _Requirements: All requirements integration_
 
-- [ ] 20.2 Implement rule translation and execution pipeline
+- [ ] 20.2 Implement rule translation and execution pipeline - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
   - Create rule translation from SQL to simple protobuf tasks for procmond
   - Integrate detection rule execution with IPC task distribution
   - Add result aggregation and alert generation from detection outcomes
   - Write integration tests for complete detection pipeline
   - _Requirements: All requirements integration_
 
-- [ ] 20.3 Connect alert generation to delivery pipeline
+- [ ] 20.3 Connect alert generation to delivery pipeline - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
   - Wire alert generation from detection results to multi-channel delivery
   - Implement alert deduplication and priority handling
   - Add delivery status tracking and retry coordination
   - Write end-to-end tests for alert generation and delivery
   - _Requirements: All requirements integration_
 
-- [ ] 20.4 Add unified configuration and service management
+- [ ] 20.4 Add unified configuration and service management - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
   - Implement configuration management across all three components
   - Add sentinelagent process lifecycle management for procmond
   - Create unified logging and health reporting
