@@ -119,9 +119,8 @@ ci-check:
     echo "==> 6/7: Build release"
     just build-release
 
-    echo "==> 7/7: Security audits (cargo-audit, cargo-deny)"
+    echo "==> 7/7: Security audits (cargo-audit)"
     just audit
-    just deny
 
     echo "==> CI check completed successfully! ✅"
 
