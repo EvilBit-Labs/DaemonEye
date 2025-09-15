@@ -72,10 +72,10 @@ SentinelD/
 // Library structure pattern
 pub mod alerting; // Multi-channel alert delivery
 pub mod config; // Configuration management
-pub mod crypto;
+pub mod crypto; // Cryptographic audit functions
 pub mod detection; // SQL-based detection engine
 pub mod models; // Core data structures
-pub mod storage; // Database abstractions // Cryptographic audit functions
+pub mod storage; // Database abstractions
 ```
 
 ### Error Handling Pattern
