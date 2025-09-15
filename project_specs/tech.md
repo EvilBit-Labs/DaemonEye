@@ -75,11 +75,11 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 
 ## Performance Requirements
 
-- **CPU Usage**: <5% sustained during continuous monitoring
-- **Memory Usage**: <100MB resident under normal operation
-- **Process Enumeration**: <5 seconds for 10,000+ processes
+- **CPU Usage**: \<5% sustained during continuous monitoring
+- **Memory Usage**: \<100MB resident under normal operation
+- **Process Enumeration**: \<5 seconds for 10,000+ processes
 - **Database Operations**: >1,000 records/second write rate
-- **Alert Latency**: <100ms per detection rule execution
+- **Alert Latency**: \<100ms per detection rule execution
 
 ## Security Architecture
 
