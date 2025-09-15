@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["procmond", "sentinel-lib", "sentinelagent", "sentinelcli"]
-default-members = ["procmond", "sentinelcli", "sentinelagent", "sentinel-lib"]
+members = ["procmond", "sentinel", "sentinel-lib", "sentinelagent", "sentinelcli"]
+default-members = ["procmond", "sentinelcli", "sentinelagent", "sentinel-lib", "sentinel"]
 
 [workspace.package]
 edition = "2024"
@@ -57,4 +57,9 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 [workspace.lints.rust]
 unsafe_code = "forbid"
 warnings = "deny"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 

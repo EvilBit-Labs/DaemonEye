@@ -94,37 +94,17 @@ test:
     @cargo test --workspace
 
 test-ci:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if command -v cargo-nextest >/dev/null 2>&1; then
-        echo "nextest detected: running tests with cargo nextest"
-        cargo nextest run --workspace --all-features
-    else
-        echo "cargo-nextest not found: falling back to cargo test"
-        cargo test --workspace --all-features --all-targets
-    fi
+    cargo nextest run --workspace --all-features
 
 # =============================================================================
 # SECURITY AND AUDITING
 # =============================================================================
 
 audit:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if command -v cargo-audit >/dev/null 2>&1; then
-        cargo audit
-    else
-        echo "cargo-audit not found; skipping security advisory audit. Install with: cargo install cargo-audit"
-    fi
+    cargo audit
 
 deny:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if command -v cargo-deny >/dev/null 2>&1; then
-        cargo deny check
-    else
-        echo "cargo-deny not found; skipping license/advisory checks. Install with: cargo install cargo-deny"
-    fi
+    cargo deny check
 
 # =============================================================================
 # CI AND QUALITY ASSURANCE
@@ -139,7 +119,7 @@ coverage-check:
     cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info --fail-under-lines 85
 
 # Full local CI parity check
-ci-check: fmt-check lint-rust lint-rust-min test-ci build-release audit coverage-check
+ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release audit coverage-check dist-plan
 
 # =============================================================================
 # DEVELOPMENT AND EXECUTION
