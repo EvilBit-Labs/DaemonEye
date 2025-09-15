@@ -44,7 +44,7 @@ fn read_process_config(path: &Path) -> Result<ProcessConfig, CollectionError> {
         .map_err(|e| CollectionError::IoError(
             std::io::Error::new(std::io::ErrorKind::Other, e)
         ))?;
-    
+
     // Parse content...
     Ok(ProcessConfig {})
 }
@@ -52,13 +52,42 @@ fn read_process_config(path: &Path) -> Result<ProcessConfig, CollectionError> {
 
 ### Service Layer Pattern
 
-Implement trait-based services for clear boundaries:
+Implement trait-based services for clear boundaries. For process collection we AVOID returning a gigantic `Vec` (which can cause unbounded memory growth on large fleets) and instead expose a backpressure‑friendly async stream so callers can incrementally consume results, short‑circuit, or apply their own batching:
 
 ```rust
+use futures::stream::BoxStream;
+use std::time::Instant;
+
+#[derive(Debug, thiserror::Error)]
+pub enum CollectionError {
+    #[error("Permission denied accessing process {pid}")]
+    PermissionDenied { pid: u32 },
+    #[error("Process {pid} no longer exists")]
+    ProcessNotFound { pid: u32 },
+    #[error("Collection timed out before completion")]
+    Timeout,
+    #[error("Enumeration failed: {0}")]
+    EnumerationError(String),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+pub type ProcessStream = BoxStream<'static, Result<ProcessRecord, CollectionError>>;
+
 #[async_trait]
 pub trait ProcessCollectionService: Send + Sync {
-    async fn collect_processes(&self) -> Result<CollectionResult, CollectionError>;
+    /// Return an async stream of individual `ProcessRecord` items.
+    /// The implementation MUST:
+    /// - Respect the optional `deadline`; once exceeded, yield a single `Err(CollectionError::Timeout)` and terminate.
+    /// - Avoid buffering all processes in memory simultaneously (bounded internal buffering only).
+    /// - Propagate per‑item errors without aborting the entire stream unless fatal (timeout or system enumeration failure).
+    fn stream_processes(&self, deadline: Option<Instant>) -> ProcessStream;
 }
+
+// Example consumption pattern:
+// let collector = SysinfoProcessCollector::new();
+// let mut stream = collector.stream_processes(Some(Instant::now() + Duration::from_secs(5)));
+// while let Some(item) = stream.next().await { match item { Ok(proc) => { /* handle */ }, Err(e) => { /* log / break */ } }}
 ```
 
 ## Critical Workflows
