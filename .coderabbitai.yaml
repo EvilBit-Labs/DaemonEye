@@ -1,0 +1,400 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+tone_instructions: "Security-first Rust 2024 code review. Flag vulnerabilities, enforce zero-warnings policy, optimize for 10k+ process monitoring. Be direct like a senior security engineer. Focus on privilege separation, performance, and operator reliability."
+early_access: true
+enable_free_tier: true
+reviews:
+    profile: assertive
+    request_changes_workflow: true
+    high_level_summary: true
+    high_level_summary_placeholder: "@coderabbitai summary"
+    high_level_summary_in_walkthrough: true
+    auto_title_placeholder: "@coderabbitai"
+    auto_title_instructions: "Generate PR/MR titles following Conventional Commits format: type(scope): description. Use types: feat, fix, docs, style, refactor, perf, test, build, ci, chore. Use scopes: procmond, sentinelagent, sentinelcli, sentinel-lib, security-center, gui, core-feature, process-monitoring, data-models, ipc, database, crypto, async, testing, integration, cross-platform. Keep descriptions concise and action-oriented."
+    review_status: true
+    commit_status: true
+    fail_commit_status: false
+    collapse_walkthrough: false
+    changed_files_summary: true
+    sequence_diagrams: true
+    estimate_code_review_effort: true
+    assess_linked_issues: true
+    related_issues: true
+    related_prs: true
+    suggested_labels: true
+    auto_apply_labels: true
+    suggested_reviewers: true
+    auto_assign_reviewers: true
+    poem: true
+    labeling_instructions:
+        [
+            {
+                "label": "rust",
+                "instructions": "Apply when the PR/MR contains changes to Rust source code files (*.rs). This includes modifications to any Rust modules, functions, structs, enums, or traits.",
+            },
+            {
+                "label": "core-feature",
+                "instructions": "Apply when the PR/MR implements or modifies core system functionality including procmond, sentinelagent, sentinelcli, or sentinel-lib components. Focus on fundamental security monitoring capabilities.",
+            },
+            {
+                "label": "process-monitoring",
+                "instructions": "Apply when the PR/MR involves process enumeration, monitoring, or collection functionality. Includes changes to process data structures, collection algorithms, or monitoring interfaces.",
+            },
+            {
+                "label": "data-models",
+                "instructions": "Apply when the PR/MR modifies data structures, models, or type definitions. Includes changes to ProcessRecord, Alert, DetectionRule, or other core data types.",
+            },
+            {
+                "label": "serialization",
+                "instructions": "Apply when the PR/MR involves serialization/deserialization functionality. Includes changes to serde implementations, JSON handling, or data format conversions.",
+            },
+            {
+                "label": "ipc",
+                "instructions": "Apply when the PR/MR involves Inter-Process Communication between procmond, sentinelagent, or sentinelcli components. Includes protobuf definitions, Unix sockets, or named pipes.",
+            },
+            {
+                "label": "protobuf",
+                "instructions": "Apply when the PR/MR involves Protocol Buffer definitions, code generation, or protobuf-based communication. Includes .proto files or generated protobuf code.",
+            },
+            {
+                "label": "database",
+                "instructions": "Apply when the PR/MR involves database operations, schema changes, or data storage. Includes redb, PostgreSQL, or other database-related functionality.",
+            },
+            {
+                "label": "crypto",
+                "instructions": "Apply when the PR/MR involves cryptographic functionality, hashing, digital signatures, or security-related cryptographic operations.",
+            },
+            {
+                "label": "async",
+                "instructions": "Apply when the PR/MR involves asynchronous programming patterns, tokio usage, or async/await implementations. Includes async functions, futures, or concurrent operations.",
+            },
+            {
+                "label": "testing",
+                "instructions": "Apply when the PR/MR adds, modifies, or improves test code. Includes unit tests, integration tests, or test infrastructure changes.",
+            },
+            {
+                "label": "integration",
+                "instructions": "Apply when the PR/MR involves integration testing, component integration, or cross-component functionality. Includes end-to-end testing or system integration work.",
+            },
+            {
+                "label": "cross-platform",
+                "instructions": "Apply when the PR/MR involves multi-platform compatibility features for Linux, macOS, or Windows. Includes platform-specific code or cross-platform abstractions.",
+            },
+            {
+                "label": "sentinelagent",
+                "instructions": "Apply when the PR/MR specifically involves the sentinelagent component. Includes detection orchestration, alert management, or service lifecycle management.",
+            },
+            {
+                "label": "documentation",
+                "instructions": "Apply when the PR/MR involves documentation changes, README updates, or code comments. Includes rustdoc, JSDoc, or markdown documentation.",
+            },
+            {
+                "label": "dependencies",
+                "instructions": "Apply when the PR/MR updates dependency files like Cargo.toml, package.json, or other dependency management files.",
+            },
+            {
+                "label": "priority:high",
+                "instructions": "Apply when the PR/MR addresses high priority issues requiring immediate attention. Use sparingly for critical security fixes or blocking issues.",
+            },
+        ]
+    path_filters:
+        [
+            "procmond/**",
+            "sentinelagent/**",
+            "sentinelcli/**",
+            "sentinel-lib/**",
+            "sentinel/**",
+            "docs/src/**",
+            "spec/**",
+            "kiro/**",
+            "cursor/**",
+            ".github/workflows/release.yml",
+            "*.md",
+            "*.toml",
+            "*.yaml",
+            "*.yml",
+            "*.json",
+            "*.sh",
+            "*.py",
+            "*.js",
+            "*.ts",
+            "*.tsx",
+            "justfile",
+            "!target/**",
+            "!dist/**",
+            "!docs/book/**",
+            "!node_modules/**",
+            "!*.woff2",
+            "!*.png",
+            "!*.svg",
+            "!*.ico",
+            "!*.wxs",
+        ]
+    path_instructions:
+        [
+            {
+                "path": "procmond/**",
+                "instructions": "CRITICAL: Privileged process collector with minimal attack surface. Enforce principle of least privilege, immediate privilege dropping after init, no network access, write-only access to audit ledger. Flag any unsafe code, privilege escalation risks, or attack surface expansions. Focus on security, performance, and minimal dependencies.",
+            },
+            {
+                "path": "sentinelagent/**",
+                "instructions": "User-space orchestrator for detection, alerting, and procmond lifecycle management. Enforce outbound-only network connections, read/write event store access, IPC client patterns. Focus on SQL-to-IPC translation using sqlparser, task generation for procmond, overcollection handling, SQL injection prevention, concurrent alert delivery, service management, and error handling with thiserror/anyhow. Flag performance regressions in detection rule execution.",
+            },
+            {
+                "path": "sentinelcli/**",
+                "instructions": "Operator CLI interface. Enforce NO direct database access - communicates only through sentinelagent. No network access, comprehensive error messages, JSON/table output support. Focus on user experience, shell completions, color handling, and operational efficiency for SOC environments.",
+            },
+            {
+                "path": "sentinel-lib/**",
+                "instructions": "Shared library providing common functionality across all components. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments.",
+            },
+            {
+                "path": "sentinel/**",
+                "instructions": "Windows-specific components. Enforce Windows API best practices, service deployment patterns, security considerations for Windows environments. Focus on privilege management and cross-platform compatibility.",
+            },
+            {
+                "path": "security-center/**",
+                "instructions": "Business tier Security Center server. Enforce PostgreSQL database management, mTLS agent authentication, centralized data aggregation, rule pack distribution, and external SIEM integrations. Focus on scalability, security, and enterprise-grade reliability.",
+            },
+            {
+                "path": "gui/**",
+                "instructions": "Business tier web GUI frontend. Enforce React/TypeScript best practices, JWT authentication, responsive design, and real-time data visualization. Focus on user experience for security operations teams and fleet management.",
+            },
+            {
+                "path": "docs/src/**",
+                "instructions": "Documentation source files. Enforce clear, technical writing for cybersecurity professionals. Focus on accuracy, completeness, and operational relevance. Flag missing security considerations or unclear technical explanations.",
+            },
+            {
+                "path": "spec/**",
+                "instructions": "Project specifications and architecture documents. Enforce technical accuracy, architectural consistency, and clear requirements. Focus on security-first design principles and operational constraints.",
+            },
+            {
+                "path": "*.md",
+                "instructions": "Project documentation. Enforce clear, professional writing for security operations teams. Focus on accuracy, completeness, and operational relevance. Flag missing security considerations or unclear technical explanations.",
+            },
+            {
+                "path": "Cargo.toml",
+                "instructions": "Dependency and workspace configuration. Enforce minimal dependencies, security-focused crate selection, proper version pinning. Flag potential security vulnerabilities in dependencies or workspace configuration issues.",
+            },
+            {
+                "path": "justfile",
+                "instructions": "Task runner configuration. Enforce DRY principles, clear command organization, security considerations in build tasks. Focus on operational efficiency and maintainability.",
+            },
+            {
+                "path": "*.yaml",
+                "instructions": "YAML configuration files. Enforce proper YAML syntax, consistent indentation, and clear structure. Focus on configuration validation and security considerations for CI/CD workflows.",
+            },
+            {
+                "path": "*.yml",
+                "instructions": "YAML configuration files. Enforce proper YAML syntax, consistent indentation, and clear structure. Focus on configuration validation and security considerations for CI/CD workflows.",
+            },
+            {
+                "path": "*.json",
+                "instructions": "JSON configuration files. Enforce valid JSON syntax, proper structure, and security considerations. Focus on configuration validation and maintainability.",
+            },
+            {
+                "path": "*.sh",
+                "instructions": "Shell scripts. Enforce proper shell scripting practices, error handling, and security considerations. Focus on portability, maintainability, and operational efficiency.",
+            },
+            {
+                "path": "*.js",
+                "instructions": "JavaScript files. Enforce modern JavaScript practices, security considerations, and maintainability. Focus on performance and compatibility.",
+            },
+            {
+                "path": "*.ts",
+                "instructions": "TypeScript files. Enforce TypeScript best practices, type safety, and security considerations. Focus on maintainability and developer experience.",
+            },
+            {
+                "path": "*.tsx",
+                "instructions": "React TypeScript files. Enforce React and TypeScript best practices, component design patterns, and security considerations. Focus on user experience and maintainability.",
+            },
+        ]
+    abort_on_close: true
+    disable_cache: false
+    auto_review:
+        enabled: true
+        auto_incremental_review: true
+        ignore_title_keywords: []
+        labels: []
+        drafts: false
+        base_branches: []
+        ignore_usernames: []
+    finishing_touches:
+        docstrings:
+            enabled: true
+        unit_tests:
+            enabled: true
+    pre_merge_checks:
+        docstrings:
+            mode: warning
+            threshold: 80
+        title:
+            mode: warning
+            requirements: "Must follow Conventional Commits specification: type(scope): description. Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore. Scopes: auth, api, cli, models, detection, alerting, etc. Breaking changes indicated with ! in header or BREAKING CHANGE: in footer."
+        description:
+            mode: warning
+        issue_assessment:
+            mode: warning
+        custom_checks: []
+    tools:
+        ast-grep:
+            rule_dirs: []
+            util_dirs: []
+            essential_rules: true
+            packages: []
+        shellcheck:
+            enabled: false
+        ruff:
+            enabled: false
+        markdownlint:
+            enabled: true
+        github-checks:
+            enabled: true
+            timeout_ms: 90000
+        languagetool:
+            enabled: true
+            enabled_rules: []
+            disabled_rules: []
+            enabled_categories: []
+            disabled_categories: []
+            enabled_only: false
+            level: default
+        biome:
+            enabled: false
+        hadolint:
+            enabled: false
+        swiftlint:
+            enabled: false
+        phpstan:
+            enabled: false
+            level: default
+        phpmd:
+            enabled: false
+        phpcs:
+            enabled: false
+        golangci-lint:
+            enabled: false
+        yamllint:
+            enabled: true
+        gitleaks:
+            enabled: true
+        checkov:
+            enabled: true
+        detekt:
+            enabled: false
+        eslint:
+            enabled: false
+        flake8:
+            enabled: false
+        rubocop:
+            enabled: false
+        buf:
+            enabled: false
+        regal:
+            enabled: false
+        actionlint:
+            enabled: true
+        pmd:
+            enabled: false
+        cppcheck:
+            enabled: false
+        semgrep:
+            enabled: true
+        circleci:
+            enabled: false
+        clippy:
+            enabled: true
+        sqlfluff:
+            enabled: true
+        prismaLint:
+            enabled: false
+        pylint:
+            enabled: false
+        oxc:
+            enabled: false
+        shopifyThemeCheck:
+            enabled: false
+        luacheck:
+            enabled: false
+        brakeman:
+            enabled: false
+        dotenvLint:
+            enabled: true
+        htmlhint:
+            enabled: false
+        checkmake:
+            enabled: true
+        osvScanner:
+            enabled: true
+chat:
+    art: true
+    auto_reply: true
+    integrations:
+        jira:
+            usage: disabled
+        linear:
+            usage: auto
+knowledge_base:
+    opt_out: false
+    web_search:
+        enabled: true
+    code_guidelines:
+        enabled: true
+        filePatterns: []
+    learnings:
+        scope: auto
+    issues:
+        scope: local
+    jira:
+        usage: disabled
+        project_keys: []
+    linear:
+        usage: auto
+        team_keys: []
+    pull_requests:
+        scope: local
+    mcp:
+        usage: enabled
+        disabled_servers: []
+code_generation:
+    docstrings:
+        language: en-US
+        path_instructions:
+            [
+                {
+                    "path": "**/*.rs",
+                    "instructions": "Generate rustdoc comments following standard format: /// for public items, //! for module docs. Include brief description, parameter docs with # Arguments, return docs with # Returns, error docs with # Errors, and examples with # Examples. Use ```rust for runnable examples, ```rust,no_run for non-runnable. Focus on security implications and performance characteristics.",
+                },
+                {
+                    "path": "sentinelcli/**",
+                    "instructions": "Generate rustdoc comments following standard format with CLI focus: /// for public items, //! for module docs. Include # Arguments, # Returns, # Errors, and # Examples sections. Focus on operator workflows, error messages, and output formatting. Use ```rust,no_run for security-sensitive CLI examples.",
+                },
+                {
+                    "path": "sentinel-lib/**",
+                    "instructions": "Generate rustdoc comments following standard format with shared library focus: /// for public items, //! for module docs. Include # Arguments, # Returns, # Errors, and # Examples sections. Emphasize trait-based abstractions, security boundaries, and cross-component usage. Use ```rust for runnable examples.",
+                },
+                {
+                    "path": "gui/**",
+                    "instructions": "Generate JSDoc comments following TypeScript/React format: /** */ for components and functions. Include @param, @returns, @example, and @since tags. Focus on user experience, real-time data handling, and security operations workflows. Use ```tsx for component examples.",
+                },
+            ]
+    unit_tests:
+        path_instructions:
+            [
+                {
+                    "path": "**/*.rs",
+                    "instructions": "Generate unit tests using standard Rust testing patterns: #[cfg(test)] mod tests, #[tokio::test] for async, use super::*. Focus on security boundaries, error handling, and performance. Use mock dependencies, assert_cmd for CLI testing, and predicates for validation. Test both success and failure paths.",
+                },
+                {
+                    "path": "procmond/**",
+                    "instructions": "Generate security-focused unit tests for privileged process collector. Test privilege escalation scenarios, privilege dropping behavior, and attack surface boundaries. Use mock system calls and test error conditions thoroughly.",
+                },
+                {
+                    "path": "sentinelcli/**",
+                    "instructions": "Generate CLI-focused unit tests using assert_cmd and predicates. Test JSON/table output formatting, shell completions, error messages, and user experience. Test both interactive and non-interactive modes.",
+                },
+                {
+                    "path": "gui/**",
+                    "instructions": "Generate React/TypeScript unit tests using Jest and React Testing Library. Test component rendering, user interactions, state management, and API integration. Focus on accessibility and responsive design testing.",
+                },
+            ]

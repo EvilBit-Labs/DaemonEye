@@ -305,8 +305,8 @@ impl DetectionRule {
     /// - the SQL parses successfully,
     /// - exactly one statement is present,
     /// - the single statement is a `SELECT` query,
-    /// and then delegates to lower-level validators for the query/SELECT/expression checks
-    /// (e.g., projection, FROM/JOIN limits, banned functions).
+    ///   and then delegates to lower-level validators for the query/SELECT/expression checks
+    ///   (e.g., projection, FROM/JOIN limits, banned functions).
     ///
     /// Returns `Ok(())` when the query passes parsing and the top-level checks. Returns
     /// `Err(RuleError::InvalidSql(...))` if parsing fails, if multiple statements are present,
@@ -507,7 +507,7 @@ impl DetectionRule {
     /// - Subqueries are validated via `validate_query_basic`.
     /// - Binary and unary expressions are validated recursively.
     /// - `CASE` expressions validate each condition/result and the optional `ELSE`.
-    /// Other expression types (identifiers, literals, simple qualifiers, etc.) are allowed.
+    ///   Other expression types (identifiers, literals, simple qualifiers, etc.) are allowed.
     ///
     /// Returns `Ok(())` when the expression and all nested sub-expressions pass validation,
     /// or a `RuleError` propagated from deeper checks when a disallowed construct is found.
