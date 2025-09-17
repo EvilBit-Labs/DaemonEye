@@ -55,37 +55,31 @@ rmrf path:
 setup:
     Set-Location "{{ root }}"
     rustup component add rustfmt clippy llvm-tools-preview
-    try { cargo install cargo-nextest --locked } catch { Write-Host "cargo-nextest already installed" }
+    cargo install cargo-binstall --locked
 
 [unix]
 setup:
     cd "{{ root }}"
     rustup component add rustfmt clippy llvm-tools-preview
-    cargo install cargo-nextest --locked || /bin/echo "cargo-nextest already installed"
+    cargo install cargo-binstall --locked
 
 # Install development tools (extended setup)
 [windows]
 install-tools:
-    try { cargo install cargo-llvm-cov --locked } catch { Write-Host "cargo-llvm-cov already installed" }
-    try { cargo install cargo-audit --locked } catch { Write-Host "cargo-audit already installed" }
-    try { cargo install cargo-deny --locked } catch { Write-Host "cargo-deny already installed" }
-    try { cargo install cargo-dist --locked } catch { Write-Host "cargo-dist already installed" }
+    cargo binstall cargo-llvm-cov cargo-audit cargo-deny cargo-dist --locked
 
 [unix]
 install-tools:
-    cargo install cargo-llvm-cov --locked || /bin/echo "cargo-llvm-cov already installed"
-    cargo install cargo-audit --locked || /bin/echo "cargo-audit already installed"
-    cargo install cargo-deny --locked || /bin/echo "cargo-deny already installed"
-    cargo install cargo-dist --locked || /bin/echo "cargo-dist already installed"
+    cargo binstall cargo-llvm-cov cargo-audit cargo-deny cargo-dist --locked
 
 # Install mdBook and plugins for documentation
 [windows]
 docs-install:
-    try { cargo install mdbook mdbook-admonish mdbook-mermaid mdbook-linkcheck mdbook-toc mdbook-open-on-gh mdbook-tabs mdbook-i18n-helpers } catch { Write-Host "Some mdBook plugins may already be installed" }
+    cargo binstall mdbook mdbook-admonish mdbook-mermaid mdbook-linkcheck mdbook-toc mdbook-open-on-gh mdbook-tabs mdbook-i18n-helpers
 
 [unix]
 docs-install:
-    cargo install mdbook mdbook-admonish mdbook-mermaid mdbook-linkcheck mdbook-toc mdbook-open-on-gh mdbook-tabs mdbook-i18n-helpers || /bin/echo "Some mdBook plugins may already be installed"
+    cargo binstall mdbook mdbook-admonish mdbook-mermaid mdbook-linkcheck mdbook-toc mdbook-open-on-gh mdbook-tabs mdbook-i18n-helpers
 
 # =============================================================================
 # FORMATTING AND LINTING

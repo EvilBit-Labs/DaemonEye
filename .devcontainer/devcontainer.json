@@ -1,8 +1,5 @@
-// For format details, see https://aka.ms/devcontainer.json. For config options, see the
-// README at: https://github.com/devcontainers/templates/tree/main/src/rust
 {
     "name": "SentinelD Rust Development",
-    // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
     "image": "mcr.microsoft.com/devcontainers/rust:latest",
     "features": {
         "ghcr.io/devcontainers/features/common-utils:2": {
@@ -10,37 +7,42 @@
             "configureZshAsDefaultShell": true,
             "installOhMyZsh": true,
             "installOhMyZshConfig": true,
-            "upgradePackages": false,
+            "upgradePackages": true,
             "nonFreePackages": true,
             "username": "automatic",
             "userUid": "automatic",
             "userGid": "automatic"
         },
         "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
-            "moby": false,
             "installDockerBuildx": true,
             "installDockerComposeSwitch": true,
             "version": "latest",
-            "dockerDashComposeVersion": "v2"
+            "dockerDashComposeVersion": "v2",
+            "moby": false
         },
         "ghcr.io/devcontainers/features/git-lfs:1": {
-            "autoPull": false,
+            "autoPull": true,
             "version": "latest"
         },
         "ghcr.io/devcontainers/features/node:1": {
             "nodeGypDependencies": true,
-            "version": "lts"
+            "installYarnUsingApt": true,
+            "version": "lts",
+            "pnpmVersion": "latest",
+            "nvmVersion": "latest"
         },
         "ghcr.io/devcontainers/features/python:1": {
-            "version": "3.12",
-            "installTools": true
+            "installTools": true,
+            "version": "latest"
         },
         "ghcr.io/lee-orr/rusty-dev-containers/cargo-binstall:0": {},
         "ghcr.io/schlich/devcontainer-features/just:0": {
             "version": "latest"
+        },
+        "ghcr.io/devcontainers-extra/features/pre-commit:2": {
+            "version": "latest"
         }
     },
-    // Use 'mounts' to make the cargo cache persistent in a Docker Volume.
     "mounts": [
         {
             "source": "devcontainer-cargo-cache-${devcontainerId}",
@@ -48,13 +50,7 @@
             "type": "volume"
         }
     ],
-    // Features to add to the dev container. More info: https://containers.dev/features.
-    // "features": {},
-    // Use 'forwardPorts' to make a list of ports inside the container available locally.
-    // "forwardPorts": [],
-    // Use 'postCreateCommand' to run commands after the container is created.
     "postCreateCommand": "just setup && just install-tools",
-    // Configure tool-specific properties.
     "customizations": {
         "vscode": {
             "extensions": [
@@ -72,7 +68,16 @@
                 "ms-python.python",
                 "ms-vscode.test-adapter-converter",
                 "github.vscode-github-actions",
-                "ms-vscode.makefile-tools"
+                "ms-vscode.makefile-tools",
+                "EditorConfig.EditorConfig",
+                "skellock.just",
+                "bierner.markdown-emoji",
+                "bierner.markdown-footnotes",
+                "charliermarsh.ruff",
+                "foxundermoon.shell-format",
+                "redhat.vscode-yaml",
+                "codezombiech.gitignore",
+                "eamodio.gitlens"
             ],
             "settings": {
                 "rust-analyzer.check.command": "clippy",
@@ -105,7 +110,5 @@
                 "rust-analyzer.inlayHints.parameterHints.enable": false
             }
         }
-    },
-    // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-    // "remoteUser": "root"
+    }
 }
