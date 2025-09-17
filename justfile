@@ -1,4 +1,9 @@
-set shell := ["bash", "-eu", "-o", "pipefail", "-c", "--"]
+# Cross-platform justfile using OS annotations
+# Windows uses PowerShell, Unix uses bash
+set shell := ["bash", "-c"]
+set windows-shell := ["powershell", "-NoProfile", "-Command"]
+
+root := justfile_dir()
 
 # =============================================================================
 # GENERAL COMMANDS
@@ -11,25 +16,76 @@ help:
     @just --list
 
 # =============================================================================
+# CROSS-PLATFORM HELPERS
+# =============================================================================
+
+# Cross-platform helpers using OS annotations
+# Each helper has Windows and Unix variants
+
+[windows]
+cd-root:
+    Set-Location "{{ root }}"
+
+[unix]
+cd-root:
+    cd "{{ root }}"
+
+[windows]
+ensure-dir dir:
+    New-Item -ItemType Directory -Force -Path "{{ dir }}" | Out-Null
+
+[unix]
+ensure-dir dir:
+    /bin/mkdir -p "{{ dir }}"
+
+[windows]
+rmrf path:
+    if (Test-Path "{{ path }}") { Remove-Item "{{ path }}" -Recurse -Force }
+
+[unix]
+rmrf path:
+    /bin/rm -rf "{{ path }}"
+
+# =============================================================================
 # SETUP AND INITIALIZATION
 # =============================================================================
 
 # Development setup
+[windows]
 setup:
-    cd {{justfile_dir()}}
+    Set-Location "{{ root }}"
     rustup component add rustfmt clippy llvm-tools-preview
-    cargo install cargo-nextest --locked || echo "cargo-nextest already installed"
+    try { cargo install cargo-nextest --locked } catch { Write-Host "cargo-nextest already installed" }
+
+[unix]
+setup:
+    cd "{{ root }}"
+    rustup component add rustfmt clippy llvm-tools-preview
+    cargo install cargo-nextest --locked || /bin/echo "cargo-nextest already installed"
 
 # Install development tools (extended setup)
+[windows]
 install-tools:
-    cargo install cargo-llvm-cov --locked || echo "cargo-llvm-cov already installed"
-    cargo install cargo-audit --locked || echo "cargo-audit already installed"
-    cargo install cargo-deny --locked || echo "cargo-deny already installed"
-    cargo install cargo-dist --locked || echo "cargo-dist already installed"
+    try { cargo install cargo-llvm-cov --locked } catch { Write-Host "cargo-llvm-cov already installed" }
+    try { cargo install cargo-audit --locked } catch { Write-Host "cargo-audit already installed" }
+    try { cargo install cargo-deny --locked } catch { Write-Host "cargo-deny already installed" }
+    try { cargo install cargo-dist --locked } catch { Write-Host "cargo-dist already installed" }
+
+[unix]
+install-tools:
+    cargo install cargo-llvm-cov --locked || /bin/echo "cargo-llvm-cov already installed"
+    cargo install cargo-audit --locked || /bin/echo "cargo-audit already installed"
+    cargo install cargo-deny --locked || /bin/echo "cargo-deny already installed"
+    cargo install cargo-dist --locked || /bin/echo "cargo-dist already installed"
 
 # Install mdBook and plugins for documentation
+[windows]
 docs-install:
-    cargo install mdbook mdbook-admonish mdbook-mermaid mdbook-linkcheck mdbook-toc mdbook-open-on-gh mdbook-tabs mdbook-i18n-helpers
+    try { cargo install mdbook mdbook-admonish mdbook-mermaid mdbook-linkcheck mdbook-toc mdbook-open-on-gh mdbook-tabs mdbook-i18n-helpers } catch { Write-Host "Some mdBook plugins may already be installed" }
+
+[unix]
+docs-install:
+    cargo install mdbook mdbook-admonish mdbook-mermaid mdbook-linkcheck mdbook-toc mdbook-open-on-gh mdbook-tabs mdbook-i18n-helpers || /bin/echo "Some mdBook plugins may already be installed"
 
 # =============================================================================
 # FORMATTING AND LINTING
@@ -52,10 +108,15 @@ lint-rust: fmt-check
 lint-rust-min:
     @cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
-lint-just:
+# Format justfile
+fmt-justfile:
+    @just --fmt --unstable
+
+# Lint justfile formatting
+lint-justfile:
     @just --fmt --check --unstable
 
-lint: lint-rust lint-just
+lint: lint-rust lint-justfile
 
 # Run clippy with fixes
 fix:
@@ -72,7 +133,7 @@ format-files +FILES:
     npx prettier --write --config .prettierrc.json {{ FILES }}
 
 megalinter:
-    cd {{ justfile_dir() }}
+    cd "{{ root }}"
     npx mega-linter-runner --flavor rust
 
 # =============================================================================
@@ -88,15 +149,42 @@ build-release:
 test:
     @cargo test --workspace
 
+# Test justfile cross-platform functionality
+[windows]
+test-justfile:
+    Set-Location "{{ root }}"
+    $p = (Get-Location).Path; Write-Host "Current directory: $p"; Write-Host "Expected directory: {{ root }}"
+
+[unix]
+test-justfile:
+    cd "{{ root }}"
+    /bin/echo "Current directory: $(pwd -P)"
+    /bin/echo "Expected directory: {{ root }}"
+
+# Test cross-platform file system helpers
+[windows]
+test-fs:
+    Set-Location "{{ root }}"
+    @just rmrf tmp/xfstest
+    @just ensure-dir tmp/xfstest/sub
+    @just rmrf tmp/xfstest
+
+[unix]
+test-fs:
+    cd "{{ root }}"
+    @just rmrf tmp/xfstest
+    @just ensure-dir tmp/xfstest/sub
+    @just rmrf tmp/xfstest
+
 test-ci:
-        cargo nextest run --workspace --all-features
+    cargo nextest run --workspace --all-features
 
 # =============================================================================
 # SECURITY AND AUDITING
 # =============================================================================
 
 audit:
-        cargo audit
+    cargo audit
 
 deny:
     cargo deny check
