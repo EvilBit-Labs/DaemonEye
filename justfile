@@ -17,7 +17,7 @@ help:
 # Development setup
 setup:
     cd {{justfile_dir()}}
-    rustup component add rustfmt clippy llvm-tools-preview rust-src
+    rustup component add rustfmt clippy llvm-tools-preview
     cargo install cargo-nextest --locked || echo "cargo-nextest already installed"
 
 # Install development tools (extended setup)
@@ -46,8 +46,7 @@ fmt:
 fmt-check:
     @cargo fmt --all --check
 
-lint-rust:
-    @just fmt-check
+lint-rust: fmt-check
     @cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 lint-rust-min:
@@ -56,18 +55,14 @@ lint-rust-min:
 lint-just:
     @just --fmt --check --unstable
 
-lint:
-    @just lint-rust
-    @just lint-just
+lint: lint-rust lint-just
 
 # Run clippy with fixes
 fix:
     cargo clippy --fix --allow-dirty --allow-staged
 
 # Quick development check
-check: pre-commit-run
-    just lint
-    just test-no-docker
+check: pre-commit-run lint
 
 pre-commit-run:
     pre-commit run -a
@@ -95,37 +90,17 @@ test:
     @cargo test --workspace
 
 test-ci:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if command -v cargo-nextest >/dev/null 2>&1; then
-        echo "nextest detected: running tests with cargo nextest"
         cargo nextest run --workspace --all-features
-    else
-        echo "cargo-nextest not found: falling back to cargo test"
-        cargo test --workspace --all-features --all-targets
-    fi
 
 # =============================================================================
 # SECURITY AND AUDITING
 # =============================================================================
 
 audit:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if command -v cargo-audit >/dev/null 2>&1; then
         cargo audit
-    else
-        echo "cargo-audit not found; skipping security advisory audit. Install with: cargo install cargo-audit"
-    fi
 
 deny:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if command -v cargo-deny >/dev/null 2>&1; then
-        cargo deny check
-    else
-        echo "cargo-deny not found; skipping license/advisory checks. Install with: cargo install cargo-deny"
-    fi
+    cargo deny check
 
 # =============================================================================
 # CI AND QUALITY ASSURANCE

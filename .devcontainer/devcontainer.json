@@ -1,0 +1,111 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/rust
+{
+    "name": "SentinelD Rust Development",
+    // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+    "image": "mcr.microsoft.com/devcontainers/rust:latest",
+    "features": {
+        "ghcr.io/devcontainers/features/common-utils:2": {
+            "installZsh": true,
+            "configureZshAsDefaultShell": true,
+            "installOhMyZsh": true,
+            "installOhMyZshConfig": true,
+            "upgradePackages": false,
+            "nonFreePackages": true,
+            "username": "automatic",
+            "userUid": "automatic",
+            "userGid": "automatic"
+        },
+        "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+            "moby": false,
+            "installDockerBuildx": true,
+            "installDockerComposeSwitch": true,
+            "version": "latest",
+            "dockerDashComposeVersion": "v2"
+        },
+        "ghcr.io/devcontainers/features/git-lfs:1": {
+            "autoPull": false,
+            "version": "latest"
+        },
+        "ghcr.io/devcontainers/features/node:1": {
+            "nodeGypDependencies": true,
+            "version": "lts"
+        },
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.12",
+            "installTools": true
+        },
+        "ghcr.io/lee-orr/rusty-dev-containers/cargo-binstall:0": {},
+        "ghcr.io/schlich/devcontainer-features/just:0": {
+            "version": "latest"
+        }
+    },
+    // Use 'mounts' to make the cargo cache persistent in a Docker Volume.
+    "mounts": [
+        {
+            "source": "devcontainer-cargo-cache-${devcontainerId}",
+            "target": "/usr/local/cargo",
+            "type": "volume"
+        }
+    ],
+    // Features to add to the dev container. More info: https://containers.dev/features.
+    // "features": {},
+    // Use 'forwardPorts' to make a list of ports inside the container available locally.
+    // "forwardPorts": [],
+    // Use 'postCreateCommand' to run commands after the container is created.
+    "postCreateCommand": "just setup && just install-tools",
+    // Configure tool-specific properties.
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "vadimcn.vscode-lldb",
+                "serayuzgur.crates",
+                "ms-vscode.vscode-json",
+                "yzhang.markdown-all-in-one",
+                "bierner.markdown-mermaid",
+                "esbenp.prettier-vscode",
+                "tamasfe.even-better-toml",
+                "fill-labs.dependi",
+                "usernamehw.errorlens",
+                "bradlc.vscode-tailwindcss",
+                "ms-python.python",
+                "ms-vscode.test-adapter-converter",
+                "github.vscode-github-actions",
+                "ms-vscode.makefile-tools"
+            ],
+            "settings": {
+                "rust-analyzer.check.command": "clippy",
+                "rust-analyzer.check.extraArgs": [
+                    "--all-targets",
+                    "--all-features"
+                ],
+                "rust-analyzer.cargo.features": "all",
+                "rust-analyzer.rustfmt.extraArgs": [
+                    "--edition",
+                    "2024"
+                ],
+                "editor.formatOnSave": true,
+                "editor.codeActionsOnSave": {
+                    "source.fixAll": "explicit"
+                },
+                "files.watcherExclude": {
+                    "**/target/**": true,
+                    "**/.git/objects/**": true,
+                    "**/.git/subtree-cache/**": true
+                },
+                "search.exclude": {
+                    "**/target": true,
+                    "**/Cargo.lock": true
+                },
+                "terminal.integrated.defaultProfile.linux": "zsh",
+                "rust-analyzer.lens.enable": true,
+                "rust-analyzer.completion.addCallParentheses": false,
+                "rust-analyzer.completion.addCallArgumentSnippets": false,
+                "rust-analyzer.inlayHints.parameterHints.enable": false
+            }
+        }
+    },
+    // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+    // "remoteUser": "root"
+}
