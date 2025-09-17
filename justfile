@@ -17,7 +17,7 @@ help:
 # Development setup
 setup:
     cd {{justfile_dir()}}
-    rustup component add rustfmt clippy llvm-tools-preview rust-src
+    rustup component add rustfmt clippy llvm-tools-preview
     cargo install cargo-nextest --locked || echo "cargo-nextest already installed"
 
 # Install development tools (extended setup)
