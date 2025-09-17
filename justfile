@@ -16,8 +16,8 @@ help:
 
 # Development setup
 setup:
-    cd {{ justfile_dir() }}
-    rustup component add rustfmt clippy llvm-tools-preview rust-src
+    cd {{justfile_dir()}}
+    rustup component add rustfmt clippy llvm-tools-preview
     cargo install cargo-nextest --locked || echo "cargo-nextest already installed"
 
 # Install development tools (extended setup)
@@ -46,8 +46,7 @@ fmt:
 fmt-check:
     @cargo fmt --all --check
 
-lint-rust:
-    @just fmt-check
+lint-rust: fmt-check
     @cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 lint-rust-min:
@@ -56,18 +55,14 @@ lint-rust-min:
 lint-just:
     @just --fmt --check --unstable
 
-lint:
-    @just lint-rust
-    @just lint-just
+lint: lint-rust lint-just
 
 # Run clippy with fixes
 fix:
     cargo clippy --fix --allow-dirty --allow-staged
 
 # Quick development check
-check: pre-commit-run
-    just lint
-    just test-no-docker
+check: pre-commit-run lint
 
 pre-commit-run:
     pre-commit run -a
@@ -94,14 +89,14 @@ test:
     @cargo test --workspace
 
 test-ci:
-    cargo nextest run --workspace --all-features
+        cargo nextest run --workspace --all-features
 
 # =============================================================================
 # SECURITY AND AUDITING
 # =============================================================================
 
 audit:
-    cargo audit
+        cargo audit
 
 deny:
     cargo deny check
