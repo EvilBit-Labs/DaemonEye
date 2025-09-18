@@ -77,10 +77,17 @@ jobs:
             - checkout
             - restore_cargo_cache_linux
 
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler
+
             # Rustfmt check (equivalent to actions-rust-lang/rustfmt@v1)
             - run:
                   name: Rustfmt Check
-                  command: rustfmt --check
+                  command: cargo fmt -- --check
 
             # Clippy check with warnings as errors (matches GHA: cargo clippy --all-targets --all-features -- -D warnings)
             - run:
@@ -98,6 +105,13 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_linux
+
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler
 
             # Install cargo-nextest (matches taiki-e/install-action@v2)
             - run:
@@ -130,6 +144,13 @@ jobs:
             - checkout
             - restore_cargo_cache_linux
 
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler
+
             - run:
                   name: Install cargo-nextest
                   command: cargo install cargo-nextest --locked
@@ -155,6 +176,12 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_macos
+
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      brew install protobuf
 
             # Install Rust toolchain on macOS
             - run:
@@ -192,6 +219,13 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_linux
+
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler
 
             # Install cargo-llvm-cov (matches taiki-e/install-action@v2)
             - run:
