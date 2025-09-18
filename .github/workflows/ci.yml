@@ -100,9 +100,7 @@ jobs:
                     # Secondary Support - Linux (using available runners)
                     - os: ubuntu-22.04
                       platform: "Linux"
-                    - os: windows-2019
-                      platform: "Windows"
-                    # Note: Ubuntu 20.04, 18.04, RHEL 7, FreeBSD testing would require custom runners
+                    # Note: Ubuntu 20.04, 18.04, RHEL 7, FreeBSD, and Windows Server 2019 testing would require custom runners
                     # Note: macOS 12 (Monterey) testing would require custom runners
 
         runs-on: ${{ matrix.os }}
