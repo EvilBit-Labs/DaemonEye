@@ -1,3 +1,4 @@
+
 [package]
 name = "sentineld"
 edition = "2024"
@@ -15,6 +16,10 @@ upgrade-guid = "C447BDE5-2A00-43F3-A75B-EC69BA427B7E"
 path-guid = "B39EF01E-BA27-4430-8770-8D16E84BB0F3"
 license = false
 eula = false
+
+[workspace]
+members = ["sentinel-lib"]
+resolver = "3"
 
 # No library target - we only ship binaries
 
@@ -59,8 +64,8 @@ clap = { version = "4.0", features = ["derive"] }
 futures = { version = "0.3.31", optional = true }
 
 # Protocol Buffers support
-prost = "0.13.5"
-prost-types = "0.13.5"
+prost = "0.14.1"
+prost-types = "0.14.1"
 redb = "3.0.2"
 # Always-needed core dependencies
 serde = { version = "1.0.225", features = ["derive"] }
@@ -90,7 +95,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 path = "sentinel-lib"
 
 [build-dependencies]
-prost-build = "0.13.5"
+prost-build = "0.14.1"
 
 [dev-dependencies]
 assert_cmd = "2.0.17"

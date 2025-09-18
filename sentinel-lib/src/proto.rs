@@ -202,7 +202,6 @@ impl DetectionResult {
 mod tests {
     use super::*;
     use crate::models::process::{ProcessRecord as NativeProcessRecord, ProcessStatus};
-    use std::collections::HashMap;
 
     #[test]
     fn test_detection_task_creation() {
