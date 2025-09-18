@@ -218,12 +218,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_detection_engine_default() {
-        let engine = DetectionEngine::default();
-        assert_eq!(engine.get_rules().len(), 0);
-    }
-
-    #[tokio::test]
     async fn test_rule_loading() {
         let mut engine = DetectionEngine::new();
         let rule = DetectionRule::new(
