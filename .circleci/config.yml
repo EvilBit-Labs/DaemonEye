@@ -1,42 +1,334 @@
-# This config was automatically generated from your source code
-# Stacks detected: cicd:github-actions:.github/workflows,deps:rust:.
+# CircleCI 2.1 configuration converted from GitHub Actions workflow
+# Maintains parity with .github/workflows/ci.yml functionality
 version: 2.1
+
+orbs:
+    codecov: codecov/codecov@5.4.3
+    win: circleci/windows@5.1.0
+    macos: circleci/macos@2.5.4
+
+# Reusable cache commands for different operating systems
+commands:
+    restore_cargo_cache_linux:
+        steps:
+            - restore_cache:
+                  keys:
+                      - cargo-v1-linux-{{ arch }}-{{ checksum "Cargo.lock" }}
+                      - cargo-v1-linux-{{ arch }}-
+                      - cargo-v1-linux-
+
+    save_cargo_cache_linux:
+        steps:
+            - save_cache:
+                  key: cargo-v1-linux-{{ arch }}-{{ checksum "Cargo.lock" }}
+                  paths:
+                      - ~/.cargo/registry
+                      - ~/.cargo/git
+                      - target
+
+    restore_cargo_cache_macos:
+        steps:
+            - restore_cache:
+                  keys:
+                      - cargo-v1-macos-{{ arch }}-{{ checksum "Cargo.lock" }}
+                      - cargo-v1-macos-{{ arch }}-
+                      - cargo-v1-macos-
+
+    save_cargo_cache_macos:
+        steps:
+            - save_cache:
+                  key: cargo-v1-macos-{{ arch }}-{{ checksum "Cargo.lock" }}
+                  paths:
+                      - ~/.cargo/registry
+                      - ~/.cargo/git
+                      - target
+
+    restore_cargo_cache_windows:
+        steps:
+            - restore_cache:
+                  keys:
+                      - cargo-v1-windows-{{ checksum "Cargo.lock" }}
+                      - cargo-v1-windows-
+
+    save_cargo_cache_windows:
+        steps:
+            - save_cache:
+                  key: cargo-v1-windows-{{ checksum "Cargo.lock" }}
+                  paths:
+                      - C:\\Users\\circleci\\.cargo\\registry
+                      - C:\\Users\\circleci\\.cargo\\git
+                      - C:\\Users\\circleci\\project\\target
+    install_cargo_binstall_and_just:
+        steps:
+            - run:
+                  name: Install cargo-binstall
+                  command: cargo install cargo-binstall --locked
+            - run:
+                  name: Install just
+                  command: cargo binstall just --locked
+
+# Global environment variables
+common_env: &common_env
+    CARGO_TERM_COLOR: always
+    CI: true
+
 jobs:
-  test-rust:
-    docker:
-      - image: cimg/rust:1.85
-    steps:
-      - checkout
-      - restore_cache:
-          key: cargo-{{ checksum "Cargo.lock" }}
-      - run:
-          command: cargo install cargo-binstall
-      - run:
-          command: cargo binstall cargo-nextest --locked
-      - run:
-          command: cargo binstall just
-      - run:
-          command: cargo nextest run --workspace --exclude sentinel
-      - save_cache:
-          key: cargo-{{ checksum "Cargo.lock" }}
-          paths:
-            - ~/.cargo
-  deploy:
-    # This is an example deploy job, not actually used by the workflow
-    docker:
-      - image: cimg/base:stable
-    steps:
-      # Replace this with steps to deploy to users
-      - run:
-          name: deploy
-          command: "#e.g. ./deploy.sh"
-      - run:
-          name: found github actions config
-          command: ":"
+    # Code quality checks - rustfmt and clippy
+    quality:
+        docker:
+            - image: cimg/rust:1.85
+        environment:
+            <<: *common_env
+        steps:
+            - checkout
+            - restore_cargo_cache_linux
+            - install_cargo_binstall_and_just
+
+            # Rustfmt check (equivalent to actions-rust-lang/rustfmt@v1)
+            - run:
+                  name: Rustfmt Check
+                  command: just fmt-check
+
+            # Clippy check with warnings as errors (matches GHA: cargo clippy -- -D warnings)
+            - run:
+                  name: Clippy (default features)
+                  command: just lint-rust
+
+            - save_cargo_cache_linux
+
+    # Basic test job - mirrors GitHub Actions "test" job
+    test:
+        docker:
+            - image: cimg/rust:1.85
+        environment:
+            <<: *common_env
+        steps:
+            - checkout
+            - restore_cargo_cache_linux
+            - install_cargo_binstall_and_just
+
+            # Install cargo-nextest (matches taiki-e/install-action@v2)
+            - run:
+                  name: Install cargo-nextest
+                  command: cargo binstall cargo-nextest --locked
+
+            # Run tests with nextest (matches GHA: cargo nextest run)
+            - run:
+                  name: Run tests (default features)
+                  command: cargo nextest run
+
+            # Build release binary (matches GHA: cargo build --release)
+            - run:
+                  name: Build release
+                  command: cargo build --release
+
+            - save_cargo_cache_linux
+            - store_test_results:
+                  path: target/nextest
+            - store_artifacts:
+                  path: target/nextest
+
+    # Cross-platform testing - Linux (Ubuntu variants)
+    test-cross-platform-linux:
+        docker:
+            - image: cimg/rust:1.85
+        environment:
+            <<: *common_env
+        steps:
+            - checkout
+            - restore_cargo_cache_linux
+
+            - run:
+                  name: Install cargo-nextest
+                  command: |
+                      curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+
+            # Matches GHA matrix job: cargo nextest run --workspace --exclude sentinel
+            - run:
+                  name: Run tests (workspace, exclude sentinel)
+                  command: cargo nextest run --workspace --exclude sentinel
+
+            # Matches GHA: cargo build --release --workspace --exclude sentinel
+            - run:
+                  name: Build release (workspace, exclude sentinel)
+                  command: cargo build --release --workspace --exclude sentinel
+
+            - save_cargo_cache_linux
+
+    # Cross-platform testing - macOS
+    test-cross-platform-macos:
+        macos:
+            xcode: 15.4.0
+        environment:
+            <<: *common_env
+        steps:
+            - checkout
+            - restore_cargo_cache_macos
+
+            # Install Rust toolchain on macOS
+            - run:
+                  name: Install Rust
+                  command: |
+                      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                      echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+
+            - run:
+                  name: Install cargo-nextest
+                  command: |
+                      source "$BASH_ENV"
+                      curl -LsSf https://get.nexte.st/latest/mac | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+
+            - run:
+                  name: Run tests (workspace, exclude sentinel)
+                  command: |
+                      source "$BASH_ENV"
+                      cargo nextest run --workspace --exclude sentinel
+
+            - run:
+                  name: Build release (workspace, exclude sentinel)
+                  command: |
+                      source "$BASH_ENV"
+                      cargo build --release --workspace --exclude sentinel
+
+            - save_cargo_cache_macos
+
+    # Cross-platform testing - Windows
+    test-cross-platform-windows:
+        executor:
+            name: win/default
+            size: large
+        steps:
+            - checkout
+            - restore_cargo_cache_windows
+
+            # Install Rust on Windows
+            - run:
+                  name: Install Rust
+                  command: |
+                      $ProgressPreference = 'SilentlyContinue'
+                      Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile "rustup-init.exe"
+                      .\rustup-init.exe -y --default-toolchain stable
+                      $env:Path += ";$env:USERPROFILE\\.cargo\\bin"
+                      rustc --version
+                      cargo --version
+                  shell: powershell.exe
+
+            - run:
+                  name: Install cargo-nextest
+                  command: |
+                      $env:Path += ";$env:USERPROFILE\\.cargo\\bin"
+                      cargo install cargo-nextest --locked
+                  shell: powershell.exe
+
+            - run:
+                  name: Run tests (workspace, exclude sentinel)
+                  command: |
+                      $env:Path += ";$env:USERPROFILE\\.cargo\\bin"
+                      $env:CARGO_TERM_COLOR = "always"
+                      cargo nextest run --workspace --exclude sentinel
+                  shell: powershell.exe
+
+            - run:
+                  name: Build release (workspace, exclude sentinel)
+                  command: |
+                      $env:Path += ";$env:USERPROFILE\\.cargo\\bin"
+                      $env:CARGO_TERM_COLOR = "always"
+                      cargo build --release --workspace --exclude sentinel
+                  shell: powershell.exe
+
+            - save_cargo_cache_windows
+
+    # Coverage generation - mirrors GitHub Actions "coverage" job
+    coverage:
+        docker:
+            - image: cimg/rust:1.85
+        environment:
+            <<: *common_env
+        steps:
+            - checkout
+            - restore_cargo_cache_linux
+
+            # Install cargo-llvm-cov (matches taiki-e/install-action@v2)
+            - run:
+                  name: Install cargo-llvm-cov
+                  command: |
+                      rustup component add llvm-tools-preview
+                      cargo install cargo-llvm-cov --locked
+
+            # Generate coverage (matches GHA: cargo llvm-cov --workspace --no-report)
+            - run:
+                  name: Generate coverage
+                  command: cargo llvm-cov --workspace --no-report
+
+            # Combine coverage reports (matches GHA: cargo llvm-cov report --lcov --output-path lcov.info)
+            - run:
+                  name: Combine coverage reports
+                  command: cargo llvm-cov report --lcov --output-path lcov.info
+
+            - save_cargo_cache_linux
+            - store_artifacts:
+                  path: lcov.info
+
+            # Upload to Codecov (matches codecov/codecov-action@v5)
+            - codecov/upload:
+                  files: lcov.info
+
 workflows:
-  build-and-test:
-    jobs:
-      - test-rust
-    # - deploy:
-    #     requires:
-    #       - test-rust
+    ci:
+        jobs:
+            # Quality checks run first
+            - quality:
+                  filters:
+                      branches:
+                          only: /.*/
+                      tags:
+                          only: /.*/
+
+            # Basic test job requires quality to pass
+            - test:
+                  requires:
+                      - quality
+                  filters:
+                      branches:
+                          only: /.*/
+                      tags:
+                          only: /.*/
+
+            # Cross-platform tests require quality to pass (parallel to basic test)
+            - test-cross-platform-linux:
+                  requires:
+                      - quality
+                  filters:
+                      branches:
+                          only: /.*/
+                      tags:
+                          only: /.*/
+
+            - test-cross-platform-macos:
+                  requires:
+                      - quality
+                  filters:
+                      branches:
+                          only: /.*/
+                      tags:
+                          only: /.*/
+
+            - test-cross-platform-windows:
+                  requires:
+                      - quality
+                  filters:
+                      branches:
+                          only: /.*/
+                      tags:
+                          only: /.*/
+
+            # Coverage requires all tests to pass
+            - coverage:
+                  requires:
+                      - test
+                      - test-cross-platform-linux
+                  filters:
+                      branches:
+                          only: /.*/
+                      tags:
+                          only: /.*/

@@ -39,6 +39,10 @@
     "git.pullBeforeCheckout": true,
     "git.rebaseWhenSync": true,
     "git.replaceTagsWhenPull": true,
+    "[yaml]": {
+        "editor.insertSpaces": true,
+        "editor.tabSize": 4
+    },
     "github-actions.workflows.pinned.refresh.enabled": false,
     "github.copilot.enable": {
         "markdown": true
