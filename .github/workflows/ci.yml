@@ -42,8 +42,8 @@ jobs:
             - name: Rustfmt Check
               uses: actions-rust-lang/rustfmt@v1
 
-            - name: Run clippy (default features)
-              run: cargo clippy -- -D warnings
+            - name: Run clippy (all features)
+              run: cargo clippy --all-targets --all-features -- -D warnings
 
     test:
         runs-on: ubuntu-latest
@@ -61,11 +61,11 @@ jobs:
               with:
                   tool: cargo-nextest
 
-            - name: Run tests (default features)
-              run: cargo nextest run
+            - name: Run tests (all features)
+              run: cargo nextest run --all-features
 
             - name: Build release
-              run: cargo build --release
+              run: cargo build --release --all-features
 
     # Test cross-platform
     test-cross-platform:
@@ -98,8 +98,8 @@ jobs:
                   tool: cargo-nextest
 
             # Run tests and build the release binary
-            - run: cargo nextest run
-            - run: cargo build --release
+            - run: cargo nextest run --all-features
+            - run: cargo build --release --all-features
 
     # Generate coverage for TLS-enabled builds
     coverage:
@@ -119,7 +119,7 @@ jobs:
                   tool: cargo-llvm-cov
 
             - name: Generate coverage
-              run: cargo llvm-cov --workspace --no-report
+              run: cargo llvm-cov --all-features --no-report
 
             - name: Combine coverage reports
               run: cargo llvm-cov report --lcov --output-path lcov.info

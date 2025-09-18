@@ -1,9 +1,5 @@
-[workspace]
-resolver = "3"
-members = ["procmond", "sentinel-lib", "sentinelagent", "sentinelcli"]
-default-members = ["procmond", "sentinelcli", "sentinelagent", "sentinel-lib"]
-
-[workspace.package]
+[package]
+name = "sentineld"
 edition = "2024"
 version = "0.1.0"
 authors = ["UncleSp1d3r", "Krypdo3"]
@@ -12,31 +8,64 @@ rust-version = "1.85"
 description = "SentinelD: High-performance process monitoring system for security operations"
 repository = "https://github.com/EvilBit-Labs/SentinelD"
 homepage = "https://evilbitlabs.io/sentineld"
+publish = true
 
-[workspace.dependencies]
+[package.metadata.wix]
+upgrade-guid = "C447BDE5-2A00-43F3-A75B-EC69BA427B7E"
+path-guid = "B39EF01E-BA27-4430-8770-8D16E84BB0F3"
+license = false
+eula = false
+
+# No library target - we only ship binaries
+
+# Binary targets with their own directory structures
+[[bin]]
+name = "procmond"
+path = "procmond/src/main.rs"
+required-features = ["procmond"]
+
+[[bin]]
+name = "sentinelagent"
+path = "sentinelagent/src/main.rs"
+required-features = ["agent"]
+
+[[bin]]
+name = "sentinelcli"
+path = "sentinelcli/src/main.rs"
+required-features = ["cli"]
+
+# Feature flags for precise dependency control
+[features]
+default = ["procmond", "agent", "cli"]
+
+# Component features
+procmond = ["sysinfo", "process-collection"]
+agent = ["futures", "detection-engine", "alerting"]
+cli = ["serde_json", "terminal-ui"]
+
+# Capability features (map to sentinel-lib modules)
+process-collection = []
+detection-engine = ["sqlparser"]
+alerting = []
+terminal-ui = []
+
+# Convenience bundles
+full = ["procmond", "agent", "cli"]
+minimal = ["cli"]
+
+[dependencies]
 anyhow = "1.0.99"
-
-# Shared test utilities
-assert_cmd = "2.0.17"
-
-# CLI framework
 clap = { version = "4.0", features = ["derive"] }
-predicates = "3.1.3"
+futures = { version = "0.3.31", optional = true }
+redb = "3.0.2"
+# Always-needed core dependencies
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = { version = "1.0.145", optional = true }
+sqlparser = { version = "0.58.0", optional = true }
 
-# Database
-redb = "3.0.1"
-
-# Serialization
-serde = { version = "1.0.223", features = ["derive"] }
-serde_json = "1.0"
-
-# Process enumeration
-sysinfo = "0.37.0"
-tempfile = "3.0"
-
-# Error handling
+# Feature-gated dependencies
+sysinfo = { version = "0.37.0", optional = true }
 thiserror = "2.0.16"
-# Core async runtime
 tokio = { version = "1.47.1", features = [
     "rt",
     "rt-multi-thread",
@@ -47,14 +76,21 @@ tokio = { version = "1.47.1", features = [
     "macros",
     "sync",
     "fs",
-    "signal",          # needed for ctrl_c graceful shutdown
+    "signal",
 ] }
-
-# Logging
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
-[workspace.lints.rust]
+# Internal library dependency
+[dependencies.sentinel-lib]
+path = "sentinel-lib"
+
+[dev-dependencies]
+assert_cmd = "2.0.17"
+predicates = "3.1.3"
+tempfile = "3.0"
+
+[lints.rust]
 unsafe_code = "forbid"
 warnings = "deny"
 

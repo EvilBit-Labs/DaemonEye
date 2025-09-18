@@ -12,16 +12,28 @@
 //! - Performance telemetry and health monitoring
 //! - Network correlation and kernel monitoring (Enterprise)
 
-pub mod alerting;
-pub mod collection;
+// Core modules (always available)
 pub mod config;
 pub mod crypto;
-pub mod detection;
-pub mod kernel;
 pub mod models;
-pub mod network;
 pub mod storage;
 pub mod telemetry;
+
+// Feature-gated modules
+#[cfg(feature = "alerting")]
+pub mod alerting;
+
+#[cfg(feature = "process-collection")]
+pub mod collection;
+
+#[cfg(feature = "detection-engine")]
+pub mod detection;
+
+#[cfg(feature = "kernel-monitoring")]
+pub mod kernel;
+
+#[cfg(feature = "network-correlation")]
+pub mod network;
 
 /// Return a greeting message from the shared library for a specific component.
 #[must_use]

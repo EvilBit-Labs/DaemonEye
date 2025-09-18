@@ -13,11 +13,12 @@ Security boundaries: Only `procmond` runs with elevated privileges; `sentinelage
 
 ## Essential Patterns
 
-### Workspace Structure
+### Single Crate Structure
 
-- **Rust 2024 Edition** with MSRV 1.85+, workspace resolver "3"
-- **Zero warnings policy**: `cargo clippy -- -D warnings` must pass
-- **Forbidden unsafe code**: `unsafe_code = "forbid"` at workspace level
+- **Rust 2024 Edition** with MSRV 1.85+, single crate with multiple binaries
+- **Zero warnings policy**: `cargo clippy --all-targets --all-features -- -D warnings` must pass
+- **Forbidden unsafe code**: `unsafe_code = "forbid"` at crate level
+- **Feature flags**: Control dependencies with `procmond`, `agent`, `cli` features
 - Use `just` for all development tasks (DRY composition with `@just <subrecipe>`)
 
 ### Error Handling
@@ -98,28 +99,20 @@ pub trait ProcessCollectionService: Send + Sync {
 ```bash
 just lint                # Lint all components (fmt-check + clippy + lint-just)
 just test                # Run all tests (cargo-nextest preferred)
-just build               # Build entire workspace
+just build               # Build all binaries with features
 
-# Procmond component
-just lint-procmond       # Lint procmond only
-just test-procmond       # Test procmond only
-just build-procmond      # Build procmond only
+# Component building and running
 just run-procmond        # Run procmond (with args)
-
-# Agent component
-just lint-agent          # Lint sentinelagent only
-just test-agent          # Test sentinelagent only
-just build-agent         # Build sentinelagent only
 just run-sentinelagent   # Run sentinelagent (with args)
-
-# CLI component
-just lint-cli            # Lint sentinelcli only
-just test-cli            # Test sentinelcli only
-just build-cli           # Build sentinelcli only
 just run-sentinelcli     # Run sentinelcli (with args)
 
+# Feature-specific builds
+cargo build --bin procmond --features=procmond
+cargo build --bin sentinelagent --features=agent
+cargo build --bin sentinelcli --features=cli
+
 # CI aggregate (recommended for CI)
-just ci                  # Run lint/test/build for all components (CI gate)
+just ci-check            # Run full CI pipeline (pre-commit + lint + test + build + audit + coverage + dist)
 ```
 
 ### Testing Standards

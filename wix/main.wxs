@@ -60,7 +60,7 @@
 
     <Product
         Id='*'
-        Name='sentinel'
+        Name='sentineld'
         UpgradeCode='C447BDE5-2A00-43F3-A75B-EC69BA427B7E'
         Manufacturer='UncleSp1d3r; Krypdo3'
         Language='1033'
@@ -83,11 +83,11 @@
             DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
 
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
-        <Property Id='DiskPrompt' Value='sentinel Installation'/>
+        <Property Id='DiskPrompt' Value='sentineld Installation'/>
 
         <Directory Id='TARGETDIR' Name='SourceDir'>
             <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-                <Directory Id='APPLICATIONFOLDER' Name='sentinel'>
+                <Directory Id='APPLICATIONFOLDER' Name='sentineld'>
                     
                     <!--
                       Enabling the license sidecar file in the installer is a four step process:

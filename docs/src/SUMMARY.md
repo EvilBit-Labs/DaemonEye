@@ -11,6 +11,8 @@
   - [Core Monitoring](./technical/core-monitoring.md)
   - [Business Tier Features](./technical/business-tier.md)
   - [Enterprise Tier Features](./technical/enterprise-tier.md)
+  - [Query Pipeline and SQL Dialect](./technical/query-pipeline.md)
+  - [SQL Dialect Quick Reference](./technical/sql-dialect-reference.md)
 - [User Guides](./user-guides.md)
   - [Operator Guide](./user-guides/operator-guide.md)
   - [Configuration Guide](./user-guides/configuration.md)

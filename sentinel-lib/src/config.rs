@@ -75,6 +75,8 @@ pub struct AlertingConfig {
     pub dedup_window_seconds: u64,
     /// Maximum alert rate per minute
     pub max_alerts_per_minute: Option<u32>,
+    /// Threshold in seconds for considering an alert as recent
+    pub recent_threshold_seconds: u64,
 }
 
 /// Individual alert sink configuration.
@@ -126,11 +128,30 @@ impl Default for DatabaseConfig {
 }
 
 impl Default for AlertingConfig {
+    /// Creates the default AlertingConfig.
+    ///
+    /// Defaults:
+    /// - `sinks`: empty list
+    /// - `dedup_window_seconds`: 300
+    /// - `max_alerts_per_minute`: `None`
+    /// - `recent_threshold_seconds`: 3600
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::config::AlertingConfig;
+    /// let cfg = AlertingConfig::default();
+    /// assert!(cfg.sinks.is_empty());
+    /// assert_eq!(cfg.dedup_window_seconds, 300);
+    /// assert!(cfg.max_alerts_per_minute.is_none());
+    /// assert_eq!(cfg.recent_threshold_seconds, 3600);
+    /// ```
     fn default() -> Self {
         Self {
             sinks: vec![],
             dedup_window_seconds: 300,
             max_alerts_per_minute: None,
+            recent_threshold_seconds: 3600,
         }
     }
 }
@@ -220,7 +241,37 @@ impl ConfigLoader {
         Ok(config)
     }
 
-    /// Apply environment variable overrides.
+    /// Apply environment variable overrides to a Config using the loader's component name as a prefix.
+    ///
+    /// Environment variables are read with the prefix derived from `self.component` converted to
+    /// uppercase (e.g. component "procmond" => "PROCMOND_SCAN_INTERVAL_MS"). When present, the
+    /// following variables override their corresponding config fields:
+    ///
+    /// - `{PREFIX}_SCAN_INTERVAL_MS` -> `config.app.scan_interval_ms` (parsed as integer)
+    /// - `{PREFIX}_BATCH_SIZE` -> `config.app.batch_size` (parsed as integer)
+    /// - `{PREFIX}_LOG_LEVEL` -> `config.logging.level` (string)
+    /// - `{PREFIX}_LOG_FORMAT` -> `config.logging.format` (string)
+    /// - `{PREFIX}_DATABASE_PATH` -> `config.database.path` (string -> `PathBuf`)
+    /// - `{PREFIX}_RECENT_THRESHOLD_SECONDS` -> `config.alerting.recent_threshold_seconds` (parsed as integer)
+    ///
+    /// Parsing failures for numeric values are ignored and leave the existing config value unchanged.
+    /// The function returns a new `Config` with any applied overrides; it does not modify external state.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use std::env;
+    /// use sentinel_lib::config::{ConfigLoader, Config};
+    /// // create a loader for component "procmond"
+    /// let loader = ConfigLoader::new("procmond");
+    /// let mut cfg = Config::default();
+    ///
+    /// // override scan interval via environment
+    /// env::set_var("PROCMOND_SCAN_INTERVAL_MS", "45000");
+    ///
+    /// let cfg = loader.apply_env_overrides(cfg);
+    /// assert_eq!(cfg.app.scan_interval_ms, 45000);
+    /// ```
     fn apply_env_overrides(&self, mut config: Config) -> Config {
         // Apply component-specific environment variables
         let prefix = self.component.to_uppercase();
@@ -247,6 +298,12 @@ impl ConfigLoader {
 
         if let Ok(val) = std::env::var(format!("{}_DATABASE_PATH", prefix)) {
             config.database.path = val.into();
+        }
+
+        if let Ok(val) = std::env::var(format!("{}_RECENT_THRESHOLD_SECONDS", prefix)) {
+            if let Ok(threshold) = val.parse() {
+                config.alerting.recent_threshold_seconds = threshold;
+            }
         }
 
         config
@@ -319,5 +376,108 @@ mod tests {
         let loader = ConfigLoader::new("procmond");
         let result = loader.validate_config(&config);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_validation_valid() {
+        let config = Config::default();
+        let loader = ConfigLoader::new("procmond");
+        let result = loader.validate_config(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_config_loader_creation() {
+        let loader = ConfigLoader::new("test-component");
+        assert_eq!(loader.component, "test-component");
+    }
+
+    #[test]
+    fn test_config_loader_load_blocking() {
+        let loader = ConfigLoader::new("procmond");
+        let config = loader.load_blocking().unwrap();
+        assert_eq!(config.app.scan_interval_ms, 30000);
+    }
+
+    #[test]
+    fn test_config_merge() {
+        let base = Config::default();
+        let mut override_config = Config::default();
+        override_config.app.scan_interval_ms = 60000;
+
+        let loader = ConfigLoader::new("test");
+        let merged = loader.merge_configs(base, override_config);
+        assert_eq!(merged.app.scan_interval_ms, 60000);
+    }
+
+    #[test]
+    fn test_config_error_display() {
+        let errors = vec![
+            ConfigError::ValidationError {
+                message: "test error".to_string(),
+            },
+            ConfigError::IoError(std::io::Error::other("test error")),
+        ];
+
+        for error in errors {
+            let error_string = format!("{}", error);
+            assert!(!error_string.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_app_config_creation() {
+        let app_config = AppConfig::default();
+        assert_eq!(app_config.scan_interval_ms, 30000);
+        assert_eq!(app_config.batch_size, 1000);
+    }
+
+    #[test]
+    fn test_database_config_creation() {
+        let db_config = DatabaseConfig::default();
+        assert_eq!(
+            db_config.path,
+            std::path::PathBuf::from("/var/lib/sentineld/processes.db")
+        );
+        assert_eq!(db_config.retention_days, 30);
+    }
+
+    #[test]
+    fn test_logging_config_creation() {
+        let logging_config = LoggingConfig::default();
+        assert_eq!(logging_config.level, "info");
+        assert_eq!(logging_config.format, "human");
+    }
+
+    #[test]
+    fn test_alerting_config_creation() {
+        let alerting_config = AlertingConfig::default();
+        assert!(alerting_config.sinks.is_empty());
+        assert_eq!(alerting_config.recent_threshold_seconds, 3600);
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let config = Config::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let deserialized: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(
+            config.app.scan_interval_ms,
+            deserialized.app.scan_interval_ms
+        );
+        assert_eq!(
+            config.alerting.recent_threshold_seconds,
+            deserialized.alerting.recent_threshold_seconds
+        );
+    }
+
+    #[test]
+    fn test_alerting_config_recent_threshold() {
+        let mut config = AlertingConfig::default();
+        assert_eq!(config.recent_threshold_seconds, 3600);
+
+        // Test custom threshold
+        config.recent_threshold_seconds = 1800;
+        assert_eq!(config.recent_threshold_seconds, 1800);
     }
 }

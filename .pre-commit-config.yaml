@@ -58,15 +58,16 @@ repos:
 
     # 📝 Commit message linting (commit-msg only, not blocking push)
     - repo: https://github.com/commitizen-tools/commitizen
-      rev: v4.9.0
+      rev: v4.9.1
       hooks:
           - id: commitizen
             stages: [commit-msg]
 
-    - repo: https://github.com/bnjbvr/cargo-machete
-      rev: v0.9.1
-      hooks:
-          - id: cargo-machete
+    # Temporarily disabled due to issues with cargo-machete while we are stubbing out the project
+    # - repo: https://github.com/bnjbvr/cargo-machete
+    #   rev: v0.9.1
+    #   hooks:
+    #       - id: cargo-machete
 
     # 📝 Markdown formatting and linting (temporarily disabled in CI due to path issues)
     - repo: https://github.com/hukkin/mdformat

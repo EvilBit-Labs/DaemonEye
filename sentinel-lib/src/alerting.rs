@@ -100,6 +100,34 @@ impl StdoutSink {
 
 #[async_trait]
 impl AlertSink for StdoutSink {
+    /// Sends the alert to stdout using the sink's configured output format and returns a DeliveryResult.
+    ///
+    /// The alert is formatted according to `self.format`:
+    /// - `Json`: pretty-prints the alert as JSON (may produce `AlertingError::SerializationError`).
+    /// - `Yaml`: serializes to YAML (maps YAML errors to `AlertingError::YamlSerializationError`).
+    /// - `Human`: a concise human-readable single-line string using `severity`, `detection_rule_id`, `title`, and `description`.
+    /// - `Csv`: a single-line CSV with `id,severity,detection_rule_id,title,description`.
+    ///
+    /// Returns a `DeliveryResult` containing the sink name, success=true, the delivery timestamp, and the elapsed duration in milliseconds.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use sentinel_lib::alerting::{AlertSink, StdoutSink, OutputFormat};
+    /// use sentinel_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    ///
+    /// let sink = StdoutSink::new("stdout-test".to_string(), OutputFormat::Human);
+    /// let alert = Alert::new(
+    ///     AlertSeverity::Low,
+    ///     "Test",
+    ///     "Example",
+    ///     "rule-1",
+    ///     ProcessRecord::new(1, "proc".to_string()),
+    /// );
+    /// let rt = tokio::runtime::Runtime::new().unwrap();
+    /// let res = rt.block_on(async { sink.send(&alert).await }).unwrap();
+    /// assert_eq!(res.sink_name, "stdout-test");
+    /// ```
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 
@@ -107,13 +135,13 @@ impl AlertSink for StdoutSink {
             OutputFormat::Json => serde_json::to_string_pretty(alert)?,
             OutputFormat::Human => format!(
                 "[{}] {} - {}: {}",
-                alert.severity, alert.category, alert.title, alert.description
+                alert.severity, alert.detection_rule_id, alert.title, alert.description
             ),
             OutputFormat::Yaml => serde_yaml::to_string(alert)
                 .map_err(|e| AlertingError::YamlSerializationError(e.to_string()))?,
             OutputFormat::Csv => format!(
                 "{},{},{},{},{}",
-                alert.id, alert.severity, alert.category, alert.title, alert.description
+                alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
             ),
         };
 
@@ -159,6 +187,28 @@ impl FileSink {
 
 #[async_trait]
 impl AlertSink for FileSink {
+    /// Appends the given alert to the configured file using the sink's OutputFormat and returns a DeliveryResult with timing and delivery metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use sentinel_lib::alerting::{AlertSink, FileSink, OutputFormat};
+    /// use sentinel_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use std::path::PathBuf;
+    ///
+    /// let path = PathBuf::from("/tmp/sentineld-alerts.log");
+    /// let sink = FileSink::new("file".to_string(), path.clone(), OutputFormat::Json);
+    /// let alert = Alert::new(
+    ///     AlertSeverity::High,
+    ///     "Title",
+    ///     "Desc",
+    ///     "rule-1",
+    ///     ProcessRecord::new(1, "proc".to_string()),
+    /// );
+    /// let rt = tokio::runtime::Runtime::new().unwrap();
+    /// let _ = rt.block_on(async { sink.send(&alert).await }).unwrap();
+    /// assert!(path.exists());
+    /// ```
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 
@@ -166,13 +216,13 @@ impl AlertSink for FileSink {
             OutputFormat::Json => serde_json::to_string_pretty(alert)?,
             OutputFormat::Human => format!(
                 "[{}] {} - {}: {}",
-                alert.severity, alert.category, alert.title, alert.description
+                alert.severity, alert.detection_rule_id, alert.title, alert.description
             ),
             OutputFormat::Yaml => serde_yaml::to_string(alert)
                 .map_err(|e| AlertingError::YamlSerializationError(e.to_string()))?,
             OutputFormat::Csv => format!(
                 "{},{},{},{},{}",
-                alert.id, alert.severity, alert.category, alert.title, alert.description
+                alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
             ),
         };
 
@@ -435,9 +485,28 @@ impl AlertManager {
         Ok(delivery_results)
     }
 
-    /// Check if an alert is a duplicate.
+    /// Returns true if the given alert's deduplication key was seen within the manager's deduplication window.
+    ///
+    /// This checks `recent_alerts` for `alert.deduplication_key` and compares the stored timestamp to
+    /// the current time using `dedup_window_seconds`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use sentinel_lib::alerting::{AlertManager, AlertSink, StdoutSink, OutputFormat};
+    /// use sentinel_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    ///
+    /// let mut mgr = AlertManager::new();
+    /// mgr.add_sink(Box::new(StdoutSink::new("s".to_string(), OutputFormat::Json)));
+    /// let alert = Alert::new(AlertSeverity::Low, "Title", "Desc", "rule-1", ProcessRecord::new(1, "proc".to_string()));
+    /// let rt = tokio::runtime::Runtime::new().unwrap();
+    /// let first = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
+    /// let second = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
+    /// assert!(first.len() >= 0);
+    /// assert_eq!(second.len(), 0); // duplicate suppressed
+    /// ```
     fn is_duplicate(&self, alert: &Alert) -> bool {
-        if let Some(last_seen) = self.recent_alerts.get(&alert.dedup_key) {
+        if let Some(last_seen) = self.recent_alerts.get(&alert.deduplication_key) {
             let now = chrono::Utc::now();
             let time_diff = now.signed_duration_since(*last_seen);
             time_diff.num_seconds() < self.dedup_window_seconds as i64
@@ -464,10 +533,24 @@ impl AlertManager {
         }
     }
 
-    /// Record an alert for deduplication and rate limiting.
+    /// Record the given alert for deduplication and rate-limiting.
+    ///
+    /// Inserts or updates the alert's `deduplication_key` in the manager's
+    /// `recent_alerts` map with the current UTC timestamp. When the map grows
+    /// beyond 1000 entries this function prunes entries older than one hour to
+    /// bound memory usage.
+    ///
+    /// This is used by the sending pipeline to (1) detect duplicates within the
+    /// configured deduplication window and (2) help enforce rate limits.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // Internal helper used by AlertManager; prefer using `send_alert` which records alerts automatically.
+    /// ```
     fn record_alert(&mut self, alert: &Alert) {
         self.recent_alerts
-            .insert(alert.dedup_key.clone(), chrono::Utc::now());
+            .insert(alert.deduplication_key.clone(), chrono::Utc::now());
 
         // Clean up old entries periodically
         if self.recent_alerts.len() > 1000 {
@@ -569,17 +652,18 @@ impl HealthSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::AlertSeverity;
+    use crate::models::{AlertSeverity, ProcessRecord};
 
     #[tokio::test]
     async fn test_stdout_sink() {
         let sink = StdoutSink::new("test".to_string(), OutputFormat::Json);
+        let process = ProcessRecord::new(1234, "test-process".to_string());
         let alert = Alert::new(
-            "test-alert".to_string(),
             AlertSeverity::High,
-            "Test Alert".to_string(),
-            "This is a test alert".to_string(),
-            "test".to_string(),
+            "Test Alert",
+            "This is a test alert",
+            "test-rule",
+            process,
         );
 
         let result = sink.send(&alert).await.unwrap();
@@ -593,12 +677,13 @@ mod tests {
         let stdout_sink = Box::new(StdoutSink::new("stdout".to_string(), OutputFormat::Json));
         manager.add_sink(stdout_sink);
 
+        let process = ProcessRecord::new(1234, "test-process".to_string());
         let alert = Alert::new(
-            "test-alert".to_string(),
             AlertSeverity::High,
-            "Test Alert".to_string(),
-            "This is a test alert".to_string(),
-            "test".to_string(),
+            "Test Alert",
+            "This is a test alert",
+            "test-rule",
+            process,
         );
 
         let results = manager.send_alert(&alert).await.unwrap();
@@ -612,12 +697,13 @@ mod tests {
         let stdout_sink = Box::new(StdoutSink::new("stdout".to_string(), OutputFormat::Json));
         manager.add_sink(stdout_sink);
 
+        let process = ProcessRecord::new(1234, "test-process".to_string());
         let alert = Alert::new(
-            "test-alert",
             AlertSeverity::High,
             "Test Alert",
             "This is a test alert",
-            "test",
+            "test-rule",
+            process,
         );
 
         // Send the same alert twice
@@ -689,5 +775,148 @@ mod tests {
         assert_eq!(summary.unhealthy_sinks, 0);
         assert!(summary.is_all_healthy());
         assert_eq!(summary.health_percentage(), 100.0);
+    }
+
+    #[test]
+    fn test_health_summary_creation() {
+        let summary = HealthSummary {
+            total_sinks: 5,
+            healthy_sinks: 4,
+            unhealthy_sinks: 1,
+            details: std::collections::HashMap::new(),
+        };
+
+        assert_eq!(summary.total_sinks, 5);
+        assert_eq!(summary.healthy_sinks, 4);
+        assert_eq!(summary.unhealthy_sinks, 1);
+        assert!(!summary.is_all_healthy());
+        assert_eq!(summary.health_percentage(), 80.0);
+    }
+
+    #[test]
+    fn test_health_summary_all_healthy() {
+        let summary = HealthSummary {
+            total_sinks: 3,
+            healthy_sinks: 3,
+            unhealthy_sinks: 0,
+            details: std::collections::HashMap::new(),
+        };
+
+        assert!(summary.is_all_healthy());
+        assert_eq!(summary.health_percentage(), 100.0);
+    }
+
+    #[test]
+    fn test_health_summary_no_sinks() {
+        let summary = HealthSummary {
+            total_sinks: 0,
+            healthy_sinks: 0,
+            unhealthy_sinks: 0,
+            details: std::collections::HashMap::new(),
+        };
+
+        assert!(summary.is_all_healthy());
+        assert_eq!(summary.health_percentage(), 100.0);
+    }
+
+    #[test]
+    fn test_delivery_result_creation() {
+        let result = DeliveryResult {
+            success: true,
+            sink_name: "test-sink".to_string(),
+            delivered_at: chrono::Utc::now(),
+            error_message: None,
+            duration_ms: 100,
+        };
+
+        assert!(result.success);
+        assert_eq!(result.sink_name, "test-sink");
+        assert!(result.error_message.is_none());
+    }
+
+    #[test]
+    fn test_delivery_result_serialization() {
+        let result = DeliveryResult {
+            success: true,
+            sink_name: "test-sink".to_string(),
+            delivered_at: chrono::Utc::now(),
+            error_message: None,
+            duration_ms: 100,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: DeliveryResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result.success, deserialized.success);
+        assert_eq!(result.sink_name, deserialized.sink_name);
+        assert_eq!(result.duration_ms, deserialized.duration_ms);
+    }
+
+    #[test]
+    fn test_alerting_error_display() {
+        let errors = vec![
+            AlertingError::UnknownSinkType {
+                sink_type: "test".to_string(),
+            },
+            AlertingError::ConfigurationError("test error".to_string()),
+            AlertingError::ConfigurationError("test error".to_string()),
+        ];
+
+        for error in errors {
+            let error_string = format!("{}", error);
+            assert!(!error_string.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_sink_config_with_config() {
+        let mut config = SinkConfig::new("test", "stdout", OutputFormat::Json);
+        config = config.with_config("key1", "value1");
+        config = config.with_config("key2", "value2");
+
+        assert_eq!(config.config.get("key1"), Some(&"value1".to_string()));
+        assert_eq!(config.config.get("key2"), Some(&"value2".to_string()));
+    }
+
+    #[test]
+    fn test_sink_config_serialization() {
+        let config =
+            SinkConfig::new("test", "stdout", OutputFormat::Json).with_config("level", "info");
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: SinkConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.name, deserialized.name);
+        assert_eq!(config.sink_type, deserialized.sink_type);
+        assert_eq!(config.format, deserialized.format);
+    }
+
+    #[tokio::test]
+    async fn test_alert_manager_empty() {
+        let manager = AlertManager::new();
+        assert_eq!(manager.get_sinks().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_alert_manager_multiple_sinks() {
+        let mut manager = AlertManager::new();
+        let sink1 = Box::new(StdoutSink::new("sink1".to_string(), OutputFormat::Json));
+        let sink2 = Box::new(StdoutSink::new("sink2".to_string(), OutputFormat::Human));
+        manager.add_sink(sink1);
+        manager.add_sink(sink2);
+
+        assert_eq!(manager.get_sinks().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_alert_manager_health_summary_multiple_sinks() {
+        let mut manager = AlertManager::new();
+        let sink1 = Box::new(StdoutSink::new("sink1".to_string(), OutputFormat::Json));
+        let sink2 = Box::new(StdoutSink::new("sink2".to_string(), OutputFormat::Human));
+        manager.add_sink(sink1);
+        manager.add_sink(sink2);
+
+        let summary = manager.health_summary().await;
+        assert_eq!(summary.total_sinks, 2);
+        assert_eq!(summary.healthy_sinks, 2);
+        assert_eq!(summary.unhealthy_sinks, 0);
     }
 }

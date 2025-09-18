@@ -8,7 +8,7 @@
   - Implement structured logging with tracing ecosystem and JSON formatting
   - _Requirements: 6.4, 10.1_
 
-- [ ] 2. Implement core data models and serialization - [#34](https://github.com/EvilBit-Labs/SentinelD/issues/34)
+- [x] 2. Implement core data models and serialization - [#34](https://github.com/EvilBit-Labs/SentinelD/issues/34)
 
   - Create ProcessRecord struct with comprehensive metadata fields (PID, PPID, name, executable_path, etc.)
   - Implement Alert struct with severity levels, deduplication keys, and context information
@@ -17,7 +17,7 @@
   - Write unit tests for data model validation and serialization
   - _Requirements: 1.3, 4.1, 4.3_
 
-- [ ] 3. Design and implement protobuf IPC protocol - [#35](https://github.com/EvilBit-Labs/SentinelD/issues/35)
+- [ ] 3. Design and implement protobuf IPC protocol
 
 - [ ] 3.1 Define protobuf schema for IPC messages - [#35](https://github.com/EvilBit-Labs/SentinelD/issues/35)
 
@@ -85,7 +85,7 @@
   - Write cryptographic tests for hash chain integrity and optional Ed25519 signatures
   - _Requirements: 7.1, 7.2, 7.4, 7.5_
 
-- [ ] 8. Implement redb database layer for sentinelagent - [#43](https://github.com/EvilBit-Labs/SentinelD/issues/43)
+- [ ] 8. Implement redb database layer for sentinelagent
 
 - [ ] 8.1 Set up redb database foundation - [#43](https://github.com/EvilBit-Labs/SentinelD/issues/43)
 
@@ -119,7 +119,7 @@
   - Write integration tests for migration scenarios and version compatibility
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 9. Implement SQL-based detection engine with security validation - [#47](https://github.com/EvilBit-Labs/SentinelD/issues/47)
+- [ ] 9. Implement SQL-based detection engine with security validation
 
 - [ ] 9.1 Create SQL validator for injection prevention - [#47](https://github.com/EvilBit-Labs/SentinelD/issues/47)
 
@@ -162,7 +162,7 @@
   - Write unit tests for alert generation logic and deduplication behavior
   - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
-- [ ] 11. Implement multi-channel alert delivery system - [#52](https://github.com/EvilBit-Labs/SentinelD/issues/52)
+- [ ] 11. Implement multi-channel alert delivery system
 
 - [ ] 11.1 Create AlertSink trait and basic sinks - [#52](https://github.com/EvilBit-Labs/SentinelD/issues/52)
 
@@ -242,7 +242,7 @@
   - Write metrics accuracy tests and Prometheus scraping compatibility verification
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
-- [ ] 18. Create comprehensive test suite and quality assurance - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
+- [ ] 18. Create comprehensive test suite and quality assurance
 
 - [ ] 18.1 Implement unit test coverage - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
 
@@ -285,7 +285,7 @@
   - Write penetration testing scenarios for IPC protocol and component boundaries
   - _Requirements: 3.5, 6.4, 6.5_
 
-- [ ] 20. Integrate components and implement end-to-end workflows - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
+- [ ] 20. Integrate components and implement end-to-end workflows
 
 - [ ] 20.1 Wire IPC communication between components - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
 

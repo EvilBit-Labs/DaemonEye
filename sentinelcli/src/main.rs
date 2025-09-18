@@ -4,6 +4,7 @@ use sentinel_lib::{config, storage, telemetry};
 #[derive(Parser)]
 #[command(name = "sentinelcli")]
 #[command(about = "SentinelD CLI interface")]
+#[command(version)]
 struct Cli {
     /// Database path
     #[arg(short, long, default_value = "/var/lib/sentineld/processes.db")]
@@ -14,7 +15,7 @@ struct Cli {
     format: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
