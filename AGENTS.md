@@ -297,7 +297,7 @@ just lint-rust    # Clippy with strict warnings
 just lint-just    # Lint justfile syntax
 
 # Building and Testing
-just build        # Build workspace
+just build        # Build all binaries with features
 just check        # Quick check without build
 just test         # Run all tests
 
@@ -310,19 +310,19 @@ just run-sentinelagent [args] # Run sentinelagent with optional args
 ### Core Development Commands
 
 ```bash
-# Workspace Operations
-cargo build --workspace --all-features
-cargo test --workspace --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+# Single Crate Operations
+cargo build --all-features
+cargo test --all-features
+cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all
-cargo check --workspace --all-targets --all-features
+cargo check --all-targets --all-features
 
 # Testing with stable output
-NO_COLOR=1 TERM=dumb cargo test --workspace
+NO_COLOR=1 TERM=dumb cargo test --all-features
 
-# Component-specific testing
-cargo test -p sentinel-lib
-cargo test -p procmond
+# Component-specific building
+cargo build --bin procmond --features=procmond
+cargo build --bin sentinelagent --features=agent
 
 # Performance testing
 cargo bench  # Run criterion benchmarks
@@ -345,19 +345,37 @@ cargo bench  # Run criterion benchmarks
 
 ## Code Organization and Architecture
 
-### Workspace Structure
+### Single Crate Structure
 
 ```text
 SentinelD/
-├── procmond/         # Privileged Process Collector
-├── sentinelagent/    # User-Space Orchestrator
-├── sentinelcli/      # Command-Line Interface
-├── sentinel-lib/     # Shared Library Components
-├── security-center/  # Centralized Management (Business/Enterprise)
-├── .kiro/            # Project Documentation
-│   ├── steering/     # Architectural decisions
-│   └── specs/        # Technical specifications
-└── project_spec/     # Legacy documentation
+├── Cargo.toml            # Single crate with [[bin]] entries
+├── procmond/             # Privileged Process Collector (binary)
+│   ├── src/
+│   │   └── main.rs      # Binary implementation
+│   └── tests/           # Component-specific tests
+├── sentinelagent/        # User-Space Orchestrator (binary)
+│   ├── src/
+│   │   └── main.rs      # Binary implementation
+│   └── tests/           # Component-specific tests
+├── sentinelcli/          # Command-Line Interface (binary)
+│   ├── src/
+│   │   └── main.rs      # Binary implementation
+│   └── tests/           # Component-specific tests
+├── sentinel-lib/         # Shared Library Components
+│   ├── src/
+│   │   ├── lib.rs       # Feature-gated modules
+│   │   ├── alerting.rs  # cfg(feature = "alerting")
+│   │   ├── detection.rs # cfg(feature = "detection-engine")
+│   │   └── ...          # Other modules
+├── tests/                # Integration tests
+│   ├── procmond.rs
+│   ├── sentinelagent.rs
+│   └── sentinelcli.rs
+├── .kiro/                # Project Documentation
+│   ├── steering/         # Architectural decisions
+│   └── specs/            # Technical specifications
+└── project_spec/         # Legacy documentation
 ```
 
 ### Module Organization (sentinel-lib)
