@@ -112,6 +112,28 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 
 ## Cross-Platform Strategy
 
+### OS Support Matrix
+
+| OS          | Version              | Architecture  | Status    | Notes                          |
+| ----------- | -------------------- | ------------- | --------- | ------------------------------ |
+| **Linux**   | Ubuntu 20.04+ LTS    | x86_64, ARM64 | Primary   | Full feature support           |
+| **Linux**   | RHEL/CentOS 8+       | x86_64, ARM64 | Primary   | Full feature support           |
+| **Linux**   | Alma/Rocky Linux 8+  | x86_64, ARM64 | Primary   | Full feature support           |
+| **Linux**   | Debian 11+ LTS       | x86_64, ARM64 | Primary   | Full feature support           |
+| **macOS**   | 14.0+ (Sonoma)       | x86_64, ARM64 | Primary   | Native process monitoring      |
+| **Windows** | Windows 10+          | x86_64, ARM64 | Primary   | Service deployment[^5]         |
+| **Windows** | Windows Server 2019+ | x86_64        | Primary   | Enterprise features[^6]        |
+| **Windows** | Windows Server 2022  | x86_64, ARM64 | Primary   | Enterprise standard            |
+| **Windows** | Windows 11           | x86_64, ARM64 | Primary   | Full feature support           |
+| **Linux**   | Alpine 3.16+         | x86_64, ARM64 | Secondary | Container deployments          |
+| **Linux**   | Amazon Linux 2+      | x86_64, ARM64 | Secondary | Cloud deployments              |
+| **Linux**   | Ubuntu 18.04         | x86_64, ARM64 | Secondary | Best-effort support[^1][^8]    |
+| **Linux**   | RHEL 7               | x86_64        | Secondary | Best-effort support[^2][^8]    |
+| **macOS**   | 12.0+ (Monterey)     | x86_64, ARM64 | Secondary | Best-effort support[^7]        |
+| **FreeBSD** | 13.0+                | x86_64, ARM64 | Secondary | pfSense/OPNsense ecosystem[^9] |
+
+**Testing Policy**: We test against the current and one previous major version of Windows and macOS to ensure compatibility with enterprise environments. macOS 14.0+ (Sonoma and later) are Primary support.
+
 ### Process Enumeration
 
 - **Phase 1**: sysinfo crate for unified cross-platform baseline
@@ -163,3 +185,17 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 - **Coverage Tools**: llvm-cov for coverage measurement and reporting
 - **Snapshot Testing**: insta for deterministic CLI output validation
 - **CI Matrix**: Test across Linux, macOS, Windows with multiple Rust versions (stable, beta, MSRV)
+
+[^5]: Windows 10: EOL October 14, 2025. Organizations should plan migration to Windows 11.
+
+[^6]: Windows Server 2019: EOL January 9, 2029. Consider upgrading to Windows Server 2022.
+
+[^1]: Ubuntu 18.04 (EOL April 2023): Legacy support for long-lived server deployments. Limited testing and no guaranteed compatibility.
+
+[^8]: **Enterprise Tier**: No eBPF kernel monitoring (requires kernel 5.4+). Graceful degradation to userspace monitoring with reduced threat detection capabilities.
+
+[^2]: RHEL 7 (EOL June 2024): Enterprise legacy support for organizations with extended support contracts. Compatibility not guaranteed.
+
+[^7]: macOS 12.0 (Monterey): EOL September 16, 2024. Legacy support for organizations with older Mac hardware. **Enterprise Tier**: Limited EndpointSecurity framework features compared to macOS 14.0+. Reduced code signing bypass detection and advanced threat monitoring capabilities.
+
+[^9]: **FreeBSD 13.0+**: pfSense/OPNsense ecosystem support. **Enterprise Tier**: No eBPF kernel monitoring (FreeBSD uses classic BPF). Full process and network monitoring via sysinfo crate and FreeBSD audit system.

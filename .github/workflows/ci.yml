@@ -80,18 +80,31 @@ jobs:
         strategy:
             matrix:
                 include:
-                    - os: ubuntu-latest
+                    # Primary Support - Linux
+                    - os: ubuntu-24.04
                       platform: "Linux"
-                    - os: ubuntu-22.04
+                    - os: ubuntu-24.04-arm
                       platform: "Linux"
-                    - os: macos-latest
+                    # Primary Support - macOS (using available runners)
+                    - os: macos-15
+                      platform: "macOS"
+                    - os: macos-14
                       platform: "macOS"
                     - os: macos-13
                       platform: "macOS"
-                    - os: windows-latest
+                    # Primary Support - Windows
+                    - os: windows-2025
                       platform: "Windows"
                     - os: windows-2022
                       platform: "Windows"
+                    # Secondary Support - Linux (using available runners)
+                    - os: ubuntu-22.04
+                      platform: "Linux"
+                    - os: windows-2019
+                      platform: "Windows"
+                    # Note: Ubuntu 20.04, 18.04, RHEL 7, FreeBSD testing would require custom runners
+                    # Note: macOS 12 (Monterey) testing would require custom runners
+
         runs-on: ${{ matrix.os }}
         needs: quality
         steps:
