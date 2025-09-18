@@ -58,14 +58,6 @@ commands:
                       - C:\\Users\\circleci\\.cargo\\registry
                       - C:\\Users\\circleci\\.cargo\\git
                       - C:\\Users\\circleci\\project\\target
-    install_cargo_binstall_and_just:
-        steps:
-            - run:
-                  name: Install cargo-binstall
-                  command: cargo install cargo-binstall --locked
-            - run:
-                  name: Install just
-                  command: cargo binstall just --locked
 
 # Global environment variables
 common_env: &common_env
@@ -82,7 +74,6 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_linux
-            - install_cargo_binstall_and_just
 
             # Rustfmt check (equivalent to actions-rust-lang/rustfmt@v1)
             - run:
@@ -105,12 +96,11 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_linux
-            - install_cargo_binstall_and_just
 
             # Install cargo-nextest (matches taiki-e/install-action@v2)
             - run:
                   name: Install cargo-nextest
-                  command: cargo binstall cargo-nextest --locked
+                  command: cargo install cargo-nextest --locked
 
             # Run tests with nextest (matches GHA: cargo nextest run)
             - run:
@@ -137,11 +127,10 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_linux
-            - install_cargo_binstall_and_just
 
             - run:
                   name: Install cargo-nextest
-                  command: cargo binstall cargo-nextest --locked
+                  command: cargo install cargo-nextest --locked
 
             # Matches GHA matrix job: cargo nextest run --workspace --exclude sentinel
             - run:
