@@ -100,6 +100,8 @@ lcov-minimal.info
 *.profdata
 tarpaulin-report/
 tarpaulin-report.html
+coverage-report/
+
 
 # Node.js
 node_modules/
@@ -120,4 +122,6 @@ docs/book/
 .direnv/
 
 megalinter-reports/
+
+# Override global gitignore
 !bin/
