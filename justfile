@@ -193,7 +193,7 @@ coverage:
 
 # Check coverage thresholds
 coverage-check:
-    cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info --fail-under-lines 85
+    cargo llvm-cov --all-features --package procmond --package sentinelagent --package sentinelcli --package sentinel-lib --lcov --output-path lcov.info --fail-under-lines 85
 
 # Full local CI parity check
 ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release audit coverage-check dist-plan

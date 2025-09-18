@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 

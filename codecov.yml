@@ -13,3 +13,4 @@ coverage:
         - "benches/**/*"
         - "examples/**/*"
         - "target/**/*"
+        - "sentinel/**/*" # Exclude distribution package from coverage

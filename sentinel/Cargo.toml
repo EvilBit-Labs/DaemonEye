@@ -1,3 +1,23 @@
+# =============================================================================
+# DISTRIBUTION BUNDLE PACKAGE
+# =============================================================================
+# This package serves as a distribution bundle that combines all SentinelD
+# components into a single crate for easier installation and deployment.
+#
+# BUNDLING STRATEGY:
+# - Re-exports individual component binaries (procmond, sentinelagent, sentinelcli)
+# - Each component maintains its own dependencies and development workflow
+# - Allows users to install all components with a single `cargo install sentinel`
+# - Individual packages can still be developed and tested independently
+#
+# ARCHITECTURE:
+# - procmond: Privileged process collector (minimal attack surface)
+# - sentinelagent: User-space orchestrator for detection and alerting
+# - sentinelcli: Command-line interface for operators
+# - sentinel-lib: Shared library providing common functionality
+#
+# =============================================================================
+
 [package]
 name = "sentinel"
 edition.workspace = true
@@ -16,7 +36,25 @@ path-guid = "B39EF01E-BA27-4430-8770-8D16E84BB0F3"
 license = false
 eula = false
 
-# Include all binaries from workspace members
+# =============================================================================
+# BUNDLED BINARIES
+# =============================================================================
+# These binary definitions create the distribution binaries that users will
+# install. Each binary is implemented in the corresponding src/bin/*.rs file
+# and contains the actual implementation copied from the individual packages.
+#
+# WHY BUNDLING:
+# - Single installation: `cargo install sentinel` installs all components
+# - Simplified distribution: One package to manage instead of three
+# - Consistent versioning: All components share the same version
+# - Reduced complexity: Users don't need to know about individual packages
+#
+# DEVELOPMENT WORKFLOW:
+# - Individual packages (procmond/, sentinelagent/, sentinelcli/) are developed separately
+# - Changes are copied to the corresponding src/bin/*.rs files in this package
+# - This package serves as the distribution artifact, not the development artifact
+# =============================================================================
+
 [[bin]]
 name = "procmond"
 path = "src/bin/procmond.rs"
@@ -30,16 +68,45 @@ name = "sentinelagent"
 path = "src/bin/sentinelagent.rs"
 
 [dependencies]
-# Re-export the shared library
+# =============================================================================
+# DEPENDENCY MANAGEMENT
+# =============================================================================
+# This package includes all dependencies that any of the bundled binaries might need.
+# This ensures that users can install the package without missing dependencies.
+#
+# DEPENDENCY STRATEGY:
+# - Include sentinel-lib for shared functionality
+# - Include all workspace dependencies that any binary uses
+# - Use workspace inheritance for consistent versioning
+# - Add specific dependencies not covered by workspace inheritance
+#
+# NOTE: Individual packages maintain their own Cargo.toml files with their
+# specific dependencies. This package aggregates all dependencies needed
+# for the distribution binaries.
+# =============================================================================
+
+# Shared library providing common functionality across all components
 sentinel-lib = { path = "../sentinel-lib" }
 
-# Include all dependencies that any binary might need
+# Core async runtime and utilities
 tokio.workspace = true
+futures = "0.3.31"
+
+# CLI framework and argument parsing
 clap.workspace = true
+
+# Serialization and data handling
 serde.workspace = true
+serde_json.workspace = true
+
+# System information and process enumeration
 sysinfo.workspace = true
+
+# Logging and observability
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# Error handling and context
 thiserror.workspace = true
 anyhow.workspace = true
 
@@ -48,4 +115,13 @@ assert_cmd.workspace = true
 predicates.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["anyhow", "clap", "serde", "sysinfo", "thiserror", "tokio", "tracing", "tracing-subscriber"]
+ignored = [
+    "anyhow",
+    "clap",
+    "serde",
+    "sysinfo",
+    "thiserror",
+    "tokio",
+    "tracing",
+    "tracing-subscriber",
+]
