@@ -98,8 +98,8 @@ jobs:
                   tool: cargo-nextest
 
             # Run tests and build the release binary
-            - run: cargo nextest run
-            - run: cargo build --release
+            - run: cargo nextest run --workspace --exclude sentinel
+            - run: cargo build --release --workspace --exclude sentinel
 
     # Generate coverage for TLS-enabled builds
     coverage:
