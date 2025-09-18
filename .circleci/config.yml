@@ -91,9 +91,9 @@ jobs:
                   name: Rustfmt Check
                   command: just fmt-check
 
-            # Clippy check with warnings as errors (matches GHA: cargo clippy -- -D warnings)
+            # Clippy check with warnings as errors (matches GHA: cargo clippy --all-targets --all-features -- -D warnings)
             - run:
-                  name: Clippy (default features)
+                  name: Clippy (all features)
                   command: just lint-rust
 
             - save_cargo_cache_linux
@@ -114,15 +114,15 @@ jobs:
                   name: Install cargo-nextest
                   command: cargo binstall cargo-nextest --locked --no-confirm
 
-            # Run tests with nextest (matches GHA: cargo nextest run)
+            # Run tests with nextest (matches GHA: cargo nextest run --all-features)
             - run:
-                  name: Run tests (default features)
-                  command: cargo nextest run
+                  name: Run tests (all features)
+                  command: cargo nextest run --all-features
 
-            # Build release binary (matches GHA: cargo build --release)
+            # Build release binary (matches GHA: cargo build --release --all-features)
             - run:
                   name: Build release
-                  command: cargo build --release
+                  command: cargo build --release --all-features
 
             - save_cargo_cache_linux
             - store_test_results:
@@ -145,15 +145,15 @@ jobs:
                   name: Install cargo-nextest
                   command: cargo binstall cargo-nextest --locked --no-confirm
 
-            # Matches GHA matrix job: cargo nextest run --workspace --exclude sentinel
+            # Matches GHA matrix job: cargo nextest run --all-features
             - run:
-                  name: Run tests (workspace, exclude sentinel)
-                  command: cargo nextest run --workspace --exclude sentinel
+                  name: Run tests (all features)
+                  command: cargo nextest run --all-features
 
-            # Matches GHA: cargo build --release --workspace --exclude sentinel
+            # Matches GHA: cargo build --release --all-features
             - run:
-                  name: Build release (workspace, exclude sentinel)
-                  command: cargo build --release --workspace --exclude sentinel
+                  name: Build release (all features)
+                  command: cargo build --release --all-features
 
             - save_cargo_cache_linux
 
@@ -179,16 +179,16 @@ jobs:
                   command: cargo binstall cargo-nextest --locked --no-confirm
 
             - run:
-                  name: Run tests (workspace, exclude sentinel)
+                  name: Run tests (all features)
                   command: |
                       source "$BASH_ENV"
-                      cargo nextest run --workspace --exclude sentinel
+                      cargo nextest run --all-features
 
             - run:
-                  name: Build release (workspace, exclude sentinel)
+                  name: Build release (all features)
                   command: |
                       source "$BASH_ENV"
-                      cargo build --release --workspace --exclude sentinel
+                      cargo build --release --all-features
 
             - save_cargo_cache_macos
 
@@ -211,10 +211,10 @@ jobs:
                       rustup component add llvm-tools-preview
                       cargo binstall cargo-llvm-cov --locked --no-confirm
 
-            # Generate coverage (matches GHA: cargo llvm-cov --workspace --no-report)
+            # Generate coverage (matches GHA: cargo llvm-cov --all-features --no-report)
             - run:
                   name: Generate coverage
-                  command: cargo llvm-cov --workspace --no-report
+                  command: cargo llvm-cov --all-features --no-report
 
             # Combine coverage reports (matches GHA: cargo llvm-cov report --lcov --output-path lcov.info)
             - run:
