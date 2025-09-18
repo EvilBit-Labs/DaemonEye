@@ -24,6 +24,7 @@ commands:
                   paths:
                       - ~/.cargo/registry
                       - ~/.cargo/git
+                      - ~/.cargo/bin
                       - target
 
     restore_cargo_cache_macos:
@@ -41,6 +42,7 @@ commands:
                   paths:
                       - ~/.cargo/registry
                       - ~/.cargo/git
+                      - ~/.cargo/bin
                       - target
 
     restore_cargo_cache_windows:
@@ -58,6 +60,14 @@ commands:
                       - C:\\Users\\circleci\\.cargo\\registry
                       - C:\\Users\\circleci\\.cargo\\git
                       - C:\\Users\\circleci\\project\\target
+    install_cargo_binstall_and_just:
+        steps:
+            - run:
+                  name: Install cargo-binstall
+                  command: cargo install cargo-binstall --locked
+            - run:
+                  name: Install just
+                  command: cargo binstall just --locked --no-confirm
 
 # Global environment variables
 common_env: &common_env
@@ -68,12 +78,13 @@ jobs:
     # Code quality checks - rustfmt and clippy
     quality:
         docker:
-            - image: cimg/rust:1.85
+            - image: cimg/rust:1.89
         environment:
             <<: *common_env
         steps:
             - checkout
             - restore_cargo_cache_linux
+            - install_cargo_binstall_and_just
 
             # Rustfmt check (equivalent to actions-rust-lang/rustfmt@v1)
             - run:
@@ -90,17 +101,18 @@ jobs:
     # Basic test job - mirrors GitHub Actions "test" job
     test:
         docker:
-            - image: cimg/rust:1.85
+            - image: cimg/rust:1.89
         environment:
             <<: *common_env
         steps:
             - checkout
             - restore_cargo_cache_linux
+            - install_cargo_binstall_and_just
 
             # Install cargo-nextest (matches taiki-e/install-action@v2)
             - run:
                   name: Install cargo-nextest
-                  command: cargo install cargo-nextest --locked
+                  command: cargo binstall cargo-nextest --locked --no-confirm
 
             # Run tests with nextest (matches GHA: cargo nextest run)
             - run:
@@ -121,16 +133,17 @@ jobs:
     # Cross-platform testing - Linux (Ubuntu variants)
     test-cross-platform-linux:
         docker:
-            - image: cimg/rust:1.85
+            - image: cimg/rust:1.89
         environment:
             <<: *common_env
         steps:
             - checkout
             - restore_cargo_cache_linux
+            - install_cargo_binstall_and_just
 
             - run:
                   name: Install cargo-nextest
-                  command: cargo install cargo-nextest --locked
+                  command: cargo binstall cargo-nextest --locked --no-confirm
 
             # Matches GHA matrix job: cargo nextest run --workspace --exclude sentinel
             - run:
@@ -163,7 +176,7 @@ jobs:
 
             - run:
                   name: Install cargo-nextest
-                  command: cargo install cargo-nextest --locked
+                  command: cargo binstall cargo-nextest --locked --no-confirm
 
             - run:
                   name: Run tests (workspace, exclude sentinel)
@@ -184,7 +197,7 @@ jobs:
     # Coverage generation - mirrors GitHub Actions "coverage" job
     coverage:
         docker:
-            - image: cimg/rust:1.85
+            - image: cimg/rust:1.89
         environment:
             <<: *common_env
         steps:
@@ -196,7 +209,7 @@ jobs:
                   name: Install cargo-llvm-cov
                   command: |
                       rustup component add llvm-tools-preview
-                      cargo install cargo-llvm-cov --locked
+                      cargo binstall cargo-llvm-cov --locked --no-confirm
 
             # Generate coverage (matches GHA: cargo llvm-cov --workspace --no-report)
             - run:
