@@ -12,37 +12,48 @@ use crate::models::alert::AlertSeverity;
 use sqlparser::ast::{Expr, Function, Query, Select, SetExpr, Statement};
 
 // Banned SQL functions for rule validation (case-insensitive match).
+// These functions are banned because they either:
+// 1. Cannot be translated to simple protobuf collection tasks (SQL-to-IPC translation)
+// 2. Have no meaningful application in process monitoring context
+// 3. Could cause performance issues or crashes in the detection engine
+// 4. Are not supported by the underlying redb database
+//
 // Hoisted as a module-level constant to avoid re-allocating per validation call.
 const BANNED_FUNCTIONS: &[&str] = &[
-    "load_extension",
-    "load",
-    "eval",
-    "exec",
-    "system",
-    "shell",
-    "readfile",
-    "writefile",
-    "edit",
-    "glob",
-    "like",
-    "match",
-    "regexp",
-    "replace",
-    "substr",
-    "instr",
-    "length",
-    "abs",
-    "random",
-    "randomblob",
-    "hex",
-    "unhex",
-    "quote",
-    "printf",
-    "format",
-    "char",
-    "unicode",
-    "soundex",
-    "difference",
+    // File system operations - not applicable to process monitoring
+    "load_extension", // SQLite extension loading - not supported in redb
+    "load",           // Generic load function - ambiguous purpose
+    "readfile",       // File reading - not applicable to process data
+    "writefile",      // File writing - not applicable to process data
+    "edit",           // File editing - not applicable to process data
+    // System/execution functions - security and applicability concerns
+    "eval",   // Code evaluation - security risk, not applicable
+    "exec",   // Command execution - security risk, not applicable
+    "system", // System calls - security risk, not applicable
+    "shell",  // Shell execution - security risk, not applicable
+    // Pattern matching functions - selectively allowed for process data analysis
+    "glob", // Glob patterns - complex to translate to simple filters
+    // "like",    // ALLOWED - Useful for pattern matching in process names, paths, command lines
+    // "match",   // ALLOWED - Useful for pattern matching in process data
+    // "regexp",  // ALLOWED - Useful for complex pattern matching in process data
+    "replace", // String replacement - not applicable to process monitoring
+    // "substr",  // ALLOWED - Useful for extracting parts of command lines, paths, environment variables
+    // "instr",   // ALLOWED - Useful for finding substrings in process data
+    // "length",  // ALLOWED - Useful for analyzing string lengths in process data
+    // Mathematical functions - not applicable to process monitoring
+    "abs",        // Absolute value - not applicable to process data
+    "random",     // Random numbers - not applicable to process monitoring
+    "randomblob", // Random binary data - not applicable to process monitoring
+    // Encoding/formatting functions - selectively allowed for process data analysis
+    // "hex",        // ALLOWED - Useful for analyzing executable_hash and binary metadata
+    // "unhex",      // ALLOWED - Useful for converting hex data back to binary for analysis
+    "quote",      // SQL quoting - not applicable to process monitoring
+    "printf",     // String formatting - not applicable to process monitoring
+    "format",     // String formatting - not applicable to process monitoring
+    "char",       // Character conversion - not applicable to process monitoring
+    "unicode",    // Unicode functions - not applicable to process monitoring
+    "soundex",    // Soundex algorithm - not applicable to process monitoring
+    "difference", // String difference - not applicable to process monitoring
 ];
 
 /// Strongly-typed rule identifier.
@@ -616,9 +627,38 @@ impl DetectionRule {
             )));
         }
 
-        // Validate function arguments - simplified approach
-        // Just check that the function name is safe, don't recurse into arguments
-        // to avoid complex API issues with sqlparser 0.50
+        // Validate function arguments recursively for security
+        // This ensures that arguments don't contain dangerous subqueries or expressions
+        match &func.args {
+            sqlparser::ast::FunctionArguments::None => {
+                // Functions with no arguments are safe
+            }
+            sqlparser::ast::FunctionArguments::Subquery(query) => {
+                // Validate subquery arguments
+                Self::validate_query_basic(query)?;
+            }
+            sqlparser::ast::FunctionArguments::List(arg_list) => {
+                for arg in &arg_list.args {
+                    match arg {
+                        sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
+                            if let sqlparser::ast::FunctionArgExpr::Expr(e) = arg_expr {
+                                Self::validate_expr_basic(e)?;
+                            }
+                        }
+                        sqlparser::ast::FunctionArg::Named { arg, .. } => {
+                            if let sqlparser::ast::FunctionArgExpr::Expr(e) = arg {
+                                Self::validate_expr_basic(e)?;
+                            }
+                        }
+                        sqlparser::ast::FunctionArg::ExprNamed { arg, .. } => {
+                            if let sqlparser::ast::FunctionArgExpr::Expr(e) = arg {
+                                Self::validate_expr_basic(e)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -972,5 +1012,85 @@ mod tests {
 
         // Rule should be recent (just created)
         assert_eq!(rule.age_seconds(), 0);
+    }
+
+    #[test]
+    fn test_function_validation_in_sql_queries() {
+        // Test valid SQL without functions (should pass)
+        let valid_no_func_rule = DetectionRule::new(
+            "rule-func-001",
+            "Valid No Function Rule",
+            "Uses no functions",
+            "SELECT name, pid FROM processes WHERE name IS NOT NULL",
+            "test",
+            AlertSeverity::Low,
+        );
+        assert!(valid_no_func_rule.validate_sql().is_ok());
+
+        // Test banned function in SQL (should fail)
+        let banned_func_rule = DetectionRule::new(
+            "rule-func-002",
+            "Banned Function Rule",
+            "Uses banned function",
+            "SELECT load_extension('test') FROM processes",
+            "test",
+            AlertSeverity::Low,
+        );
+        assert!(banned_func_rule.validate_sql().is_err());
+
+        // Test allowed function (should pass)
+        let length_func_rule = DetectionRule::new(
+            "rule-func-003",
+            "Length Function Rule",
+            "Uses allowed LENGTH function",
+            "SELECT LENGTH(name) FROM processes",
+            "test",
+            AlertSeverity::Low,
+        );
+        assert!(length_func_rule.validate_sql().is_ok());
+
+        // Test allowed hex function (should pass)
+        let hex_func_rule = DetectionRule::new(
+            "rule-func-004",
+            "Hex Function Rule",
+            "Uses allowed HEX function for hash analysis",
+            "SELECT HEX(executable_hash) FROM processes WHERE executable_hash IS NOT NULL",
+            "test",
+            AlertSeverity::Low,
+        );
+        assert!(hex_func_rule.validate_sql().is_ok());
+
+        // Test function with subquery argument (should fail)
+        let func_with_subquery_rule = DetectionRule::new(
+            "rule-func-005",
+            "Function with Subquery Rule",
+            "Uses function with subquery",
+            "SELECT load_extension((SELECT name FROM processes LIMIT 1)) FROM processes",
+            "test",
+            AlertSeverity::Low,
+        );
+        assert!(func_with_subquery_rule.validate_sql().is_err());
+
+        // Test multiple banned functions (should fail)
+        let multiple_banned_rule = DetectionRule::new(
+            "rule-func-006",
+            "Multiple Banned Functions Rule",
+            "Uses multiple banned functions",
+            "SELECT load_extension('test'), eval('malicious'), exec('command') FROM processes",
+            "test",
+            AlertSeverity::Low,
+        );
+        assert!(multiple_banned_rule.validate_sql().is_err());
+
+        // Test banned function in WHERE clause (should fail)
+        let banned_in_where_rule = DetectionRule::new(
+            "rule-func-007",
+            "Banned in WHERE Rule",
+            "Uses banned function in WHERE",
+            "SELECT * FROM processes WHERE load_extension('test') = 1",
+            "test",
+            AlertSeverity::Low,
+        );
+        assert!(banned_in_where_rule.validate_sql().is_err());
     }
 }
