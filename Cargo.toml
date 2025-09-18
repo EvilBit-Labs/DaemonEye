@@ -57,6 +57,10 @@ minimal = ["cli"]
 anyhow = "1.0.99"
 clap = { version = "4.0", features = ["derive"] }
 futures = { version = "0.3.31", optional = true }
+
+# Protocol Buffers support
+prost = "0.13.5"
+prost-types = "0.13.5"
 redb = "3.0.2"
 # Always-needed core dependencies
 serde = { version = "1.0.225", features = ["derive"] }
@@ -81,21 +85,17 @@ tokio = { version = "1.47.1", features = [
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
-# Protocol Buffers support
-prost = "0.13.5"
-prost-types = "0.13.5"
-
 # Internal library dependency
 [dependencies.sentinel-lib]
 path = "sentinel-lib"
+
+[build-dependencies]
+prost-build = "0.13.5"
 
 [dev-dependencies]
 assert_cmd = "2.0.17"
 predicates = "3.1.3"
 tempfile = "3.0"
-
-[build-dependencies]
-prost-build = "0.13.5"
 
 [lints.rust]
 unsafe_code = "forbid"

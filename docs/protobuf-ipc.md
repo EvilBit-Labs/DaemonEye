@@ -14,6 +14,7 @@ The protobuf schema defines type-safe message contracts that enable efficient an
 ### Core Messages
 
 #### DetectionTask
+
 Sent from `sentinelagent` to `procmond` to request process data collection.
 
 ```protobuf
@@ -27,6 +28,7 @@ message DetectionTask {
 ```
 
 #### DetectionResult
+
 Returned from `procmond` to `sentinelagent` with collection results.
 
 ```protobuf
@@ -42,6 +44,7 @@ message DetectionResult {
 ### Data Types
 
 #### ProcessRecord
+
 Comprehensive process information structure.
 
 ```protobuf
@@ -64,6 +67,7 @@ message ProcessRecord {
 ```
 
 #### TaskType Enum
+
 Defines the types of operations that can be requested.
 
 ```protobuf
@@ -76,6 +80,7 @@ enum TaskType {
 ```
 
 #### ProcessFilter
+
 Criteria for filtering process collection.
 
 ```protobuf
@@ -87,6 +92,7 @@ message ProcessFilter {
 ```
 
 #### HashCheck/HashResult
+
 Hash verification request and response.
 
 ```protobuf
@@ -113,10 +119,8 @@ The protobuf types are available in the `sentinel_lib::proto` module:
 
 ```rust
 use sentinel_lib::proto::{
-    DetectionTask, DetectionResult,
-    ProtoProcessRecord, ProtoProcessFilter,
-    ProtoHashCheck, ProtoHashResult,
-    ProtoTaskType,
+    DetectionResult, DetectionTask, ProtoHashCheck, ProtoHashResult, ProtoProcessFilter,
+    ProtoProcessRecord, ProtoTaskType,
 };
 ```
 
