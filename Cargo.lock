@@ -896,6 +896,7 @@ name = "procmond"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "clap",
  "predicates",
  "sentinel-lib",
  "sysinfo",
@@ -1172,6 +1173,7 @@ name = "sentinelagent"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "clap",
  "futures",
  "predicates",
  "sentinel-lib",

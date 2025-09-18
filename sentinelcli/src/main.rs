@@ -4,6 +4,7 @@ use sentinel_lib::{config, storage, telemetry};
 #[derive(Parser)]
 #[command(name = "sentinelcli")]
 #[command(about = "SentinelD CLI interface")]
+#[command(version)]
 struct Cli {
     /// Database path
     #[arg(short, long, default_value = "/var/lib/sentineld/processes.db")]

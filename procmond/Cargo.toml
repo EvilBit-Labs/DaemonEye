@@ -15,6 +15,7 @@ publish = false
 sentinel-lib = { path = "../sentinel-lib" }
 
 # Process monitoring specific dependencies
+clap.workspace = true
 tokio.workspace = true
 sysinfo.workspace = true
 tracing-subscriber.workspace = true

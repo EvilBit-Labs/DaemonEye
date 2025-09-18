@@ -15,6 +15,7 @@ publish                = false
 sentinel-lib = { path = "../sentinel-lib" }
 
 # Agent specific dependencies
+clap.workspace               = true
 tokio.workspace              = true
 tracing-subscriber.workspace = true
 tracing.workspace            = true

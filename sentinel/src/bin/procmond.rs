@@ -44,7 +44,7 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse CLI arguments first
+    // Parse CLI arguments first - this will handle --help and --version automatically
     let _cli = Cli::parse();
 
     // Initialize logging

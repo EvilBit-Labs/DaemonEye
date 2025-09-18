@@ -1,7 +1,24 @@
+use clap::Parser;
 use sentinel_lib::{config, models, storage, telemetry};
+
+#[derive(Parser)]
+#[command(name = "procmond")]
+#[command(about = "SentinelD Process Monitoring Daemon")]
+#[command(version)]
+struct Cli {
+    /// Database path
+    #[arg(short, long, default_value = "/var/lib/sentineld/processes.db")]
+    database: String,
+
+    /// Log level
+    #[arg(short, long, default_value = "info")]
+    log_level: String,
+}
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Parse CLI arguments first - this will handle --help and --version automatically
+    let _cli = Cli::parse();
     // Initialize logging
     tracing_subscriber::fmt::init();
 
