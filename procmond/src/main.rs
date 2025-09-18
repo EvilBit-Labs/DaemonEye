@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
 use sentinel_lib::{config, models, storage, telemetry};
 

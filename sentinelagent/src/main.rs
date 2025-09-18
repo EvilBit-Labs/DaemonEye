@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
 use futures::StreamExt;
 use sentinel_lib::{
