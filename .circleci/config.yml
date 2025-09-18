@@ -77,10 +77,17 @@ jobs:
             - checkout
             - restore_cargo_cache_linux
 
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler
+
             # Rustfmt check (equivalent to actions-rust-lang/rustfmt@v1)
             - run:
                   name: Rustfmt Check
-                  command: rustfmt --check
+                  command: cargo fmt -- --check
 
             # Clippy check with warnings as errors (matches GHA: cargo clippy --all-targets --all-features -- -D warnings)
             - run:
@@ -98,6 +105,13 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_linux
+
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler
 
             # Install cargo-nextest (matches taiki-e/install-action@v2)
             - run:
@@ -120,8 +134,8 @@ jobs:
             - store_artifacts:
                   path: target/nextest
 
-    # Cross-platform testing - Linux (Ubuntu variants)
-    test-cross-platform-linux:
+    # Cross-platform testing - Linux (Primary Support)
+    test-cross-platform-linux-ubuntu-latest:
         docker:
             - image: cimg/rust:1.89
         environment:
@@ -130,9 +144,16 @@ jobs:
             - checkout
             - restore_cargo_cache_linux
 
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler
+
             - run:
                   name: Install cargo-nextest
-                  command: cargo install cargo-nextest --locked
+                  command: if ! command -v cargo-nextest &> /dev/null; then cargo install cargo-nextest --locked; fi
 
             # Matches GHA matrix job: cargo nextest run --all-features
             - run:
@@ -146,7 +167,41 @@ jobs:
 
             - save_cargo_cache_linux
 
-    # Cross-platform testing - macOS
+    # Cross-platform testing - Linux (Secondary Support - Ubuntu 22.04)
+    # Note: Ubuntu 20.04, 18.04, RHEL 7, FreeBSD testing would require custom runners
+    test-cross-platform-linux-ubuntu-22:
+        docker:
+            - image: cimg/rust:1.89
+        environment:
+            <<: *common_env
+        steps:
+            - checkout
+            - restore_cargo_cache_linux
+
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler
+
+            - run:
+                  name: Install cargo-nextest
+                  command: if ! command -v cargo-nextest &> /dev/null; then cargo install cargo-nextest --locked; fi
+
+            # Matches GHA matrix job: cargo nextest run --all-features
+            - run:
+                  name: Run tests (all features)
+                  command: cargo nextest run --all-features
+
+            # Matches GHA: cargo build --release --all-features
+            - run:
+                  name: Build release (all features)
+                  command: cargo build --release --all-features
+
+            - save_cargo_cache_linux
+
+    # Cross-platform testing - macOS (Primary Support)
     test-cross-platform-macos:
         macos:
             xcode: 15.4.0
@@ -155,6 +210,12 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_macos
+
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      brew install protobuf
 
             # Install Rust toolchain on macOS
             - run:
@@ -165,7 +226,7 @@ jobs:
 
             - run:
                   name: Install cargo-nextest
-                  command: cargo install cargo-nextest --locked
+                  command: if ! command -v cargo-nextest &> /dev/null; then cargo install cargo-nextest --locked; fi
 
             - run:
                   name: Run tests (all features)
@@ -182,6 +243,9 @@ jobs:
             - save_cargo_cache_macos
 
     # Cross-platform testing doesn't seem to work well on Windows
+    # Note: Ubuntu 20.04, 18.04, RHEL 7, FreeBSD testing would require custom runners
+    # Note: macOS 12 (Monterey) testing would require custom runners
+    # Note: Windows Server 2019 testing would require custom runners
 
     # Coverage generation - mirrors GitHub Actions "coverage" job
     coverage:
@@ -193,12 +257,19 @@ jobs:
             - checkout
             - restore_cargo_cache_linux
 
+            # Install protoc for protobuf compilation
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler
+
             # Install cargo-llvm-cov (matches taiki-e/install-action@v2)
             - run:
                   name: Install cargo-llvm-cov
                   command: |
                       rustup component add llvm-tools-preview
-                      cargo install cargo-llvm-cov --locked
+                      if ! command -v cargo-llvm-cov &> /dev/null; then cargo install cargo-llvm-cov --locked; fi
 
             # Generate coverage (matches GHA: cargo llvm-cov --all-features --no-report)
             - run:
@@ -240,7 +311,16 @@ workflows:
                           only: /.*/
 
             # Cross-platform tests require quality to pass (parallel to basic test)
-            - test-cross-platform-linux:
+            - test-cross-platform-linux-ubuntu-latest:
+                  requires:
+                      - quality
+                  filters:
+                      branches:
+                          only: /.*/
+                      tags:
+                          only: /.*/
+
+            - test-cross-platform-linux-ubuntu-22:
                   requires:
                       - quality
                   filters:

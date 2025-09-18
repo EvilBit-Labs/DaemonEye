@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+import "common.proto";
+
+// IPC message definitions for communication between procmond and sentinelagent
+
+/// Detection task sent from sentinelagent to procmond
+message DetectionTask {
+  /// Unique task identifier for correlation
+  string task_id = 1;
+  /// Type of detection task to perform
+  TaskType task_type = 2;
+  /// Optional process filtering criteria
+  optional ProcessFilter process_filter = 3;
+  /// Optional hash verification request
+  optional HashCheck hash_check = 4;
+  /// Optional metadata for the task
+  optional string metadata = 5;
+}
+
+/// Detection result returned from procmond to sentinelagent
+message DetectionResult {
+  /// Task identifier matching the original request
+  string task_id = 1;
+  /// Whether the task completed successfully
+  bool success = 2;
+  /// Error message if task failed
+  optional string error_message = 3;
+  /// Process records collected (for enumeration tasks)
+  repeated ProcessRecord processes = 4;
+  /// Hash verification result (for hash check tasks)
+  optional HashResult hash_result = 5;
+}

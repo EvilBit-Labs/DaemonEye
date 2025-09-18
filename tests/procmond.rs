@@ -35,3 +35,33 @@ fn shows_version_when_requested() -> Result<(), Box<dyn std::error::Error>> {
         .stdout(predicate::str::contains("procmond"));
     Ok(())
 }
+
+#[test]
+fn accepts_database_argument() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin("procmond")?;
+    cmd.args(["--database", "/tmp/test.db"]);
+    cmd.assert()
+        .failure() // Expected to fail due to missing database
+        .stderr(predicate::str::contains("DatabaseError"));
+    Ok(())
+}
+
+#[test]
+fn accepts_log_level_argument() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin("procmond")?;
+    cmd.args(["--log-level", "debug"]);
+    cmd.assert()
+        .failure() // Expected to fail due to missing database
+        .stderr(predicate::str::contains("DatabaseError"));
+    Ok(())
+}
+
+#[test]
+fn accepts_short_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin("procmond")?;
+    cmd.args(["-d", "/tmp/test.db", "-l", "warn"]);
+    cmd.assert()
+        .failure() // Expected to fail due to missing database
+        .stderr(predicate::str::contains("DatabaseError"));
+    Ok(())
+}

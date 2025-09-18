@@ -1,14 +1,85 @@
-# AI Coding Assistant Configuration: SentinelD
+# SentinelD Development Workflows (WARP)
+
+This file contains operational commands and development workflows for **SentinelD**.
+
+**Document Authority**: For AI assistant rules and architectural guidance, see [AGENTS.md](./AGENTS.md). **Source of Truth**: Technical requirements and architectural decisions are in [.kiro/steering/](./kiro/steering/) and [.kiro/specs/](./kiro/specs/).
 
 ---
 
-## Purpose and Scope
+## Development Commands
 
-This file serves as the **authoritative rules of engagement** for AI coding assistants working on **SentinelD**, a security-focused, high-performance process monitoring system built in Rust 2024 Edition. SentinelD is designed for cybersecurity professionals, threat hunters, and security operations centers to detect suspicious activity through continuous process monitoring, behavioral analysis, and pattern recognition.
+### Task Runner (justfile)
 
-**Document Authority**: This AGENTS.md file takes precedence as the primary rules-of-engagement file as specified in the project rules. For operational commands and development workflows, defer to [WARP.md](./WARP.md). For additional context, consult [.cursor/rules/](./cursor/rules/) and [GEMINI.md](./GEMINI.md) if present.
+All development tasks use the `just` command runner with DRY principles:
 
-**Source of Truth**: All technical requirements and architectural decisions are derived from the steering documents in [.kiro/steering/](./kiro/steering/) and detailed specifications in [.kiro/specs/](./kiro/specs/).
+```bash
+# Formatting
+just fmt          # Format all code
+just fmt-check    # Check formatting (CI-friendly)
+
+# Linting (composed recipe)
+just lint         # Runs fmt-check + clippy + lint-just
+just lint-rust    # Clippy with strict warnings
+just lint-just    # Lint justfile syntax
+
+# Building and Testing
+just build        # Build all binaries with features
+just check        # Quick check without build
+just test         # Run all tests
+
+# Component Execution
+just run-procmond [args]      # Run procmond with optional args
+just run-sentinelcli [args]   # Run sentinelcli with optional args
+just run-sentinelagent [args] # Run sentinelagent with optional args
+```
+
+### Core Development Commands
+
+```bash
+# Single Crate Operations
+cargo build --all-features
+cargo test --all-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all
+cargo check --all-targets --all-features
+
+# Testing with stable output
+NO_COLOR=1 TERM=dumb cargo test --all-features
+
+# Component-specific building
+cargo build --bin procmond --features=procmond
+cargo build --bin sentinelagent --features=agent
+
+# Performance testing
+cargo bench  # Run criterion benchmarks
+```
+
+## Quality Assurance
+
+### Pre-commit Requirements
+
+1. `cargo clippy -- -D warnings` (zero warnings)
+2. `cargo fmt --all --check` (formatting validation)
+3. `cargo test --workspace` (all tests pass)
+4. `just lint-just` (justfile syntax validation)
+5. No new `unsafe` code without explicit approval
+6. Performance benchmarks within acceptable ranges
+
+### Test Execution
+
+```bash
+# All tests must use stable output environment
+NO_COLOR=1 TERM=dumb cargo test --workspace
+
+# Component-specific testing
+RUST_BACKTRACE=1 cargo test -p sentinel-lib --nocapture
+
+# Performance regression testing
+cargo bench --baseline previous
+
+# Coverage reporting
+cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+```
 
 ---
 
@@ -167,6 +238,28 @@ sequenceDiagram
 - **Configuration**: YAML/TOML via figment and config crates with hierarchical overrides
 - **IPC**: Custom protobuf over Unix sockets/named pipes
 - **Testing**: cargo-nextest, assert_cmd, predicates, criterion, insta
+
+### OS Support Matrix
+
+| OS          | Version              | Architecture  | Status    | Notes                          |
+| ----------- | -------------------- | ------------- | --------- | ------------------------------ |
+| **Linux**   | Ubuntu 20.04+ LTS    | x86_64, ARM64 | Primary   | Full feature support           |
+| **Linux**   | RHEL/CentOS 8+       | x86_64, ARM64 | Primary   | Full feature support           |
+| **Linux**   | Alma/Rocky Linux 8+  | x86_64, ARM64 | Primary   | Full feature support           |
+| **Linux**   | Debian 11+ LTS       | x86_64, ARM64 | Primary   | Full feature support           |
+| **macOS**   | 14.0+ (Sonoma)       | x86_64, ARM64 | Primary   | Native process monitoring      |
+| **Windows** | Windows 10+          | x86_64, ARM64 | Primary   | Service deployment[^5]         |
+| **Windows** | Windows Server 2019+ | x86_64        | Primary   | Enterprise features[^6]        |
+| **Windows** | Windows Server 2022  | x86_64, ARM64 | Primary   | Enterprise standard            |
+| **Windows** | Windows 11           | x86_64, ARM64 | Primary   | Full feature support           |
+| **Linux**   | Alpine 3.16+         | x86_64, ARM64 | Secondary | Container deployments          |
+| **Linux**   | Amazon Linux 2+      | x86_64, ARM64 | Secondary | Cloud deployments              |
+| **Linux**   | Ubuntu 18.04         | x86_64, ARM64 | Secondary | Best-effort support[^1][^8]    |
+| **Linux**   | RHEL 7               | x86_64        | Secondary | Best-effort support[^2][^8]    |
+| **macOS**   | 12.0+ (Monterey)     | x86_64, ARM64 | Secondary | Best-effort support[^7]        |
+| **FreeBSD** | 13.0+                | x86_64, ARM64 | Secondary | pfSense/OPNsense ecosystem[^9] |
+
+**Testing Policy**: We test against the current and one previous major version of Windows and macOS to ensure compatibility with enterprise environments. macOS 14.0+ (Sonoma and later) are Primary support.
 
 ### Key Dependencies
 
@@ -389,16 +482,16 @@ pub mod crypto; // Cryptographic audit functions
 pub mod detection; // SQL-based detection engine
 pub mod kernel; // Kernel-level monitoring (Enterprise)
 pub mod models; // Core data structures
-pub mod network;
+pub mod network; // Network correlation (Enterprise)
 pub mod storage; // Database abstractions (redb)
-pub mod telemetry; // Performance metrics and health // Network correlation (Enterprise)
+pub mod telemetry; // Performance metrics and health
 ```
 
 ### Service Layer Pattern
 
 Implement clear separation of concerns with trait-based service interfaces:
 
-```rust
+```rust,ignore
 use async_trait::async_trait;
 use std::error::Error;
 
@@ -727,7 +820,7 @@ const KERNEL_EVENTS_TABLE: TableDefinition<u64, KernelEvent> =
 
 ### Test Organization
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -835,7 +928,7 @@ alerting:
 
 Use trait-based plugin system:
 
-```rust
+```rust,ignore
 use async_trait::async_trait;
 use std::error::Error;
 
@@ -1059,7 +1152,7 @@ When generating code for SentinelD:
 
 ### Code Documentation
 
-````rust
+````rust,ignore
 use std::error::Error;
 
 // Example types for documentation
@@ -1182,3 +1275,17 @@ pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionErro
 ---
 
 **Remember**: SentinelD is a security-focused system. Always prioritize security, performance, and reliability in implementation decisions. When in doubt, choose the more secure and observable approach.
+
+[^5]: Windows 10: EOL October 14, 2025. Organizations should plan migration to Windows 11.
+
+[^6]: Windows Server 2019: EOL January 9, 2029. Consider upgrading to Windows Server 2022.
+
+[^1]: Ubuntu 18.04 (EOL April 2023): Legacy support for long-lived server deployments. Limited testing and no guaranteed compatibility.
+
+[^8]: **Enterprise Tier**: No eBPF kernel monitoring (requires kernel 5.4+). Graceful degradation to userspace monitoring with reduced threat detection capabilities.
+
+[^2]: RHEL 7 (EOL June 2024): Enterprise legacy support for organizations with extended support contracts. Compatibility not guaranteed.
+
+[^7]: macOS 12.0 (Monterey): EOL September 16, 2024. Legacy support for organizations with older Mac hardware. **Enterprise Tier**: Limited EndpointSecurity framework features compared to macOS 14.0+. Reduced code signing bypass detection and advanced threat monitoring capabilities.
+
+[^9]: **FreeBSD 13.0+**: pfSense/OPNsense ecosystem support. **Enterprise Tier**: No eBPF kernel monitoring (FreeBSD uses classic BPF). Full process and network monitoring via sysinfo crate and FreeBSD audit system.

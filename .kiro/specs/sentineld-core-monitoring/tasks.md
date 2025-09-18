@@ -19,7 +19,7 @@
 
 - [ ] 3. Design and implement protobuf IPC protocol
 
-- [ ] 3.1 Define protobuf schema for IPC messages - [#35](https://github.com/EvilBit-Labs/SentinelD/issues/35)
+- [x] 3.1 Define protobuf schema for IPC messages - [#35](https://github.com/EvilBit-Labs/SentinelD/issues/35)
 
   - Create .proto files for DetectionTask, DetectionResult, ProcessFilter, and HashCheck message types
   - Add build.rs configuration for protobuf code generation

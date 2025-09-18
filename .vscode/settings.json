@@ -23,7 +23,6 @@
     },
     "chat.renderRelatedFiles": true,
     "chat.useChatSessionsForCloudButton": true,
-    "coderabbit.autoReviewMode": "auto",
     "evenBetterToml.formatter.alignComments": true,
     "git.alwaysSignOff": true,
     "git.autofetch": true,

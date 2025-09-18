@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+// Common data types shared across all IPC messages
+
+/// Task types for detection operations
+enum TaskType {
+  /// Enumerate all accessible processes
+  ENUMERATE_PROCESSES = 0;
+  /// Check executable hash for specific process
+  CHECK_PROCESS_HASH = 1;
+  /// Monitor process tree hierarchy
+  MONITOR_PROCESS_TREE = 2;
+  /// Verify executable integrity
+  VERIFY_EXECUTABLE = 3;
+}
+
+/// Process filtering criteria for targeted collection
+message ProcessFilter {
+  /// Filter by specific process names
+  repeated string process_names = 1;
+  /// Filter by specific process IDs
+  repeated uint32 pids = 2;
+  /// Filter by executable path pattern (glob-style)
+  optional string executable_pattern = 3;
+}
+
+/// File hash verification request/response
+message HashCheck {
+  /// Expected hash value (hex-encoded)
+  string expected_hash = 1;
+  /// Hash algorithm name (e.g., "sha256", "blake3")
+  string hash_algorithm = 2;
+  /// Path to executable for verification
+  string executable_path = 3;
+}
+
+/// Hash computation result
+message HashResult {
+  /// Computed hash value (hex-encoded)
+  string hash_value = 1;
+  /// Algorithm used for computation
+  string algorithm = 2;
+  /// File path that was hashed
+  string file_path = 3;
+  /// Whether hash computation was successful
+  bool success = 4;
+  /// Error message if computation failed
+  optional string error_message = 5;
+}
+
+/// Comprehensive process information
+message ProcessRecord {
+  /// Process identifier
+  uint32 pid = 1;
+  /// Parent process identifier
+  optional uint32 ppid = 2;
+  /// Process name
+  string name = 3;
+  /// Full path to executable
+  optional string executable_path = 4;
+  /// Command line arguments (space-separated)
+  repeated string command_line = 5;
+  /// Process start time (Unix timestamp in seconds)
+  optional int64 start_time = 6;
+  /// CPU usage percentage (0-100)
+  optional double cpu_usage = 7;
+  /// Memory usage in bytes
+  optional uint64 memory_usage = 8;
+  /// Executable file hash (hex-encoded)
+  optional string executable_hash = 9;
+  /// Hash algorithm used
+  optional string hash_algorithm = 10;
+  /// User ID running the process
+  optional string user_id = 11;
+  /// Whether process data is accessible
+  bool accessible = 12;
+  /// Whether executable file exists
+  bool file_exists = 13;
+  /// Collection timestamp (Unix timestamp in milliseconds)
+  int64 collection_time = 14;
+}

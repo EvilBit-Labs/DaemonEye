@@ -116,7 +116,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match item {
                         Ok(proc_record) => {
                             processes.push(proc_record);
-                            if let Some(max) = config.app.max_processes { if processes.len() >= max { break; } }
+                            if let Some(max) = config.app.max_processes && processes.len() >= max { break; }
                         },
                         Err(e) => {
                             match e {
@@ -156,7 +156,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Update telemetry with rough resource usage snapshot (placeholder zeros for now)
                 telemetry.update_resource_usage(0.0, 0);
-                if iteration % 10 == 0 { // periodic health check every 10 iterations
+                if iteration.is_multiple_of(10) { // periodic health check every 10 iterations
                     match telemetry.health_check().await {
                         Ok(h) => info!(status=%h.status, "Telemetry health check"),
                         Err(e) => warn!(error=?e, "Telemetry health check failed"),

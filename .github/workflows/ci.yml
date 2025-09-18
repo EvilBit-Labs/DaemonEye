@@ -36,6 +36,11 @@ jobs:
             - name: Install just
               uses: extractions/setup-just@v3
 
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+
             - name: Cache Rust dependencies
               uses: Swatinem/rust-cache@v2
 
@@ -60,7 +65,10 @@ jobs:
               uses: taiki-e/install-action@v2
               with:
                   tool: cargo-nextest
-
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
             - name: Run tests (all features)
               run: cargo nextest run --all-features
 
@@ -72,18 +80,29 @@ jobs:
         strategy:
             matrix:
                 include:
-                    - os: ubuntu-latest
+                    # Primary Support - Linux
+                    - os: ubuntu-24.04
                       platform: "Linux"
-                    - os: ubuntu-22.04
+                    - os: ubuntu-24.04-arm
                       platform: "Linux"
-                    - os: macos-latest
+                    # Primary Support - macOS (using available runners)
+                    - os: macos-15
+                      platform: "macOS"
+                    - os: macos-14
                       platform: "macOS"
                     - os: macos-13
                       platform: "macOS"
-                    - os: windows-latest
+                    # Primary Support - Windows
+                    - os: windows-2025
                       platform: "Windows"
                     - os: windows-2022
                       platform: "Windows"
+                    # Secondary Support - Linux (using available runners)
+                    - os: ubuntu-22.04
+                      platform: "Linux"
+                    # Note: Ubuntu 20.04, 18.04, RHEL 7, FreeBSD, and Windows Server 2019 testing would require custom runners
+                    # Note: macOS 12 (Monterey) testing would require custom runners
+
         runs-on: ${{ matrix.os }}
         needs: quality
         steps:
@@ -91,11 +110,19 @@ jobs:
 
             - name: Setup Rust
               uses: actions-rust-lang/setup-rust-toolchain@v1
+              with:
+                  cache: true
+                  cache-shared-key: ${{ runner.os }}-rust-${{ hashFiles('Cargo.lock') }}
 
             - name: Install cargo-nextest
               uses: taiki-e/install-action@v2
               with:
                   tool: cargo-nextest
+
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
 
             # Run tests and build the release binary
             - run: cargo nextest run --all-features
@@ -111,12 +138,18 @@ jobs:
             - name: Setup Rust
               uses: actions-rust-lang/setup-rust-toolchain@v1
               with:
-                  components: rustfmt, clippy
+                    components: llvm-tools
+
 
             - name: Install cargo-llvm-cov
               uses: taiki-e/install-action@v2
               with:
                   tool: cargo-llvm-cov
+
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Generate coverage
               run: cargo llvm-cov --all-features --no-report

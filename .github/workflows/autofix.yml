@@ -28,6 +28,11 @@ jobs:
               with:
                   tool: cargo-audit
 
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+
             # Fix rust code
             - run: cargo clippy --fix --workspace
             - run: cargo fmt --all
