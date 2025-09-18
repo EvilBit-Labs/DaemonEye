@@ -60,14 +60,6 @@ commands:
                       - C:\\Users\\circleci\\.cargo\\registry
                       - C:\\Users\\circleci\\.cargo\\git
                       - C:\\Users\\circleci\\project\\target
-    install_cargo_binstall_and_just:
-        steps:
-            - run:
-                  name: Install cargo-binstall
-                  command: cargo install cargo-binstall --locked
-            - run:
-                  name: Install just
-                  command: cargo binstall just --locked --no-confirm
 
 # Global environment variables
 common_env: &common_env
@@ -84,17 +76,16 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_linux
-            - install_cargo_binstall_and_just
 
             # Rustfmt check (equivalent to actions-rust-lang/rustfmt@v1)
             - run:
                   name: Rustfmt Check
-                  command: just fmt-check
+                  command: rustfmt --check
 
             # Clippy check with warnings as errors (matches GHA: cargo clippy --all-targets --all-features -- -D warnings)
             - run:
                   name: Clippy (all features)
-                  command: just lint-rust
+                  command: cargo clippy --all-targets --all-features -- -D warnings
 
             - save_cargo_cache_linux
 
@@ -107,12 +98,11 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_linux
-            - install_cargo_binstall_and_just
 
             # Install cargo-nextest (matches taiki-e/install-action@v2)
             - run:
                   name: Install cargo-nextest
-                  command: cargo binstall cargo-nextest --locked --no-confirm
+                  command: cargo install cargo-nextest --locked
 
             # Run tests with nextest (matches GHA: cargo nextest run --all-features)
             - run:
@@ -139,11 +129,10 @@ jobs:
         steps:
             - checkout
             - restore_cargo_cache_linux
-            - install_cargo_binstall_and_just
 
             - run:
                   name: Install cargo-nextest
-                  command: cargo binstall cargo-nextest --locked --no-confirm
+                  command: cargo install cargo-nextest --locked
 
             # Matches GHA matrix job: cargo nextest run --all-features
             - run:
@@ -176,7 +165,7 @@ jobs:
 
             - run:
                   name: Install cargo-nextest
-                  command: cargo binstall cargo-nextest --locked --no-confirm
+                  command: cargo install cargo-nextest --locked
 
             - run:
                   name: Run tests (all features)
@@ -209,7 +198,7 @@ jobs:
                   name: Install cargo-llvm-cov
                   command: |
                       rustup component add llvm-tools-preview
-                      cargo binstall cargo-llvm-cov --locked --no-confirm
+                      cargo install cargo-llvm-cov --locked
 
             # Generate coverage (matches GHA: cargo llvm-cov --all-features --no-report)
             - run:
@@ -272,7 +261,7 @@ workflows:
             # Coverage requires all tests to pass
             - coverage:
                   requires:
-                      - test
+                      - quality
                   filters:
                       branches:
                           only: /.*/
