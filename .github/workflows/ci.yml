@@ -36,6 +36,11 @@ jobs:
             - name: Install just
               uses: extractions/setup-just@v3
 
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+
             - name: Cache Rust dependencies
               uses: Swatinem/rust-cache@v2
 
@@ -60,7 +65,10 @@ jobs:
               uses: taiki-e/install-action@v2
               with:
                   tool: cargo-nextest
-
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
             - name: Run tests (all features)
               run: cargo nextest run --all-features
 
@@ -97,6 +105,11 @@ jobs:
               with:
                   tool: cargo-nextest
 
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+
             # Run tests and build the release binary
             - run: cargo nextest run --all-features
             - run: cargo build --release --all-features
@@ -117,6 +130,11 @@ jobs:
               uses: taiki-e/install-action@v2
               with:
                   tool: cargo-llvm-cov
+
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Generate coverage
               run: cargo llvm-cov --all-features --no-report
