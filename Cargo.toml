@@ -21,54 +21,55 @@ eula = false
 members = ["sentinel-lib"]
 resolver = "3"
 
+# Overpinning the versions is breaking the cross-platform functionality, so we are limiting pinning to minor versions.
 [workspace.dependencies]
 # Core error handling and utilities
-anyhow = "1.0.99"
+anyhow = "1.0"
 
 # Testing
 assert_cmd = "2.0.17"
 
 # Async traits
-async-trait = "0.1.89"
+async-trait = "0.1"
 
 # Cryptographic hashing
-blake3 = "1.8.2"
+blake3 = "1.8"
 
 # Date/time
-chrono = { version = "0.4.42", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 # CLI
 clap = { version = "4.0", features = ["derive"] }
-criterion = "0.7.0"
-futures = "0.3.31"
-predicates = "3.1.3"
-proptest = "1.7.0"
+criterion = "0.7"
+futures = "0.3"
+predicates = "3.1"
+proptest = "1.7"
 
 # Protocol Buffers
-prost = "0.14.1"
-prost-build = "0.14.1"
-prost-types = "0.14.1"
+prost = "0.14"
+prost-build = "0.14"
+prost-types = "0.14"
 
 # Database
-redb = "3.0.2"
+redb = "3.0"
 
 # Serialization
-serde = { version = "1.0.225", features = ["derive"] }
-serde_json = "1.0.145"
-serde_yaml = "0.9.33"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
 
 # SQL parsing
-sqlparser = "0.58.0"
+sqlparser = "0.58"
 
 # System information
-sysinfo = "0.37.0"
+sysinfo = "0.37"
 
 # Temporary files
-tempfile = "3.22.0"
-thiserror = "2.0.16"
+tempfile = "3.22"
+thiserror = "2.0"
 
 # Async runtime
-tokio = { version = "1.47.1", features = [
+tokio = { version = "1.47", features = [
     "rt",
     "rt-multi-thread",
     "net",
@@ -82,11 +83,11 @@ tokio = { version = "1.47.1", features = [
 ] }
 
 # Logging
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # UUID support
-uuid = { version = "1.18.1", features = ["v4", "serde"] }
+uuid = { version = "1.18", features = ["v4", "serde"] }
 
 # No library target - we only ship binaries
 
