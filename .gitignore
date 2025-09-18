@@ -120,3 +120,4 @@ docs/book/
 .direnv/
 
 megalinter-reports/
+!bin/
