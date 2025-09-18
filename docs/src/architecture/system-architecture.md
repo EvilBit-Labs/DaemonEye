@@ -2,7 +2,7 @@
 
 ## Overview
 
-SentinelD implements a sophisticated three-component security architecture designed around the principle of minimal attack surface while maintaining high performance and audit-grade integrity. The system follows a pipeline processing model where process data flows from collection through detection to alerting, with each component having clearly defined responsibilities and security boundaries.
+SentinelD implements a **single crate with multiple binaries architecture** using feature flags for precise dependency control. The system follows a sophisticated three-component security design around the principle of minimal attack surface while maintaining high performance and audit-grade integrity. The system follows a pipeline processing model where process data flows from collection through detection to alerting, with each component having clearly defined responsibilities and security boundaries.
 
 ## High-Level Architecture
 

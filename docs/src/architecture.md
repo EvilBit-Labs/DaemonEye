@@ -2,7 +2,7 @@
 
 ## Three-Component Security Architecture
 
-SentinelD implements a **three-component security architecture** with strict privilege separation to provide continuous process monitoring and threat detection. The system is designed around the principle of minimal attack surface while maintaining high performance and audit-grade integrity.
+SentinelD implements a **single crate with multiple binaries architecture** using feature flags for precise dependency control. The system follows a three-component security design with strict privilege separation to provide continuous process monitoring and threat detection. The system is designed around the principle of minimal attack surface while maintaining high performance and audit-grade integrity.
 
 ```mermaid
 graph TB
