@@ -153,7 +153,7 @@ jobs:
 
             - run:
                   name: Install cargo-nextest
-                  command: cargo install cargo-nextest --locked
+                  command: if ! command -v cargo-nextest &> /dev/null; then cargo install cargo-nextest --locked; fi
 
             # Matches GHA matrix job: cargo nextest run --all-features
             - run:
@@ -192,7 +192,7 @@ jobs:
 
             - run:
                   name: Install cargo-nextest
-                  command: cargo install cargo-nextest --locked
+                  command: if ! command -v cargo-nextest &> /dev/null; then cargo install cargo-nextest --locked; fi
 
             - run:
                   name: Run tests (all features)
@@ -232,7 +232,7 @@ jobs:
                   name: Install cargo-llvm-cov
                   command: |
                       rustup component add llvm-tools-preview
-                      cargo install cargo-llvm-cov --locked
+                      if ! command -v cargo-llvm-cov &> /dev/null; then cargo install cargo-llvm-cov --locked; fi
 
             # Generate coverage (matches GHA: cargo llvm-cov --all-features --no-report)
             - run:
