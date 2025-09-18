@@ -4,7 +4,7 @@ members = ["cargo:."]
 # Config for 'dist'
 [dist]
 # The package to distribute (contains all binaries)
-package = "sentinel"
+package = "sentineld"
 dist-dir = "target/dist"
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-pc-windows-msvc", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
@@ -47,18 +47,9 @@ cargo-cyclonedx = true
 # Custom message to display on successful install
 install-success-msg = "Successfully installed SentinelD! Ready to start watching your processes!"
 
-# Binary configuration
-[[dist.bin]]
-name = "procmond"
-path = "procmond"
-
-[[dist.bin]]
-name = "sentinelcli"
-path = "sentinelcli"
-
-[[dist.bin]]
-name = "sentinelagent"
-path = "sentinelagent"
+# Binary configuration for single crate with multiple binaries
+# Note: With the new single crate structure, cargo-dist will automatically
+# detect all binaries from the [[bin]] entries in Cargo.toml
 
 # GitHub release configuration
 [dist.github]

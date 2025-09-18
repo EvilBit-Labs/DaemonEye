@@ -1,19 +1,7 @@
-// =============================================================================
-// BUNDLED SENTINELCLI TESTS
-// =============================================================================
-// These tests validate the bundled sentinelcli binary in the sentinel package.
-// They ensure the distribution package works correctly and maintains the same
-// behavior as the individual sentinelcli package.
-//
-// TEST STRATEGY:
-// - Test the bundled binary behavior matches the individual package
-// - Validate error handling and expected failure modes
-// - Ensure proper database error handling when database is missing
-// - Verify CLI argument parsing and help output
-//
-// NOTE: These tests are for the distribution package, not the individual
-// sentinelcli package. The individual package has its own comprehensive tests.
-// =============================================================================
+//! Integration tests for sentinelcli binary
+//!
+//! These tests validate the sentinelcli binary behavior in the unified sentineld package.
+//! They ensure the binary works correctly with feature flags and maintains expected behavior.
 
 use assert_cmd::prelude::*;
 use predicates::prelude::*;

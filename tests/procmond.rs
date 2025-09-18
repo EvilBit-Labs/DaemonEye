@@ -1,19 +1,7 @@
-// =============================================================================
-// BUNDLED PROCMOND TESTS
-// =============================================================================
-// These tests validate the bundled procmond binary in the sentinel package.
-// They ensure the distribution package works correctly and maintains the same
-// behavior as the individual procmond package.
-//
-// TEST STRATEGY:
-// - Test the bundled binary behavior matches the individual package
-// - Validate error handling and expected failure modes
-// - Ensure proper database error handling when database is missing
-// - Verify CLI argument parsing and help output
-//
-// NOTE: These tests are for the distribution package, not the individual
-// procmond package. The individual package has its own comprehensive tests.
-// =============================================================================
+//! Integration tests for procmond binary
+//!
+//! These tests validate the procmond binary behavior in the unified sentineld package.
+//! They ensure the binary works correctly with feature flags and maintains expected behavior.
 
 use assert_cmd::prelude::*;
 use predicates::prelude::*;
