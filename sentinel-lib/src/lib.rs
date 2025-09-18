@@ -16,6 +16,7 @@
 pub mod config;
 pub mod crypto;
 pub mod models;
+pub mod proto;
 pub mod storage;
 pub mod telemetry;
 
