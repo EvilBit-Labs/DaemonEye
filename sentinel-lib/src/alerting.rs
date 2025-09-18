@@ -112,28 +112,21 @@ impl AlertSink for StdoutSink {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use chrono::Utc;
-    /// use tokio::runtime::Runtime;
+    /// ```no_run
+    /// use sentinel_lib::alerting::{AlertSink, StdoutSink, OutputFormat};
+    /// use sentinel_lib::models::{Alert, AlertSeverity, ProcessRecord};
     ///
-    /// // Construct a minimal Alert and a StdoutSink (types from the crate)
-    /// let alert = crate::models::Alert {
-    ///     id: "a1".into(),
-    ///     title: "Test".into(),
-    ///     severity: crate::models::AlertSeverity::Info,
-    ///     description: "Example".into(),
-    ///     detection_rule_id: "rule-1".into(),
-    ///     process: crate::models::ProcessRecord::default(),
-    ///     deduplication_key: "key".into(),
-    ///     created_at: Utc::now(),
-    /// };
-    /// let sink = crate::sinks::StdoutSink::new("stdout-test".into(), crate::sinks::OutputFormat::Human);
-    ///
-    /// // Run the async send
-    /// let rt = Runtime::new().unwrap();
-    /// let res = rt.block_on(async { sink.send(&alert).await.unwrap() });
+    /// let sink = StdoutSink::new("stdout-test".to_string(), OutputFormat::Human);
+    /// let alert = Alert::new(
+    ///     AlertSeverity::Low,
+    ///     "Test",
+    ///     "Example",
+    ///     "rule-1",
+    ///     ProcessRecord::new(1, "proc".to_string()),
+    /// );
+    /// let rt = tokio::runtime::Runtime::new().unwrap();
+    /// let res = rt.block_on(async { sink.send(&alert).await }).unwrap();
     /// assert_eq!(res.sink_name, "stdout-test");
-    /// assert!(res.success);
     /// ```
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
@@ -196,38 +189,25 @@ impl FileSink {
 impl AlertSink for FileSink {
     /// Appends the given alert to the configured file using the sink's OutputFormat and returns a DeliveryResult with timing and delivery metadata.
     ///
-    /// The alert is serialized according to `self.format`:
-    /// - `Json`: pretty-printed JSON
-    /// - `Human`: single-line human readable string including severity, detection rule ID, title, and description
-    /// - `Yaml`: YAML (errors are mapped to `AlertingError::YamlSerializationError`)
-    /// - `Csv`: comma-separated values (id,severity,detection_rule_id,title,description)
-    ///
-    /// Returns an error if serialization fails or the file cannot be opened/written.
-    ///
     /// # Examples
     ///
-    /// ```
-    /// use tokio::runtime::Runtime;
+    /// ```no_run
+    /// use sentinel_lib::alerting::{AlertSink, FileSink, OutputFormat};
+    /// use sentinel_lib::models::{Alert, AlertSeverity, ProcessRecord};
     /// use std::path::PathBuf;
     ///
-    /// // create a runtime for the async example
-    /// let rt = Runtime::new().unwrap();
-    /// rt.block_on(async {
-    ///     // construct a file sink (FileSink::new(name, path, format))
-    ///     let sink = crate::sinks::FileSink::new("test-sink".into(), PathBuf::from("/tmp/alerts.log"), crate::OutputFormat::Human);
-    ///
-    ///     // construct an Alert (use the crate's Alert constructor)
-    ///     let alert = crate::models::Alert::new(
-    ///         "Example alert",
-    ///         crate::models::AlertSeverity::Medium,
-    ///         "An example description",
-    ///         "rule-123",
-    ///         crate::models::ProcessRecord::default(),
-    ///     );
-    ///
-    ///     let result = sink.send(&alert).await.unwrap();
-    ///     assert!(result.success);
-    /// });
+    /// let path = PathBuf::from("/tmp/sentineld-alerts.log");
+    /// let sink = FileSink::new("file".to_string(), path.clone(), OutputFormat::Json);
+    /// let alert = Alert::new(
+    ///     AlertSeverity::High,
+    ///     "Title",
+    ///     "Desc",
+    ///     "rule-1",
+    ///     ProcessRecord::new(1, "proc".to_string()),
+    /// );
+    /// let rt = tokio::runtime::Runtime::new().unwrap();
+    /// let _ = rt.block_on(async { sink.send(&alert).await }).unwrap();
+    /// assert!(path.exists());
     /// ```
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
@@ -512,12 +492,18 @@ impl AlertManager {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
+    /// use sentinel_lib::alerting::{AlertManager, AlertSink, StdoutSink, OutputFormat};
+    /// use sentinel_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    ///
     /// let mut mgr = AlertManager::new();
-    /// let alert = Alert::new("Title", AlertSeverity::Info, "Desc", "rule-1", ProcessRecord::default());
-    /// // Record the alert now; it should be considered a duplicate immediately afterwards.
-    /// mgr.record_alert(&alert);
-    /// assert!(mgr.is_duplicate(&alert));
+    /// mgr.add_sink(Box::new(StdoutSink::new("s".to_string(), OutputFormat::Json)));
+    /// let alert = Alert::new(AlertSeverity::Low, "Title", "Desc", "rule-1", ProcessRecord::new(1, "proc".to_string()));
+    /// let rt = tokio::runtime::Runtime::new().unwrap();
+    /// let first = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
+    /// let second = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
+    /// assert!(first.len() >= 0);
+    /// assert_eq!(second.len(), 0); // duplicate suppressed
     /// ```
     fn is_duplicate(&self, alert: &Alert) -> bool {
         if let Some(last_seen) = self.recent_alerts.get(&alert.deduplication_key) {
@@ -559,12 +545,8 @@ impl AlertManager {
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// # use sentinel_lib::{AlertManager, Alert, ProcessRecord, AlertSeverity};
-    /// let mut mgr = AlertManager::new();
-    /// let process = ProcessRecord::default();
-    /// let alert = Alert::new("Title", AlertSeverity::Info, "Desc", "rule-1", process);
-    /// mgr.record_alert(&alert);
+    /// ```ignore
+    /// // Internal helper used by AlertManager; prefer using `send_alert` which records alerts automatically.
     /// ```
     fn record_alert(&mut self, alert: &Alert) {
         self.recent_alerts

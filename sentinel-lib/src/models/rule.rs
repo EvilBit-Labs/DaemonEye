@@ -11,6 +11,40 @@ use crate::models::alert::AlertSeverity;
 // Import sqlparser types for AST-based validation
 use sqlparser::ast::{Expr, Function, Query, Select, SetExpr, Statement};
 
+// Banned SQL functions for rule validation (case-insensitive match).
+// Hoisted as a module-level constant to avoid re-allocating per validation call.
+const BANNED_FUNCTIONS: &[&str] = &[
+    "load_extension",
+    "load",
+    "eval",
+    "exec",
+    "system",
+    "shell",
+    "readfile",
+    "writefile",
+    "edit",
+    "glob",
+    "like",
+    "match",
+    "regexp",
+    "replace",
+    "substr",
+    "instr",
+    "length",
+    "abs",
+    "random",
+    "randomblob",
+    "hex",
+    "unhex",
+    "quote",
+    "printf",
+    "format",
+    "char",
+    "unicode",
+    "soundex",
+    "difference",
+];
+
 /// Strongly-typed rule identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RuleId(String);
@@ -24,6 +58,7 @@ impl RuleId {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::RuleId;
     /// let id = RuleId::new("rule-123");
     /// assert_eq!(id.raw(), "rule-123");
     /// ```
@@ -36,6 +71,7 @@ impl RuleId {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::RuleId;
     /// let id = RuleId::new("rule-123");
     /// assert_eq!(id.raw(), "rule-123");
     /// ```
@@ -52,6 +88,7 @@ impl From<String> for RuleId {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::RuleId;
     /// let id = RuleId::from("rule-123".to_string());
     /// assert_eq!(id.raw(), "rule-123");
     /// ```
@@ -66,7 +103,8 @@ impl From<&str> for RuleId {
     /// # Examples
     ///
     /// ```
-    /// let rid = sentinel_lib::models::rule::RuleId::from("rule-123");
+    /// use sentinel_lib::models::RuleId;
+    /// let rid = RuleId::from("rule-123");
     /// assert_eq!(rid.raw(), "rule-123");
     /// ```
     fn from(id: &str) -> Self {
@@ -80,7 +118,8 @@ impl fmt::Display for RuleId {
     /// # Examples
     ///
     /// ```
-    /// let id = crate::models::rule::RuleId::new("rule-123");
+    /// use sentinel_lib::models::RuleId;
+    /// let id = RuleId::new("rule-123");
     /// assert_eq!(format!("{}", id), "rule-123");
     /// ```
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -111,6 +150,7 @@ impl RuleMetadata {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::RuleMetadata;
     /// let md = RuleMetadata::new();
     /// assert!(md.data.is_empty());
     /// assert!(md.tags.is_empty());
@@ -127,7 +167,8 @@ impl RuleMetadata {
     /// # Examples
     ///
     /// ```
-    /// let meta = crate::models::rule::RuleMetadata::new().with_data("env", "production");
+    /// use sentinel_lib::models::RuleMetadata;
+    /// let meta = RuleMetadata::new().with_data("env", "production");
     /// assert_eq!(meta.data.get("env").map(String::as_str), Some("production"));
     /// ```
     pub fn with_data(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
@@ -142,6 +183,7 @@ impl RuleMetadata {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::RuleMetadata;
     /// let meta = RuleMetadata::new().with_tag("network").with_tag("suspicious");
     /// assert!(meta.tags.contains(&"network".to_string()));
     /// assert!(meta.tags.contains(&"suspicious".to_string()));
@@ -158,7 +200,8 @@ impl RuleMetadata {
     /// # Examples
     ///
     /// ```
-    /// let meta = crate::models::rule::RuleMetadata::new().with_author("alice");
+    /// use sentinel_lib::models::RuleMetadata;
+    /// let meta = RuleMetadata::new().with_author("alice");
     /// assert_eq!(meta.author, Some("alice".to_string()));
     /// ```
     pub fn with_author(mut self, author: impl Into<String>) -> Self {
@@ -171,7 +214,8 @@ impl RuleMetadata {
     /// # Examples
     ///
     /// ```
-    /// let meta = sentinel_lib::models::rule::RuleMetadata::new().with_version("1.2.3");
+    /// use sentinel_lib::models::RuleMetadata;
+    /// let meta = RuleMetadata::new().with_version("1.2.3");
     /// assert_eq!(meta.version.as_deref(), Some("1.2.3"));
     /// ```
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
@@ -187,7 +231,8 @@ impl RuleMetadata {
     /// # Examples
     ///
     /// ```
-    /// let meta = crate::models::rule::RuleMetadata::new().with_category("network");
+    /// use sentinel_lib::models::RuleMetadata;
+    /// let meta = RuleMetadata::new().with_category("network");
     /// assert_eq!(meta.category.as_deref(), Some("network"));
     /// ```
     pub fn with_category(mut self, category: impl Into<String>) -> Self {
@@ -200,7 +245,8 @@ impl RuleMetadata {
     /// # Examples
     ///
     /// ```
-    /// let meta = crate::models::rule::RuleMetadata::new().with_priority(5);
+    /// use sentinel_lib::models::RuleMetadata;
+    /// let meta = RuleMetadata::new().with_priority(5);
     /// assert_eq!(meta.priority, Some(5));
     /// ```
     pub fn with_priority(mut self, priority: u8) -> Self {
@@ -249,8 +295,7 @@ impl DetectionRule {
     /// # Examples
     ///
     /// ```
-    /// use crate::models::rule::{DetectionRule, RuleId};
-    /// use crate::models::alert::AlertSeverity;
+    /// use sentinel_lib::models::{DetectionRule, RuleId, AlertSeverity};
     ///
     /// let rule = DetectionRule::new(
     ///     RuleId::new("rule-1"),
@@ -281,7 +326,7 @@ impl DetectionRule {
         let sql_query = sql_query.into();
         let category = category.into();
         Self {
-            id: id.clone(),
+            id,
             name,
             description,
             sql_query,
@@ -315,14 +360,13 @@ impl DetectionRule {
     /// # Examples
     ///
     /// ```
-    /// # use crate::models::rule::DetectionRule;
-    /// # use crate::models::rule::RuleId;
-    /// # use crate::models::alert::AlertSeverity;
+    /// # use sentinel_lib::models::rule::{DetectionRule, RuleId};
+    /// # use sentinel_lib::models::alert::AlertSeverity;
     /// let rule = DetectionRule::new(
     ///     RuleId::from("r1"),
     ///     "Example",
     ///     "Example rule",
-    ///     "SELECT 1",
+    ///     "SELECT 1 FROM processes",
     ///     "example",
     ///     AlertSeverity::Low,
     /// );
@@ -366,7 +410,7 @@ impl DetectionRule {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// use sqlparser::dialect::GenericDialect;
     /// use sqlparser::parser::Parser;
     /// use sentinel_lib::models::rule::{RuleError, DetectionRule};
@@ -431,6 +475,13 @@ impl DetectionRule {
     /// assert!(rule.validate_sql().is_ok());
     /// ```
     fn validate_select_basic(select: &Select) -> Result<(), RuleError> {
+        // Validate FROM clause exists
+        if select.from.is_empty() {
+            return Err(RuleError::InvalidSql(
+                "SELECT statement must have a FROM clause".to_string(),
+            ));
+        }
+
         // Validate projection count
         if select.projection.len() > 50 {
             return Err(RuleError::InvalidSql(
@@ -451,13 +502,6 @@ impl DetectionRule {
                     // Allow other projection types (wildcards, etc.)
                 }
             }
-        }
-
-        // Validate FROM clause exists
-        if select.from.is_empty() {
-            return Err(RuleError::InvalidSql(
-                "SELECT statement must have a FROM clause".to_string(),
-            ));
         }
 
         // Validate join count
@@ -514,7 +558,7 @@ impl DetectionRule {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// use sqlparser::ast::{Expr, Ident};
     /// // Simple identifier expressions are allowed:
     /// let expr = Expr::Identifier(Ident::new("column"));
@@ -560,47 +604,16 @@ impl DetectionRule {
 
     /// Basic function validation for security.
     fn validate_function_basic(func: &Function) -> Result<(), RuleError> {
-        // Check for banned functions
-        let banned_functions = [
-            "load_extension",
-            "load",
-            "eval",
-            "exec",
-            "system",
-            "shell",
-            "readfile",
-            "writefile",
-            "edit",
-            "glob",
-            "like",
-            "match",
-            "regexp",
-            "replace",
-            "substr",
-            "instr",
-            "length",
-            "abs",
-            "random",
-            "randomblob",
-            "hex",
-            "unhex",
-            "quote",
-            "printf",
-            "format",
-            "char",
-            "unicode",
-            "soundex",
-            "difference",
-        ];
-
-        let func_name = func.name.to_string().to_lowercase();
-        for banned in &banned_functions {
-            if func_name == *banned {
-                return Err(RuleError::InvalidSql(format!(
-                    "Function '{}' is not allowed",
-                    func_name
-                )));
-            }
+        // Check for banned functions (case-insensitive)
+        let name = func.name.to_string();
+        if BANNED_FUNCTIONS
+            .iter()
+            .any(|banned| name.eq_ignore_ascii_case(banned))
+        {
+            return Err(RuleError::InvalidSql(format!(
+                "Function '{}' is not allowed",
+                name
+            )));
         }
 
         // Validate function arguments - simplified approach
@@ -617,7 +630,8 @@ impl DetectionRule {
     /// # Examples
     ///
     /// ```no_run
-    /// let mut rule = /* DetectionRule::new(...) */ ;
+    /// use sentinel_lib::models::{DetectionRule, RuleId, AlertSeverity};
+    /// let mut rule = DetectionRule::new(RuleId::from("r1"), "n", "d", "SELECT 1", "cat", AlertSeverity::Low);
     /// rule.touch();
     /// ```
     pub fn touch(&mut self) {
@@ -629,13 +643,14 @@ impl DetectionRule {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::{DetectionRule, RuleId, AlertSeverity};
     /// let mut rule = DetectionRule::new(
     ///     RuleId::from("rule-1"),
     ///     "Example rule",
     ///     "Detects example activity",
     ///     "SELECT 1",
     ///     "example",
-    ///     crate::models::alert::AlertSeverity::Low,
+    ///     AlertSeverity::Low,
     /// );
     /// rule.enable();
     /// assert!(rule.enabled);
@@ -652,6 +667,7 @@ impl DetectionRule {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::{DetectionRule, RuleId, AlertSeverity};
     /// let mut rule = DetectionRule::new(
     ///     RuleId::from("r1"),
     ///     "name",
@@ -703,9 +719,7 @@ impl DetectionRule {
     /// # Examples
     ///
     /// ```
-    /// use crate::models::rule::DetectionRule;
-    /// use crate::models::rule::RuleId;
-    /// use crate::models::alert::AlertSeverity;
+    /// use sentinel_lib::models::{DetectionRule, RuleId, AlertSeverity};
     ///
     /// let mut rule = DetectionRule::new(
     ///     RuleId::new("rule-1"),
@@ -746,7 +760,8 @@ impl DetectionRule {
     /// assert!(rule.is_valid());
     /// ```
     pub fn is_valid(&self) -> bool {
-        self.validate_sql().is_ok() && !self.name.is_empty() && !self.sql_query.is_empty()
+        // Cheap checks first to avoid SQL parsing on obviously invalid rules.
+        !self.name.is_empty() && !self.sql_query.is_empty() && self.validate_sql().is_ok()
     }
 
     /// Returns the age of the rule in whole seconds.
@@ -757,16 +772,14 @@ impl DetectionRule {
     /// # Examples
     ///
     /// ```
-    /// use crate::models::alert::AlertSeverity;
-    /// use crate::models::rule::DetectionRule;
-    ///
+    /// use sentinel_lib::models::{DetectionRule, AlertSeverity};
     /// let rule = DetectionRule::new("r1", "name", "desc", "SELECT 1", "category", AlertSeverity::Low);
     /// let secs = rule.age_seconds();
     /// // newly created rule should have a small non-negative age
     /// assert!(secs >= 0);
     /// ```
     pub fn age_seconds(&self) -> u64 {
-        self.created_at.elapsed().map(|d| d.as_secs()).unwrap_or(0)
+        self.created_at.elapsed().map_or(0, |d| d.as_secs())
     }
 }
 

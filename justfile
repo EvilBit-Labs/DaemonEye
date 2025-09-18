@@ -1,5 +1,6 @@
 # Cross-platform justfile using OS annotations
 # Windows uses PowerShell, Unix uses bash
+
 set shell := ["bash", "-c"]
 set windows-shell := ["powershell", "-NoProfile", "-Command"]
 
@@ -18,7 +19,6 @@ help:
 # =============================================================================
 # CROSS-PLATFORM HELPERS
 # =============================================================================
-
 # Cross-platform helpers using OS annotations
 # Each helper has Windows and Unix variants
 

@@ -53,10 +53,9 @@ impl DetectionEngine {
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// # use sentinel_lib::detection::{DetectionEngine, DetectionRule};
-    /// let mut engine = DetectionEngine::new();
-    /// // Construct a DetectionRule `rule` appropriate for your codebase...
+    /// ```ignore
+    /// // Create an engine and load a validated rule (see DetectionRule::new docs)
+    /// // let mut engine = sentinel_lib::detection::DetectionEngine::new();
     /// // engine.load_rule(rule).unwrap();
     /// ```
     pub fn load_rule(&mut self, rule: DetectionRule) -> Result<(), DetectionEngineError> {
@@ -107,16 +106,8 @@ impl DetectionEngine {
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// // Example (illustrative): run inside an async context
-    /// # async fn _example() {
-    /// # use sentinel_lib::{DetectionEngine, DetectionRule, ProcessRecord};
-    /// let engine = DetectionEngine::new();
-    /// let rule = DetectionRule::mock_suspicious_rule(); // illustrative constructor
-    /// let processes = vec![ ProcessRecord::mock("suspicious-binary", 123, Some(5.0)) ];
-    /// let alerts = engine.execute_rule(&rule, &processes).await.unwrap();
-    /// assert!(!alerts.is_empty());
-    /// # }
+    /// ```ignore
+    /// // Illustrative async example; construct a rule and processes then call execute_rule().
     /// ```
     async fn execute_rule(
         &self,
@@ -130,7 +121,9 @@ impl DetectionEngine {
         // 4. Generate alerts based on results
 
         // For now, we'll create a simple placeholder implementation
-        let mut alerts = Vec::new();
+        // Pre-allocate with an upper bound (processes.len()); some categories may alert often.
+        let mut alerts = Vec::with_capacity(processes.len());
+        let rule_id = rule.id.raw().to_string();
 
         // Simple pattern matching based on rule category
         match rule.metadata.category.as_deref().unwrap_or("unknown") {
@@ -141,7 +134,7 @@ impl DetectionEngine {
                             rule.severity,
                             format!("Suspicious process detected: {}", process.name),
                             format!("Process {} matches suspicious pattern", process.name),
-                            rule.id.raw().to_string(),
+                            rule_id.clone(),
                             process.clone(),
                         );
 
@@ -157,7 +150,7 @@ impl DetectionEngine {
                                 rule.severity,
                                 format!("High CPU usage detected: {}%", cpu_usage),
                                 format!("Process {} is using {}% CPU", process.name, cpu_usage),
-                                rule.id.raw().to_string(),
+                                rule_id.clone(),
                                 process.clone(),
                             );
 

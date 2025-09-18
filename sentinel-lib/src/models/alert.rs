@@ -18,7 +18,8 @@ impl AlertId {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
+    /// use sentinel_lib::models::alert::AlertId;
     /// let aid = AlertId::new(42);
     /// assert_eq!(aid.raw(), 42);
     /// ```
@@ -30,7 +31,8 @@ impl AlertId {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
+    /// use sentinel_lib::models::alert::AlertId;
     /// let id = AlertId::new(42);
     /// assert_eq!(id.raw(), 42);
     /// ```
@@ -44,8 +46,9 @@ impl fmt::Display for AlertId {
     ///
     /// # Examples
     ///
-    /// ```
-    /// let id = crate::models::alert::AlertId::new(42);
+    /// ```rust
+    /// use sentinel_lib::models::alert::AlertId;
+    /// let id = AlertId::new(42);
     /// assert_eq!(id.to_string(), "42");
     /// ```
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -74,7 +77,7 @@ impl fmt::Display for AlertSeverity {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
     /// use sentinel_lib::models::alert::AlertSeverity;
     /// assert_eq!(AlertSeverity::Low.to_string(), "low");
     /// assert_eq!(AlertSeverity::Critical.to_string(), "critical");
@@ -100,8 +103,9 @@ impl std::str::FromStr for AlertSeverity {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
     /// use std::str::FromStr;
+    /// use sentinel_lib::models::alert::AlertSeverity;
     /// let s = "High";
     /// let sev = AlertSeverity::from_str(s).unwrap();
     /// assert_eq!(sev, AlertSeverity::High);
@@ -154,7 +158,8 @@ impl AlertContext {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
+    /// use sentinel_lib::models::alert::AlertContext;
     /// let ctx = AlertContext::new().with_data("user", "alice");
     /// assert_eq!(ctx.data.get("user").map(|s| s.as_str()), Some("alice"));
     /// ```
@@ -167,8 +172,9 @@ impl AlertContext {
     ///
     /// # Examples
     ///
-    /// ```
-    /// let ctx = crate::models::alert::AlertContext::new().with_tag("suspicious");
+    /// ```rust
+    /// use sentinel_lib::models::alert::AlertContext;
+    /// let ctx = AlertContext::new().with_tag("suspicious");
     /// assert_eq!(ctx.tags, vec!["suspicious".to_string()]);
     /// ```
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
@@ -183,8 +189,9 @@ impl AlertContext {
     ///
     /// # Examples
     ///
-    /// ```
-    /// let ctx = crate::models::alert::AlertContext::new().with_source("kernel");
+    /// ```rust
+    /// use sentinel_lib::models::alert::AlertContext;
+    /// let ctx = AlertContext::new().with_source("kernel");
     /// assert_eq!(ctx.source.as_deref(), Some("kernel"));
     /// ```
     pub fn with_source(mut self, source: impl Into<String>) -> Self {
@@ -203,7 +210,8 @@ impl AlertContext {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
+    /// use sentinel_lib::models::alert::{AlertContext, AlertError};
     /// let ctx = AlertContext::new();
     /// let ctx = ctx.with_confidence(0.85).expect("valid confidence");
     /// assert_eq!(ctx.confidence, Some(0.85));
@@ -254,8 +262,10 @@ impl Alert {
     ///
     /// # Examples
     ///
-    /// ```
-    /// let proc = ProcessRecord::default();
+    /// ```rust
+    /// use sentinel_lib::models::alert::{Alert, AlertSeverity};
+    /// use sentinel_lib::models::process::ProcessRecord;
+    /// let proc = ProcessRecord::new(1, "proc".to_string());
     /// let alert = Alert::new(AlertSeverity::High, "CPU spike", "High CPU usage observed", "rule-123", proc);
     /// assert_eq!(alert.severity, AlertSeverity::High);
     /// assert!(alert.deduplication_key.contains("CPU spike"));
@@ -290,8 +300,9 @@ impl Alert {
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// let alert = /* an existing Alert */ alert.with_context_data("user", "alice");
+    /// ```rust,ignore
+    /// // Given an existing `Alert` named `alert`:
+    /// let alert = alert.with_context_data("user", "alice");
     /// // now alert.context.data.get("user") == Some(&"alice".to_string())
     /// ```
     pub fn with_context_data(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
@@ -306,14 +317,12 @@ impl Alert {
     ///
     /// # Examples
     ///
-    /// ```
-    /// let alert = Alert::new(
-    ///     AlertSeverity::Low,
-    ///     "title",
-    ///     "desc",
-    ///     "rule-1",
-    ///     process_record,
-    /// ).with_tag("network");
+    /// ```rust,ignore
+    /// use sentinel_lib::models::alert::{Alert, AlertSeverity};
+    /// use sentinel_lib::models::process::ProcessRecord;
+    /// let process_record = ProcessRecord::default();
+    /// let alert = Alert::new(AlertSeverity::Low, "title", "desc", "rule-1", process_record)
+    ///     .with_tag("network");
     /// assert!(alert.context.tags.contains(&"network".to_string()));
     /// ```
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
@@ -340,7 +349,8 @@ impl Alert {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
+    /// use sentinel_lib::models::alert::AlertContext;
     /// let ctx = AlertContext::new().with_confidence(0.85).unwrap();
     /// assert_eq!(ctx.confidence, Some(0.85));
     /// ```

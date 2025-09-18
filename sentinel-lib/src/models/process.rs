@@ -20,7 +20,8 @@ impl ProcessId {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
+    /// use sentinel_lib::models::process::ProcessId;
     /// let pid = ProcessId::new(1234);
     /// assert_eq!(pid.raw(), 1234);
     /// ```
@@ -32,7 +33,8 @@ impl ProcessId {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
+    /// use sentinel_lib::models::process::ProcessId;
     /// let pid = ProcessId::new(1234);
     /// assert_eq!(pid.raw(), 1234);
     /// ```
@@ -46,7 +48,8 @@ impl fmt::Display for ProcessId {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
+    /// use sentinel_lib::models::process::ProcessId;
     /// let pid = ProcessId::new(1234);
     /// assert_eq!(pid.to_string(), "1234");
     /// ```
@@ -81,7 +84,7 @@ impl fmt::Display for ProcessStatus {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
     /// use sentinel_lib::models::process::ProcessStatus;
     ///
     /// assert_eq!(format!("{}", ProcessStatus::Running), "running");
@@ -150,6 +153,7 @@ impl ProcessRecord {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::{ProcessRecord, ProcessStatus};
     /// let rec = ProcessRecord::new(1234, "test-process".to_string());
     /// assert_eq!(rec.pid.raw(), 1234);
     /// assert_eq!(rec.name, "test-process");
@@ -184,7 +188,8 @@ impl ProcessRecord {
     /// # Examples
     ///
     /// ```
-    /// let record = sentinel_lib::models::process::ProcessRecord::builder()
+    /// use sentinel_lib::models::process::ProcessRecord;
+    /// let record = ProcessRecord::builder()
     ///     .pid_raw(1234)
     ///     .name("example-process")
     ///     .build()
@@ -228,6 +233,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
     /// let builder = ProcessRecordBuilder::new();
     /// let record = builder
     ///     .pid_raw(1234)
@@ -248,6 +254,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
     /// let record = ProcessRecordBuilder::new()
     ///     .pid_raw(1234)
     ///     .name("test-process")
@@ -267,6 +274,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::{ProcessRecord, ProcessId};
     /// let rec = ProcessRecord::builder()
     ///     .pid_raw(1)
     ///     .name("proc")
@@ -288,6 +296,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
     /// let builder = ProcessRecordBuilder::new().pid_raw(42).name("my-process");
     /// let record = builder.build().unwrap();
     /// assert_eq!(record.name, "my-process");
@@ -307,6 +316,7 @@ impl ProcessRecordBuilder {
     ///
     /// ```
     /// use std::path::PathBuf;
+    /// use sentinel_lib::models::process::ProcessRecord;
     /// let record = ProcessRecord::builder()
     ///     .pid_raw(1)
     ///     .name("example")
@@ -328,6 +338,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
     /// let record = ProcessRecordBuilder::new()
     ///     .pid_raw(1234)
     ///     .name("myproc")
@@ -351,6 +362,7 @@ impl ProcessRecordBuilder {
     ///
     /// ```
     /// use std::time::SystemTime;
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
     /// let builder = ProcessRecordBuilder::new().start_time(SystemTime::now());
     /// ```
     pub fn start_time(mut self, time: SystemTime) -> Self {
@@ -366,9 +378,10 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecord;
     /// let record = ProcessRecord::builder()
     ///     .pid_raw(1234)
-    ///     .name("example".to_string())
+    ///     .name("example")
     ///     .cpu_usage(12.5)
     ///     .build()
     ///     .unwrap();
@@ -387,6 +400,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecord;
     /// let record = ProcessRecord::builder()
     ///     .pid_raw(1234)
     ///     .name("example")
@@ -414,6 +428,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
     /// let rec = ProcessRecordBuilder::new()
     ///     .pid_raw(1234)
     ///     .name("svc".to_string())
@@ -435,6 +450,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
     /// let builder = ProcessRecordBuilder::new().hash_algorithm("sha256");
     /// let record = builder.pid_raw(1).name("proc").build().unwrap();
     /// assert_eq!(record.hash_algorithm.as_deref(), Some("sha256"));
@@ -452,10 +468,10 @@ impl ProcessRecordBuilder {
     ///
     /// ```
     /// use chrono::Utc;
-    ///
+    /// use sentinel_lib::models::process::ProcessRecord;
     /// let builder = ProcessRecord::builder()
     ///     .pid_raw(1)
-    ///     .name("svc".into())
+    ///     .name("svc")
     ///     .collection_time(Utc::now());
     /// // `builder` can be chained further or passed to `build()`
     /// ```
@@ -469,7 +485,8 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
-    /// let builder = ProcessRecordBuilder::new().pid_raw(1000).name("proc".into()).user_id(1001);
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
+    /// let builder = ProcessRecordBuilder::new().pid_raw(1000).name("proc").user_id(1001);
     /// let record = builder.build().unwrap();
     /// assert_eq!(record.user_id, Some(1001));
     /// ```
@@ -485,6 +502,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecord;
     /// let rec = ProcessRecord::builder()
     ///     .pid_raw(1)
     ///     .name("proc")
@@ -505,6 +523,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecord;
     /// let record = ProcessRecord::builder()
     ///     .pid_raw(1)
     ///     .name("test")
@@ -526,14 +545,15 @@ impl ProcessRecordBuilder {
     ///
     /// ```
     /// use std::collections::HashMap;
+    /// use sentinel_lib::models::process::ProcessRecord;
     ///
     /// let mut vars = HashMap::new();
     /// vars.insert("PATH".to_string(), "/usr/bin".to_string());
     /// vars.insert("RUST_LOG".to_string(), "debug".to_string());
     ///
-    /// let builder = crate::models::process::ProcessRecord::builder()
+    /// let builder = ProcessRecord::builder()
     ///     .pid_raw(123)
-    ///     .name("example".into())
+    ///     .name("example")
     ///     .env_vars(vars);
     ///
     /// // building will include the merged environment variables
@@ -552,8 +572,9 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecord;
     /// let builder = ProcessRecord::builder().metadata("role", "worker").metadata("env", "prod");
-    /// let record = builder.pid_raw(1).name("svc".into()).build().unwrap();
+    /// let record = builder.pid_raw(1).name("svc").build().unwrap();
     /// assert_eq!(record.metadata.get("role").map(String::as_str), Some("worker"));
     /// assert_eq!(record.metadata.get("env").map(String::as_str), Some("prod"));
     /// ```
@@ -571,11 +592,12 @@ impl ProcessRecordBuilder {
     ///
     /// ```
     /// use std::collections::HashMap;
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
     ///
     /// let mut m = HashMap::new();
     /// m.insert("k".to_string(), "v".to_string());
     ///
-    /// let builder = sentinel_lib::models::process::ProcessRecordBuilder::new()
+    /// let builder = ProcessRecordBuilder::new()
     ///     .metadata_map(m)
     ///     .name("proc".to_string())
     ///     .pid_raw(1);
@@ -602,6 +624,7 @@ impl ProcessRecordBuilder {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::ProcessRecordBuilder;
     /// let record = ProcessRecordBuilder::new()
     ///     .pid_raw(1234)
     ///     .name("example")
@@ -664,6 +687,7 @@ impl Default for SystemInfo {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::SystemInfo;
     /// let info = SystemInfo::default();
     /// assert_eq!(info.os_name, "unknown");
     /// assert_eq!(info.capabilities.len(), 0);
@@ -682,6 +706,7 @@ impl SystemInfo {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::models::process::SystemInfo;
     /// let info = SystemInfo::new();
     /// assert_eq!(info.os_name, "unknown");
     /// assert_eq!(info.total_memory, 0);

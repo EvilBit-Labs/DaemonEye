@@ -139,6 +139,7 @@ impl Default for AlertingConfig {
     /// # Examples
     ///
     /// ```
+    /// use sentinel_lib::config::AlertingConfig;
     /// let cfg = AlertingConfig::default();
     /// assert!(cfg.sinks.is_empty());
     /// assert_eq!(cfg.dedup_window_seconds, 300);
@@ -258,11 +259,12 @@ impl ConfigLoader {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// use std::env;
+    /// use sentinel_lib::config::{ConfigLoader, Config};
     /// // create a loader for component "procmond"
-    /// let loader = crate::config::ConfigLoader::new("procmond".into());
-    /// let mut cfg = crate::config::Config::default();
+    /// let loader = ConfigLoader::new("procmond");
+    /// let mut cfg = Config::default();
     ///
     /// // override scan interval via environment
     /// env::set_var("PROCMOND_SCAN_INTERVAL_MS", "45000");

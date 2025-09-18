@@ -151,6 +151,7 @@ pub struct TelemetryCollector {
     metrics: Metrics,
     operation_times: Vec<Duration>,
     error_count: u64,
+    total_operation_duration: Duration,
 }
 
 impl TelemetryCollector {
@@ -161,6 +162,7 @@ impl TelemetryCollector {
             metrics: Metrics::new(component),
             operation_times: Vec::new(),
             error_count: 0,
+            total_operation_duration: Duration::ZERO,
         }
     }
 
@@ -169,10 +171,10 @@ impl TelemetryCollector {
         self.operation_times.push(duration);
         self.metrics.operation_count += 1;
 
-        // Update average operation duration
-        let total_duration: Duration = self.operation_times.iter().sum();
+        // Update running total and average operation duration (O(1))
+        self.total_operation_duration += duration;
         self.metrics.avg_operation_duration_ms =
-            total_duration.as_millis() as f64 / self.operation_times.len() as f64;
+            self.total_operation_duration.as_millis() as f64 / self.operation_times.len() as f64;
     }
 
     /// Record an error occurrence.
@@ -316,6 +318,7 @@ impl TelemetryCollector {
         self.operation_times.clear();
         self.error_count = 0;
         self.metrics = Metrics::new(self.component.clone());
+        self.total_operation_duration = Duration::ZERO;
     }
 }
 
