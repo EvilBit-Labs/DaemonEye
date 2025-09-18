@@ -30,6 +30,11 @@ jobs:
             - name: Setup Rust
               uses: dtolnay/rust-toolchain@stable
 
+            - name: Install protobuf
+              uses: arduino/setup-protoc@v3
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+
             - name: Setup mdBook
               uses: jontze/action-mdbook@v4
               with:
