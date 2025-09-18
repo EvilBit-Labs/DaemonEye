@@ -4,13 +4,19 @@ version: 2.1
 jobs:
   test-rust:
     docker:
-      - image: cimg/rust:1.70
+      - image: cimg/rust:1.85
     steps:
       - checkout
       - restore_cache:
           key: cargo-{{ checksum "Cargo.lock" }}
       - run:
-          command: cargo test
+          command: cargo install cargo-binstall
+      - run:
+          command: cargo binstall cargo-nextest --locked
+      - run:
+          command: cargo binstall just
+      - run:
+          command: cargo nextest run --workspace --exclude sentinel
       - save_cache:
           key: cargo-{{ checksum "Cargo.lock" }}
           paths:
@@ -23,10 +29,10 @@ jobs:
       # Replace this with steps to deploy to users
       - run:
           name: deploy
-          command: '#e.g. ./deploy.sh'
+          command: "#e.g. ./deploy.sh"
       - run:
           name: found github actions config
-          command: ':'
+          command: ":"
 workflows:
   build-and-test:
     jobs:

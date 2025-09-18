@@ -1,7 +1,19 @@
 [workspace]
 resolver = "3"
-members = ["procmond", "sentinel", "sentinel-lib", "sentinelagent", "sentinelcli"]
-default-members = ["procmond", "sentinelcli", "sentinelagent", "sentinel-lib", "sentinel"]
+members = [
+    "procmond",
+    "sentinel",
+    "sentinel-lib",
+    "sentinelagent",
+    "sentinelcli",
+]
+default-members = [
+    "procmond",
+    "sentinelcli",
+    "sentinelagent",
+    "sentinel-lib",
+    "sentinel",
+]
 
 [workspace.package]
 edition = "2024"
@@ -24,11 +36,11 @@ clap = { version = "4.0", features = ["derive"] }
 predicates = "3.1.3"
 
 # Database
-redb = "3.0.1"
+redb = "3.0.2"
 
 # Serialization
-serde = { version = "1.0.223", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = "1.0.145"
 
 # Process enumeration
 sysinfo = "0.37.0"
@@ -62,4 +74,3 @@ warnings = "deny"
 [profile.dist]
 inherits = "release"
 lto = "thin"
-
