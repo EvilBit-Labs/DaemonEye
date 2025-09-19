@@ -1,0 +1,40 @@
+---
+globs: *.proto,build.rs,*.rs
+description: Protobuf integration and code generation standards
+---
+
+# Protobuf Integration Standards
+
+## File Organization
+
+- **Protobuf files**: Located in [sentinel-lib/proto/](mdc:sentinel-lib/proto/)
+- **Build script**: [sentinel-lib/build.rs](mdc:sentinel-lib/build.rs) handles protobuf compilation
+- **Generated code**: Included in [sentinel-lib/src/proto.rs](mdc:sentinel-lib/src/proto.rs)
+
+## Key Files
+
+- [sentinel-lib/proto/common.proto](mdc:sentinel-lib/proto/common.proto): Common message types
+- [sentinel-lib/proto/ipc.proto](mdc:sentinel-lib/proto/ipc.proto): IPC communication messages
+- [sentinel-lib/build.rs](mdc:sentinel-lib/build.rs): Protobuf compilation script
+- [sentinel-lib/src/proto.rs](mdc:sentinel-lib/src/proto.rs): Generated code integration
+
+## Build Process
+
+1. **Compilation**: `prost-build` compiles `.proto` files to Rust code
+2. **Inclusion**: Generated code is included using `include!(concat!(env!("OUT_DIR"), "/_.rs"))`
+3. **Re-exports**: Clean type names are re-exported for easier usage
+4. **Dependencies**: All crates that need protobuf types depend on `sentinel-lib`
+
+## Usage Patterns
+
+- Access protobuf types through `sentinel-lib::proto`
+- Use generated builders for message construction
+- Implement proper serialization/deserialization with prost
+- Handle protobuf errors gracefully
+
+## Development Workflow
+
+- Modify `.proto` files in [sentinel-lib/proto/](mdc:sentinel-lib/proto/)
+- Run `cargo build` to regenerate Rust code
+- Update [sentinel-lib/src/proto.rs](mdc:sentinel-lib/src/proto.rs) if needed
+- Test changes with `cargo test --workspace`
