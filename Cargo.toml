@@ -128,6 +128,10 @@ minimal = ["cli"]
 
 [dependencies]
 anyhow = { workspace = true }
+
+# Additional dependencies for IPC
+async-trait = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 futures = { workspace = true, optional = true }
 

@@ -26,7 +26,7 @@
   - Generate Rust code from protobuf definitions and verify compilation
   - _Requirements: 3.1, 3.2_
 
-- [ ] 3.2 Implement IPC server for procmond - [#36](https://github.com/EvilBit-Labs/SentinelD/issues/36)
+- [x] 3.2 Implement IPC server for procmond - [#36](https://github.com/EvilBit-Labs/SentinelD/issues/36)
 
   - Create IpcServer trait with async message handling methods
   - Implement Unix socket server for Linux/macOS with proper error handling
