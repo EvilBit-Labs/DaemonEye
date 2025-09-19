@@ -1,0 +1,60 @@
+[package]
+name = "procmond"
+edition = "2024"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "SentinelD Process Monitoring Daemon"
+publish = true
+
+[package.metadata.wix]
+upgrade-guid = "C3B17B71-0443-4060-A962-D4D4F88CC2A2"
+path-guid = "9011B6A9-5EF9-4CC3-9A4F-CA09D5C987C2"
+license = false
+eula = false
+
+[dependencies]
+# Core dependencies
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bincode = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# System information
+sysinfo = { workspace = true }
+
+# Database
+redb = { workspace = true }
+
+# IPC communication
+interprocess = { workspace = true }
+bytes = { workspace = true }
+crc32fast = { workspace = true }
+
+# Protocol Buffers
+prost = { workspace = true }
+prost-types = { workspace = true }
+
+# Internal library
+sentinel-lib = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+warnings = "deny"

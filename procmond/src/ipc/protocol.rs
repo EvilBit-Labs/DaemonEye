@@ -33,7 +33,7 @@ impl Default for ProtocolConfig {
 }
 
 /// Envelope for protocol messages with sequence number and checksum
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
 pub struct MessageEnvelope {
     /// Sequence number for ordering and flow control
     pub sequence_number: u32,
@@ -268,7 +268,7 @@ impl ProtocolEncoder {
 
         // Encode with varint length prefix
         let mut encoded = Vec::new();
-        let envelope_bytes = bincode::serialize(&envelope)
+        let envelope_bytes = bincode::encode_to_vec(&envelope, bincode::config::standard())
             .map_err(|e| IpcError::invalid_message(format!("Serialization failed: {}", e)))?;
 
         // Add varint length prefix
@@ -312,8 +312,10 @@ impl ProtocolDecoder {
 
         // Deserialize envelope
         let envelope_bytes = &data[offset..offset + length as usize];
-        let envelope: MessageEnvelope = bincode::deserialize(envelope_bytes)
-            .map_err(|e| IpcError::invalid_message(format!("Deserialization failed: {}", e)))?;
+        let envelope: MessageEnvelope =
+            bincode::decode_from_slice(envelope_bytes, bincode::config::standard())
+                .map_err(|e| IpcError::invalid_message(format!("Deserialization failed: {}", e)))?
+                .0;
 
         // Verify checksum if enabled
         if self.config.enable_checksum && !envelope.verify_checksum() {

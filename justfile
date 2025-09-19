@@ -97,10 +97,10 @@ fmt-check:
     @cargo fmt --all --check
 
 lint-rust: fmt-check
-    @cargo clippy --all-targets --all-features -- -D warnings
+    @cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 lint-rust-min:
-    @cargo clippy --all-targets --no-default-features -- -D warnings
+    @cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
 # Format justfile
 fmt-justfile:
@@ -135,13 +135,13 @@ megalinter:
 # =============================================================================
 
 build:
-    @cargo build --all-features
+    @cargo build --workspace
 
 build-release:
-    @cargo build --all-features --release
+    @cargo build --workspace --release
 
 test:
-    @cargo test --all-features
+    @cargo test --workspace
 
 # Test justfile cross-platform functionality
 [windows]
@@ -171,7 +171,7 @@ test-fs:
     @just rmrf tmp/xfstest
 
 test-ci:
-    cargo nextest run --all-features
+    cargo nextest run --workspace
 
 # =============================================================================
 # SECURITY AND AUDITING
@@ -189,11 +189,11 @@ deny:
 
 # Generate coverage report
 coverage:
-    cargo llvm-cov --all-features --lcov --output-path lcov.info
+    cargo llvm-cov --workspace --lcov --output-path lcov.info
 
 # Check coverage thresholds
 coverage-check:
-    cargo llvm-cov --all-features --lcov --output-path lcov.info --fail-under-lines 9.7
+    cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 9.7
 
 # Full local CI parity check
 ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release audit coverage-check dist-plan
@@ -203,13 +203,13 @@ ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release
 # =============================================================================
 
 run-procmond *args:
-    @cargo run --bin procmond --features=procmond -- {{ args }}
+    @cargo run -p procmond -- {{ args }}
 
 run-sentinelcli *args:
-    @cargo run --bin sentinelcli --features=cli -- {{ args }}
+    @cargo run -p sentinelcli -- {{ args }}
 
 run-sentinelagent *args:
-    @cargo run --bin sentinelagent --features=agent -- {{ args }}
+    @cargo run -p sentinelagent -- {{ args }}
 
 # =============================================================================
 # DISTRIBUTION AND PACKAGING

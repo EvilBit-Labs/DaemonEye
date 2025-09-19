@@ -1,0 +1,44 @@
+[package]
+name = "sentinelcli"
+edition = "2024"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "SentinelD Command Line Interface"
+publish = true
+
+[package.metadata.wix]
+upgrade-guid = "9821CB9C-4F06-4EF8-9763-2434C2D7D175"
+path-guid = "A0AC25BF-9512-4104-A6E8-9480B086F5D3"
+license = false
+eula = false
+
+[dependencies]
+# Core dependencies
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Database
+redb = { workspace = true }
+
+# Internal library
+sentinel-lib = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+warnings = "deny"
