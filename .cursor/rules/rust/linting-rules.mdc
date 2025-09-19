@@ -111,17 +111,17 @@ This document explains the intent behind each clippy lint rule in SentinelD's Ca
 
 ## Correctness Rules
 
-### `correctness = { level = "deny" }`
+### `correctness = { level = "deny", priority = -1 }`
 
 **Intent**: Denies all correctness issues that could lead to bugs or security vulnerabilities.
 **Why not to disable**: Correctness is fundamental to security monitoring.
 
-### `suspicious = { level = "warn" }`
+### `suspicious = { level = "warn", priority = -1 }`
 
 **Intent**: Warns about suspicious patterns that might indicate bugs or security issues.
 **Why not to disable**: Suspicious patterns often indicate real problems.
 
-### `perf = { level = "warn" }`
+### `perf = { level = "warn", priority = -1 }`
 
 **Intent**: Optimizes performance-critical code paths.
 **Why not to disable**: Performance directly impacts security monitoring effectiveness.
@@ -154,6 +154,11 @@ This document explains the intent behind each clippy lint rule in SentinelD's Ca
 
 **Intent**: Removes unnecessary type annotations that clutter code.
 **Why not to disable**: Clean code is easier to audit for security issues.
+
+### `ref_binding_to_reference = "warn"`
+
+**Intent**: Prevents unnecessary reference binding that can hide ownership issues.
+**Why not to disable**: Ownership issues can lead to use-after-free vulnerabilities.
 
 ### `pattern_type_mismatch = "warn"`
 
@@ -209,11 +214,6 @@ This document explains the intent behind each clippy lint rule in SentinelD's Ca
 **Intent**: Identifies potentially confusing conditional logic that might hide bugs.
 **Why not to disable**: Confusing logic can hide security vulnerabilities.
 
-### `let_underscore_must_use = "warn"`
-
-**Intent**: Prevents ignoring important return values that might indicate errors.
-**Why not to disable**: Ignored return values can hide security-relevant information.
-
 ### `lossy_float_literal = "warn"`
 
 **Intent**: Prevents precision loss in floating-point calculations that could affect security metrics.
@@ -258,16 +258,6 @@ This document explains the intent behind each clippy lint rule in SentinelD's Ca
 
 **Intent**: Prevents partially public structs that can break encapsulation.
 **Why not to disable**: Encapsulation is important for security-critical data structures.
-
-### `rc_buffer = "warn"`
-
-**Intent**: Optimizes reference-counted buffer usage for better performance.
-**Why not to disable**: Poor buffer management can cause memory pressure and slow detection.
-
-### `rc_mutex = "warn"`
-
-**Intent**: Warns about inefficient reference-counted mutex usage that can cause contention.
-**Why not to disable**: Lock contention can slow down threat detection.
 
 ### `same_name_method = "warn"`
 
@@ -380,6 +370,8 @@ This document explains the intent behind each clippy lint rule in SentinelD's Ca
 **Why not to disable**: Inefficient data structures can impact monitoring performance.
 
 ## Pragmatic Exceptions
+
+These exceptions are allowed currently while the project is in early development.
 
 ### `missing_errors_doc = "allow"`
 
