@@ -196,6 +196,7 @@ impl InterprocessServer {
                                     if let Err(e) = Self::handle_connection(stream, handler, config).await {
                                         error!("Connection handling error: {}", e);
                                     }
+                                    // Permit is automatically released when dropped
                                 });
                             }
                             Err(e) => {
@@ -278,11 +279,17 @@ impl InterprocessServer {
         let write_timeout = Duration::from_millis(config.write_timeout_ms);
 
         loop {
-            // Read detection task
+            // Read detection task with proper error handling
             let task: DetectionTask = match codec.read_message(&mut stream, read_timeout).await {
                 Ok(task) => task,
                 Err(IpcError::PeerClosed) => {
                     // Client disconnected normally
+                    info!("Client disconnected normally");
+                    break;
+                }
+                Err(IpcError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    // Client disconnected unexpectedly
+                    info!("Client disconnected unexpectedly");
                     break;
                 }
                 Err(e) => {
@@ -294,8 +301,22 @@ impl InterprocessServer {
             // Capture task ID before moving task into handler
             let task_id = task.task_id.clone();
 
-            // Process task
-            let result = handler(task).await;
+            // Process task with timeout to prevent hanging
+            let result = match tokio::time::timeout(
+                Duration::from_millis(config.read_timeout_ms),
+                handler(task),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    warn!("Task processing timed out for task: {}", task_id);
+                    Err(IpcError::Io(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Task processing timed out",
+                    )))
+                }
+            };
 
             match result {
                 Ok(detection_result) => {

@@ -4,6 +4,7 @@
 //! using the new interprocess transport implementation.
 
 mod tests {
+    use sentinel_lib::ipc::codec::IpcError;
     use sentinel_lib::ipc::interprocess_transport::{InterprocessClient, InterprocessServer};
     use sentinel_lib::ipc::{Crc32Variant, IpcConfig, TransportType};
     use sentinel_lib::proto::{DetectionResult, DetectionTask, TaskType};
@@ -163,32 +164,51 @@ mod tests {
         server.start().await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Send multiple concurrent requests
+        // Send multiple concurrent requests with proper error handling
         let mut handles = vec![];
 
         for i in 0..3 {
             let config = config.clone();
             let handle = tokio::spawn(async move {
-                let mut client = InterprocessClient::new(config).unwrap();
-                let task = DetectionTask {
-                    task_id: format!("concurrent-task-{}", i),
-                    task_type: TaskType::EnumerateProcesses as i32,
-                    process_filter: None,
-                    hash_check: None,
-                    metadata: Some(format!("concurrent test {}", i)),
-                };
+                // Add timeout to prevent hanging
+                timeout(Duration::from_secs(10), async {
+                    let mut client = InterprocessClient::new(config)?;
+                    let task = DetectionTask {
+                        task_id: format!("concurrent-task-{}", i),
+                        task_type: TaskType::EnumerateProcesses as i32,
+                        process_filter: None,
+                        hash_check: None,
+                        metadata: Some(format!("concurrent test {}", i)),
+                    };
 
-                client.send_task(task).await
+                    client.send_task(task).await
+                })
+                .await
+                .map_err(|_| {
+                    IpcError::Io(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Client request timed out",
+                    ))
+                })?
             });
 
             handles.push(handle);
         }
 
-        // Wait for all requests to complete
+        // Wait for all requests to complete with proper error handling
         for (i, handle) in handles.into_iter().enumerate() {
-            let result = handle.await.unwrap().unwrap();
-            assert_eq!(result.task_id, format!("concurrent-task-{}", i));
-            assert!(result.success);
+            match handle.await {
+                Ok(Ok(result)) => {
+                    assert_eq!(result.task_id, format!("concurrent-task-{}", i));
+                    assert!(result.success);
+                }
+                Ok(Err(e)) => {
+                    panic!("Client {} failed with error: {}", i, e);
+                }
+                Err(e) => {
+                    panic!("Client {} task panicked: {}", i, e);
+                }
+            }
         }
 
         // Clean up
