@@ -5,14 +5,10 @@
 //! protobuf message framing and CRC32 integrity validation.
 
 pub mod codec;
-
-#[cfg(feature = "ipc")]
 pub mod interprocess_transport;
 
 /// Re-export commonly used types
 pub use codec::{IpcCodec, IpcError, IpcResult};
-
-#[cfg(feature = "ipc")]
 pub use interprocess_transport::{InterprocessClient, InterprocessServer};
 
 /// IPC configuration for transport layer
@@ -26,7 +22,7 @@ pub struct IpcConfig {
     pub max_frame_bytes: usize,
     /// Accept timeout in milliseconds
     pub accept_timeout_ms: u64,
-    /// Read timeout in milliseconds  
+    /// Read timeout in milliseconds
     pub read_timeout_ms: u64,
     /// Write timeout in milliseconds
     pub write_timeout_ms: u64,

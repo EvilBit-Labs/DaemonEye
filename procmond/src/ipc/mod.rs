@@ -1,36 +1,14 @@
 //! IPC (Inter-Process Communication) module for procmond.
 //!
 //! This module provides the server-side IPC implementation for communication
-//! between procmond and sentinelagent. It supports both Unix domain sockets
-//! (Linux/macOS) and named pipes (Windows) with proper error handling and
-//! graceful shutdown capabilities.
-
-use sentinel_lib::proto::{DetectionResult, DetectionTask};
-use std::time::Duration;
-
-/// Type alias for the message handler function to reduce complexity
-pub type MessageHandlerFn = Box<
-    dyn Fn(
-            DetectionTask,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = IpcResult<DetectionResult>> + Send>,
-        > + Send
-        + Sync,
->;
+//! between procmond and sentinelagent using the interprocess crate for
+//! cross-platform support.
 
 pub mod error;
 pub mod protocol;
-pub mod server;
-
-#[cfg(unix)]
-pub mod unix;
-
-#[cfg(windows)]
-pub mod windows;
 
 // Re-export commonly used types
 pub use error::{IpcError, IpcResult};
-pub use server::IpcServer;
 
 /// Configuration for IPC server setup
 #[derive(Debug, Clone)]
@@ -58,108 +36,22 @@ impl Default for IpcConfig {
     }
 }
 
-/// Simple message handler for IPC messages
-pub struct SimpleMessageHandler {
-    pub handler: MessageHandlerFn,
-    pub name: String,
-}
+/// Create an IPC server using the interprocess transport
+pub fn create_ipc_server(config: IpcConfig) -> IpcResult<sentinel_lib::ipc::InterprocessServer> {
+    use sentinel_lib::ipc::{IpcConfig as LibIpcConfig, TransportType};
 
-impl std::fmt::Debug for SimpleMessageHandler {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SimpleMessageHandler")
-            .field("name", &self.name)
-            .field("handler", &"<closure>")
-            .finish()
-    }
-}
+    let lib_config = LibIpcConfig {
+        transport: TransportType::Interprocess,
+        endpoint_path: config.path,
+        max_frame_bytes: 1024 * 1024, // 1MB
+        accept_timeout_ms: config.connection_timeout_secs * 1000,
+        read_timeout_ms: config.message_timeout_secs * 1000,
+        write_timeout_ms: config.message_timeout_secs * 1000,
+        max_connections: config.max_connections,
+        crc32_variant: sentinel_lib::ipc::Crc32Variant::Ieee,
+    };
 
-impl SimpleMessageHandler {
-    pub fn new<F, Fut>(name: String, handler: F) -> Self
-    where
-        F: Fn(DetectionTask) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = IpcResult<DetectionResult>> + Send + 'static,
-    {
-        Self {
-            handler: Box::new(move |task| Box::pin(handler(task))),
-            name,
-        }
-    }
-
-    pub async fn handle(&self, task: DetectionTask) -> IpcResult<DetectionResult> {
-        // Pre-processing validation: enforce IPC constraints
-
-        // 1. Check task size constraints by serializing to estimate response size
-        let serialized_task = serde_json::to_vec(&task)
-            .map_err(|e| IpcError::invalid_message(format!("Task serialization failed: {}", e)))?;
-
-        if serialized_task.len() > 16 * 1024 {
-            return Err(IpcError::invalid_message(
-                "Task serialized size exceeds 16KB limit",
-            ));
-        }
-
-        // 2. For enumeration tasks, estimate maximum process count
-        if matches!(
-            task.task_type(),
-            sentinel_lib::proto::TaskType::EnumerateProcesses
-        ) {
-            // Estimate based on typical system process counts
-            // Allow up to 100 processes as per constraint
-            const MAX_PROCESS_COUNT: usize = 100;
-
-            // We can't know the exact count until after processing, but we can
-            // validate that the task itself isn't requesting too many specific processes
-            if let Some(filter) = &task.process_filter {
-                let requested_pids = filter.pids.len();
-                let requested_names = filter.process_names.len();
-
-                if requested_pids > MAX_PROCESS_COUNT {
-                    return Err(IpcError::invalid_message(format!(
-                        "Too many specific PIDs requested: {} (max: {})",
-                        requested_pids, MAX_PROCESS_COUNT
-                    )));
-                }
-
-                if requested_names > MAX_PROCESS_COUNT {
-                    return Err(IpcError::invalid_message(format!(
-                        "Too many specific process names requested: {} (max: {})",
-                        requested_names, MAX_PROCESS_COUNT
-                    )));
-                }
-            }
-        }
-
-        // 3. Enforce 10s request timeout
-        let result = tokio::time::timeout(Duration::from_secs(10), (self.handler)(task)).await;
-
-        match result {
-            Ok(handler_result) => handler_result,
-            Err(_timeout) => Err(IpcError::invalid_message(
-                "Request timeout: handler exceeded 10 second limit",
-            )),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-/// Platform-specific IPC server factory
-#[cfg(unix)]
-pub fn create_ipc_server(config: IpcConfig) -> IpcResult<unix::UnixSocketServer> {
-    unix::UnixSocketServer::new(config)
-}
-
-#[cfg(windows)]
-pub fn create_ipc_server(config: IpcConfig) -> IpcResult<windows::NamedPipeServer> {
-    windows::NamedPipeServer::new(config)
-}
-
-#[cfg(not(any(unix, windows)))]
-pub fn create_ipc_server(_config: IpcConfig) -> IpcResult<()> {
-    Err(IpcError::UnsupportedPlatform)
+    sentinel_lib::ipc::InterprocessServer::new(lib_config).map_err(Into::into)
 }
 
 #[cfg(test)]

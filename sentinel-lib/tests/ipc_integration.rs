@@ -3,7 +3,6 @@
 //! These tests validate the full client-server communication flow
 //! using the new interprocess transport implementation.
 
-#[cfg(feature = "ipc")]
 mod tests {
     use sentinel_lib::ipc::interprocess_transport::{InterprocessClient, InterprocessServer};
     use sentinel_lib::ipc::{Crc32Variant, IpcConfig, TransportType};

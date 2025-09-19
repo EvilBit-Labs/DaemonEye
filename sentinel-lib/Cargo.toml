@@ -22,8 +22,7 @@ kernel-monitoring = []
 network-correlation = []
 
 # IPC transport features
-ipc = []                 # Default: use tokio native IPC transport
-windows-pipe-strict = [] # Windows-only: use strict named pipe SDDL
+ipc = [] # Use interprocess transport (cross-platform)
 
 [dependencies]
 # Core dependencies used by all components

@@ -213,7 +213,7 @@ impl Default for IpcCodec {
     }
 }
 
-/// Async trait for codec operations  
+/// Async trait for codec operations
 #[async_trait]
 pub trait AsyncCodec {
     /// Write a message with timeout

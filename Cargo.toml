@@ -126,9 +126,8 @@ procmond = ["sysinfo", "process-collection"]
 agent = ["futures", "detection-engine", "alerting"]
 cli = ["serde_json", "terminal-ui"]
 
-# IPC transport features  
-ipc = []                 # Default: use tokio native IPC transport
-windows-pipe-strict = [] # Windows-only: use strict named pipe SDDL
+# IPC transport features
+ipc = [] # Use interprocess transport (cross-platform)
 
 # Capability features (map to sentinel-lib modules)
 process-collection = []

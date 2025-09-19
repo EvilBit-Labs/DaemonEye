@@ -32,10 +32,6 @@ pub enum IpcError {
     #[allow(dead_code)]
     ServerNotRunning,
 
-    /// Server is already running
-    #[error("Server is already running")]
-    ServerAlreadyRunning,
-
     /// Invalid message format
     #[error("Invalid message format: {reason}")]
     InvalidMessage { reason: String },
@@ -58,10 +54,32 @@ pub enum IpcError {
     /// Handler error
     #[error("Message handler error: {0}")]
     HandlerError(#[from] Box<dyn Error + Send + Sync>),
+}
 
-    /// Configuration error
-    #[error("Configuration error: {reason}")]
-    ConfigurationError { reason: String },
+impl From<sentinel_lib::ipc::IpcError> for IpcError {
+    fn from(err: sentinel_lib::ipc::IpcError) -> Self {
+        match err {
+            sentinel_lib::ipc::IpcError::Io(io_err) => IpcError::Io(io_err),
+            sentinel_lib::ipc::IpcError::Decode(decode_err) => IpcError::Protobuf(decode_err),
+            sentinel_lib::ipc::IpcError::Encode(msg) => IpcError::InvalidMessage { reason: msg },
+            sentinel_lib::ipc::IpcError::Timeout => IpcError::MessageTimeout { timeout_secs: 30 },
+            sentinel_lib::ipc::IpcError::TooLarge { size, max_size } => IpcError::InvalidMessage {
+                reason: format!("Message too large: {} bytes (max: {})", size, max_size),
+            },
+            sentinel_lib::ipc::IpcError::CrcMismatch { expected, actual } => {
+                IpcError::InvalidMessage {
+                    reason: format!(
+                        "CRC32 mismatch: expected {:08x}, got {:08x}",
+                        expected, actual
+                    ),
+                }
+            }
+            sentinel_lib::ipc::IpcError::PeerClosed => IpcError::ServerNotRunning,
+            sentinel_lib::ipc::IpcError::InvalidLength { length } => IpcError::InvalidMessage {
+                reason: format!("Invalid message length: {}", length),
+            },
+        }
+    }
 }
 
 impl IpcError {
@@ -88,13 +106,6 @@ impl IpcError {
     #[allow(dead_code)]
     pub fn connection_limit_exceeded(current: usize, max: usize) -> Self {
         Self::ConnectionLimitExceeded { current, max }
-    }
-
-    /// Create a new configuration error
-    pub fn configuration_error(reason: impl Into<String>) -> Self {
-        Self::ConfigurationError {
-            reason: reason.into(),
-        }
     }
 
     /// Check if this error is retryable

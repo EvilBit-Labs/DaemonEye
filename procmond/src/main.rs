@@ -9,8 +9,7 @@ use tokio::sync::Mutex;
 mod ipc;
 
 use ipc::error::IpcError;
-use ipc::server::IpcServer;
-use ipc::{IpcConfig, SimpleMessageHandler, create_ipc_server};
+use ipc::{IpcConfig, create_ipc_server};
 use sentinel_lib::proto::{DetectionResult, DetectionTask, ProtoProcessRecord, ProtoTaskType};
 
 /// Message handler for IPC communication with process monitoring
@@ -28,77 +27,7 @@ impl ProcessMessageHandler {
 
         match task.task_type {
             task_type if task_type == ProtoTaskType::EnumerateProcesses as i32 => {
-                // Real process enumeration using sysinfo
-                let mut system = System::new_all();
-                system.refresh_all();
-
-                let processes: Vec<ProtoProcessRecord> = system
-                    .processes()
-                    .iter()
-                    .map(|(pid, process)| {
-                        // Convert PID to u32
-                        let pid_u32 = pid.as_u32();
-
-                        // Get parent PID
-                        let ppid = process.parent().map(|p| p.as_u32());
-
-                        // Get process name
-                        let name = process.name().to_string_lossy().to_string();
-
-                        // Get executable path
-                        let executable_path =
-                            process.exe().map(|path| path.to_string_lossy().to_string());
-
-                        // Get command line arguments
-                        let command_line = process
-                            .cmd()
-                            .iter()
-                            .map(|s| s.to_string_lossy().to_string())
-                            .collect();
-
-                        // Get start time (convert to seconds)
-                        let start_time = Some(process.start_time() as i64);
-
-                        // Get CPU usage
-                        let cpu_usage = Some(process.cpu_usage() as f64);
-
-                        // Get memory usage (convert from KB to bytes)
-                        let memory_usage = Some(process.memory() * 1024);
-
-                        // Set executable hash and algorithm (None for now, would need file hashing)
-                        let executable_hash = None;
-                        let hash_algorithm = None;
-
-                        // Get user ID (convert to string)
-                        let user_id = process.user_id().map(|uid| uid.to_string());
-
-                        // Set accessible and file_exists based on process status
-                        let accessible = true; // Process is accessible if we can enumerate it
-                        let file_exists = executable_path.is_some();
-
-                        // Set collection time
-                        let collection_time = chrono::Utc::now().timestamp_millis();
-
-                        ProtoProcessRecord {
-                            pid: pid_u32,
-                            ppid,
-                            name,
-                            executable_path,
-                            command_line,
-                            start_time,
-                            cpu_usage,
-                            memory_usage,
-                            executable_hash,
-                            hash_algorithm,
-                            user_id,
-                            accessible,
-                            file_exists,
-                            collection_time,
-                        }
-                    })
-                    .collect();
-
-                Ok(DetectionResult::success(&task.task_id, processes))
+                self.enumerate_processes(&task).await
             }
             _ => {
                 tracing::warn!("Unsupported task type: {}", task.task_type);
@@ -107,6 +36,63 @@ impl ProcessMessageHandler {
                     "Unsupported task type",
                 ))
             }
+        }
+    }
+
+    /// Enumerate all processes on the system
+    async fn enumerate_processes(&self, task: &DetectionTask) -> Result<DetectionResult, IpcError> {
+        let mut system = System::new_all();
+        system.refresh_all();
+
+        let processes: Vec<ProtoProcessRecord> = system
+            .processes()
+            .iter()
+            .map(|(pid, process)| self.convert_process_to_record(pid, process))
+            .collect();
+
+        Ok(DetectionResult::success(&task.task_id, processes))
+    }
+
+    /// Convert a sysinfo process to a ProtoProcessRecord
+    fn convert_process_to_record(
+        &self,
+        pid: &sysinfo::Pid,
+        process: &sysinfo::Process,
+    ) -> ProtoProcessRecord {
+        let pid_u32 = pid.as_u32();
+        let ppid = process.parent().map(|p| p.as_u32());
+        let name = process.name().to_string_lossy().to_string();
+        let executable_path = process.exe().map(|path| path.to_string_lossy().to_string());
+        let command_line = process
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect();
+        let start_time = Some(process.start_time() as i64);
+        let cpu_usage = Some(process.cpu_usage() as f64);
+        let memory_usage = Some(process.memory() * 1024);
+        let executable_hash = None; // Would need file hashing implementation
+        let hash_algorithm = None;
+        let user_id = process.user_id().map(|uid| uid.to_string());
+        let accessible = true; // Process is accessible if we can enumerate it
+        let file_exists = executable_path.is_some();
+        let collection_time = chrono::Utc::now().timestamp_millis();
+
+        ProtoProcessRecord {
+            pid: pid_u32,
+            ppid,
+            name,
+            executable_path,
+            command_line,
+            start_time,
+            cpu_usage,
+            memory_usage,
+            executable_hash,
+            hash_algorithm,
+            user_id,
+            accessible,
+            file_exists,
+            collection_time,
         }
     }
 }
@@ -179,7 +165,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn initialize_ipc_server(
     db_manager: &Arc<Mutex<storage::DatabaseManager>>,
     socket_path: &str,
-) -> Result<Box<dyn IpcServer>, IpcError> {
+) -> Result<sentinel_lib::ipc::InterprocessServer, IpcError> {
     let ipc_config = IpcConfig {
         path: socket_path.to_string(),
         max_connections: 10,
@@ -193,21 +179,28 @@ async fn initialize_ipc_server(
     let process_handler = Arc::new(ProcessMessageHandler {
         database: Arc::clone(db_manager),
     });
-    let handler = SimpleMessageHandler::new("ProcessMessageHandler".to_string(), move |task| {
+    ipc_server.set_handler(move |task: DetectionTask| {
         let handler = Arc::clone(&process_handler);
-        async move { handler.handle_detection_task(task).await }
+        async move {
+            let result = handler.handle_detection_task(task).await;
+            result.map_err(|e| {
+                tracing::error!("IPC handler error: {}", e);
+                sentinel_lib::ipc::IpcError::Encode(format!("Handler error: {}", e))
+            })
+        }
     });
-    ipc_server.set_handler(handler);
 
     // Start the IPC server
     ipc_server.start().await?;
     println!("IPC server started successfully");
 
-    Ok(Box::new(ipc_server))
+    Ok(ipc_server)
 }
 
 /// Run the IPC server until shutdown signal
-async fn run_ipc_server(mut ipc_server: Box<dyn IpcServer>) -> Result<(), IpcError> {
+async fn run_ipc_server(
+    mut ipc_server: sentinel_lib::ipc::InterprocessServer,
+) -> Result<(), IpcError> {
     // Keep the server running until shutdown signal
     tokio::signal::ctrl_c().await?;
     println!("Shutdown signal received, stopping IPC server...");
