@@ -144,7 +144,7 @@ just ci-check            # Run full CI pipeline (pre-commit + lint + test + buil
 
 ### Testing Standards
 
-- **Primary approach**: Integration tests with assert_cmd/predicates for CLI validation
+- **Primary approach**: Integration tests with insta for snapshot testing and predicates for validation
 - **Stable output**: Use `NO_COLOR=1 TERM=dumb` for CI-friendly testing
 - **Async testing**: `#[tokio::test]` with tokio-test utilities
 - **Performance**: Criterion benchmarks with regression detection

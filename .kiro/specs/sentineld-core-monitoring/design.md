@@ -621,7 +621,7 @@ The system implements comprehensive testing across multiple levels:
 
 - Cross-component interaction testing
 - Database schema and migration testing
-- CLI interface testing with `assert_cmd`
+- CLI interface testing with `insta` for snapshot testing
 - Platform-specific functionality verification
 
 **Performance Testing**:

@@ -53,8 +53,7 @@ SentinelD uses a comprehensive unit testing framework:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert_cmd::prelude::*;
-    use predicates::prelude::*;
+    use insta::assert_snapshot;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -259,8 +258,8 @@ async fn test_alert_delivery() {
 Test command-line interface:
 
 ```rust
-use assert_cmd::Command;
-use predicates::prelude::*;
+use insta::assert_snapshot;
+use std::process::Command;
 
 #[test]
 fn test_cli_help() {

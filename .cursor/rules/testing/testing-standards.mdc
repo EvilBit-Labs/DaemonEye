@@ -19,7 +19,7 @@ Follow the **comprehensive testing strategy**:
 - Use cargo-nextest for faster, more reliable test execution
 - Use tokio-test for async runtime testing utilities
 - Use insta for snapshot testing of CLI outputs and behavior
-- Use assert_cmd and predicates for comprehensive CLI validation
+- Use insta for snapshot testing and predicates for validation
 - Use proptest for generative testing of edge cases and invariants
 - Follow the pattern in [AGENTS.md](mdc:AGENTS.md):
 
@@ -27,8 +27,7 @@ Follow the **comprehensive testing strategy**:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert_cmd::prelude::*;
-    use predicates::prelude::*;
+    use insta::assert_snapshot;
 
     #[tokio::test]
     async fn test_process_collection() {
@@ -39,7 +38,7 @@ mod tests {
 
 ## CLI Testing
 
-- Use `assert_cmd` for testing command-line interfaces
+- Use `insta` for snapshot testing of command-line interfaces
 - Test both success and error cases
 - Validate output format (human-readable and JSON)
 - Test argument parsing and validation

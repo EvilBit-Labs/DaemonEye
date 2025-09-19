@@ -26,5 +26,5 @@ alwaysApply: false
 
 ## Testing Requirements
 
-- Include comprehensive tests with assert_cmd for CLI testing
+- Include comprehensive tests with insta for snapshot testing
 - Test organization should follow the pattern in [AGENTS.md](mdc:AGENTS.md)

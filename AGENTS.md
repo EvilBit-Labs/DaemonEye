@@ -242,7 +242,7 @@ sequenceDiagram
 - **Logging**: tracing ecosystem with structured JSON output
 - **Configuration**: YAML/TOML via figment and config crates with hierarchical overrides
 - **IPC**: `interprocess` crate for cross-platform transport + protobuf for message serialization
-- **Testing**: cargo-nextest, assert_cmd, predicates, criterion, insta
+- **Testing**: cargo-nextest, insta, predicates, criterion
 
 ### IPC Communication with interprocess and protobuf
 
@@ -333,10 +333,9 @@ blake3 = "1.5"
 ed25519-dalek = "2.1"
 
 # Testing
-assert_cmd = "2.0"
+insta = "1.0"
 predicates = "3.1"
 criterion = "0.5"
-insta = "1.0"
 ```
 
 ---
@@ -352,7 +351,7 @@ insta = "1.0"
 - **Error Handling**: Use `thiserror` for structured errors, `anyhow` for error context
 - **Async**: Async-first design using Tokio runtime
 - **Logging**: Structured logging with `tracing` ecosystem (JSON or human-readable)
-- **Testing**: Comprehensive unit and integration tests with assert_cmd and predicates
+- **Testing**: Comprehensive unit and integration tests with insta for snapshot testing
 - **Documentation**: Rustdoc comments for all public interfaces
 
 ## Security Model and Policies
@@ -586,7 +585,7 @@ flowchart TB
         E2E -.-> TOOLS
 
         TOOLS --> CN[cargo-nextest<br/>Test Runner]
-        TOOLS --> AC[assert_cmd<br/>CLI Testing]
+        TOOLS --> AC[insta<br/>Snapshot Testing]
         TOOLS --> P[predicates<br/>Validation]
         TOOLS --> C[criterion<br/>Benchmarking]
         TOOLS --> I[insta<br/>Snapshots]
@@ -603,7 +602,7 @@ flowchart TB
 #### Integration Testing
 
 - **Scope**: Cross-component interaction and realistic scenarios
-- **Tools**: assert_cmd and predicates for comprehensive CLI validation
+- **Tools**: insta for snapshot testing and predicates for validation
 - **Approach**: Primary testing method with minimal mocking
 - **Database**: Real redb instances with test data
 
@@ -867,8 +866,7 @@ const KERNEL_EVENTS_TABLE: TableDefinition<u64, KernelEvent> =
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert_cmd::prelude::*;
-    use predicates::prelude::*;
+    use insta::assert_snapshot;
 
     #[tokio::test]
     async fn test_process_collection() {
@@ -1081,7 +1079,7 @@ When generating code for SentinelD:
 01. **Always use Rust 2024 Edition** in Cargo.toml files
 02. **Implement comprehensive error handling** with thiserror
 03. **Use async/await patterns** with Tokio runtime
-04. **Include comprehensive tests** with assert_cmd for CLI testing
+04. **Include comprehensive tests** with insta for snapshot testing
 05. **Follow the service layer pattern** with trait definitions
 06. **Implement proper logging** with tracing framework
 07. **Use workspace inheritance** for common dependencies
@@ -1158,7 +1156,7 @@ When generating code for SentinelD:
 1. [ ] Update clap derive structures with new argument
 2. [ ] Implement configuration handling in sentinel-lib
 3. [ ] Add help text and default values
-4. [ ] Create assert_cmd integration tests
+4. [ ] Create insta snapshot tests for CLI output
 5. [ ] Test both short and long option forms
 6. [ ] Validate with `NO_COLOR=1 TERM=dumb` environment
 7. [ ] Update shell completion generation if applicable
