@@ -34,30 +34,31 @@
   - Write unit tests for server connection handling and message parsing
   - _Requirements: 3.1, 3.2_
 
-- [ ] 3.3 Migrate to interprocess crate with unified local socket API
+- [x] 3.3 Migrate to interprocess crate with unified local socket API
 
   - Add interprocess crate dependency with tokio feature for cross-platform local sockets
   - Implement interprocess-based IpcServer maintaining same trait interface
   - Create codec layer preserving protobuf framing with CRC32 validation
-  - Add feature flags for interprocess (default) vs legacy transport with rollback capability
-  - Ensure Unix domain socket permissions (0700 dir, 0600 socket) and Windows named pipe SDDL restrictions
+  - Ensure Unix domain socket permissions (0700 dir, 0600 socket) and Windows named pipe SDDL restrictions (revisit later)
   - _Requirements: 3.1, 3.2_
 
 - [ ] 3.4 Implement interprocess IpcClient for sentinelagent - [#37](https://github.com/EvilBit-Labs/SentinelD/issues/37)
 
-  - Create IpcClient using interprocess LocalSocketStream with connection management
+  - Create IpcClient using `interprocess` LocalSocketStream with connection management
   - Add automatic reconnection logic with exponential backoff using existing patterns
   - Implement connection lifecycle management (connect, disconnect, health checks)
-  - Preserve message timeout, size limits, and error handling parity with legacy implementation
+  - Implement message timeout, size limits, and error handling implementation, maximizing cross-platform portability and reusability
   - Write unit tests for client connection scenarios and cross-platform compatibility
   - _Requirements: 3.1, 3.2_
 
-- [ ] 3.5 Comprehensive testing and validation for interprocess migration - [#38](https://github.com/EvilBit-Labs/SentinelD/issues/38)
+- [ ] 3.5 Comprehensive testing and validation for interprocess communication - [#38](https://github.com/EvilBit-Labs/SentinelD/issues/38)
 
-  - Create integration tests comparing legacy vs interprocess transport behavior
+  - Create integration tests for `interprocess` transport behavior
   - Add cross-platform tests (Linux, macOS, Windows) for local socket functionality
-  - Implement property-based tests for codec robustness with malformed inputs
-  - Add performance benchmarks ensuring no regression from custom implementation
+  - Implement integration tests for cross-component interaction with `interprocess`, specifically testing task distribution and result collection workflows
+  - Implement integration tests for error handling and recovery scenarios on both client and server sides for communication reliability
+  - Implement property-based tests for codec robustness with malformed inputs, ensuring maximum resilience and security
+  - Add performance benchmarks ensuring no regression in message throughput or latency
   - Create security validation tests for socket permissions and connection limits
   - _Requirements: 3.1, 3.2_
 
@@ -65,7 +66,7 @@
 
   - Create ProcessCollector trait with platform-specific implementations using sysinfo crate
   - Implement process metadata extraction (PID, PPID, name, executable path, command line)
-  - Add enhanced metadata collection when privileges allow (memory usage, CPU%, start time)
+  - Add enhanced metadata collection when privileges allow (memory usage, CPU%, start time) - procmond should run as root or with CAP_SYS_PTRACE but we need to fail gracefully if we don't have the privileges
   - Handle inaccessible processes gracefully with proper error logging
   - Write unit tests with mock process data and integration tests on real systems
   - _Requirements: 1.1, 1.5_
