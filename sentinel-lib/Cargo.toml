@@ -12,7 +12,7 @@ publish = false
 
 # Feature flags
 [features]
-default = ["process-collection", "detection-engine", "alerting"]
+default = ["process-collection", "detection-engine", "alerting", "ipc"]
 
 # Component features
 process-collection = []
@@ -20,6 +20,9 @@ detection-engine = ["sqlparser"]
 alerting = []
 kernel-monitoring = []
 network-correlation = []
+
+# IPC transport features
+ipc = [] # Use interprocess transport (cross-platform)
 
 [dependencies]
 # Core dependencies used by all components
@@ -65,6 +68,11 @@ uuid = { workspace = true }
 # Protocol Buffers support
 prost = { workspace = true }
 prost-types = { workspace = true }
+
+# IPC communication
+interprocess = { workspace = true }
+bytes = { workspace = true }
+crc32fast = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

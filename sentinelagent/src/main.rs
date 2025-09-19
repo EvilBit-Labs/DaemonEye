@@ -156,7 +156,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Update telemetry with rough resource usage snapshot (placeholder zeros for now)
                 telemetry.update_resource_usage(0.0, 0);
-                if iteration.is_multiple_of(10) { // periodic health check every 10 iterations
+                if iteration % 10 == 0 { // periodic health check every 10 iterations
                     match telemetry.health_check().await {
                         Ok(h) => info!(status=%h.status, "Telemetry health check"),
                         Err(e) => warn!(error=?e, "Telemetry health check failed"),

@@ -1,0 +1,128 @@
+---
+globs: *.proto,build.rs,*.rs
+description: Protobuf integration and code generation standards
+---
+
+# Protobuf Integration Standards
+
+## File Organization
+
+- **Protobuf files**: Located in [sentinel-lib/proto/](mdc:sentinel-lib/proto/)
+- **Build script**: [sentinel-lib/build.rs](mdc:sentinel-lib/build.rs) handles protobuf compilation
+- **Generated code**: Included in [sentinel-lib/src/proto.rs](mdc:sentinel-lib/src/proto.rs)
+
+## Key Files
+
+- [sentinel-lib/proto/common.proto](mdc:sentinel-lib/proto/common.proto): Common message types
+- [sentinel-lib/proto/ipc.proto](mdc:sentinel-lib/proto/ipc.proto): IPC communication messages
+- [sentinel-lib/build.rs](mdc:sentinel-lib/build.rs): Protobuf compilation script
+- [sentinel-lib/src/proto.rs](mdc:sentinel-lib/src/proto.rs): Generated code integration
+
+## Build Process
+
+1. **Compilation**: `prost-build` compiles `.proto` files to Rust code
+2. **Inclusion**: Generated code is included using `include!(concat!(env!("OUT_DIR"), "/_.rs"))`
+3. **Re-exports**: Clean type names are re-exported for easier usage
+4. **Dependencies**: All crates that need protobuf types depend on `sentinel-lib`
+
+## Usage Patterns
+
+- Access protobuf types through `sentinel-lib::proto`
+- Use generated builders for message construction
+- Implement proper serialization/deserialization with prost
+- Handle protobuf errors gracefully
+
+## IPC Communication with interprocess
+
+The `interprocess` crate provides the transport layer for protobuf messages:
+
+### Transport Setup
+
+- **Unix Domain Sockets**: Linux/macOS IPC using `interprocess::local_socket`
+- **Named Pipes**: Windows IPC using `interprocess::local_socket` with named pipe support
+- **Cross-platform**: Automatic platform detection and appropriate transport selection
+
+### Message Framing
+
+- **Protobuf Serialization**: Messages are serialized using `prost` before transmission
+- **CRC32 Checksum**: Integrity verification with `crc32fast` for message validation
+- **Length Prefixing**: Messages are prefixed with length for proper framing
+- **Error Handling**: Comprehensive error types for transport and serialization failures
+
+### Usage Example
+
+```rust
+use interprocess::local_socket::LocalSocketStream;
+use sentinel_lib::proto::{DetectionTask, DetectionResult};
+
+// Create IPC connection
+let stream = LocalSocketStream::connect("/tmp/sentineld.sock")?;
+
+// Send protobuf message
+let task = DetectionTask::new()
+    .with_rule_id("suspicious_process")
+    .with_query("SELECT * FROM processes WHERE name = 'malware.exe'")
+    .build();
+
+// Serialize and send with framing
+let serialized = prost::Message::encode_to_vec(&task)?;
+// ... send with CRC32 and length prefixing
+```
+
+### Error Handling
+
+- **Transport Errors**: Connection failures, timeouts, broken pipes
+- **Serialization Errors**: Invalid protobuf data, encoding failures
+- **Protocol Errors**: CRC32 mismatches, malformed messages
+- **Recovery**: Automatic reconnection with exponential backoff
+
+## Integration with IPC Transport
+
+The protobuf messages work in conjunction with the IPC transport layer:
+
+### Message Flow
+
+1. **Client Side**: Create protobuf message → Serialize with prost → Frame with CRC32 → Send via interprocess
+2. **Server Side**: Receive via interprocess → Validate CRC32 → Deserialize with prost → Process message
+3. **Response**: Generate protobuf response → Serialize → Frame → Send back via interprocess
+
+### Key Integration Points
+
+- **Message Types**: All IPC messages are defined in `.proto` files
+- **Serialization**: `prost` handles protobuf encoding/decoding
+- **Transport**: `interprocess` handles cross-platform IPC transport
+- **Validation**: CRC32 checksums ensure message integrity
+- **Error Handling**: Both protobuf and transport errors are properly handled
+
+### Testing IPC with Protobuf
+
+```rust
+use tempfile::tempdir;
+use sentinel_lib::ipc::interprocess_transport::IpcServer;
+
+#[tokio::test]
+async fn test_protobuf_ipc_roundtrip() {
+    let temp_dir = tempdir().unwrap();
+    let socket_path = temp_dir.path().join("test.sock");
+
+    // Start server
+    let server = IpcServer::new(&socket_path).await.unwrap();
+
+    // Test protobuf message exchange
+    let task = DetectionTask::new()
+        .with_rule_id("test_rule")
+        .with_query("SELECT * FROM processes")
+        .build();
+
+    // Send and receive via IPC
+    // ... test implementation
+}
+```
+
+## Development Workflow
+
+- Modify `.proto` files in [sentinel-lib/proto/](mdc:sentinel-lib/proto/)
+- Run `cargo build` to regenerate Rust code
+- Update [sentinel-lib/src/proto.rs](mdc:sentinel-lib/src/proto.rs) if needed
+- Test changes with `cargo test --workspace`
+- Test IPC integration with `cargo test --test ipc_integration`

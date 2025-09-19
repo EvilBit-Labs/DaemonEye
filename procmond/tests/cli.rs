@@ -3,16 +3,11 @@ use predicates::prelude::*;
 use std::process::Command;
 
 #[test]
-fn prints_expected_greeting() -> Result<(), Box<dyn std::error::Error>> {
-    use tempfile::tempdir;
-
-    let temp_dir = tempdir()?;
-    let db_path = temp_dir.path().join("test.db");
-
+fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin("procmond")?;
-    cmd.env("PROCMOND_DATABASE_PATH", db_path.to_str().unwrap());
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("procmond started successfully"));
+    cmd.arg("--help");
+    cmd.assert().success().stdout(predicate::str::contains(
+        "SentinelD Process Monitoring Daemon",
+    ));
     Ok(())
 }

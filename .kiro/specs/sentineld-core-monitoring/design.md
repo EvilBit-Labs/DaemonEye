@@ -33,7 +33,7 @@ SentinelD consists of three main components that work together to provide compre
 │     only        │    │    managed      │
 └─────────────────┘    └─────────────────┘
 
-IPC Protocol: Custom Protobuf over Unix Sockets/Named Pipes
+IPC Protocol: Protobuf + CRC32 framing over `interprocess` local sockets
 Communication: sentinelcli ↔ sentinelagent ↔ procmond
 Service Management: sentinelagent manages procmond lifecycle
 ```
@@ -112,7 +112,7 @@ pub struct DetectionTask {
 - No network access whatsoever
 - No SQL parsing or complex query logic
 - Write-only access to audit ledger
-- Simple protobuf IPC only (Unix sockets/named pipes)
+- Cross-platform IPC via interprocess crate (Unix domain sockets/Windows named pipes)
 - Purpose-built for stability and minimal attack surface
 - Zero unsafe code goal; any required unsafe code isolated to highly structured, tested modules
 
@@ -156,7 +156,7 @@ pub trait DetectionEngine {
 - **Privilege Separation**: SQL execution never directly touches live processes; only simple collection tasks sent via IPC
 - Outbound-only network connections for alert delivery
 - Sandboxed rule execution with resource limits
-- IPC client for communication with procmond
+- IPC client for communication with procmond via interprocess crate (see [IPC Implementation](../../../docs/src/technical/ipc-implementation.md))
 - Manages procmond process lifecycle (start, stop, restart, health monitoring)
 
 **Service Management**:
@@ -249,13 +249,75 @@ message DetectionResult {
 }
 ```
 
-**Transport Layer**:
+**Transport Layer (Tokio Native APIs)**:
 
-- Unix domain sockets on Linux/macOS
-- Named pipes on Windows
-- Async message handling with tokio
-- Connection authentication and encryption (optional)
-- Automatic reconnection with exponential backoff
+- **Phase 1 Implementation**: Standard tokio networking APIs for reliability and maintainability
+- **Unix/Linux/macOS**: `tokio::net::UnixListener` and `UnixStream` with owner-only permissions (0700 dir, 0600 socket)
+- **Windows**: `tokio::net::windows::named_pipe` for cross-platform compatibility
+- **Frame Protocol**: Length-delimited protobuf messages with CRC32 integrity validation
+- **Codec**: Custom `IpcCodec` with BytesMut buffers, timeout handling, and comprehensive error types
+- **Security**: No network access, local-only endpoints, connection limits via semaphore
+- **Reliability**: Async message handling, graceful shutdown, and proper cleanup
+- **Configuration**: Comprehensive `IpcConfig` with timeouts, limits, and CRC32 variant selection
+
+### IPC Protocol Flow
+
+```mermaid
+sequenceDiagram
+    participant SA as sentinelagent
+    participant PM as procmond
+    participant C as Codec
+    participant UDS as Unix Socket
+
+    Note over SA,UDS: Connection Establishment
+    SA->>UDS: Connect to socket
+    UDS-->>SA: Connection accepted
+
+    Note over SA,UDS: Message Exchange
+    SA->>C: Encode DetectionTask
+    C->>C: Add length + CRC32
+    C->>UDS: Write frame
+    UDS->>PM: Frame received
+    PM->>C: Read and validate frame
+    C->>C: Verify CRC32
+    C-->>PM: DetectionTask
+
+    PM->>PM: Process task
+
+    PM->>C: Encode DetectionResult
+    C->>C: Add length + CRC32
+    C->>UDS: Write frame
+    UDS->>SA: Frame received
+    SA->>C: Read and validate frame
+    C->>C: Verify CRC32
+    C-->>SA: DetectionResult
+
+    Note over SA,UDS: Connection Cleanup
+    SA->>UDS: Close connection
+```
+
+### Error Handling Flow
+
+```mermaid
+flowchart TD
+    A["Incoming Frame"] --> B{"Valid Length?"}
+    B -->|No| C["IpcError::InvalidLength"]
+    B -->|Yes| D{"Within Size Limit?"}
+    D -->|No| E["IpcError::TooLarge"]
+    D -->|Yes| F["Read Message Bytes"]
+    F --> G{"CRC32 Valid?"}
+    G -->|No| H["IpcError::CrcMismatch"]
+    G -->|Yes| I["Decode Protobuf"]
+    I --> J{"Decode Success?"}
+    J -->|No| K["IpcError::Decode"]
+    J -->|Yes| L["Process Message"]
+
+    C --> M["Send Error Response"]
+    E --> M
+    H --> M
+    K --> M
+    L --> N["Send Success Response"]
+```
 
 ## Data Models
 

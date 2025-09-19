@@ -103,11 +103,10 @@ reviews:
             "sentinelagent/**",
             "sentinelcli/**",
             "sentinel-lib/**",
-            "sentinel/**",
             "docs/src/**",
             "spec/**",
-            "kiro/**",
-            "cursor/**",
+            ".kiro/**",
+            ".cursor/**",
             ".github/workflows/release.yml",
             "*.md",
             "*.toml",
@@ -130,8 +129,7 @@ reviews:
             "!*.ico",
             "!*.wxs",
         ]
-    path_instructions:
-        [
+    path_instructions: [
             {
                 "path": "procmond/**",
                 "instructions": "CRITICAL: Privileged process collector with minimal attack surface. Enforce principle of least privilege, immediate privilege dropping after init, no network access, write-only access to audit ledger. Flag any unsafe code, privilege escalation risks, or attack surface expansions. Focus on security, performance, and minimal dependencies.",
@@ -148,14 +146,12 @@ reviews:
                 "path": "sentinel-lib/**",
                 "instructions": "Shared library providing common functionality across all components. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments.",
             },
-            {
-                "path": "sentinel/**",
-                "instructions": "Windows-specific components. Enforce Windows API best practices, service deployment patterns, security considerations for Windows environments. Focus on privilege management and cross-platform compatibility.",
-            },
+            # Not yet implemented
             {
                 "path": "security-center/**",
                 "instructions": "Business tier Security Center server. Enforce PostgreSQL database management, mTLS agent authentication, centralized data aggregation, rule pack distribution, and external SIEM integrations. Focus on scalability, security, and enterprise-grade reliability.",
             },
+            # Not yet implemented
             {
                 "path": "gui/**",
                 "instructions": "Business tier web GUI frontend. Enforce React/TypeScript best practices, JWT authentication, responsive design, and real-time data visualization. Focus on user experience for security operations teams and fleet management.",
@@ -167,6 +163,10 @@ reviews:
             {
                 "path": "spec/**",
                 "instructions": "Project specifications and architecture documents. Enforce technical accuracy, architectural consistency, and clear requirements. Focus on security-first design principles and operational constraints.",
+            },
+            {
+                "path": ".kiro/**",
+                "instructions": "Project documentation and specifications, written in spec-driven development, used by the Kiro AI assistant. Enforce technical accuracy, architectural consistency, and clear requirements. Focus on security-first design principles and operational constraints.",
             },
             {
                 "path": "*.md",
@@ -359,8 +359,7 @@ knowledge_base:
 code_generation:
     docstrings:
         language: en-US
-        path_instructions:
-            [
+        path_instructions: [
                 {
                     "path": "**/*.rs",
                     "instructions": "Generate rustdoc comments following standard format: /// for public items, //! for module docs. Include brief description, parameter docs with # Arguments, return docs with # Returns, error docs with # Errors, and examples with # Examples. Use ```rust for runnable examples, ```rust,no_run for non-runnable. Focus on security implications and performance characteristics.",
@@ -373,14 +372,14 @@ code_generation:
                     "path": "sentinel-lib/**",
                     "instructions": "Generate rustdoc comments following standard format with shared library focus: /// for public items, //! for module docs. Include # Arguments, # Returns, # Errors, and # Examples sections. Emphasize trait-based abstractions, security boundaries, and cross-component usage. Use ```rust for runnable examples.",
                 },
+                # Not yet implemented
                 {
                     "path": "gui/**",
                     "instructions": "Generate JSDoc comments following TypeScript/React format: /** */ for components and functions. Include @param, @returns, @example, and @since tags. Focus on user experience, real-time data handling, and security operations workflows. Use ```tsx for component examples.",
                 },
             ]
     unit_tests:
-        path_instructions:
-            [
+        path_instructions: [
                 {
                     "path": "**/*.rs",
                     "instructions": "Generate unit tests using standard Rust testing patterns: #[cfg(test)] mod tests, #[tokio::test] for async, use super::*. Focus on security boundaries, error handling, and performance. Use mock dependencies, assert_cmd for CLI testing, and predicates for validation. Test both success and failure paths.",
@@ -393,6 +392,7 @@ code_generation:
                     "path": "sentinelcli/**",
                     "instructions": "Generate CLI-focused unit tests using assert_cmd and predicates. Test JSON/table output formatting, shell completions, error messages, and user experience. Test both interactive and non-interactive modes.",
                 },
+                # Not yet implemented
                 {
                     "path": "gui/**",
                     "instructions": "Generate React/TypeScript unit tests using Jest and React Testing Library. Test component rendering, user interactions, state management, and API integration. Focus on accessibility and responsive design testing.",
