@@ -382,7 +382,7 @@ code_generation:
         path_instructions: [
                 {
                     "path": "**/*.rs",
-                    "instructions": "Generate unit tests using standard Rust testing patterns: #[cfg(test)] mod tests, #[tokio::test] for async, use super::*. Focus on security boundaries, error handling, and performance. Use mock dependencies, assert_cmd for CLI testing, and predicates for validation. Test both success and failure paths.",
+                    "instructions": "Generate unit tests using standard Rust testing patterns: #[cfg(test)] mod tests, #[tokio::test] for async, use super::*. Focus on security boundaries, error handling, and performance. Use mock dependencies, insta for snapshot testing, and predicates for validation. Test both success and failure paths.",
                 },
                 {
                     "path": "procmond/**",
@@ -390,7 +390,7 @@ code_generation:
                 },
                 {
                     "path": "sentinelcli/**",
-                    "instructions": "Generate CLI-focused unit tests using assert_cmd and predicates. Test JSON/table output formatting, shell completions, error messages, and user experience. Test both interactive and non-interactive modes.",
+                    "instructions": "Generate CLI-focused unit tests using insta for snapshot testing and predicates for validation. Test JSON/table output formatting, shell completions, error messages, and user experience. Test both interactive and non-interactive modes.",
                 },
                 # Not yet implemented
                 {
