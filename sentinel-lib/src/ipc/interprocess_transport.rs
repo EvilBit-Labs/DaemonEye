@@ -171,8 +171,8 @@ impl InterprocessServer {
         let config = self.config.clone();
         let handler = Arc::clone(&handler);
 
-        // Spawn the server task
-        tokio::spawn(async move {
+        // Spawn the server task and wait for it to start
+        let _server_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     // Accept new connections
@@ -213,6 +213,9 @@ impl InterprocessServer {
                 }
             }
         });
+
+        // Give the server task a moment to start and bind to the endpoint
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         Ok(())
     }
