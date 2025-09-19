@@ -52,6 +52,10 @@ cargo build --bin sentinelagent --features=agent
 
 # Performance testing
 cargo bench  # Run criterion benchmarks
+
+# IPC testing
+cargo test --test ipc_integration --features ipc-interprocess  # Test interprocess transport
+cargo test ipc::codec --features ipc-interprocess           # Test codec implementation
 ```
 
 ## Quality Assurance
@@ -170,7 +174,7 @@ flowchart LR
 - **Security**: Runs with elevated privileges, drops them immediately after init
 - **Network**: No network access whatsoever
 - **Database**: Write-only access to audit ledger
-- **Communication**: IPC server for receiving simple detection tasks from sentinelagent
+- **Communication**: Tokio-based IPC server with protobuf + CRC32 framing for secure task processing
 - **Function**: Minimal privileged component for process data collection
 
 #### sentinelagent (Detection Orchestrator)
@@ -178,7 +182,7 @@ flowchart LR
 - **Security**: Minimal privileges, outbound-only network connections
 - **Database**: Read/write access to event store, manages procmond lifecycle
 - **Features**: SQL-based detection engine, multi-channel alerting, IPC client
-- **Communication**: Translates complex SQL rules into simple protobuf tasks for procmond
+- **Communication**: IPC client with automatic reconnection, translates SQL rules into protobuf tasks
 - **Function**: User-space detection rule execution and alert dispatching
 
 #### sentinelcli (Operator Interface)
@@ -196,7 +200,7 @@ flowchart LR
 ### Security Boundaries
 
 - **Privilege Separation**: Only procmond runs with elevated privileges when necessary
-- **IPC Communication**: Secure protobuf over Unix sockets/named pipes
+- **IPC Communication**: Secure protobuf over tokio Unix sockets/named pipes with CRC32 validation
 - **No Inbound Network**: System is outbound-only for alert delivery
 - **Input Validation**: All data validated with serde and typed models
 - **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only

@@ -2,7 +2,10 @@
 
 use async_trait::async_trait;
 use sentinel_lib::proto::{DetectionResult, DetectionTask};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, timeout};
@@ -16,6 +19,9 @@ pub struct NamedPipeServer {
     common: Arc<RwLock<ServerCommon>>,
     pipe_handle: Option<tokio::io::DuplexStream>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    handler: Arc<RwLock<Option<SimpleMessageHandler>>>,
+    is_running: AtomicBool,
+    cached_config: IpcConfig,
 }
 
 impl NamedPipeServer {
@@ -37,24 +43,29 @@ impl NamedPipeServer {
         config.path = pipe_name;
 
         Ok(Self {
-            common: Arc::new(RwLock::new(ServerCommon::new(config))),
+            common: Arc::new(RwLock::new(ServerCommon::new(config.clone()))),
             pipe_handle: None,
             shutdown_tx: None,
+            handler: Arc::new(RwLock::new(None)),
+            is_running: AtomicBool::new(false),
+            cached_config: config,
         })
     }
 
     /// Handle a single client connection
     async fn handle_connection(
         common: Arc<RwLock<ServerCommon>>,
+        handler: Arc<RwLock<Option<SimpleMessageHandler>>>,
         mut stream: tokio::io::DuplexStream,
         client_addr: String,
+        message_timeout_secs: u64,
     ) {
         let mut buffer = [0; 4096];
 
         loop {
             // Read message length (4 bytes)
             let length_result = timeout(
-                Duration::from_secs(30), // 30 second timeout
+                Duration::from_secs(message_timeout_secs),
                 stream.read_exact(&mut buffer[..4]),
             )
             .await;
@@ -80,7 +91,7 @@ impl NamedPipeServer {
 
             // Read the actual message
             let message_result = timeout(
-                Duration::from_secs(30),
+                Duration::from_secs(message_timeout_secs),
                 stream.read_exact(&mut buffer[..length]),
             )
             .await;
@@ -98,7 +109,7 @@ impl NamedPipeServer {
             };
 
             // Parse and handle the message
-            let response = match Self::process_message(&common, message_data).await {
+            let response = match Self::process_message(&common, &handler, message_data).await {
                 Ok(response) => response,
                 Err(e) => {
                     tracing::error!("Error processing message from {}: {}", client_addr, e);
@@ -122,6 +133,7 @@ impl NamedPipeServer {
     /// Process an incoming message
     async fn process_message(
         common: &Arc<RwLock<ServerCommon>>,
+        handler: &Arc<RwLock<Option<SimpleMessageHandler>>>,
         message_data: Vec<u8>,
     ) -> IpcResult<Vec<u8>> {
         // Parse the detection task
@@ -130,16 +142,16 @@ impl NamedPipeServer {
         })?;
 
         // Get the handler
-        let common_guard = common.read().await;
-        let handler = common_guard
-            .handler()
+        let handler_guard = handler.read().await;
+        let handler = handler_guard
+            .as_ref()
             .ok_or_else(|| IpcError::invalid_message("No message handler set"))?;
 
         // Process the task
         let result = handler.handle(task).await?;
 
         // Update statistics
-        drop(common_guard);
+        drop(handler_guard);
         if let Ok(mut common_guard) = common.write().await {
             common_guard.stats_mut().record_message();
         }
@@ -175,6 +187,9 @@ impl IpcServer for NamedPipeServer {
         }
         drop(common_guard);
 
+        // Ensure we start with running flag set to false
+        self.is_running.store(false, Ordering::SeqCst);
+
         // For Windows named pipes, we'll use a simplified approach
         // In a real implementation, you would use the Windows API to create named pipes
         // For now, we'll simulate the behavior with a duplex stream
@@ -185,11 +200,15 @@ impl IpcServer for NamedPipeServer {
             common_guard.record_start();
         }
 
+        // Set running flag to true
+        self.is_running.store(true, Ordering::SeqCst);
+
         let pipe_name = &self.common.read().await.config().path;
         tracing::info!("Named pipe server started on {}", pipe_name);
 
         // Start the server loop
         let common = Arc::clone(&self.common);
+        let handler = Arc::clone(&self.handler);
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(shutdown_tx);
 
@@ -206,6 +225,9 @@ impl IpcServer for NamedPipeServer {
                     // In a real implementation, you would handle pipe connections here
                     _ = tokio::time::sleep(Duration::from_millis(100)) => {
                         // This is a placeholder - in reality you would handle pipe connections
+                        // When a connection is accepted, it would be handled like:
+                        // let message_timeout = common.read().await.config().message_timeout_secs as u64;
+                        // tokio::spawn(Self::handle_connection(common, handler, stream, client_addr, message_timeout));
                         continue;
                     }
                 }
@@ -216,6 +238,9 @@ impl IpcServer for NamedPipeServer {
     }
 
     async fn stop(&mut self) -> IpcResult<()> {
+        // Set running flag to false
+        self.is_running.store(false, Ordering::SeqCst);
+
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
         }
@@ -229,28 +254,21 @@ impl IpcServer for NamedPipeServer {
     }
 
     fn is_running(&self) -> bool {
-        // For now, we'll return false since we can't use blocking_read in async context
-        // In a real implementation, we'd need to track this state differently
-        false
+        self.is_running.load(Ordering::SeqCst)
     }
 
     fn config(&self) -> &IpcConfig {
-        // This is a temporary workaround - in a real implementation we'd need to handle this differently
-        // For now, we'll return a static config or handle it differently
-        static DEFAULT_CONFIG: IpcConfig = IpcConfig {
-            path: String::new(),
-            max_connections: 10,
-            connection_timeout_secs: 30,
-            message_timeout_secs: 60,
-        };
-        &DEFAULT_CONFIG
+        &self.cached_config
     }
 
-    fn set_handler(&mut self, _handler: SimpleMessageHandler) {
-        // This is a bit tricky with Arc<RwLock<>>, we need to handle it in the async context
-        // For now, we'll store it in a way that can be accessed by the async tasks
-        // In a real implementation, you might want to use a different approach
-        tracing::warn!("set_handler called but not fully implemented for NamedPipeServer");
+    fn set_handler(&mut self, handler: SimpleMessageHandler) {
+        // Store the handler in the Arc<RwLock<Option<SimpleMessageHandler>>>
+        // We need to use a blocking approach since this is a sync method
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            let mut handler_guard = self.handler.write().await;
+            *handler_guard = Some(handler);
+        });
     }
 
     async fn get_stats(&self) -> IpcResult<ServerStats> {

@@ -4,11 +4,13 @@ use async_trait::async_trait;
 // Removed unused imports
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::RwLock;
 use tokio::time::{Duration, timeout};
 
+use crate::ipc::protocol::{ProtocolConfig, ProtocolManager};
 use crate::ipc::server::{ServerCommon, ServerStats};
 use crate::ipc::{IpcConfig, IpcError, IpcResult, IpcServer, SimpleMessageHandler};
 
@@ -20,6 +22,9 @@ pub struct UnixSocketServer {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     #[allow(dead_code)]
     config: IpcConfig,
+    protocol_manager: Arc<ProtocolManager>,
+    running: AtomicBool,
+    handler: Arc<RwLock<Option<SimpleMessageHandler>>>,
 }
 
 impl UnixSocketServer {
@@ -36,79 +41,183 @@ impl UnixSocketServer {
             )));
         }
 
+        let protocol_config = ProtocolConfig::default();
+        let protocol_manager = Arc::new(ProtocolManager::new(protocol_config));
+
         Ok(Self {
             common: Arc::new(RwLock::new(ServerCommon::new(config.clone()))),
             listener: None,
             shutdown_tx: None,
             config,
+            protocol_manager,
+            running: AtomicBool::new(false),
+            handler: Arc::new(RwLock::new(None)),
         })
+    }
+
+    /// Read a varint length prefix from the stream
+    async fn read_varint_length(
+        stream: &mut UnixStream,
+        timeout_secs: u64,
+    ) -> Result<usize, std::io::Error> {
+        let mut result = 0u64;
+        let mut shift = 0;
+        let mut buffer = [0u8; 1];
+
+        loop {
+            let read_result = timeout(
+                Duration::from_secs(timeout_secs),
+                stream.read_exact(&mut buffer),
+            )
+            .await;
+
+            let byte = match read_result {
+                Ok(Ok(_)) => buffer[0],
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Timeout reading varint",
+                    ));
+                }
+            };
+
+            result |= ((byte & 0x7F) as u64) << shift;
+            if (byte & 0x80) == 0 {
+                if result > usize::MAX as u64 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Varint too large",
+                    ));
+                }
+                return Ok(result as usize);
+            }
+            shift += 7;
+            if shift >= 64 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Varint too large",
+                ));
+            }
+        }
     }
 
     /// Handle a single client connection
     async fn handle_connection(
         common: Arc<RwLock<ServerCommon>>,
+        protocol_manager: Arc<ProtocolManager>,
+        handler: Arc<RwLock<Option<SimpleMessageHandler>>>,
         mut stream: UnixStream,
         client_addr: String,
+        message_timeout_secs: u64,
     ) {
         let mut buffer = [0; 4096];
 
         loop {
-            // Read message length (4 bytes)
-            let length_result = timeout(
-                Duration::from_secs(30), // 30 second timeout
-                stream.read_exact(&mut buffer[..4]),
-            )
-            .await;
-
-            let length = match length_result {
-                Ok(Ok(_)) => {
-                    u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize
-                }
-                Ok(Err(e)) => {
+            // Read varint length prefix
+            let length = match Self::read_varint_length(&mut stream, message_timeout_secs).await {
+                Ok(length) => length,
+                Err(e) => {
                     tracing::warn!("Failed to read message length from {}: {}", client_addr, e);
                     break;
                 }
-                Err(_) => {
-                    tracing::warn!("Timeout reading message length from {}", client_addr);
-                    break;
-                }
             };
 
-            if length > buffer.len() {
-                tracing::error!("Message too large from {}: {} bytes", client_addr, length);
+            // Enforce maximum message size (16KB)
+            const MAX_MESSAGE_SIZE: usize = 16 * 1024;
+            if length > MAX_MESSAGE_SIZE {
+                tracing::error!(
+                    "Message too large from {}: {} bytes (max: {})",
+                    client_addr,
+                    length,
+                    MAX_MESSAGE_SIZE
+                );
                 break;
             }
 
-            // Read the actual message
-            let message_result = timeout(
-                Duration::from_secs(30),
-                stream.read_exact(&mut buffer[..length]),
+            // Read the full frame: sequence (4 bytes) + payload + crc32 (4 bytes)
+            let frame_size = 4 + length + 4; // sequence + payload + crc32
+            if frame_size > buffer.len() {
+                tracing::error!(
+                    "Frame too large from {}: {} bytes (buffer: {})",
+                    client_addr,
+                    frame_size,
+                    buffer.len()
+                );
+                break;
+            }
+
+            let frame_result = timeout(
+                Duration::from_secs(message_timeout_secs),
+                stream.read_exact(&mut buffer[..frame_size]),
             )
             .await;
 
-            let message_data = match message_result {
-                Ok(Ok(_)) => buffer[..length].to_vec(),
+            let frame_data = match frame_result {
+                Ok(Ok(_)) => &buffer[..frame_size],
                 Ok(Err(e)) => {
-                    tracing::warn!("Failed to read message from {}: {}", client_addr, e);
+                    tracing::warn!("Failed to read frame from {}: {}", client_addr, e);
                     break;
                 }
                 Err(_) => {
-                    tracing::warn!("Timeout reading message from {}", client_addr);
+                    tracing::warn!("Timeout reading frame from {}", client_addr);
                     break;
                 }
             };
 
+            // Parse frame: sequence (4 bytes) + payload + crc32 (4 bytes)
+            let sequence_bytes = &frame_data[0..4];
+            let payload = &frame_data[4..4 + length];
+            let crc32_bytes = &frame_data[4 + length..4 + length + 4];
+
+            // Convert sequence number from big-endian
+            let sequence_number = u32::from_be_bytes([
+                sequence_bytes[0],
+                sequence_bytes[1],
+                sequence_bytes[2],
+                sequence_bytes[3],
+            ]);
+
+            // Convert CRC32 from big-endian
+            let received_crc32 = u32::from_be_bytes([
+                crc32_bytes[0],
+                crc32_bytes[1],
+                crc32_bytes[2],
+                crc32_bytes[3],
+            ]);
+
+            // Validate CRC32 over sequence number + payload
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(sequence_bytes);
+            hasher.update(payload);
+            let computed_crc32 = hasher.finalize();
+
+            if received_crc32 != computed_crc32 {
+                tracing::error!(
+                    "CRC32 mismatch from {}: received={:08x}, computed={:08x}",
+                    client_addr,
+                    received_crc32,
+                    computed_crc32
+                );
+                break;
+            }
+
+            let message_data = payload.to_vec();
+
             // Parse and handle the message
-            let response = match Self::process_message(&common, message_data).await {
-                Ok(response) => response,
-                Err(e) => {
-                    tracing::error!("Error processing message from {}: {}", client_addr, e);
-                    continue;
-                }
-            };
+            let response =
+                match Self::process_message(&common, &protocol_manager, &handler, message_data)
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(e) => {
+                        tracing::error!("Error processing message from {}: {}", client_addr, e);
+                        continue;
+                    }
+                };
 
             // Send response
-            if let Err(e) = Self::send_response(&mut stream, response).await {
+            if let Err(e) = Self::send_response(&mut stream, response, sequence_number).await {
                 tracing::warn!("Failed to send response to {}: {}", client_addr, e);
                 break;
             }
@@ -122,42 +231,71 @@ impl UnixSocketServer {
     /// Process an incoming message
     async fn process_message(
         common: &Arc<RwLock<ServerCommon>>,
+        protocol_manager: &ProtocolManager,
+        handler: &Arc<RwLock<Option<SimpleMessageHandler>>>,
         message_data: Vec<u8>,
     ) -> IpcResult<Vec<u8>> {
-        // Parse the detection task
-        let task = prost::Message::decode(&message_data[..]).map_err(|e| {
-            IpcError::invalid_message(format!("Failed to decode DetectionTask: {}", e))
-        })?;
+        // Decode using protocol manager
+        let (task, _sequence_number) =
+            protocol_manager.decode_message::<sentinel_lib::proto::DetectionTask>(&message_data)?;
 
-        // Get the handler
-        let common_guard = common.read().await;
-        let handler = common_guard
-            .handler()
+        // Check flow control
+        if !protocol_manager.can_send() {
+            return Err(IpcError::invalid_message(
+                "Flow control: no credits available",
+            ));
+        }
+
+        // Get the handler from the shared Arc<RwLock<Option<SimpleMessageHandler>>>
+        let handler_guard = handler.read().await;
+        let handler = handler_guard
+            .as_ref()
             .ok_or_else(|| IpcError::invalid_message("No message handler set"))?;
 
         // Process the task
         let result = handler.handle(task).await?;
 
         // Update statistics
-        drop(common_guard);
         let mut common_guard = common.write().await;
         common_guard.stats_mut().record_message();
 
-        // Encode the response
-        let response_data = prost::Message::encode_to_vec(&result);
+        // Encode the response using protocol manager
+        let response_data = protocol_manager.encode_message(&result)?;
         Ok(response_data)
     }
 
-    /// Send a response to the client
-    async fn send_response(stream: &mut UnixStream, response_data: Vec<u8>) -> IpcResult<()> {
-        // Send message length
-        let length = response_data.len() as u32;
-        stream.write_all(&length.to_be_bytes()).await?;
+    /// Send a response to the client with proper framing
+    async fn send_response(
+        stream: &mut UnixStream,
+        response_data: Vec<u8>,
+        sequence_number: u32,
+    ) -> IpcResult<()> {
+        // Encode varint length prefix
+        let mut length_bytes = Vec::new();
+        let mut length = response_data.len() as u64;
+        while length >= 0x80 {
+            length_bytes.push((length as u8) | 0x80);
+            length >>= 7;
+        }
+        length_bytes.push(length as u8);
 
-        // Send the actual message
+        // Send varint length prefix
+        stream.write_all(&length_bytes).await?;
+
+        // Send sequence number (4 bytes, big-endian)
+        stream.write_all(&sequence_number.to_be_bytes()).await?;
+
+        // Send payload
         stream.write_all(&response_data).await?;
-        stream.flush().await?;
 
+        // Compute and send CRC32 over sequence + payload
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&sequence_number.to_be_bytes());
+        hasher.update(&response_data);
+        let crc32 = hasher.finalize();
+        stream.write_all(&crc32.to_be_bytes()).await?;
+
+        stream.flush().await?;
         Ok(())
     }
 }
@@ -174,7 +312,13 @@ impl IpcServer for UnixSocketServer {
         // Create the Unix listener
         let path = self.common.read().await.config().path.clone();
         let _ = std::fs::remove_file(&path); // Remove existing socket file
-        let listener = UnixListener::bind(&path).map_err(IpcError::Io)?;
+        let listener = match UnixListener::bind(&path) {
+            Ok(listener) => listener,
+            Err(e) => {
+                self.running.store(false, Ordering::SeqCst);
+                return Err(IpcError::Io(e));
+            }
+        };
 
         // Update server state
         {
@@ -185,8 +329,13 @@ impl IpcServer for UnixSocketServer {
         self.listener = Some(listener);
         tracing::info!("Unix socket server started on {}", path);
 
+        // Set running flag to true
+        self.running.store(true, Ordering::SeqCst);
+
         // Start the server loop
         let common = Arc::clone(&self.common);
+        let protocol_manager = Arc::clone(&self.protocol_manager);
+        let handler = Arc::clone(&self.handler);
         let listener = self.listener.take().unwrap();
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
@@ -218,7 +367,8 @@ impl IpcServer for UnixSocketServer {
                                 }
 
                                 // Handle the connection
-                                tokio::spawn(Self::handle_connection(common, stream, client_addr));
+                                let message_timeout = common.read().await.config().message_timeout_secs as u64;
+                                tokio::spawn(Self::handle_connection(common, Arc::clone(&protocol_manager), Arc::clone(&handler), stream, client_addr, message_timeout));
                             }
                             Err(e) => {
                                 tracing::error!("Failed to accept connection: {}", e);
@@ -242,6 +392,9 @@ impl IpcServer for UnixSocketServer {
     }
 
     async fn stop(&mut self) -> IpcResult<()> {
+        // Set running flag to false
+        self.running.store(false, Ordering::SeqCst);
+
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
         }
@@ -258,20 +411,21 @@ impl IpcServer for UnixSocketServer {
     }
 
     fn is_running(&self) -> bool {
-        // For now, we'll return false since we can't use blocking_read in async context
-        // In a real implementation, we'd need to track this state differently
-        false
+        self.running.load(Ordering::SeqCst)
     }
 
     fn config(&self) -> &IpcConfig {
         &self.config
     }
 
-    fn set_handler(&mut self, _handler: SimpleMessageHandler) {
-        // This is a bit tricky with Arc<RwLock<>>, we need to handle it in the async context
-        // For now, we'll store it in a way that can be accessed by the async tasks
-        // In a real implementation, you might want to use a different approach
-        tracing::warn!("set_handler called but not fully implemented for UnixSocketServer");
+    fn set_handler(&mut self, handler: SimpleMessageHandler) {
+        // Store the handler in the shared Arc<RwLock<Option<SimpleMessageHandler>>>
+        // This will be accessible to async tasks
+        let handler_arc = Arc::clone(&self.handler);
+        tokio::spawn(async move {
+            let mut handler_guard = handler_arc.write().await;
+            *handler_guard = Some(handler);
+        });
     }
 
     async fn get_stats(&self) -> IpcResult<ServerStats> {

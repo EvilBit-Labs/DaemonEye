@@ -3,6 +3,7 @@
 use clap::Parser;
 use sentinel_lib::{config, models, storage, telemetry};
 use std::sync::Arc;
+use sysinfo::System;
 use tokio::sync::Mutex;
 
 mod ipc;
@@ -27,23 +28,75 @@ impl ProcessMessageHandler {
 
         match task.task_type {
             task_type if task_type == ProtoTaskType::EnumerateProcesses as i32 => {
-                // Simulate process enumeration
-                let processes = vec![ProtoProcessRecord {
-                    pid: 1234,
-                    ppid: Some(1),
-                    name: "test-process".to_string(),
-                    executable_path: Some("/usr/bin/test".to_string()),
-                    command_line: vec!["test".to_string(), "--arg".to_string()],
-                    start_time: Some(chrono::Utc::now().timestamp()),
-                    cpu_usage: Some(25.5),
-                    memory_usage: Some(1024 * 1024),
-                    executable_hash: Some("abc123def456".to_string()),
-                    hash_algorithm: Some("sha256".to_string()),
-                    user_id: Some("1000".to_string()),
-                    accessible: true,
-                    file_exists: true,
-                    collection_time: chrono::Utc::now().timestamp_millis(),
-                }];
+                // Real process enumeration using sysinfo
+                let mut system = System::new_all();
+                system.refresh_all();
+
+                let processes: Vec<ProtoProcessRecord> = system
+                    .processes()
+                    .iter()
+                    .map(|(pid, process)| {
+                        // Convert PID to u32
+                        let pid_u32 = pid.as_u32();
+
+                        // Get parent PID
+                        let ppid = process.parent().map(|p| p.as_u32());
+
+                        // Get process name
+                        let name = process.name().to_string_lossy().to_string();
+
+                        // Get executable path
+                        let executable_path =
+                            process.exe().map(|path| path.to_string_lossy().to_string());
+
+                        // Get command line arguments
+                        let command_line = process
+                            .cmd()
+                            .iter()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .collect();
+
+                        // Get start time (convert to seconds)
+                        let start_time = Some(process.start_time() as i64);
+
+                        // Get CPU usage
+                        let cpu_usage = Some(process.cpu_usage() as f64);
+
+                        // Get memory usage (convert from KB to bytes)
+                        let memory_usage = Some(process.memory() * 1024);
+
+                        // Set executable hash and algorithm (None for now, would need file hashing)
+                        let executable_hash = None;
+                        let hash_algorithm = None;
+
+                        // Get user ID (convert to string)
+                        let user_id = process.user_id().map(|uid| uid.to_string());
+
+                        // Set accessible and file_exists based on process status
+                        let accessible = true; // Process is accessible if we can enumerate it
+                        let file_exists = executable_path.is_some();
+
+                        // Set collection time
+                        let collection_time = chrono::Utc::now().timestamp_millis();
+
+                        ProtoProcessRecord {
+                            pid: pid_u32,
+                            ppid,
+                            name,
+                            executable_path,
+                            command_line,
+                            start_time,
+                            cpu_usage,
+                            memory_usage,
+                            executable_hash,
+                            hash_algorithm,
+                            user_id,
+                            accessible,
+                            file_exists,
+                            collection_time,
+                        }
+                    })
+                    .collect();
 
                 Ok(DetectionResult::success(&task.task_id, processes))
             }
@@ -70,6 +123,10 @@ struct Cli {
     /// Log level
     #[arg(short, long, default_value = "info")]
     log_level: String,
+
+    /// IPC socket path
+    #[arg(short, long, default_value = "/tmp/sentineld-procmond.sock")]
+    socket: String,
 }
 
 #[tokio::main]
@@ -110,7 +167,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Database stats: {:?}", stats);
 
     // Initialize and start IPC server
-    let ipc_server = initialize_ipc_server(&db_manager).await?;
+    let ipc_server = initialize_ipc_server(&db_manager, &cli.socket).await?;
 
     // Keep the server running until shutdown signal
     run_ipc_server(ipc_server).await?;
@@ -121,9 +178,10 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Initialize the IPC server with proper configuration
 async fn initialize_ipc_server(
     db_manager: &Arc<Mutex<storage::DatabaseManager>>,
+    socket_path: &str,
 ) -> Result<Box<dyn IpcServer>, IpcError> {
     let ipc_config = IpcConfig {
-        path: "/tmp/sentineld-procmond.sock".to_string(),
+        path: socket_path.to_string(),
         max_connections: 10,
         connection_timeout_secs: 30,
         message_timeout_secs: 60,

@@ -32,16 +32,26 @@ assert_cmd = "2.0.17"
 # Async traits
 async-trait = "0.1"
 
+# Binary serialization
+bincode = "1.3"
+
 # Cryptographic hashing
 blake3 = "1.8"
+bytes = "1.9"
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
 
 # CLI
 clap = { version = "4.0", features = ["derive"] }
+
+# CRC32 checksum
+crc32fast = "1.4"
 criterion = "0.7"
 futures = "0.3"
+
+# IPC communication
+interprocess = { version = "2.2", features = ["tokio"] }
 predicates = "3.1"
 proptest = "1.7"
 
@@ -109,12 +119,16 @@ required-features = ["cli"]
 
 # Feature flags for precise dependency control
 [features]
-default = ["procmond", "agent", "cli"]
+default = ["procmond", "agent", "cli", "ipc"]
 
 # Component features
 procmond = ["sysinfo", "process-collection"]
 agent = ["futures", "detection-engine", "alerting"]
 cli = ["serde_json", "terminal-ui"]
+
+# IPC transport features  
+ipc = []                 # Default: use tokio native IPC transport
+windows-pipe-strict = [] # Windows-only: use strict named pipe SDDL
 
 # Capability features (map to sentinel-lib modules)
 process-collection = []
@@ -128,12 +142,18 @@ minimal = ["cli"]
 
 [dependencies]
 anyhow = { workspace = true }
-
-# Additional dependencies for IPC
 async-trait = { workspace = true }
+
+# Protocol layer dependencies
+bincode = { workspace = true }
+bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+crc32fast = { workspace = true }
 futures = { workspace = true, optional = true }
+
+# IPC dependencies
+interprocess = { workspace = true }
 
 # Protocol Buffers support
 prost = { workspace = true }

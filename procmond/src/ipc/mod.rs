@@ -6,6 +6,7 @@
 //! graceful shutdown capabilities.
 
 use sentinel_lib::proto::{DetectionResult, DetectionTask};
+use std::time::Duration;
 
 /// Type alias for the message handler function to reduce complexity
 pub type MessageHandlerFn = Box<
@@ -18,6 +19,7 @@ pub type MessageHandlerFn = Box<
 >;
 
 pub mod error;
+pub mod protocol;
 pub mod server;
 
 #[cfg(unix)]
@@ -84,7 +86,58 @@ impl SimpleMessageHandler {
     }
 
     pub async fn handle(&self, task: DetectionTask) -> IpcResult<DetectionResult> {
-        (self.handler)(task).await
+        // Pre-processing validation: enforce IPC constraints
+
+        // 1. Check task size constraints by serializing to estimate response size
+        let serialized_task = serde_json::to_vec(&task)
+            .map_err(|e| IpcError::invalid_message(format!("Task serialization failed: {}", e)))?;
+
+        if serialized_task.len() > 16 * 1024 {
+            return Err(IpcError::invalid_message(
+                "Task serialized size exceeds 16KB limit",
+            ));
+        }
+
+        // 2. For enumeration tasks, estimate maximum process count
+        if matches!(
+            task.task_type(),
+            sentinel_lib::proto::TaskType::EnumerateProcesses
+        ) {
+            // Estimate based on typical system process counts
+            // Allow up to 100 processes as per constraint
+            const MAX_PROCESS_COUNT: usize = 100;
+
+            // We can't know the exact count until after processing, but we can
+            // validate that the task itself isn't requesting too many specific processes
+            if let Some(filter) = &task.process_filter {
+                let requested_pids = filter.pids.len();
+                let requested_names = filter.process_names.len();
+
+                if requested_pids > MAX_PROCESS_COUNT {
+                    return Err(IpcError::invalid_message(format!(
+                        "Too many specific PIDs requested: {} (max: {})",
+                        requested_pids, MAX_PROCESS_COUNT
+                    )));
+                }
+
+                if requested_names > MAX_PROCESS_COUNT {
+                    return Err(IpcError::invalid_message(format!(
+                        "Too many specific process names requested: {} (max: {})",
+                        requested_names, MAX_PROCESS_COUNT
+                    )));
+                }
+            }
+        }
+
+        // 3. Enforce 10s request timeout
+        let result = tokio::time::timeout(Duration::from_secs(10), (self.handler)(task)).await;
+
+        match result {
+            Ok(handler_result) => handler_result,
+            Err(_timeout) => Err(IpcError::invalid_message(
+                "Request timeout: handler exceeded 10 second limit",
+            )),
+        }
     }
 
     #[allow(dead_code)]

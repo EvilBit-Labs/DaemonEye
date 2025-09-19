@@ -82,7 +82,6 @@ impl ServerStats {
 #[derive(Debug)]
 pub struct ServerCommon {
     config: IpcConfig,
-    handler: Option<SimpleMessageHandler>,
     stats: ServerStats,
     start_time: Option<std::time::SystemTime>,
 }
@@ -92,21 +91,9 @@ impl ServerCommon {
     pub fn new(config: IpcConfig) -> Self {
         Self {
             config,
-            handler: None,
             stats: ServerStats::new(),
             start_time: None,
         }
-    }
-
-    /// Set the message handler
-    #[allow(dead_code)]
-    pub fn set_handler(&mut self, handler: SimpleMessageHandler) {
-        self.handler = Some(handler);
-    }
-
-    /// Get the message handler
-    pub fn handler(&self) -> Option<&SimpleMessageHandler> {
-        self.handler.as_ref()
     }
 
     /// Get the server configuration
@@ -194,7 +181,6 @@ mod tests {
         let common = ServerCommon::new(config);
 
         assert!(!common.is_running());
-        assert!(common.handler().is_none());
         assert_eq!(common.stats().active_connections, 0);
     }
 
