@@ -13,12 +13,12 @@ Security boundaries: Only `procmond` runs with elevated privileges; `sentinelage
 
 ## Essential Patterns
 
-### Single Crate Structure
+### Workspace Structure
 
-- **Rust 2024 Edition** with MSRV 1.85+, single crate with multiple binaries
-- **Zero warnings policy**: `cargo clippy --all-targets --all-features -- -D warnings` must pass
-- **Forbidden unsafe code**: `unsafe_code = "forbid"` at crate level
-- **Feature flags**: Control dependencies with `procmond`, `agent`, `cli` features
+- **Rust 2024 Edition** with MSRV 1.85+, pure workspace with independent crates
+- **Zero warnings policy**: `cargo clippy --workspace -- -D warnings` must pass
+- **Forbidden unsafe code**: `unsafe_code = "forbid"` enforced at workspace level
+- **Workspace members**: `procmond`, `sentinelagent`, `sentinelcli`, `sentinel-lib`
 - Use `just` for all development tasks (DRY composition with `@just <subrecipe>`)
 
 ### Error Handling
@@ -51,6 +51,32 @@ fn read_process_config(path: &Path) -> Result<ProcessConfig, CollectionError> {
     Ok(ProcessConfig {})
 }
 ```
+
+### IPC Communication with interprocess and protobuf
+
+**Transport Layer**: Use `interprocess` crate for cross-platform IPC communication:
+
+```rust
+use interprocess::local_socket::LocalSocketStream;
+use sentinel_lib::proto::{DetectionTask, DetectionResult};
+
+// Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
+let stream = LocalSocketStream::connect("/tmp/sentineld.sock")?;
+
+// Protobuf message serialization with CRC32 checksums
+let task = DetectionTask::new()
+    .with_rule_id("suspicious_process")
+    .with_query("SELECT * FROM processes WHERE name = 'malware.exe'")
+    .build();
+
+// Serialize and send with framing
+let serialized = prost::Message::encode_to_vec(&task)?;
+// Send with CRC32 and length prefixing for integrity
+```
+
+**Message Framing**: All IPC messages use length-delimited protobuf with CRC32 checksums for corruption detection and sequence numbers for ordering.
+
+**Backpressure**: Credit-based flow control with configurable limits (default: 1000 pending records, max 10 concurrent tasks).
 
 ### Service Layer Pattern
 
@@ -106,10 +132,11 @@ just run-procmond        # Run procmond (with args)
 just run-sentinelagent   # Run sentinelagent (with args)
 just run-sentinelcli     # Run sentinelcli (with args)
 
-# Feature-specific builds
-cargo build --bin procmond --features=procmond
-cargo build --bin sentinelagent --features=agent
-cargo build --bin sentinelcli --features=cli
+# Workspace-specific builds
+cargo build -p procmond      # Build procmond crate
+cargo build -p sentinelagent # Build sentinelagent crate
+cargo build -p sentinelcli   # Build sentinelcli crate
+cargo build -p sentinel-lib  # Build sentinel-lib crate
 
 # CI aggregate (recommended for CI)
 just ci-check            # Run full CI pipeline (pre-commit + lint + test + build + audit + coverage + dist)
@@ -500,7 +527,9 @@ fn validate_query_complexity(statement: &Statement) -> Result<(), ValidationErro
 - **CLI**: clap v4 with derive macros, support `--json` output + `NO_COLOR`
 - **Async**: Tokio runtime with structured logging via `tracing`
 - **Process enumeration**: `sysinfo` crate with platform-specific optimizations
-- **IPC**: Custom protobuf over Unix sockets/named pipes between components
+- **IPC**: `interprocess` crate for cross-platform transport + protobuf for message serialization
+- **Protobuf**: `prost` for code generation, CRC32 checksums for message integrity
+- **Workspace**: Independent crates with shared dependencies via `workspace.dependencies`
 
 ## Documentation Standards
 

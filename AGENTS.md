@@ -36,26 +36,28 @@ just run-sentinelagent [args] # Run sentinelagent with optional args
 ### Core Development Commands
 
 ```bash
-# Single Crate Operations
-cargo build --all-features
-cargo test --all-features
-cargo clippy --all-targets --all-features -- -D warnings
+# Workspace Operations
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
 cargo fmt --all
-cargo check --all-targets --all-features
+cargo check --workspace
 
 # Testing with stable output
-NO_COLOR=1 TERM=dumb cargo test --all-features
+NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific building
-cargo build --bin procmond --features=procmond
-cargo build --bin sentinelagent --features=agent
+cargo build -p procmond
+cargo build -p sentinelagent
+cargo build -p sentinelcli
+cargo build -p sentinel-lib
 
 # Performance testing
 cargo bench  # Run criterion benchmarks
 
 # IPC testing
-cargo test --test ipc_integration --features ipc-interprocess  # Test interprocess transport
-cargo test ipc::codec --features ipc-interprocess           # Test codec implementation
+cargo test --test ipc_integration -p sentinel-lib  # Test interprocess transport
+cargo test ipc::codec -p sentinel-lib             # Test codec implementation
 ```
 
 ## Quality Assurance
@@ -103,8 +105,7 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 1. **Project Rules** (.cursor/rules/, AGENTS.md, GEMINI.md) - Highest precedence
 2. **Steering Documents** (.kiro/steering/) - Architectural authority
 3. **Technical Specifications** (.kiro/specs/) - Implementation requirements
-4. **WARP.md** - Operational commands and workflows
-5. **Embedded defaults** - Lowest precedence
+4. **Embedded defaults** - Lowest precedence
 
 ---
 
@@ -240,8 +241,34 @@ sequenceDiagram
 - **Process Enumeration**: sysinfo crate with platform-specific optimizations
 - **Logging**: tracing ecosystem with structured JSON output
 - **Configuration**: YAML/TOML via figment and config crates with hierarchical overrides
-- **IPC**: Custom protobuf over Unix sockets/named pipes
+- **IPC**: `interprocess` crate for cross-platform transport + protobuf for message serialization
 - **Testing**: cargo-nextest, assert_cmd, predicates, criterion, insta
+
+### IPC Communication with interprocess and protobuf
+
+**Transport Layer**: Use `interprocess` crate for cross-platform IPC communication:
+
+```rust
+use interprocess::local_socket::LocalSocketStream;
+use sentinel_lib::proto::{DetectionTask, DetectionResult};
+
+// Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
+let stream = LocalSocketStream::connect("/tmp/sentineld.sock")?;
+
+// Protobuf message serialization with CRC32 checksums
+let task = DetectionTask::new()
+    .with_rule_id("suspicious_process")
+    .with_query("SELECT * FROM processes WHERE name = 'malware.exe'")
+    .build();
+
+// Serialize and send with framing
+let serialized = prost::Message::encode_to_vec(&task)?;
+// Send with CRC32 and length prefixing for integrity
+```
+
+**Message Framing**: All IPC messages use length-delimited protobuf with CRC32 checksums for corruption detection and sequence numbers for ordering.
+
+**Backpressure**: Credit-based flow control with configurable limits (default: 1000 pending records, max 10 concurrent tasks).
 
 ### OS Support Matrix
 
@@ -407,19 +434,21 @@ just run-sentinelagent [args] # Run sentinelagent with optional args
 ### Core Development Commands
 
 ```bash
-# Single Crate Operations
-cargo build --all-features
-cargo test --all-features
-cargo clippy --all-targets --all-features -- -D warnings
+# Workspace Operations
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
 cargo fmt --all
-cargo check --all-targets --all-features
+cargo check --workspace
 
 # Testing with stable output
-NO_COLOR=1 TERM=dumb cargo test --all-features
+NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific building
-cargo build --bin procmond --features=procmond
-cargo build --bin sentinelagent --features=agent
+cargo build -p procmond
+cargo build -p sentinelagent
+cargo build -p sentinelcli
+cargo build -p sentinel-lib
 
 # Performance testing
 cargo bench  # Run criterion benchmarks
@@ -442,29 +471,39 @@ cargo bench  # Run criterion benchmarks
 
 ## Code Organization and Architecture
 
-### Single Crate Structure
+### Workspace Structure
 
 ```text
 SentinelD/
-├── Cargo.toml            # Single crate with [[bin]] entries
-├── procmond/             # Privileged Process Collector (binary)
+├── Cargo.toml            # Workspace root with shared dependencies
+├── procmond/             # Privileged Process Collector (independent crate)
+│   ├── Cargo.toml       # Crate-specific dependencies
 │   ├── src/
 │   │   └── main.rs      # Binary implementation
 │   └── tests/           # Component-specific tests
-├── sentinelagent/        # User-Space Orchestrator (binary)
+├── sentinelagent/        # User-Space Orchestrator (independent crate)
+│   ├── Cargo.toml       # Crate-specific dependencies
 │   ├── src/
 │   │   └── main.rs      # Binary implementation
 │   └── tests/           # Component-specific tests
-├── sentinelcli/          # Command-Line Interface (binary)
+├── sentinelcli/          # Command-Line Interface (independent crate)
+│   ├── Cargo.toml       # Crate-specific dependencies
 │   ├── src/
 │   │   └── main.rs      # Binary implementation
 │   └── tests/           # Component-specific tests
-├── sentinel-lib/         # Shared Library Components
+├── sentinel-lib/         # Shared Library Components (independent crate)
+│   ├── Cargo.toml       # Crate-specific dependencies
+│   ├── build.rs         # Protobuf compilation
+│   ├── proto/           # Protobuf definitions
+│   │   ├── common.proto
+│   │   └── ipc.proto
 │   ├── src/
-│   │   ├── lib.rs       # Feature-gated modules
-│   │   ├── alerting.rs  # cfg(feature = "alerting")
-│   │   ├── detection.rs # cfg(feature = "detection-engine")
+│   │   ├── lib.rs       # Library entry point
+│   │   ├── proto.rs     # Generated protobuf code
+│   │   ├── alerting.rs  # Alert delivery system
+│   │   ├── detection.rs # SQL-based detection engine
 │   │   └── ...          # Other modules
+│   └── tests/           # Library tests
 ├── tests/                # Integration tests
 │   ├── procmond.rs
 │   ├── sentinelagent.rs
