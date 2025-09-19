@@ -1,0 +1,456 @@
+---
+globs: **/*.rs
+---
+
+# Rust Linting Rules for SentinelD
+
+This document explains the intent behind each clippy lint rule in SentinelD's Cargo.toml. These rules are carefully chosen for a security-critical process monitoring system and should not be disabled without understanding their purpose.
+
+## Critical Security Rules (FORBIDDEN)
+
+### `panic = "forbid"`
+
+**Intent**: Panics crash the monitoring system, leaving hosts unprotected. In a security monitoring context, this is unacceptable.
+**Why not to disable**: A crashed monitor means zero visibility into threats.
+
+### `unwrap_used = "forbid"`
+
+**Intent**: Unwraps can cause unexpected crashes. Production monitoring systems must handle all error cases gracefully.
+**Why not to disable**: Silent failures in error handling can mask security events.
+
+### `await_holding_lock = "deny"`
+
+**Intent**: Prevents deadlocks in async code that could freeze the entire monitoring system.
+**Why not to disable**: A frozen monitor provides no security value.
+
+## Memory Safety Rules
+
+### `as_conversions = "warn"`
+
+**Intent**: Prevents potentially lossy type conversions that could corrupt data or cause security bypasses.
+**Why not to disable**: Data corruption in security monitoring can lead to false negatives.
+
+### `as_ptr_cast_mut = "warn"`
+
+**Intent**: Prevents dangerous mutable pointer casts that could lead to memory corruption or use-after-free.
+**Why not to disable**: Memory corruption in security-critical code is a major vulnerability.
+
+### `cast_ptr_alignment = "warn"`
+
+**Intent**: Ensures pointer alignment is correct to prevent undefined behavior and potential crashes.
+**Why not to disable**: Misaligned pointers can cause crashes or security issues.
+
+### `indexing_slicing = "warn"`
+
+**Intent**: Prevents out-of-bounds array access that could cause crashes or information disclosure.
+**Why not to disable**: Buffer overflows are a common attack vector.
+
+## Arithmetic Safety Rules
+
+### `arithmetic_side_effects = "warn"`
+
+**Intent**: Catches unintended arithmetic operations that could lead to incorrect calculations or security bypasses.
+**Why not to disable**: Incorrect arithmetic in security calculations can create vulnerabilities.
+
+### `integer_division = "warn"`
+
+**Intent**: Warns about potential division by zero that could crash the system.
+**Why not to disable**: Division by zero crashes can be exploited or cause monitoring failures.
+
+### `modulo_arithmetic = "warn"`
+
+**Intent**: Prevents modulo by zero errors that could crash the system.
+**Why not to disable**: Similar to division by zero, this can cause system crashes.
+
+### `float_cmp = "warn"`
+
+**Intent**: Ensures safe floating-point comparisons to prevent incorrect security decisions.
+**Why not to disable**: Incorrect float comparisons can lead to wrong threat assessments.
+
+## Performance Rules
+
+### `clone_on_ref_ptr = "warn"`
+
+**Intent**: Prevents unnecessary cloning of reference-counted types that wastes memory and CPU.
+**Why not to disable**: In a monitoring system, performance directly impacts detection capability.
+
+### `rc_buffer = "warn"`
+
+**Intent**: Optimizes reference-counted buffer usage for better performance.
+**Why not to disable**: Poor buffer management can cause memory pressure and slow detection.
+
+### `rc_mutex = "warn"`
+
+**Intent**: Warns about inefficient reference-counted mutex usage that can cause contention.
+**Why not to disable**: Lock contention can slow down threat detection.
+
+### `large_stack_arrays = "warn"`
+
+**Intent**: Prevents stack overflow from large arrays that could crash the system.
+**Why not to disable**: Stack overflows can crash the monitoring system.
+
+### `str_to_string = "warn"`
+
+**Intent**: Avoids unnecessary string allocations that waste memory.
+**Why not to disable**: String allocation overhead can impact performance in high-throughput monitoring.
+
+### `string_add = "warn"`
+
+**Intent**: Prevents inefficient string concatenation that can cause performance issues.
+**Why not to disable**: String concatenation performance matters in log processing.
+
+### `string_add_assign = "warn"`
+
+**Intent**: Optimizes string building operations for better performance.
+**Why not to disable**: String building is common in alert generation and logging.
+
+### `unused_async = "warn"`
+
+**Intent**: Removes unnecessary async overhead that wastes resources.
+**Why not to disable**: Unnecessary async can impact system responsiveness.
+
+## Correctness Rules
+
+### `correctness = { level = "deny" }`
+
+**Intent**: Denies all correctness issues that could lead to bugs or security vulnerabilities.
+**Why not to disable**: Correctness is fundamental to security monitoring.
+
+### `suspicious = { level = "warn" }`
+
+**Intent**: Warns about suspicious patterns that might indicate bugs or security issues.
+**Why not to disable**: Suspicious patterns often indicate real problems.
+
+### `perf = { level = "warn" }`
+
+**Intent**: Optimizes performance-critical code paths.
+**Why not to disable**: Performance directly impacts security monitoring effectiveness.
+
+## Error Handling Rules
+
+### `expect_used = "warn"`
+
+**Intent**: Prefers proper error handling over expect() for better error messages and handling.
+**Why not to disable**: Proper error handling is crucial for debugging security issues.
+
+### `map_err_ignore = "warn"`
+
+**Intent**: Ensures error transformations are meaningful and not ignored.
+**Why not to disable**: Ignored errors can mask security problems.
+
+### `let_underscore_must_use = "warn"`
+
+**Intent**: Prevents ignoring important return values that might indicate errors.
+**Why not to disable**: Ignored return values can hide security-relevant information.
+
+## Code Organization Rules
+
+### `missing_docs_in_private_items = "allow"`
+
+**Intent**: Private items don't need documentation to reduce noise.
+**Why this exception**: Private implementation details don't need public documentation.
+
+### `redundant_type_annotations = "warn"`
+
+**Intent**: Removes unnecessary type annotations that clutter code.
+**Why not to disable**: Clean code is easier to audit for security issues.
+
+### `pattern_type_mismatch = "warn"`
+
+**Intent**: Ensures pattern matching is type-safe to prevent runtime errors.
+**Why not to disable**: Type mismatches can cause crashes or security bypasses.
+
+## Additional Security Rules
+
+### `dbg_macro = "warn"`
+
+**Intent**: Prevents debug output from accidentally reaching production logs.
+**Why not to disable**: Debug output in production can leak sensitive information.
+
+### `todo = "warn"`
+
+**Intent**: Ensures TODO comments are addressed before production deployment.
+**Why not to disable**: Unfinished code in production monitoring is a security risk.
+
+### `unimplemented = "warn"`
+
+**Intent**: Prevents unimplemented code from reaching production.
+**Why not to disable**: Unimplemented code will panic at runtime.
+
+### `unreachable = "warn"`
+
+**Intent**: Identifies unreachable code that might indicate logic errors.
+**Why not to disable**: Unreachable code often indicates security bypasses or bugs.
+
+## Performance and Resource Rules
+
+### `create_dir = "warn"`
+
+**Intent**: Ensures directory creation is handled properly to prevent race conditions.
+**Why not to disable**: Race conditions in file operations can cause security issues.
+
+### `exit = "warn"`
+
+**Intent**: Prevents unexpected program termination that could leave systems unmonitored.
+**Why not to disable**: Unexpected exits can leave security gaps.
+
+### `filetype_is_file = "warn"`
+
+**Intent**: Ensures proper file type checking to prevent security bypasses.
+**Why not to disable**: Incorrect file type checks can lead to security vulnerabilities.
+
+### `float_equality_without_abs = "warn"`
+
+**Intent**: Prevents incorrect floating-point comparisons that could affect security calculations.
+**Why not to disable**: Incorrect comparisons can lead to wrong security decisions.
+
+### `if_then_some_else_none = "warn"`
+
+**Intent**: Identifies potentially confusing conditional logic that might hide bugs.
+**Why not to disable**: Confusing logic can hide security vulnerabilities.
+
+### `let_underscore_must_use = "warn"`
+
+**Intent**: Prevents ignoring important return values that might indicate errors.
+**Why not to disable**: Ignored return values can hide security-relevant information.
+
+### `lossy_float_literal = "warn"`
+
+**Intent**: Prevents precision loss in floating-point calculations that could affect security metrics.
+**Why not to disable**: Precision loss can lead to incorrect security assessments.
+
+### `match_same_arms = "warn"`
+
+**Intent**: Identifies duplicate match arms that might indicate copy-paste errors or logic bugs.
+**Why not to disable**: Duplicate arms can hide security logic errors.
+
+### `missing_assert_message = "warn"`
+
+**Intent**: Ensures assertions have meaningful messages for debugging security issues.
+**Why not to disable**: Good assertion messages are crucial for security debugging.
+
+### `mixed_read_write_in_expression = "warn"`
+
+**Intent**: Prevents confusing read/write operations that could hide race conditions.
+**Why not to disable**: Race conditions can lead to security vulnerabilities.
+
+### `mutex_atomic = "warn"`
+
+**Intent**: Suggests using atomic operations instead of mutexes for better performance.
+**Why not to disable**: Performance matters in high-throughput security monitoring.
+
+### `mutex_integer = "warn"`
+
+**Intent**: Suggests using atomic integers instead of mutex-protected integers.
+**Why not to disable**: Atomic operations are more efficient for simple data.
+
+### `non_ascii_literal = "warn"`
+
+**Intent**: Ensures non-ASCII literals are intentional and properly handled.
+**Why not to disable**: Improper handling of non-ASCII can lead to security bypasses.
+
+### `non_send_fields_in_send_ty = "warn"`
+
+**Intent**: Ensures thread safety in async code that processes security data.
+**Why not to disable**: Thread safety is crucial for concurrent security processing.
+
+### `partial_pub_fields = "warn"`
+
+**Intent**: Prevents partially public structs that can break encapsulation.
+**Why not to disable**: Encapsulation is important for security-critical data structures.
+
+### `rc_buffer = "warn"`
+
+**Intent**: Optimizes reference-counted buffer usage for better performance.
+**Why not to disable**: Poor buffer management can cause memory pressure and slow detection.
+
+### `rc_mutex = "warn"`
+
+**Intent**: Warns about inefficient reference-counted mutex usage that can cause contention.
+**Why not to disable**: Lock contention can slow down threat detection.
+
+### `same_name_method = "warn"`
+
+**Intent**: Prevents method name conflicts that could lead to confusion or bugs.
+**Why not to disable**: Confusing method names can hide security logic errors.
+
+### `self_named_module_files = "warn"`
+
+**Intent**: Ensures consistent module naming that aids in code organization and security auditing.
+**Why not to disable**: Consistent naming helps with security code reviews.
+
+### `semicolon_inside_block = "warn"`
+
+**Intent**: Prevents confusing semicolon usage that could change code behavior.
+**Why not to disable**: Incorrect semicolons can change security logic.
+
+### `semicolon_outside_block = "warn"`
+
+**Intent**: Ensures proper semicolon usage for clear code structure.
+**Why not to disable**: Clear code structure aids in security auditing.
+
+### `shadow_reuse = "warn"`
+
+**Intent**: Prevents variable shadowing that can hide bugs or security issues.
+**Why not to disable**: Variable shadowing can hide security logic errors.
+
+### `shadow_same = "warn"`
+
+**Intent**: Prevents shadowing variables with the same name.
+**Why not to disable**: Same-name shadowing can hide bugs.
+
+### `shadow_unrelated = "warn"`
+
+**Intent**: Prevents shadowing unrelated variables that can cause confusion.
+**Why not to disable**: Unrelated shadowing can hide security bugs.
+
+### `string_lit_as_bytes = "warn"`
+
+**Intent**: Prevents unnecessary string literal to bytes conversion.
+**Why not to disable**: Unnecessary conversions waste resources in high-throughput monitoring.
+
+### `string_slice = "warn"`
+
+**Intent**: Optimizes string slicing operations for better performance.
+**Why not to disable**: String operations are common in log processing and alert generation.
+
+### `suspicious_operation_groupings = "warn"`
+
+**Intent**: Identifies suspicious operation groupings that might indicate bugs.
+**Why not to disable**: Suspicious patterns often indicate real security issues.
+
+### `trailing_empty_array = "warn"`
+
+**Intent**: Prevents trailing empty arrays that can cause confusion or bugs.
+**Why not to disable**: Confusing array structures can hide security bugs.
+
+### `transmute_undefined_repr = "warn"`
+
+**Intent**: Prevents undefined behavior from transmute operations.
+**Why not to disable**: Undefined behavior can lead to security vulnerabilities.
+
+### `trivial_regex = "warn"`
+
+**Intent**: Identifies trivial regex patterns that could be simplified.
+**Why not to disable**: Simple patterns are easier to audit for security issues.
+
+### `undocumented_unsafe_blocks = "warn"`
+
+**Intent**: Ensures unsafe blocks are documented to explain their necessity.
+**Why not to disable**: Unsafe code must be carefully documented for security auditing.
+
+### `unnecessary_self_imports = "warn"`
+
+**Intent**: Removes unnecessary self imports that clutter code.
+**Why not to disable**: Clean code is easier to audit for security issues.
+
+### `unseparated_literal_suffix = "warn"`
+
+**Intent**: Ensures proper literal suffix formatting for readability.
+**Why not to disable**: Readable code aids in security auditing.
+
+### `unused_peekable = "warn"`
+
+**Intent**: Removes unused peekable iterators that waste resources.
+**Why not to disable**: Unused resources can impact performance in monitoring systems.
+
+### `unused_rounding = "warn"`
+
+**Intent**: Removes unused rounding operations that waste CPU cycles.
+**Why not to disable**: CPU cycles matter in high-throughput security monitoring.
+
+### `use_debug = "warn"`
+
+**Intent**: Prevents debug formatting in production code that can leak information.
+**Why not to disable**: Debug formatting can leak sensitive information in logs.
+
+### `verbose_file_reads = "warn"`
+
+**Intent**: Optimizes file reading operations for better performance.
+**Why not to disable**: File I/O performance matters in log processing.
+
+### `wildcard_enum_match_arm = "warn"`
+
+**Intent**: Prevents wildcard enum matching that can hide security logic errors.
+**Why not to disable**: Wildcard matching can hide important security cases.
+
+### `zero_sized_map_values = "warn"`
+
+**Intent**: Identifies zero-sized map values that might indicate inefficient data structures.
+**Why not to disable**: Inefficient data structures can impact monitoring performance.
+
+## Pragmatic Exceptions
+
+### `missing_errors_doc = "allow"`
+
+**Intent**: Error documentation can be verbose and obvious from context.
+**Why this exception**: Reduces noise while maintaining code clarity.
+
+### `missing_panics_doc = "allow"`
+
+**Intent**: Panic documentation is often obvious from the panic message.
+**Why this exception**: Reduces documentation overhead for obvious cases.
+
+### `must_use_candidate = "allow"`
+
+**Intent**: Some must-use candidates are too noisy for this project.
+**Why this exception**: Balances safety with developer productivity.
+
+### `cast_possible_truncation = "allow"`
+
+**Intent**: Some truncation warnings are too noisy for this project.
+**Why this exception**: Reduces noise while maintaining type safety.
+
+### `cast_precision_loss = "allow"`
+
+**Intent**: Some precision loss warnings are acceptable in this context.
+**Why this exception**: Balances precision with practical considerations.
+
+### `cast_sign_loss = "allow"`
+
+**Intent**: Some sign loss warnings are acceptable in this context.
+**Why this exception**: Reduces noise while maintaining correctness.
+
+### `module_name_repetitions = "allow"`
+
+**Intent**: Module name repetitions are sometimes necessary for clarity.
+**Why this exception**: Allows clear module organization.
+
+### `similar_names = "allow"`
+
+**Intent**: Similar names are sometimes necessary for related functionality.
+**Why this exception**: Reduces noise while maintaining clear naming.
+
+### `too_many_lines = "allow"`
+
+**Intent**: Some modules are naturally large due to their complexity.
+**Why this exception**: Allows complex modules when necessary.
+
+### `type_complexity = "allow"`
+
+**Intent**: Complex types are sometimes necessary for security-critical code.
+**Why this exception**: Balances complexity with functionality.
+
+### `async_yields_async = "allow"`
+
+**Intent**: Some async yields are necessary for proper async patterns.
+**Why this exception**: Allows necessary async patterns.
+
+### `large_futures = "allow"`
+
+**Intent**: Some futures are naturally large due to their complexity.
+**Why this exception**: Allows complex futures when necessary.
+
+### `result_large_err = "allow"`
+
+**Intent**: Some error types are naturally large due to their complexity.
+**Why this exception**: Allows complex error types when necessary.
+
+### `cargo_common_metadata = "allow"`
+
+**Intent**: Common metadata warnings are too noisy for this project.
+**Why this exception**: Reduces noise while maintaining package metadata.
+
+## Summary
+
+These linting rules are carefully chosen for a security-critical process monitoring system. Each rule serves a specific purpose in preventing security vulnerabilities, ensuring performance, and maintaining code quality. They should not be disabled without understanding their intent and the security implications of doing so.
