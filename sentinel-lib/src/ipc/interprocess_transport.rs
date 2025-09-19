@@ -6,11 +6,12 @@
 use crate::ipc::IpcConfig;
 use crate::ipc::codec::{IpcCodec, IpcError, IpcResult};
 use crate::proto::{DetectionResult, DetectionTask};
-use interprocess::local_socket::{
-    GenericFilePath, ListenerOptions, Name, ToFsName, tokio::prelude::*,
-};
+#[cfg(unix)]
+use interprocess::local_socket::{GenericFilePath, ToFsName};
 #[cfg(windows)]
 use interprocess::local_socket::{GenericNamespaced, ToNsName};
+use interprocess::local_socket::{ListenerOptions, Name, tokio::prelude::*};
+#[cfg(unix)]
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Semaphore, oneshot};
@@ -172,6 +173,7 @@ impl InterprocessServer {
             // Windows named pipe - use namespace path
             self.config
                 .endpoint_path
+                .clone()
                 .to_ns_name::<GenericNamespaced>()
                 .map_err(|e| IpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)))
         }
@@ -255,7 +257,7 @@ impl InterprocessServer {
     }
 }
 
-/// Interprocess-based IPC client implementation  
+/// Interprocess-based IPC client implementation
 pub struct InterprocessClient {
     config: IpcConfig,
     codec: IpcCodec,
@@ -282,6 +284,7 @@ impl InterprocessClient {
             // Windows named pipe - use namespace path
             self.config
                 .endpoint_path
+                .clone()
                 .to_ns_name::<GenericNamespaced>()
                 .map_err(|e| IpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)))
         }
