@@ -36,7 +36,38 @@ pub struct InterprocessServer {
 }
 
 impl InterprocessServer {
-    /// Create a new interprocess server
+    /// Create a new interprocess server with the specified configuration.
+    ///
+    /// This method initializes an interprocess server that can handle detection tasks
+    /// from client connections. The server uses Unix domain sockets on Unix-like systems
+    /// and named pipes on Windows for cross-platform IPC communication.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - IPC configuration containing endpoint path, timeouts, and connection limits
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(InterprocessServer)` on successful initialization, or `Err(IpcError)` if
+    /// the configuration is invalid or the server cannot be created.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - The endpoint path is invalid for the current platform
+    /// - Required IPC resources cannot be allocated
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use sentinel_lib::ipc::{IpcConfig, InterprocessServer};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = IpcConfig::default();
+    /// let server = InterprocessServer::new(config)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new(config: IpcConfig) -> IpcResult<Self> {
         Ok(Self {
             config,
@@ -45,7 +76,49 @@ impl InterprocessServer {
         })
     }
 
-    /// Set the message handler
+    /// Set the message handler for processing detection tasks.
+    ///
+    /// This method configures the handler function that will be called for each incoming
+    /// detection task. The handler must be thread-safe and can be called concurrently
+    /// from multiple client connections.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - A closure or function that takes a `DetectionTask` and returns a
+    ///   future resolving to `IpcResult<DetectionResult>`. The handler must implement
+    ///   `Send + Sync + 'static` bounds for thread safety.
+    ///
+    /// # Handler Signature
+    ///
+    /// The handler function must have the signature:
+    /// ```rust,ignore
+    /// Fn(DetectionTask) -> Fut + Send + Sync + 'static
+    /// ```
+    /// where `Fut: Future<Output = IpcResult<DetectionResult>> + Send + 'static`
+    ///
+    /// # Thread Safety
+    ///
+    /// The handler must be thread-safe (`Send + Sync`) as it may be called concurrently
+    /// from multiple client connections. The `'static` bound ensures the handler can
+    /// outlive the server instance.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use sentinel_lib::ipc::{InterprocessServer, IpcConfig};
+    /// use sentinel_lib::proto::{DetectionTask, DetectionResult};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut server = InterprocessServer::new(IpcConfig::default())?;
+    ///
+    /// server.set_handler(|task: DetectionTask| async move {
+    ///     // Process the detection task
+    ///     println!("Processing task: {}", task.task_id);
+    ///     Ok(DetectionResult::success(&task.task_id, vec![]))
+    /// });
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set_handler<F, Fut>(&mut self, handler: F)
     where
         F: Fn(DetectionTask) -> Fut + Send + Sync + 'static,
@@ -218,6 +291,9 @@ impl InterprocessServer {
                 }
             };
 
+            // Capture task ID before moving task into handler
+            let task_id = task.task_id.clone();
+
             // Process task
             let result = handler(task).await;
 
@@ -233,9 +309,9 @@ impl InterprocessServer {
                     }
                 }
                 Err(e) => {
-                    // Send error result
+                    // Send error result with correct task ID
                     let error_result = DetectionResult {
-                        task_id: "unknown".to_string(), // We don't have task_id from the error
+                        task_id,
                         success: false,
                         error_message: Some(e.to_string()),
                         processes: vec![],

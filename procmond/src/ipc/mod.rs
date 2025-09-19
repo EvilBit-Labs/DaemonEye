@@ -28,7 +28,7 @@ pub struct IpcConfig {
 impl Default for IpcConfig {
     fn default() -> Self {
         Self {
-            path: "/tmp/sentineld-procmond.sock".to_string(),
+            path: "/var/run/sentineld/procmond.sock".to_string(),
             max_connections: 10,
             connection_timeout_secs: 30,
             message_timeout_secs: 60,
@@ -36,9 +36,50 @@ impl Default for IpcConfig {
     }
 }
 
+/// Create the secure directory for IPC sockets with appropriate permissions
+fn ensure_secure_directory(socket_path: &str) -> IpcResult<()> {
+    use std::fs;
+    use std::path::Path;
+
+    let socket_path = Path::new(socket_path);
+    if let Some(parent_dir) = socket_path.parent() {
+        // Create parent directory if it doesn't exist
+        if !parent_dir.exists() {
+            fs::create_dir_all(parent_dir).map_err(|e| {
+                IpcError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("Failed to create directory {}: {}", parent_dir.display(), e),
+                ))
+            })?;
+        }
+
+        // Set secure permissions on Unix systems
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = fs::Permissions::from_mode(0o750); // rwxr-x--- (owner: rwx, group: r-x, other: ---)
+            fs::set_permissions(parent_dir, perms).map_err(|e| {
+                IpcError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "Failed to set directory permissions for {}: {}",
+                        parent_dir.display(),
+                        e
+                    ),
+                ))
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Create an IPC server using the interprocess transport
 pub fn create_ipc_server(config: IpcConfig) -> IpcResult<sentinel_lib::ipc::InterprocessServer> {
     use sentinel_lib::ipc::{IpcConfig as LibIpcConfig, TransportType};
+
+    // Ensure the secure directory exists with proper permissions
+    ensure_secure_directory(&config.path)?;
 
     let lib_config = LibIpcConfig {
         transport: TransportType::Interprocess,
@@ -61,7 +102,7 @@ mod tests {
     #[test]
     fn test_ipc_config_default() {
         let config = IpcConfig::default();
-        assert_eq!(config.path, "/tmp/sentineld-procmond.sock");
+        assert_eq!(config.path, "/var/run/sentineld/procmond.sock");
         assert_eq!(config.max_connections, 10);
         assert_eq!(config.connection_timeout_secs, 30);
         assert_eq!(config.message_timeout_secs, 60);

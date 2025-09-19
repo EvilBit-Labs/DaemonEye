@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use sentinel_lib::{config, models, storage, telemetry};
+use sentinel_lib::{config, storage, telemetry};
 use std::sync::Arc;
 use sysinfo::System;
 use tokio::sync::Mutex;
@@ -132,12 +132,6 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize database
     let db_manager = Arc::new(Mutex::new(storage::DatabaseManager::new(&cli.database)?));
-
-    // Create a sample process record
-    let process = models::ProcessRecord::new(1234, "procmond".to_string());
-
-    // Store the process record
-    db_manager.lock().await.store_process(1, &process)?;
 
     // Record operation in telemetry
     let timer = telemetry::PerformanceTimer::start("process_collection".to_string());
