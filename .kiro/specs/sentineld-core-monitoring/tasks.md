@@ -300,25 +300,33 @@
   - Write chaos testing scenarios for network failures and endpoint unavailability
   - _Requirements: 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 15. Implement sentinelcli query and management interface - [#56](https://github.com/EvilBit-Labs/SentinelD/issues/56)
+- [ ] 15. Implement sentinelcli core infrastructure and query commands - [#56](https://github.com/EvilBit-Labs/SentinelD/issues/56)
 
-  - Create IPC client to communicate with sentinelagent for query execution and data retrieval
-  - Implement secure local communication using existing interprocess crate infrastructure
-  - Add multiple output formats (JSON, human-readable table, CSV) with terminal capability detection
-  - Implement streaming and pagination for large result sets via IPC protocol
+  - Create IPC client to communicate with sentinelagent using existing interprocess crate infrastructure
+  - Implement clap-based CLI with global options (--config, --output, --no-color, --verbose, --help, --version)
+  - Add query command with subcommands: interactive shell, single query execution, history, explain, validate
+  - Implement multiple output formats (JSON, table with borders, CSV) with terminal capability detection
+  - Add streaming and pagination support for large result sets via IPC protocol
+  - Create interactive query shell with syntax highlighting, auto-completion, and command history
+  - Implement query parameter binding and prepared statement support through sentinelagent
   - Add color support with NO_COLOR and TERM=dumb environment variable handling
   - Create query request/response protobuf messages extending existing IPC protocol
-  - Write CLI integration tests using insta for snapshot testing
+  - Write CLI integration tests using insta for snapshot testing of all output formats
   - _Requirements: 8.1, 8.2, 10.5_
 
-- [ ] 16. Add rule management capabilities to sentinelcli - [#57](https://github.com/EvilBit-Labs/SentinelD/issues/57)
+- [ ] 16. Implement sentinelcli management commands (rules, alerts, health, data, config, service) - [#57](https://github.com/EvilBit-Labs/SentinelD/issues/57)
 
-  - Implement rule listing, validation, and testing operations
-  - Add rule import/export functionality for bundle-based distribution
-  - Create rule enable/disable operations with configuration validation
-  - Display rule execution statistics and alert history
-  - Write integration tests for complete rule management workflows
-  - _Requirements: 8.2, 8.3_
+  - Add rules command with subcommands: list, show, validate, test, enable/disable, create, edit, delete, import/export, stats, pack management
+  - Implement alerts command with subcommands: list, show, acknowledge, close, reopen, stats, export with filtering by severity/rule/status
+  - Create health command with subcommands: overall status, component-specific checks, metrics, config validation, connectivity testing, logs, diagnostics, repair
+  - Add data command with subcommands: export (processes/audit), stats, vacuum, integrity-check, cleanup with retention policies
+  - Implement config command with subcommands: show, validate, set, reset with hierarchical configuration management
+  - Create service command with subcommands: status, start/stop/restart, logs with component filtering and follow mode
+  - Add shell completion support for bash, zsh, fish, and PowerShell
+  - Implement configuration file support with YAML format and user/system config hierarchy
+  - Add comprehensive error handling with helpful suggestions and troubleshooting guidance
+  - Write integration tests for all command workflows and error scenarios using insta snapshots
+  - _Requirements: 8.2, 8.3, 8.4, 8.5_
 
 - [ ] 17. Implement system health monitoring and diagnostics - [#58](https://github.com/EvilBit-Labs/SentinelD/issues/58)
 
@@ -377,10 +385,15 @@
 
 - [ ] 20.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
 
-  - Configure CI matrix testing across Linux, macOS, Windows
-  - Add multiple Rust version testing (stable, beta, MSRV)
-  - Set up quality gates with clippy, rustfmt, and security auditing
-  - Create automated test reporting and coverage tracking
+  - Configure comprehensive CI matrix testing aligned with AGENTS.md OS Support Matrix
+  - Add primary platform testing: Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Debian 11+ LTS, macOS 14.0+ (Sonoma), Windows 10+/11/Server 2019+/Server 2022
+  - Include architecture matrix: x86_64 and ARM64 for all primary platforms
+  - Add secondary platform testing: Alpine 3.16+, Amazon Linux 2+, Ubuntu 18.04, RHEL 7, macOS 12.0+ (Monterey), FreeBSD 13.0+
+  - Configure multiple Rust version testing (stable, beta, MSRV 1.70+) across primary platforms
+  - Set up quality gates with clippy, rustfmt, security auditing (cargo audit, cargo deny), and overflow-checks validation
+  - Create automated test reporting and coverage tracking with llvm-cov
+  - Add container-based testing for Alpine and Amazon Linux deployments
+  - Configure cross-compilation testing for ARM64 targets
   - _Requirements: All requirements verification_
 
 - [ ] 21. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/SentinelD/issues/62)

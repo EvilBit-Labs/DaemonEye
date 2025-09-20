@@ -12,42 +12,34 @@ The core design follows a pipeline architecture where process data flows from co
 
 The collector-core framework provides a unified foundation for multiple collection components, enabling extensible monitoring capabilities while maintaining shared operational infrastructure:
 
-```text
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                                collector-core Framework                              │
-├─────────────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
-│  │   EventSource   │  │   EventSource   │  │   EventSource   │  │   EventSource   │ │
-│  │   (Process)     │  │   (Network)     │  │  (Filesystem)   │  │ (Performance)   │ │
-│  │                 │  │                 │  │                 │  │                 │ │
-│  │ • sysinfo       │  │ • Netlink/WFP   │  │ • inotify/FSE   │  │ • /proc/perf    │ │
-│  │ • /proc enum    │  │ • Packet cap    │  │ • File ops      │  │ • Resource mon  │ │
-│  │ • Hash compute  │  │ • DNS monitor   │  │ • Access track  │  │ • System metrics│ │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
-│           │                     │                     │                     │        │
-│           └─────────────────────┼─────────────────────┼─────────────────────┘        │
-│                                 │                     │                              │
-│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
-│  │                        Collector Runtime                                        │ │
-│  │  • Event aggregation and batching                                              │ │
-│  │  • IPC server (protobuf + CRC32 framing)                                       │ │
-│  │  • Configuration management and validation                                     │ │
-│  │  • Structured logging and metrics                                              │ │
-│  │  • Health checks and graceful shutdown                                         │ │
-│  │  • Capability negotiation                                                      │ │
-│  └─────────────────────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-                                         │
-                                         ▼
-                              ┌─────────────────┐
-                              │  sentinelagent  │
-                              │ (Orchestrator)  │
-                              │                 │
-                              │ • Task dispatch │
-                              │ • Data aggreg.  │
-                              │ • SQL detection │
-                              │ • Alert mgmt    │
-                              └─────────────────┘
+```mermaid
+graph LR
+    subgraph CC["collector-core Framework"]
+        subgraph ES["Event Sources"]
+            PS["EventSource<br/>(Process)<br/>• sysinfo<br/>• /proc enum<br/>• Hash compute"]
+            NS["EventSource<br/>(Network)<br/>• Netlink/WFP<br/>• Packet cap<br/>• DNS monitor"]
+            FS["EventSource<br/>(Filesystem)<br/>• inotify/FSE<br/>• File ops<br/>• Access track"]
+            PerfS["EventSource<br/>(Performance)<br/>• /proc/perf<br/>• Resource mon<br/>• System metrics"]
+        end
+
+        subgraph CR["Collector Runtime"]
+            AGG["Event aggregation and batching"]
+            IPC["IPC server (protobuf + CRC32 framing)"]
+            CFG["Configuration management and validation"]
+            LOG["Structured logging and metrics"]
+            HEALTH["Health checks and graceful shutdown"]
+            CAP["Capability negotiation"]
+        end
+
+        PS --> CR
+        NS --> CR
+        FS --> CR
+        PerfS --> CR
+    end
+
+    CC --> SA["sentinelagent<br/>(Orchestrator)<br/>• Task dispatch<br/>• Data aggregation<br/>• SQL detection<br/>• Alert management"]
+
+
 ```
 
 **Core Framework Components**:
@@ -59,48 +51,80 @@ The collector-core framework provides a unified foundation for multiple collecti
 
 **Multi-Component Vision**:
 
-1. **procmond**: Process monitoring using collector-core + process EventSource
-2. **netmond**: Network monitoring using collector-core + network EventSource (future)
-3. **fsmond**: Filesystem monitoring using collector-core + filesystem EventSource (future)
-4. **perfmond**: Performance monitoring using collector-core + performance EventSource (future)
+1. **procmond**: Process monitoring using collector-core + process `EventSource`
+2. **netmond**: Network monitoring using collector-core + network `EventSource` (future)
+3. **fsmond**: Filesystem monitoring using collector-core + filesystem `EventSource` (future)
+4. **perfmond**: Performance monitoring using collector-core + performance `EventSource` (future)
 
 ### Component Architecture
 
 SentinelD consists of three main components that work together to provide comprehensive process monitoring, with procmond built on the collector-core framework:
 
-```text
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│    procmond     │    │  sentinelagent  │    │   sentinelcli   │
-│ (collector-core │◀──▶│ (Orchestrator)  │◀───│  (Interface)    │
-│   + process     │    │                 │    │                 │
-│   EventSource)  │    │ • User space    │    │ • User space    │
-│                 │    │ • SQL engine    │    │ • Queries       │
-│ • Privileged    │    │ • Rule mgmt     │    │ • Management    │
-│ • Process enum  │    │ • Detection     │    │ • Diagnostics   │
-│ • Hash compute  │    │ • Alerting      │    │ • Config mgmt   │
-│ • Audit logging │    │ • Network comm  │    │                 │
-│ • Protobuf IPC  │    │ • Task dispatch │    │                 │
-│ • Extensible    │    │ • Multi-domain  │    │                 │
-│   architecture  │    │   correlation   │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │
-         ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐
-│  Audit Ledger   │    │   Event Store   │
-│ (Merkle Tree)   │    │     (redb)      │
-│ collector-core  │    │  sentinelagent  │
-│   managed       │    │    managed      │
-└─────────────────┘    └─────────────────┘
+```mermaid
+graph LR
+    subgraph "SentinelD Architecture"
+        CLI["sentinelcli<br/>(Interface)<br/>• User space<br/>• Queries<br/>• Management<br/>• Diagnostics<br/>• Config mgmt"]
 
-IPC Protocol: Protobuf + CRC32 framing over interprocess crate (existing implementation)
-Communication: sentinelcli ↔ sentinelagent ↔ collector-core components
-Service Management: sentinelagent manages collector-core component lifecycle
-Extensibility: collector-core enables future business/enterprise tier functionality
+        AGENT["sentinelagent<br/>(Orchestrator)<br/>• User space<br/>• SQL engine<br/>• Rule mgmt<br/>• Detection<br/>• Alerting<br/>• Network comm<br/>• Task dispatch<br/>• Multi-domain correlation"]
+
+        PROC["procmond<br/>(collector-core + process EventSource)<br/>• Privileged<br/>• Process enum<br/>• Hash compute<br/>• Audit logging<br/>• Protobuf IPC<br/>• Extensible architecture"]
+
+        AUDIT["Audit Ledger<br/>(Merkle Tree)<br/>collector-core managed"]
+
+        STORE["Event Store<br/>(redb)<br/>sentinelagent managed"]
+    end
+
+    CLI ---|IPC| AGENT
+    AGENT ---|IPC| PROC
+    PROC --> AUDIT
+    AGENT --> STORE
+
+
 ```
+
+**IPC Protocol**: Protobuf + CRC32 framing over interprocess crate (existing implementation) **Communication Flow**: sentinelcli ↔ sentinelagent ↔ collector-core components Service Management: sentinelagent manages collector-core component lifecycle Extensibility: collector-core enables future business/enterprise tier functionality
 
 ### Data Flow Architecture
 
 The system implements a pipeline processing model with clear phases and strict component separation:
+
+```mermaid
+sequenceDiagram
+    participant CLI as sentinelcli
+    participant AGENT as sentinelagent
+    participant CORE as collector-core
+    participant PROC as ProcessEventSource
+    participant AUDIT as Audit Ledger
+    participant STORE as Event Store
+
+    Note over CLI,STORE: Detection Rule Execution Pipeline
+
+    CLI->>AGENT: SQL Detection Rule
+    AGENT->>AGENT: SQL AST Parsing & Validation
+    AGENT->>AGENT: Extract Collection Requirements
+    AGENT->>CORE: Simple Protobuf Collection Task
+
+    Note over CORE,PROC: Collection Phase
+    CORE->>PROC: Start Collection
+    PROC->>PROC: Enumerate Processes
+    PROC->>PROC: Compute SHA-256 Hashes
+    PROC->>AUDIT: Write Audit Entry (Tamper-Evident)
+    PROC->>CORE: Collection Events
+    CORE->>AGENT: Aggregated Results
+
+    Note over AGENT,STORE: Detection & Alert Phase
+    AGENT->>STORE: Store Process Data
+    AGENT->>AGENT: Execute Original SQL Rule
+    AGENT->>AGENT: Generate Structured Alerts
+    AGENT->>AGENT: Multi-Channel Delivery
+
+    Note over CLI,AGENT: Query & Management
+    CLI->>AGENT: Query Request (IPC)
+    AGENT->>STORE: Execute Query
+    AGENT->>CLI: Formatted Results
+```
+
+**Pipeline Phases**:
 
 1. **Collection Phase**: procmond enumerates processes and computes hashes
 2. **SQL-to-IPC Translation**: sentinelagent uses sqlparser to extract collection requirements from SQL AST
@@ -217,12 +241,12 @@ bitflags! {
 
 **Shared Infrastructure**:
 
-- **Configuration Management**: **EXISTING** Hierarchical config loading with validation (sentinel-lib/src/config.rs)
-- **Logging Infrastructure**: **EXISTING** Structured tracing with JSON output and metrics (sentinel-lib/src/telemetry.rs)
-- **IPC Server**: **EXISTING** Protobuf-based communication with sentinelagent (sentinel-lib/src/ipc/)
-- **Health Monitoring**: **EXISTING** Component status tracking and graceful shutdown
-- **Event Batching**: **NEW** Efficient event aggregation and backpressure handling
-- **Capability Negotiation**: **NEW** Dynamic feature discovery and task routing
+- **Configuration Management**: Hierarchical config loading with validation (sentinel-lib/src/config.rs)
+- **Logging Infrastructure**: Structured tracing with JSON output and metrics (sentinel-lib/src/telemetry.rs)
+- **IPC Server**: Protobuf-based communication with sentinelagent (sentinel-lib/src/ipc/)
+- **Health Monitoring**: Component status tracking and graceful shutdown
+- **Event Batching**: Efficient event aggregation and backpressure handling
+- **Capability Negotiation**: Dynamic feature discovery and task routing
 
 **Integration with Existing Components**:
 
@@ -1139,3 +1163,490 @@ Security Invariants:
 5. Canonical format change requires full rebuild and lineage version bump.
 
 See also: `database-standards.mdc` for operational procedures (recovery, pruning, checkpoint export) and future enhancements roadmap.
+
+## SentinelCLI Command-Line Interface Design
+
+### Overview
+
+SentinelCLI provides a comprehensive command-line interface for operators to query data, manage detection rules, monitor system health, and perform administrative tasks. It communicates exclusively with sentinelagent via IPC, maintaining the security boundary where CLI never directly accesses the database.
+
+### Command Structure
+
+```bash
+sentinelcli [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] [ARGS]
+```
+
+### Global Options
+
+```bash
+--config <PATH>          Configuration file path (default: ~/.config/sentineld/cli.yaml)
+--output <FORMAT>        Output format: json, table, csv (default: table)
+--no-color              Disable colored output
+--verbose               Enable verbose logging
+--help                  Show help information
+--version               Show version information
+```
+
+### Core Commands
+
+#### 1. Query Commands (`query`)
+
+Execute SQL queries against historical process data:
+
+```bash
+# Interactive query mode
+sentinelcli query
+
+# Execute single query
+sentinelcli query --sql "SELECT pid, name, executable_path FROM processes WHERE name LIKE '%suspicious%'"
+
+# Query with parameters
+sentinelcli query --sql "SELECT * FROM processes WHERE start_time > ?" --param "2024-01-01T00:00:00Z"
+
+# Export query results
+sentinelcli query --sql "SELECT * FROM processes" --output csv --file processes.csv
+
+# Streaming for large results
+sentinelcli query --sql "SELECT * FROM processes" --stream --limit 1000
+
+# Query with pagination
+sentinelcli query --sql "SELECT * FROM processes ORDER BY start_time DESC" --page 1 --page-size 50
+```
+
+**Subcommands:**
+
+- `sentinelcli query interactive` - Start interactive SQL shell
+- `sentinelcli query history` - Show query history
+- `sentinelcli query explain <SQL>` - Show query execution plan
+- `sentinelcli query validate <SQL>` - Validate SQL syntax without execution
+
+#### 2. Rule Management (`rules`)
+
+Manage detection rules and rule packs:
+
+```bash
+# List all rules
+sentinelcli rules list
+
+# Show rule details
+sentinelcli rules show <rule-id>
+
+# Validate rule syntax
+sentinelcli rules validate <rule-file>
+
+# Test rule against historical data
+sentinelcli rules test <rule-id> --since "1 hour ago"
+
+# Enable/disable rules
+sentinelcli rules enable <rule-id>
+sentinelcli rules disable <rule-id>
+
+# Import/export rules
+sentinelcli rules import <rule-pack.yaml>
+sentinelcli rules export --output rules-backup.yaml
+
+# Rule statistics
+sentinelcli rules stats <rule-id>
+sentinelcli rules stats --all
+```
+
+**Subcommands:**
+
+- `sentinelcli rules create` - Create new rule interactively
+- `sentinelcli rules edit <rule-id>` - Edit existing rule
+- `sentinelcli rules delete <rule-id>` - Delete rule
+- `sentinelcli rules pack list` - List available rule packs
+- `sentinelcli rules pack install <pack-name>` - Install rule pack
+
+#### 3. Alert Management (`alerts`)
+
+View and manage alerts:
+
+```bash
+# List recent alerts
+sentinelcli alerts list
+
+# Show alert details
+sentinelcli alerts show <alert-id>
+
+# Filter alerts
+sentinelcli alerts list --severity high --since "24 hours ago"
+sentinelcli alerts list --rule-id suspicious-process --status open
+
+# Alert statistics
+sentinelcli alerts stats --by-severity
+sentinelcli alerts stats --by-rule --since "7 days ago"
+
+# Export alerts
+sentinelcli alerts export --format json --since "1 week ago" --file alerts.json
+```
+
+**Subcommands:**
+
+- `sentinelcli alerts acknowledge <alert-id>` - Acknowledge alert
+- `sentinelcli alerts close <alert-id>` - Close alert
+- `sentinelcli alerts reopen <alert-id>` - Reopen closed alert
+
+#### 4. System Health (`health`)
+
+Monitor system health and diagnostics:
+
+```bash
+# Overall system status
+sentinelcli health
+
+# Component-specific status
+sentinelcli health --component procmond
+sentinelcli health --component sentinelagent
+sentinelcli health --component database
+
+# Performance metrics
+sentinelcli health metrics
+
+# Configuration validation
+sentinelcli health config
+
+# Connection testing
+sentinelcli health connectivity
+```
+
+**Subcommands:**
+
+- `sentinelcli health logs` - Show recent system logs
+- `sentinelcli health diagnostics` - Run comprehensive diagnostics
+- `sentinelcli health repair` - Attempt automatic issue resolution
+
+#### 5. Data Management (`data`)
+
+Data export, import, and maintenance:
+
+```bash
+# Export process data
+sentinelcli data export processes --since "7 days ago" --format json
+
+# Export audit logs
+sentinelcli data export audit --format csv --file audit.csv
+
+# Database statistics
+sentinelcli data stats
+
+# Database maintenance
+sentinelcli data vacuum
+sentinelcli data integrity-check
+
+# Data retention management
+sentinelcli data cleanup --older-than "30 days"
+```
+
+#### 6. Configuration (`config`)
+
+Configuration management:
+
+```bash
+# Show current configuration
+sentinelcli config show
+
+# Validate configuration
+sentinelcli config validate
+
+# Set configuration values
+sentinelcli config set alert.email.smtp_server smtp.example.com
+sentinelcli config set detection.scan_interval 30s
+
+# Reset configuration
+sentinelcli config reset
+```
+
+#### 7. Service Management (`service`)
+
+Service lifecycle management:
+
+```bash
+# Service status
+sentinelcli service status
+
+# Start/stop services
+sentinelcli service start
+sentinelcli service stop
+sentinelcli service restart
+
+# Service logs
+sentinelcli service logs --follow
+sentinelcli service logs --component procmond --lines 100
+```
+
+### Output Formats
+
+#### Table Format (Default)
+
+```structured text
+┌──────┬─────────────────┬──────────────────────────────────┬─────────────────────┐
+│ PID  │ Name            │ Executable Path                  │ Start Time          │
+├──────┼─────────────────┼──────────────────────────────────┼─────────────────────┤
+│ 1234 │ suspicious.exe  │ /tmp/malware/suspicious.exe      │ 2024-01-15 14:30:25 │
+│ 5678 │ normal.exe      │ /usr/bin/normal.exe              │ 2024-01-15 14:25:10 │
+└──────┴─────────────────┴──────────────────────────────────┴─────────────────────┘
+```
+
+#### JSON Format
+
+```json
+{
+  "query": "SELECT pid, name, executable_path, start_time FROM processes LIMIT 2",
+  "execution_time_ms": 45,
+  "row_count": 2,
+  "results": [
+    {
+      "pid": 1234,
+      "name": "suspicious.exe",
+      "executable_path": "/tmp/malware/suspicious.exe",
+      "start_time": "2024-01-15T14:30:25Z"
+    },
+    {
+      "pid": 5678,
+      "name": "normal.exe",
+      "executable_path": "/usr/bin/normal.exe",
+      "start_time": "2024-01-15T14:25:10Z"
+    }
+  ]
+}
+```
+
+#### CSV Format
+
+```csv
+pid,name,executable_path,start_time
+1234,suspicious.exe,/tmp/malware/suspicious.exe,2024-01-15T14:30:25Z
+5678,normal.exe,/usr/bin/normal.exe,2024-01-15T14:25:10Z
+```
+
+### Interactive Features
+
+#### Interactive Query Shell
+
+```bash
+sentinelcli query interactive
+SentinelD Query Shell v1.0.0
+Type 'help' for commands, 'exit' to quit.
+
+sentinel> SELECT COUNT(*) FROM processes WHERE name LIKE '%chrome%';
+┌─────────┐
+│ count   │
+├─────────┤
+│ 12      │
+└─────────┘
+Executed in 23ms
+
+sentinel> .schema processes
+CREATE TABLE processes (
+  id INTEGER PRIMARY KEY,
+  pid INTEGER NOT NULL,
+  ppid INTEGER,
+  name TEXT NOT NULL,
+  executable_path TEXT,
+  command_line TEXT,
+  start_time TIMESTAMP,
+  hash_sha256 TEXT,
+  scan_id INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+sentinel> .help
+Available commands:
+  .schema [table]     Show table schema
+  .tables             List all tables
+  .history            Show query history
+  .export <format>    Export last result
+  .clear              Clear screen
+  .exit               Exit shell
+```
+
+### Error Handling and User Experience
+
+#### Validation Errors
+
+```bash
+$ sentinelcli query --sql "DROP TABLE processes;"
+Error: Invalid SQL query
+  ├─ Reason: DROP statements are not allowed
+  ├─ Allowed: SELECT statements only
+  └─ Help: Use SELECT queries to retrieve data safely
+
+$ sentinelcli rules validate malformed-rule.yaml
+Error: Rule validation failed
+  ├─ File: malformed-rule.yaml:15:3
+  ├─ Issue: Invalid SQL syntax in detection query
+  ├─ Query: "SELECT * FROM processes WHERE pid = ?"
+  └─ Fix: Add proper WHERE clause parameters
+```
+
+#### Connection Errors
+
+```bash
+$ sentinelcli health
+Error: Cannot connect to sentinelagent
+  ├─ IPC Socket: /var/run/sentineld/agent.sock
+  ├─ Status: Connection refused
+  ├─ Suggestion: Check if sentinelagent service is running
+  └─ Command: sudo systemctl status sentinelagent
+```
+
+### Configuration File
+
+CLI configuration in `~/.config/sentineld/cli.yaml`:
+
+```yaml
+# SentinelCLI Configuration
+connection:
+  ipc_socket: /var/run/sentineld/agent.sock
+  timeout: 30s
+  retry_attempts: 3
+
+output:
+  default_format: table
+  color: true
+  pager: less
+  max_rows_without_paging: 100
+
+query:
+  history_size: 1000
+  auto_complete: true
+  syntax_highlighting: true
+
+aliases:
+  recent: SELECT * FROM processes WHERE start_time > datetime('now', '-1 hour') 
+    ORDER BY start_time DESC
+  suspicious: SELECT * FROM processes WHERE name NOT IN (SELECT DISTINCT name 
+    FROM processes GROUP BY name HAVING COUNT(*) > 10)
+```
+
+### Shell Integration
+
+#### Bash Completion
+
+```bash
+# Enable bash completion
+source <(sentinelcli completion bash)
+
+# Tab completion examples
+sentinelcli ru<TAB>     # completes to "rules"
+sentinelcli rules <TAB> # shows: list, show, validate, test, enable, disable, import, export, stats
+```
+
+#### Shell Aliases
+
+```bash
+# Common aliases for .bashrc
+alias sctl='sentinelcli'
+alias sq='sentinelcli query'
+alias sr='sentinelcli rules'
+alias sh='sentinelcli health'
+```
+
+This comprehensive CLI design provides operators with powerful, intuitive tools for managing SentinelD while maintaining security boundaries and following Unix CLI conventions.
+
+## Testing Strategy and Platform Support
+
+### OS Support Matrix
+
+SentinelD follows a tiered support model aligned with enterprise deployment requirements:
+
+| OS          | Version              | Architecture  | Status    | CI Testing | Notes                      |
+| ----------- | -------------------- | ------------- | --------- | ---------- | -------------------------- |
+| **Linux**   | Ubuntu 20.04+ LTS    | x86_64, ARM64 | Primary   | ✅ Full    | Full feature support       |
+| **Linux**   | RHEL/CentOS 8+       | x86_64, ARM64 | Primary   | ✅ Full    | Full feature support       |
+| **Linux**   | Alma/Rocky Linux 8+  | x86_64, ARM64 | Primary   | ✅ Full    | Full feature support       |
+| **Linux**   | Debian 11+ LTS       | x86_64, ARM64 | Primary   | ✅ Full    | Full feature support       |
+| **macOS**   | 14.0+ (Sonoma)       | x86_64, ARM64 | Primary   | ✅ Full    | Native process monitoring  |
+| **Windows** | Windows 10+          | x86_64, ARM64 | Primary   | ✅ Full    | Service deployment         |
+| **Windows** | Windows Server 2019+ | x86_64        | Primary   | ✅ Full    | Enterprise features        |
+| **Windows** | Windows Server 2022  | x86_64, ARM64 | Primary   | ✅ Full    | Enterprise standard        |
+| **Windows** | Windows 11           | x86_64, ARM64 | Primary   | ✅ Full    | Full feature support       |
+| **Linux**   | Alpine 3.16+         | x86_64, ARM64 | Secondary | ⚠️ Limited | Container deployments      |
+| **Linux**   | Amazon Linux 2+      | x86_64, ARM64 | Secondary | ⚠️ Limited | Cloud deployments          |
+| **Linux**   | Ubuntu 18.04         | x86_64, ARM64 | Secondary | ⚠️ Limited | Best-effort support        |
+| **Linux**   | RHEL 7               | x86_64        | Secondary | ⚠️ Limited | Best-effort support        |
+| **macOS**   | 12.0+ (Monterey)     | x86_64, ARM64 | Secondary | ⚠️ Limited | Best-effort support        |
+| **FreeBSD** | 13.0+                | x86_64, ARM64 | Secondary | ⚠️ Limited | pfSense/OPNsense ecosystem |
+
+### CI/CD Testing Matrix
+
+```mermaid
+graph TB
+    subgraph "Primary Platform Testing (Full CI)"
+        P1["Ubuntu 20.04+ LTS<br/>x86_64, ARM64"]
+        P2["RHEL/CentOS 8+<br/>x86_64, ARM64"]
+        P3["Debian 11+ LTS<br/>x86_64, ARM64"]
+        P4["macOS 14.0+ (Sonoma)<br/>x86_64, ARM64"]
+        P5["Windows 10+/11<br/>x86_64, ARM64"]
+        P6["Windows Server 2019+/2022<br/>x86_64, ARM64"]
+    end
+
+    subgraph "Secondary Platform Testing (Limited CI)"
+        S1["Alpine 3.16+<br/>Container Testing"]
+        S2["Amazon Linux 2+<br/>Cloud Testing"]
+        S3["Ubuntu 18.04<br/>Legacy Support"]
+        S4["macOS 12.0+ (Monterey)<br/>Best Effort"]
+        S5["FreeBSD 13.0+<br/>Network Appliance"]
+    end
+
+    subgraph "Rust Version Matrix"
+        R1["Stable (Latest)"]
+        R2["Beta"]
+        R3["MSRV (1.70+)"]
+    end
+
+    subgraph "Quality Gates"
+        Q1["cargo clippy -- -D warnings"]
+        Q2["cargo fmt --all --check"]
+        Q3["cargo audit"]
+        Q4["cargo deny check"]
+        Q5["overflow-checks = true"]
+        Q6["llvm-cov coverage >85%"]
+    end
+
+    P1 --> R1
+    P1 --> R2
+    P1 --> R3
+    P2 --> R1
+    P3 --> R1
+    P4 --> R1
+    P5 --> R1
+    P6 --> R1
+
+    S1 --> R1
+    S2 --> R1
+
+    R1 --> Q1
+    R1 --> Q2
+    R1 --> Q3
+    R1 --> Q4
+    R1 --> Q5
+    R1 --> Q6
+
+    style P1 fill:#e8f5e8
+    style P2 fill:#e8f5e8
+    style P3 fill:#e8f5e8
+    style P4 fill:#e8f5e8
+    style P5 fill:#e8f5e8
+    style P6 fill:#e8f5e8
+    style S1 fill:#fff3e0
+    style S2 fill:#fff3e0
+    style S3 fill:#fff3e0
+    style S4 fill:#fff3e0
+    style S5 fill:#fff3e0
+```
+
+### Testing Policy
+
+**Primary Platforms**: Full CI/CD pipeline with comprehensive testing across all Rust versions (stable, beta, MSRV) and both x86_64 and ARM64 architectures.
+
+**Secondary Platforms**: Limited CI testing with stable Rust only, focusing on compilation and basic functionality validation.
+
+**Quality Gates**: All platforms must pass security auditing, formatting, linting, and maintain >85% code coverage.
+
+**Cross-Compilation**: ARM64 targets are cross-compiled and tested where native runners are not available.
+
+**Container Testing**: Alpine and Amazon Linux are tested in containerized environments to validate deployment scenarios.
+
+This comprehensive testing strategy ensures SentinelD works reliably across enterprise environments while maintaining security and performance standards.
