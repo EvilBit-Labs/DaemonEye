@@ -18,7 +18,7 @@
 mod tests {
     use sentinel_lib::ipc::codec::IpcError;
     use sentinel_lib::ipc::interprocess_transport::{InterprocessClient, InterprocessServer};
-    use sentinel_lib::ipc::{Crc32Variant, IpcConfig, TransportType};
+    use sentinel_lib::ipc::{IpcConfig, TransportType};
     use sentinel_lib::proto::{DetectionResult, DetectionTask, TaskType};
     use std::time::Duration;
     use tempfile::TempDir;
@@ -58,7 +58,6 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 5, // Allow more concurrent connections
-            crc32_variant: Crc32Variant::Ieee,
         };
 
         (config, temp_dir)
@@ -351,7 +350,6 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 5,
-            crc32_variant: Crc32Variant::Ieee,
         };
 
         let _server = InterprocessServer::new(config.clone());

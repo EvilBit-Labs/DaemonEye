@@ -64,7 +64,7 @@ impl InterprocessServer {
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = IpcConfig::default();
-    /// let server = InterprocessServer::new(config)?;
+    /// let server = InterprocessServer::new(config);
     /// # Ok(())
     /// # }
     /// ```
@@ -109,7 +109,7 @@ impl InterprocessServer {
     /// use sentinel_lib::proto::{DetectionTask, DetectionResult};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut server = InterprocessServer::new(IpcConfig::default())?;
+    /// let mut server = InterprocessServer::new(IpcConfig::default());
     ///
     /// server.set_handler(|task: DetectionTask| async move {
     ///     // Process the detection task
@@ -272,7 +272,7 @@ impl InterprocessServer {
         handler: MessageHandler,
         config: IpcConfig,
     ) -> IpcResult<()> {
-        let mut codec = IpcCodec::new(config.max_frame_bytes, config.crc32_variant.clone());
+        let mut codec = IpcCodec::new(config.max_frame_bytes);
         let read_timeout = Duration::from_millis(config.read_timeout_ms);
         let write_timeout = Duration::from_millis(config.write_timeout_ms);
 
@@ -356,7 +356,7 @@ pub struct InterprocessClient {
 impl InterprocessClient {
     /// Create a new interprocess client
     pub fn new(config: IpcConfig) -> Self {
-        let codec = IpcCodec::new(config.max_frame_bytes, config.crc32_variant.clone());
+        let codec = IpcCodec::new(config.max_frame_bytes);
         Self { config, codec }
     }
 

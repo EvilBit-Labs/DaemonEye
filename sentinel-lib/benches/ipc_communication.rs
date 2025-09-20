@@ -13,7 +13,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use futures::FutureExt;
 use prost::Message;
-use sentinel_lib::ipc::{Crc32Variant, IpcConfig, ResilientIpcClient, TransportType};
+use sentinel_lib::ipc::{IpcConfig, ResilientIpcClient, TransportType};
 use sentinel_lib::proto::{DetectionResult, DetectionTask, ProtoProcessRecord};
 use std::hint::black_box;
 use tempfile::TempDir;
@@ -119,22 +119,9 @@ fn bench_crc32_calculation(c: &mut Criterion) {
 
     let test_data = b"This is test data for CRC32 calculation benchmark";
 
-    group.bench_function("crc32_ieee", |b| {
+    group.bench_function("crc32c", |b| {
         b.iter(|| {
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(test_data);
-            let checksum = hasher.finalize();
-
-            black_box(checksum)
-        });
-    });
-
-    group.bench_function("crc32_castagnoli", |b| {
-        b.iter(|| {
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(test_data);
-            let checksum = hasher.finalize();
-
+            let checksum = crc32c::crc32c(test_data);
             black_box(checksum)
         });
     });
@@ -150,10 +137,7 @@ fn bench_crc32_calculation(c: &mut Criterion) {
                 let test_data_bytes = vec![0_u8; data_size];
 
                 b.iter(|| {
-                    let mut hasher = crc32fast::Hasher::new();
-                    hasher.update(&test_data_bytes);
-                    let checksum = hasher.finalize();
-
+                    let checksum = crc32c::crc32c(&test_data_bytes);
                     black_box(checksum)
                 });
             },
@@ -180,7 +164,6 @@ fn bench_ipc_client_operations(c: &mut Criterion) {
                 read_timeout_ms: 5000,
                 write_timeout_ms: 5000,
                 transport: TransportType::Interprocess,
-                crc32_variant: Crc32Variant::Ieee,
             };
 
             let client = ResilientIpcClient::new(config);
@@ -197,7 +180,6 @@ fn bench_ipc_client_operations(c: &mut Criterion) {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             transport: TransportType::Interprocess,
-            crc32_variant: Crc32Variant::Ieee,
         };
 
         let client = ResilientIpcClient::new(config);
@@ -219,11 +201,9 @@ fn bench_message_framing(c: &mut Criterion) {
 
     group.bench_function("frame_message", |b| {
         b.iter(|| {
-            // Simulate message framing with length prefix and CRC32
+            // Simulate message framing with length prefix and CRC32C
             let length = test_message.len() as u32;
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(test_message);
-            let crc = hasher.finalize();
+            let crc = crc32c::crc32c(test_message);
 
             let mut framed = Vec::new();
             framed.extend_from_slice(&length.to_le_bytes());
@@ -237,9 +217,7 @@ fn bench_message_framing(c: &mut Criterion) {
     group.bench_function("unframe_message", |b| {
         // Create framed message
         let length = test_message.len() as u32;
-        let mut hasher = crc32fast::Hasher::new();
-        hasher.update(test_message);
-        let crc = hasher.finalize();
+        let crc = crc32c::crc32c(test_message);
 
         let mut framed = Vec::new();
         framed.extend_from_slice(&length.to_le_bytes());
@@ -254,10 +232,8 @@ fn bench_message_framing(c: &mut Criterion) {
             let crc = u32::from_le_bytes(crc_bytes);
             let message = &framed[8..8 + length as usize];
 
-            // Verify CRC32
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(message);
-            let calculated_crc = hasher.finalize();
+            // Verify CRC32C
+            let calculated_crc = crc32c::crc32c(message);
 
             black_box(crc == calculated_crc)
         });
@@ -283,7 +259,6 @@ fn bench_concurrent_ipc_operations(c: &mut Criterion) {
                 read_timeout_ms: 5000,
                 write_timeout_ms: 5000,
                 transport: TransportType::Interprocess,
-                crc32_variant: Crc32Variant::Ieee,
             };
 
             // Create multiple clients concurrently using current runtime handle
@@ -327,9 +302,7 @@ fn bench_ipc_throughput(c: &mut Criterion) {
 
                     // Simulate full IPC message processing
                     let length = test_message.len() as u32;
-                    let mut hasher = crc32fast::Hasher::new();
-                    hasher.update(&test_message);
-                    let crc = hasher.finalize();
+                    let crc = crc32c::crc32c(&test_message);
 
                     // Frame message
                     let mut framed = Vec::new();
@@ -344,10 +317,8 @@ fn bench_ipc_throughput(c: &mut Criterion) {
                     let unframed_crc = u32::from_le_bytes(unframed_crc_bytes);
                     let unframed_message = &framed[8..8 + unframed_length as usize];
 
-                    // Verify CRC32
-                    let mut crc_hasher = crc32fast::Hasher::new();
-                    crc_hasher.update(unframed_message);
-                    let calculated_crc = crc_hasher.finalize();
+                    // Verify CRC32C
+                    let calculated_crc = crc32c::crc32c(unframed_message);
 
                     black_box(calculated_crc == unframed_crc)
                 });

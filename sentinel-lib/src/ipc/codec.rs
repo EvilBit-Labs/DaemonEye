@@ -5,7 +5,6 @@
 //! - u32 crc32 checksum over the message bytes (little-endian)
 //! - N bytes protobuf message (prost-encoded)
 
-use crate::ipc::Crc32Variant;
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use prost::Message;
@@ -46,22 +45,19 @@ pub enum IpcError {
     InvalidLength { length: u32 },
 }
 
-/// Codec for encoding and decoding protobuf messages with CRC32 validation
+/// Codec for encoding and decoding protobuf messages with CRC32C validation
 pub struct IpcCodec {
     /// Maximum allowed frame length
     max_frame_len: usize,
-    /// CRC32 variant to use
-    crc32_variant: Crc32Variant,
     /// Reusable buffer for reading
     read_buf: BytesMut,
 }
 
 impl IpcCodec {
-    /// Create a new codec with specified limits and CRC variant
-    pub fn new(max_frame_len: usize, crc32_variant: Crc32Variant) -> Self {
+    /// Create a new codec with specified limits
+    pub fn new(max_frame_len: usize) -> Self {
         Self {
             max_frame_len,
-            crc32_variant,
             read_buf: BytesMut::with_capacity(8192), // Start with 8KB buffer
         }
     }
@@ -96,8 +92,8 @@ impl IpcCodec {
             });
         }
 
-        // Calculate CRC32 over message bytes
-        let crc32 = self.calculate_crc32(&message_bytes);
+        // Calculate CRC32C over message bytes
+        let crc32 = crc32c::crc32c(&message_bytes);
 
         // Build frame: length + crc32 + message
         let frame_len = 4_usize.saturating_add(4).saturating_add(message_len); // u32 + u32 + message
@@ -179,8 +175,8 @@ impl IpcCodec {
                 }
             })?;
 
-        // Validate CRC32
-        let actual_crc32 = self.calculate_crc32(&self.read_buf);
+        // Validate CRC32C
+        let actual_crc32 = crc32c::crc32c(&self.read_buf);
         if expected_crc32 != actual_crc32 {
             return Err(IpcError::CrcMismatch {
                 expected: expected_crc32,
@@ -192,28 +188,11 @@ impl IpcCodec {
         let message = T::decode(&self.read_buf[..])?;
         Ok(message)
     }
-
-    /// Calculate CRC32 checksum based on configured variant
-    fn calculate_crc32(&self, data: &[u8]) -> u32 {
-        match self.crc32_variant {
-            Crc32Variant::Ieee => {
-                let mut hasher = crc32fast::Hasher::new();
-                hasher.update(data);
-                hasher.finalize()
-            }
-            Crc32Variant::Castagnoli => {
-                // For now, use the same implementation - would need crc32c crate for true Castagnoli
-                let mut hasher = crc32fast::Hasher::new();
-                hasher.update(data);
-                hasher.finalize()
-            }
-        }
-    }
 }
 
 impl Default for IpcCodec {
     fn default() -> Self {
-        Self::new(1024 * 1024, Crc32Variant::Ieee) // 1MB max, IEEE CRC32
+        Self::new(1024 * 1024) // 1MB max
     }
 }
 
@@ -244,7 +223,7 @@ mod tests {
     use tokio::io::{DuplexStream, duplex};
 
     fn create_test_codec_pair() -> (IpcCodec, DuplexStream, DuplexStream) {
-        let codec = IpcCodec::new(1024, Crc32Variant::Ieee);
+        let codec = IpcCodec::new(1024);
         let (client, server) = duplex(1024);
         (codec, client, server)
     }
@@ -306,7 +285,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_oversized_message_rejection() {
-        let codec = IpcCodec::new(100, Crc32Variant::Ieee); // Very small limit
+        let codec = IpcCodec::new(100); // Very small limit
         let (mut client, _server) = duplex(1024);
 
         let large_message = DetectionTask {
@@ -347,7 +326,7 @@ mod tests {
             .encode(&mut message_bytes)
             .expect("Failed to encode test message for CRC test");
         let message_len = message_bytes.len() as u32;
-        let correct_crc32 = codec.calculate_crc32(&message_bytes);
+        let correct_crc32 = crc32c::crc32c(&message_bytes);
 
         // Write frame with incorrect CRC32
         let mut frame = BytesMut::new();
@@ -400,17 +379,15 @@ mod tests {
     }
 
     #[test]
-    fn test_crc32_variants() {
-        let codec_ieee = IpcCodec::new(1024, Crc32Variant::Ieee);
-        let codec_castagnoli = IpcCodec::new(1024, Crc32Variant::Castagnoli);
-
+    fn test_crc32c_calculation() {
         let test_data = b"Hello, world!";
+        let crc = crc32c::crc32c(test_data);
 
-        let crc_ieee = codec_ieee.calculate_crc32(test_data);
-        let crc_castagnoli = codec_castagnoli.calculate_crc32(test_data);
+        // Verify CRC32C produces non-zero result (basic sanity check)
+        assert_ne!(crc, 0, "CRC32C should not be zero for non-empty data");
 
-        // For now both use the same implementation, but they should be equal
-        // TODO: Implement actual Castagnoli CRC32 when needed
-        assert_eq!(crc_ieee, crc_castagnoli);
+        // Verify CRC32C is deterministic
+        let crc2 = crc32c::crc32c(test_data);
+        assert_eq!(crc, crc2, "CRC32C should be deterministic");
     }
 }

@@ -32,10 +32,10 @@ bincode = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-crc32fast = { workspace = true }
 
 # IPC communication
 interprocess = { workspace = true }
+crc32c = { workspace = true }
 
 # Protocol Buffers
 prost = { workspace = true }

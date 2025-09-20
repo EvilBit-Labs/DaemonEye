@@ -30,8 +30,6 @@ pub struct IpcConfig {
     pub write_timeout_ms: u64,
     /// Maximum concurrent connections
     pub max_connections: usize,
-    /// CRC32 variant for integrity validation
-    pub crc32_variant: Crc32Variant,
 }
 
 impl Default for IpcConfig {
@@ -44,7 +42,6 @@ impl Default for IpcConfig {
             read_timeout_ms: 30000,       // 30 seconds
             write_timeout_ms: 10000,      // 10 seconds
             max_connections: 16,
-            crc32_variant: Crc32Variant::Ieee,
         }
     }
 }
@@ -55,16 +52,6 @@ impl Default for IpcConfig {
 pub enum TransportType {
     /// Use tokio native IPC transport (default)
     Interprocess,
-}
-
-/// CRC32 variant for integrity validation
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Crc32Variant {
-    /// IEEE 802.3 CRC32 (default)
-    Ieee,
-    /// Castagnoli CRC32C
-    Castagnoli,
 }
 
 /// Get the default endpoint path based on the platform
@@ -89,7 +76,6 @@ mod tests {
         assert_eq!(config.transport, TransportType::Interprocess);
         assert_eq!(config.max_frame_bytes, 1024 * 1024);
         assert_eq!(config.max_connections, 16);
-        assert_eq!(config.crc32_variant, Crc32Variant::Ieee);
     }
 
     #[test]

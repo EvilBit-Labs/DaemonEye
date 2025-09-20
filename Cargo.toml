@@ -39,7 +39,7 @@ chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.5.48", features = ["derive"] }
 
 # CRC32 checksum
-crc32fast = "1.5.0"
+crc32c = "0.6.8"
 criterion = "0.7.0"
 futures = "0.3.31"
 futures-util = "0.3.31"

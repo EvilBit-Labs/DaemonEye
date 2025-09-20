@@ -15,7 +15,7 @@
 
 use sentinel_lib::ipc::client::{ConnectionState, ResilientIpcClient};
 use sentinel_lib::ipc::interprocess_transport::InterprocessServer;
-use sentinel_lib::ipc::{Crc32Variant, IpcConfig, TransportType};
+use sentinel_lib::ipc::{IpcConfig, TransportType};
 use sentinel_lib::proto::{DetectionResult, DetectionTask, TaskType};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -33,7 +33,6 @@ fn create_test_config() -> (IpcConfig, TempDir) {
         read_timeout_ms: 5000,
         write_timeout_ms: 5000,
         max_connections: 4,
-        crc32_variant: Crc32Variant::Ieee,
     };
 
     (config, temp_dir)

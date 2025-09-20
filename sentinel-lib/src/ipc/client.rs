@@ -126,7 +126,7 @@ pub struct ResilientIpcClient {
 impl ResilientIpcClient {
     /// Create a new resilient IPC client
     pub fn new(config: IpcConfig) -> Self {
-        let codec = IpcCodec::new(config.max_frame_bytes, config.crc32_variant.clone());
+        let codec = IpcCodec::new(config.max_frame_bytes);
 
         Self {
             config,
@@ -421,7 +421,6 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 4,
-            crc32_variant: crate::ipc::Crc32Variant::Ieee,
         };
 
         (config, temp_dir)

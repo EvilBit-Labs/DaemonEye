@@ -34,7 +34,7 @@ pub struct IpcClientManager {
 impl IpcClientManager {
     /// Create a new IPC client manager with the given configuration
     pub fn new(config: IpcConfig) -> AnyhowResult<Self> {
-        let codec = IpcCodec::new(config.max_frame_bytes, config.crc32_variant.clone());
+        let codec = IpcCodec::new(config.max_frame_bytes);
 
         Ok(Self {
             config,
@@ -325,7 +325,6 @@ pub fn create_default_ipc_config() -> IpcConfig {
         read_timeout_ms: 30000,     // 30 seconds
         write_timeout_ms: 10000,    // 10 seconds
         max_connections: 4,
-        crc32_variant: sentinel_lib::ipc::Crc32Variant::Ieee,
     }
 }
 
@@ -343,7 +342,6 @@ pub fn create_maximum_ipc_config() -> IpcConfig {
         read_timeout_ms: 60000,       // 60 seconds - maximum read timeout
         write_timeout_ms: 30000,      // 30 seconds - maximum write timeout
         max_connections: 16,          // Maximum connections
-        crc32_variant: sentinel_lib::ipc::Crc32Variant::Ieee,
     }
 }
 
@@ -376,7 +374,6 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 4,
-            crc32_variant: sentinel_lib::ipc::Crc32Variant::Ieee,
         };
 
         (config, temp_dir)
