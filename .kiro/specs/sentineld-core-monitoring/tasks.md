@@ -280,10 +280,12 @@
 
 - [ ] 15. Implement sentinelcli query and management interface - [#56](https://github.com/EvilBit-Labs/SentinelD/issues/56)
 
-  - Create QueryExecutor for safe SQL query execution with parameterization
+  - Create IPC client to communicate with sentinelagent for query execution and data retrieval
+  - Implement secure local communication using existing interprocess crate infrastructure
   - Add multiple output formats (JSON, human-readable table, CSV) with terminal capability detection
-  - Implement streaming and pagination for large result sets
+  - Implement streaming and pagination for large result sets via IPC protocol
   - Add color support with NO_COLOR and TERM=dumb environment variable handling
+  - Create query request/response protobuf messages extending existing IPC protocol
   - Write CLI integration tests using insta for snapshot testing
   - _Requirements: 8.1, 8.2, 10.5_
 
@@ -368,20 +370,22 @@
 
 - [ ] 22. Integrate components and implement end-to-end workflows
 
-- [x] 22.1 Wire IPC communication between components - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
+- [ ] 22.1 Wire IPC communication between components via collector-core - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
 
-  - COMPLETED: Connected collector-core IPC server with sentinelagent IPC client via interprocess crate
-  - COMPLETED: Implemented task distribution and result collection workflows with protobuf + CRC32 framing
-  - COMPLETED: Added proper error handling and connection management
-  - COMPLETED: Created integration tests for cross-platform IPC communication reliability
+  - Integrate sentinelagent IPC client with collector-core framework from Task 4
+  - Verify task distribution and result collection workflows work through collector-core runtime
+  - Ensure existing protobuf + CRC32 framing is preserved through collector-core integration
+  - Test cross-component communication with refactored procmond using collector-core from Task 7
+  - Write integration tests for complete collector-core mediated IPC communication
   - _Requirements: All requirements integration_
 
 - [ ] 22.2 Implement rule translation and execution pipeline - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
 
-  - Create rule translation from SQL to simple protobuf tasks for collector-core components
-  - Integrate detection rule execution with interprocess IPC task distribution
-  - Add result aggregation and alert generation from detection outcomes
-  - Write integration tests for complete detection pipeline
+  - Integrate SQL-to-IPC translation pipeline from Task 11 with collector-core framework from Task 4
+  - Verify detection rule execution works with collector-core event sources and IPC distribution
+  - Connect result aggregation from collector-core events to alert generation pipeline
+  - Test complete detection pipeline with ProcessEventSource from Task 7 and collector-core runtime
+  - Write integration tests for end-to-end rule execution through collector-core architecture
   - _Requirements: All requirements integration_
 
 - [ ] 22.3 Connect alert generation to delivery pipeline - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
