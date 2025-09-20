@@ -305,6 +305,11 @@ async fn test_cross_platform_concurrent_connections() {
     });
 
     server.start().await.expect("Failed to start server");
+
+    // Windows named pipes need more time to initialize properly
+    #[cfg(windows)]
+    sleep(Duration::from_millis(500)).await;
+    #[cfg(not(windows))]
     sleep(Duration::from_millis(300)).await;
 
     // Test concurrent connections
@@ -315,6 +320,10 @@ async fn test_cross_platform_concurrent_connections() {
         let client_config = config.clone();
 
         let handle = tokio::spawn(async move {
+            // Stagger connections on Windows to prevent connection burst issues
+            #[cfg(windows)]
+            sleep(Duration::from_millis(i as u64 * 100)).await;
+
             let mut client = InterprocessClient::new(client_config);
             let task = create_cross_platform_task(&format!("concurrent_{}", i));
 

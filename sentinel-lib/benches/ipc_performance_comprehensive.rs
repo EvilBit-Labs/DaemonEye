@@ -181,21 +181,7 @@ fn bench_crc32_performance(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(data_size as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("crc32_ieee", size_name),
-            &data_size,
-            |b, &data_size| {
-                let test_data = vec![0_u8; data_size];
-                let _codec = IpcCodec::new(10 * 1024 * 1024);
-
-                b.iter(|| {
-                    let crc = crc32c::crc32c(&test_data);
-                    black_box(crc)
-                });
-            },
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("crc32_castagnoli", size_name),
+            BenchmarkId::new("crc32c", size_name),
             &data_size,
             |b, &data_size| {
                 let test_data = vec![0_u8; data_size];
