@@ -11,7 +11,17 @@ fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
     let output = cmd.output()?;
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_snapshot!("procmond_help", stdout);
+
+    // Demonstrate idiomatic with_settings! macro approach
+    insta::with_settings!({
+        filters => vec![
+            // Normalize executable name: remove .exe extension on Windows
+            (r"\bprocmond\.exe\b", "procmond"),
+        ]
+    }, {
+        assert_snapshot!("procmond_help", stdout.as_ref());
+    });
+
     Ok(())
 }
 

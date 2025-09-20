@@ -28,7 +28,17 @@ fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
     let output = cmd.output()?;
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_snapshot!("sentinelagent_help", stdout);
+
+    // Demonstrate idiomatic with_settings! macro approach
+    insta::with_settings!({
+        filters => vec![
+            // Normalize executable name: remove .exe extension on Windows
+            (r"\bsentinelagent\.exe\b", "sentinelagent"),
+        ]
+    }, {
+        assert_snapshot!("sentinelagent_help", stdout.as_ref());
+    });
+
     Ok(())
 }
 
