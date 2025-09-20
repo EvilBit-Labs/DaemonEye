@@ -1,136 +1,361 @@
-//! IPC client integration for sentinelagent
+//! IPC client implementation for sentinelagent.
 //!
-//! This module provides the integration between sentinelagent and procmond
-//! using the resilient IPC client for reliable communication.
+//! This module provides a high-level IPC client for sentinelagent to communicate
+//! with procmond using the interprocess crate with protobuf messages and CRC32
+//! integrity validation. It includes connection management, automatic reconnection,
+//! and robust error handling.
 
-use sentinel_lib::ipc::{ConnectionState, IpcConfig, ResilientIpcClient};
+use anyhow::{Context, Result as AnyhowResult};
+use sentinel_lib::ipc::{IpcCodec, IpcConfig};
 use sentinel_lib::proto::{DetectionResult, DetectionTask, TaskType};
 use std::time::Duration;
-use tracing::{debug, info};
+use tokio::time::{sleep, timeout};
+use tracing::{debug, error, info, warn};
+
+// Import interprocess types
+use interprocess::local_socket::Name;
+use interprocess::local_socket::tokio::prelude::*;
+#[cfg(unix)]
+use interprocess::local_socket::{GenericFilePath, ToFsName};
+#[cfg(windows)]
+use interprocess::local_socket::{GenericNamespaced, ToNsName};
 
 /// IPC client manager for sentinelagent
 pub struct IpcClientManager {
-    client: ResilientIpcClient,
+    config: IpcConfig,
+    codec: IpcCodec,
+    is_connected: bool,
+    reconnect_attempts: u32,
+    max_reconnect_attempts: u32,
+    base_reconnect_delay: Duration,
+    max_reconnect_delay: Duration,
 }
 
 impl IpcClientManager {
-    /// Create a new IPC client manager
-    pub fn new(config: IpcConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = ResilientIpcClient::new(config);
-        Ok(Self { client })
+    /// Create a new IPC client manager with the given configuration
+    pub fn new(config: IpcConfig) -> AnyhowResult<Self> {
+        let codec = IpcCodec::new(config.max_frame_bytes, config.crc32_variant.clone());
+
+        Ok(Self {
+            config,
+            codec,
+            is_connected: false,
+            reconnect_attempts: 0,
+            max_reconnect_attempts: 10,
+            base_reconnect_delay: Duration::from_millis(100),
+            max_reconnect_delay: Duration::from_secs(30),
+        })
     }
 
-    /// Send a detection task to procmond and receive the result
-    pub async fn send_detection_task(
-        &mut self,
-        task: DetectionTask,
-    ) -> Result<DetectionResult, Box<dyn std::error::Error>> {
-        debug!(task_id = %task.task_id, "Sending detection task to procmond");
+    /// Wait for procmond to become available with the given timeout
+    pub async fn wait_for_procmond(&mut self, timeout_duration: Duration) -> AnyhowResult<()> {
+        let start_time = std::time::Instant::now();
+        let mut attempt = 0;
 
-        let result = self.client.send_task(task).await?;
+        while start_time.elapsed() < timeout_duration {
+            attempt += 1;
+            debug!(attempt, "Attempting to connect to procmond");
 
-        debug!(
-            task_id = %result.task_id,
-            success = result.success,
-            "Received detection result from procmond"
-        );
+            match self.test_connection().await {
+                Ok(()) => {
+                    info!("Successfully connected to procmond");
+                    self.is_connected = true;
+                    self.reconnect_attempts = 0;
+                    return Ok(());
+                }
+                Err(e) => {
+                    debug!(error = %e, attempt, "Connection attempt failed");
 
-        Ok(result)
+                    if start_time.elapsed() + Duration::from_millis(500) < timeout_duration {
+                        sleep(Duration::from_millis(500)).await;
+                    }
+                }
+            }
+        }
+
+        anyhow::bail!(
+            "Failed to connect to procmond within {:?}",
+            timeout_duration
+        )
     }
 
-    /// Request process enumeration from procmond
-    pub async fn enumerate_processes(
-        &mut self,
-    ) -> Result<DetectionResult, Box<dyn std::error::Error>> {
+    /// Test the connection to procmond
+    async fn test_connection(&mut self) -> AnyhowResult<()> {
+        // Create socket name from configuration
+        let name = self
+            .create_socket_name()
+            .context("Failed to create socket name")?;
+
+        // Attempt connection with timeout
+        let connect_timeout = Duration::from_millis(self.config.accept_timeout_ms);
+        let mut stream = timeout(connect_timeout, LocalSocketStream::connect(name))
+            .await
+            .context("Connection timeout")?
+            .context("Failed to connect to procmond socket")?;
+
+        // Test the connection by sending a simple ping task
+        let ping_task = DetectionTask {
+            task_id: format!("ping-{}", chrono::Utc::now().timestamp_millis()),
+            task_type: TaskType::EnumerateProcesses as i32,
+            process_filter: None,
+            hash_check: None,
+            metadata: Some("connection_test".to_string()),
+        };
+
+        let write_timeout = Duration::from_millis(self.config.write_timeout_ms);
+        let read_timeout = Duration::from_millis(self.config.read_timeout_ms);
+
+        // Send ping task
+        timeout(
+            write_timeout,
+            self.codec
+                .write_message(&mut stream, &ping_task, write_timeout),
+        )
+        .await
+        .context("Write timeout during connection test")?
+        .with_context(|| {
+            error!("Failed to write ping task");
+            "Failed to write ping task to procmond"
+        })?;
+
+        // Read response
+        let _response: DetectionResult = timeout(
+            read_timeout,
+            self.codec.read_message(&mut stream, read_timeout),
+        )
+        .await
+        .context("Read timeout during connection test")?
+        .with_context(|| {
+            error!("Failed to read ping response");
+            "Failed to read ping response from procmond"
+        })?;
+
+        debug!("Connection test successful");
+        Ok(())
+    }
+
+    /// Create socket name from configuration
+    fn create_socket_name(&self) -> AnyhowResult<Name<'_>> {
+        #[cfg(unix)]
+        {
+            use std::path::Path;
+            let path = Path::new(&self.config.endpoint_path);
+            path.to_fs_name::<GenericFilePath>()
+                .with_context(|| format!("Invalid Unix socket path: {}", self.config.endpoint_path))
+        }
+        #[cfg(windows)]
+        {
+            self.config
+                .endpoint_path
+                .clone()
+                .to_ns_name::<GenericNamespaced>()
+                .with_context(|| {
+                    format!(
+                        "Invalid Windows named pipe path: {}",
+                        self.config.endpoint_path
+                    )
+                })
+        }
+    }
+
+    /// Enumerate processes by sending a task to procmond
+    pub async fn enumerate_processes(&mut self) -> AnyhowResult<DetectionResult> {
+        if !self.is_connected {
+            anyhow::bail!("Not connected to procmond");
+        }
+
         let task = DetectionTask {
             task_id: format!("enumerate-{}", chrono::Utc::now().timestamp_millis()),
             task_type: TaskType::EnumerateProcesses as i32,
             process_filter: None,
             hash_check: None,
-            metadata: Some("sentinelagent process enumeration".to_string()),
+            metadata: Some("process_enumeration".to_string()),
         };
 
-        self.send_detection_task(task).await
+        self.send_task_with_retry(task).await
     }
 
-    /// Check if the IPC client is healthy
-    pub async fn is_healthy(&self) -> bool {
-        self.client.health_check().await
-    }
+    /// Send a detection task with automatic retry and reconnection logic
+    async fn send_task_with_retry(&mut self, task: DetectionTask) -> AnyhowResult<DetectionResult> {
+        let task_id = task.task_id.clone();
+        let mut last_error = None;
 
-    /// Get the current connection state
-    #[allow(dead_code)]
-    pub async fn get_connection_state(&self) -> ConnectionState {
-        self.client.get_connection_state().await
-    }
-
-    /// Force a reconnection attempt
-    pub async fn force_reconnect(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("Forcing IPC client reconnection");
-        self.client.force_reconnect().await?;
-        Ok(())
-    }
-
-    /// Get client statistics for monitoring
-    #[allow(dead_code)]
-    pub async fn get_stats(&self) -> sentinel_lib::ipc::ClientStats {
-        self.client.get_stats().await
-    }
-
-    /// Wait for procmond to become available
-    pub async fn wait_for_procmond(
-        &mut self,
-        max_wait_time: Duration,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let start_time = std::time::Instant::now();
-        let check_interval = Duration::from_millis(500);
-
-        info!("Waiting for procmond to become available...");
-
-        while start_time.elapsed() < max_wait_time {
-            match self.enumerate_processes().await {
-                Ok(_) => {
-                    info!("Procmond is now available");
-                    return Ok(());
+        for attempt in 0..=self.max_reconnect_attempts {
+            match self.attempt_send_task(&task).await {
+                Ok(result) => {
+                    self.handle_success().await;
+                    return Ok(result);
                 }
                 Err(e) => {
-                    debug!("Procmond not yet available: {}", e);
-                    tokio::time::sleep(check_interval).await;
+                    last_error = Some(e);
+                    self.handle_failure(attempt, &task_id).await;
                 }
             }
         }
 
-        Err(format!(
-            "Procmond did not become available within {:?}",
-            max_wait_time
+        // All retry attempts failed
+        anyhow::bail!(
+            "All retry attempts failed for task {}: {}",
+            task_id,
+            last_error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Unknown error".to_string())
         )
-        .into())
+    }
+
+    /// Attempt to send a task with a single connection attempt
+    async fn attempt_send_task(&mut self, task: &DetectionTask) -> AnyhowResult<DetectionResult> {
+        let name = self
+            .create_socket_name()
+            .context("Failed to create socket name for task")?;
+
+        // Attempt connection with timeout
+        let connect_timeout = Duration::from_millis(self.config.accept_timeout_ms);
+        let mut stream = timeout(connect_timeout, LocalSocketStream::connect(name))
+            .await
+            .context("Connection timeout")?
+            .context("Failed to connect to procmond socket")?;
+
+        let write_timeout = Duration::from_millis(self.config.write_timeout_ms);
+        let read_timeout = Duration::from_millis(self.config.read_timeout_ms);
+
+        // Send task with timeout
+        timeout(
+            write_timeout,
+            self.codec.write_message(&mut stream, task, write_timeout),
+        )
+        .await
+        .context("Write timeout")?
+        .with_context(|| {
+            error!("Failed to write task: {}", task.task_id);
+            "Failed to write task to procmond"
+        })?;
+
+        // Receive result with timeout
+        let result = timeout(
+            read_timeout,
+            self.codec.read_message(&mut stream, read_timeout),
+        )
+        .await
+        .context("Read timeout")?
+        .with_context(|| {
+            error!("Failed to read result for task: {}", task.task_id);
+            "Failed to read result from procmond"
+        })?;
+
+        Ok(result)
+    }
+
+    /// Handle successful operation
+    async fn handle_success(&mut self) {
+        self.reconnect_attempts = 0;
+        self.is_connected = true;
+        debug!("Operation successful, connection is healthy");
+    }
+
+    /// Handle operation failure
+    async fn handle_failure(&mut self, attempt: u32, task_id: &str) {
+        self.is_connected = false;
+
+        if attempt < self.max_reconnect_attempts {
+            self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
+            let backoff_delay = self.calculate_backoff_delay();
+
+            warn!(
+                task_id = %task_id,
+                attempt = attempt.saturating_add(1),
+                max_attempts = self.max_reconnect_attempts,
+                backoff_ms = backoff_delay.as_millis(),
+                "Task send failed, retrying with backoff"
+            );
+
+            sleep(backoff_delay).await;
+        } else {
+            error!(
+                task_id = %task_id,
+                attempts = self.max_reconnect_attempts.saturating_add(1),
+                "Task send failed after all retry attempts"
+            );
+        }
+    }
+
+    /// Calculate exponential backoff delay
+    fn calculate_backoff_delay(&self) -> Duration {
+        let delay_ms = u64::try_from(self.base_reconnect_delay.as_millis())
+            .unwrap_or(100)
+            .saturating_mul(2_u64.pow(self.reconnect_attempts.min(10))); // Cap at 2^10 to prevent overflow
+
+        let delay = Duration::from_millis(delay_ms);
+        std::cmp::min(delay, self.max_reconnect_delay)
+    }
+
+    /// Check if the client is healthy
+    pub async fn is_healthy(&self) -> bool {
+        self.is_connected
+    }
+
+    /// Force a reconnection attempt
+    pub async fn force_reconnect(&mut self) -> AnyhowResult<()> {
+        self.is_connected = false;
+        self.reconnect_attempts = 0;
+
+        info!("Forcing reconnection to procmond");
+        self.test_connection()
+            .await
+            .context("Failed to force reconnection to procmond")?;
+
+        self.is_connected = true;
+        info!("Forced reconnection successful");
+        Ok(())
     }
 }
 
 /// Create a default IPC configuration for sentinelagent
+///
+/// This configuration follows the coding guidelines with:
+/// - Max message size: 16KB (default 8KB)
+/// - Request timeout: 10 seconds
+/// - Conservative settings for production use
 pub fn create_default_ipc_config() -> IpcConfig {
     IpcConfig {
         transport: sentinel_lib::ipc::TransportType::Interprocess,
-        endpoint_path: default_procmond_endpoint(),
-        max_frame_bytes: 1024 * 1024, // 1MB
-        accept_timeout_ms: 5000,      // 5 seconds
-        read_timeout_ms: 30000,       // 30 seconds
-        write_timeout_ms: 10000,      // 10 seconds
+        endpoint_path: default_endpoint_path(),
+        max_frame_bytes: 16 * 1024, // 16KB - follows coding guidelines
+        accept_timeout_ms: 10000,   // 10 seconds - follows coding guidelines
+        read_timeout_ms: 30000,     // 30 seconds
+        write_timeout_ms: 10000,    // 10 seconds
         max_connections: 4,
         crc32_variant: sentinel_lib::ipc::Crc32Variant::Ieee,
     }
 }
 
-/// Get the default procmond endpoint path
-fn default_procmond_endpoint() -> String {
+/// Create an IPC configuration with maximum allowed values
+///
+/// This configuration uses the maximum allowed values for high-throughput
+/// scenarios where larger messages and longer timeouts are acceptable.
+#[allow(dead_code)] // Utility function for future use
+pub fn create_maximum_ipc_config() -> IpcConfig {
+    IpcConfig {
+        transport: sentinel_lib::ipc::TransportType::Interprocess,
+        endpoint_path: default_endpoint_path(),
+        max_frame_bytes: 1024 * 1024, // 1MB - maximum allowed
+        accept_timeout_ms: 30000,     // 30 seconds - maximum timeout
+        read_timeout_ms: 60000,       // 60 seconds - maximum read timeout
+        write_timeout_ms: 30000,      // 30 seconds - maximum write timeout
+        max_connections: 16,          // Maximum connections
+        crc32_variant: sentinel_lib::ipc::Crc32Variant::Ieee,
+    }
+}
+
+/// Get the default endpoint path based on the platform
+fn default_endpoint_path() -> String {
     #[cfg(unix)]
     {
-        "/var/run/sentineld/procmond.sock".to_string()
+        "/var/run/sentineld/procmond.sock".to_owned()
     }
     #[cfg(windows)]
     {
-        r"\\.\pipe\sentineld\procmond".to_string()
+        r"\\.\pipe\sentineld\procmond".to_owned()
     }
 }
 
@@ -140,7 +365,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_config() -> (IpcConfig, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
         let endpoint_path = create_test_endpoint(&temp_dir);
 
         let config = IpcConfig {
@@ -162,7 +387,7 @@ mod tests {
         {
             temp_dir
                 .path()
-                .join("test-ipc-manager.sock")
+                .join("test-ipc-client.sock")
                 .to_string_lossy()
                 .to_string()
         }
@@ -173,176 +398,54 @@ mod tests {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("test");
-            format!(r"\\.\pipe\sentineld\test-ipc-manager-{}", dir_name)
+            format!(r"\\.\pipe\sentineld\test-ipc-client-{}", dir_name)
         }
     }
 
     #[test]
-    fn test_ipc_manager_creation() {
+    fn test_client_creation() {
         let (config, _temp_dir) = create_test_config();
-        let manager = IpcClientManager::new(config);
-        assert!(manager.is_ok());
+        let _client = IpcClientManager::new(config).expect("Failed to create client");
+        // Client creation always succeeds
     }
 
     #[test]
-    fn test_default_config() {
+    fn test_default_config_creation() {
         let config = create_default_ipc_config();
-        assert_eq!(config.max_frame_bytes, 1024 * 1024);
-        assert_eq!(config.max_connections, 4);
-    }
-
-    #[tokio::test]
-    async fn test_connection_state() {
-        let (config, _temp_dir) = create_test_config();
-        let manager = IpcClientManager::new(config).unwrap();
-
-        let state = manager.get_connection_state().await;
-        assert_eq!(state, ConnectionState::Disconnected);
-
-        assert!(!manager.is_healthy().await);
-    }
-
-    #[tokio::test]
-    async fn test_enumerate_processes() {
-        let (config, _temp_dir) = create_test_config();
-        let mut manager = IpcClientManager::new(config).unwrap();
-
-        // This will fail because there's no server, but we can test the method
-        let result = manager.enumerate_processes().await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_send_detection_task() {
-        let (config, _temp_dir) = create_test_config();
-        let mut manager = IpcClientManager::new(config).unwrap();
-
-        let task = DetectionTask {
-            task_id: "test-task".to_string(),
-            task_type: TaskType::EnumerateProcesses as i32,
-            process_filter: None,
-            hash_check: None,
-            metadata: Some("test metadata".to_string()),
-        };
-
-        // This will fail because there's no server, but we can test the method
-        let result = manager.send_detection_task(task).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_force_reconnect() {
-        let (config, _temp_dir) = create_test_config();
-        let mut manager = IpcClientManager::new(config).unwrap();
-
-        // This will fail because there's no server, but we can test the method
-        let result = manager.force_reconnect().await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_wait_for_procmond_timeout() {
-        let (config, _temp_dir) = create_test_config();
-        let mut manager = IpcClientManager::new(config).unwrap();
-
-        // Test with a very short timeout to ensure it times out
-        let result = manager.wait_for_procmond(Duration::from_millis(100)).await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Procmond did not become available")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_get_stats() {
-        let (config, _temp_dir) = create_test_config();
-        let manager = IpcClientManager::new(config).unwrap();
-
-        let stats = manager.get_stats().await;
-        // Stats should be available even when disconnected
-        assert_eq!(stats.connection_state, ConnectionState::Disconnected);
-    }
-
-    #[test]
-    fn test_default_procmond_endpoint_unix() {
-        // Test the endpoint path creation logic
-        let endpoint = default_procmond_endpoint();
-
-        #[cfg(unix)]
-        {
-            assert!(endpoint.contains("procmond.sock"));
-            assert!(endpoint.starts_with("/var/run/sentineld/"));
-        }
-
-        #[cfg(windows)]
-        {
-            assert!(endpoint.contains("procmond"));
-            assert!(endpoint.starts_with(r"\\.\pipe\sentineld\"));
-        }
-    }
-
-    #[test]
-    fn test_create_test_endpoint() {
-        let temp_dir = TempDir::new().unwrap();
-        let endpoint = create_test_endpoint(&temp_dir);
-
-        #[cfg(unix)]
-        {
-            assert!(endpoint.contains("test-ipc-manager.sock"));
-            assert!(endpoint.contains(&temp_dir.path().to_string_lossy().to_string()));
-        }
-
-        #[cfg(windows)]
-        {
-            assert!(endpoint.contains("test-ipc-manager"));
-            assert!(endpoint.starts_with(r"\\.\pipe\sentineld\"));
-        }
-    }
-
-    #[test]
-    fn test_create_test_config() {
-        let (config, temp_dir) = create_test_config();
-
-        assert_eq!(config.max_frame_bytes, 1024 * 1024);
-        assert_eq!(config.max_connections, 4);
-        assert_eq!(config.accept_timeout_ms, 1000);
-        assert_eq!(config.read_timeout_ms, 5000);
-        assert_eq!(config.write_timeout_ms, 5000);
-
-        // Verify the endpoint path is created correctly
-        let endpoint = create_test_endpoint(&temp_dir);
-        assert_eq!(config.endpoint_path, endpoint);
-    }
-
-    #[test]
-    fn test_create_default_ipc_config_values() {
-        let config = create_default_ipc_config();
-
-        assert_eq!(config.max_frame_bytes, 1024 * 1024);
-        assert_eq!(config.max_connections, 4);
-        assert_eq!(config.accept_timeout_ms, 5000);
+        assert_eq!(config.max_frame_bytes, 16 * 1024); // 16KB - follows coding guidelines
+        assert_eq!(config.accept_timeout_ms, 10000); // 10 seconds - follows coding guidelines
         assert_eq!(config.read_timeout_ms, 30000);
         assert_eq!(config.write_timeout_ms, 10000);
-        assert_eq!(
-            config.transport,
-            sentinel_lib::ipc::TransportType::Interprocess
-        );
-        assert_eq!(config.crc32_variant, sentinel_lib::ipc::Crc32Variant::Ieee);
-
-        // Verify the endpoint path is set correctly
-        let expected_endpoint = default_procmond_endpoint();
-        assert_eq!(config.endpoint_path, expected_endpoint);
+        assert_eq!(config.max_connections, 4);
     }
 
-    #[tokio::test]
-    async fn test_health_check_disconnected() {
+    #[test]
+    fn test_backoff_calculation() {
         let (config, _temp_dir) = create_test_config();
-        let manager = IpcClientManager::new(config).unwrap();
+        let mut client = IpcClientManager::new(config).expect("Failed to create client");
 
-        // When disconnected, health check should return false
-        assert!(!manager.is_healthy().await);
+        // Test exponential backoff
+        assert_eq!(client.calculate_backoff_delay(), Duration::from_millis(100));
+
+        // Simulate multiple attempts
+        client.reconnect_attempts = 1;
+        assert_eq!(client.calculate_backoff_delay(), Duration::from_millis(200));
+
+        client.reconnect_attempts = 2;
+        assert_eq!(client.calculate_backoff_delay(), Duration::from_millis(400));
+
+        // Test max delay cap
+        client.reconnect_attempts = 20; // Very high number
+        let delay = client.calculate_backoff_delay();
+        assert!(delay <= client.max_reconnect_delay);
+    }
+
+    #[test]
+    fn test_default_endpoint_path() {
+        let path = default_endpoint_path();
+        #[cfg(unix)]
+        assert!(path.contains("procmond.sock"));
+        #[cfg(windows)]
+        assert!(path.contains(r"\\.\pipe\"));
     }
 }

@@ -71,8 +71,23 @@ impl ProcessCollectionService for SysinfoProcessCollector {
             system.refresh_all();
         }
 
-        // Collect process data to avoid borrowing issues with the closure
-        #[allow(clippy::needless_collect)] // Required to avoid borrow checker issues
+        // TECHNICAL CONSTRAINT: Upfront collection is necessary due to sysinfo API limitations
+        // and Rust borrow checker constraints. The sysinfo::System::processes() method returns
+        // a reference to a HashMap<Pid, Process> that is owned by the System instance. We cannot:
+        // 1. Hold a reference to the HashMap while moving the System into a closure (borrow checker)
+        // 2. Clone the Process objects as they don't implement Clone
+        // 3. Iterate over the HashMap while also accessing individual processes later
+        //
+        // Alternative approaches considered:
+        // - Collecting only PIDs first: Still requires upfront collection of PIDs
+        // - Using sysinfo::SystemExt::processes(): Same API limitations
+        // - Lazy evaluation: Not possible due to lifetime constraints
+        //
+        // The current approach minimizes memory usage by collecting only essential data
+        // and streaming it immediately. The clippy warning is suppressed as this collection
+        // is technically necessary for the API constraints.
+        #[allow(clippy::needless_collect)]
+        // Required due to sysinfo API and borrow checker constraints
         let processes_data: Vec<_> = system
             .processes()
             .iter()

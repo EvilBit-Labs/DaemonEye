@@ -20,6 +20,10 @@ use std::hint::black_box;
 fn bench_detection_engine_execution(c: &mut Criterion) {
     let mut group = c.benchmark_group("detection_engine_execution");
 
+    // Create Tokio runtime once outside the benchmark loop
+    let rt = tokio::runtime::Runtime::new()
+        .expect("Failed to create tokio runtime for detection engine benchmark");
+
     // Test with different numbers of processes
     let process_counts = vec![100, 1000, 5000, 10000];
 
@@ -29,8 +33,6 @@ fn bench_detection_engine_execution(c: &mut Criterion) {
             &process_count,
             |b, &process_count| {
                 b.iter(|| {
-                    let rt = tokio::runtime::Runtime::new()
-                        .expect("Failed to create tokio runtime in benchmark");
                     rt.block_on(async {
                         // Create test processes
                         let processes: Vec<ProcessRecord> = (0..process_count)

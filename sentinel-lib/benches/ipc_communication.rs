@@ -11,12 +11,12 @@
 )]
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use futures::FutureExt;
 use prost::Message;
 use sentinel_lib::ipc::{Crc32Variant, IpcConfig, ResilientIpcClient, TransportType};
 use sentinel_lib::proto::{DetectionResult, DetectionTask, ProtoProcessRecord};
 use std::hint::black_box;
 use tempfile::TempDir;
-use tokio::runtime::Runtime;
 
 /// Benchmark IPC message serialization and deserialization
 fn bench_ipc_serialization(c: &mut Criterion) {
@@ -25,12 +25,8 @@ fn bench_ipc_serialization(c: &mut Criterion) {
     group.bench_function("serialize_detection_task", |b| {
         b.iter(|| {
             let task = DetectionTask::new_enumerate_processes("benchmark_task", None);
-
-            let start = std::time::Instant::now();
             let serialized = prost::Message::encode_to_vec(&task);
-            let duration = start.elapsed();
-
-            black_box((serialized.len(), duration))
+            black_box(serialized.len())
         });
     });
 
@@ -40,11 +36,9 @@ fn bench_ipc_serialization(c: &mut Criterion) {
         let serialized = prost::Message::encode_to_vec(&task);
 
         b.iter(|| {
-            let start = std::time::Instant::now();
             let deserialized = DetectionTask::decode(&serialized[..]).unwrap();
-            let duration = start.elapsed();
 
-            black_box((deserialized.task_id, duration))
+            black_box(deserialized.task_id)
         });
     });
 
@@ -77,11 +71,9 @@ fn bench_ipc_serialization(c: &mut Criterion) {
                 hash_result: None,
             };
 
-            let start = std::time::Instant::now();
             let serialized = prost::Message::encode_to_vec(&result);
-            let duration = start.elapsed();
 
-            black_box((serialized.len(), duration))
+            black_box(serialized.len())
         });
     });
 
@@ -112,11 +104,9 @@ fn bench_ipc_serialization(c: &mut Criterion) {
         let serialized = prost::Message::encode_to_vec(&result);
 
         b.iter(|| {
-            let start = std::time::Instant::now();
             let deserialized = DetectionResult::decode(&serialized[..]).unwrap();
-            let duration = start.elapsed();
 
-            black_box((deserialized.task_id, duration))
+            black_box(deserialized.task_id)
         });
     });
 
@@ -131,25 +121,21 @@ fn bench_crc32_calculation(c: &mut Criterion) {
 
     group.bench_function("crc32_ieee", |b| {
         b.iter(|| {
-            let start = std::time::Instant::now();
             let mut hasher = crc32fast::Hasher::new();
             hasher.update(test_data);
             let checksum = hasher.finalize();
-            let duration = start.elapsed();
 
-            black_box((checksum, duration))
+            black_box(checksum)
         });
     });
 
     group.bench_function("crc32_castagnoli", |b| {
         b.iter(|| {
-            let start = std::time::Instant::now();
             let mut hasher = crc32fast::Hasher::new();
             hasher.update(test_data);
             let checksum = hasher.finalize();
-            let duration = start.elapsed();
 
-            black_box((checksum, duration))
+            black_box(checksum)
         });
     });
 
@@ -164,13 +150,11 @@ fn bench_crc32_calculation(c: &mut Criterion) {
                 let test_data_bytes = vec![0_u8; data_size];
 
                 b.iter(|| {
-                    let start = std::time::Instant::now();
                     let mut hasher = crc32fast::Hasher::new();
                     hasher.update(&test_data_bytes);
                     let checksum = hasher.finalize();
-                    let duration = start.elapsed();
 
-                    black_box((checksum, duration))
+                    black_box(checksum)
                 });
             },
         );
@@ -183,35 +167,11 @@ fn bench_crc32_calculation(c: &mut Criterion) {
 fn bench_ipc_client_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("ipc_client_operations");
 
-    let rt = Runtime::new().unwrap();
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
 
     group.bench_function("create_ipc_client", |b| {
         b.iter(|| {
-            rt.block_on(async {
-                let config = IpcConfig {
-                    endpoint_path: socket_path.to_string_lossy().to_string(),
-                    max_frame_bytes: 1024 * 1024,
-                    max_connections: 4,
-                    accept_timeout_ms: 1000,
-                    read_timeout_ms: 5000,
-                    write_timeout_ms: 5000,
-                    transport: TransportType::Interprocess,
-                    crc32_variant: Crc32Variant::Ieee,
-                };
-
-                let start = std::time::Instant::now();
-                let client = ResilientIpcClient::new(config);
-                let duration = start.elapsed();
-
-                black_box((client, duration))
-            })
-        });
-    });
-
-    group.bench_function("get_client_stats", |b| {
-        rt.block_on(async {
             let config = IpcConfig {
                 endpoint_path: socket_path.to_string_lossy().to_string(),
                 max_frame_bytes: 1024 * 1024,
@@ -224,14 +184,27 @@ fn bench_ipc_client_operations(c: &mut Criterion) {
             };
 
             let client = ResilientIpcClient::new(config);
+            black_box(client)
+        });
+    });
 
-            b.iter(|| {
-                let start = std::time::Instant::now();
-                let stats = client.get_stats();
-                let duration = start.elapsed();
+    group.bench_function("get_client_stats", |b| {
+        let config = IpcConfig {
+            endpoint_path: socket_path.to_string_lossy().to_string(),
+            max_frame_bytes: 1024 * 1024,
+            max_connections: 4,
+            accept_timeout_ms: 1000,
+            read_timeout_ms: 5000,
+            write_timeout_ms: 5000,
+            transport: TransportType::Interprocess,
+            crc32_variant: Crc32Variant::Ieee,
+        };
 
-                black_box((stats, duration))
-            });
+        let client = ResilientIpcClient::new(config);
+
+        b.iter(|| {
+            let stats = client.get_stats();
+            black_box(stats)
         });
     });
 
@@ -246,8 +219,6 @@ fn bench_message_framing(c: &mut Criterion) {
 
     group.bench_function("frame_message", |b| {
         b.iter(|| {
-            let start = std::time::Instant::now();
-
             // Simulate message framing with length prefix and CRC32
             let length = test_message.len() as u32;
             let mut hasher = crc32fast::Hasher::new();
@@ -259,9 +230,7 @@ fn bench_message_framing(c: &mut Criterion) {
             framed.extend_from_slice(&crc.to_le_bytes());
             framed.extend_from_slice(test_message);
 
-            let duration = start.elapsed();
-
-            black_box((framed.len(), duration))
+            black_box(framed.len())
         });
     });
 
@@ -278,8 +247,6 @@ fn bench_message_framing(c: &mut Criterion) {
         framed.extend_from_slice(test_message);
 
         b.iter(|| {
-            let start = std::time::Instant::now();
-
             // Simulate message unframing
             let length_bytes = [framed[0], framed[1], framed[2], framed[3]];
             let crc_bytes = [framed[4], framed[5], framed[6], framed[7]];
@@ -292,9 +259,7 @@ fn bench_message_framing(c: &mut Criterion) {
             hasher.update(message);
             let calculated_crc = hasher.finalize();
 
-            let duration = start.elapsed();
-
-            black_box((crc == calculated_crc, duration))
+            black_box(crc == calculated_crc)
         });
     });
 
@@ -305,39 +270,35 @@ fn bench_message_framing(c: &mut Criterion) {
 fn bench_concurrent_ipc_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_ipc_operations");
 
-    let rt = Runtime::new().unwrap();
     let temp_dir = TempDir::new().unwrap();
     let socket_path = temp_dir.path().join("test.sock");
 
     group.bench_function("concurrent_client_creation", |b| {
         b.iter(|| {
-            rt.block_on(async {
-                let config = IpcConfig {
-                    endpoint_path: socket_path.to_string_lossy().to_string(),
-                    max_frame_bytes: 1024 * 1024,
-                    max_connections: 4,
-                    accept_timeout_ms: 1000,
-                    read_timeout_ms: 5000,
-                    write_timeout_ms: 5000,
-                    transport: TransportType::Interprocess,
-                    crc32_variant: Crc32Variant::Ieee,
-                };
+            let config = IpcConfig {
+                endpoint_path: socket_path.to_string_lossy().to_string(),
+                max_frame_bytes: 1024 * 1024,
+                max_connections: 4,
+                accept_timeout_ms: 1000,
+                read_timeout_ms: 5000,
+                write_timeout_ms: 5000,
+                transport: TransportType::Interprocess,
+                crc32_variant: Crc32Variant::Ieee,
+            };
 
-                let start = std::time::Instant::now();
+            // Create multiple clients concurrently using current runtime handle
+            let handle = tokio::runtime::Handle::current();
+            let clients: Vec<_> = (0..10)
+                .map(|_| {
+                    let config = config.clone();
+                    handle.spawn(async move { ResilientIpcClient::new(config) })
+                })
+                .collect();
 
-                // Create multiple clients concurrently
-                let handles: Vec<_> = (0..10)
-                    .map(|_| {
-                        let config = config.clone();
-                        tokio::spawn(async move { ResilientIpcClient::new(config) })
-                    })
-                    .collect();
+            // Wait for all clients to be created
+            let _results = futures::future::join_all(clients).now_or_never();
 
-                let clients = futures::future::join_all(handles).await;
-                let duration = start.elapsed();
-
-                black_box((clients.len(), duration))
-            })
+            black_box(10) // Return the number of clients created
         });
     });
 
@@ -352,13 +313,15 @@ fn bench_ipc_throughput(c: &mut Criterion) {
     let message_sizes = vec![100, 1000, 10000, 100_000];
 
     for message_size in message_sizes {
+        // Set throughput measurement based on message size
+        // This tells Criterion to measure throughput in bytes per second
+        group.throughput(criterion::Throughput::Bytes(message_size as u64));
+
         group.bench_with_input(
             BenchmarkId::new("message_throughput", message_size),
             &message_size,
             |b, &message_size| {
                 b.iter(|| {
-                    let start = std::time::Instant::now();
-
                     // Create test message
                     let test_message = vec![0_u8; message_size];
 
@@ -386,10 +349,7 @@ fn bench_ipc_throughput(c: &mut Criterion) {
                     crc_hasher.update(unframed_message);
                     let calculated_crc = crc_hasher.finalize();
 
-                    let duration = start.elapsed();
-                    let throughput = message_size as f64 / duration.as_secs_f64();
-
-                    black_box((calculated_crc == unframed_crc, throughput))
+                    black_box(calculated_crc == unframed_crc)
                 });
             },
         );

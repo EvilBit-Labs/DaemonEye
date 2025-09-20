@@ -18,6 +18,7 @@ use sentinel_lib::models::{Alert, AlertSeverity, ProcessRecord, ProcessStatus};
 use std::hint::black_box;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use tokio::sync::Mutex;
 
 /// Mock alert sink for benchmarking
 #[derive(Debug)]
@@ -351,12 +352,8 @@ fn bench_concurrent_alert_processing(c: &mut Criterion) {
     group.bench_function("concurrent_alert_sending", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let _sinks = [
-                    Arc::new(MockAlertSink::new("sink1".to_string(), 0.9, 10)),
-                    Arc::new(MockAlertSink::new("sink2".to_string(), 0.8, 15)),
-                ];
-
-                let _manager = AlertManager::new();
+                // Create a single shared AlertManager instance
+                let manager = Arc::new(Mutex::new(AlertManager::new()));
 
                 // Create multiple alerts
                 let alerts: Vec<Alert> = (0..100)
@@ -378,13 +375,14 @@ fn bench_concurrent_alert_processing(c: &mut Criterion) {
 
                 let start = std::time::Instant::now();
 
-                // Send alerts concurrently
+                // Send alerts concurrently using the shared AlertManager
                 let handles: Vec<_> = alerts
                     .iter()
                     .map(|alert| {
                         let alert = alert.clone();
+                        let manager = Arc::clone(&manager);
                         tokio::spawn(async move {
-                            let mut manager = AlertManager::new();
+                            let mut manager = manager.lock().await;
                             manager.send_alert(&alert).await
                         })
                     })

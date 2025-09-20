@@ -12,9 +12,75 @@ use std::sync::Arc;
 use sysinfo::System;
 use tokio::sync::Mutex;
 
-/// Message handler for IPC communication with process monitoring
+/// Message handler for IPC communication with process monitoring.
+///
+/// The `ProcessMessageHandler` is the core component of procmond that handles
+/// inter-process communication with sentinelagent. It provides functionality for
+/// process enumeration, system monitoring, and task processing through a secure
+/// IPC protocol using protobuf messages and CRC32 integrity validation.
+///
+/// # Purpose
+///
+/// This handler serves as the privileged process collector in the SentinelD
+/// three-component security architecture. It runs with elevated privileges
+/// when necessary but drops them immediately after initialization to maintain
+/// a minimal attack surface. The handler is responsible for:
+///
+/// - Enumerating system processes using the `sysinfo` crate
+/// - Converting process data to protobuf format for IPC transmission
+/// - Handling detection tasks from sentinelagent via IPC
+/// - Managing database operations for audit logging
+/// - Providing process metadata including CPU usage, memory consumption, and execution details
+///
+/// # Security Model
+///
+/// The handler follows the principle of least privilege:
+/// - No network access whatsoever
+/// - Write-only access to audit ledger for tamper-evident logging
+/// - Minimal complexity to reduce attack surface
+/// - All complex logic (SQL parsing, networking, detection) handled by sentinelagent
+///
+/// # Usage
+///
+/// The handler is typically created during procmond initialization and used
+/// by the IPC server to process incoming detection tasks. It requires a
+/// `DatabaseManager` wrapped in `Arc<Mutex<>>` for thread-safe database access.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use procmond::ProcessMessageHandler;
+/// use sentinel_lib::storage::DatabaseManager;
+/// use std::sync::Arc;
+/// use tokio::sync::Mutex;
+///
+/// // Create a database manager (typically done during procmond startup)
+/// let db_manager = Arc::new(Mutex::new(
+///     DatabaseManager::new("/var/lib/sentineld/audit.db")
+///         .expect("Failed to create database manager")
+/// ));
+///
+/// // Create the process message handler
+/// let handler = ProcessMessageHandler::new(db_manager);
+///
+/// // The handler is now ready to process detection tasks via IPC
+/// // This would typically be done by the IPC server in the main procmond loop
+/// ```
+///
+/// # Thread Safety
+///
+/// This struct is designed to be used in a multi-threaded environment. The
+/// `DatabaseManager` is wrapped in `Arc<Mutex<>>` to ensure thread-safe access
+/// to the underlying database operations.
+///
+/// # Error Handling
+///
+/// All operations return `Result` types with appropriate error handling.
+/// Database errors, process enumeration failures, and IPC communication
+/// issues are properly propagated to the caller for appropriate handling.
 #[allow(dead_code)]
 pub struct ProcessMessageHandler {
+    /// Thread-safe database manager for audit logging and data storage
     pub database: Arc<Mutex<storage::DatabaseManager>>,
 }
 
@@ -111,9 +177,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_message_handler_creation() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
         let db_path = temp_dir.path().join("test.db");
-        let db_manager = Arc::new(Mutex::new(storage::DatabaseManager::new(&db_path).unwrap()));
+        let db_manager = Arc::new(Mutex::new(
+            storage::DatabaseManager::new(&db_path)
+                .expect("Failed to create database manager for test"),
+        ));
 
         let _handler = ProcessMessageHandler::new(db_manager);
         // Handler should be created successfully
@@ -122,9 +191,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_detection_task_enumerate_processes() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
         let db_path = temp_dir.path().join("test.db");
-        let db_manager = Arc::new(Mutex::new(storage::DatabaseManager::new(&db_path).unwrap()));
+        let db_manager = Arc::new(Mutex::new(
+            storage::DatabaseManager::new(&db_path)
+                .expect("Failed to create database manager for test"),
+        ));
 
         let handler = ProcessMessageHandler::new(db_manager);
 
@@ -139,7 +211,8 @@ mod tests {
         let result = handler.handle_detection_task(task).await;
         assert!(result.is_ok());
 
-        let detection_result = result.unwrap();
+        let detection_result =
+            result.expect("Detection task should succeed for enumerate processes");
         assert_eq!(detection_result.task_id, "test-task");
         assert!(detection_result.success);
         assert!(!detection_result.processes.is_empty());
@@ -147,9 +220,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_detection_task_unsupported_type() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
         let db_path = temp_dir.path().join("test.db");
-        let db_manager = Arc::new(Mutex::new(storage::DatabaseManager::new(&db_path).unwrap()));
+        let db_manager = Arc::new(Mutex::new(
+            storage::DatabaseManager::new(&db_path)
+                .expect("Failed to create database manager for test"),
+        ));
 
         let handler = ProcessMessageHandler::new(db_manager);
 
@@ -164,23 +240,27 @@ mod tests {
         let result = handler.handle_detection_task(task).await;
         assert!(result.is_ok());
 
-        let detection_result = result.unwrap();
+        let detection_result =
+            result.expect("Detection task should return result even for unsupported type");
         assert_eq!(detection_result.task_id, "test-task");
         assert!(!detection_result.success);
         assert!(
             detection_result
                 .error_message
                 .as_ref()
-                .unwrap()
+                .expect("Error message should be present for unsupported task type")
                 .contains("Unsupported task type")
         );
     }
 
     #[test]
     fn test_convert_process_to_record() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
         let db_path = temp_dir.path().join("test.db");
-        let db_manager = Arc::new(Mutex::new(storage::DatabaseManager::new(&db_path).unwrap()));
+        let db_manager = Arc::new(Mutex::new(
+            storage::DatabaseManager::new(&db_path)
+                .expect("Failed to create database manager for test"),
+        ));
 
         let handler = ProcessMessageHandler::new(db_manager);
 
@@ -199,9 +279,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_enumerate_processes() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
         let db_path = temp_dir.path().join("test.db");
-        let db_manager = Arc::new(Mutex::new(storage::DatabaseManager::new(&db_path).unwrap()));
+        let db_manager = Arc::new(Mutex::new(
+            storage::DatabaseManager::new(&db_path)
+                .expect("Failed to create database manager for test"),
+        ));
 
         let handler = ProcessMessageHandler::new(db_manager);
 
@@ -216,7 +299,7 @@ mod tests {
         let result = handler.enumerate_processes(&task).await;
         assert!(result.is_ok());
 
-        let detection_result = result.unwrap();
+        let detection_result = result.expect("Process enumeration should succeed");
         assert_eq!(detection_result.task_id, "test-task");
         assert!(detection_result.success);
         assert!(!detection_result.processes.is_empty());

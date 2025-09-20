@@ -1,6 +1,6 @@
 #![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
+    clippy::unwrap_used, // We allow unwraps in benchmarks
+    clippy::expect_used, // We allow expects in benchmarks
     clippy::str_to_string,
     clippy::uninlined_format_args,
     clippy::shadow_reuse,
@@ -286,29 +286,31 @@ fn bench_concurrent_operations(c: &mut Criterion) {
     let db_path = temp_dir.path().join("bench.db");
 
     group.bench_function("concurrent_reads", |b| {
+        // Setup test data once outside the benchmark loop
+        let db_manager =
+            Arc::new(DatabaseManager::new(&db_path).expect("Failed to create database manager"));
+
+        // Create test data
+        let processes_with_ids: Vec<(u64, ProcessRecord)> = (0..1000)
+            .map(|i| {
+                let process = ProcessRecord::builder()
+                    .pid_raw(i.try_into().unwrap_or(0))
+                    .name(format!("process_{i}"))
+                    .status(ProcessStatus::Running)
+                    .build()
+                    .expect("Failed to build process record");
+                (u64::try_from(i).unwrap_or(0), process)
+            })
+            .collect();
+
+        // Store test data in database once
+        db_manager
+            .store_processes_batch(&processes_with_ids)
+            .expect("Failed to store processes batch");
+
         b.iter(|| {
             rt.block_on(async {
-                let db_manager = Arc::new(
-                    DatabaseManager::new(&db_path).expect("Failed to create database manager"),
-                );
-
-                // Setup test data
-                let processes_with_ids: Vec<(u64, ProcessRecord)> = (0..1000)
-                    .map(|i| {
-                        let process = ProcessRecord::builder()
-                            .pid_raw(i.try_into().unwrap_or(0))
-                            .name(format!("process_{i}"))
-                            .status(ProcessStatus::Running)
-                            .build()
-                            .expect("Failed to build process record");
-                        (u64::try_from(i).unwrap_or(0), process)
-                    })
-                    .collect();
-                db_manager
-                    .store_processes_batch(&processes_with_ids)
-                    .expect("Failed to store processes batch");
-
-                // Concurrent reads
+                // Concurrent reads on the pre-populated database
                 let handles: Vec<_> = (0..10)
                     .map(|_| {
                         let db_manager_clone = Arc::clone(&db_manager);

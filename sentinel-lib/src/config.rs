@@ -311,10 +311,43 @@ impl ConfigLoader {
     }
 
     /// Merge two configurations, with the second taking precedence.
-    fn merge_configs(_base: Config, override_config: Config) -> Config {
-        // For simplicity, we'll use the override config for most fields
-        // In a more sophisticated implementation, we'd merge individual fields
-        override_config
+    fn merge_configs(base: Config, override_config: Config) -> Config {
+        Config {
+            app: AppConfig {
+                scan_interval_ms: override_config.app.scan_interval_ms,
+                batch_size: override_config.app.batch_size,
+                max_processes: override_config.app.max_processes.or(base.app.max_processes),
+                enhanced_metadata: override_config.app.enhanced_metadata,
+            },
+            database: DatabaseConfig {
+                path: override_config.database.path,
+                retention_days: override_config.database.retention_days,
+                max_size_mb: override_config
+                    .database
+                    .max_size_mb
+                    .or(base.database.max_size_mb),
+                encryption_enabled: override_config.database.encryption_enabled,
+            },
+            alerting: AlertingConfig {
+                sinks: if override_config.alerting.sinks.is_empty() {
+                    base.alerting.sinks
+                } else {
+                    override_config.alerting.sinks
+                },
+                dedup_window_seconds: override_config.alerting.dedup_window_seconds,
+                max_alerts_per_minute: override_config
+                    .alerting
+                    .max_alerts_per_minute
+                    .or(base.alerting.max_alerts_per_minute),
+                recent_threshold_seconds: override_config.alerting.recent_threshold_seconds,
+            },
+            logging: LoggingConfig {
+                level: override_config.logging.level,
+                format: override_config.logging.format,
+                file: override_config.logging.file.or(base.logging.file),
+                structured: override_config.logging.structured,
+            },
+        }
     }
 
     /// Validate the final configuration.

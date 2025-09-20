@@ -2,9 +2,7 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::str_to_string,
-    clippy::shadow_reuse,
-    clippy::arithmetic_side_effects,
-    clippy::unchecked_duration_subtraction
+    clippy::shadow_reuse
 )]
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -62,6 +60,8 @@ fn bench_process_collection_streaming(c: &mut Criterion) {
     let mut group = c.benchmark_group("process_collection_streaming");
 
     group.bench_function("stream_small_batch", |b| {
+        // Allow arithmetic_side_effects: saturating_add is safe and intentional for counting
+        #[allow(clippy::arithmetic_side_effects)]
         b.iter(|| {
             let collector = SysinfoProcessCollector::default();
             let deadline = Some(
@@ -75,6 +75,7 @@ fn bench_process_collection_streaming(c: &mut Criterion) {
                 let mut stream = collector.stream_processes(deadline);
                 let mut count: u32 = 0;
                 while (stream.next().await).is_some() {
+                    // Allow arithmetic_side_effects: saturating_add is safe and intentional for counting
                     count = count.saturating_add(1);
                     if count >= 1000 {
                         break;
@@ -94,14 +95,20 @@ fn bench_process_record_operations(c: &mut Criterion) {
 
     group.bench_function("create_process_record", |b| {
         b.iter(|| {
-            let record = ProcessRecord::builder()
+            let record_builder = ProcessRecord::builder()
                 .pid_raw(1234)
                 .name("test_process".to_owned())
                 .status(ProcessStatus::Running)
                 .executable_path("/usr/bin/test".to_owned())
                 .command_line("test --arg value".to_owned())
-                .cpu_usage(25.5)
-                .memory_usage(1024 * 1024)
+                .cpu_usage(25.5);
+
+            // Allow arithmetic_side_effects: multiplication for memory calculation is safe in this context
+            #[allow(clippy::arithmetic_side_effects)]
+            let memory_bytes = 1024 * 1024;
+
+            let record = record_builder
+                .memory_usage(memory_bytes)
                 .build()
                 .expect("Failed to build process record");
 
@@ -128,14 +135,20 @@ fn bench_process_record_operations(c: &mut Criterion) {
     });
 
     group.bench_function("deserialize_process_record", |b| {
-        let record = ProcessRecord::builder()
+        let record_builder = ProcessRecord::builder()
             .pid_raw(1234)
             .name("test_process".to_owned())
             .status(ProcessStatus::Running)
             .executable_path("/usr/bin/test".to_owned())
             .command_line("test --arg value".to_owned())
-            .cpu_usage(25.5)
-            .memory_usage(1024 * 1024)
+            .cpu_usage(25.5);
+
+        // Allow arithmetic_side_effects: multiplication for memory calculation is safe in this context
+        #[allow(clippy::arithmetic_side_effects)]
+        let memory_bytes = 1024 * 1024;
+
+        let record = record_builder
+            .memory_usage(memory_bytes)
             .build()
             .expect("Failed to build process record");
 

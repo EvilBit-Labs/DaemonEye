@@ -126,11 +126,16 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let processes = match ipc_manager.enumerate_processes().await {
                     Ok(result) => {
                         if result.success {
-                            info!("Successfully collected process data from procmond");
-                            // For now, we'll use an empty vector since the actual process data
-                            // would need to be parsed from the DetectionResult
-                            // TODO: Parse process data from DetectionResult.processes
-                            Vec::new()
+                            info!(
+                                process_count = result.processes.len(),
+                                "Successfully collected process data from procmond"
+                            );
+                            // Parse process data from DetectionResult.processes
+                            result
+                                .processes
+                                .into_iter()
+                                .map(Into::into)
+                                .collect()
                         } else {
                             warn!(
                                 error = %result.error_message.as_deref().unwrap_or("Unknown error"),
