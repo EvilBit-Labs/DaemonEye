@@ -549,7 +549,7 @@ impl AlertManager {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```text
     /// // Internal helper used by AlertManager; prefer using `send_alert` which records alerts automatically.
     /// ```
     fn record_alert(&mut self, alert: &Alert) {

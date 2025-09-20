@@ -54,7 +54,7 @@ impl DetectionEngine {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```text
     /// // Create an engine and load a validated rule (see DetectionRule::new docs)
     /// // let mut engine = sentinel_lib::detection::DetectionEngine::new();
     /// // engine.load_rule(rule).unwrap();
@@ -99,7 +99,7 @@ impl DetectionEngine {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```text
     /// // Illustrative async example; construct a rule and processes then call execute_rule().
     /// ```
     fn execute_rule(rule: &DetectionRule, processes: &[ProcessRecord]) -> Vec<Alert> {
