@@ -104,6 +104,17 @@
   - Write unit tests for protobuf serialization and backward compatibility
   - _Requirements: 12.1, 12.2, 12.3_
 
+- [ ] 4.5 Create comprehensive collector-core testing suite - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+
+  - Write integration tests for multiple concurrent EventSource registration and lifecycle management
+  - Add stress tests for event batching, backpressure handling, and graceful shutdown coordination
+  - Create property-based tests for CollectionEvent serialization and capability negotiation
+  - Implement chaos testing for EventSource failure scenarios and recovery behavior
+  - Add performance benchmarks for collector-core runtime overhead and event throughput
+  - Write security tests for EventSource isolation and capability enforcement
+  - Create compatibility tests ensuring collector-core works with existing procmond and sentinelagent
+  - _Requirements: 11.1, 11.2, 12.1, 12.2, 13.1, 13.2, 13.5_
+
 - [ ] 5. Implement cross-platform process enumeration in procmond - [#39](https://github.com/EvilBit-Labs/SentinelD/issues/39)
 
   - Create ProcessCollector trait with platform-specific implementations using sysinfo crate
@@ -195,6 +206,17 @@
   - Add migration validation and rollback capabilities
   - Write integration tests for migration scenarios and version compatibility
   - _Requirements: 1.3, 4.4, 7.4_
+
+- [ ] 10.5 Create comprehensive database testing and validation - [#46](https://github.com/EvilBit-Labs/SentinelD/issues/46)
+
+  - Add property-based tests for redb transaction handling and concurrent access patterns
+  - Create stress tests for high-volume process data ingestion and query performance
+  - Implement corruption detection tests and database integrity validation
+  - Add performance benchmarks for query execution times and storage efficiency
+  - Write chaos tests for database recovery scenarios and transaction rollback behavior
+  - Create data consistency tests for audit ledger integrity and tamper detection
+  - Add memory usage tests for long-running database operations and cleanup verification
+  - _Requirements: 1.3, 4.4, 7.1, 7.2, 7.4_
 
 - [ ] 11. Implement SQL-based detection engine with SQL-to-IPC translation pipeline
 
@@ -345,10 +367,12 @@
 
 - [ ] 20.3 Create performance and property-based testing - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
 
-  - Add performance tests with criterion for regression detection
-  - Implement property-based tests with proptest for edge case discovery
-  - Create load testing scenarios for high-volume process monitoring
-  - Write benchmark tests for critical performance paths
+  - Add performance tests with criterion for regression detection on critical paths (process enumeration, SQL execution, IPC throughput)
+  - Implement property-based tests with proptest for edge case discovery in data models, SQL parsing, and collector-core event handling
+  - Create load testing scenarios for high-volume process monitoring (10,000+ processes, sustained monitoring)
+  - Write benchmark tests for collector-core framework overhead and event source registration/deregistration
+  - Add memory usage benchmarks for long-running monitoring scenarios and database growth patterns
+  - Create stress tests for alert delivery under high-volume detection scenarios
   - _Requirements: All requirements verification_
 
 - [ ] 20.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
@@ -361,11 +385,14 @@
 
 - [ ] 21. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/SentinelD/issues/62)
 
-  - Implement comprehensive SQL injection prevention testing with malicious input vectors
-  - Add privilege boundary verification tests for all components
-  - Create input validation fuzzing with cargo-fuzz for security-critical components
-  - Add memory safety verification with Miri and AddressSanitizer where available
-  - Write penetration testing scenarios for interprocess IPC protocol and component boundaries
+  - Implement comprehensive SQL injection prevention testing with OWASP test vectors and malicious input fuzzing
+  - Add privilege boundary verification tests for all components with capability dropping validation
+  - Create input validation fuzzing with cargo-fuzz for protobuf parsing, SQL validation, configuration loading, and collector-core event processing
+  - Add memory safety verification with Miri and AddressSanitizer for unsafe code boundaries
+  - Write penetration testing scenarios for IPC protocol, socket permissions, and component isolation
+  - Create audit chain integrity testing with tampering detection and cryptographic verification
+  - Add collector-core security testing for event source isolation and capability enforcement
+  - Implement chaos engineering tests for component failure scenarios and recovery behavior
   - _Requirements: 3.5, 6.4, 6.5_
 
 - [ ] 22. Integrate components and implement end-to-end workflows
