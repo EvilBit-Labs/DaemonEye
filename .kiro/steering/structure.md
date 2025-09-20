@@ -65,6 +65,7 @@ SentinelD/
 - **Resolver**: Version 3 for enhanced dependency resolution
 - **Lints**: `unsafe_code = "forbid"`, `warnings = "deny"`
 - **Quality**: Zero-warnings policy enforced by CI
+- **AI Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission
 
 ### Module Organization
 

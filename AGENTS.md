@@ -99,6 +99,7 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 4. **Operator-Centric Design**: Built for operators, by operators. Prioritize workflows efficient in contested/airgapped environments.
 5. **Documentation Standards**: Use Mermaid for all diagrams. Prettier ignores Markdown files. Use relative links and maintain link hygiene.
 6. **Testing Required**: All code changes must include appropriate tests to ensure quality and correctness.
+7. **Linter Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission. All `-D warnings` and `deny` attributes must be preserved.
 
 ### Rule Precedence Hierarchy
 

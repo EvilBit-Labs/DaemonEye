@@ -446,3 +446,7 @@ These exceptions are allowed currently while the project is in early development
 ## Summary
 
 These linting rules are carefully chosen for a security-critical process monitoring system. Each rule serves a specific purpose in preventing security vulnerabilities, ensuring performance, and maintaining code quality. They should not be disabled without understanding their intent and the security implications of doing so.
+
+## AI Assistant Restrictions
+
+**CRITICAL**: AI assistants are explicitly prohibited from removing clippy restrictions or allowing linters marked as `deny` without explicit permission. All `-D warnings` and `deny` attributes must be preserved. Any changes to linting configuration require explicit user approval.

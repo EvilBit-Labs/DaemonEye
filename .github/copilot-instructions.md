@@ -18,6 +18,7 @@ Security boundaries: Only `procmond` runs with elevated privileges; `sentinelage
 - **Rust 2024 Edition** with MSRV 1.85+, pure workspace with independent crates
 - **Zero warnings policy**: `cargo clippy --workspace -- -D warnings` must pass
 - **Forbidden unsafe code**: `unsafe_code = "forbid"` enforced at workspace level
+- **Linter restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission
 - **Workspace members**: `procmond`, `sentinelagent`, `sentinelcli`, `sentinel-lib`
 - Use `just` for all development tasks (DRY composition with `@just <subrecipe>`)
 
