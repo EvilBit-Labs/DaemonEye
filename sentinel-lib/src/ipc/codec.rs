@@ -43,6 +43,21 @@ pub enum IpcError {
 
     #[error("Invalid message length: {length}")]
     InvalidLength { length: u32 },
+
+    #[error("Server not found at {endpoint} - ensure procmond is running")]
+    ServerNotFound { endpoint: String },
+
+    #[error("Connection refused to {endpoint} - server may not be accepting connections")]
+    ConnectionRefused { endpoint: String },
+
+    #[error("Permission denied connecting to {endpoint} - check file permissions")]
+    PermissionDenied { endpoint: String },
+
+    #[error("Connection timeout to {endpoint} - server may be overloaded")]
+    ConnectionTimeout { endpoint: String },
+
+    #[error("Circuit breaker is open - too many recent failures")]
+    CircuitBreakerOpen,
 }
 
 /// Codec for encoding and decoding protobuf messages with CRC32C validation

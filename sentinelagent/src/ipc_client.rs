@@ -325,6 +325,7 @@ pub fn create_default_ipc_config() -> IpcConfig {
         read_timeout_ms: 30000,     // 30 seconds
         write_timeout_ms: 10000,    // 10 seconds
         max_connections: 4,
+        panic_strategy: sentinel_lib::ipc::PanicStrategy::Abort, // Production configuration
     }
 }
 
@@ -342,6 +343,7 @@ pub fn create_maximum_ipc_config() -> IpcConfig {
         read_timeout_ms: 60000,       // 60 seconds - maximum read timeout
         write_timeout_ms: 30000,      // 30 seconds - maximum write timeout
         max_connections: 16,          // Maximum connections
+        panic_strategy: sentinel_lib::ipc::PanicStrategy::Abort, // Production configuration
     }
 }
 
@@ -374,6 +376,7 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 4,
+            panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
         };
 
         (config, temp_dir)

@@ -58,6 +58,7 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 5, // Allow more concurrent connections
+            panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
         };
 
         (config, temp_dir)
@@ -114,7 +115,7 @@ mod tests {
         assert!(result.error_message.is_none());
 
         // Clean up
-        server.stop();
+        let _result = server.graceful_shutdown().await;
     }
 
     #[tokio::test]
@@ -154,7 +155,7 @@ mod tests {
         );
 
         // Clean up
-        server.stop();
+        let _result = server.graceful_shutdown().await;
     }
 
     #[tokio::test]
@@ -316,7 +317,7 @@ mod tests {
         );
 
         // Clean up
-        server.stop();
+        let _result = server.graceful_shutdown().await;
     }
 
     /// Test cross-platform endpoint creation
@@ -350,6 +351,7 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 5,
+            panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
         };
 
         let _server = InterprocessServer::new(config.clone());

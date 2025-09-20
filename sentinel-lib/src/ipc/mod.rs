@@ -30,6 +30,8 @@ pub struct IpcConfig {
     pub write_timeout_ms: u64,
     /// Maximum concurrent connections
     pub max_connections: usize,
+    /// Panic strategy for production environments
+    pub panic_strategy: PanicStrategy,
 }
 
 impl Default for IpcConfig {
@@ -42,6 +44,7 @@ impl Default for IpcConfig {
             read_timeout_ms: 30000,       // 30 seconds
             write_timeout_ms: 10000,      // 10 seconds
             max_connections: 16,
+            panic_strategy: PanicStrategy::Unwind, // Default to unwind for development
         }
     }
 }
@@ -52,6 +55,33 @@ impl Default for IpcConfig {
 pub enum TransportType {
     /// Use tokio native IPC transport (default)
     Interprocess,
+}
+
+/// Panic strategy for production environments
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PanicStrategy {
+    /// Allow panics to unwind (default for development)
+    Unwind,
+    /// Abort on panic (recommended for production)
+    Abort,
+}
+
+impl IpcConfig {
+    /// Create a production-ready configuration with abort-on-panic strategy
+    pub fn production() -> Self {
+        Self {
+            panic_strategy: PanicStrategy::Abort,
+            ..Self::default()
+        }
+    }
+
+    /// Configure the panic strategy
+    #[must_use]
+    pub const fn with_panic_strategy(mut self, strategy: PanicStrategy) -> Self {
+        self.panic_strategy = strategy;
+        self
+    }
 }
 
 /// Get the default endpoint path based on the platform

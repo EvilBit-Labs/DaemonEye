@@ -66,11 +66,11 @@ setup:
 # Install development tools (extended setup)
 [windows]
 install-tools:
-    cargo binstall cargo-llvm-cov cargo-audit cargo-deny cargo-dist --locked
+    cargo binstall cargo-llvm-cov cargo-audit cargo-deny cargo-dist cargo-release cargo-cyclonedx cargo-auditable cargo-nextest --locked
 
 [unix]
 install-tools:
-    cargo binstall cargo-llvm-cov cargo-audit cargo-deny cargo-dist --locked
+    cargo binstall cargo-llvm-cov cargo-audit cargo-deny cargo-dist cargo-release cargo-cyclonedx cargo-auditable cargo-nextest --locked
 
 # Install mdBook and plugins for documentation
 [windows]
@@ -251,13 +251,13 @@ run-sentinelagent *args:
 # =============================================================================
 
 dist:
-    @cargo dist build
+    @dist build
 
 dist-check:
-    @cargo dist check
+    @dist check
 
 dist-plan:
-    @cargo dist plan
+    @dist plan
 
 install:
     @cargo install --path .

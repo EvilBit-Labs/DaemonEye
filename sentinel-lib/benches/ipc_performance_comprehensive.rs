@@ -41,6 +41,7 @@ fn create_benchmark_config(test_name: &str) -> (IpcConfig, TempDir) {
         read_timeout_ms: 30000,
         write_timeout_ms: 30000,
         max_connections: 16,
+        panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
     };
 
     (config, temp_dir)

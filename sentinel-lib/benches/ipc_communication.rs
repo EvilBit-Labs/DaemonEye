@@ -164,6 +164,7 @@ fn bench_ipc_client_operations(c: &mut Criterion) {
                 read_timeout_ms: 5000,
                 write_timeout_ms: 5000,
                 transport: TransportType::Interprocess,
+                panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
             };
 
             let client = ResilientIpcClient::new(config);
@@ -180,6 +181,7 @@ fn bench_ipc_client_operations(c: &mut Criterion) {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             transport: TransportType::Interprocess,
+            panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
         };
 
         let client = ResilientIpcClient::new(config);
@@ -259,6 +261,7 @@ fn bench_concurrent_ipc_operations(c: &mut Criterion) {
                 read_timeout_ms: 5000,
                 write_timeout_ms: 5000,
                 transport: TransportType::Interprocess,
+                panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
             };
 
             // Create multiple clients concurrently using current runtime handle

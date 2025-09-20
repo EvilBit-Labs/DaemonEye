@@ -43,6 +43,7 @@ fn create_test_config(test_name: &str) -> (IpcConfig, TempDir) {
         read_timeout_ms: 10000,
         write_timeout_ms: 10000,
         max_connections: 8,
+        panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
     };
 
     (config, temp_dir)
@@ -160,12 +161,9 @@ async fn test_cross_platform_transport_behavior() {
     }
 
     #[cfg(windows)]
-    {
-        // Windows named pipe should be accessible
-        assert!(config.endpoint_path.starts_with(r"\\.\pipe\"));
-    }
+    assert!(config.endpoint_path.starts_with(r"\\.\pipe\"));
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 /// Test task distribution and result collection workflows
@@ -255,7 +253,7 @@ async fn test_task_distribution_workflows() {
     // Verify task counter
     assert_eq!(task_counter.load(Ordering::SeqCst), 2);
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 /// Test concurrent task distribution
@@ -358,7 +356,7 @@ async fn test_concurrent_task_distribution() {
     // Verify all tasks were processed
     assert_eq!(task_counter.load(Ordering::SeqCst), num_tasks as u32);
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 /// Test error handling and recovery scenarios
@@ -459,7 +457,7 @@ async fn test_error_handling_and_recovery() {
     assert!(result4.error_message.is_none());
     assert_eq!(result4.processes.len(), 1);
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 /// Test connection limits and security validation
@@ -554,7 +552,7 @@ async fn test_connection_limits_and_security() {
         successful_connections, failed_connections, config.max_connections
     );
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 /// Test server shutdown and cleanup
@@ -590,7 +588,7 @@ async fn test_server_shutdown_and_cleanup() {
     assert!(result.success);
 
     // Stop server
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 
     // Give server time to clean up
     sleep(Duration::from_millis(200)).await;
@@ -663,7 +661,7 @@ async fn test_large_message_handling() {
         assert_eq!(process.name, format!("test_process_{}", i));
     }
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 /// Test timeout handling
@@ -711,5 +709,5 @@ async fn test_timeout_handling() {
         }
     }
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
