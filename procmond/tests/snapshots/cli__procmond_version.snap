@@ -1,0 +1,5 @@
+---
+source: procmond/tests/cli.rs
+expression: stdout
+---
+procmond 0.1.0

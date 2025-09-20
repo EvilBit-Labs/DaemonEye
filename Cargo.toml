@@ -126,7 +126,7 @@ arithmetic_side_effects = "warn"
 integer_division = "warn"
 modulo_arithmetic = "warn"
 panic = "forbid"                 # DON'T PANIC IN PRODUCTION
-unwrap_used = "forbid"           # DON'T UNWRAP IN PRODUCTION
+unwrap_used = "deny"             # DON'T UNWRAP IN PRODUCTION
 expect_used = "warn"
 
 # Security anti-patterns

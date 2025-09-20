@@ -4,9 +4,11 @@
 //! between procmond and sentinelagent using the interprocess crate with
 //! protobuf message framing and CRC32 integrity validation.
 
+pub mod client;
 pub mod codec;
 pub mod interprocess_transport;
 
+pub use client::{ClientStats, ConnectionState, ResilientIpcClient};
 /// Re-export commonly used types
 pub use codec::{IpcCodec, IpcError, IpcResult};
 pub use interprocess_transport::{InterprocessClient, InterprocessServer};
@@ -67,11 +69,11 @@ pub enum Crc32Variant {
 fn default_endpoint_path() -> String {
     #[cfg(unix)]
     {
-        "/var/run/sentineld/procmond.sock".to_string()
+        "/var/run/sentineld/procmond.sock".to_owned()
     }
     #[cfg(windows)]
     {
-        r"\\.\pipe\sentineld\procmond".to_string()
+        r"\\.\pipe\sentineld\procmond".to_owned()
     }
 }
 

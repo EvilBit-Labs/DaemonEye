@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-//! sentinel-lib: Shared library for SentinelD common functionality.
+//! sentinel-lib: Shared library for `SentinelD` common functionality.
 //!
-//! This library provides core functionality shared across all SentinelD components:
+//! This library provides core functionality shared across all `SentinelD` components:
 //! - Configuration management with hierarchical overrides
 //! - Core data models for processes, alerts, and detection rules
 //! - Database abstractions and storage management

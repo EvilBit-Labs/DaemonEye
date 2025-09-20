@@ -68,12 +68,12 @@ impl InterprocessServer {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(config: IpcConfig) -> IpcResult<Self> {
-        Ok(Self {
+    pub fn new(config: IpcConfig) -> Self {
+        Self {
             config,
             handler: None,
             shutdown_tx: None,
-        })
+        }
     }
 
     /// Set the message handler for processing detection tasks.
@@ -132,7 +132,7 @@ impl InterprocessServer {
         let handler = self
             .handler
             .clone()
-            .ok_or_else(|| IpcError::Encode("No message handler set".to_string()))?;
+            .ok_or_else(|| IpcError::Encode("No message handler set".to_owned()))?;
 
         // Create socket name using interprocess crate
         let name = self.create_socket_name()?;
@@ -153,7 +153,7 @@ impl InterprocessServer {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o600);
             std::fs::set_permissions(&self.config.endpoint_path, perms).map_err(IpcError::Io)?;
-        }
+        };
 
         info!(
             "Interprocess server starting on {}",
@@ -168,8 +168,8 @@ impl InterprocessServer {
         self.shutdown_tx = Some(shutdown_tx);
 
         // Clone config for the server task
-        let config = self.config.clone();
-        let handler = Arc::clone(&handler);
+        let server_config = self.config.clone();
+        let server_handler = Arc::clone(&handler);
 
         // Spawn the server task and wait for it to start
         let _server_handle = tokio::spawn(async move {
@@ -180,20 +180,17 @@ impl InterprocessServer {
                         match result {
                             Ok(stream) => {
                                 // Acquire connection permit
-                                let permit = match connection_semaphore.clone().try_acquire_owned() {
-                                    Ok(permit) => permit,
-                                    Err(_) => {
-                                        warn!("Connection limit reached, rejecting connection");
-                                        continue;
-                                    }
-                                };
+                let Ok(permit) = Arc::clone(&connection_semaphore).try_acquire_owned() else {
+                    warn!("Connection limit reached, rejecting connection");
+                    continue;
+                };
 
                                 // Handle connection
-                                let handler = Arc::clone(&handler);
-                                let config = config.clone();
+                                let connection_handler = Arc::clone(&server_handler);
+                                let connection_config = server_config.clone();
                                 tokio::spawn(async move {
                                     let _permit = permit; // Keep permit alive during connection
-                                    if let Err(e) = Self::handle_connection(stream, handler, config).await {
+                                    if let Err(e) = Self::handle_connection(stream, connection_handler, connection_config).await {
                                         error!("Connection handling error: {}", e);
                                     }
                                     // Permit is automatically released when dropped
@@ -240,7 +237,7 @@ impl InterprocessServer {
             }
 
             // Remove existing socket file
-            let _ = std::fs::remove_file(path);
+            let _result = std::fs::remove_file(path);
 
             path.to_fs_name::<GenericFilePath>()
                 .map_err(|e| IpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)))
@@ -257,18 +254,16 @@ impl InterprocessServer {
     }
 
     /// Stop the server
-    pub async fn stop(&mut self) -> IpcResult<()> {
+    pub fn stop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
+            let _result = shutdown_tx.send(());
         }
 
         // Clean up socket file on Unix
         #[cfg(unix)]
         {
-            let _ = std::fs::remove_file(&self.config.endpoint_path);
+            let _result = std::fs::remove_file(&self.config.endpoint_path);
         }
-
-        Ok(())
     }
 
     /// Handle a single client connection
@@ -305,21 +300,16 @@ impl InterprocessServer {
             let task_id = task.task_id.clone();
 
             // Process task with timeout to prevent hanging
-            let result = match tokio::time::timeout(
-                Duration::from_millis(config.read_timeout_ms),
-                handler(task),
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(_) => {
-                    warn!("Task processing timed out for task: {}", task_id);
-                    Err(IpcError::Io(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "Task processing timed out",
-                    )))
-                }
-            };
+            let result =
+                tokio::time::timeout(Duration::from_millis(config.read_timeout_ms), handler(task))
+                    .await
+                    .unwrap_or_else(|_| {
+                        warn!("Task processing timed out for task: {}", task_id);
+                        Err(IpcError::Io(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Task processing timed out",
+                        )))
+                    });
 
             match result {
                 Ok(detection_result) => {
@@ -365,9 +355,9 @@ pub struct InterprocessClient {
 
 impl InterprocessClient {
     /// Create a new interprocess client
-    pub fn new(config: IpcConfig) -> IpcResult<Self> {
+    pub fn new(config: IpcConfig) -> Self {
         let codec = IpcCodec::new(config.max_frame_bytes, config.crc32_variant.clone());
-        Ok(Self { config, codec })
+        Self { config, codec }
     }
 
     /// Create socket name from configuration
@@ -420,14 +410,14 @@ mod tests {
     #[test]
     fn test_server_creation() {
         let config = IpcConfig::default();
-        let server = InterprocessServer::new(config);
-        assert!(server.is_ok());
+        let _server = InterprocessServer::new(config);
+        // Server creation always succeeds
     }
 
     #[test]
     fn test_client_creation() {
         let config = IpcConfig::default();
-        let client = InterprocessClient::new(config);
-        assert!(client.is_ok());
+        let _client = InterprocessClient::new(config);
+        // Client creation always succeeds
     }
 }

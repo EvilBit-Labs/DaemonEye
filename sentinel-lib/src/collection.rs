@@ -51,7 +51,7 @@ pub struct SysinfoProcessCollector {
 
 impl SysinfoProcessCollector {
     /// Create a new collector.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { refresh_cpu: true }
     }
 }
@@ -70,63 +70,81 @@ impl ProcessCollectionService for SysinfoProcessCollector {
             system.refresh_all();
         }
 
-        // Capture process list keys to avoid holding &System across await points (stream::iter is sync but good hygiene).
-        let pids: Vec<_> = system.processes().keys().cloned().collect();
-        let iter = pids.into_iter().map(move |pid| {
-            // Access the process each iteration (if it vanished, surface error per-item).
-            let proc = match system.processes().get(&pid) {
-                Some(p) => p,
-                None => return Err(CollectionError::ProcessNotFound { pid: pid.as_u32() }),
-            };
-            if let Some(dl) = deadline_instant {
-                if Instant::now() > dl {
-                    // Represent timeout as single error; downstream can stop.
-                    return Err(CollectionError::Timeout);
+        // Collect process data to avoid borrowing issues with the closure
+        #[allow(clippy::needless_collect)] // Required to avoid borrow checker issues
+        let processes_data: Vec<_> = system
+            .processes()
+            .iter()
+            .map(|(pid, process)| {
+                let pid_u32 = pid.as_u32();
+                let status = match process.status() {
+                    sysinfo::ProcessStatus::Run => ProcessStatus::Running,
+                    sysinfo::ProcessStatus::Sleep => ProcessStatus::Sleeping,
+                    sysinfo::ProcessStatus::Stop => ProcessStatus::Stopped,
+                    sysinfo::ProcessStatus::Zombie => ProcessStatus::Zombie,
+                    sysinfo::ProcessStatus::Tracing => ProcessStatus::Traced,
+                    sysinfo::ProcessStatus::Idle
+                    | sysinfo::ProcessStatus::Dead
+                    | sysinfo::ProcessStatus::Wakekill
+                    | sysinfo::ProcessStatus::Waking
+                    | sysinfo::ProcessStatus::Parked
+                    | sysinfo::ProcessStatus::LockBlocked
+                    | sysinfo::ProcessStatus::UninterruptibleDiskSleep
+                    | sysinfo::ProcessStatus::Unknown(_) => {
+                        ProcessStatus::Unknown(format!("{:?}", process.status()))
+                    }
+                };
+
+                let name_str = process.name().to_string_lossy().to_string();
+                let cmdline = {
+                    let parts: Vec<String> = process
+                        .cmd()
+                        .iter()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .collect();
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join(" "))
+                    }
+                };
+
+                (
+                    pid_u32,
+                    name_str,
+                    status,
+                    cmdline,
+                    process.memory(),
+                    f64::from(process.cpu_usage()),
+                )
+            })
+            .collect();
+
+        let iter = processes_data.into_iter().map(
+            move |(pid_u32, name_str, status, cmdline, memory, cpu_usage)| {
+                if let Some(dl) = deadline_instant {
+                    if Instant::now() > dl {
+                        // Represent timeout as single error; downstream can stop.
+                        return Err(CollectionError::Timeout);
+                    }
                 }
-            }
-            let pid_u32: u32 = pid.as_u32();
 
-            // Map sysinfo status to our status enum.
-            let status = match proc.status() {
-                sysinfo::ProcessStatus::Run => ProcessStatus::Running,
-                sysinfo::ProcessStatus::Sleep => ProcessStatus::Sleeping,
-                sysinfo::ProcessStatus::Stop => ProcessStatus::Stopped,
-                sysinfo::ProcessStatus::Zombie => ProcessStatus::Zombie,
-                sysinfo::ProcessStatus::Tracing => ProcessStatus::Traced,
-                other => ProcessStatus::Unknown(format!("{:?}", other)),
-            };
-
-            // Build record (best-effort, no hashing yet)
-            // Convert OS strings to lossy UTF-8 Strings.
-            let name_str = proc.name().to_string_lossy().to_string();
-            let cmdline = {
-                let parts: Vec<String> = proc
-                    .cmd()
-                    .iter()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .collect();
-                if parts.is_empty() {
-                    None
-                } else {
-                    Some(parts.join(" "))
+                let mut builder = ProcessRecord::builder()
+                    .pid_raw(pid_u32)
+                    .name(name_str)
+                    .status(status);
+                if let Some(cmd) = cmdline {
+                    builder = builder.command_line(cmd);
                 }
-            };
+                let record = builder
+                    .memory_usage(memory)
+                    .cpu_usage(cpu_usage)
+                    .build()
+                    .map_err(|e| CollectionError::EnumerationError(e.to_string()))?;
 
-            let mut builder = ProcessRecord::builder()
-                .pid_raw(pid_u32)
-                .name(name_str)
-                .status(status);
-            if let Some(cmd) = cmdline {
-                builder = builder.command_line(cmd);
-            }
-            let record = builder
-                .memory_usage(proc.memory())
-                .cpu_usage(proc.cpu_usage() as f64)
-                .build()
-                .map_err(|e| CollectionError::EnumerationError(e.to_string()))?;
-
-            Ok(record)
-        });
+                Ok(record)
+            },
+        );
 
         // Wrap in a stream with small buffering; map iterator into async stream.
         // Using stream::iter keeps it simple; any heavy work could be offloaded via spawn_blocking if needed.
@@ -135,6 +153,11 @@ impl ProcessCollectionService for SysinfoProcessCollector {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::assertions_on_constants,
+    clippy::unchecked_duration_subtraction
+)]
 mod tests {
     use super::*;
     use futures::StreamExt;
@@ -144,7 +167,7 @@ mod tests {
     async fn test_basic_stream_collection() {
         let collector = SysinfoProcessCollector::new();
         let mut stream = collector.stream_processes(None);
-        let mut count = 0usize;
+        let mut count = 0_usize;
         while let Some(item) = stream.next().await {
             match item {
                 Ok(_proc) => {
@@ -154,7 +177,10 @@ mod tests {
                     }
                 }
                 Err(e) => {
-                    panic!("unexpected error: {e}");
+                    assert!(
+                        false,
+                        "unexpected error in test_basic_stream_collection: {e}"
+                    );
                 }
             }
         }
@@ -171,10 +197,18 @@ mod tests {
         if let Some(res) = stream.next().await {
             match res {
                 Err(CollectionError::Timeout) => {}
-                other => panic!("expected timeout error, got {other:?}"),
+                other => {
+                    assert!(
+                        false,
+                        "expected timeout error in test_deadline_timeout, got {other:?}"
+                    );
+                }
             }
         } else {
-            panic!("Expected at least one timeout error item");
+            assert!(
+                false,
+                "Expected at least one timeout error item in test_deadline_timeout"
+            );
         }
     }
 }

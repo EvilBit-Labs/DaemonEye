@@ -14,7 +14,7 @@ use crate::models::process::ProcessRecord;
 pub struct AlertId(u64);
 
 impl AlertId {
-    /// Create a new AlertId from a raw numeric identifier.
+    /// Create a new `AlertId` from a raw numeric identifier.
     ///
     /// # Examples
     ///
@@ -23,7 +23,7 @@ impl AlertId {
     /// let aid = AlertId::new(42);
     /// assert_eq!(aid.raw(), 42);
     /// ```
-    pub fn new(id: u64) -> Self {
+    pub const fn new(id: u64) -> Self {
         Self(id)
     }
 
@@ -36,13 +36,13 @@ impl AlertId {
     /// let id = AlertId::new(42);
     /// assert_eq!(id.raw(), 42);
     /// ```
-    pub fn raw(&self) -> u64 {
+    pub const fn raw(self) -> u64 {
         self.0
     }
 }
 
 impl fmt::Display for AlertId {
-    /// Formats the AlertId as its underlying numeric ID.
+    /// Formats the `AlertId` as its underlying numeric ID.
     ///
     /// # Examples
     ///
@@ -83,11 +83,11 @@ impl fmt::Display for AlertSeverity {
     /// assert_eq!(AlertSeverity::Critical.to_string(), "critical");
     /// ```
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AlertSeverity::Low => write!(f, "low"),
-            AlertSeverity::Medium => write!(f, "medium"),
-            AlertSeverity::High => write!(f, "high"),
-            AlertSeverity::Critical => write!(f, "critical"),
+        match *self {
+            Self::Low => write!(f, "low"),
+            Self::Medium => write!(f, "medium"),
+            Self::High => write!(f, "high"),
+            Self::Critical => write!(f, "critical"),
         }
     }
 }
@@ -112,11 +112,11 @@ impl std::str::FromStr for AlertSeverity {
     /// ```
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "low" => Ok(AlertSeverity::Low),
-            "medium" => Ok(AlertSeverity::Medium),
-            "high" => Ok(AlertSeverity::High),
-            "critical" => Ok(AlertSeverity::Critical),
-            _ => Err(format!("Invalid alert severity: {}", s)),
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "critical" => Ok(Self::Critical),
+            _ => Err(format!("Invalid alert severity: {s}")),
         }
     }
 }
@@ -135,7 +135,7 @@ pub struct AlertContext {
 }
 
 impl AlertContext {
-    /// Creates a new, empty AlertContext.
+    /// Creates a new, empty `AlertContext`.
     ///
     /// The returned context has an empty `data` map, no `tags`, and `source` and `confidence` set to `None`.
     ///
@@ -163,6 +163,7 @@ impl AlertContext {
     /// let ctx = AlertContext::new().with_data("user", "alice");
     /// assert_eq!(ctx.data.get("user").map(|s| s.as_str()), Some("alice"));
     /// ```
+    #[must_use]
     pub fn with_data(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.data.insert(key.into(), value.into());
         self
@@ -175,8 +176,9 @@ impl AlertContext {
     /// ```rust
     /// use sentinel_lib::models::alert::AlertContext;
     /// let ctx = AlertContext::new().with_tag("suspicious");
-    /// assert_eq!(ctx.tags, vec!["suspicious".to_string()]);
+    /// assert_eq!(ctx.tags, vec!["suspicious".to_owned()]);
     /// ```
+    #[must_use]
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.tags.push(tag.into());
         self
@@ -194,6 +196,7 @@ impl AlertContext {
     /// let ctx = AlertContext::new().with_source("kernel");
     /// assert_eq!(ctx.source.as_deref(), Some("kernel"));
     /// ```
+    #[must_use]
     pub fn with_source(mut self, source: impl Into<String>) -> Self {
         self.source = Some(source.into());
         self
@@ -265,7 +268,7 @@ impl Alert {
     /// ```rust
     /// use sentinel_lib::models::alert::{Alert, AlertSeverity};
     /// use sentinel_lib::models::process::ProcessRecord;
-    /// let proc = ProcessRecord::new(1, "proc".to_string());
+    /// let proc = ProcessRecord::new(1, "proc".to_owned());
     /// let alert = Alert::new(AlertSeverity::High, "CPU spike", "High CPU usage observed", "rule-123", proc);
     /// assert_eq!(alert.severity, AlertSeverity::High);
     /// assert!(alert.deduplication_key.contains("CPU spike"));
@@ -277,16 +280,16 @@ impl Alert {
         detection_rule_id: impl Into<String>,
         process_record: ProcessRecord,
     ) -> Self {
-        let title = title.into();
-        let description = description.into();
-        let detection_rule_id = detection_rule_id.into();
-        let deduplication_key = format!("{}:{}:{}", severity, detection_rule_id, title);
+        let alert_title = title.into();
+        let alert_description = description.into();
+        let alert_detection_rule_id = detection_rule_id.into();
+        let deduplication_key = format!("{severity}:{alert_detection_rule_id}:{alert_title}");
         Self {
             id: Uuid::new_v4(),
             severity,
-            title,
-            description,
-            detection_rule_id,
+            title: alert_title,
+            description: alert_description,
+            detection_rule_id: alert_detection_rule_id,
             process_record,
             timestamp: SystemTime::now(),
             deduplication_key,
@@ -303,8 +306,9 @@ impl Alert {
     /// ```rust,ignore
     /// // Given an existing `Alert` named `alert`:
     /// let alert = alert.with_context_data("user", "alice");
-    /// // now alert.context.data.get("user") == Some(&"alice".to_string())
+    /// // now alert.context.data.get("user") == Some(&"alice".to_owned())
     /// ```
+    #[must_use]
     pub fn with_context_data(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.context.data.insert(key.into(), value.into());
         self
@@ -323,14 +327,16 @@ impl Alert {
     /// let process_record = ProcessRecord::default();
     /// let alert = Alert::new(AlertSeverity::Low, "title", "desc", "rule-1", process_record)
     ///     .with_tag("network");
-    /// assert!(alert.context.tags.contains(&"network".to_string()));
+    /// assert!(alert.context.tags.contains(&"network".to_owned()));
     /// ```
+    #[must_use]
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.context.tags.push(tag.into());
         self
     }
 
     /// Set the alert source.
+    #[must_use]
     pub fn with_source(mut self, source: impl Into<String>) -> Self {
         self.context.source = Some(source.into());
         self
@@ -393,10 +399,10 @@ impl Alert {
     ///
     /// let alert = Alert::new(
     ///     AlertSeverity::Medium,
-    ///     "Test Alert".to_string(),
-    ///     "Test Description".to_string(),
-    ///     "rule-001".to_string(),
-    ///     ProcessRecord::new(1234, "test-process".to_string()),
+    ///     "Test Alert".to_owned(),
+    ///     "Test Description".to_owned(),
+    ///     "rule-001".to_owned(),
+    ///     ProcessRecord::new(1234, "test-process".to_owned()),
     /// );
     ///
     /// // Use default threshold (3600 seconds)
@@ -410,7 +416,7 @@ impl Alert {
         self.age_seconds() < threshold
     }
 
-    /// Check if the alert is recent using the configured threshold from AlertingConfig.
+    /// Check if the alert is recent using the configured threshold from `AlertingConfig`.
     ///
     /// This is a convenience method that uses the `recent_threshold_seconds` value
     /// from the provided configuration.
@@ -428,10 +434,10 @@ impl Alert {
     ///
     /// let alert = Alert::new(
     ///     AlertSeverity::Medium,
-    ///     "Test Alert".to_string(),
-    ///     "Test Description".to_string(),
-    ///     "rule-001".to_string(),
-    ///     ProcessRecord::new(1234, "test-process".to_string()),
+    ///     "Test Alert".to_owned(),
+    ///     "Test Description".to_owned(),
+    ///     "rule-001".to_owned(),
+    ///     ProcessRecord::new(1234, "test-process".to_owned()),
     /// );
     ///
     /// let config = AlertingConfig::default();
@@ -456,13 +462,14 @@ pub enum AlertError {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::models::process::ProcessRecord;
 
     #[test]
     fn test_alert_creation() {
-        let process = ProcessRecord::new(1234, "test-process".to_string());
+        let process = ProcessRecord::new(1234, "test-process".to_owned());
         let alert = Alert::new(
             AlertSeverity::High,
             "Suspicious Process Detected",
@@ -484,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_alert_serialization() {
-        let process = ProcessRecord::new(1234, "test-process".to_string());
+        let process = ProcessRecord::new(1234, "test-process".to_owned());
         let alert = Alert::new(
             AlertSeverity::High,
             "Test Alert",
@@ -495,26 +502,34 @@ mod tests {
         .with_tag("test")
         .with_source("test-system")
         .with_confidence(0.95)
-        .unwrap();
+        .expect("Failed to create alert in test_alert_serialization");
 
         // Test JSON serialization
-        let json = serde_json::to_string(&alert).unwrap();
-        let deserialized: Alert = serde_json::from_str(&json).unwrap();
+        let json =
+            serde_json::to_string(&alert).expect("Failed to serialize alert to JSON in test");
+        let deserialized: Alert =
+            serde_json::from_str(&json).expect("Failed to deserialize alert from JSON in test");
         assert_eq!(alert, deserialized);
     }
 
     #[test]
     fn test_alert_severity_parsing() {
         assert_eq!(
-            "high".parse::<AlertSeverity>().unwrap(),
+            "high"
+                .parse::<AlertSeverity>()
+                .expect("Failed to parse 'high' as AlertSeverity in test"),
             AlertSeverity::High
         );
         assert_eq!(
-            "MEDIUM".parse::<AlertSeverity>().unwrap(),
+            "MEDIUM"
+                .parse::<AlertSeverity>()
+                .expect("Failed to parse 'MEDIUM' as AlertSeverity in test"),
             AlertSeverity::Medium
         );
         assert_eq!(
-            "Critical".parse::<AlertSeverity>().unwrap(),
+            "Critical"
+                .parse::<AlertSeverity>()
+                .expect("Failed to parse 'Critical' as AlertSeverity in test"),
             AlertSeverity::Critical
         );
         assert!("invalid".parse::<AlertSeverity>().is_err());
@@ -535,11 +550,11 @@ mod tests {
             .with_tag("test")
             .with_source("test-system")
             .with_confidence(0.8)
-            .unwrap();
+            .expect("Failed to create alert context in test");
 
-        assert_eq!(context.data.get("key"), Some(&"value".to_string()));
-        assert!(context.tags.contains(&"test".to_string()));
-        assert_eq!(context.source, Some("test-system".to_string()));
+        assert_eq!(context.data.get("key"), Some(&"value".to_owned()));
+        assert!(context.tags.contains(&"test".to_owned()));
+        assert_eq!(context.source, Some("test-system".to_owned()));
         assert_eq!(context.confidence, Some(0.8));
     }
 
@@ -573,7 +588,7 @@ mod tests {
 
     #[test]
     fn test_alert_age() {
-        let process = ProcessRecord::new(1234, "test-process".to_string());
+        let process = ProcessRecord::new(1234, "test-process".to_owned());
         let alert = Alert::new(
             AlertSeverity::High,
             "Test Alert",
@@ -589,12 +604,12 @@ mod tests {
 
     #[test]
     fn test_is_recent_with_custom_threshold() {
-        let process = ProcessRecord::new(1234, "test-process".to_string());
+        let process = ProcessRecord::new(1234, "test-process".to_owned());
         let alert = Alert::new(
             AlertSeverity::Medium,
-            "Test Alert".to_string(),
-            "Test description".to_string(),
-            "rule-001".to_string(),
+            "Test Alert".to_owned(),
+            "Test description".to_owned(),
+            "rule-001".to_owned(),
             process,
         );
 
@@ -613,12 +628,12 @@ mod tests {
     fn test_is_recent_with_config() {
         use crate::config::AlertingConfig;
 
-        let process = ProcessRecord::new(1234, "test-process".to_string());
+        let process = ProcessRecord::new(1234, "test-process".to_owned());
         let alert = Alert::new(
             AlertSeverity::Medium,
-            "Test Alert".to_string(),
-            "Test description".to_string(),
-            "rule-001".to_string(),
+            "Test Alert".to_owned(),
+            "Test description".to_owned(),
+            "rule-001".to_owned(),
             process,
         );
 

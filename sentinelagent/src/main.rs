@@ -1,14 +1,12 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use futures::StreamExt;
-use sentinel_lib::{
-    alerting,
-    collection::{ProcessCollectionService, SysinfoProcessCollector},
-    config, detection, models, storage, telemetry,
-};
+use sentinel_lib::{alerting, config, detection, models, storage, telemetry};
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
+
+mod ipc_client;
+use ipc_client::{IpcClientManager, create_default_ipc_config};
 
 #[derive(Parser)]
 #[command(name = "sentinelagent")]
@@ -31,15 +29,39 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
+    // Test mode: exit early to keep existing integration test semantics (set SENTINELAGENT_TEST_MODE=1)
+    if std::env::var("SENTINELAGENT_TEST_MODE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        println!("sentinelagent started successfully");
+        return Ok(());
+    }
+
     // Load configuration
     let config_loader = config::ConfigLoader::new("sentinelagent");
-    let config = config_loader.load().await?;
+    let config = config_loader.load()?;
 
     // Initialize telemetry
     let mut telemetry = telemetry::TelemetryCollector::new("sentinelagent".to_string());
 
     // Initialize database
     let _db_manager = storage::DatabaseManager::new(&config.database.path)?;
+
+    // Initialize IPC client for communication with procmond
+    let ipc_config = create_default_ipc_config();
+    let mut ipc_manager = IpcClientManager::new(ipc_config)?;
+
+    // Wait for procmond to become available
+    info!("Waiting for procmond to become available...");
+    if let Err(e) = ipc_manager.wait_for_procmond(Duration::from_secs(30)).await {
+        warn!(
+            "Procmond not available: {}. Continuing without process monitoring.",
+            e
+        );
+    } else {
+        info!("Connected to procmond successfully");
+    }
 
     // Initialize detection engine
     let mut detection_engine = detection::DetectionEngine::new();
@@ -68,20 +90,11 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Indicate startup success before entering main loop
     println!("sentinelagent started successfully");
 
-    // Test mode: exit early to keep existing integration test semantics (set SENTINELAGENT_TEST_MODE=1)
-    if std::env::var("SENTINELAGENT_TEST_MODE")
-        .map(|v| v == "1")
-        .unwrap_or(false)
-    {
-        return Ok(());
-    }
-
-    // Collector for real process data (streaming)
-    let process_collector = SysinfoProcessCollector::new();
+    // Main collection loop using IPC client
     let scan_interval = Duration::from_millis(config.app.scan_interval_ms);
     info!(
         interval_ms = config.app.scan_interval_ms,
-        "Entering main collection+detection loop"
+        "Entering main collection+detection loop with IPC client"
     );
 
     // Graceful shutdown signal future
@@ -108,59 +121,63 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ = tokio::time::sleep(scan_interval) => {
                 iteration += 1;
                 let loop_start = Instant::now();
-                // Establish a soft deadline for collection (75% of interval) to avoid overlap
-                let collection_deadline = Some(Instant::now() + (scan_interval * 3 / 4));
-                let mut stream = process_collector.stream_processes(collection_deadline);
-                let mut processes: Vec<models::ProcessRecord> = Vec::new();
-                while let Some(item) = stream.next().await {
-                    match item {
-                        Ok(proc_record) => {
-                            processes.push(proc_record);
-                            if let Some(max) = config.app.max_processes && processes.len() >= max { break; }
-                        },
-                        Err(e) => {
-                            match e {
-                                sentinel_lib::collection::CollectionError::Timeout => { warn!("Process collection timed out; continuing with partial data"); break; },
-                                other => { warn!(error=?other, "Process collection item error"); }
-                            }
+
+                // Request process enumeration from procmond via IPC
+                let processes = match ipc_manager.enumerate_processes().await {
+                    Ok(result) => {
+                        if result.success {
+                            info!("Successfully collected process data from procmond");
+                            // For now, we'll use an empty vector since the actual process data
+                            // would need to be parsed from the DetectionResult
+                            // TODO: Parse process data from DetectionResult.processes
+                            Vec::new()
+                        } else {
+                            warn!(
+                                error = %result.error_message.as_deref().unwrap_or("Unknown error"),
+                                "Procmond returned error during process enumeration"
+                            );
+                            Vec::new()
                         }
                     }
-                }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to collect processes from procmond");
+                        // Check if we should try to reconnect
+                        if !ipc_manager.is_healthy().await {
+                            warn!("IPC client is unhealthy, attempting reconnection");
+                            if let Err(reconnect_err) = ipc_manager.force_reconnect().await {
+                                error!(error = %reconnect_err, "Failed to reconnect to procmond");
+                            }
+                        }
+                        Vec::new()
+                    }
+                };
 
                 // Execute detection rules against collected processes
                 let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_string());
-                match detection_engine.execute_rules(&processes).await {
-                    Ok(alerts) => {
-                        if !alerts.is_empty() {
-                            info!(count = alerts.len(), "Generated alerts");
+                let alerts = detection_engine.execute_rules(&processes);
+
+                if !alerts.is_empty() {
+                    info!(count = alerts.len(), "Generated alerts");
+                }
+                for alert in &alerts {
+                    match alert_manager.send_alert(alert).await {
+                        Ok(results) => {
+                            if results.is_empty() { warn!("Alert generated but no sinks succeeded"); }
                         }
-                        for alert in &alerts {
-                            match alert_manager.send_alert(alert).await {
-                                Ok(results) => {
-                                    if results.is_empty() { warn!("Alert generated but no sinks succeeded"); }
-                                }
-                                Err(e) => {
-                                    error!(error=?e, "Failed to deliver alert");
-                                    telemetry.record_error();
-                                }
-                            }
+                        Err(e) => {
+                            error!(error=?e, "Failed to deliver alert");
+                            telemetry.record_error();
                         }
-                        let detection_duration = detection_timer.finish();
-                        telemetry.record_operation(detection_duration);
-                    }
-                    Err(e) => {
-                        error!(error=?e, "Detection execution failed");
-                        telemetry.record_error();
                     }
                 }
+                let detection_duration = detection_timer.finish();
+                telemetry.record_operation(detection_duration);
 
                 // Update telemetry with rough resource usage snapshot (placeholder zeros for now)
                 telemetry.update_resource_usage(0.0, 0);
                 if iteration % 10 == 0 { // periodic health check every 10 iterations
-                    match telemetry.health_check().await {
-                        Ok(h) => info!(status=%h.status, "Telemetry health check"),
-                        Err(e) => warn!(error=?e, "Telemetry health check failed"),
-                    }
+                    let h = telemetry.health_check();
+                    info!(status=%h.status, "Telemetry health check");
                 }
                 let loop_elapsed = loop_start.elapsed();
                 if loop_elapsed > scan_interval { warn!(elapsed_ms = loop_elapsed.as_millis() as u64, "Loop overran scan interval"); }

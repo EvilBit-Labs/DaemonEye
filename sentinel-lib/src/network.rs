@@ -24,7 +24,7 @@ pub enum NetworkError {
 }
 
 /// Network event types.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum NetworkEventType {
     Connection,
     Disconnection,
@@ -37,7 +37,7 @@ pub enum NetworkEventType {
 }
 
 /// Network connection information.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NetworkConnection {
     /// Source IP address
     pub source_ip: IpAddr,
@@ -72,13 +72,13 @@ impl NetworkConnection {
             dest_port,
             protocol,
             pid,
-            state: "unknown".to_string(),
+            state: "unknown".to_owned(),
         }
     }
 }
 
 /// Network event.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NetworkEvent {
     /// Event type
     pub event_type: NetworkEventType,
@@ -104,7 +104,7 @@ impl NetworkEvent {
             timestamp: chrono::Utc::now(),
             connection,
             data,
-            severity: "info".to_string(),
+            severity: "info".to_owned(),
         }
     }
 }
@@ -121,7 +121,7 @@ impl NetworkMonitor {
         // Check if network monitoring is supported on this platform
         if !Self::is_supported() {
             return Err(NetworkError::UnsupportedPlatform(
-                "Network monitoring not supported on this platform".to_string(),
+                "Network monitoring not supported on this platform".to_owned(),
             ));
         }
 
@@ -132,16 +132,16 @@ impl NetworkMonitor {
     }
 
     /// Check if network monitoring is supported on this platform.
-    pub fn is_supported() -> bool {
+    pub const fn is_supported() -> bool {
         // In a real implementation, this would check for packet capture capabilities
         true // Placeholder - assume supported
     }
 
     /// Start network monitoring.
-    pub async fn start(&mut self) -> Result<(), NetworkError> {
+    pub fn start(&mut self) -> Result<(), NetworkError> {
         if !Self::is_supported() {
             return Err(NetworkError::UnsupportedPlatform(
-                "Network monitoring not supported".to_string(),
+                "Network monitoring not supported".to_owned(),
             ));
         }
 
@@ -150,23 +150,25 @@ impl NetworkMonitor {
     }
 
     /// Stop network monitoring.
-    pub async fn stop(&mut self) -> Result<(), NetworkError> {
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn stop(&mut self) -> Result<(), NetworkError> {
         self.enabled = false;
         Ok(())
     }
 
     /// Check if monitoring is enabled.
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         self.enabled
     }
 
     /// Get the number of events collected.
-    pub fn event_count(&self) -> u64 {
+    pub const fn event_count(&self) -> u64 {
         self.event_count
     }
 
     /// Collect network events (placeholder implementation).
-    pub async fn collect_events(&mut self) -> Result<Vec<NetworkEvent>, NetworkError> {
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn collect_events(&mut self) -> Result<Vec<NetworkEvent>, NetworkError> {
         if !self.enabled {
             return Ok(vec![]);
         }
@@ -177,7 +179,8 @@ impl NetworkMonitor {
     }
 
     /// Get active network connections.
-    pub async fn get_active_connections(&self) -> Result<Vec<NetworkConnection>, NetworkError> {
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn get_active_connections(&self) -> Result<Vec<NetworkConnection>, NetworkError> {
         if !self.enabled {
             return Ok(vec![]);
         }
@@ -198,6 +201,7 @@ impl Default for NetworkMonitor {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     use std::net::Ipv4Addr;
@@ -209,7 +213,7 @@ mod tests {
             8080,
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
             80,
-            "TCP".to_string(),
+            "TCP".to_owned(),
             1234,
         );
 
@@ -226,7 +230,7 @@ mod tests {
             8080,
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
             80,
-            "TCP".to_string(),
+            "TCP".to_owned(),
             1234,
         );
 
@@ -246,16 +250,252 @@ mod tests {
         assert!(monitor.is_ok());
     }
 
-    #[tokio::test]
-    async fn test_network_monitor_lifecycle() {
+    #[test]
+    fn test_network_monitor_lifecycle() {
         if let Ok(mut monitor) = NetworkMonitor::new() {
             assert!(!monitor.is_enabled());
 
-            monitor.start().await.unwrap();
+            monitor.start().expect("Failed to start monitor");
             assert!(monitor.is_enabled());
 
-            monitor.stop().await.unwrap();
+            monitor.stop().expect("Failed to stop monitor");
             assert!(!monitor.is_enabled());
         }
+    }
+
+    #[test]
+    fn test_network_event_type_serialization() {
+        let event_types = vec![
+            NetworkEventType::Connection,
+            NetworkEventType::Disconnection,
+            NetworkEventType::DataTransfer,
+            NetworkEventType::DnsQuery,
+            NetworkEventType::DnsResponse,
+            NetworkEventType::HttpRequest,
+            NetworkEventType::HttpResponse,
+            NetworkEventType::Other("custom".to_owned()),
+        ];
+
+        for event_type in event_types {
+            let json = serde_json::to_string(&event_type).expect("Failed to serialize event type");
+            let deserialized: NetworkEventType =
+                serde_json::from_str(&json).expect("Failed to deserialize event type");
+            assert_eq!(event_type, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_network_connection_serialization() {
+        let connection = NetworkConnection::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            80,
+            "TCP".to_owned(),
+            1234,
+        );
+
+        let json = serde_json::to_string(&connection).expect("Failed to serialize connection");
+        let deserialized: NetworkConnection =
+            serde_json::from_str(&json).expect("Failed to deserialize connection");
+        assert_eq!(connection, deserialized);
+    }
+
+    #[test]
+    fn test_network_event_serialization() {
+        let connection = NetworkConnection::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            80,
+            "TCP".to_owned(),
+            1234,
+        );
+
+        let event = NetworkEvent::new(
+            NetworkEventType::Connection,
+            connection,
+            serde_json::json!({"bytes": 1024}),
+        );
+
+        let json = serde_json::to_string(&event).expect("Failed to serialize event");
+        let deserialized: NetworkEvent =
+            serde_json::from_str(&json).expect("Failed to deserialize event");
+        assert_eq!(event.event_type, deserialized.event_type);
+        assert_eq!(event.connection, deserialized.connection);
+        assert_eq!(event.data, deserialized.data);
+        assert_eq!(event.severity, deserialized.severity);
+    }
+
+    #[test]
+    fn test_network_error_display() {
+        let errors = vec![
+            NetworkError::InterfaceError("test error".to_owned()),
+            NetworkError::CaptureError("test error".to_owned()),
+            NetworkError::PermissionDenied("test error".to_owned()),
+            NetworkError::UnsupportedPlatform("test error".to_owned()),
+        ];
+
+        for error in errors {
+            let error_msg = format!("{error}");
+            assert!(error_msg.contains("test error"));
+        }
+    }
+
+    #[test]
+    fn test_network_monitor_default() {
+        let monitor = NetworkMonitor::default();
+        assert!(!monitor.is_enabled());
+        assert_eq!(monitor.event_count(), 0);
+    }
+
+    #[test]
+    fn test_network_monitor_is_supported() {
+        // This should always return true in our implementation
+        assert!(NetworkMonitor::is_supported());
+    }
+
+    #[test]
+    fn test_network_monitor_collect_events_disabled() {
+        let mut monitor = NetworkMonitor::default();
+        let events = monitor.collect_events().expect("Failed to collect events");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_network_monitor_get_active_connections_disabled() {
+        let monitor = NetworkMonitor::default();
+        let connections = monitor
+            .get_active_connections()
+            .expect("Failed to get active connections");
+        assert!(connections.is_empty());
+    }
+
+    #[test]
+    fn test_network_monitor_collect_events_enabled() {
+        if let Ok(mut monitor) = NetworkMonitor::new() {
+            monitor.start().expect("Failed to start monitor");
+            let events = monitor.collect_events().expect("Failed to collect events");
+            // Should return empty vector in our placeholder implementation
+            assert!(events.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_network_monitor_get_active_connections_enabled() {
+        if let Ok(monitor) = NetworkMonitor::new() {
+            // Note: we can't start the monitor here because it's not mutable
+            // This tests the disabled path
+            let connections = monitor
+                .get_active_connections()
+                .expect("Failed to get active connections");
+            assert!(connections.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_network_connection_clone() {
+        let connection = NetworkConnection::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            80,
+            "TCP".to_owned(),
+            1234,
+        );
+
+        let cloned = connection.clone();
+        assert_eq!(connection, cloned);
+    }
+
+    #[test]
+    fn test_network_event_clone() {
+        let connection = NetworkConnection::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            80,
+            "TCP".to_owned(),
+            1234,
+        );
+
+        let event = NetworkEvent::new(
+            NetworkEventType::Connection,
+            connection,
+            serde_json::json!({"bytes": 1024}),
+        );
+
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn test_network_event_type_partial_eq() {
+        let event_type1 = NetworkEventType::Connection;
+        let event_type2 = NetworkEventType::Connection;
+        let event_type3 = NetworkEventType::Disconnection;
+
+        assert_eq!(event_type1, event_type2);
+        assert_ne!(event_type1, event_type3);
+    }
+
+    #[test]
+    fn test_network_connection_partial_eq() {
+        let connection1 = NetworkConnection::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            80,
+            "TCP".to_owned(),
+            1234,
+        );
+
+        let connection2 = NetworkConnection::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            80,
+            "TCP".to_owned(),
+            1234,
+        );
+
+        let connection3 = NetworkConnection::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8081, // Different port
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            80,
+            "TCP".to_owned(),
+            1234,
+        );
+
+        assert_eq!(connection1, connection2);
+        assert_ne!(connection1, connection3);
+    }
+
+    #[test]
+    fn test_network_event_partial_eq() {
+        let connection = NetworkConnection::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            8080,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            80,
+            "TCP".to_owned(),
+            1234,
+        );
+
+        let event1 = NetworkEvent::new(
+            NetworkEventType::Connection,
+            connection.clone(),
+            serde_json::json!({"bytes": 1024}),
+        );
+
+        let event2 = NetworkEvent::new(
+            NetworkEventType::Connection,
+            connection,
+            serde_json::json!({"bytes": 1024}),
+        );
+
+        // Note: These won't be equal due to timestamp differences
+        assert_ne!(event1, event2);
     }
 }

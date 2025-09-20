@@ -188,7 +188,9 @@ mod tests {
 
         match ipc_error {
             IpcError::Io(_) => {} // Expected
-            _ => panic!("Expected Io error variant"),
+            other => {
+                panic!("Expected Io error variant in test_ipc_error_from_io, got: {other:?}");
+            }
         }
     }
 }

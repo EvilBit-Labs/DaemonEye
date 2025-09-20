@@ -1,67 +1,80 @@
-use clap::Parser;
+use clap::{Arg, Command};
 use sentinel_lib::{config, storage, telemetry};
-
-#[derive(Parser)]
-#[command(name = "sentinelcli")]
-#[command(about = "SentinelD CLI interface")]
-#[command(version)]
-struct Cli {
-    /// Database path
-    #[arg(short, long, default_value = "/var/lib/sentineld/processes.db")]
-    database: String,
-
-    /// Output format
-    #[arg(short, long, default_value = "human")]
-    format: String,
-}
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
     // Parse command line arguments
-    let cli = Cli::parse();
+    let matches = Command::new("sentinelcli")
+        .about("SentinelD CLI interface")
+        .version(env!("CARGO_PKG_VERSION"))
+        .arg(
+            Arg::new("database")
+                .short('d')
+                .long("database")
+                .value_name("PATH")
+                .help("Database path")
+                .default_value("/var/lib/sentineld/processes.db"),
+        )
+        .arg(
+            Arg::new("format")
+                .short('f')
+                .long("format")
+                .value_name("FORMAT")
+                .help("Output format")
+                .default_value("human"),
+        )
+        .get_matches();
+
+    let _database = matches.get_one::<String>("database").map_or_else(
+        || "/var/lib/sentineld/processes.db".to_owned(),
+        Clone::clone,
+    );
+    let format = matches
+        .get_one::<String>("format")
+        .map_or_else(|| "human".to_owned(), Clone::clone);
 
     // Load configuration
     let config_loader = config::ConfigLoader::new("sentinelcli");
-    let _config = config_loader.load_blocking()?;
+    let config = config_loader.load_blocking()?;
 
     // Initialize telemetry
-    let mut telemetry = telemetry::TelemetryCollector::new("sentinelcli".to_string());
+    let mut telemetry = telemetry::TelemetryCollector::new("sentinelcli".to_owned());
 
     // Initialize database
-    let db_manager = storage::DatabaseManager::new(&_config.database.path)?;
+    let db_manager = storage::DatabaseManager::new(&config.database.path)?;
 
     // Get database statistics
     let stats = db_manager.get_stats()?;
 
     // Output based on format
-    match cli.format.as_str() {
+    match format.as_str() {
         "json" => {
             println!("{}", serde_json::to_string_pretty(&stats)?);
         }
         "human" => {
             println!("SentinelD Database Statistics");
             println!("============================");
-            println!("Processes: {}", stats.process_count);
-            println!("Rules: {}", stats.rule_count);
-            println!("Alerts: {}", stats.alert_count);
-            println!("System Info: {}", stats.system_info_count);
-            println!("Scans: {}", stats.scan_count);
+            println!("Processes: {}", stats.processes);
+            println!("Rules: {}", stats.rules);
+            println!("Alerts: {}", stats.alerts);
+            println!("System Info: {}", stats.system_info);
+            println!("Scans: {}", stats.scans);
         }
         _ => {
-            eprintln!("Unknown format: {}", cli.format);
+            eprintln!("Unknown format: {format}");
             std::process::exit(1);
         }
     }
 
     // Record operation in telemetry
-    let timer = telemetry::PerformanceTimer::start("database_query".to_string());
+    let timer = telemetry::PerformanceTimer::start("database_query".to_owned());
     let duration = timer.finish();
     telemetry.record_operation(duration);
 
     // Perform health check
-    let health_check = telemetry.health_check_blocking()?;
+    let health_check = telemetry.health_check_blocking();
     println!("Health status: {}", health_check.status);
 
     println!("sentinelcli completed successfully");

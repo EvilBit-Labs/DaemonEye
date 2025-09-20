@@ -1,7 +1,7 @@
-//! Core data models for SentinelD process monitoring and threat detection.
+//! Core data models for `SentinelD` process monitoring and threat detection.
 //!
 //! This module provides the foundational data structures used throughout
-//! the SentinelD system for representing processes, alerts, and detection rules.
+//! the `SentinelD` system for representing processes, alerts, and detection rules.
 
 pub mod alert;
 pub mod process;

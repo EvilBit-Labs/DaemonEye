@@ -27,8 +27,8 @@ pub enum ConfigError {
     ValidationError { message: String },
 }
 
-/// Main configuration structure for SentinelD components.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+/// Main configuration structure for `SentinelD` components.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Config {
     /// Application-specific configuration
     pub app: AppConfig,
@@ -41,7 +41,7 @@ pub struct Config {
 }
 
 /// Application-specific configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppConfig {
     /// Scan interval in milliseconds
     pub scan_interval_ms: u64,
@@ -54,7 +54,7 @@ pub struct AppConfig {
 }
 
 /// Database configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DatabaseConfig {
     /// Database file path
     pub path: PathBuf,
@@ -67,7 +67,7 @@ pub struct DatabaseConfig {
 }
 
 /// Alerting configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AlertingConfig {
     /// Alert sinks configuration
     pub sinks: Vec<AlertSinkConfig>,
@@ -80,7 +80,7 @@ pub struct AlertingConfig {
 }
 
 /// Individual alert sink configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AlertSinkConfig {
     /// Sink type identifier
     pub sink_type: String,
@@ -91,7 +91,7 @@ pub struct AlertSinkConfig {
 }
 
 /// Logging configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LoggingConfig {
     /// Log level (trace, debug, info, warn, error)
     pub level: String,
@@ -128,7 +128,7 @@ impl Default for DatabaseConfig {
 }
 
 impl Default for AlertingConfig {
-    /// Creates the default AlertingConfig.
+    /// Creates the default `AlertingConfig`.
     ///
     /// Defaults:
     /// - `sinks`: empty list
@@ -159,8 +159,8 @@ impl Default for AlertingConfig {
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
-            level: "info".to_string(),
-            format: "human".to_string(),
+            level: "info".to_owned(),
+            format: "human".to_owned(),
             file: None,
             structured: false,
         }
@@ -176,29 +176,29 @@ impl ConfigLoader {
     /// Create a new configuration loader for the specified component.
     pub fn new(component: &str) -> Self {
         Self {
-            component: component.to_string(),
+            component: component.to_owned(),
         }
     }
 
     /// Load configuration with hierarchical overrides.
-    pub async fn load(&self) -> Result<Config, ConfigError> {
+    pub fn load(&self) -> Result<Config, ConfigError> {
         let mut config = Config::default();
 
         // Load from system configuration file
-        if let Ok(system_config) = self.load_system_config().await {
-            config = self.merge_configs(config, system_config);
+        if let Ok(system_config) = Self::load_system_config() {
+            config = Self::merge_configs(config, system_config);
         }
 
         // Load from user configuration file
-        if let Ok(user_config) = self.load_user_config().await {
-            config = self.merge_configs(config, user_config);
+        if let Ok(user_config) = Self::load_user_config() {
+            config = Self::merge_configs(config, user_config);
         }
 
         // Apply environment variable overrides
         config = self.apply_env_overrides(config);
 
         // Validate final configuration
-        self.validate_config(&config)?;
+        Self::validate_config(&config)?;
 
         Ok(config)
     }
@@ -211,13 +211,13 @@ impl ConfigLoader {
         config = self.apply_env_overrides(config);
 
         // Validate final configuration
-        self.validate_config(&config)?;
+        Self::validate_config(&config)?;
 
         Ok(config)
     }
 
     /// Load system-wide configuration file.
-    async fn load_system_config(&self) -> Result<Config, ConfigError> {
+    fn load_system_config() -> Result<Config, ConfigError> {
         let path = PathBuf::from("/etc/sentineld/config.yaml");
         if !path.exists() {
             return Err(ConfigError::FileNotFound { path });
@@ -229,8 +229,8 @@ impl ConfigLoader {
     }
 
     /// Load user-specific configuration file.
-    async fn load_user_config(&self) -> Result<Config, ConfigError> {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    fn load_user_config() -> Result<Config, ConfigError> {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_owned());
         let path = PathBuf::from(home).join(".config/sentineld/config.yaml");
         if !path.exists() {
             return Err(ConfigError::FileNotFound { path });
@@ -244,7 +244,7 @@ impl ConfigLoader {
     /// Apply environment variable overrides to a Config using the loader's component name as a prefix.
     ///
     /// Environment variables are read with the prefix derived from `self.component` converted to
-    /// uppercase (e.g. component "procmond" => "PROCMOND_SCAN_INTERVAL_MS"). When present, the
+    /// uppercase (e.g. component "procmond" => "`PROCMOND_SCAN_INTERVAL_MS`"). When present, the
     /// following variables override their corresponding config fields:
     ///
     /// - `{PREFIX}_SCAN_INTERVAL_MS` -> `config.app.scan_interval_ms` (parsed as integer)
@@ -276,31 +276,31 @@ impl ConfigLoader {
         // Apply component-specific environment variables
         let prefix = self.component.to_uppercase();
 
-        if let Ok(val) = std::env::var(format!("{}_SCAN_INTERVAL_MS", prefix)) {
+        if let Ok(val) = std::env::var(format!("{prefix}_SCAN_INTERVAL_MS")) {
             if let Ok(interval) = val.parse() {
                 config.app.scan_interval_ms = interval;
             }
         }
 
-        if let Ok(val) = std::env::var(format!("{}_BATCH_SIZE", prefix)) {
+        if let Ok(val) = std::env::var(format!("{prefix}_BATCH_SIZE")) {
             if let Ok(size) = val.parse() {
                 config.app.batch_size = size;
             }
         }
 
-        if let Ok(val) = std::env::var(format!("{}_LOG_LEVEL", prefix)) {
+        if let Ok(val) = std::env::var(format!("{prefix}_LOG_LEVEL")) {
             config.logging.level = val;
         }
 
-        if let Ok(val) = std::env::var(format!("{}_LOG_FORMAT", prefix)) {
+        if let Ok(val) = std::env::var(format!("{prefix}_LOG_FORMAT")) {
             config.logging.format = val;
         }
 
-        if let Ok(val) = std::env::var(format!("{}_DATABASE_PATH", prefix)) {
+        if let Ok(val) = std::env::var(format!("{prefix}_DATABASE_PATH")) {
             config.database.path = val.into();
         }
 
-        if let Ok(val) = std::env::var(format!("{}_RECENT_THRESHOLD_SECONDS", prefix)) {
+        if let Ok(val) = std::env::var(format!("{prefix}_RECENT_THRESHOLD_SECONDS")) {
             if let Ok(threshold) = val.parse() {
                 config.alerting.recent_threshold_seconds = threshold;
             }
@@ -310,29 +310,29 @@ impl ConfigLoader {
     }
 
     /// Merge two configurations, with the second taking precedence.
-    fn merge_configs(&self, _base: Config, override_config: Config) -> Config {
+    fn merge_configs(_base: Config, override_config: Config) -> Config {
         // For simplicity, we'll use the override config for most fields
         // In a more sophisticated implementation, we'd merge individual fields
         override_config
     }
 
     /// Validate the final configuration.
-    fn validate_config(&self, config: &Config) -> Result<(), ConfigError> {
+    fn validate_config(config: &Config) -> Result<(), ConfigError> {
         if config.app.scan_interval_ms == 0 {
             return Err(ConfigError::ValidationError {
-                message: "scan_interval_ms must be greater than 0".to_string(),
+                message: "scan_interval_ms must be greater than 0".to_owned(),
             });
         }
 
         if config.app.batch_size == 0 {
             return Err(ConfigError::ValidationError {
-                message: "batch_size must be greater than 0".to_string(),
+                message: "batch_size must be greater than 0".to_owned(),
             });
         }
 
         if config.database.retention_days == 0 {
             return Err(ConfigError::ValidationError {
-                message: "retention_days must be greater than 0".to_string(),
+                message: "retention_days must be greater than 0".to_owned(),
             });
         }
 
@@ -341,6 +341,7 @@ impl ConfigLoader {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     // use std::env; // Removed due to unsafe_code = "forbid"
@@ -348,7 +349,7 @@ mod tests {
     #[tokio::test]
     async fn test_config_loader_default() {
         let loader = ConfigLoader::new("procmond");
-        let config = loader.load().await.unwrap();
+        let config = loader.load().expect("Failed to load config in test");
 
         assert_eq!(config.app.scan_interval_ms, 30000);
         assert_eq!(config.app.batch_size, 1000);
@@ -361,7 +362,7 @@ mod tests {
         // Environment variable testing will be implemented in Task 8
         // when we have proper test infrastructure
         let loader = ConfigLoader::new("procmond");
-        let config = loader.load().await.unwrap();
+        let config = loader.load().expect("Failed to load config in test");
 
         // Test with default values for now
         assert_eq!(config.app.scan_interval_ms, 30000);
@@ -373,16 +374,16 @@ mod tests {
         let mut config = Config::default();
         config.app.scan_interval_ms = 0;
 
-        let loader = ConfigLoader::new("procmond");
-        let result = loader.validate_config(&config);
+        let _loader = ConfigLoader::new("procmond");
+        let result = ConfigLoader::validate_config(&config);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_config_validation_valid() {
         let config = Config::default();
-        let loader = ConfigLoader::new("procmond");
-        let result = loader.validate_config(&config);
+        let _loader = ConfigLoader::new("procmond");
+        let result = ConfigLoader::validate_config(&config);
         assert!(result.is_ok());
     }
 
@@ -395,7 +396,9 @@ mod tests {
     #[test]
     fn test_config_loader_load_blocking() {
         let loader = ConfigLoader::new("procmond");
-        let config = loader.load_blocking().unwrap();
+        let config = loader
+            .load_blocking()
+            .expect("Failed to load config in test");
         assert_eq!(config.app.scan_interval_ms, 30000);
     }
 
@@ -405,8 +408,8 @@ mod tests {
         let mut override_config = Config::default();
         override_config.app.scan_interval_ms = 60000;
 
-        let loader = ConfigLoader::new("test");
-        let merged = loader.merge_configs(base, override_config);
+        let _loader = ConfigLoader::new("test");
+        let merged = ConfigLoader::merge_configs(base, override_config);
         assert_eq!(merged.app.scan_interval_ms, 60000);
     }
 
@@ -414,13 +417,13 @@ mod tests {
     fn test_config_error_display() {
         let errors = vec![
             ConfigError::ValidationError {
-                message: "test error".to_string(),
+                message: "test error".to_owned(),
             },
             ConfigError::IoError(std::io::Error::other("test error")),
         ];
 
         for error in errors {
-            let error_string = format!("{}", error);
+            let error_string = format!("{error}");
             assert!(!error_string.is_empty());
         }
     }
@@ -459,8 +462,9 @@ mod tests {
     #[test]
     fn test_config_serialization() {
         let config = Config::default();
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        let deserialized: Config = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = serde_yaml::to_string(&config).expect("Failed to serialize config in test");
+        let deserialized: Config =
+            serde_yaml::from_str(&yaml).expect("Failed to deserialize config in test");
         assert_eq!(
             config.app.scan_interval_ms,
             deserialized.app.scan_interval_ms

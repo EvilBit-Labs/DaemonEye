@@ -1,0 +1,5 @@
+---
+source: sentinelagent/tests/cli.rs
+expression: stdout
+---
+sentinelagent started successfully

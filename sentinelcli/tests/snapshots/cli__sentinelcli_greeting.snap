@@ -1,0 +1,13 @@
+---
+source: sentinelcli/tests/cli.rs
+expression: stdout
+---
+SentinelD Database Statistics
+============================
+Processes: 0
+Rules: 0
+Alerts: 0
+System Info: 0
+Scans: 0
+Health status: healthy
+sentinelcli completed successfully

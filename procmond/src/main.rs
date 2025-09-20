@@ -3,99 +3,14 @@
 use clap::Parser;
 use sentinel_lib::{config, storage, telemetry};
 use std::sync::Arc;
-use sysinfo::System;
 use tokio::sync::Mutex;
 
 mod ipc;
 
 use ipc::error::IpcError;
 use ipc::{IpcConfig, create_ipc_server};
-use sentinel_lib::proto::{DetectionResult, DetectionTask, ProtoProcessRecord, ProtoTaskType};
-
-/// Message handler for IPC communication with process monitoring
-#[allow(dead_code)]
-struct ProcessMessageHandler {
-    database: Arc<Mutex<storage::DatabaseManager>>,
-}
-
-impl ProcessMessageHandler {
-    async fn handle_detection_task(
-        &self,
-        task: DetectionTask,
-    ) -> Result<DetectionResult, IpcError> {
-        tracing::info!("Received detection task: {}", task.task_id);
-
-        match task.task_type {
-            task_type if task_type == ProtoTaskType::EnumerateProcesses as i32 => {
-                self.enumerate_processes(&task).await
-            }
-            _ => {
-                tracing::warn!("Unsupported task type: {}", task.task_type);
-                Ok(DetectionResult::failure(
-                    &task.task_id,
-                    "Unsupported task type",
-                ))
-            }
-        }
-    }
-
-    /// Enumerate all processes on the system
-    async fn enumerate_processes(&self, task: &DetectionTask) -> Result<DetectionResult, IpcError> {
-        let mut system = System::new_all();
-        system.refresh_all();
-
-        let processes: Vec<ProtoProcessRecord> = system
-            .processes()
-            .iter()
-            .map(|(pid, process)| self.convert_process_to_record(pid, process))
-            .collect();
-
-        Ok(DetectionResult::success(&task.task_id, processes))
-    }
-
-    /// Convert a sysinfo process to a ProtoProcessRecord
-    fn convert_process_to_record(
-        &self,
-        pid: &sysinfo::Pid,
-        process: &sysinfo::Process,
-    ) -> ProtoProcessRecord {
-        let pid_u32 = pid.as_u32();
-        let ppid = process.parent().map(|p| p.as_u32());
-        let name = process.name().to_string_lossy().to_string();
-        let executable_path = process.exe().map(|path| path.to_string_lossy().to_string());
-        let command_line = process
-            .cmd()
-            .iter()
-            .map(|s| s.to_string_lossy().to_string())
-            .collect();
-        let start_time = Some(process.start_time() as i64);
-        let cpu_usage = Some(process.cpu_usage() as f64);
-        let memory_usage = Some(process.memory() * 1024);
-        let executable_hash = None; // Would need file hashing implementation
-        let hash_algorithm = None;
-        let user_id = process.user_id().map(|uid| uid.to_string());
-        let accessible = true; // Process is accessible if we can enumerate it
-        let file_exists = executable_path.is_some();
-        let collection_time = chrono::Utc::now().timestamp_millis();
-
-        ProtoProcessRecord {
-            pid: pid_u32,
-            ppid,
-            name,
-            executable_path,
-            command_line,
-            start_time,
-            cpu_usage,
-            memory_usage,
-            executable_hash,
-            hash_algorithm,
-            user_id,
-            accessible,
-            file_exists,
-            collection_time,
-        }
-    }
-}
+use procmond::ProcessMessageHandler;
+use sentinel_lib::proto::DetectionTask;
 
 #[derive(Parser)]
 #[command(name = "procmond")]
@@ -125,7 +40,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load configuration
     let config_loader = config::ConfigLoader::new("procmond");
-    let _config = config_loader.load().await?;
+    let _config = config_loader.load()?;
 
     // Initialize telemetry
     let mut telemetry = telemetry::TelemetryCollector::new("procmond".to_string());
@@ -139,7 +54,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     telemetry.record_operation(duration);
 
     // Perform health check
-    let health_check = telemetry.health_check().await?;
+    let health_check = telemetry.health_check();
     println!("Health status: {}", health_check.status);
 
     // Get database statistics
@@ -200,7 +115,7 @@ async fn run_ipc_server(
     println!("Shutdown signal received, stopping IPC server...");
 
     // Stop the IPC server
-    ipc_server.stop().await?;
+    ipc_server.stop();
     println!("procmond stopped successfully");
 
     Ok(())
