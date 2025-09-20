@@ -76,7 +76,7 @@ fn ensure_secure_directory(socket_path: &str) -> IpcResult<()> {
 
 /// Create an IPC server using the interprocess transport
 pub fn create_ipc_server(config: IpcConfig) -> IpcResult<sentinel_lib::ipc::InterprocessServer> {
-    use sentinel_lib::ipc::{IpcConfig as LibIpcConfig, TransportType};
+    use sentinel_lib::ipc::{IpcConfig as LibIpcConfig, PanicStrategy, TransportType};
 
     // Ensure the secure directory exists with proper permissions
     ensure_secure_directory(&config.path)?;
@@ -89,7 +89,7 @@ pub fn create_ipc_server(config: IpcConfig) -> IpcResult<sentinel_lib::ipc::Inte
         read_timeout_ms: config.message_timeout_secs * 1000,
         write_timeout_ms: config.message_timeout_secs * 1000,
         max_connections: config.max_connections,
-        crc32_variant: sentinel_lib::ipc::Crc32Variant::Ieee,
+        panic_strategy: PanicStrategy::Abort, // Production configuration
     };
 
     Ok(sentinel_lib::ipc::InterprocessServer::new(lib_config))

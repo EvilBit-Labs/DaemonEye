@@ -18,7 +18,7 @@
 mod tests {
     use sentinel_lib::ipc::codec::IpcError;
     use sentinel_lib::ipc::interprocess_transport::{InterprocessClient, InterprocessServer};
-    use sentinel_lib::ipc::{Crc32Variant, IpcConfig, TransportType};
+    use sentinel_lib::ipc::{IpcConfig, TransportType};
     use sentinel_lib::proto::{DetectionResult, DetectionTask, TaskType};
     use std::time::Duration;
     use tempfile::TempDir;
@@ -58,7 +58,7 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 5, // Allow more concurrent connections
-            crc32_variant: Crc32Variant::Ieee,
+            panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
         };
 
         (config, temp_dir)
@@ -115,7 +115,7 @@ mod tests {
         assert!(result.error_message.is_none());
 
         // Clean up
-        server.stop();
+        let _result = server.graceful_shutdown().await;
     }
 
     #[tokio::test]
@@ -155,7 +155,7 @@ mod tests {
         );
 
         // Clean up
-        server.stop();
+        let _result = server.graceful_shutdown().await;
     }
 
     #[tokio::test]
@@ -317,7 +317,7 @@ mod tests {
         );
 
         // Clean up
-        server.stop();
+        let _result = server.graceful_shutdown().await;
     }
 
     /// Test cross-platform endpoint creation
@@ -351,7 +351,7 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 5,
-            crc32_variant: Crc32Variant::Ieee,
+            panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
         };
 
         let _server = InterprocessServer::new(config.clone());

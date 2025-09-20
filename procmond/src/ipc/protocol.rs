@@ -49,9 +49,7 @@ impl MessageEnvelope {
         let checksum = if payload.is_empty() {
             0
         } else {
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(&payload);
-            hasher.finalize()
+            crc32c::crc32c(&payload)
         };
         Self {
             sequence_number,
@@ -65,10 +63,7 @@ impl MessageEnvelope {
         if self.payload.is_empty() {
             self.checksum == 0
         } else {
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(&self.payload);
-            let computed = hasher.finalize();
-            computed == self.checksum
+            crc32c::crc32c(&self.payload) == self.checksum
         }
     }
 }

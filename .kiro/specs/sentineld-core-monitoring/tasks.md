@@ -17,7 +17,7 @@
   - Write unit tests for data model validation and serialization
   - _Requirements: 1.3, 4.1, 4.3_
 
-- [ ] 3. Migrate to interprocess crate for IPC protocol
+- [x] 3. Migrate to interprocess crate for IPC protocol
 
 - [x] 3.1 Define protobuf schema for IPC messages - [#35](https://github.com/EvilBit-Labs/SentinelD/issues/35)
 
@@ -51,7 +51,7 @@
   - Write unit tests for client connection scenarios and cross-platform compatibility
   - _Requirements: 3.1, 3.2_
 
-- [ ] 3.5 Comprehensive testing and validation for interprocess communication - [#38](https://github.com/EvilBit-Labs/SentinelD/issues/38)
+- [x] 3.5 Comprehensive testing and validation for interprocess communication - [#38](https://github.com/EvilBit-Labs/SentinelD/issues/38)
 
   - Create integration tests for `interprocess` transport behavior
   - Add cross-platform tests (Linux, macOS, Windows) for local socket functionality

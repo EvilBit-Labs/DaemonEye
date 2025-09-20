@@ -43,7 +43,7 @@ bytes = { workspace = true }
 
 # Date/time handling
 chrono = { workspace = true }
-crc32fast = { workspace = true }
+crc32c = { workspace = true }
 
 # Futures utilities
 futures = { workspace = true }

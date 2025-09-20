@@ -386,12 +386,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "crc32fast"
-version = "1.5.0"
+name = "crc32c"
+version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
+checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
 dependencies = [
- "cfg-if",
+ "rustc_version",
 ]
 
 [[package]]
@@ -1071,7 +1071,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
- "crc32fast",
+ "crc32c",
  "insta",
  "interprocess",
  "predicates",
@@ -1329,6 +1329,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56f7d92ca342cea22a06f2121d944b4fd82af56988c270852495420f961d4ace"
 
 [[package]]
+name = "rustc_version"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
+dependencies = [
+ "semver",
+]
+
+[[package]]
 name = "rustix"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1375,6 +1384,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "semver"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+
+[[package]]
 name = "sentinel-lib"
 version = "0.1.0"
 dependencies = [
@@ -1384,7 +1399,7 @@ dependencies = [
  "blake3",
  "bytes",
  "chrono",
- "crc32fast",
+ "crc32c",
  "criterion",
  "futures",
  "futures-util",
@@ -1420,7 +1435,6 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
- "crc32fast",
  "futures",
  "insta",
  "interprocess",

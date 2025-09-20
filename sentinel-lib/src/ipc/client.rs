@@ -126,7 +126,7 @@ pub struct ResilientIpcClient {
 impl ResilientIpcClient {
     /// Create a new resilient IPC client
     pub fn new(config: IpcConfig) -> Self {
-        let codec = IpcCodec::new(config.max_frame_bytes, config.crc32_variant.clone());
+        let codec = IpcCodec::new(config.max_frame_bytes);
 
         Self {
             config,
@@ -171,10 +171,7 @@ impl ResilientIpcClient {
         {
             let breaker = self.circuit_breaker.lock().await;
             if !breaker.should_attempt_connection() {
-                return Err(IpcError::Io(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionRefused,
-                    "Circuit breaker is open",
-                )));
+                return Err(IpcError::CircuitBreakerOpen);
             }
         }
 
@@ -182,13 +179,28 @@ impl ResilientIpcClient {
         let connect_timeout = Duration::from_millis(self.config.accept_timeout_ms);
         let stream = timeout(connect_timeout, LocalSocketStream::connect(name))
             .await
-            .map_err(|_err| {
-                IpcError::Io(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "Connection timeout",
-                ))
+            .map_err(|_err| IpcError::ConnectionTimeout {
+                endpoint: self.config.endpoint_path.clone(),
             })?
-            .map_err(IpcError::Io)?;
+            .map_err(|err| {
+                // Convert OS errors to user-friendly IPC errors
+                #[allow(clippy::wildcard_enum_match_arm)]
+                match err.kind() {
+                    std::io::ErrorKind::NotFound => IpcError::ServerNotFound {
+                        endpoint: self.config.endpoint_path.clone(),
+                    },
+                    std::io::ErrorKind::ConnectionRefused => IpcError::ConnectionRefused {
+                        endpoint: self.config.endpoint_path.clone(),
+                    },
+                    std::io::ErrorKind::PermissionDenied => IpcError::PermissionDenied {
+                        endpoint: self.config.endpoint_path.clone(),
+                    },
+                    std::io::ErrorKind::TimedOut => IpcError::ConnectionTimeout {
+                        endpoint: self.config.endpoint_path.clone(),
+                    },
+                    _ => IpcError::Io(err),
+                }
+            })?;
 
         // Update state to connected
         {
@@ -421,7 +433,7 @@ mod tests {
             read_timeout_ms: 5000,
             write_timeout_ms: 5000,
             max_connections: 4,
-            crc32_variant: crate::ipc::Crc32Variant::Ieee,
+            panic_strategy: crate::ipc::PanicStrategy::Unwind,
         };
 
         (config, temp_dir)
@@ -443,7 +455,7 @@ mod tests {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("test");
-            format!(r"\\.\pipe\sentineld\test-resilient-{}", dir_name)
+            format!(r"\\.\pipe\sentineld\test-resilient-{dir_name}")
         }
     }
 

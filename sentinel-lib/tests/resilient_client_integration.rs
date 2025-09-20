@@ -15,7 +15,7 @@
 
 use sentinel_lib::ipc::client::{ConnectionState, ResilientIpcClient};
 use sentinel_lib::ipc::interprocess_transport::InterprocessServer;
-use sentinel_lib::ipc::{Crc32Variant, IpcConfig, TransportType};
+use sentinel_lib::ipc::{IpcConfig, TransportType};
 use sentinel_lib::proto::{DetectionResult, DetectionTask, TaskType};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -33,7 +33,7 @@ fn create_test_config() -> (IpcConfig, TempDir) {
         read_timeout_ms: 5000,
         write_timeout_ms: 5000,
         max_connections: 4,
-        crc32_variant: Crc32Variant::Ieee,
+        panic_strategy: sentinel_lib::ipc::PanicStrategy::Unwind,
     };
 
     (config, temp_dir)
@@ -144,7 +144,7 @@ async fn test_automatic_reconnection() {
     let state = client.get_connection_state().await;
     assert_eq!(state, ConnectionState::Connected);
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 #[tokio::test]
@@ -204,7 +204,7 @@ async fn test_server_error_handling() {
             .contains("Test server error")
     );
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 #[tokio::test]
@@ -267,7 +267,7 @@ async fn test_concurrent_requests() {
     // At least some requests should succeed
     assert!(successful_requests > 0, "No requests succeeded");
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 #[tokio::test]
@@ -316,7 +316,7 @@ async fn test_force_reconnection() {
 
     assert!(result2.success);
 
-    server.stop();
+    let _result = server.graceful_shutdown().await;
 }
 
 #[tokio::test]
