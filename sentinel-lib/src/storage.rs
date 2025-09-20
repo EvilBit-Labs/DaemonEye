@@ -6,18 +6,44 @@
 use crate::models::{Alert, DetectionRule, ProcessRecord, SystemInfo};
 use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 use thiserror::Error;
 
 /// Database operation errors.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum StorageError {
-    #[error("Database error: {0}")]
-    DatabaseError(#[from] redb::Error),
+    /// Platform-agnostic friendly errors for directory issues
+    #[error("Database directory '{dir}' does not exist")]
+    MissingDirectory {
+        dir: PathBuf,
+        #[source]
+        source: Option<std::io::Error>,
+    },
 
+    #[error("Database directory '{path}' is not a directory")]
+    NotADirectory { path: PathBuf },
+
+    #[error("Permission denied accessing database directory '{path}'")]
+    DirectoryPermissionDenied {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("Failed to open/create database at '{path}'")]
+    DatabaseCreationFailed {
+        path: PathBuf,
+        #[source]
+        source: redb::DatabaseError,
+    },
+
+    /// Legacy error variants (preserved for compatibility)
     #[error("Database error: {0}")]
-    DatabaseError2(#[from] redb::DatabaseError),
+    DatabaseError(#[from] redb::DatabaseError),
 
     #[error("Storage error: {0}")]
     StorageError(#[from] redb::StorageError),
@@ -34,14 +60,52 @@ pub enum StorageError {
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    #[error("I/O error accessing '{path}'")]
+    IoError {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("Table not found: {table}")]
     TableNotFound { table: String },
 
     #[error("Record not found: {id}")]
     RecordNotFound { id: String },
+}
+
+/// Validates that the directory containing the database file exists and is accessible.
+/// This provides platform-agnostic error messages before attempting to open the database.
+fn ensure_db_dir(db_path: &Path) -> Result<(), StorageError> {
+    if let Some(dir) = db_path.parent() {
+        match fs::metadata(dir) {
+            Ok(metadata) => {
+                if !metadata.is_dir() {
+                    return Err(StorageError::NotADirectory {
+                        path: dir.to_path_buf(),
+                    });
+                }
+                Ok(())
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Err(StorageError::MissingDirectory {
+                dir: dir.to_path_buf(),
+                source: Some(e),
+            }),
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                Err(StorageError::DirectoryPermissionDenied {
+                    path: dir.to_path_buf(),
+                    source: e,
+                })
+            }
+            Err(e) => Err(StorageError::IoError {
+                path: dir.to_path_buf(),
+                source: e,
+            }),
+        }
+    } else {
+        // Paths like "test.db" (no parent directory) are acceptable
+        Ok(())
+    }
 }
 
 /// Table definitions for the database schema.
@@ -106,7 +170,18 @@ pub struct DatabaseManager {
 impl DatabaseManager {
     /// Create a new database manager.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let db = Database::create(path).map_err(StorageError::from)?;
+        let db_path = path.as_ref();
+
+        // Platform-agnostic preflight directory checks
+        ensure_db_dir(db_path)?;
+
+        // Create the database, mapping errors to friendly messages
+        let db =
+            Database::create(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
+                path: db_path.to_path_buf(),
+                source,
+            })?;
+
         let manager = Self { db };
         manager.initialize_schema()?;
         Ok(manager)
@@ -114,7 +189,18 @@ impl DatabaseManager {
 
     /// Open an existing database.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let db = Database::open(path).map_err(StorageError::from)?;
+        let db_path = path.as_ref();
+
+        // Platform-agnostic preflight directory checks
+        ensure_db_dir(db_path)?;
+
+        // Open the database, mapping errors to friendly messages
+        let db =
+            Database::open(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
+                path: db_path.to_path_buf(),
+                source,
+            })?;
+
         Ok(Self { db })
     }
 
@@ -734,11 +820,23 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_error_from_io_error() {
-        // Test that StorageError can be created from std::io::Error
-        let io_error = std::io::Error::other("test io error");
-        let storage_error = StorageError::from(io_error);
-        assert!(format!("{storage_error}").contains("IO error"));
+    fn test_storage_error_friendly_variants() {
+        // Test the new friendly error variants
+        let missing_dir_error = StorageError::MissingDirectory {
+            dir: "/tmp/missing".into(),
+            source: Some(std::io::Error::other("test io error")),
+        };
+        let missing_dir_msg = format!("{missing_dir_error}");
+        assert!(missing_dir_msg.contains("Database directory"));
+        assert!(missing_dir_msg.contains("does not exist"));
+        assert!(missing_dir_msg.contains("/tmp/missing"));
+
+        let not_dir_error = StorageError::NotADirectory {
+            path: "/tmp/file".into(),
+        };
+        let not_dir_msg = format!("{not_dir_error}");
+        assert!(not_dir_msg.contains("is not a directory"));
+        assert!(not_dir_msg.contains("/tmp/file"));
     }
 
     #[test]

@@ -24,8 +24,16 @@ struct Cli {
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = run().await {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Parse CLI arguments first - this will handle --help and --version automatically
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
     // Initialize logging
     tracing_subscriber::fmt::init();
 
@@ -40,7 +48,10 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load configuration
     let config_loader = config::ConfigLoader::new("sentinelagent");
-    let config = config_loader.load()?;
+    let mut config = config_loader.load()?;
+
+    // Override database path from CLI argument if provided
+    config.database.path = cli.database.into();
 
     // Initialize telemetry
     let mut telemetry = telemetry::TelemetryCollector::new("sentinelagent".to_string());

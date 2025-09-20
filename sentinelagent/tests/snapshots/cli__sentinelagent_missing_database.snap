@@ -1,5 +1,5 @@
 ---
 source: sentinelagent/tests/cli.rs
-expression: stderr
+expression: stderr.as_ref()
 ---
-Error: DatabaseError2(Storage(Io(Os { code: 2, kind: NotFound, message: "No such file or directory" })))
+Error: Database directory '/tmp/<TEMP>/nonexistent' does not exist

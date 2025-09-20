@@ -105,6 +105,30 @@ fn handles_missing_database_gracefully() -> Result<(), Box<dyn std::error::Error
     let output = cmd.output()?;
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_snapshot!("sentinelagent_missing_database", stderr);
+
+    // Use insta settings to normalize the temporary directory path
+    insta::with_settings!({
+        filters => vec![
+            // Normalize macOS temporary directory paths
+            (r"/var/folders/[^/]+/[^/]+/[^/]+/[^/]+/nonexistent", "/tmp/<TEMP>/nonexistent"),
+            // Normalize Unix/Linux temporary directory paths
+            (r"/tmp/\.[^/]+/nonexistent", "/tmp/<TEMP>/nonexistent"),
+            // Normalize Windows temporary directory paths (forward slashes) - AppData/Local/Temp
+            (r"C:/Users/[^/]+/AppData/Local/Temp/[^/]+/nonexistent", "/tmp/<TEMP>/nonexistent"),
+            // Normalize Windows temporary directory paths (backslashes) - AppData/Local/Temp
+            (r"C:\\Users\\[^\\]+\\AppData\\Local\\Temp\\[^\\]+\\nonexistent", "/tmp/<TEMP>/nonexistent"),
+            // Windows system TEMP directory patterns
+            (r"C:/Windows/Temp/[^/]+/nonexistent", "/tmp/<TEMP>/nonexistent"),
+            (r"C:\\Windows\\Temp\\[^\\]+\\nonexistent", "/tmp/<TEMP>/nonexistent"),
+            // Generic Windows temp patterns with different drive letters
+            (r"[A-Z]:/temp/[^/]+/nonexistent", "/tmp/<TEMP>/nonexistent"),
+            (r"[A-Z]:\\temp\\[^\\]+\\nonexistent", "/tmp/<TEMP>/nonexistent"),
+            // Generic Windows Users temp patterns
+            (r"[A-Z]:/Users/[^/]+/AppData/Local/Temp/[^/]+/nonexistent", "/tmp/<TEMP>/nonexistent"),
+            (r"[A-Z]:\\Users\\[^\\]+\\AppData\\Local\\Temp\\[^\\]+\\nonexistent", "/tmp/<TEMP>/nonexistent"),
+        ]
+    }, {
+        assert_snapshot!("sentinelagent_missing_database", stderr.as_ref());
+    });
     Ok(())
 }
