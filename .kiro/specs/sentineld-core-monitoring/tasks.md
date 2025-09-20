@@ -196,38 +196,42 @@
   - Write integration tests for migration scenarios and version compatibility
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 11. Implement SQL-based detection engine with security validation
+- [ ] 11. Implement SQL-based detection engine with SQL-to-IPC translation pipeline
 
-- [ ] 11.1 Create SQL validator for injection prevention - [#47](https://github.com/EvilBit-Labs/SentinelD/issues/47)
+- [ ] 11.1 Create SQL validator and collection requirements extractor - [#47](https://github.com/EvilBit-Labs/SentinelD/issues/47)
 
   - Implement SqlValidator using sqlparser-rs for AST parsing and validation
-  - Create whitelist of allowed SQL constructs (SELECT statements, approved functions)
-  - Add comprehensive validation rules to reject dangerous SQL patterns
-  - Write unit tests for SQL validation with malicious input samples
+  - Create CollectionRequirementsExtractor to analyze SQL AST and extract collection needs
+  - Add SQL-to-IPC translation logic that converts complex SQL rules into simple protobuf collection tasks
+  - Create whitelist of allowed SQL constructs (SELECT statements, approved functions from docs/src/technical/query-pipeline.md)
+  - Write unit tests for SQL validation and collection requirements extraction
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.2 Implement detection engine core - [#48](https://github.com/EvilBit-Labs/SentinelD/issues/48)
+- [ ] 11.2 Implement detection engine with two-phase execution - [#48](https://github.com/EvilBit-Labs/SentinelD/issues/48)
 
-  - Create DetectionEngine struct with rule execution capabilities
-  - Add read-only database transaction handling for rule queries
-  - Implement rule loading and validation from multiple sources
-  - Write unit tests for detection engine initialization and basic operations
+  - Create DetectionEngine struct implementing the two-phase query pipeline from docs/src/technical/query-pipeline.md
+  - Add Phase 1: SQL-to-IPC translation that generates protobuf tasks for collector-core components
+  - Add Phase 2: SQL rule execution against collected data in redb event store
+  - Implement overcollection strategy where collector-core may collect broader data than SQL requires
+  - Write unit tests for both phases of the detection pipeline
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.3 Add query execution with resource limits - [#49](https://github.com/EvilBit-Labs/SentinelD/issues/49)
+- [ ] 11.3 Add query execution with resource limits and sandboxing - [#49](https://github.com/EvilBit-Labs/SentinelD/issues/49)
 
-  - Implement query timeouts (30 seconds) and memory limits
-  - Add sandboxed execution environment for rule processing
-  - Create resource cleanup and cancellation mechanisms
+  - Implement query timeouts (30 seconds) and memory limits for SQL rule execution
+  - Add sandboxed execution environment with read-only database connections
+  - Create resource cleanup and cancellation mechanisms for both translation and execution phases
+  - Ensure privilege separation where SQL execution never directly touches live processes
   - Write integration tests for resource limit enforcement and timeout scenarios
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.4 Create comprehensive security testing - [#50](https://github.com/EvilBit-Labs/SentinelD/issues/50)
+- [ ] 11.4 Create comprehensive security testing for SQL-to-IPC pipeline - [#50](https://github.com/EvilBit-Labs/SentinelD/issues/50)
 
-  - Implement OWASP SQL injection test vector validation
-  - Add fuzzing tests for malformed SQL input
+  - Implement OWASP SQL injection test vector validation for both AST parsing and collection extraction
+  - Add fuzzing tests for malformed SQL input in both translation and execution phases
   - Create penetration testing scenarios for SQL validation bypass attempts
-  - Write security audit tests for rule execution sandboxing
+  - Write security audit tests for rule execution sandboxing and IPC task generation
+  - Test that complex SQL rules are properly translated to simple, secure protobuf tasks
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
 - [ ] 12. Create alert generation and management system - [#51](https://github.com/EvilBit-Labs/SentinelD/issues/51)
