@@ -1,0 +1,34 @@
+[package]
+name = "collector-core"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+description = "Extensible collection framework for SentinelD monitoring components"
+
+[dependencies]
+# Core async runtime and utilities
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Bitflags for capabilities
+bitflags = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4.4"
+tempfile = { workspace = true }
+serde_json = { workspace = true }

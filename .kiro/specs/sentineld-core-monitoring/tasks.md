@@ -64,7 +64,7 @@
 
 - [ ] 4. Implement collector-core framework for extensible monitoring architecture
 
-- [ ] 4.1 Create collector-core library foundation - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.1 Create collector-core library foundation - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Create new collector-core workspace member crate with public API exports
   - Define universal EventSource trait with start/stop lifecycle and capability reporting
