@@ -294,49 +294,42 @@ let serialized = prost::Message::encode_to_vec(&task)?;
 
 ### Key Dependencies
 
-```toml
-[workspace.dependencies]
-# Core async runtime
-tokio = { version = "1.0", features = [
-  "rt",
-  "rt-multi-thread",
-  "net",
-  "io-util",
-  "time",
-  "process",
-  "macros",
-  "sync",
-] }
+#### Core Runtime & Async
 
-# CLI framework
-clap = { version = "4.0", features = ["derive"] }
+- **tokio** (1.0+) - Async runtime with multi-threaded support, networking, I/O utilities, and process management
+- **serde** (1.0+) - Serialization framework with derive macros for data structures
 
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
+#### CLI & User Interface
 
-# Database (pure Rust embedded)
-redb = "1.0"
+- **clap** (4.0+) - Command-line argument parsing with derive macros and shell completions
 
-# Process enumeration
-sysinfo = "0.30"
+#### Database & Storage
 
-# Logging
-tracing = "0.1"
+- **redb** (3.0+) - Pure Rust embedded database for optimal performance and security (used only in sentinelagent)
 
-# Error handling
-thiserror = "1.0"
-anyhow = "1.0"
+#### System Monitoring
 
-# Cryptographic components
-rs-merkle = "1.4"
-blake3 = "1.5"
-ed25519-dalek = "2.1"
+- **sysinfo** (0.37+) - Cross-platform process enumeration and system information gathering
 
-# Testing
-insta = "1.0"
-predicates = "3.1"
-criterion = "0.5"
-```
+#### Logging & Observability
+
+- **tracing** (0.1+) - Structured logging ecosystem with JSON and human-readable output
+
+#### Error Handling
+
+- **thiserror** (2.0+) - Structured error types with derive macros
+- **anyhow** (1.0+) - Error context and chaining utilities
+
+#### Cryptographic Security
+
+- **rs-merkle** (1.5+) - Merkle tree implementation for audit trail integrity (used only in collection-core)
+- **blake3** (1.8+) - High-performance cryptographic hash function
+
+#### Testing & Quality
+
+- **insta** (1.0+) - Snapshot testing for deterministic output validation
+- **predicates** (3.1+) - Test assertion utilities for complex validations
+- **criterion** (0.7+) - Performance benchmarking and regression detection
 
 ---
 

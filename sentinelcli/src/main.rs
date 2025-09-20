@@ -1,39 +1,34 @@
-use clap::{Arg, Command};
+#![forbid(unsafe_code)]
+
+use clap::Parser;
 use sentinel_lib::{config, storage, telemetry};
+
+/// SentinelD CLI interface
+#[derive(Parser)]
+#[command(name = "sentinelcli")]
+#[command(about = "SentinelD CLI interface")]
+#[command(version)]
+struct Cli {
+    /// Database path
+    #[arg(short = 'd', long = "database", value_name = "PATH")]
+    #[arg(default_value = "/var/lib/sentineld/processes.db")]
+    database: String,
+
+    /// Output format
+    #[arg(short = 'f', long = "format", value_name = "FORMAT")]
+    #[arg(default_value = "human")]
+    format: String,
+}
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
     // Parse command line arguments
-    let matches = Command::new("sentinelcli")
-        .about("SentinelD CLI interface")
-        .version(env!("CARGO_PKG_VERSION"))
-        .arg(
-            Arg::new("database")
-                .short('d')
-                .long("database")
-                .value_name("PATH")
-                .help("Database path")
-                .default_value("/var/lib/sentineld/processes.db"),
-        )
-        .arg(
-            Arg::new("format")
-                .short('f')
-                .long("format")
-                .value_name("FORMAT")
-                .help("Output format")
-                .default_value("human"),
-        )
-        .get_matches();
+    let cli = Cli::parse();
 
-    let _database = matches.get_one::<String>("database").map_or_else(
-        || "/var/lib/sentineld/processes.db".to_owned(),
-        Clone::clone,
-    );
-    let format = matches
-        .get_one::<String>("format")
-        .map_or_else(|| "human".to_owned(), Clone::clone);
+    let _database = cli.database;
+    let format = cli.format;
 
     // Load configuration
     let config_loader = config::ConfigLoader::new("sentinelcli");

@@ -78,6 +78,9 @@ impl From<sentinel_lib::ipc::IpcError> for IpcError {
             sentinel_lib::ipc::IpcError::InvalidLength { length } => IpcError::InvalidMessage {
                 reason: format!("Invalid message length: {}", length),
             },
+            _ => IpcError::InvalidMessage {
+                reason: "Unknown IPC error".to_string(),
+            },
         }
     }
 }

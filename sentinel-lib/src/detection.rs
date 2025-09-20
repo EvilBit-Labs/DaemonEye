@@ -10,6 +10,7 @@ use thiserror::Error;
 
 /// Detection engine errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum DetectionEngineError {
     #[error("SQL validation failed: {0}")]
     SqlValidationError(String),

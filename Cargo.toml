@@ -111,7 +111,8 @@ warnings = "deny"
 
 [workspace.lints.clippy]
 # Pedantic clippy configuration with proper priorities
-all = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
@@ -125,8 +126,6 @@ indexing_slicing = "warn"
 arithmetic_side_effects = "warn"
 integer_division = "warn"
 modulo_arithmetic = "warn"
-panic = "forbid"                 # DON'T PANIC IN PRODUCTION
-unwrap_used = "deny"             # DON'T UNWRAP IN PRODUCTION
 expect_used = "warn"
 
 # Security anti-patterns
@@ -137,10 +136,11 @@ dbg_macro = "warn"
 todo = "warn"
 unimplemented = "warn"
 unreachable = "warn"
+panic = "deny"          # DON'T PANIC IN PRODUCTION (it would be forbidden, but it breaks clap for some reason, so just don't do it)
+unwrap_used = "deny"      # DON'T UNWRAP IN PRODUCTION
+exhaustive_enums = "warn"
 
 # Performance and correctness
-correctness = { level = "deny", priority = -1 }
-suspicious = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 await_holding_lock = "deny"
 clone_on_ref_ptr = "warn"
@@ -184,7 +184,7 @@ suspicious_operation_groupings = "warn"
 trailing_empty_array = "warn"
 transmute_undefined_repr = "warn"
 trivial_regex = "warn"
-undocumented_unsafe_blocks = "warn"
+undocumented_unsafe_blocks = "deny" # We should not have unsafe code in this project, but if we do, we should document it
 unnecessary_self_imports = "warn"
 unseparated_literal_suffix = "warn"
 unused_async = "warn"

@@ -19,6 +19,7 @@ pub type IpcResult<T> = Result<T, IpcError>;
 
 /// Comprehensive error types for IPC operations
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum IpcError {
     #[error("Timeout occurred during operation")]
     Timeout,

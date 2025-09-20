@@ -8,6 +8,7 @@ use thiserror::Error;
 
 /// Cryptographic operation errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum CryptoError {
     #[error("Hash computation failed: {0}")]
     Hash(String),

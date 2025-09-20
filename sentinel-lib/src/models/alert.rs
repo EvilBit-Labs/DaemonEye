@@ -58,6 +58,7 @@ impl fmt::Display for AlertId {
 
 /// Alert severity levels.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum AlertSeverity {
     /// Low severity alert
     Low,
@@ -450,6 +451,7 @@ impl Alert {
 
 /// Alert-related errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AlertError {
     #[error("Invalid alert severity: {0}")]
     InvalidSeverity(String),

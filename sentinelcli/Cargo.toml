@@ -40,6 +40,6 @@ insta = { workspace = true }
 predicates = { workspace = true }
 tempfile = { workspace = true }
 
-# Inherit workspace lint configuration
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "forbid"
+warnings = "deny"

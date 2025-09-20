@@ -11,6 +11,7 @@ use thiserror::Error;
 /// Telemetry collection errors.
 #[derive(Debug, Error)]
 #[allow(clippy::enum_variant_names)]
+#[non_exhaustive]
 pub enum TelemetryError {
     #[error("Metric collection failed: {0}")]
     Collection(String),
@@ -70,6 +71,7 @@ impl Metrics {
 
 /// Health status for a component.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HealthStatus {
     Healthy,
     Degraded,

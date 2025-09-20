@@ -13,6 +13,7 @@ use thiserror::Error;
 
 /// Configuration loading and validation errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ConfigError {
     #[error("Configuration file not found: {path}")]
     FileNotFound { path: PathBuf },

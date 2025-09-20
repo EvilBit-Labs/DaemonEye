@@ -9,6 +9,7 @@ use thiserror::Error;
 
 /// Network monitoring errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum NetworkError {
     #[error("Network interface error: {0}")]
     InterfaceError(String),
@@ -25,6 +26,7 @@ pub enum NetworkError {
 
 /// Network event types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NetworkEventType {
     Connection,
     Disconnection,

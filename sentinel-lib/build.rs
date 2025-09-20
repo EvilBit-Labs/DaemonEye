@@ -10,6 +10,8 @@ fn main() -> Result<()> {
         .type_attribute(".", "#[allow(clippy::missing_const_for_fn)]")
         .type_attribute(".", "#[allow(clippy::trivially_copy_pass_by_ref)]")
         .type_attribute(".", "#[allow(clippy::pattern_type_mismatch)]")
+        // Add non_exhaustive to all generated enums
+        .enum_attribute(".", "#[non_exhaustive]")
         // Enable optional features for proto3 optional fields
         .protoc_arg("--experimental_allow_proto3_optional")
         // Compile our protobuf files

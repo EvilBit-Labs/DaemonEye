@@ -19,6 +19,7 @@ use thiserror::Error;
 
 /// Alert delivery errors with specific error types for better error handling.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AlertingError {
     #[error("Alert sink error: {0}")]
     SinkError(String),
@@ -258,6 +259,7 @@ impl AlertSink for FileSink {
 
 /// Output format enumeration with string parsing support.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OutputFormat {
     Json,
     Human,

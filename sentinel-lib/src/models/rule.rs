@@ -1000,6 +1000,7 @@ impl DetectionRule {
 
 /// Rule-related errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RuleError {
     #[error("Invalid SQL query: {0}")]
     InvalidSql(String),

@@ -21,6 +21,7 @@ use tracing::{debug, error, warn};
 
 /// Connection state for the IPC client
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectionState {
     /// Client is disconnected
     Disconnected,

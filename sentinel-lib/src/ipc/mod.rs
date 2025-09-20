@@ -51,6 +51,7 @@ impl Default for IpcConfig {
 
 /// Transport type selection
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TransportType {
     /// Use tokio native IPC transport (default)
     Interprocess,
@@ -58,6 +59,7 @@ pub enum TransportType {
 
 /// CRC32 variant for integrity validation
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Crc32Variant {
     /// IEEE 802.3 CRC32 (default)
     Ieee,

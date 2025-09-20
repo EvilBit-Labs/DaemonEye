@@ -8,6 +8,7 @@ use thiserror::Error;
 
 /// Kernel monitoring errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum KernelError {
     #[error("eBPF program loading failed: {0}")]
     EbpfError(String),
@@ -24,6 +25,7 @@ pub enum KernelError {
 
 /// Kernel event types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum KernelEventType {
     ProcessCreate,
     ProcessExit,

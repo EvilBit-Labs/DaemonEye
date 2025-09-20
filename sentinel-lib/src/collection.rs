@@ -15,6 +15,7 @@ use thiserror::Error;
 
 /// Errors that may occur during process collection.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum CollectionError {
     #[error("Permission denied accessing process {pid}")]
     PermissionDenied { pid: u32 },

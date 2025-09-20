@@ -11,6 +11,7 @@ use thiserror::Error;
 
 /// Database operation errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum StorageError {
     #[error("Database error: {0}")]
     DatabaseError(#[from] redb::Error),
@@ -90,6 +91,7 @@ pub struct ScanMetadata {
 
 /// Scan status enumeration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ScanStatus {
     InProgress,
     Completed,

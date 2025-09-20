@@ -60,6 +60,7 @@ impl fmt::Display for ProcessId {
 
 /// Process status enumeration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProcessStatus {
     /// Process is running
     Running,
@@ -764,6 +765,7 @@ impl SystemInfo {
 
 /// Process-related errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ProcessError {
     #[error("Missing required field: {0}")]
     MissingField(&'static str),
