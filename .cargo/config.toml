@@ -3,6 +3,3 @@ frequency = 'always'
 
 [cache]
 auto-clean-frequency = "1 day"
-
-[target.'cfg(all())']
-rustflags = ["-Dunsafe_code"]
