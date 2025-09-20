@@ -1,284 +1,226 @@
 # Implementation Plan
 
-- [ ] 1. Set up Enterprise tier foundation and platform support
+- [ ] 1. Set up Enterprise tier foundation with collector-core integration
 
-- [ ] 1.1 Create platform detection and compatibility system
+- [ ] 1.1 Create Enterprise EventSource trait implementations
 
-  - Implement platform version detection for Linux/Windows/macOS
-  - Add kernel version and capability checking
-  - Create compatibility matrix and feature availability detection
-  - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.8_
-
-- [ ] 1.2 Create kernel monitoring trait abstractions
-
-  - Define cross-platform kernel monitoring interfaces
-  - Create common event schemas and error types
-  - Add graceful degradation patterns for unsupported features
+  - Extend collector-core EventSource trait for kernel-level monitoring
+  - Define Enterprise-specific SourceCaps flags (KERNEL_LEVEL, SYSCALL_TRACING, REGISTRY, etc.)
+  - Create platform-specific EventSource implementations (EbpfEventSource, EtwEventSource, EndpointSecurityEventSource)
+  - Add capability-based feature detection and graceful degradation to OSS ProcessEventSource
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 12.8_
 
-- [ ] 1.3 Set up workspace structure for enterprise features
+- [ ] 1.2 Extend collector-core CollectionEvent enum for Enterprise events
 
-  - Create enterprise feature module organization
-  - Add conditional compilation for platform-specific features
-  - Set up feature flags and capability-based initialization
-  - _Requirements: 1.1, 1.2, 1.3, 1.4_
+  - Add Enterprise event types (Network, Filesystem, Registry, Syscall, Container, XPC)
+  - Maintain backward compatibility with OSS ProcessEvent
+  - Create platform-specific event data structures with unified interfaces
+  - Add event correlation metadata for multi-domain analysis
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 10.1, 10.2, 10.3_
 
-- [ ] 2. Implement Linux eBPF kernel monitoring
+- [ ] 1.3 Create Enterprise collector-core configuration system
 
-- [ ] 2.1 Configure eBPF build environment
+  - Extend collector-core configuration with Enterprise-specific settings
+  - Add platform detection and kernel version compatibility checking
+  - Create feature flags for conditional EventSource registration
+  - Implement licensing-based capability enablement
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 5.1, 5.2, 12.8_
 
-  - Add aya and aya-log dependencies to Cargo.toml
+- [ ] 2. Implement Linux EbpfEventSource (collector-core integration)
+
+- [ ] 2.1 Create EbpfEventSource collector-core integration
+
+  - Implement EventSource trait for EbpfEventSource with aya eBPF library
+  - Add eBPF-specific SourceCaps (KERNEL_LEVEL, SYSCALL_TRACING, CONTAINER_AWARE)
+  - Integrate with collector-core runtime for IPC, configuration, and health monitoring
+  - Create graceful fallback to OSS ProcessEventSource when eBPF unavailable
+  - _Requirements: 1.1, 1.4, 1.8_
+
+- [ ] 2.2 Configure eBPF build environment and program loading
+
+  - Add aya and aya-log dependencies with collector-core integration
   - Create eBPF build configuration and justfile targets
-  - Set up eBPF program directory structure
+  - Implement eBPF program loading with capability detection and error handling
+  - Add eBPF program directory structure and build artifacts management
   - _Requirements: 1.1, 1.4, 1.8_
 
-- [ ] 2.2 Create eBPF program templates
+- [ ] 2.3 Implement eBPF process monitoring programs
 
-  - Write basic eBPF program skeleton with ring buffer setup
-  - Create shared data structures for kernel-userspace communication
-  - Add eBPF program loading and attachment utilities
+  - Write execve tracepoint eBPF program for process execution events
+  - Implement fork/clone tracepoint eBPF program for process creation events
+  - Add process exit eBPF program for termination events with exit codes
+  - Create ring buffer event streaming with sub-millisecond latency
   - _Requirements: 1.1, 1.4, 1.8_
 
-- [ ] 2.3 Implement execve tracepoint eBPF program
+- [ ] 2.4 Implement eBPF network monitoring programs
 
-  - Write eBPF program to capture process execution events
-  - Extract process metadata (PID, PPID, command line)
-  - Send events to userspace via ring buffer
-  - _Requirements: 1.1, 1.4, 1.8_
-
-- [ ] 2.4 Implement fork/clone tracepoint eBPF program
-
-  - Write eBPF program to capture process creation events
-  - Extract parent-child relationship information
-  - Add event correlation with existing processes
-  - _Requirements: 1.1, 1.4, 1.8_
-
-- [ ] 2.5 Implement process exit eBPF program
-
-  - Write eBPF program to capture process termination events
-  - Extract exit codes and termination reasons
-  - Clean up process tracking data structures
-  - _Requirements: 1.1, 1.4, 1.8_
-
-- [ ] 2.6 Create basic network socket eBPF program
-
-  - Write eBPF program to capture socket creation events
-  - Extract socket type, protocol, and process correlation
-  - Send network events to userspace ring buffer
+  - Write socket creation eBPF program with process correlation
+  - Implement TCP connection eBPF program for connect/accept events
+  - Add network event extraction with connection endpoints and metadata
+  - Create network event correlation with process activity
   - _Requirements: 1.1, 1.4, 1.8, 10.1, 10.5_
 
-- [ ] 2.7 Implement TCP connection eBPF program
+- [ ] 2.5 Create eBPF event processing and collector-core integration
 
-  - Write eBPF program to capture TCP connect/accept events
-  - Extract connection endpoints and process information
-  - Add connection state tracking
-  - _Requirements: 1.1, 1.4, 1.8, 10.1, 10.5_
-
-- [ ] 2.8 Create eBPF userspace event reader
-
-  - Implement ring buffer polling and event extraction
-  - Add event deserialization and validation
-  - Create async event stream interface
+  - Implement ring buffer polling and event deserialization
+  - Convert eBPF events to collector-core CollectionEvent enum
+  - Add event filtering, rate limiting, and backpressure handling
+  - Integrate with collector-core event aggregation and IPC communication
   - _Requirements: 1.1, 1.4, 1.8_
 
-- [ ] 2.9 Implement eBPF event processing pipeline
+- [ ] 3. Implement Windows EtwEventSource (collector-core integration)
 
-  - Create event correlation and enrichment logic
-  - Add event filtering and rate limiting
-  - Implement metrics collection for eBPF programs
-  - _Requirements: 1.1, 1.4, 1.8_
+- [ ] 3.1 Create EtwEventSource collector-core integration
 
-- [ ] 3. Implement Windows ETW kernel monitoring
+  - Implement EventSource trait for EtwEventSource with windows crate ETW APIs
+  - Add ETW-specific SourceCaps (KERNEL_LEVEL, REGISTRY, FILESYSTEM)
+  - Integrate with collector-core runtime for IPC, configuration, and health monitoring
+  - Create graceful fallback to OSS ProcessEventSource when ETW unavailable
+  - _Requirements: 1.2, 1.4, 1.8_
 
-- [ ] 3.1 Set up ETW session infrastructure
+- [ ] 3.2 Set up ETW session infrastructure and provider management
 
-  - Add windows crate dependency and ETW imports
   - Create ETW session properties and configuration structures
-  - Implement ETW session creation and cleanup
+  - Implement ETW session creation, cleanup, and lifecycle management
+  - Add ETW provider registration, enable/disable functionality, and health monitoring
+  - Integrate ETW session management with collector-core startup and shutdown
   - _Requirements: 1.2, 1.4, 1.8_
 
-- [ ] 3.2 Create ETW provider management
+- [ ] 3.3 Implement ETW multi-domain event providers
 
-  - Implement ETW provider registration and configuration
-  - Add provider enable/disable functionality
-  - Create provider health monitoring and recovery
-  - _Requirements: 1.2, 1.4, 1.8_
-
-- [ ] 3.3 Implement ETW event consumer
-
-  - Create ETW event callback handler
-  - Add event deserialization and parsing logic
-  - Implement async event processing pipeline
-  - _Requirements: 1.2, 1.4, 1.8_
-
-- [ ] 3.4 Add process event ETW provider
-
-  - Subscribe to Microsoft-Windows-Kernel-Process provider
-  - Parse process creation and termination events
-  - Extract process metadata and context information
-  - _Requirements: 1.2, 1.4, 1.8_
-
-- [ ] 3.5 Add network event ETW provider
-
-  - Subscribe to Microsoft-Windows-Kernel-Network provider
-  - Parse TCP/UDP connection and socket events
-  - Correlate network events with process information
+  - Subscribe to Microsoft-Windows-Kernel-Process provider for process events
+  - Add Microsoft-Windows-Kernel-Network provider for network events
+  - Implement Microsoft-Windows-Kernel-Registry provider for registry monitoring
+  - Create Microsoft-Windows-Kernel-File provider for filesystem events
   - _Requirements: 1.2, 1.4, 1.8, 10.2, 10.5_
 
-- [ ] 3.6 Add registry monitoring ETW provider
+- [ ] 3.4 Create ETW event processing and collector-core integration
 
-  - Subscribe to Microsoft-Windows-Kernel-Registry provider
-  - Parse registry key and value modification events
-  - Filter for security-relevant registry changes
+  - Implement ETW event callback handler with async processing
+  - Convert ETW events to collector-core CollectionEvent enum (Process, Network, Registry, Filesystem)
+  - Add event deserialization, parsing, and validation logic
+  - Integrate with collector-core event aggregation and IPC communication
   - _Requirements: 1.2, 1.4, 1.8, 10.2, 10.5_
 
-- [ ] 3.7 Implement ETW event correlation
+- [ ] 4. Implement macOS EndpointSecurityEventSource (collector-core integration)
 
-  - Create cross-event correlation logic for process/network/registry
-  - Add event timeline reconstruction
-  - Implement event filtering and prioritization
-  - _Requirements: 1.2, 1.4, 1.8, 10.2, 10.5_
+- [ ] 4.1 Create EndpointSecurityEventSource collector-core integration
 
-- [ ] 4. Implement macOS EndpointSecurity monitoring
-
-- [ ] 4.1 Set up EndpointSecurity dependencies
-
-  - Add endpoint-sec and core-foundation dependencies
-  - Create EndpointSecurity client initialization
-  - Add proper entitlement handling and validation
+  - Implement EventSource trait for EndpointSecurityEventSource with endpoint-sec crate
+  - Add EndpointSecurity-specific SourceCaps (KERNEL_LEVEL, FILESYSTEM, NETWORK)
+  - Integrate with collector-core runtime for IPC, configuration, and health monitoring
+  - Create graceful fallback to OSS ProcessEventSource when EndpointSecurity unavailable
   - _Requirements: 1.3, 1.4, 1.8_
 
-- [ ] 4.2 Create EndpointSecurity event subscription
+- [ ] 4.2 Set up EndpointSecurity client and event subscription
 
-  - Implement event type subscription management
-  - Add event handler registration and callback setup
-  - Create async event processing infrastructure
+  - Add endpoint-sec and core-foundation dependencies with collector-core integration
+  - Create EndpointSecurity client initialization with proper entitlement handling
+  - Implement event type subscription management and callback setup
+  - Add EndpointSecurity client lifecycle management with collector-core coordination
   - _Requirements: 1.3, 1.4, 1.8_
 
-- [ ] 4.3 Implement process event monitoring
+- [ ] 4.3 Implement EndpointSecurity multi-domain event monitoring
 
-  - Subscribe to ES_EVENT_TYPE_NOTIFY_EXEC events
-  - Parse process execution and fork events
-  - Extract process metadata and parent relationships
-  - _Requirements: 1.3, 1.4, 1.8_
-
-- [ ] 4.4 Implement file system event monitoring
-
-  - Subscribe to file open, create, and modify events
-  - Filter for security-relevant file operations
-  - Correlate file events with process activity
+  - Subscribe to ES_EVENT_TYPE_NOTIFY_EXEC and ES_EVENT_TYPE_NOTIFY_FORK for process events
+  - Add file system event monitoring (open, create, modify, unlink) with security filtering
+  - Implement network event monitoring (socket, bind, connect) with process correlation
+  - Create XPC communication monitoring for macOS-specific threat detection
   - _Requirements: 1.3, 1.4, 1.8, 10.3, 10.5_
 
-- [ ] 4.5 Implement network event monitoring
+- [ ] 4.4 Create EndpointSecurity event processing and collector-core integration
 
-  - Subscribe to network socket and connection events
-  - Parse network event data and process correlation
-  - Add network traffic filtering and analysis
+  - Implement EndpointSecurity event handler with async processing
+  - Convert EndpointSecurity events to collector-core CollectionEvent enum (Process, Filesystem, Network, XPC)
+  - Add event parsing, validation, and metadata extraction
+  - Integrate with collector-core event aggregation and IPC communication
   - _Requirements: 1.3, 1.4, 1.8, 10.3, 10.5_
 
-- [ ] 4.6 Create EndpointSecurity event correlation
+- [ ] 5. Enhance sentinelagent with Enterprise multi-domain correlation
 
-  - Implement cross-event correlation for process/file/network
-  - Add event timeline and causality tracking
-  - Create event prioritization and filtering logic
-  - _Requirements: 1.3, 1.4, 1.8, 10.3, 10.5_
+- [ ] 5.1 Create Enterprise orchestrator with multi-domain event correlation
 
-- [ ] 5. Implement cross-platform logging integration
+  - Extend sentinelagent with EnterpriseOrchestrator for multi-domain event correlation
+  - Implement NetworkCorrelator, FilesystemCorrelator, and RegistryCorrelator components
+  - Add event timeline reconstruction and causality tracking across domains
+  - Create unified threat detection using correlated process, network, and filesystem events
+  - _Requirements: 1.8, 10.1, 10.2, 10.3, 10.5_
 
-- [ ] 5.1 Create platform-specific logging adapters
+- [ ] 5.2 Implement cross-platform logging integration with collector-core
 
-  - Implement systemd journald integration for Linux
-  - Create Windows Event Log writer with proper event IDs
-  - Add macOS unified logging system (os_log) integration
-  - _Requirements: 8.1, 8.2, 8.3, 8.4_
+  - Extend collector-core logging infrastructure with platform-specific adapters
+  - Implement systemd journald integration for Linux with structured metadata
+  - Create Windows Event Log writer with proper event IDs and categories
+  - Add macOS unified logging system (os_log) integration with native formatting
+  - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7_
 
-- [ ] 5.2 Implement unified logging interface
+- [ ] 6. Implement platform-specific advanced detections using collector-core events
 
-  - Create cross-platform logging abstraction
-  - Add log format normalization while preserving platform conventions
-  - Implement fallback to file-based logging on platform failures
-  - _Requirements: 8.4, 8.5, 8.6, 8.7_
+- [ ] 6.1 Create Linux-specific detection rules using eBPF CollectionEvents
 
-- [ ] 6. Implement platform-specific advanced detections
-
-- [ ] 6.1 Create Linux-specific detection rules
-
-  - Implement process injection and privilege escalation detection
-  - Add container escape attempt detection using eBPF data
-  - Create rootkit and file system manipulation detection
+  - Implement process injection and privilege escalation detection using eBPF syscall events
+  - Add container escape attempt detection using eBPF container-aware events and cgroup data
+  - Create rootkit and file system manipulation detection using eBPF process and network correlation
+  - Develop memory analysis detection using eBPF memory mapping and process hollowing events
   - _Requirements: 9.1, 9.5, 9.6_
 
-- [ ] 6.2 Create Windows-specific detection rules
+- [ ] 6.2 Create Windows-specific detection rules using ETW CollectionEvents
 
-  - Implement PowerShell obfuscation and WMI abuse detection
-  - Add LSASS access pattern and token manipulation detection
-  - Create detection for suspicious registry modifications
+  - Implement PowerShell obfuscation and WMI abuse detection using ETW process and registry events
+  - Add LSASS access pattern and token manipulation detection using ETW process correlation
+  - Create detection for suspicious registry modifications using ETW registry events
+  - Develop file system manipulation detection using ETW filesystem and process correlation
   - _Requirements: 9.2, 9.5, 9.6_
 
-- [ ] 6.3 Create macOS-specific detection rules
+- [ ] 6.3 Create macOS-specific detection rules using EndpointSecurity CollectionEvents
 
-  - Implement code signing bypass and Gatekeeper evasion detection
-  - Add suspicious XPC communication pattern detection
-  - Create detection for unauthorized system extension loading
+  - Implement code signing bypass and Gatekeeper evasion detection using EndpointSecurity process events
+  - Add suspicious XPC communication pattern detection using EndpointSecurity XPC events
+  - Create detection for unauthorized system extension loading using EndpointSecurity filesystem events
+  - Develop network-based lateral movement detection using EndpointSecurity network correlation
   - _Requirements: 9.3, 9.5, 9.6_
 
-- [ ] 7. Implement federated Security Center architecture
+- [ ] 7. Implement federated Security Center architecture with collector-core compatibility
 
-- [ ] 7.1 Create Security Center configuration system
+- [ ] 7.1 Create Security Center configuration and capability negotiation
 
-  - Define Security Center tier types (Regional, Primary)
-  - Implement configuration loading and validation
-  - Add Security Center discovery and registration
+  - Define Security Center tier types (Regional, Primary) with collector-core compatibility
+  - Implement configuration loading and validation for mixed OSS/Enterprise deployments
+  - Add Security Center discovery, registration, and capability negotiation
+  - Create agent capability detection to handle mixed OSS and Enterprise EventSources
   - _Requirements: 2.1, 2.2, 2.3, 2.8_
 
-- [ ] 7.2 Implement mutual TLS authentication
+- [ ] 7.2 Implement mutual TLS authentication and agent connection management
 
-  - Create certificate management and validation
-  - Add TLS client and server configuration
-  - Implement certificate chain verification
-  - _Requirements: 2.2, 2.3, 2.8_
-
-- [ ] 7.3 Create agent connection management
-
-  - Implement agent registration and heartbeat system
-  - Add connection pooling and load balancing
-  - Create agent health monitoring and status tracking
+  - Create certificate management and validation for federated deployments
+  - Add TLS client and server configuration with certificate chain verification
+  - Implement agent registration and heartbeat system with capability reporting
+  - Add connection pooling, load balancing, and agent health monitoring
   - _Requirements: 2.1, 2.2, 2.3, 2.8_
 
-- [ ] 7.4 Implement store-and-forward functionality
+- [ ] 7.3 Create unified event processing for collector-core events
 
-  - Create local event buffering for regional centers
-  - Add event forwarding to upstream Security Centers
-  - Implement backpressure handling and flow control
+  - Implement store-and-forward functionality for collector-core CollectionEvents
+  - Add event deduplication across multiple agents with different EventSource capabilities
+  - Create data normalization for cross-platform events (eBPF, ETW, EndpointSecurity, OSS)
+  - Implement efficient storage and indexing for multi-domain deduplicated data
   - _Requirements: 2.4, 2.5, 2.6_
 
-- [ ] 7.5 Create data deduplication system
+- [ ] 7.4 Implement distributed query system with capability awareness
 
-  - Implement event deduplication across multiple agents
-  - Add data normalization for cross-platform events
-  - Create efficient storage and indexing for deduplicated data
-  - _Requirements: 2.4, 2.5, 2.6_
-
-- [ ] 7.6 Implement query distribution mechanism
-
-  - Create query parsing and distribution logic
-  - Add query routing to appropriate Security Center tiers
-  - Implement query timeout and cancellation handling
+  - Create query parsing and distribution logic with EventSource capability routing
+  - Add query routing to appropriate Security Center tiers based on agent capabilities
+  - Implement result collection, merging, and deduplication from heterogeneous agents
+  - Add query timeout, cancellation handling, and result formatting
   - _Requirements: 2.6, 2.7, 2.9_
 
-- [ ] 7.7 Create result aggregation system
+- [ ] 7.5 Implement federation resilience and failover
 
-  - Implement result collection from multiple sources
-  - Add result merging and deduplication
-  - Create result formatting and response generation
-  - _Requirements: 2.6, 2.7, 2.9_
-
-- [ ] 7.8 Implement failover and resilience
-
-  - Add automatic failover to backup Security Centers
+  - Add automatic failover to backup Security Centers with capability preservation
   - Implement circuit breaker patterns for connection management
-  - Create exponential backoff and retry logic
-  - _Requirements: 2.3, 2.9_
+  - Create exponential backoff and retry logic with capability-aware reconnection
+  - Add local event buffering and backpressure handling for mixed agent types
+  - _Requirements: 2.3, 2.4, 2.9_
 
 - [ ] 8. Implement STIX/TAXII threat intelligence integration
 

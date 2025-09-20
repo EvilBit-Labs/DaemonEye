@@ -2,22 +2,44 @@
 
 ## Overview
 
-This design document outlines the architecture and implementation approach for SentinelD Enterprise tier features, which transform the system from a polling-based process monitor into a comprehensive real-time security platform with kernel-level visibility, federated fleet management, and enterprise-grade security features.
+This design document outlines the architecture and implementation approach for SentinelD Enterprise tier features, which extend the collector-core framework with kernel-level visibility, federated fleet management, and enterprise-grade security features. The Enterprise tier builds upon the proven collector-core foundation established in the sentineld-core-monitoring specification to provide real-time security monitoring capabilities.
 
-The Enterprise tier maintains SentinelD's core security principles while adding advanced capabilities required for large-scale deployments, compliance environments, and sophisticated threat detection scenarios.
+The Enterprise tier maintains SentinelD's core security principles while leveraging the collector-core framework's extensible EventSource architecture to add advanced monitoring capabilities required for large-scale deployments, compliance environments, and sophisticated threat detection scenarios.
 
 ## Architecture
 
-### High-Level Architecture
+### Enterprise Collector-Core Architecture
+
+The Enterprise tier extends the collector-core framework with kernel-level EventSource implementations while maintaining the same operational infrastructure:
 
 ```mermaid
 graph TB
-    subgraph "Enterprise Agent"
-        A[procmond - Privileged Collector]
-        B[sentinelagent - Detection Engine]
-        C[sentinelcli - Management Interface]
-        D[Kernel Monitoring Layer]
-        E[Network Event Monitor]
+    subgraph "Enterprise Agent (collector-core + Enterprise EventSources)"
+        subgraph CC["collector-core Framework"]
+            subgraph ES["Enterprise EventSources"]
+                EBPF["EbpfEventSource<br/>(Linux)<br/>• Process events<br/>• Syscall tracing<br/>• Network sockets<br/>• Container aware"]
+                ETW["EtwEventSource<br/>(Windows)<br/>• Process lifecycle<br/>• Registry events<br/>• Network activity<br/>• File operations"]
+                ENDPOINT["EndpointSecurityEventSource<br/>(macOS)<br/>• Process execution<br/>• File system events<br/>• Network connections<br/>• XPC monitoring"]
+                PROC["ProcessEventSource<br/>(OSS Baseline)<br/>• sysinfo enum<br/>• Hash compute<br/>• Polling based"]
+            end
+
+            subgraph CR["Collector Runtime (Shared)"]
+                AGG["Event aggregation and batching"]
+                IPC["IPC server (protobuf + CRC32 framing)"]
+                CFG["Configuration management and validation"]
+                LOG["Structured logging and metrics"]
+                HEALTH["Health checks and graceful shutdown"]
+                CAP["Capability negotiation"]
+            end
+
+            EBPF --> CR
+            ETW --> CR
+            ENDPOINT --> CR
+            PROC --> CR
+        end
+
+        AGENT["sentinelagent<br/>(Enhanced Orchestrator)<br/>• Multi-domain correlation<br/>• Enterprise rule engine<br/>• Federation client<br/>• STIX/TAXII integration"]
+        CLI["sentinelcli<br/>(Management Interface)<br/>• Enterprise queries<br/>• Fleet management<br/>• Compliance reporting"]
     end
 
     subgraph "Federated Security Centers"
@@ -32,103 +54,314 @@ graph TB
         K[Platform Logging]
     end
 
-    D --> A
-    E --> A
-    A --> B
-    B --> F
+    CC --> AGENT
+    AGENT --> CLI
+    AGENT --> F
     F --> G
     G --> H
-    I --> B
-    B --> J
-    B --> K
+    I --> AGENT
+    AGENT --> J
+    AGENT --> K
 ```
 
-### Component Enhancements
+### Collector-Core Integration Benefits
 
-#### 1. Kernel Monitoring Layer
+**Shared Infrastructure**: Enterprise EventSources leverage the same proven operational foundation as OSS components:
 
-**Linux eBPF Integration:**
+- **IPC Communication**: Same protobuf + CRC32 framing over interprocess crate
+- **Configuration Management**: Hierarchical config loading with validation
+- **Logging Infrastructure**: Structured tracing with JSON output and metrics
+- **Health Monitoring**: Component status tracking and graceful shutdown
+- **Event Processing**: Unified event aggregation and backpressure handling
+- **Capability Negotiation**: Dynamic feature discovery and task routing
+
+**Operational Consistency**: Both OSS and Enterprise versions provide identical management interfaces and operational characteristics while supporting different collection capabilities.
+
+**Licensing Flexibility**: The collector-core framework remains Apache-2.0 licensed while enabling proprietary EventSource implementations for Enterprise features.
+
+### Enterprise EventSource Components
+
+The Enterprise tier implements kernel-level monitoring through specialized EventSource components that integrate seamlessly with the collector-core framework:
+
+#### 1. EbpfEventSource (Linux Kernel Monitoring)
+
+**Implementation**: Extends collector-core EventSource trait with eBPF-based real-time monitoring
+
+**Capabilities**:
 
 - eBPF programs attached to kernel tracepoints for process lifecycle events
 - Real-time syscall monitoring (execve, fork, clone, ptrace, mmap)
 - Network socket tracking with process correlation
 - Container-aware monitoring with cgroup integration
+- Ring buffer event streaming with sub-millisecond latency
 
-**Windows ETW Integration:**
+**Integration with Collector-Core**:
+
+```rust
+pub struct EbpfEventSource {
+    bpf: Bpf,                    // aya eBPF program management
+    ring_buf: RingBuf<MapData>,  // Event ring buffer
+    config: EbpfConfig,          // eBPF-specific configuration
+    metrics: Arc<EbpfMetrics>,   // Performance tracking
+}
+
+#[async_trait]
+impl EventSource for EbpfEventSource {
+    fn name(&self) -> &'static str { "ebpf-kernel-monitor" }
+
+    fn capabilities(&self) -> SourceCaps {
+        SourceCaps::PROCESS | SourceCaps::NETWORK | SourceCaps::REALTIME |
+        SourceCaps::KERNEL_LEVEL | SourceCaps::SYSTEM_WIDE
+    }
+
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+        // Attach eBPF programs and start ring buffer processing
+        // Send CollectionEvent::Process and CollectionEvent::Network events
+    }
+}
+```
+
+#### 2. EtwEventSource (Windows Kernel Monitoring)
+
+**Implementation**: Extends collector-core EventSource trait with ETW-based monitoring
+
+**Capabilities**:
 
 - ETW consumer for kernel process events (Microsoft-Windows-Kernel-Process)
 - Registry monitoring via Microsoft-Windows-Kernel-Registry
 - File system events through Microsoft-Windows-Kernel-File
 - Network correlation using Microsoft-Windows-Kernel-Network
+- Real-time event processing with async callbacks
 
-**macOS EndpointSecurity Integration:**
+**Integration with Collector-Core**:
+
+```rust
+pub struct EtwEventSource {
+    session_handle: TRACEHANDLE,           // ETW session management
+    providers: Vec<EtwProvider>,           // Enabled ETW providers
+    config: EtwConfig,                     // ETW-specific configuration
+    metrics: Arc<EtwMetrics>,              // Performance tracking
+}
+
+#[async_trait]
+impl EventSource for EtwEventSource {
+    fn name(&self) -> &'static str { "etw-kernel-monitor" }
+
+    fn capabilities(&self) -> SourceCaps {
+        SourceCaps::PROCESS | SourceCaps::NETWORK | SourceCaps::FILESYSTEM |
+        SourceCaps::REALTIME | SourceCaps::KERNEL_LEVEL | SourceCaps::SYSTEM_WIDE
+    }
+
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+        // Start ETW session and enable providers
+        // Send CollectionEvent::Process, CollectionEvent::Network, and CollectionEvent::Filesystem events
+    }
+}
+```
+
+#### 3. EndpointSecurityEventSource (macOS Kernel Monitoring)
+
+**Implementation**: Extends collector-core EventSource trait with EndpointSecurity framework integration
+
+**Capabilities**:
 
 - ES_EVENT_TYPE_NOTIFY_EXEC for process execution
 - ES_EVENT_TYPE_NOTIFY_FORK for process creation
 - ES_EVENT_TYPE_NOTIFY_FILE\_\* for file system monitoring
 - ES_EVENT_TYPE_NOTIFY_NETWORK\_\* for network activity
+- Real-time event subscription with native macOS integration
 
-#### 2. Federated Security Center Architecture
+**Integration with Collector-Core**:
+
+```rust
+pub struct EndpointSecurityEventSource {
+    client: *mut es_client_t,              // EndpointSecurity client
+    event_types: Vec<es_event_type_t>,     // Subscribed event types
+    config: ESConfig,                      // ES-specific configuration
+    metrics: Arc<ESMetrics>,               // Performance tracking
+}
+
+#[async_trait]
+impl EventSource for EndpointSecurityEventSource {
+    fn name(&self) -> &'static str { "endpoint-security-monitor" }
+
+    fn capabilities(&self) -> SourceCaps {
+        SourceCaps::PROCESS | SourceCaps::NETWORK | SourceCaps::FILESYSTEM |
+        SourceCaps::REALTIME | SourceCaps::KERNEL_LEVEL | SourceCaps::SYSTEM_WIDE
+    }
+
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+        // Create ES client and subscribe to event types
+        // Send CollectionEvent::Process, CollectionEvent::Network, and CollectionEvent::Filesystem events
+    }
+}
+```
+
+#### 4. Federated Security Center Architecture
 
 **Three-Tier Hierarchy:**
 
-1. **Agents**: Individual endpoint monitoring with local buffering
-2. **Regional Security Centers**: Geographic/network segment aggregation
-3. **Primary Security Center**: Enterprise-wide visibility and management
+1. **Enterprise Agents**: Individual endpoint monitoring with collector-core + Enterprise EventSources
+2. **Regional Security Centers**: Geographic/network segment aggregation with multi-domain event correlation
+3. **Primary Security Center**: Enterprise-wide visibility and management with unified analytics
 
 **Communication Protocol:**
 
 - Mutual TLS authentication with certificate chain validation
-- Protocol Buffers for efficient data serialization
+- Protocol Buffers for efficient data serialization (extending existing collector-core IPC protocol)
 - Automatic failover and load balancing
 - Compression and deduplication for bandwidth optimization
+- Capability negotiation to handle mixed OSS/Enterprise deployments
+
+**Collector-Core Integration Benefits**:
+
+- **Unified Event Model**: All agents (OSS and Enterprise) send events using the same CollectionEvent enum
+- **Consistent IPC Protocol**: Same protobuf + CRC32 framing for local and federated communication
+- **Capability Awareness**: Security Centers can discover and route tasks based on agent capabilities
+- **Operational Consistency**: Same health monitoring, logging, and management interfaces across all tiers
 
 ## Components and Interfaces
 
-### Enhanced procmond Component
+### Enterprise Collector-Core Integration
+
+The Enterprise tier leverages the existing collector-core framework from sentineld-core-monitoring, extending it with kernel-level EventSource implementations:
 
 ```rust
-// Kernel monitoring abstraction
-pub trait KernelMonitor: Send + Sync {
-    async fn start_monitoring(&self) -> Result<(), MonitorError>;
-    async fn subscribe_events(&self) -> Result<EventStream, MonitorError>;
-    fn get_capabilities(&self) -> MonitorCapabilities;
+// Enterprise EventSources implement the same EventSource trait as OSS components
+use collector_core::{CollectionEvent, Collector, EventSource, SourceCaps};
+
+// Enterprise collector main function
+fn main() -> anyhow::Result<()> {
+    let config = collector_core::config::load()?;
+    let mut collector = collector_core::Collector::new(config);
+
+    // Register platform-specific Enterprise EventSources
+    #[cfg(target_os = "linux")]
+    if config.enterprise.ebpf_enabled {
+        collector.register(EbpfEventSource::new(config.ebpf.clone())?);
+    }
+
+    #[cfg(target_os = "windows")]
+    if config.enterprise.etw_enabled {
+        collector.register(EtwEventSource::new(config.etw.clone())?);
+    }
+
+    #[cfg(target_os = "macos")]
+    if config.enterprise.endpoint_security_enabled {
+        collector.register(EndpointSecurityEventSource::new(config.es.clone())?);
+    }
+
+    // Always include OSS ProcessEventSource as fallback
+    collector.register(ProcessEventSource::new(config.process.clone())?);
+
+    // Use same collector-core runtime as OSS version
+    collector.run().await
 }
 
-// Platform-specific implementations
-pub struct EbpfMonitor {
-    programs: Vec<BpfProgram>,
-    ring_buffer: RingBuffer,
-    capabilities: MonitorCapabilities,
-}
-
-pub struct EtwMonitor {
-    session: EtwSession,
-    providers: Vec<EtwProvider>,
-    capabilities: MonitorCapabilities,
-}
-
-pub struct EndpointSecurityMonitor {
-    client: ESClient,
-    event_types: Vec<ESEventType>,
-    capabilities: MonitorCapabilities,
+// Unified event model supports both OSS and Enterprise events
+#[derive(Debug, Clone)]
+pub enum CollectionEvent {
+    Process(ProcessEvent),         // OSS + Enterprise
+    Network(NetworkEvent),         // Enterprise: eBPF, ETW, EndpointSecurity
+    Filesystem(FilesystemEvent),   // Enterprise: ETW, EndpointSecurity
+    Performance(PerformanceEvent), // Future: Enterprise performance monitoring
+    Registry(RegistryEvent),       // Enterprise: Windows ETW registry events
+    Syscall(SyscallEvent),         // Enterprise: Linux eBPF syscall tracing
 }
 ```
 
-### Network Event Integration
+### Capability-Based Feature Detection
 
 ```rust
-pub struct NetworkEventMonitor {
-    platform_monitor: Box<dyn NetworkMonitor>,
-    process_correlator: ProcessCorrelator,
-    event_buffer: BoundedChannel<NetworkEvent>,
+// Enterprise capabilities extend OSS capabilities
+bitflags! {
+    pub struct SourceCaps: u32 {
+        // OSS capabilities
+        const PROCESS = 1 << 0;
+        const REALTIME = 1 << 4;
+        const SYSTEM_WIDE = 1 << 6;
+
+        // Enterprise capabilities
+        const NETWORK = 1 << 1;
+        const FILESYSTEM = 1 << 2;
+        const PERFORMANCE = 1 << 3;
+        const KERNEL_LEVEL = 1 << 5;
+        const REGISTRY = 1 << 7;        // Windows ETW
+        const SYSCALL_TRACING = 1 << 8; // Linux eBPF
+        const CONTAINER_AWARE = 1 << 9; // Linux eBPF + cgroups
+    }
 }
 
-pub trait NetworkMonitor: Send + Sync {
-    async fn monitor_connections(&self) -> Result<NetworkEventStream, NetworkError>;
-    fn get_supported_protocols(&self) -> Vec<Protocol>;
+// sentinelagent discovers capabilities and routes tasks appropriately
+impl EnterpriseOrchestrator {
+    async fn discover_capabilities(&self) -> SourceCaps {
+        // Query collector-core for available EventSource capabilities
+        let caps = self.ipc_client.get_capabilities().await?;
+
+        // Enable Enterprise features based on available capabilities
+        if caps.contains(SourceCaps::KERNEL_LEVEL) {
+            self.enable_realtime_detection().await?;
+        }
+
+        if caps.contains(SourceCaps::NETWORK) {
+            self.enable_network_correlation().await?;
+        }
+
+        caps
+    }
+}
+```
+
+### Enhanced sentinelagent (Enterprise Orchestrator)
+
+The Enterprise tier extends sentinelagent with multi-domain event correlation and advanced detection capabilities:
+
+```rust
+pub struct EnterpriseOrchestrator {
+    // Core components (same as OSS)
+    detection_engine: DetectionEngine,
+    alert_manager: AlertManager,
+    ipc_client: IpcClient,
+
+    // Enterprise extensions
+    network_correlator: NetworkCorrelator,
+    filesystem_correlator: FilesystemCorrelator,
+    threat_intel_client: TaxiiClient,
+    federation_client: Option<FederationClient>,
+    compliance_mapper: ComplianceMapper,
 }
 
+// Multi-domain event correlation
+impl EnterpriseOrchestrator {
+    async fn correlate_events(&self, events: Vec<CollectionEvent>) -> Vec<CorrelatedEvent> {
+        let mut correlator = EventCorrelator::new();
+
+        for event in events {
+            match event {
+                CollectionEvent::Process(proc_event) => {
+                    correlator.add_process_event(proc_event);
+                }
+                CollectionEvent::Network(net_event) => {
+                    // Correlate network activity with process events
+                    if let Some(process) = correlator.find_process(net_event.process_id) {
+                        correlator.add_network_correlation(process, net_event);
+                    }
+                }
+                CollectionEvent::Filesystem(fs_event) => {
+                    // Correlate file operations with process activity
+                    if let Some(process) = correlator.find_process(fs_event.process_id) {
+                        correlator.add_filesystem_correlation(process, fs_event);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        correlator.generate_correlated_events()
+    }
+}
+
+// Network event data model (unified across platforms)
 #[derive(Debug, Clone)]
 pub struct NetworkEvent {
     pub process_id: u32,
@@ -139,6 +372,14 @@ pub struct NetworkEvent {
     pub direction: ConnectionDirection,
     pub timestamp: SystemTime,
     pub bytes_transferred: u64,
+    pub platform_specific: NetworkPlatformData,
+}
+
+#[derive(Debug, Clone)]
+pub enum NetworkPlatformData {
+    Linux(LinuxNetworkData),     // eBPF socket tracking
+    Windows(WindowsNetworkData), // ETW network events
+    MacOS(MacOSNetworkData),     // EndpointSecurity network events
 }
 ```
 
@@ -172,32 +413,44 @@ pub struct DistributedQueryEngine {
 
 ## Data Models
 
-### Enhanced Event Schema
+### Enhanced Event Schema (Collector-Core Integration)
+
+The Enterprise tier extends the collector-core CollectionEvent enum with additional event types while maintaining compatibility:
 
 ```rust
+// Extended CollectionEvent enum (builds on collector-core foundation)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnterpriseEvent {
-    // Core event data
-    pub event_id: Uuid,
+pub enum CollectionEvent {
+    // OSS events (from collector-core)
+    Process(ProcessEvent),
+
+    // Enterprise events (kernel-level monitoring)
+    Network(NetworkEvent),
+    Filesystem(FilesystemEvent),
+    Performance(PerformanceEvent),
+
+    // Platform-specific Enterprise events
+    Registry(RegistryEvent),   // Windows ETW registry monitoring
+    Syscall(SyscallEvent),     // Linux eBPF syscall tracing
+    Container(ContainerEvent), // Linux eBPF container events
+    XPC(XPCEvent),             // macOS EndpointSecurity XPC events
+}
+
+// Enhanced ProcessEvent with kernel-level context
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessEvent {
+    // Core process data (same as OSS)
+    pub pid: u32,
+    pub ppid: Option<u32>,
+    pub name: String,
+    pub executable_path: Option<String>,
+    pub command_line: Vec<String>,
     pub timestamp: SystemTime,
-    pub event_type: EventType,
-    pub source: EventSource,
 
-    // Process information
-    pub process: ProcessInfo,
-    pub parent_process: Option<ProcessInfo>,
-
-    // Kernel-level context
+    // Enterprise extensions
     pub kernel_context: Option<KernelContext>,
-
-    // Network correlation
-    pub network_context: Option<NetworkContext>,
-
-    // Platform-specific data
-    pub platform_data: PlatformSpecificData,
-
-    // Security metadata
-    pub security_context: SecurityContext,
+    pub security_context: Option<SecurityContext>,
+    pub platform_data: Option<PlatformSpecificData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,13 +459,44 @@ pub struct KernelContext {
     pub memory_info: Option<MemoryInfo>,
     pub file_operations: Vec<FileOperation>,
     pub capabilities: Vec<String>,
+    pub container_info: Option<ContainerInfo>, // Linux eBPF cgroup data
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkContext {
-    pub connections: Vec<NetworkConnection>,
-    pub dns_queries: Vec<DnsQuery>,
-    pub traffic_summary: TrafficSummary,
+pub struct NetworkEvent {
+    pub process_id: u32,
+    pub connection_id: u64,
+    pub local_addr: SocketAddr,
+    pub remote_addr: SocketAddr,
+    pub protocol: Protocol,
+    pub direction: ConnectionDirection,
+    pub timestamp: SystemTime,
+    pub bytes_transferred: u64,
+    pub platform_source: NetworkEventSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NetworkEventSource {
+    EbpfSocket(EbpfSocketData),      // Linux eBPF socket tracking
+    EtwNetwork(EtwNetworkData),      // Windows ETW network events
+    EndpointSecurity(ESNetworkData), // macOS EndpointSecurity network events
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesystemEvent {
+    pub process_id: u32,
+    pub operation: FileOperation,
+    pub path: PathBuf,
+    pub timestamp: SystemTime,
+    pub result: FileOperationResult,
+    pub platform_source: FilesystemEventSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FilesystemEventSource {
+    EtwFile(EtwFileData), // Windows ETW file events
+    EndpointSecurity(ESFileData), // macOS EndpointSecurity file events
+                          // Note: Linux filesystem monitoring would be future eBPF extension
 }
 ```
 
@@ -401,22 +685,25 @@ mod stix_taxii_tests {
 
 ## Platform-Specific Implementation Details
 
-### Linux eBPF Implementation
+### Linux eBPF Implementation (Collector-Core Integration)
+
+**Architecture**: EbpfEventSource implements the collector-core EventSource trait, leveraging shared infrastructure while providing kernel-level monitoring capabilities.
 
 **Crate Dependencies:**
 
+- `collector-core` (internal): Shared collector infrastructure and EventSource trait
 - `aya` (0.12+): Pure Rust eBPF library - preferred over libbpf-rs for easier deployment, no C toolchain requirement, faster builds, and better Rust ergonomics
 - `aya-log` (0.2+): eBPF logging support for debugging
-- `tokio` (1.39+): Async runtime for event processing
+- `tokio` (1.39+): Async runtime for event processing (shared with collector-core)
 - `tokio-stream` (0.1+): Stream utilities for event handling
-- `tracing` (0.1+): Structured logging
+- `tracing` (0.1+): Structured logging (shared with collector-core)
 
 **Linux eBPF Support Tiers:**
 
 - **Full eBPF Support**: Kernel 5.4+ (ring buffers, all program types, BTF support)
 - **Standard eBPF Support**: Kernel 4.7+ (tracepoints, basic program types)
 - **Limited eBPF Support**: RHEL/CentOS 7.6+ kernel 3.10 (backported tracepoints only)
-- **Legacy Support**: Older kernels (graceful degradation to userspace monitoring)
+- **Legacy Support**: Older kernels (graceful degradation to OSS ProcessEventSource)
 
 **Distribution-Specific Notes:**
 
@@ -425,7 +712,16 @@ mod stix_taxii_tests {
 - **Debian**: 9+ (kernel 4.9+), full support on 10+ (kernel 4.19+)
 - **SLES**: 12 SP3+ (kernel 4.4+), full support on 15+ (kernel 4.12+)
 
+**Collector-Core Integration Benefits**:
+
+- **Shared IPC**: Same protobuf + CRC32 framing as OSS ProcessEventSource
+- **Unified Configuration**: Same hierarchical config loading and validation
+- **Common Logging**: Same structured tracing and metrics collection
+- **Consistent Health Monitoring**: Same health checks and graceful shutdown
+- **Capability Negotiation**: Automatic fallback to OSS ProcessEventSource when eBPF unavailable
+
 ```rust
+use collector_core::{EventSource, CollectionEvent, SourceCaps};
 use aya::{
     include_bytes_aligned,
     maps::{RingBuf, MapData},
@@ -434,18 +730,13 @@ use aya::{
 };
 use aya_log::BpfLogger;
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{info, warn, error};
 use std::sync::{Arc, atomic::{AtomicU64, AtomicU32, Ordering}};
 
-pub struct EbpfMonitor {
+pub struct EbpfEventSource {
     // eBPF program management using aya
     bpf: Bpf,
     ring_buf: RingBuf<MapData>,
-
-    // Event channels
-    event_tx: mpsc::UnboundedSender<KernelEvent>,
-    event_rx: Option<mpsc::UnboundedReceiver<KernelEvent>>,
 
     // Program handles
     process_tracepoint: Option<TracePoint>,
@@ -465,10 +756,8 @@ pub struct EbpfConfig {
     pub ring_buffer_size: usize,
 }
 
-impl EbpfMonitor {
+impl EbpfEventSource {
     pub async fn new(config: EbpfConfig) -> Result<Self, EbpfError> {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-
         // Load eBPF programs using aya with configuration
         let mut bpf = BpfLoader::new()
             .set_global("CONFIG_ENABLE_PROCESS_MON", &(config.enable_process_monitoring as u32), true)
@@ -488,8 +777,6 @@ impl EbpfMonitor {
         Ok(Self {
             bpf,
             ring_buf,
-            event_tx,
-            event_rx: Some(event_rx),
             process_tracepoint: None,
             network_kprobe: None,
             config,
@@ -497,7 +784,89 @@ impl EbpfMonitor {
         })
     }
 
-    pub async fn start_monitoring(&mut self) -> Result<(), EbpfError> {
+    async fn spawn_event_processor(&self, tx: mpsc::Sender<CollectionEvent>) {
+        let mut ring_buf = self.ring_buf.clone();
+        let metrics = Arc::clone(&self.metrics);
+
+        tokio::spawn(async move {
+            loop {
+                match ring_buf.next() {
+                    Some(item) => {
+                        match Self::parse_kernel_event(&item) {
+                            Ok(event) => {
+                                metrics.events_processed.fetch_add(1, Ordering::Relaxed);
+                                if let Err(_) = tx.send(event).await {
+                                    error!("Event channel closed, stopping eBPF processor");
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse kernel event: {}", e);
+                                metrics.parse_errors.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    None => {
+                        tokio::task::yield_now().await;
+                    }
+                }
+            }
+        });
+    }
+
+    fn parse_kernel_event(data: &[u8]) -> Result<CollectionEvent, ParseError> {
+        // Parse eBPF ring buffer data and convert to CollectionEvent
+        // This integrates with collector-core's unified event model
+        match parse_ebpf_event_type(data)? {
+            EbpfEventType::ProcessExec => {
+                let proc_event = parse_process_event(data)?;
+                Ok(CollectionEvent::Process(proc_event))
+            }
+            EbpfEventType::NetworkConnect => {
+                let net_event = parse_network_event(data)?;
+                Ok(CollectionEvent::Network(net_event))
+            }
+            EbpfEventType::SyscallTrace => {
+                let syscall_event = parse_syscall_event(data)?;
+                Ok(CollectionEvent::Syscall(syscall_event))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct EbpfMetrics {
+    pub events_processed: AtomicU64,
+    pub parse_errors: AtomicU64,
+    pub programs_loaded: AtomicU32,
+    pub ring_buffer_drops: AtomicU64,
+}
+
+#[async_trait]
+impl EventSource for EbpfEventSource {
+    fn name(&self) -> &'static str {
+        "ebpf-kernel-monitor"
+    }
+
+    fn capabilities(&self) -> SourceCaps {
+        let mut caps = SourceCaps::REALTIME | SourceCaps::KERNEL_LEVEL | SourceCaps::SYSTEM_WIDE;
+
+        if self.config.enable_process_monitoring {
+            caps |= SourceCaps::PROCESS | SourceCaps::SYSCALL_TRACING;
+        }
+
+        if self.config.enable_network_monitoring {
+            caps |= SourceCaps::NETWORK;
+        }
+
+        if self.config.enable_container_monitoring {
+            caps |= SourceCaps::CONTAINER_AWARE;
+        }
+
+        caps
+    }
+
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
         info!("Starting eBPF monitoring with config: {:?}", self.config);
 
         // Attach process monitoring tracepoint
@@ -516,82 +885,30 @@ impl EbpfMonitor {
             info!("Attached network monitoring kprobe");
         }
 
-        // Start event processing task
-        self.spawn_event_processor().await;
+        // Start event processing task (integrates with collector-core)
+        self.spawn_event_processor(tx).await;
         Ok(())
     }
 
-    async fn spawn_event_processor(&mut self) {
-        let mut ring_buf = self.ring_buf.clone();
-        let event_tx = self.event_tx.clone();
-        let metrics = Arc::clone(&self.metrics);
-
-        tokio::spawn(async move {
-            loop {
-                match ring_buf.next() {
-                    Some(item) => {
-                        match Self::parse_kernel_event(&item) {
-                            Ok(event) => {
-                                metrics.events_processed.fetch_add(1, Ordering::Relaxed);
-                                if let Err(_) = event_tx.send(event) {
-                                    error!("Event channel closed, stopping eBPF processor");
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                warn!("Failed to parse kernel event: {}", e);
-                                metrics.parse_errors.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                    None => {
-                        tokio::task::yield_now().await;
-                    }
-                }
-            }
-        });
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct EbpfMetrics {
-    pub events_processed: AtomicU64,
-    pub parse_errors: AtomicU64,
-    pub programs_loaded: AtomicU32,
-    pub ring_buffer_drops: AtomicU64,
-}
-
-impl KernelMonitor for EbpfMonitor {
-    async fn start_monitoring(&self) -> Result<(), MonitorError> {
-        // Implementation delegated to start_monitoring method
+    async fn stop(&self) -> anyhow::Result<()> {
+        info!("Stopping eBPF monitoring");
+        // Detach eBPF programs and cleanup resources
+        // collector-core handles graceful shutdown coordination
         Ok(())
-    }
-
-    async fn subscribe_events(&self) -> Result<EventStream, MonitorError> {
-        let rx = self.event_rx.take().ok_or(MonitorError::AlreadySubscribed)?;
-        Ok(Box::pin(UnboundedReceiverStream::new(rx)))
-    }
-
-    fn get_capabilities(&self) -> MonitorCapabilities {
-        MonitorCapabilities {
-            real_time_events: true,
-            syscall_monitoring: self.config.enable_process_monitoring,
-            network_monitoring: self.config.enable_network_monitoring,
-            file_monitoring: self.config.enable_file_monitoring,
-            container_awareness: true,
-            performance_overhead: PerformanceLevel::Low,
-        }
     }
 }
 ```
 
-### Windows ETW Implementation
+### Windows ETW Implementation (Collector-Core Integration)
+
+**Architecture**: EtwEventSource implements the collector-core EventSource trait, providing Windows kernel-level monitoring through ETW while leveraging shared collector infrastructure.
 
 **Crate Dependencies:**
 
+- `collector-core` (internal): Shared collector infrastructure and EventSource trait
 - `windows` (0.58+): Official Microsoft Windows API bindings - actively maintained and comprehensive
-- `tokio` (1.39+): Async runtime for event processing
-- `tracing` (0.1+): Structured logging
+- `tokio` (1.39+): Async runtime for event processing (shared with collector-core)
+- `tracing` (0.1+): Structured logging (shared with collector-core)
 - `tracing-etw` (0.2+): Optional ETW integration for tracing events
 - `serde` (1.0+): Serialization for event data
 
@@ -599,9 +916,18 @@ impl KernelMonitor for EbpfMonitor {
 
 - **Full ETW Support**: Windows 7+, Windows Server 2012+ (SystemTraceProvider with kernel events)
 - **Limited ETW Support**: Windows Server 2008 R2 (basic ETW, limited kernel providers)
-- **Legacy Support**: Windows Vista/Server 2008 (basic ETW only, graceful degradation to userspace monitoring)
+- **Legacy Support**: Windows Vista/Server 2008 (graceful degradation to OSS ProcessEventSource)
+
+**Collector-Core Integration Benefits**:
+
+- **Shared IPC**: Same protobuf + CRC32 framing as OSS ProcessEventSource
+- **Unified Configuration**: Same hierarchical config loading and validation
+- **Common Logging**: Same structured tracing and metrics collection
+- **Consistent Health Monitoring**: Same health checks and graceful shutdown
+- **Capability Negotiation**: Automatic fallback to OSS ProcessEventSource when ETW unavailable
 
 ```rust
+use collector_core::{EventSource, CollectionEvent, SourceCaps};
 use windows::{
     core::*,
     Win32::System::Diagnostics::Etw::*,
@@ -611,14 +937,10 @@ use tokio::sync::mpsc;
 use tracing::{info, warn, error};
 use std::sync::Arc;
 
-pub struct EtwMonitor {
+pub struct EtwEventSource {
     // ETW session management
     session_handle: TRACEHANDLE,
     session_properties: Box<EVENT_TRACE_PROPERTIES>,
-
-    // Event processing
-    event_tx: mpsc::UnboundedSender<KernelEvent>,
-    event_rx: Option<mpsc::UnboundedReceiver<KernelEvent>>,
 
     // Provider configuration
     providers: Vec<EtwProvider>,
@@ -644,10 +966,8 @@ pub struct EtwProvider {
     pub match_any_keyword: u64,
 }
 
-impl EtwMonitor {
+impl EtwEventSource {
     pub async fn new(config: EtwConfig) -> Result<Self, EtwError> {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-
         // Initialize ETW session properties
         let mut session_properties = Box::new(EVENT_TRACE_PROPERTIES {
             Wnode: WNODE_HEADER {
@@ -686,18 +1006,25 @@ impl EtwMonitor {
             });
         }
 
+        if config.enable_registry_events {
+            providers.push(EtwProvider {
+                guid: GUID::from("70EB4F03-C1DE-4F73-A051-33D13D5413BD"), // Microsoft-Windows-Kernel-Registry
+                name: "Microsoft-Windows-Kernel-Registry".to_string(),
+                level: 5,
+                match_any_keyword: 0xFFFFFFFFFFFFFFFF,
+            });
+        }
+
         Ok(Self {
             session_handle: TRACEHANDLE::default(),
             session_properties,
-            event_tx,
-            event_rx: Some(event_rx),
             providers,
             config,
             metrics: Arc::new(EtwMetrics::default()),
         })
     }
 
-    pub async fn start_monitoring(&mut self) -> Result<(), EtwError> {
+    async fn start_etw_session(&mut self) -> Result<(), EtwError> {
         info!("Starting ETW monitoring session: {}", self.config.session_name);
 
         // Start ETW trace session
@@ -719,10 +1046,34 @@ impl EtwMonitor {
             self.enable_provider(provider).await?;
         }
 
-        // Start event processing
-        self.spawn_event_processor().await;
-
         Ok(())
+    }
+
+    fn parse_etw_event(event_record: *const EVENT_RECORD) -> Result<CollectionEvent, ParseError> {
+        // Parse ETW event record and convert to CollectionEvent
+        // This integrates with collector-core's unified event model
+        unsafe {
+            let record = &*event_record;
+
+            match record.EventHeader.ProviderId {
+                // Microsoft-Windows-Kernel-Process events
+                PROCESS_PROVIDER_GUID => {
+                    let proc_event = parse_process_etw_event(record)?;
+                    Ok(CollectionEvent::Process(proc_event))
+                }
+                // Microsoft-Windows-Kernel-Network events
+                NETWORK_PROVIDER_GUID => {
+                    let net_event = parse_network_etw_event(record)?;
+                    Ok(CollectionEvent::Network(net_event))
+                }
+                // Microsoft-Windows-Kernel-Registry events
+                REGISTRY_PROVIDER_GUID => {
+                    let reg_event = parse_registry_etw_event(record)?;
+                    Ok(CollectionEvent::Registry(reg_event))
+                }
+                _ => Err(ParseError::UnsupportedProvider),
+            }
+        }
     }
 
     async fn enable_provider(&self, provider: &EtwProvider) -> Result<(), EtwError> {
@@ -747,16 +1098,22 @@ impl EtwMonitor {
         Ok(())
     }
 
-    async fn spawn_event_processor(&mut self) {
-        let event_tx = self.event_tx.clone();
+    async fn spawn_event_processor(&self, tx: mpsc::Sender<CollectionEvent>) {
         let metrics = Arc::clone(&self.metrics);
         let session_handle = self.session_handle;
 
         tokio::task::spawn_blocking(move || {
-            // ETW event processing callback
+            // ETW event processing callback that integrates with collector-core
+            let tx_clone = tx.clone();
+            let metrics_clone = Arc::clone(&metrics);
+
             unsafe extern "system" fn event_record_callback(event_record: *mut EVENT_RECORD) {
-                // Process ETW event record
-                // This would parse the event data and convert to KernelEvent
+                // Access the channel and metrics through thread-local storage or global state
+                // This is a simplified example - actual implementation would need proper callback context
+                if let Ok(event) = EtwEventSource::parse_etw_event(event_record) {
+                    // Send to collector-core event aggregation
+                    // Note: Actual implementation would need proper async context handling
+                }
             }
 
             // Set up ETW event processing
@@ -779,6 +1136,50 @@ impl EtwMonitor {
     }
 }
 
+#[async_trait]
+impl EventSource for EtwEventSource {
+    fn name(&self) -> &'static str {
+        "etw-kernel-monitor"
+    }
+
+    fn capabilities(&self) -> SourceCaps {
+        let mut caps = SourceCaps::REALTIME | SourceCaps::KERNEL_LEVEL | SourceCaps::SYSTEM_WIDE;
+
+        if self.config.enable_process_events {
+            caps |= SourceCaps::PROCESS;
+        }
+
+        if self.config.enable_network_events {
+            caps |= SourceCaps::NETWORK;
+        }
+
+        if self.config.enable_registry_events {
+            caps |= SourceCaps::REGISTRY;
+        }
+
+        caps
+    }
+
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+        // Start ETW session and enable providers
+        self.start_etw_session().await?;
+
+        // Start event processing task (integrates with collector-core)
+        self.spawn_event_processor(tx).await;
+        Ok(())
+    }
+
+    async fn stop(&self) -> anyhow::Result<()> {
+        info!("Stopping ETW monitoring");
+        // Stop ETW session and cleanup resources
+        // collector-core handles graceful shutdown coordination
+        unsafe {
+            StopTraceW(self.session_handle, None, self.session_properties.as_ref());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct EtwMetrics {
     pub events_processed: AtomicU64,
@@ -787,17 +1188,29 @@ pub struct EtwMetrics {
 }
 ```
 
-### macOS EndpointSecurity Implementation
+### macOS EndpointSecurity Implementation (Collector-Core Integration)
+
+**Architecture**: EndpointSecurityEventSource implements the collector-core EventSource trait, providing macOS kernel-level monitoring through the EndpointSecurity framework while leveraging shared collector infrastructure.
 
 **Crate Dependencies:**
 
+- `collector-core` (internal): Shared collector infrastructure and EventSource trait
 - `endpoint-sec` (0.3+): Safe Rust bindings for EndpointSecurity framework - preferred over manual FFI
 - `core-foundation` (0.10+): Core Foundation bindings for system integration
 - `mach2` (0.4+): Mach kernel interfaces for low-level system access
-- `tokio` (1.39+): Async runtime for event processing
+- `tokio` (1.39+): Async runtime for event processing (shared with collector-core)
 - Alternative: `endpointsecurity` (0.1+): Community bindings if endpoint-sec is insufficient
 
+**Collector-Core Integration Benefits**:
+
+- **Shared IPC**: Same protobuf + CRC32 framing as OSS ProcessEventSource
+- **Unified Configuration**: Same hierarchical config loading and validation
+- **Common Logging**: Same structured tracing and metrics collection
+- **Consistent Health Monitoring**: Same health checks and graceful shutdown
+- **Capability Negotiation**: Automatic fallback to OSS ProcessEventSource when EndpointSecurity unavailable
+
 ```rust
+use collector_core::{EventSource, CollectionEvent, SourceCaps};
 use endpoint_sec::{Client, Message, EventType};
 use core_foundation::{
     base::{CFTypeRef, TCFType},
@@ -826,13 +1239,9 @@ pub struct es_message_t {
     // ... additional fields
 }
 
-pub struct EndpointSecurityMonitor {
+pub struct EndpointSecurityEventSource {
     // ES client handle
     client: *mut es_client_t,
-
-    // Event processing
-    event_tx: mpsc::UnboundedSender<KernelEvent>,
-    event_rx: Option<mpsc::UnboundedReceiver<KernelEvent>>,
 
     // Configuration
     config: ESConfig,
@@ -848,10 +1257,8 @@ pub struct ESConfig {
     pub cache_size: usize,
 }
 
-impl EndpointSecurityMonitor {
+impl EndpointSecurityEventSource {
     pub async fn new(config: ESConfig) -> Result<Self, ESError> {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-
         // Determine event types to subscribe to
         let mut event_types = Vec::new();
 
@@ -882,27 +1289,25 @@ impl EndpointSecurityMonitor {
 
         Ok(Self {
             client: std::ptr::null_mut(),
-            event_tx,
-            event_rx: Some(event_rx),
             config,
             event_types,
             metrics: Arc::new(ESMetrics::default()),
         })
     }
 
-    pub async fn start_monitoring(&mut self) -> Result<(), ESError> {
+    async fn create_es_client(&mut self, tx: mpsc::Sender<CollectionEvent>) -> Result<(), ESError> {
         info!("Starting EndpointSecurity monitoring");
 
-        // Create ES client with event handler
-        let event_tx = self.event_tx.clone();
+        // Create ES client with event handler that integrates with collector-core
         let metrics = Arc::clone(&self.metrics);
+        let tx_clone = tx.clone();
 
         unsafe {
             let handler: es_handler_block_t = Box::into_raw(Box::new(move |_client, message| {
-                // Process EndpointSecurity message
+                // Process EndpointSecurity message and send to collector-core
                 if let Ok(event) = Self::parse_es_message(message) {
                     metrics.events_processed.fetch_add(1, Ordering::Relaxed);
-                    let _ = event_tx.send(event);
+                    let _ = tx_clone.try_send(event);
                 } else {
                     metrics.parse_errors.fetch_add(1, Ordering::Relaxed);
                 }
@@ -931,30 +1336,73 @@ impl EndpointSecurityMonitor {
         Ok(())
     }
 
-    unsafe fn parse_es_message(message: *const es_message_t) -> Result<KernelEvent, ParseError> {
+    unsafe fn parse_es_message(message: *const es_message_t) -> Result<CollectionEvent, ParseError> {
+        // Parse EndpointSecurity message and convert to CollectionEvent
+        // This integrates with collector-core's unified event model
         let msg = &*message;
 
         match msg.event_type {
             ES_EVENT_TYPE_NOTIFY_EXEC => {
-                // Parse process execution event
-                Ok(KernelEvent::Process(ProcessEvent {
-                    pid: (*msg.process).pid,
-                    timestamp: SystemTime::now(),
-                    event_type: ProcessEventType::Exec,
-                    // ... additional fields
-                }))
+                let proc_event = parse_process_es_event(msg)?;
+                Ok(CollectionEvent::Process(proc_event))
             }
             ES_EVENT_TYPE_NOTIFY_FORK => {
-                // Parse process fork event
-                Ok(KernelEvent::Process(ProcessEvent {
-                    pid: (*msg.process).pid,
-                    timestamp: SystemTime::now(),
-                    event_type: ProcessEventType::Fork,
-                    // ... additional fields
-                }))
+                let proc_event = parse_fork_es_event(msg)?;
+                Ok(CollectionEvent::Process(proc_event))
+            }
+            ES_EVENT_TYPE_NOTIFY_OPEN | ES_EVENT_TYPE_NOTIFY_CREATE => {
+                let fs_event = parse_filesystem_es_event(msg)?;
+                Ok(CollectionEvent::Filesystem(fs_event))
+            }
+            ES_EVENT_TYPE_NOTIFY_SOCKET | ES_EVENT_TYPE_NOTIFY_CONNECT => {
+                let net_event = parse_network_es_event(msg)?;
+                Ok(CollectionEvent::Network(net_event))
             }
             _ => Err(ParseError::UnsupportedEventType(msg.event_type)),
         }
+    }
+}
+
+#[async_trait]
+impl EventSource for EndpointSecurityEventSource {
+    fn name(&self) -> &'static str {
+        "endpoint-security-monitor"
+    }
+
+    fn capabilities(&self) -> SourceCaps {
+        let mut caps = SourceCaps::REALTIME | SourceCaps::KERNEL_LEVEL | SourceCaps::SYSTEM_WIDE;
+
+        if self.config.enable_process_events {
+            caps |= SourceCaps::PROCESS;
+        }
+
+        if self.config.enable_file_events {
+            caps |= SourceCaps::FILESYSTEM;
+        }
+
+        if self.config.enable_network_events {
+            caps |= SourceCaps::NETWORK;
+        }
+
+        caps
+    }
+
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+        // Create ES client and subscribe to event types
+        self.create_es_client(tx).await?;
+        Ok(())
+    }
+
+    async fn stop(&self) -> anyhow::Result<()> {
+        info!("Stopping EndpointSecurity monitoring");
+        // Delete ES client and cleanup resources
+        // collector-core handles graceful shutdown coordination
+        unsafe {
+            if !self.client.is_null() {
+                es_delete_client(self.client);
+            }
+        }
+        Ok(())
     }
 }
 
