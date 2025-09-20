@@ -4,7 +4,7 @@
 
 SentinelD is a security-focused, high-performance process monitoring system designed to detect suspicious activity on systems through continuous process monitoring, behavioral analysis, and pattern recognition. The system provides security operations teams with a reliable, high-performance threat detection solution that operates independently of external dependencies while maintaining audit-grade integrity.
 
-This specification covers the core monitoring functionality including process enumeration, detection rule execution, and alert generation across the three-component architecture: procmond (privileged collector), sentinelagent (detection orchestrator), and sentinelcli (operator interface).
+This specification covers the core monitoring functionality including the collector-core framework, process enumeration, detection rule execution, and alert generation across the three-component architecture: procmond (privileged collector), sentinelagent (detection orchestrator), and sentinelcli (operator interface). The collector-core framework enables extensible monitoring capabilities across multiple domains (process, network, filesystem, performance) while maintaining shared infrastructure and operational consistency.
 
 ## Requirements
 
@@ -127,3 +127,39 @@ This specification covers the core monitoring functionality including process en
 3. WHEN monitoring health THEN the system SHALL expose HTTP health endpoints with component-level status checks
 4. WHEN tracking performance THEN the system SHALL embed performance metrics in log entries with correlation IDs
 5. WHEN integrating with monitoring systems THEN the system SHALL respect NO_COLOR and TERM=dumb environment variables for console output
+
+### Requirement 11
+
+**User Story:** As a system architect, I want a reusable collector-core framework that enables multiple collection components, so that I can extend monitoring capabilities across different domains while maintaining shared infrastructure.
+
+#### Acceptance Criteria
+
+1. WHEN creating collection components THEN the system SHALL provide a universal EventSource trait that abstracts collection methodology from operational infrastructure
+2. WHEN registering event sources THEN the collector-core SHALL support multiple concurrent sources with unified event processing and IPC communication
+3. WHEN handling different event types THEN the system SHALL support extensible CollectionEvent enum covering process, network, filesystem, and performance domains
+4. WHEN managing component lifecycle THEN the collector-core SHALL provide consistent start/stop, health checks, and graceful shutdown across all registered sources
+5. WHEN configuring components THEN the system SHALL share common configuration loading, validation, and environment handling across all collection types
+
+### Requirement 12
+
+**User Story:** As a platform developer, I want the collector-core framework to enable future monitoring components like network, filesystem, and performance monitoring, so that I can build comprehensive behavioral analysis capabilities.
+
+#### Acceptance Criteria
+
+1. WHEN implementing new collection components THEN the system SHALL provide shared IPC server logic, configuration management, and logging infrastructure through collector-core
+2. WHEN developing network monitoring THEN the system SHALL support NetworkEvent types with connection tracking, traffic analysis, and DNS monitoring capabilities
+3. WHEN implementing filesystem monitoring THEN the system SHALL support FilesystemEvent types with file operations, access patterns, and bulk operation detection
+4. WHEN adding performance monitoring THEN the system SHALL support PerformanceEvent types with resource utilization, system metrics, and anomaly detection
+5. WHEN correlating multi-domain events THEN sentinelagent SHALL receive unified event streams from multiple collection components for behavioral analysis
+
+### Requirement 13
+
+**User Story:** As a system architect, I want the collector-core framework to enable shared infrastructure between OSS and enterprise features, so that both versions can leverage the same proven operational foundation while supporting different collection capabilities.
+
+#### Acceptance Criteria
+
+1. WHEN implementing enterprise features THEN the system SHALL use the same collector-core infrastructure for IPC, configuration, logging, and runtime management
+2. WHEN deploying different versions THEN both OSS and enterprise implementations SHALL use identical operational interfaces and protocols
+3. WHEN extending capabilities THEN the system SHALL support capability negotiation that indicates available monitoring features without exposing implementation details
+4. WHEN managing licensing THEN the collector-core SHALL remain Apache-2.0 licensed while enabling proprietary EventSource implementations
+5. WHEN operating in production THEN both OSS and enterprise versions SHALL provide identical operational characteristics and management interfaces

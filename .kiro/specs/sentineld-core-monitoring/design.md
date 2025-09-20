@@ -8,34 +8,94 @@ The core design follows a pipeline architecture where process data flows from co
 
 ## Architecture
 
+### Collector-Core Framework Architecture
+
+The collector-core framework provides a unified foundation for multiple collection components, enabling extensible monitoring capabilities while maintaining shared operational infrastructure:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                collector-core Framework                              │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │   EventSource   │  │   EventSource   │  │   EventSource   │  │   EventSource   │ │
+│  │   (Process)     │  │   (Network)     │  │  (Filesystem)   │  │ (Performance)   │ │
+│  │                 │  │                 │  │                 │  │                 │ │
+│  │ • sysinfo       │  │ • Netlink/WFP   │  │ • inotify/FSE   │  │ • /proc/perf    │ │
+│  │ • /proc enum    │  │ • Packet cap    │  │ • File ops      │  │ • Resource mon  │ │
+│  │ • Hash compute  │  │ • DNS monitor   │  │ • Access track  │  │ • System metrics│ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│           │                     │                     │                     │        │
+│           └─────────────────────┼─────────────────────┼─────────────────────┘        │
+│                                 │                     │                              │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
+│  │                        Collector Runtime                                        │ │
+│  │  • Event aggregation and batching                                              │ │
+│  │  • IPC server (protobuf + CRC32 framing)                                       │ │
+│  │  • Configuration management and validation                                     │ │
+│  │  • Structured logging and metrics                                              │ │
+│  │  • Health checks and graceful shutdown                                         │ │
+│  │  • Capability negotiation                                                      │ │
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                         │
+                                         ▼
+                              ┌─────────────────┐
+                              │  sentinelagent  │
+                              │ (Orchestrator)  │
+                              │                 │
+                              │ • Task dispatch │
+                              │ • Data aggreg.  │
+                              │ • SQL detection │
+                              │ • Alert mgmt    │
+                              └─────────────────┘
+```
+
+**Core Framework Components**:
+
+- **Universal EventSource Trait**: Abstracts collection methodology from operational infrastructure
+- **Collector Runtime**: Manages event sources, IPC communication, and shared services
+- **Extensible Event Model**: Supports multiple collection domains through unified event types
+- **Shared Infrastructure**: Common configuration, logging, health checks, and capability negotiation
+
+**Multi-Component Vision**:
+
+1. **procmond**: Process monitoring using collector-core + process EventSource
+2. **netmond**: Network monitoring using collector-core + network EventSource (future)
+3. **fsmond**: Filesystem monitoring using collector-core + filesystem EventSource (future)
+4. **perfmond**: Performance monitoring using collector-core + performance EventSource (future)
+
 ### Component Architecture
 
-SentinelD consists of three main components that work together to provide comprehensive process monitoring:
+SentinelD consists of three main components that work together to provide comprehensive process monitoring, with procmond built on the collector-core framework:
 
 ```text
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │    procmond     │    │  sentinelagent  │    │   sentinelcli   │
-│   (Collector)   │◀──▶│ (Orchestrator)  │◀───│  (Interface)    │
-│                 │    │                 │    │                 │
-│ • Privileged    │    │ • User space    │    │ • User space    │
-│ • Process enum  │    │ • SQL engine    │    │ • Queries       │
-│ • Hash compute  │    │ • Rule mgmt     │    │ • Management    │
-│ • Audit logging │    │ • Detection     │    │ • Diagnostics   │
-│ • Protobuf IPC  │    │ • Alerting      │    │ • Config mgmt   │
-│                 │    │ • Network comm  │    │                 │
+│ (collector-core │◀──▶│ (Orchestrator)  │◀───│  (Interface)    │
+│   + process     │    │                 │    │                 │
+│   EventSource)  │    │ • User space    │    │ • User space    │
+│                 │    │ • SQL engine    │    │ • Queries       │
+│ • Privileged    │    │ • Rule mgmt     │    │ • Management    │
+│ • Process enum  │    │ • Detection     │    │ • Diagnostics   │
+│ • Hash compute  │    │ • Alerting      │    │ • Config mgmt   │
+│ • Audit logging │    │ • Network comm  │    │                 │
+│ • Protobuf IPC  │    │ • Task dispatch │    │                 │
+│ • Extensible    │    │ • Multi-domain  │    │                 │
+│   architecture  │    │   correlation   │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │
          ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐
 │  Audit Ledger   │    │   Event Store   │
 │ (Merkle Tree)   │    │     (redb)      │
-│ procmond write  │    │  sentinelagent  │
-│     only        │    │    managed      │
+│ collector-core  │    │  sentinelagent  │
+│   managed       │    │    managed      │
 └─────────────────┘    └─────────────────┘
 
-IPC Protocol: Protobuf + CRC32 framing over `interprocess` local sockets
-Communication: sentinelcli ↔ sentinelagent ↔ procmond
-Service Management: sentinelagent manages procmond lifecycle
+IPC Protocol: Protobuf + CRC32 framing over interprocess crate (existing implementation)
+Communication: sentinelcli ↔ sentinelagent ↔ collector-core components
+Service Management: sentinelagent manages collector-core component lifecycle
+Extensibility: collector-core enables future business/enterprise tier functionality
 ```
 
 ### Data Flow Architecture
@@ -63,45 +123,243 @@ The system implements a pipeline processing model with clear phases and strict c
 
 ## Components and Interfaces
 
-### procmond (Privileged Collector)
+### collector-core Framework
 
-**Purpose**: Minimal privileged component for secure process data collection with purpose-built simplicity
+**Purpose**: Reusable collection infrastructure that enables multiple monitoring components while maintaining shared operational foundation
+
+**Reusable Components from Existing Implementation**:
+
+The collector-core framework will wrap and extend existing proven components:
+
+- **IPC Infrastructure**: Complete interprocess crate integration (docs/src/technical/ipc-implementation.md)
+
+  - `InterprocessServer` and `InterprocessClient` from sentinel-lib/src/ipc/
+  - `IpcCodec` with CRC32 validation and frame protocol
+  - `IpcConfig` with comprehensive timeout and security settings
+  - Cross-platform transport layer (Unix sockets, Windows named pipes)
+
+- **Process Collection Logic**: Existing ProcessMessageHandler (procmond/src/lib.rs)
+
+  - `enumerate_processes()` using sysinfo crate
+  - `convert_process_to_record()` with comprehensive metadata
+  - `handle_detection_task()` with task routing and error handling
+  - Support for process filtering and hash verification
+
+- **Database Integration**: Existing storage layer (sentinel-lib/src/storage.rs)
+
+  - `DatabaseManager` with redb backend
+  - Table definitions and transaction handling
+  - Serialization and error handling
+
+- **Configuration Management**: Existing config system (sentinel-lib/src/config.rs)
+
+  - `ConfigLoader` with hierarchical overrides
+  - Environment variable and file-based configuration
+  - Validation and error handling
+
+- **Telemetry and Logging**: Existing observability (sentinel-lib/src/telemetry.rs)
+
+  - `TelemetryCollector` for performance monitoring
+  - Structured logging with tracing crate
+  - Health check and metrics collection
 
 **Key Interfaces**:
 
-- `ProcessCollector` trait for cross-platform process enumeration
-- `HashComputer` trait for executable integrity verification
-- `AuditLogger` trait for tamper-evident logging
-- `IpcServer` trait for protobuf-based communication with sentinelagent
+- `EventSource` trait for pluggable collection implementations
+- `Collector` struct for runtime management and event aggregation
+- `CollectionEvent` enum for unified event handling across domains
+- `CollectorConfig` for shared configuration management
 
 **Core Implementation**:
 
 ```rust
-pub struct ProcessCollector {
+#[async_trait]
+pub trait EventSource: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn capabilities(&self) -> SourceCaps;
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()>;
+    async fn stop(&self) -> anyhow::Result<()>;
+}
+
+pub struct Collector {
     config: CollectorConfig,
-    hash_computer: Box<dyn HashComputer>,
-    audit_logger: Box<dyn AuditLogger>,
-    ipc_server: Box<dyn IpcServer>,
+    sources: Vec<Box<dyn EventSource>>,
+    runtime: CollectorRuntime,
+    ipc_server: IpcServer,
+}
+
+impl Collector {
+    pub fn new(config: CollectorConfig) -> Self { ... }
+    pub fn register<S: EventSource + 'static>(&mut self, source: S) { ... }
+    pub async fn run(self) -> anyhow::Result<()> { ... }
+}
+
+#[derive(Debug, Clone)]
+pub enum CollectionEvent {
+    Process(ProcessEvent),
+    Network(NetworkEvent),      // Future: netmond
+    Filesystem(FilesystemEvent), // Future: fsmond
+    Performance(PerformanceEvent), // Future: perfmond
+}
+
+bitflags! {
+    pub struct SourceCaps: u32 {
+        const PROCESS = 1 << 0;
+        const NETWORK = 1 << 1;
+        const FILESYSTEM = 1 << 2;
+        const PERFORMANCE = 1 << 3;
+        const REALTIME = 1 << 4;
+        const KERNEL_LEVEL = 1 << 5;
+        const SYSTEM_WIDE = 1 << 6;
+    }
+}
+```
+
+**Shared Infrastructure**:
+
+- **Configuration Management**: **EXISTING** Hierarchical config loading with validation (sentinel-lib/src/config.rs)
+- **Logging Infrastructure**: **EXISTING** Structured tracing with JSON output and metrics (sentinel-lib/src/telemetry.rs)
+- **IPC Server**: **EXISTING** Protobuf-based communication with sentinelagent (sentinel-lib/src/ipc/)
+- **Health Monitoring**: **EXISTING** Component status tracking and graceful shutdown
+- **Event Batching**: **NEW** Efficient event aggregation and backpressure handling
+- **Capability Negotiation**: **NEW** Dynamic feature discovery and task routing
+
+**Integration with Existing Components**:
+
+```rust
+// Refactored procmond using collector-core + existing components
+fn main() -> anyhow::Result<()> {
+    // EXISTING: Reuse CLI parsing and initialization
+    let cli = Cli::parse();
+    tracing_subscriber::fmt::init();
+
+    // EXISTING: Reuse configuration loading
+    let config_loader = config::ConfigLoader::new("procmond");
+    let config = config_loader.load()?;
+
+    // EXISTING: Reuse database initialization
+    let db_manager = Arc::new(Mutex::new(storage::DatabaseManager::new(&cli.database)?));
+
+    // NEW: Create collector-core with existing components
+    let collector_config = CollectorConfig::from(config);
+    let mut collector = collector_core::Collector::new(collector_config);
+
+    // NEW: Register process source wrapping existing ProcessMessageHandler
+    let process_handler = ProcessMessageHandler::new(Arc::clone(&db_manager));
+    let process_source = ProcessEventSource::new(process_handler, config.app.clone());
+    collector.register(process_source);
+
+    // EXISTING: Reuse IPC server creation with collector-core integration
+    collector.run().await
+}
+
+// ProcessEventSource wraps existing ProcessMessageHandler
+pub struct ProcessEventSource {
+    handler: ProcessMessageHandler,  // EXISTING: Complete process logic
+    config: AppConfig,               // EXISTING: Configuration structure
 }
 
 #[async_trait]
-pub trait ProcessCollector {
-    async fn enumerate_processes(&self) -> Result<Vec<ProcessRecord>>;
-    async fn handle_detection_task(&self, task: DetectionTask) -> Result<DetectionResult>;
-    async fn serve_ipc(&self) -> Result<()>;
+impl EventSource for ProcessEventSource {
+    fn name(&self) -> &'static str { "process-monitor" }
+
+    fn capabilities(&self) -> SourceCaps {
+        SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE
+    }
+
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+        // EXISTING: Reuse ProcessMessageHandler.enumerate_processes logic
+        loop {
+            let task = DetectionTask {
+                task_id: format!("scan-{}", chrono::Utc::now().timestamp_millis()),
+                task_type: ProtoTaskType::EnumerateProcesses as i32,
+                process_filter: None,
+                hash_check: None,
+                metadata: None,
+            };
+
+            let result = self.handler.enumerate_processes(&task).await?;
+
+            for process in result.processes {
+                let event = CollectionEvent::Process(ProcessEvent::from(process));
+                tx.send(event).await?;
+            }
+
+            tokio::time::sleep(Duration::from_millis(self.config.scan_interval_ms)).await;
+        }
+    }
+}
+```
+
+**Multi-Component Support**:
+
+```rust
+// Example: Future network monitoring component
+fn main() -> anyhow::Result<()> {
+    let config = collector_core::config::load()?;
+    let mut collector = collector_core::Collector::new(config);
+
+    // Register network collection sources
+    collector.register(NetworkEventSource::new()?);
+
+    #[cfg(target_os = "linux")]
+    collector.register(NetlinkSource::new()?);
+
+    collector.run().await
+}
+```
+
+### procmond (Process Collection Component)
+
+**Purpose**: Process monitoring implementation using collector-core framework with process-specific EventSource
+
+**Key Interfaces**:
+
+- `ProcessEventSource` implementing the EventSource trait
+- **EXISTING**: `ProcessMessageHandler` for process enumeration and task handling (from procmond/src/lib.rs)
+- **EXISTING**: `IpcConfig` and IPC server creation (from procmond/src/ipc/mod.rs)
+- **EXISTING**: Database integration via `storage::DatabaseManager` (from sentinel-lib)
+- Integration with collector-core runtime and existing IPC infrastructure
+
+**Core Implementation**:
+
+```rust
+pub struct ProcessEventSource {
+    collector: Box<dyn ProcessCollector>,
+    hash_computer: Box<dyn HashComputer>,
+    config: ProcessConfig,
 }
 
-// Simple protobuf-based detection tasks from sentinelagent
-#[derive(Clone, PartialEq, Message)]
-pub struct DetectionTask {
-    #[prost(string, tag = "1")]
-    pub task_id: String,
-    #[prost(enumeration = "TaskType", tag = "2")]
-    pub task_type: i32,
-    #[prost(message, optional, tag = "3")]
-    pub process_filter: Option<ProcessFilter>,
-    #[prost(message, optional, tag = "4")]
-    pub hash_check: Option<HashCheck>,
+#[async_trait]
+impl EventSource for ProcessEventSource {
+    fn name(&self) -> &'static str { "process-monitor" }
+
+    fn capabilities(&self) -> SourceCaps {
+        SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE
+    }
+
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+        // Process enumeration and event generation
+        loop {
+            let processes = self.collector.enumerate_processes().await?;
+            for process in processes {
+                let event = CollectionEvent::Process(ProcessEvent::from(process));
+                tx.send(event).await?;
+            }
+            tokio::time::sleep(self.config.scan_interval).await;
+        }
+    }
+}
+
+// Simplified procmond main using collector-core
+fn main() -> anyhow::Result<()> {
+    let config = collector_core::config::load()?;
+    let mut collector = collector_core::Collector::new(config);
+
+    // Register process monitoring source
+    collector.register(ProcessEventSource::new()?);
+
+    collector.run().await
 }
 ```
 
@@ -111,14 +369,15 @@ pub struct DetectionTask {
 - Drops all elevated privileges immediately after initialization
 - No network access whatsoever
 - No SQL parsing or complex query logic
-- Write-only access to audit ledger
-- Cross-platform IPC via interprocess crate (Unix domain sockets/Windows named pipes)
+- Write-only access to audit ledger (managed by collector-core)
+- Cross-platform IPC via interprocess crate (managed by collector-core)
 - Purpose-built for stability and minimal attack surface
 - Zero unsafe code goal; any required unsafe code isolated to highly structured, tested modules
+- Leverages collector-core framework for operational infrastructure
 
 ### sentinelagent (Detection Orchestrator)
 
-**Purpose**: User-space detection rule execution, alert management, and procmond lifecycle management
+**Purpose**: User-space detection rule execution, alert management, and collector-core component lifecycle management
 
 **Key Interfaces**:
 
@@ -151,13 +410,15 @@ pub trait DetectionEngine {
 - Operates in user space with minimal privileges
 - Manages redb event store (read/write access)
 - **SQL-to-IPC Translation**: Uses sqlparser to analyze SQL detection rules and extract collection requirements
-- **Task Generation**: Translates complex SQL queries into simple protobuf collection tasks for procmond
+- **Task Generation**: Translates complex SQL queries into simple protobuf collection tasks for collector-core components
+- **Multi-Domain Correlation**: Aggregates events from multiple collection domains (process, network, filesystem, performance)
 - **Overcollection Handling**: May request broader data collection than SQL requires, then applies SQL filtering to stored data
 - **Privilege Separation**: SQL execution never directly touches live processes; only simple collection tasks sent via IPC
 - Outbound-only network connections for alert delivery
 - Sandboxed rule execution with resource limits
-- IPC client for communication with procmond via interprocess crate (see [IPC Implementation](../../../docs/src/technical/ipc-implementation.md))
-- Manages procmond process lifecycle (start, stop, restart, health monitoring)
+- IPC client for communication with collector-core components via interprocess crate
+- Manages collector-core component lifecycle (start, stop, restart, health monitoring)
+- **Capability Negotiation**: Discovers available monitoring capabilities from collector-core components
 
 **Service Management**:
 
@@ -204,61 +465,106 @@ pub trait QueryExecutor {
 
 ### IPC Protocol Design
 
-**Purpose**: Secure, efficient communication between procmond and sentinelagent
+**Purpose**: Secure, efficient communication between collector-core components and sentinelagent
 
-**Protocol Specification**:
+**Protocol Specification** (extending existing protobuf definitions):
 
 ```protobuf
 syntax = "proto3";
 
-// Simple detection tasks sent from sentinelagent to procmond
+// NEW: Capability negotiation between collector-core and sentinelagent
+message CollectionCapabilities {
+    bool supports_processes = 1;
+    bool supports_network = 2;      // Future: netmond
+    bool supports_filesystem = 3;   // Future: fsmond
+    bool supports_performance = 4;  // Future: perfmond
+    bool kernel_level = 5;
+    bool realtime = 6;
+    bool system_wide = 7;
+}
+
+// EXISTING: Detection tasks (from ipc.proto) - extend for future components
 message DetectionTask {
     string task_id = 1;
     TaskType task_type = 2;
     optional ProcessFilter process_filter = 3;
     optional HashCheck hash_check = 4;
     optional string metadata = 5;
+    // NEW: Future extensions for additional collection domains
+    optional NetworkFilter network_filter = 6;    // Future: netmond
+    optional FilesystemFilter fs_filter = 7;      // Future: fsmond
+    optional PerformanceFilter perf_filter = 8;   // Future: perfmond
 }
 
+// EXISTING: Task types (from common.proto) - extend for future components
 enum TaskType {
     ENUMERATE_PROCESSES = 0;
     CHECK_PROCESS_HASH = 1;
     MONITOR_PROCESS_TREE = 2;
     VERIFY_EXECUTABLE = 3;
+    // NEW: Future task types
+    MONITOR_NETWORK_CONNECTIONS = 4;    // Future: netmond
+    TRACK_FILE_OPERATIONS = 5;          // Future: fsmond
+    COLLECT_PERFORMANCE_METRICS = 6;    // Future: perfmond
 }
 
+// EXISTING: Process filtering (from common.proto)
 message ProcessFilter {
     repeated string process_names = 1;
     repeated uint32 pids = 2;
     optional string executable_pattern = 3;
 }
 
+// EXISTING: Hash verification (from common.proto)
 message HashCheck {
     string expected_hash = 1;
     string hash_algorithm = 2;
     string executable_path = 3;
 }
 
-// Results sent back from procmond to sentinelagent
+// EXISTING: Detection results (from ipc.proto) - extend for future components
 message DetectionResult {
     string task_id = 1;
     bool success = 2;
     optional string error_message = 3;
     repeated ProcessRecord processes = 4;
     optional HashResult hash_result = 5;
+    // NEW: Future extensions for additional collection domains
+    repeated NetworkRecord network_events = 6;    // Future: netmond
+    repeated FilesystemRecord fs_events = 7;      // Future: fsmond
+    repeated PerformanceRecord perf_events = 8;   // Future: perfmond
+}
+
+// EXISTING: Process record (from common.proto)
+message ProcessRecord {
+    uint32 pid = 1;
+    optional uint32 ppid = 2;
+    string name = 3;
+    optional string executable_path = 4;
+    repeated string command_line = 5;
+    optional int64 start_time = 6;
+    optional double cpu_usage = 7;
+    optional uint64 memory_usage = 8;
+    optional string executable_hash = 9;
+    optional string hash_algorithm = 10;
+    optional string user_id = 11;
+    bool accessible = 12;
+    bool file_exists = 13;
+    int64 collection_time = 14;
 }
 ```
 
-**Transport Layer (Tokio Native APIs)**:
+**Transport Layer (Existing Interprocess Implementation)**:
 
-- **Phase 1 Implementation**: Standard tokio networking APIs for reliability and maintainability
-- **Unix/Linux/macOS**: `tokio::net::UnixListener` and `UnixStream` with owner-only permissions (0700 dir, 0600 socket)
-- **Windows**: `tokio::net::windows::named_pipe` for cross-platform compatibility
-- **Frame Protocol**: Length-delimited protobuf messages with CRC32 integrity validation
-- **Codec**: Custom `IpcCodec` with BytesMut buffers, timeout handling, and comprehensive error types
-- **Security**: No network access, local-only endpoints, connection limits via semaphore
-- **Reliability**: Async message handling, graceful shutdown, and proper cleanup
-- **Configuration**: Comprehensive `IpcConfig` with timeouts, limits, and CRC32 variant selection
+- **Implementation**: **EXISTING** `interprocess` crate integration from docs/src/technical/ipc-implementation.md
+- **Unix/Linux/macOS**: Unix domain sockets with owner-only permissions (0700 dir, 0600 socket)
+- **Windows**: Named pipes with appropriate security descriptors
+- **Frame Protocol**: **EXISTING** Length-delimited protobuf messages with CRC32 integrity validation
+- **Codec**: **EXISTING** `IpcCodec` with BytesMut buffers, timeout handling, and comprehensive error types
+- **Security**: **EXISTING** No network access, local-only endpoints, connection limits
+- **Reliability**: **EXISTING** Async message handling, graceful shutdown, and proper cleanup
+- **Configuration**: **EXISTING** `IpcConfig` with timeouts, limits, and CRC32 variant selection
+- **Error Handling**: **EXISTING** Comprehensive `IpcError` types with automatic reconnection and exponential backoff
 
 ### IPC Protocol Flow
 
@@ -323,18 +629,16 @@ flowchart TD
 
 ### Core Data Structures
 
-**ProcessRecord**: Represents a single process snapshot
+**ProcessRecord**: Represents a single process snapshot (existing implementation in sentinel-lib/src/models/process.rs)
 
 ```rust
+// Existing ProcessRecord structure (from protobuf and Rust models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRecord {
-    pub id: Uuid,
-    pub scan_id: i64,
-    pub collection_time: i64, // Unix timestamp in milliseconds
     pub pid: u32,
     pub ppid: Option<u32>,
     pub name: String,
-    pub executable_path: Option<PathBuf>,
+    pub executable_path: Option<String>,
     pub command_line: Vec<String>,
     pub start_time: Option<i64>,
     pub cpu_usage: Option<f64>,
@@ -344,16 +648,20 @@ pub struct ProcessRecord {
     pub user_id: Option<String>,
     pub accessible: bool,
     pub file_exists: bool,
-    pub platform_data: Option<serde_json::Value>,
+    pub collection_time: i64, // Unix timestamp in milliseconds
+    // Additional fields for collector-core integration
+    pub id: Uuid,     // NEW: Unique record identifier
+    pub scan_id: i64, // NEW: Collection cycle identifier
 }
 ```
 
-**Alert**: Represents a detection result with full context
+**Alert**: Represents a detection result with full context (existing implementation in sentinel-lib/src/models/alert.rs)
 
 ```rust
+// Existing Alert structure (from sentinel-lib models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
-    pub id: Uuid,
+    pub id: AlertId, // Existing: Uuid wrapper
     pub alert_time: i64,
     pub rule_id: String,
     pub title: String,
@@ -367,6 +675,7 @@ pub struct Alert {
     pub dedupe_key: String,
 }
 
+// Existing AlertSeverity enum
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertSeverity {
     Low,
@@ -376,12 +685,13 @@ pub enum AlertSeverity {
 }
 ```
 
-**DetectionRule**: SQL-based detection rule with metadata
+**DetectionRule**: SQL-based detection rule with metadata (existing implementation in sentinel-lib/src/models/rule.rs)
 
 ```rust
+// Existing DetectionRule structure (from sentinel-lib models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionRule {
-    pub id: String,
+    pub id: RuleId, // Existing: String wrapper
     pub name: String,
     pub description: Option<String>,
     pub version: i32,
@@ -397,6 +707,7 @@ pub struct DetectionRule {
     pub source_path: Option<PathBuf>,
 }
 
+// Existing RuleSourceType enum
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RuleSourceType {
     Builtin,

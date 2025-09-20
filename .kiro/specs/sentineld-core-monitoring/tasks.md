@@ -42,7 +42,7 @@
   - Ensure Unix domain socket permissions (0700 dir, 0600 socket) and Windows named pipe SDDL restrictions (revisit later)
   - _Requirements: 3.1, 3.2_
 
-- [ ] 3.4 Implement interprocess IpcClient for sentinelagent - [#37](https://github.com/EvilBit-Labs/SentinelD/issues/37)
+- [x] 3.4 Implement interprocess IpcClient for sentinelagent - [#37](https://github.com/EvilBit-Labs/SentinelD/issues/37)
 
   - Create IpcClient using `interprocess` LocalSocketStream with connection management
   - Add automatic reconnection logic with exponential backoff using existing patterns
@@ -62,7 +62,49 @@
   - Create security validation tests for socket permissions and connection limits
   - _Requirements: 3.1, 3.2_
 
-- [ ] 4. Implement cross-platform process enumeration in procmond - [#39](https://github.com/EvilBit-Labs/SentinelD/issues/39)
+- [ ] 4. Implement collector-core framework for extensible monitoring architecture
+
+- [ ] 4.1 Create collector-core library foundation - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+
+  - Create new collector-core workspace member crate with public API exports
+  - Define universal EventSource trait with start/stop lifecycle and capability reporting
+  - Implement Collector struct for runtime management and event source registration
+  - Create extensible CollectionEvent enum supporting process, network, filesystem, and performance domains
+  - Add SourceCaps bitflags for capability negotiation (PROCESS, NETWORK, FILESYSTEM, PERFORMANCE, REALTIME, KERNEL_LEVEL, SYSTEM_WIDE)
+  - Write unit tests for EventSource trait and Collector registration
+  - _Requirements: 11.1, 11.2, 11.5_
+
+- [ ] 4.2 Integrate existing IPC infrastructure into collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+
+  - Move existing IPC server logic from procmond to collector-core runtime
+  - Integrate existing InterprocessServer and IpcCodec with collector-core event handling
+  - Preserve existing protobuf protocol and CRC32 framing from docs/src/technical/ipc-implementation.md
+  - Add capability negotiation to existing IPC protocol with CollectionCapabilities message
+  - Extend existing DetectionTask and DetectionResult messages for multi-domain support
+  - Write integration tests for IPC compatibility with existing sentinelagent client
+  - _Requirements: 11.1, 11.2, 12.3_
+
+- [ ] 4.3 Add shared infrastructure components to collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+
+  - Integrate existing config::ConfigLoader for hierarchical configuration management
+  - Move existing telemetry::TelemetryCollector integration to collector-core runtime
+  - Add existing structured logging and health check infrastructure
+  - Implement event batching and backpressure handling for multiple event sources
+  - Create graceful shutdown coordination for all registered event sources
+  - Write unit tests for shared infrastructure integration and lifecycle management
+  - _Requirements: 11.1, 11.2, 13.1, 13.2, 13.5_
+
+- [ ] 4.4 Extend protobuf definitions for multi-domain support - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+
+  - Add CollectionCapabilities message for capability negotiation between collector-core and sentinelagent
+  - Extend existing TaskType enum with future network, filesystem, and performance task types
+  - Add optional filter fields to DetectionTask for future multi-domain filtering
+  - Extend DetectionResult with optional fields for future multi-domain event records
+  - Maintain backward compatibility with existing protobuf message structure
+  - Write unit tests for protobuf serialization and backward compatibility
+  - _Requirements: 12.1, 12.2, 12.3_
+
+- [ ] 5. Implement cross-platform process enumeration in procmond - [#39](https://github.com/EvilBit-Labs/SentinelD/issues/39)
 
   - Create ProcessCollector trait with platform-specific implementations using sysinfo crate
   - Implement process metadata extraction (PID, PPID, name, executable path, command line)
@@ -71,7 +113,7 @@
   - Write unit tests with mock process data and integration tests on real systems
   - _Requirements: 1.1, 1.5_
 
-- [ ] 5. Implement executable integrity verification with SHA-256 hashing - [#40](https://github.com/EvilBit-Labs/SentinelD/issues/40)
+- [ ] 6. Implement executable integrity verification with SHA-256 hashing - [#40](https://github.com/EvilBit-Labs/SentinelD/issues/40)
 
   - Create HashComputer trait for cryptographic hashing of executable files
   - Implement SHA-256 hash computation for accessible executable files
@@ -80,7 +122,29 @@
   - Write performance tests to ensure hashing doesn't impact enumeration speed
   - _Requirements: 2.1, 2.2, 2.4_
 
-- [ ] 6. Implement privilege management and security boundaries - [#41](https://github.com/EvilBit-Labs/SentinelD/issues/41)
+- [ ] 7. Create ProcessEventSource and refactor procmond to use collector-core
+
+- [ ] 7.1 Create ProcessEventSource wrapping existing ProcessMessageHandler - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+
+  - Implement ProcessEventSource that wraps existing ProcessMessageHandler from procmond/src/lib.rs
+  - Reuse existing enumerate_processes() and convert_process_to_record() logic
+  - Integrate with existing database::DatabaseManager and storage layer
+  - Preserve existing sysinfo-based process enumeration and hash computation
+  - Add CollectionEvent::Process generation from existing ProtoProcessRecord
+  - Write unit tests for ProcessEventSource integration with existing components
+  - _Requirements: 11.1, 11.2, 11.5_
+
+- [ ] 7.2 Refactor procmond to use collector-core framework - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+
+  - Refactor procmond main.rs to use collector-core Collector instead of direct IPC server
+  - Preserve existing CLI parsing, configuration loading, and database initialization
+  - Register ProcessEventSource with collector-core runtime
+  - Maintain identical behavior and IPC protocol compatibility
+  - Ensure existing telemetry and logging integration continues to work
+  - Write integration tests to verify identical behavior with existing sentinelagent
+  - _Requirements: 11.1, 11.2, 12.1, 12.2_
+
+- [ ] 8. Implement privilege management and security boundaries - [#41](https://github.com/EvilBit-Labs/SentinelD/issues/41)
 
   - Create PrivilegeManager for platform-specific privilege handling
   - Implement optional enhanced privilege requests (CAP_SYS_PTRACE, SeDebugPrivilege, macOS entitlements)
@@ -89,7 +153,7 @@
   - Write security tests to verify privilege boundaries and proper dropping
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 7. Create tamper-evident audit logging system - [#42](https://github.com/EvilBit-Labs/SentinelD/issues/42)
+- [ ] 9. Create tamper-evident audit logging system - [#42](https://github.com/EvilBit-Labs/SentinelD/issues/42)
 
   - Implement AuditChain with BLAKE3 hashing for cryptographic integrity
   - Create append-only audit ledger with monotonic sequence numbers
@@ -98,9 +162,9 @@
   - Write cryptographic tests for hash chain integrity and optional Ed25519 signatures
   - _Requirements: 7.1, 7.2, 7.4, 7.5_
 
-- [ ] 8. Implement redb database layer for sentinelagent
+- [ ] 10. Implement redb database layer for sentinelagent
 
-- [ ] 8.1 Set up redb database foundation - [#43](https://github.com/EvilBit-Labs/SentinelD/issues/43)
+- [ ] 10.1 Set up redb database foundation - [#43](https://github.com/EvilBit-Labs/SentinelD/issues/43)
 
   - Add redb dependency and create database initialization code
   - Configure optimal redb settings for concurrent access and performance
@@ -108,7 +172,7 @@
   - Write unit tests for database creation and basic operations
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 8.2 Define database schema and table structures - [#44](https://github.com/EvilBit-Labs/SentinelD/issues/44)
+- [ ] 10.2 Define database schema and table structures - [#44](https://github.com/EvilBit-Labs/SentinelD/issues/44)
 
   - Create table definitions for processes, scans, detection_rules, alerts, and alert_deliveries
   - Implement data serialization/deserialization for complex types
@@ -116,7 +180,7 @@
   - Write unit tests for schema creation and data type handling
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 8.3 Implement transaction handling and error recovery - [#45](https://github.com/EvilBit-Labs/SentinelD/issues/45)
+- [ ] 10.3 Implement transaction handling and error recovery - [#45](https://github.com/EvilBit-Labs/SentinelD/issues/45)
 
   - Add transaction management for atomic operations
   - Implement proper error recovery and rollback mechanisms
@@ -124,7 +188,7 @@
   - Write integration tests for transaction scenarios and error conditions
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 8.4 Add database migration system - [#46](https://github.com/EvilBit-Labs/SentinelD/issues/46)
+- [ ] 10.4 Add database migration system - [#46](https://github.com/EvilBit-Labs/SentinelD/issues/46)
 
   - Create schema versioning and migration framework
   - Implement upgrade/downgrade migration scripts
@@ -132,9 +196,9 @@
   - Write integration tests for migration scenarios and version compatibility
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 9. Implement SQL-based detection engine with security validation
+- [ ] 11. Implement SQL-based detection engine with security validation
 
-- [ ] 9.1 Create SQL validator for injection prevention - [#47](https://github.com/EvilBit-Labs/SentinelD/issues/47)
+- [ ] 11.1 Create SQL validator for injection prevention - [#47](https://github.com/EvilBit-Labs/SentinelD/issues/47)
 
   - Implement SqlValidator using sqlparser-rs for AST parsing and validation
   - Create whitelist of allowed SQL constructs (SELECT statements, approved functions)
@@ -142,7 +206,7 @@
   - Write unit tests for SQL validation with malicious input samples
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 9.2 Implement detection engine core - [#48](https://github.com/EvilBit-Labs/SentinelD/issues/48)
+- [ ] 11.2 Implement detection engine core - [#48](https://github.com/EvilBit-Labs/SentinelD/issues/48)
 
   - Create DetectionEngine struct with rule execution capabilities
   - Add read-only database transaction handling for rule queries
@@ -150,7 +214,7 @@
   - Write unit tests for detection engine initialization and basic operations
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 9.3 Add query execution with resource limits - [#49](https://github.com/EvilBit-Labs/SentinelD/issues/49)
+- [ ] 11.3 Add query execution with resource limits - [#49](https://github.com/EvilBit-Labs/SentinelD/issues/49)
 
   - Implement query timeouts (30 seconds) and memory limits
   - Add sandboxed execution environment for rule processing
@@ -158,7 +222,7 @@
   - Write integration tests for resource limit enforcement and timeout scenarios
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 9.4 Create comprehensive security testing - [#50](https://github.com/EvilBit-Labs/SentinelD/issues/50)
+- [ ] 11.4 Create comprehensive security testing - [#50](https://github.com/EvilBit-Labs/SentinelD/issues/50)
 
   - Implement OWASP SQL injection test vector validation
   - Add fuzzing tests for malformed SQL input
@@ -166,7 +230,7 @@
   - Write security audit tests for rule execution sandboxing
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 10. Create alert generation and management system - [#51](https://github.com/EvilBit-Labs/SentinelD/issues/51)
+- [ ] 12. Create alert generation and management system - [#51](https://github.com/EvilBit-Labs/SentinelD/issues/51)
 
   - Implement AlertManager for generating structured alerts from detection results
   - Add alert deduplication using configurable keys and time windows
@@ -175,9 +239,9 @@
   - Write unit tests for alert generation logic and deduplication behavior
   - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
-- [ ] 11. Implement multi-channel alert delivery system
+- [ ] 13. Implement multi-channel alert delivery system
 
-- [ ] 11.1 Create AlertSink trait and basic sinks - [#52](https://github.com/EvilBit-Labs/SentinelD/issues/52)
+- [ ] 13.1 Create AlertSink trait and basic sinks - [#52](https://github.com/EvilBit-Labs/SentinelD/issues/52)
 
   - Define AlertSink trait with async delivery methods
   - Implement StdoutSink and FileSink for basic alert output
@@ -185,7 +249,7 @@
   - Write unit tests for basic sink implementations and formatting
   - _Requirements: 5.1, 5.2_
 
-- [ ] 11.2 Implement network-based alert sinks - [#53](https://github.com/EvilBit-Labs/SentinelD/issues/53)
+- [ ] 13.2 Implement network-based alert sinks - [#53](https://github.com/EvilBit-Labs/SentinelD/issues/53)
 
   - Create WebhookSink with HTTP POST delivery and authentication
   - Add SyslogSink for Unix syslog integration
@@ -193,7 +257,7 @@
   - Write integration tests for network sinks with mock endpoints
   - _Requirements: 5.1, 5.2_
 
-- [ ] 11.3 Add parallel delivery and tracking - [#54](https://github.com/EvilBit-Labs/SentinelD/issues/54)
+- [ ] 13.3 Add parallel delivery and tracking - [#54](https://github.com/EvilBit-Labs/SentinelD/issues/54)
 
   - Implement parallel alert delivery to multiple sinks without blocking
   - Add delivery tracking with success/failure status recording
@@ -201,7 +265,7 @@
   - Write integration tests for concurrent delivery scenarios
   - _Requirements: 5.1, 5.2_
 
-- [ ] 12. Add alert delivery reliability with circuit breakers and retries - [#55](https://github.com/EvilBit-Labs/SentinelD/issues/55)
+- [ ] 14. Add alert delivery reliability with circuit breakers and retries - [#55](https://github.com/EvilBit-Labs/SentinelD/issues/55)
 
   - Implement circuit breaker pattern for each alert sink with configurable failure thresholds
   - Add exponential backoff retry logic with jitter and maximum retry limits
@@ -210,16 +274,16 @@
   - Write chaos testing scenarios for network failures and endpoint unavailability
   - _Requirements: 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 13. Implement sentinelcli query and management interface - [#56](https://github.com/EvilBit-Labs/SentinelD/issues/56)
+- [ ] 15. Implement sentinelcli query and management interface - [#56](https://github.com/EvilBit-Labs/SentinelD/issues/56)
 
   - Create QueryExecutor for safe SQL query execution with parameterization
   - Add multiple output formats (JSON, human-readable table, CSV) with terminal capability detection
   - Implement streaming and pagination for large result sets
   - Add color support with NO_COLOR and TERM=dumb environment variable handling
-  - Write CLI integration tests using assert_cmd and snapshot testing with insta
+  - Write CLI integration tests using insta for snapshot testing
   - _Requirements: 8.1, 8.2, 10.5_
 
-- [ ] 14. Add rule management capabilities to sentinelcli - [#57](https://github.com/EvilBit-Labs/SentinelD/issues/57)
+- [ ] 16. Add rule management capabilities to sentinelcli - [#57](https://github.com/EvilBit-Labs/SentinelD/issues/57)
 
   - Implement rule listing, validation, and testing operations
   - Add rule import/export functionality for bundle-based distribution
@@ -228,16 +292,16 @@
   - Write integration tests for complete rule management workflows
   - _Requirements: 8.2, 8.3_
 
-- [ ] 15. Implement system health monitoring and diagnostics - [#58](https://github.com/EvilBit-Labs/SentinelD/issues/58)
+- [ ] 17. Implement system health monitoring and diagnostics - [#58](https://github.com/EvilBit-Labs/SentinelD/issues/58)
 
-  - Create HealthChecker for component status verification (database, alert sinks, IPC via interprocess crate)
+  - Create HealthChecker for component status verification (database, alert sinks, collector-core components via interprocess crate)
   - Add system health overview with color-coded status indicators
   - Implement performance metrics reporting and resource usage tracking
   - Create configuration validation with detailed error messages and troubleshooting guidance
   - Write health check tests with simulated component failures
   - _Requirements: 8.4, 8.5, 10.2, 10.3_
 
-- [ ] 16. Add offline-first operation and bundle support - [#59](https://github.com/EvilBit-Labs/SentinelD/issues/59)
+- [ ] 18. Add offline-first operation and bundle support - [#59](https://github.com/EvilBit-Labs/SentinelD/issues/59)
 
   - Ensure all core functionality operates without network connectivity
   - Implement graceful degradation for alert delivery when network is unavailable
@@ -246,7 +310,7 @@
   - Write integration tests for airgapped environment operation
   - _Requirements: 9.1, 9.2, 9.4, 9.5_
 
-- [ ] 17. Implement comprehensive observability and metrics - [#60](https://github.com/EvilBit-Labs/SentinelD/issues/60)
+- [ ] 19. Implement comprehensive observability and metrics - [#60](https://github.com/EvilBit-Labs/SentinelD/issues/60)
 
   - Add Prometheus-compatible metrics export for collection rate, detection latency, alert delivery
   - Create structured logging with correlation IDs and performance metrics
@@ -255,9 +319,9 @@
   - Write metrics accuracy tests and Prometheus scraping compatibility verification
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
-- [ ] 18. Create comprehensive test suite and quality assurance
+- [ ] 20. Create comprehensive test suite and quality assurance
 
-- [ ] 18.1 Implement unit test coverage - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
+- [ ] 20.1 Implement unit test coverage - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
 
   - Add unit tests for all core functionality targeting >85% code coverage
   - Set up llvm-cov for code coverage measurement and reporting
@@ -265,15 +329,15 @@
   - Write unit tests for error handling and edge cases
   - _Requirements: All requirements verification_
 
-- [ ] 18.2 Add integration and CLI testing - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
+- [ ] 20.2 Add integration and CLI testing - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
 
-  - Implement integration tests with assert_cmd for CLI testing
+  - Implement integration tests with insta for CLI snapshot testing
   - Add cross-component interaction tests for interprocess-based IPC communication
   - Create end-to-end workflow tests for complete monitoring scenarios
   - Write snapshot tests with insta for CLI output validation
   - _Requirements: All requirements verification_
 
-- [ ] 18.3 Create performance and property-based testing - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
+- [ ] 20.3 Create performance and property-based testing - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
 
   - Add performance tests with criterion for regression detection
   - Implement property-based tests with proptest for edge case discovery
@@ -281,7 +345,7 @@
   - Write benchmark tests for critical performance paths
   - _Requirements: All requirements verification_
 
-- [ ] 18.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
+- [ ] 20.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/SentinelD/issues/61)
 
   - Configure CI matrix testing across Linux, macOS, Windows
   - Add multiple Rust version testing (stable, beta, MSRV)
@@ -289,7 +353,7 @@
   - Create automated test reporting and coverage tracking
   - _Requirements: All requirements verification_
 
-- [ ] 19. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/SentinelD/issues/62)
+- [ ] 21. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/SentinelD/issues/62)
 
   - Implement comprehensive SQL injection prevention testing with malicious input vectors
   - Add privilege boundary verification tests for all components
@@ -298,25 +362,25 @@
   - Write penetration testing scenarios for interprocess IPC protocol and component boundaries
   - _Requirements: 3.5, 6.4, 6.5_
 
-- [ ] 20. Integrate components and implement end-to-end workflows
+- [ ] 22. Integrate components and implement end-to-end workflows
 
-- [ ] 20.1 Wire IPC communication between components - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
+- [x] 22.1 Wire IPC communication between components - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
 
-  - ✅ COMPLETED: Connected procmond IPC server with sentinelagent IPC client via interprocess crate
-  - ✅ COMPLETED: Implemented task distribution and result collection workflows with protobuf + CRC32 framing
-  - ✅ COMPLETED: Added proper error handling and connection management
-  - ✅ COMPLETED: Created integration tests for cross-platform IPC communication reliability
+  - COMPLETED: Connected collector-core IPC server with sentinelagent IPC client via interprocess crate
+  - COMPLETED: Implemented task distribution and result collection workflows with protobuf + CRC32 framing
+  - COMPLETED: Added proper error handling and connection management
+  - COMPLETED: Created integration tests for cross-platform IPC communication reliability
   - _Requirements: All requirements integration_
 
-- [ ] 20.2 Implement rule translation and execution pipeline - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
+- [ ] 22.2 Implement rule translation and execution pipeline - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
 
-  - Create rule translation from SQL to simple protobuf tasks for procmond
+  - Create rule translation from SQL to simple protobuf tasks for collector-core components
   - Integrate detection rule execution with interprocess IPC task distribution
   - Add result aggregation and alert generation from detection outcomes
   - Write integration tests for complete detection pipeline
   - _Requirements: All requirements integration_
 
-- [ ] 20.3 Connect alert generation to delivery pipeline - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
+- [ ] 22.3 Connect alert generation to delivery pipeline - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
 
   - Wire alert generation from detection results to multi-channel delivery
   - Implement alert deduplication and priority handling
@@ -324,10 +388,10 @@
   - Write end-to-end tests for alert generation and delivery
   - _Requirements: All requirements integration_
 
-- [ ] 20.4 Add unified configuration and service management - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
+- [ ] 22.4 Add unified configuration and service management - [#63](https://github.com/EvilBit-Labs/SentinelD/issues/63)
 
   - Implement configuration management across all three components
-  - Add sentinelagent process lifecycle management for procmond
+  - Add sentinelagent process lifecycle management for collector-core components
   - Create unified logging and health reporting
   - Write integration tests for service startup, shutdown, and configuration changes
   - _Requirements: All requirements integration_
