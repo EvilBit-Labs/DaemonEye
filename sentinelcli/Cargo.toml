@@ -21,6 +21,12 @@ eula = false
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+
+# Database
+redb = { workspace = true }
+
+# Internal library
+sentinel-lib = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -28,14 +34,9 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-# Database
-redb = { workspace = true }
-
-# Internal library
-sentinel-lib = { workspace = true }
-
 [dev-dependencies]
 assert_cmd = { workspace = true }
+insta = { workspace = true }
 predicates = { workspace = true }
 tempfile = { workspace = true }
 

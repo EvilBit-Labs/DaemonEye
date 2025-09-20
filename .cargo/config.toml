@@ -1,0 +1,5 @@
+[future-incompat-report]
+frequency = 'always'
+
+[cache]
+auto-clean-frequency = "1 day"

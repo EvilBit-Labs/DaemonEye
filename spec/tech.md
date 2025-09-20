@@ -168,7 +168,7 @@ just run-sentinelagent --config /path   # Run orchestrator agent
 - **Test Runner**: cargo-nextest for faster, more reliable test execution
 - **Async Testing**: tokio-test for async runtime testing utilities
 - **CLI Testing**: insta for snapshot testing of CLI outputs and behavior
-- **Integration Testing**: assert_cmd and predicates for comprehensive CLI validation
+- **Integration Testing**: insta for snapshot testing and predicates for validation
 - **Property Testing**: proptest for generative testing of edge cases and invariants
 
 ### Testing Approach

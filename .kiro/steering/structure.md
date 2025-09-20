@@ -65,6 +65,7 @@ SentinelD/
 - **Resolver**: Version 3 for enhanced dependency resolution
 - **Lints**: `unsafe_code = "forbid"`, `warnings = "deny"`
 - **Quality**: Zero-warnings policy enforced by CI
+- **AI Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission
 
 ### Module Organization
 
@@ -107,7 +108,7 @@ All development tasks use the `just` command runner:
 
 - **Unit Tests**: Component-specific functionality testing
 - **Integration Tests**: Cross-component interaction testing
-- **CLI Tests**: assert_cmd for command-line interface testing
+- **CLI Tests**: insta for snapshot testing of command-line interface
 - **Performance Tests**: Criterion benchmarks with regression detection
 
 ### Configuration Management

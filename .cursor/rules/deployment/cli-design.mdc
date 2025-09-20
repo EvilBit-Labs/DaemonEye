@@ -52,4 +52,4 @@ Support hierarchical configuration with precedence:
 
 - Use structured error types with thiserror
 - Provide detailed error messages with actionable suggestions
-- Test error conditions with assert_cmd
+- Test error conditions with insta snapshot tests

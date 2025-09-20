@@ -107,7 +107,7 @@ All development tasks use the `just` command runner:
 
 - **Unit Tests**: Component-specific functionality testing
 - **Integration Tests**: Cross-component interaction testing
-- **CLI Tests**: assert_cmd for command-line interface testing
+- **CLI Tests**: insta for snapshot testing of command-line interface
 - **Performance Tests**: Criterion benchmarks with regression detection
 
 ### Configuration Management

@@ -19,6 +19,7 @@ use thiserror::Error;
 
 /// Alert delivery errors with specific error types for better error handling.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AlertingError {
     #[error("Alert sink error: {0}")]
     SinkError(String),
@@ -58,7 +59,7 @@ pub enum AlertingError {
 }
 
 /// Alert delivery result.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeliveryResult {
     /// Sink name
     pub sink_name: String,
@@ -93,14 +94,14 @@ pub struct StdoutSink {
 
 impl StdoutSink {
     /// Create a new stdout sink.
-    pub fn new(name: String, format: OutputFormat) -> Self {
+    pub const fn new(name: String, format: OutputFormat) -> Self {
         Self { name, format }
     }
 }
 
 #[async_trait]
 impl AlertSink for StdoutSink {
-    /// Sends the alert to stdout using the sink's configured output format and returns a DeliveryResult.
+    /// Sends the alert to stdout using the sink's configured output format and returns a `DeliveryResult`.
     ///
     /// The alert is formatted according to `self.format`:
     /// - `Json`: pretty-prints the alert as JSON (may produce `AlertingError::SerializationError`).
@@ -116,13 +117,13 @@ impl AlertSink for StdoutSink {
     /// use sentinel_lib::alerting::{AlertSink, StdoutSink, OutputFormat};
     /// use sentinel_lib::models::{Alert, AlertSeverity, ProcessRecord};
     ///
-    /// let sink = StdoutSink::new("stdout-test".to_string(), OutputFormat::Human);
+    /// let sink = StdoutSink::new("stdout-test".to_owned(), OutputFormat::Human);
     /// let alert = Alert::new(
     ///     AlertSeverity::Low,
     ///     "Test",
     ///     "Example",
     ///     "rule-1",
-    ///     ProcessRecord::new(1, "proc".to_string()),
+    ///     ProcessRecord::new(1, "proc".to_owned()),
     /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let res = rt.block_on(async { sink.send(&alert).await }).unwrap();
@@ -145,7 +146,7 @@ impl AlertSink for StdoutSink {
             ),
         };
 
-        println!("{}", output);
+        println!("{output}");
 
         let duration = start_time.elapsed();
         Ok(DeliveryResult {
@@ -153,7 +154,7 @@ impl AlertSink for StdoutSink {
             success: true,
             delivered_at: chrono::Utc::now(),
             error_message: None,
-            duration_ms: duration.as_millis() as u64,
+            duration_ms: u64::try_from(duration.as_millis()).unwrap_or(0),
         })
     }
 
@@ -176,7 +177,7 @@ pub struct FileSink {
 
 impl FileSink {
     /// Create a new file sink.
-    pub fn new(name: String, file_path: std::path::PathBuf, format: OutputFormat) -> Self {
+    pub const fn new(name: String, file_path: std::path::PathBuf, format: OutputFormat) -> Self {
         Self {
             name,
             file_path,
@@ -187,7 +188,7 @@ impl FileSink {
 
 #[async_trait]
 impl AlertSink for FileSink {
-    /// Appends the given alert to the configured file using the sink's OutputFormat and returns a DeliveryResult with timing and delivery metadata.
+    /// Appends the given alert to the configured file using the sink's `OutputFormat` and returns a `DeliveryResult` with timing and delivery metadata.
     ///
     /// # Examples
     ///
@@ -197,13 +198,13 @@ impl AlertSink for FileSink {
     /// use std::path::PathBuf;
     ///
     /// let path = PathBuf::from("/tmp/sentineld-alerts.log");
-    /// let sink = FileSink::new("file".to_string(), path.clone(), OutputFormat::Json);
+    /// let sink = FileSink::new("file".to_owned(), path.clone(), OutputFormat::Json);
     /// let alert = Alert::new(
     ///     AlertSeverity::High,
     ///     "Title",
     ///     "Desc",
     ///     "rule-1",
-    ///     ProcessRecord::new(1, "proc".to_string()),
+    ///     ProcessRecord::new(1, "proc".to_owned()),
     /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let _ = rt.block_on(async { sink.send(&alert).await }).unwrap();
@@ -230,7 +231,7 @@ impl AlertSink for FileSink {
             .create(true)
             .append(true)
             .open(&self.file_path)?
-            .write_all(format!("{}\n", output).as_bytes())?;
+            .write_all(format!("{output}\n").as_bytes())?;
 
         let duration = start_time.elapsed();
         Ok(DeliveryResult {
@@ -238,7 +239,7 @@ impl AlertSink for FileSink {
             success: true,
             delivered_at: chrono::Utc::now(),
             error_message: None,
-            duration_ms: duration.as_millis() as u64,
+            duration_ms: u64::try_from(duration.as_millis()).unwrap_or(0),
         })
     }
 
@@ -257,7 +258,8 @@ impl AlertSink for FileSink {
 }
 
 /// Output format enumeration with string parsing support.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OutputFormat {
     Json,
     Human,
@@ -270,13 +272,12 @@ impl std::str::FromStr for OutputFormat {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "json" => Ok(OutputFormat::Json),
-            "human" => Ok(OutputFormat::Human),
-            "yaml" => Ok(OutputFormat::Yaml),
-            "csv" => Ok(OutputFormat::Csv),
+            "json" => Ok(Self::Json),
+            "human" => Ok(Self::Human),
+            "yaml" => Ok(Self::Yaml),
+            "csv" => Ok(Self::Csv),
             _ => Err(AlertingError::ConfigurationError(format!(
-                "Unknown output format: {}",
-                s
+                "Unknown output format: {s}"
             ))),
         }
     }
@@ -284,17 +285,17 @@ impl std::str::FromStr for OutputFormat {
 
 impl std::fmt::Display for OutputFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OutputFormat::Json => write!(f, "json"),
-            OutputFormat::Human => write!(f, "human"),
-            OutputFormat::Yaml => write!(f, "yaml"),
-            OutputFormat::Csv => write!(f, "csv"),
+        match *self {
+            Self::Json => write!(f, "json"),
+            Self::Human => write!(f, "human"),
+            Self::Yaml => write!(f, "yaml"),
+            Self::Csv => write!(f, "csv"),
         }
     }
 }
 
 /// Configuration for creating alert sinks.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SinkConfig {
     /// Sink name
     pub name: String,
@@ -322,6 +323,7 @@ impl SinkConfig {
     }
 
     /// Add a configuration parameter.
+    #[must_use]
     pub fn with_config(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.config.insert(key.into(), value.into());
         self
@@ -345,7 +347,7 @@ impl AlertSinkFactory {
                     .get("path")
                     .ok_or_else(|| {
                         AlertingError::ConfigurationError(
-                            "File path is required for file sink".to_string(),
+                            "File path is required for file sink".to_owned(),
                         )
                     })?
                     .clone();
@@ -417,12 +419,12 @@ impl AlertManager {
     }
 
     /// Set the deduplication window.
-    pub fn set_dedup_window(&mut self, seconds: u64) {
+    pub const fn set_dedup_window(&mut self, seconds: u64) {
         self.dedup_window_seconds = seconds;
     }
 
     /// Set the maximum alerts per minute rate limit.
-    pub fn set_rate_limit(&mut self, max_per_minute: Option<u32>) {
+    pub const fn set_rate_limit(&mut self, max_per_minute: Option<u32>) {
         self.max_alerts_per_minute = max_per_minute;
     }
 
@@ -439,7 +441,7 @@ impl AlertManager {
         // Check rate limiting
         if self.is_rate_limited() {
             return Err(AlertingError::RateLimitExceeded(
-                "Alert rate limit exceeded".to_string(),
+                "Alert rate limit exceeded".to_owned(),
             ));
         }
 
@@ -451,7 +453,7 @@ impl AlertManager {
         for sink in &self.sinks {
             let sink_ref = sink.as_ref();
             let alert_clone = alert.clone();
-            let sink_name = sink.name().to_string();
+            let sink_name = sink.name().to_owned();
             tasks.push(async move {
                 match sink_ref.send(&alert_clone).await {
                     Ok(result) => Ok((sink_name, result)),
@@ -478,7 +480,7 @@ impl AlertManager {
         // Log errors but don't fail the entire operation
         if !errors.is_empty() {
             for (sink_name, error) in errors {
-                eprintln!("Alert delivery failed for sink {}: {}", sink_name, error);
+                eprintln!("Alert delivery failed for sink {sink_name}: {error}");
             }
         }
 
@@ -497,8 +499,8 @@ impl AlertManager {
     /// use sentinel_lib::models::{Alert, AlertSeverity, ProcessRecord};
     ///
     /// let mut mgr = AlertManager::new();
-    /// mgr.add_sink(Box::new(StdoutSink::new("s".to_string(), OutputFormat::Json)));
-    /// let alert = Alert::new(AlertSeverity::Low, "Title", "Desc", "rule-1", ProcessRecord::new(1, "proc".to_string()));
+    /// mgr.add_sink(Box::new(StdoutSink::new("s".to_owned(), OutputFormat::Json)));
+    /// let alert = Alert::new(AlertSeverity::Low, "Title", "Desc", "rule-1", ProcessRecord::new(1, "proc".to_owned()));
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let first = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
     /// let second = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
@@ -506,20 +508,24 @@ impl AlertManager {
     /// assert_eq!(second.len(), 0); // duplicate suppressed
     /// ```
     fn is_duplicate(&self, alert: &Alert) -> bool {
-        if let Some(last_seen) = self.recent_alerts.get(&alert.deduplication_key) {
-            let now = chrono::Utc::now();
-            let time_diff = now.signed_duration_since(*last_seen);
-            time_diff.num_seconds() < self.dedup_window_seconds as i64
-        } else {
-            false
-        }
+        self.recent_alerts
+            .get(&alert.deduplication_key)
+            .is_some_and(|last_seen| {
+                let now = chrono::Utc::now();
+                let time_diff = now.signed_duration_since(*last_seen);
+                time_diff.num_seconds()
+                    < i64::try_from(self.dedup_window_seconds).unwrap_or(i64::MAX)
+            })
     }
 
     /// Check if we're rate limited.
+    #[allow(clippy::arithmetic_side_effects)]
     fn is_rate_limited(&self) -> bool {
-        if let Some(max_per_minute) = self.max_alerts_per_minute {
+        self.max_alerts_per_minute.is_some_and(|max_per_minute| {
             let now = chrono::Utc::now();
-            let one_minute_ago = now - chrono::Duration::minutes(1);
+            let one_minute_ago = now
+                .checked_sub_signed(chrono::Duration::minutes(1))
+                .unwrap_or(now);
 
             let recent_count = self
                 .recent_alerts
@@ -527,10 +533,8 @@ impl AlertManager {
                 .filter(|&&timestamp| timestamp > one_minute_ago)
                 .count();
 
-            recent_count >= max_per_minute as usize
-        } else {
-            false
-        }
+            recent_count >= usize::try_from(max_per_minute).unwrap_or(usize::MAX)
+        })
     }
 
     /// Record the given alert for deduplication and rate-limiting.
@@ -545,7 +549,7 @@ impl AlertManager {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```text
     /// // Internal helper used by AlertManager; prefer using `send_alert` which records alerts automatically.
     /// ```
     fn record_alert(&mut self, alert: &Alert) {
@@ -554,7 +558,10 @@ impl AlertManager {
 
         // Clean up old entries periodically
         if self.recent_alerts.len() > 1000 {
-            let cutoff = chrono::Utc::now() - chrono::Duration::hours(1);
+            #[allow(clippy::arithmetic_side_effects)]
+            let cutoff = chrono::Utc::now()
+                .checked_sub_signed(chrono::Duration::hours(1))
+                .unwrap_or_else(chrono::Utc::now);
             self.recent_alerts
                 .retain(|_, &mut timestamp| timestamp > cutoff);
         }
@@ -570,7 +577,7 @@ impl AlertManager {
         let mut results = HashMap::new();
 
         for sink in &self.sinks {
-            let sink_name = sink.name().to_string();
+            let sink_name = sink.name().to_owned();
             let health_result =
                 sink.health_check()
                     .await
@@ -592,14 +599,14 @@ impl AlertManager {
             .values()
             .filter(|result| result.is_ok())
             .count();
-        let unhealthy_sinks = total_sinks - healthy_sinks;
+        let unhealthy_sinks = total_sinks.saturating_sub(healthy_sinks);
 
         let details = health_results
             .into_iter()
             .map(|(sink_name, result)| {
                 let status = match result {
-                    Ok(()) => "healthy".to_string(),
-                    Err(e) => format!("unhealthy: {}", e),
+                    Ok(()) => "healthy".to_owned(),
+                    Err(e) => format!("unhealthy: {e}"),
                 };
                 (sink_name, status)
             })
@@ -621,7 +628,7 @@ impl Default for AlertManager {
 }
 
 /// Health summary for all alert sinks.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HealthSummary {
     /// Total number of sinks
     pub total_sinks: usize,
@@ -635,29 +642,39 @@ pub struct HealthSummary {
 
 impl HealthSummary {
     /// Check if all sinks are healthy.
-    pub fn is_all_healthy(&self) -> bool {
+    pub const fn is_all_healthy(&self) -> bool {
         self.unhealthy_sinks == 0
     }
 
     /// Get the health percentage.
+    #[allow(clippy::arithmetic_side_effects)]
     pub fn health_percentage(&self) -> f64 {
         if self.total_sinks == 0 {
             100.0
         } else {
-            (self.healthy_sinks as f64 / self.total_sinks as f64) * 100.0
+            let healthy = f64::from(u32::try_from(self.healthy_sinks).unwrap_or(0));
+            let total = f64::from(u32::try_from(self.total_sinks).unwrap_or(1).max(1));
+            (healthy / total) * 100.0
         }
     }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::assertions_on_constants,
+    clippy::float_cmp
+)]
 mod tests {
     use super::*;
     use crate::models::{AlertSeverity, ProcessRecord};
 
     #[tokio::test]
     async fn test_stdout_sink() {
-        let sink = StdoutSink::new("test".to_string(), OutputFormat::Json);
-        let process = ProcessRecord::new(1234, "test-process".to_string());
+        let sink = StdoutSink::new("test".to_owned(), OutputFormat::Json);
+        let process = ProcessRecord::new(1234, "test-process".to_owned());
         let alert = Alert::new(
             AlertSeverity::High,
             "Test Alert",
@@ -666,7 +683,7 @@ mod tests {
             process,
         );
 
-        let result = sink.send(&alert).await.unwrap();
+        let result = sink.send(&alert).await.expect("Failed to send alert");
         assert!(result.success);
         assert_eq!(result.sink_name, "test");
     }
@@ -674,10 +691,10 @@ mod tests {
     #[tokio::test]
     async fn test_alert_manager() {
         let mut manager = AlertManager::new();
-        let stdout_sink = Box::new(StdoutSink::new("stdout".to_string(), OutputFormat::Json));
+        let stdout_sink = Box::new(StdoutSink::new("stdout".to_owned(), OutputFormat::Json));
         manager.add_sink(stdout_sink);
 
-        let process = ProcessRecord::new(1234, "test-process".to_string());
+        let process = ProcessRecord::new(1234, "test-process".to_owned());
         let alert = Alert::new(
             AlertSeverity::High,
             "Test Alert",
@@ -686,18 +703,26 @@ mod tests {
             process,
         );
 
-        let results = manager.send_alert(&alert).await.unwrap();
+        let results = manager
+            .send_alert(&alert)
+            .await
+            .expect("Failed to send alert");
         assert_eq!(results.len(), 1);
-        assert!(results[0].success);
+        assert!(
+            results
+                .first()
+                .expect("Expected at least one result")
+                .success
+        );
     }
 
     #[tokio::test]
     async fn test_deduplication() {
         let mut manager = AlertManager::new();
-        let stdout_sink = Box::new(StdoutSink::new("stdout".to_string(), OutputFormat::Json));
+        let stdout_sink = Box::new(StdoutSink::new("stdout".to_owned(), OutputFormat::Json));
         manager.add_sink(stdout_sink);
 
-        let process = ProcessRecord::new(1234, "test-process".to_string());
+        let process = ProcessRecord::new(1234, "test-process".to_owned());
         let alert = Alert::new(
             AlertSeverity::High,
             "Test Alert",
@@ -707,8 +732,14 @@ mod tests {
         );
 
         // Send the same alert twice
-        let results1 = manager.send_alert(&alert).await.unwrap();
-        let results2 = manager.send_alert(&alert).await.unwrap();
+        let results1 = manager
+            .send_alert(&alert)
+            .await
+            .expect("Failed to send first alert");
+        let results2 = manager
+            .send_alert(&alert)
+            .await
+            .expect("Failed to send second alert");
 
         assert_eq!(results1.len(), 1);
         assert_eq!(results2.len(), 0); // Should be deduplicated
@@ -716,13 +747,28 @@ mod tests {
 
     #[test]
     fn test_output_format_parsing() {
-        assert_eq!("json".parse::<OutputFormat>().unwrap(), OutputFormat::Json);
         assert_eq!(
-            "human".parse::<OutputFormat>().unwrap(),
+            "json"
+                .parse::<OutputFormat>()
+                .expect("Failed to parse json"),
+            OutputFormat::Json
+        );
+        assert_eq!(
+            "human"
+                .parse::<OutputFormat>()
+                .expect("Failed to parse human"),
             OutputFormat::Human
         );
-        assert_eq!("yaml".parse::<OutputFormat>().unwrap(), OutputFormat::Yaml);
-        assert_eq!("csv".parse::<OutputFormat>().unwrap(), OutputFormat::Csv);
+        assert_eq!(
+            "yaml"
+                .parse::<OutputFormat>()
+                .expect("Failed to parse yaml"),
+            OutputFormat::Yaml
+        );
+        assert_eq!(
+            "csv".parse::<OutputFormat>().expect("Failed to parse csv"),
+            OutputFormat::Csv
+        );
         assert!("invalid".parse::<OutputFormat>().is_err());
     }
 
@@ -734,13 +780,13 @@ mod tests {
         assert_eq!(config.name, "test-sink");
         assert_eq!(config.sink_type, "stdout");
         assert_eq!(config.format, OutputFormat::Json);
-        assert_eq!(config.config.get("level"), Some(&"info".to_string()));
+        assert_eq!(config.config.get("level"), Some(&"info".to_owned()));
     }
 
     #[test]
     fn test_alert_sink_factory() {
         let config = SinkConfig::new("test-sink", "stdout", OutputFormat::Json);
-        let sink = AlertSinkFactory::create_sink(config).unwrap();
+        let sink = AlertSinkFactory::create_sink(config).expect("Failed to create alert sink");
         assert_eq!(sink.name(), "test-sink");
     }
 
@@ -752,21 +798,24 @@ mod tests {
         if let Err(AlertingError::UnknownSinkType { sink_type }) = result {
             assert_eq!(sink_type, "unknown");
         } else {
-            panic!("Expected UnknownSinkType error");
+            assert!(
+                false,
+                "Expected UnknownSinkType error in test_alert_sink_factory_unknown_type, got non-UnknownSinkType result"
+            );
         }
     }
 
     #[tokio::test]
     async fn test_alert_manager_from_configs() {
         let configs = vec![SinkConfig::new("stdout", "stdout", OutputFormat::Json)];
-        let manager = AlertManager::from_configs(configs).unwrap();
+        let manager = AlertManager::from_configs(configs).expect("Failed to create alert manager");
         assert_eq!(manager.get_sinks().len(), 1);
     }
 
     #[tokio::test]
     async fn test_health_summary() {
         let mut manager = AlertManager::new();
-        let stdout_sink = Box::new(StdoutSink::new("stdout".to_string(), OutputFormat::Json));
+        let stdout_sink = Box::new(StdoutSink::new("stdout".to_owned(), OutputFormat::Json));
         manager.add_sink(stdout_sink);
 
         let summary = manager.health_summary().await;
@@ -823,7 +872,7 @@ mod tests {
     fn test_delivery_result_creation() {
         let result = DeliveryResult {
             success: true,
-            sink_name: "test-sink".to_string(),
+            sink_name: "test-sink".to_owned(),
             delivered_at: chrono::Utc::now(),
             error_message: None,
             duration_ms: 100,
@@ -838,14 +887,15 @@ mod tests {
     fn test_delivery_result_serialization() {
         let result = DeliveryResult {
             success: true,
-            sink_name: "test-sink".to_string(),
+            sink_name: "test-sink".to_owned(),
             delivered_at: chrono::Utc::now(),
             error_message: None,
             duration_ms: 100,
         };
 
-        let json = serde_json::to_string(&result).unwrap();
-        let deserialized: DeliveryResult = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&result).expect("Failed to serialize delivery result");
+        let deserialized: DeliveryResult =
+            serde_json::from_str(&json).expect("Failed to deserialize delivery result");
         assert_eq!(result.success, deserialized.success);
         assert_eq!(result.sink_name, deserialized.sink_name);
         assert_eq!(result.duration_ms, deserialized.duration_ms);
@@ -855,10 +905,10 @@ mod tests {
     fn test_alerting_error_display() {
         let errors = vec![
             AlertingError::UnknownSinkType {
-                sink_type: "test".to_string(),
+                sink_type: "test".to_owned(),
             },
-            AlertingError::ConfigurationError("test error".to_string()),
-            AlertingError::ConfigurationError("test error".to_string()),
+            AlertingError::ConfigurationError("test error".to_owned()),
+            AlertingError::ConfigurationError("test error".to_owned()),
         ];
 
         for error in errors {
@@ -873,8 +923,8 @@ mod tests {
         config = config.with_config("key1", "value1");
         config = config.with_config("key2", "value2");
 
-        assert_eq!(config.config.get("key1"), Some(&"value1".to_string()));
-        assert_eq!(config.config.get("key2"), Some(&"value2".to_string()));
+        assert_eq!(config.config.get("key1"), Some(&"value1".to_owned()));
+        assert_eq!(config.config.get("key2"), Some(&"value2".to_owned()));
     }
 
     #[test]
@@ -882,8 +932,9 @@ mod tests {
         let config =
             SinkConfig::new("test", "stdout", OutputFormat::Json).with_config("level", "info");
 
-        let json = serde_json::to_string(&config).unwrap();
-        let deserialized: SinkConfig = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&config).expect("Failed to serialize sink config");
+        let deserialized: SinkConfig =
+            serde_json::from_str(&json).expect("Failed to deserialize sink config");
         assert_eq!(config.name, deserialized.name);
         assert_eq!(config.sink_type, deserialized.sink_type);
         assert_eq!(config.format, deserialized.format);
@@ -898,8 +949,8 @@ mod tests {
     #[tokio::test]
     async fn test_alert_manager_multiple_sinks() {
         let mut manager = AlertManager::new();
-        let sink1 = Box::new(StdoutSink::new("sink1".to_string(), OutputFormat::Json));
-        let sink2 = Box::new(StdoutSink::new("sink2".to_string(), OutputFormat::Human));
+        let sink1 = Box::new(StdoutSink::new("sink1".to_owned(), OutputFormat::Json));
+        let sink2 = Box::new(StdoutSink::new("sink2".to_owned(), OutputFormat::Human));
         manager.add_sink(sink1);
         manager.add_sink(sink2);
 
@@ -909,8 +960,8 @@ mod tests {
     #[tokio::test]
     async fn test_alert_manager_health_summary_multiple_sinks() {
         let mut manager = AlertManager::new();
-        let sink1 = Box::new(StdoutSink::new("sink1".to_string(), OutputFormat::Json));
-        let sink2 = Box::new(StdoutSink::new("sink2".to_string(), OutputFormat::Human));
+        let sink1 = Box::new(StdoutSink::new("sink1".to_owned(), OutputFormat::Json));
+        let sink2 = Box::new(StdoutSink::new("sink2".to_owned(), OutputFormat::Human));
         manager.add_sink(sink1);
         manager.add_sink(sink2);
 

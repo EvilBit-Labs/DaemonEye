@@ -19,6 +19,7 @@ pub type IpcResult<T> = Result<T, IpcError>;
 
 /// Comprehensive error types for IPC operations
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum IpcError {
     #[error("Timeout occurred during operation")]
     Timeout,
@@ -67,7 +68,7 @@ impl IpcCodec {
 
     /// Write a protobuf message with framing and CRC32 validation
     pub async fn write_message<T, W>(
-        &mut self,
+        &self,
         writer: &mut W,
         message: &T,
         write_timeout: Duration,
@@ -99,22 +100,22 @@ impl IpcCodec {
         let crc32 = self.calculate_crc32(&message_bytes);
 
         // Build frame: length + crc32 + message
-        let frame_len = 4 + 4 + message_len; // u32 + u32 + message
+        let frame_len = 4_usize.saturating_add(4).saturating_add(message_len); // u32 + u32 + message
         let mut frame = BytesMut::with_capacity(frame_len);
 
-        frame.put_u32_le(message_len as u32);
+        frame.put_u32_le(u32::try_from(message_len).unwrap_or(0));
         frame.put_u32_le(crc32);
         frame.extend_from_slice(&message_bytes);
 
         // Write frame with timeout
         timeout(write_timeout, writer.write_all(&frame))
             .await
-            .map_err(|_| IpcError::Timeout)?
+            .map_err(|_err| IpcError::Timeout)?
             .map_err(IpcError::Io)?;
 
         timeout(write_timeout, writer.flush())
             .await
-            .map_err(|_| IpcError::Timeout)?
+            .map_err(|_err| IpcError::Timeout)?
             .map_err(IpcError::Io)?;
 
         Ok(())
@@ -131,10 +132,10 @@ impl IpcCodec {
         R: AsyncRead + Unpin,
     {
         // Read frame header (length + crc32)
-        let mut header = [0u8; 8];
+        let mut header = [0_u8; 8];
         timeout(read_timeout, reader.read_exact(&mut header))
             .await
-            .map_err(|_| IpcError::Timeout)?
+            .map_err(|_err| IpcError::Timeout)?
             .map_err(|e| {
                 if e.kind() == io::ErrorKind::UnexpectedEof {
                     IpcError::PeerClosed
@@ -143,7 +144,10 @@ impl IpcCodec {
                 }
             })?;
 
-        let message_len = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
+        let message_len = usize::try_from(u32::from_le_bytes([
+            header[0], header[1], header[2], header[3],
+        ]))
+        .unwrap_or(0);
         let expected_crc32 = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
 
         // Validate message length
@@ -166,7 +170,7 @@ impl IpcCodec {
 
         timeout(read_timeout, reader.read_exact(&mut self.read_buf))
             .await
-            .map_err(|_| IpcError::Timeout)?
+            .map_err(|_err| IpcError::Timeout)?
             .map_err(|e| {
                 if e.kind() == io::ErrorKind::UnexpectedEof {
                     IpcError::PeerClosed
@@ -228,12 +232,18 @@ pub trait AsyncCodec {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::uninlined_format_args,
+    clippy::as_conversions,
+    clippy::assertions_on_constants
+)]
 mod tests {
     use super::*;
     use crate::proto::{DetectionTask, TaskType};
     use tokio::io::{DuplexStream, duplex};
 
-    async fn create_test_codec_pair() -> (IpcCodec, DuplexStream, DuplexStream) {
+    fn create_test_codec_pair() -> (IpcCodec, DuplexStream, DuplexStream) {
         let codec = IpcCodec::new(1024, Crc32Variant::Ieee);
         let (client, server) = duplex(1024);
         (codec, client, server)
@@ -241,17 +251,17 @@ mod tests {
 
     fn create_test_message() -> DetectionTask {
         DetectionTask {
-            task_id: "test-123".to_string(),
-            task_type: TaskType::EnumerateProcesses as i32,
+            task_id: "test-123".to_owned(),
+            task_type: i32::from(TaskType::EnumerateProcesses),
             process_filter: None,
             hash_check: None,
-            metadata: Some("test metadata".to_string()),
+            metadata: Some("test metadata".to_owned()),
         }
     }
 
     #[tokio::test]
     async fn test_encode_decode_roundtrip() {
-        let (mut codec, mut client, mut server) = create_test_codec_pair().await;
+        let (mut codec, mut client, mut server) = create_test_codec_pair();
         let original_message = create_test_message();
 
         let timeout_duration = Duration::from_secs(1);
@@ -280,7 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_message_rejection() {
-        let (_codec, mut client, _server) = create_test_codec_pair().await;
+        let (_codec, mut client, _server) = create_test_codec_pair();
 
         // Try to create a zero-length message by manipulating the frame
         let mut frame = BytesMut::new();
@@ -296,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_oversized_message_rejection() {
-        let mut codec = IpcCodec::new(100, Crc32Variant::Ieee); // Very small limit
+        let codec = IpcCodec::new(100, Crc32Variant::Ieee); // Very small limit
         let (mut client, _server) = duplex(1024);
 
         let large_message = DetectionTask {
@@ -317,18 +327,25 @@ mod tests {
                 assert!(size > max_size);
                 assert_eq!(max_size, 100);
             }
-            other => panic!("Expected TooLarge error, got: {:?}", other),
+            other => {
+                assert!(
+                    false,
+                    "Expected TooLarge error for oversized message test, got: {other:?}"
+                );
+            }
         }
     }
 
     #[tokio::test]
     async fn test_crc_mismatch_detection() {
-        let (mut codec, mut client, mut server) = create_test_codec_pair().await;
+        let (mut codec, mut client, mut server) = create_test_codec_pair();
         let message = create_test_message();
 
         // Encode message properly
         let mut message_bytes = BytesMut::new();
-        message.encode(&mut message_bytes).unwrap();
+        message
+            .encode(&mut message_bytes)
+            .expect("Failed to encode test message for CRC test");
         let message_len = message_bytes.len() as u32;
         let correct_crc32 = codec.calculate_crc32(&message_bytes);
 
@@ -338,7 +355,10 @@ mod tests {
         frame.put_u32_le(correct_crc32.wrapping_add(1)); // Corrupt CRC
         frame.extend_from_slice(&message_bytes);
 
-        client.write_all(&frame).await.unwrap();
+        client
+            .write_all(&frame)
+            .await
+            .expect("Failed to write corrupted frame for CRC test");
 
         // Try to read - should get CRC mismatch
         let timeout_duration = Duration::from_secs(1);
@@ -349,13 +369,18 @@ mod tests {
             Err(IpcError::CrcMismatch { expected, actual }) => {
                 assert_ne!(expected, actual);
             }
-            other => panic!("Expected CrcMismatch error, got: {:?}", other),
+            other => {
+                assert!(
+                    false,
+                    "Expected CrcMismatch error for corrupted CRC test, got: {other:?}"
+                );
+            }
         }
     }
 
     #[tokio::test]
     async fn test_timeout_handling() {
-        let (mut codec, mut _client, mut server) = create_test_codec_pair().await;
+        let (mut codec, mut _client, mut server) = create_test_codec_pair();
 
         // Try to read with a very short timeout and no data
         let short_timeout = Duration::from_millis(10);
@@ -365,7 +390,12 @@ mod tests {
             Err(IpcError::Timeout) => {
                 // Expected
             }
-            other => panic!("Expected Timeout error, got: {:?}", other),
+            other => {
+                assert!(
+                    false,
+                    "Expected Timeout error for timeout handling test, got: {other:?}"
+                );
+            }
         }
     }
 

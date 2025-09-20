@@ -61,7 +61,7 @@ const BANNED_FUNCTIONS: &[&str] = &[
 pub struct RuleId(String);
 
 impl RuleId {
-    /// Create a new RuleId from any type convertible into `String`.
+    /// Create a new `RuleId` from any type convertible into `String`.
     ///
     /// This is a convenience constructor that consumes the input (or clones if it was a reference)
     /// and stores its string representation as the inner ID.
@@ -77,7 +77,7 @@ impl RuleId {
         Self(id.into())
     }
 
-    /// Returns the underlying string slice of the RuleId.
+    /// Returns the underlying string slice of the `RuleId`.
     ///
     /// # Examples
     ///
@@ -92,7 +92,7 @@ impl RuleId {
 }
 
 impl From<String> for RuleId {
-    /// Creates a RuleId from a `String`.
+    /// Creates a `RuleId` from a `String`.
     ///
     /// This is equivalent to calling `RuleId::new` with the provided string.
     ///
@@ -109,7 +109,7 @@ impl From<String> for RuleId {
 }
 
 impl From<&str> for RuleId {
-    /// Creates a RuleId from a string slice.
+    /// Creates a `RuleId` from a string slice.
     ///
     /// # Examples
     ///
@@ -124,7 +124,7 @@ impl From<&str> for RuleId {
 }
 
 impl fmt::Display for RuleId {
-    /// Formats the RuleId by writing its inner string.
+    /// Formats the `RuleId` by writing its inner string.
     ///
     /// # Examples
     ///
@@ -139,7 +139,7 @@ impl fmt::Display for RuleId {
 }
 
 /// Rule metadata information.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct RuleMetadata {
     /// Additional metadata
     pub data: HashMap<String, String>,
@@ -156,7 +156,7 @@ pub struct RuleMetadata {
 }
 
 impl RuleMetadata {
-    /// Creates a new, empty RuleMetadata (equivalent to `Default::default()`).
+    /// Creates a new, empty `RuleMetadata` (equivalent to `Default::default()`).
     ///
     /// # Examples
     ///
@@ -182,6 +182,7 @@ impl RuleMetadata {
     /// let meta = RuleMetadata::new().with_data("env", "production");
     /// assert_eq!(meta.data.get("env").map(String::as_str), Some("production"));
     /// ```
+    #[must_use]
     pub fn with_data(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.data.insert(key.into(), value.into());
         self
@@ -199,6 +200,7 @@ impl RuleMetadata {
     /// assert!(meta.tags.contains(&"network".to_string()));
     /// assert!(meta.tags.contains(&"suspicious".to_string()));
     /// ```
+    #[must_use]
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.tags.push(tag.into());
         self
@@ -215,6 +217,7 @@ impl RuleMetadata {
     /// let meta = RuleMetadata::new().with_author("alice");
     /// assert_eq!(meta.author, Some("alice".to_string()));
     /// ```
+    #[must_use]
     pub fn with_author(mut self, author: impl Into<String>) -> Self {
         self.author = Some(author.into());
         self
@@ -229,6 +232,7 @@ impl RuleMetadata {
     /// let meta = RuleMetadata::new().with_version("1.2.3");
     /// assert_eq!(meta.version.as_deref(), Some("1.2.3"));
     /// ```
+    #[must_use]
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());
         self
@@ -246,6 +250,7 @@ impl RuleMetadata {
     /// let meta = RuleMetadata::new().with_category("network");
     /// assert_eq!(meta.category.as_deref(), Some("network"));
     /// ```
+    #[must_use]
     pub fn with_category(mut self, category: impl Into<String>) -> Self {
         self.category = Some(category.into());
         self
@@ -260,14 +265,15 @@ impl RuleMetadata {
     /// let meta = RuleMetadata::new().with_priority(5);
     /// assert_eq!(meta.priority, Some(5));
     /// ```
-    pub fn with_priority(mut self, priority: u8) -> Self {
+    #[must_use]
+    pub const fn with_priority(mut self, priority: u8) -> Self {
         self.priority = Some(priority);
         self
     }
 }
 
 /// Detection rule with SQL query and metadata.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DetectionRule {
     /// Rule identifier
     pub id: RuleId,
@@ -296,7 +302,7 @@ pub struct DetectionRule {
 }
 
 impl DetectionRule {
-    /// Create a new DetectionRule with sensible defaults.
+    /// Create a new `DetectionRule` with sensible defaults.
     ///
     /// The constructor initializes timestamps to now, sets the rule `version` to `"1.0.0"`,
     /// `author` to `"system"`, enables the rule, and populates `metadata` with the provided
@@ -331,25 +337,25 @@ impl DetectionRule {
         severity: AlertSeverity,
     ) -> Self {
         let now = SystemTime::now();
-        let id = id.into();
-        let name = name.into();
-        let description = description.into();
-        let sql_query = sql_query.into();
-        let category = category.into();
+        let rule_id = id.into();
+        let rule_name = name.into();
+        let rule_description = description.into();
+        let rule_sql_query = sql_query.into();
+        let rule_category = category.into();
         Self {
-            id,
-            name,
-            description,
-            sql_query,
+            id: rule_id,
+            name: rule_name,
+            description: rule_description,
+            sql_query: rule_sql_query,
             severity,
-            version: "1.0.0".to_string(),
-            author: "system".to_string(),
+            version: "1.0.0".to_owned(),
+            author: "system".to_owned(),
             created_at: now,
             updated_at: now,
             enabled: true,
             tags: Vec::new(),
             metadata: RuleMetadata::new()
-                .with_category(category)
+                .with_category(rule_category)
                 .with_version("1.0.0")
                 .with_author("system"),
         }
@@ -383,30 +389,140 @@ impl DetectionRule {
     /// );
     /// assert!(rule.validate_sql().is_ok());
     /// ```
+    #[allow(clippy::pattern_type_mismatch, clippy::indexing_slicing)]
     pub fn validate_sql(&self) -> Result<(), RuleError> {
         use sqlparser::dialect::GenericDialect;
         use sqlparser::parser::Parser;
 
         let dialect = GenericDialect {};
         let statements = Parser::parse_sql(&dialect, &self.sql_query)
-            .map_err(|e| RuleError::InvalidSql(format!("Failed to parse SQL: {}", e)))?;
+            .map_err(|e| RuleError::InvalidSql(format!("Failed to parse SQL: {e}")))?;
 
         // Ensure single statement
         if statements.len() != 1 {
             return Err(RuleError::InvalidSql(
-                "Only single SQL statements are allowed".to_string(),
+                "Only single SQL statements are allowed".to_owned(),
             ));
         }
 
-        // Ensure it's a SELECT statement
+        // Ensure it's a SELECT statement - we checked length above so this is safe
         match &statements[0] {
             Statement::Query(query) => {
                 // Basic validation - ensure it's a SELECT query
                 Self::validate_query_basic(query)?;
             }
-            _ => {
+            Statement::Analyze { .. }
+            | Statement::Set(_)
+            | Statement::Truncate { .. }
+            | Statement::Msck { .. }
+            | Statement::Insert(_)
+            | Statement::Install { .. }
+            | Statement::Load { .. }
+            | Statement::Directory { .. }
+            | Statement::Case(_)
+            | Statement::If(_)
+            | Statement::While(_)
+            | Statement::Raise(_)
+            | Statement::Call(_)
+            | Statement::Copy { .. }
+            | Statement::CopyIntoSnowflake { .. }
+            | Statement::Open(_)
+            | Statement::Close { .. }
+            | Statement::Update { .. }
+            | Statement::Delete(_)
+            | Statement::CreateView { .. }
+            | Statement::CreateTable(_)
+            | Statement::CreateVirtualTable { .. }
+            | Statement::CreateIndex(_)
+            | Statement::CreateRole { .. }
+            | Statement::CreateSecret { .. }
+            | Statement::CreateServer(_)
+            | Statement::CreatePolicy { .. }
+            | Statement::CreateConnector(_)
+            | Statement::AlterTable { .. }
+            | Statement::AlterIndex { .. }
+            | Statement::AlterView { .. }
+            | Statement::AlterType(_)
+            | Statement::AlterRole { .. }
+            | Statement::AlterPolicy { .. }
+            | Statement::AlterConnector { .. }
+            | Statement::AlterSession { .. }
+            | Statement::AttachDatabase { .. }
+            | Statement::AttachDuckDBDatabase { .. }
+            | Statement::DetachDuckDBDatabase { .. }
+            | Statement::Drop { .. }
+            | Statement::DropFunction { .. }
+            | Statement::DropDomain(_)
+            | Statement::DropProcedure { .. }
+            | Statement::DropSecret { .. }
+            | Statement::DropPolicy { .. }
+            | Statement::DropConnector { .. }
+            | Statement::Declare { .. }
+            | Statement::CreateExtension { .. }
+            | Statement::DropExtension { .. }
+            | Statement::Fetch { .. }
+            | Statement::Flush { .. }
+            | Statement::Discard { .. }
+            | Statement::ShowFunctions { .. }
+            | Statement::ShowVariable { .. }
+            | Statement::ShowStatus { .. }
+            | Statement::ShowVariables { .. }
+            | Statement::ShowCreate { .. }
+            | Statement::ShowColumns { .. }
+            | Statement::ShowDatabases { .. }
+            | Statement::ShowSchemas { .. }
+            | Statement::ShowObjects(_)
+            | Statement::ShowTables { .. }
+            | Statement::ShowViews { .. }
+            | Statement::ShowCollation { .. }
+            | Statement::Use(_)
+            | Statement::StartTransaction { .. }
+            | Statement::Comment { .. }
+            | Statement::Commit { .. }
+            | Statement::Rollback { .. }
+            | Statement::CreateSchema { .. }
+            | Statement::CreateDatabase { .. }
+            | Statement::CreateFunction(_)
+            | Statement::CreateTrigger { .. }
+            | Statement::DropTrigger { .. }
+            | Statement::CreateProcedure { .. }
+            | Statement::CreateMacro { .. }
+            | Statement::CreateStage { .. }
+            | Statement::Assert { .. }
+            | Statement::Grant { .. }
+            | Statement::Deny(_)
+            | Statement::Revoke { .. }
+            | Statement::Deallocate { .. }
+            | Statement::Execute { .. }
+            | Statement::Prepare { .. }
+            | Statement::Kill { .. }
+            | Statement::ExplainTable { .. }
+            | Statement::Explain { .. }
+            | Statement::Savepoint { .. }
+            | Statement::ReleaseSavepoint { .. }
+            | Statement::Merge { .. }
+            | Statement::Cache { .. }
+            | Statement::UNCache { .. }
+            | Statement::CreateSequence { .. }
+            | Statement::CreateDomain(_)
+            | Statement::CreateType { .. }
+            | Statement::Pragma { .. }
+            | Statement::LockTables { .. }
+            | Statement::UnlockTables
+            | Statement::Unload { .. }
+            | Statement::OptimizeTable { .. }
+            | Statement::LISTEN { .. }
+            | Statement::UNLISTEN { .. }
+            | Statement::NOTIFY { .. }
+            | Statement::LoadData { .. }
+            | Statement::RenameTable(_)
+            | Statement::List(_)
+            | Statement::Remove(_)
+            | Statement::RaisError { .. }
+            | Statement::Print(_)
+            | Statement::Return(_) => {
                 return Err(RuleError::InvalidSql(
-                    "Only SELECT statements are allowed".to_string(),
+                    "Only SELECT statements are allowed".to_owned(),
                 ));
             }
         }
@@ -438,15 +554,22 @@ impl DetectionRule {
     ///     panic!("expected a query statement");
     /// }
     /// ```
+    #[allow(clippy::pattern_type_mismatch)]
     fn validate_query_basic(query: &Query) -> Result<(), RuleError> {
         // Validate the main query body is a SELECT
-        match &*query.body {
+        match query.body.as_ref() {
             SetExpr::Select(select) => {
                 Self::validate_select_basic(select)?;
             }
-            _ => {
+            SetExpr::Query(_)
+            | SetExpr::SetOperation { .. }
+            | SetExpr::Values(_)
+            | SetExpr::Insert(_)
+            | SetExpr::Update(_)
+            | SetExpr::Delete(_)
+            | SetExpr::Table(_) => {
                 return Err(RuleError::InvalidSql(
-                    "Only SELECT statements are allowed".to_string(),
+                    "Only SELECT statements are allowed".to_owned(),
                 ));
             }
         }
@@ -485,31 +608,31 @@ impl DetectionRule {
     /// let rule = DetectionRule::new(RuleId::from("r1"), "name", "desc", sql, "cat", AlertSeverity::Low);
     /// assert!(rule.validate_sql().is_ok());
     /// ```
+    #[allow(clippy::pattern_type_mismatch)]
     fn validate_select_basic(select: &Select) -> Result<(), RuleError> {
         // Validate FROM clause exists
         if select.from.is_empty() {
             return Err(RuleError::InvalidSql(
-                "SELECT statement must have a FROM clause".to_string(),
+                "SELECT statement must have a FROM clause".to_owned(),
             ));
         }
 
         // Validate projection count
         if select.projection.len() > 50 {
             return Err(RuleError::InvalidSql(
-                "Too many columns in SELECT (max 50)".to_string(),
+                "Too many columns in SELECT (max 50)".to_owned(),
             ));
         }
 
         // Validate SELECT columns for functions
         for projection in &select.projection {
             match projection {
-                sqlparser::ast::SelectItem::UnnamedExpr(expr) => {
+                sqlparser::ast::SelectItem::UnnamedExpr(expr)
+                | sqlparser::ast::SelectItem::ExprWithAlias { expr, .. } => {
                     Self::validate_expr_basic(expr)?;
                 }
-                sqlparser::ast::SelectItem::ExprWithAlias { expr, .. } => {
-                    Self::validate_expr_basic(expr)?;
-                }
-                _ => {
+                sqlparser::ast::SelectItem::QualifiedWildcard(..)
+                | sqlparser::ast::SelectItem::Wildcard(_) => {
                     // Allow other projection types (wildcards, etc.)
                 }
             }
@@ -522,7 +645,7 @@ impl DetectionRule {
             .map(|item| item.joins.len())
             .sum::<usize>();
         if join_count > 4 {
-            return Err(RuleError::InvalidSql("Too many JOINs (max 4)".to_string()));
+            return Err(RuleError::InvalidSql("Too many JOINs (max 4)".to_owned()));
         }
 
         // Validate WHERE clause if present
@@ -538,7 +661,7 @@ impl DetectionRule {
             sqlparser::ast::GroupByExpr::Expressions(exprs, _) => {
                 if exprs.len() > 10 {
                     return Err(RuleError::InvalidSql(
-                        "GROUP BY has too many columns (max 10)".to_string(),
+                        "GROUP BY has too many columns (max 10)".to_owned(),
                     ));
                 }
                 for expr in exprs {
@@ -576,6 +699,7 @@ impl DetectionRule {
     /// // Call the validator (found on the same impl as this method):
     /// let _ = DetectionRule::validate_expr_basic(&expr);
     /// ```
+    #[allow(clippy::pattern_type_mismatch)]
     fn validate_expr_basic(expr: &Expr) -> Result<(), RuleError> {
         match expr {
             Expr::Function(func) => {
@@ -589,8 +713,10 @@ impl DetectionRule {
                 Self::validate_expr_basic(left)?;
                 Self::validate_expr_basic(right)?;
             }
-            Expr::UnaryOp { expr, .. } => {
-                Self::validate_expr_basic(expr)?;
+            Expr::UnaryOp {
+                expr: inner_expr, ..
+            } => {
+                Self::validate_expr_basic(inner_expr)?;
             }
             Expr::Case {
                 conditions,
@@ -605,7 +731,64 @@ impl DetectionRule {
                     Self::validate_expr_basic(else_expr)?;
                 }
             }
-            _ => {
+            Expr::Identifier(_)
+            | Expr::CompoundIdentifier(_)
+            | Expr::CompoundFieldAccess { .. }
+            | Expr::JsonAccess { .. }
+            | Expr::IsFalse(_)
+            | Expr::IsNotFalse(_)
+            | Expr::IsTrue(_)
+            | Expr::IsNotTrue(_)
+            | Expr::IsNull(_)
+            | Expr::IsNotNull(_)
+            | Expr::IsUnknown(_)
+            | Expr::IsNotUnknown(_)
+            | Expr::IsDistinctFrom(..)
+            | Expr::IsNotDistinctFrom(..)
+            | Expr::IsNormalized { .. }
+            | Expr::InList { .. }
+            | Expr::InSubquery { .. }
+            | Expr::InUnnest { .. }
+            | Expr::Between { .. }
+            | Expr::Like { .. }
+            | Expr::ILike { .. }
+            | Expr::SimilarTo { .. }
+            | Expr::RLike { .. }
+            | Expr::AnyOp { .. }
+            | Expr::AllOp { .. }
+            | Expr::Convert { .. }
+            | Expr::Cast { .. }
+            | Expr::AtTimeZone { .. }
+            | Expr::Extract { .. }
+            | Expr::Ceil { .. }
+            | Expr::Floor { .. }
+            | Expr::Position { .. }
+            | Expr::Substring { .. }
+            | Expr::Trim { .. }
+            | Expr::Overlay { .. }
+            | Expr::Collate { .. }
+            | Expr::Nested(_)
+            | Expr::Value(_)
+            | Expr::Prefixed { .. }
+            | Expr::TypedString { .. }
+            | Expr::Exists { .. }
+            | Expr::GroupingSets(_)
+            | Expr::Cube(_)
+            | Expr::Rollup(_)
+            | Expr::Tuple(_)
+            | Expr::Struct { .. }
+            | Expr::Named { .. }
+            | Expr::Dictionary(_)
+            | Expr::Map(_)
+            | Expr::Array(_)
+            | Expr::Interval(_)
+            | Expr::MatchAgainst { .. }
+            | Expr::Wildcard(_)
+            | Expr::QualifiedWildcard(..)
+            | Expr::OuterJoin(_)
+            | Expr::Prior(_)
+            | Expr::Lambda(_)
+            | Expr::MemberOf(_) => {
                 // Allow other expressions (identifiers, literals, etc.)
             }
         }
@@ -614,6 +797,7 @@ impl DetectionRule {
     }
 
     /// Basic function validation for security.
+    #[allow(clippy::pattern_type_mismatch)]
     fn validate_function_basic(func: &Function) -> Result<(), RuleError> {
         // Check for banned functions (case-insensitive)
         let name = func.name.to_string();
@@ -622,8 +806,7 @@ impl DetectionRule {
             .any(|banned| name.eq_ignore_ascii_case(banned))
         {
             return Err(RuleError::InvalidSql(format!(
-                "Function '{}' is not allowed",
-                name
+                "Function '{name}' is not allowed"
             )));
         }
 
@@ -638,20 +821,12 @@ impl DetectionRule {
                 Self::validate_query_basic(query)?;
             }
             sqlparser::ast::FunctionArguments::List(arg_list) => {
-                for arg in &arg_list.args {
-                    match arg {
-                        sqlparser::ast::FunctionArg::Unnamed(arg_expr) => {
+                for func_arg in &arg_list.args {
+                    match func_arg {
+                        sqlparser::ast::FunctionArg::Unnamed(arg_expr)
+                        | sqlparser::ast::FunctionArg::Named { arg: arg_expr, .. }
+                        | sqlparser::ast::FunctionArg::ExprNamed { arg: arg_expr, .. } => {
                             if let sqlparser::ast::FunctionArgExpr::Expr(e) = arg_expr {
-                                Self::validate_expr_basic(e)?;
-                            }
-                        }
-                        sqlparser::ast::FunctionArg::Named { arg, .. } => {
-                            if let sqlparser::ast::FunctionArgExpr::Expr(e) = arg {
-                                Self::validate_expr_basic(e)?;
-                            }
-                        }
-                        sqlparser::ast::FunctionArg::ExprNamed { arg, .. } => {
-                            if let sqlparser::ast::FunctionArgExpr::Expr(e) = arg {
                                 Self::validate_expr_basic(e)?;
                             }
                         }
@@ -825,6 +1000,7 @@ impl DetectionRule {
 
 /// Rule-related errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RuleError {
     #[error("Invalid SQL query: {0}")]
     InvalidSql(String),
@@ -839,6 +1015,7 @@ pub enum RuleError {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::str_to_string)]
 mod tests {
     use super::*;
 
@@ -877,8 +1054,9 @@ mod tests {
         );
 
         // Test JSON serialization
-        let json = serde_json::to_string(&rule).unwrap();
-        let deserialized: DetectionRule = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&rule).expect("Failed to serialize rule");
+        let deserialized: DetectionRule =
+            serde_json::from_str(&json).expect("Failed to deserialize rule");
         assert_eq!(rule, deserialized);
     }
 

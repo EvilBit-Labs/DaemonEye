@@ -9,7 +9,17 @@ use chrono::{DateTime, Utc};
 use std::time::UNIX_EPOCH;
 
 // Include the generated protobuf code
-include!(concat!(env!("OUT_DIR"), "/_.rs"));
+#[allow(
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::pattern_type_mismatch
+)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/_.rs"));
+}
+
+// Re-export everything from the generated module
+pub use generated::*;
 
 // Re-export commonly used types with cleaner names
 pub use self::{
@@ -19,16 +29,16 @@ pub use self::{
 };
 
 impl From<NativeProcessRecord> for ProtoProcessRecord {
-    /// Convert from native ProcessRecord to protobuf ProcessRecord.
+    /// Convert from native `ProcessRecord` to protobuf `ProcessRecord`.
     ///
-    /// This conversion extracts data from the native ProcessRecord and maps it
+    /// This conversion extracts data from the native `ProcessRecord` and maps it
     /// to the corresponding protobuf fields, handling type conversions and
     /// optional fields appropriately.
     fn from(native: NativeProcessRecord) -> Self {
         let has_executable_path = native.executable_path.is_some();
-        ProtoProcessRecord {
+        Self {
             pid: native.pid.raw(),
-            ppid: native.ppid.map(|p| p.raw()),
+            ppid: native.ppid.map(super::models::process::ProcessId::raw),
             name: native.name,
             executable_path: native
                 .executable_path
@@ -37,7 +47,7 @@ impl From<NativeProcessRecord> for ProtoProcessRecord {
             start_time: native.start_time.and_then(|st| {
                 st.duration_since(UNIX_EPOCH)
                     .ok()
-                    .map(|d| d.as_secs() as i64)
+                    .and_then(|d| i64::try_from(d.as_secs()).ok())
             }),
             cpu_usage: native.cpu_usage,
             memory_usage: native.memory_usage,
@@ -52,24 +62,25 @@ impl From<NativeProcessRecord> for ProtoProcessRecord {
 }
 
 impl From<ProtoProcessRecord> for NativeProcessRecord {
-    /// Convert from protobuf ProcessRecord to native ProcessRecord.
+    /// Convert from protobuf `ProcessRecord` to native `ProcessRecord`.
     ///
-    /// This conversion maps protobuf fields back to the native ProcessRecord
+    /// This conversion maps protobuf fields back to the native `ProcessRecord`
     /// structure, handling type conversions and providing sensible defaults
     /// for fields that may not be present.
     fn from(proto: ProtoProcessRecord) -> Self {
-        NativeProcessRecord {
+        Self {
             pid: ProcessId::new(proto.pid),
             ppid: proto.ppid.map(ProcessId::new),
             name: proto.name,
-            executable_path: proto.executable_path.map(|p| p.into()),
+            executable_path: proto.executable_path.map(std::convert::Into::into),
             command_line: proto.command_line.first().cloned(),
             start_time: proto
                 .start_time
-                .and_then(|ts| UNIX_EPOCH.checked_add(std::time::Duration::from_secs(ts as u64))),
+                .and_then(|ts| u64::try_from(ts).ok())
+                .and_then(|ts| UNIX_EPOCH.checked_add(std::time::Duration::from_secs(ts))),
             cpu_usage: proto.cpu_usage,
             memory_usage: proto.memory_usage,
-            status: crate::models::process::ProcessStatus::Unknown("proto".to_string()),
+            status: crate::models::process::ProcessStatus::Unknown("proto".to_owned()),
             executable_hash: proto.executable_hash,
             hash_algorithm: proto.hash_algorithm,
             collection_time: DateTime::from_timestamp_millis(proto.collection_time)
@@ -98,7 +109,7 @@ impl DetectionTask {
     ) -> Self {
         Self {
             task_id: task_id.into(),
-            task_type: TaskType::EnumerateProcesses as i32,
+            task_type: i32::from(TaskType::EnumerateProcesses),
             process_filter: filter,
             hash_check: None,
             metadata: None,
@@ -122,7 +133,7 @@ impl DetectionTask {
     pub fn new_hash_check(task_id: impl Into<String>, hash_check: ProtoHashCheck) -> Self {
         Self {
             task_id: task_id.into(),
-            task_type: TaskType::CheckProcessHash as i32,
+            task_type: i32::from(TaskType::CheckProcessHash),
             process_filter: None,
             hash_check: Some(hash_check),
             metadata: None,
@@ -199,6 +210,13 @@ impl DetectionResult {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::str_to_string,
+    clippy::as_conversions,
+    clippy::shadow_unrelated,
+    clippy::redundant_clone
+)]
 mod tests {
     use super::*;
     use crate::models::process::{ProcessRecord as NativeProcessRecord, ProcessStatus};
@@ -288,12 +306,12 @@ mod tests {
             .name("test-process")
             .executable_path("/usr/bin/test")
             .command_line("test --arg value")
-            .cpu_usage(25.5)
+            .cpu_usage(0.5)
             .memory_usage(1024 * 1024)
             .status(ProcessStatus::Running)
             .user_id(1000)
             .build()
-            .unwrap();
+            .expect("Failed to build process record");
 
         // Convert to protobuf
         let proto: ProtoProcessRecord = native.clone().into();
@@ -301,7 +319,7 @@ mod tests {
         assert_eq!(proto.name, "test-process");
         assert_eq!(proto.executable_path.as_deref(), Some("/usr/bin/test"));
         assert_eq!(proto.command_line, vec!["test --arg value"]);
-        assert_eq!(proto.cpu_usage, Some(25.5));
+        assert_eq!(proto.cpu_usage, Some(0.5));
         assert_eq!(proto.memory_usage, Some(1024 * 1024));
         assert_eq!(proto.user_id.as_deref(), Some("1000"));
 
@@ -317,7 +335,7 @@ mod tests {
             converted_native.command_line.as_deref(),
             Some("test --arg value")
         );
-        assert_eq!(converted_native.cpu_usage, Some(25.5));
+        assert_eq!(converted_native.cpu_usage, Some(0.5));
         assert_eq!(converted_native.memory_usage, Some(1024 * 1024));
         assert_eq!(converted_native.user_id, Some(1000));
     }

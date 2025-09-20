@@ -141,7 +141,7 @@ build-release:
     @cargo build --workspace --release
 
 test:
-    @cargo test --workspace
+    @cargo test --workspace -- --nocapture
 
 # Test justfile cross-platform functionality
 [windows]
@@ -171,7 +171,42 @@ test-fs:
     @just rmrf tmp/xfstest
 
 test-ci:
-    cargo nextest run --workspace
+    cargo nextest run --workspace --nocapture
+
+# =============================================================================
+# BENCHMARKING
+# =============================================================================
+
+# Run all benchmarks
+bench:
+    @cargo bench --workspace
+
+# Run specific benchmark suites
+bench-process:
+    @cargo bench -p sentinel-lib --bench process_collection
+
+bench-database:
+    @cargo bench -p sentinel-lib --bench database_operations
+
+bench-detection:
+    @cargo bench -p sentinel-lib --bench detection_engine
+
+bench-ipc:
+    @cargo bench -p sentinel-lib --bench ipc_communication
+
+bench-alerts:
+    @cargo bench -p sentinel-lib --bench alert_processing
+
+bench-crypto:
+    @cargo bench -p sentinel-lib --bench cryptographic_operations
+
+# Run benchmarks with HTML output
+bench-html:
+    @cargo bench --workspace -- --html
+
+# Run benchmarks and save results
+bench-save:
+    @cargo bench --workspace -- --save-baseline main
 
 # =============================================================================
 # SECURITY AND AUDITING

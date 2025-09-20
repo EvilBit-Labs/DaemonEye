@@ -8,15 +8,16 @@ use thiserror::Error;
 
 /// Cryptographic operation errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum CryptoError {
     #[error("Hash computation failed: {0}")]
-    HashError(String),
+    Hash(String),
 
     #[error("Signature verification failed: {0}")]
-    SignatureError(String),
+    Signature(String),
 
     #[error("Key generation failed: {0}")]
-    KeyError(String),
+    Key(String),
 }
 
 /// BLAKE3 hash computation for audit trails.
@@ -38,7 +39,7 @@ impl Blake3Hasher {
 }
 
 /// Audit chain entry for tamper-evident logging.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuditEntry {
     /// Entry sequence number
     pub sequence: u64,
@@ -104,7 +105,7 @@ pub struct AuditLedger {
 
 impl AuditLedger {
     /// Create a new audit ledger.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             entries: Vec::new(),
             tree_size: 0,
@@ -113,20 +114,20 @@ impl AuditLedger {
 
     /// Add an entry to the audit ledger with Merkle tree structure.
     pub fn add_entry(&mut self, actor: String, action: String, payload: &[u8]) -> AuditEntry {
-        let sequence = self.tree_size as u64;
+        let sequence = u64::try_from(self.tree_size).unwrap_or(0);
         let previous_hash = self.entries.last().map(|entry| entry.entry_hash.clone());
 
         let entry = AuditEntry::new(sequence, actor, action, payload, previous_hash);
         self.entries.push(entry.clone());
-        self.tree_size += 1;
+        self.tree_size = self.tree_size.saturating_add(1);
         entry
     }
 
     /// Generate inclusion proof for entry verification (placeholder for future Merkle tree implementation).
-    pub fn generate_inclusion_proof(&self, _index: usize) -> Result<Vec<String>, CryptoError> {
+    pub const fn generate_inclusion_proof(_index: usize) -> Vec<String> {
         // TODO: Implement Merkle tree inclusion proof generation
         // This would use rs-merkle crate for efficient proof generation
-        Ok(vec![])
+        vec![]
     }
 
     /// Verify the integrity of the audit ledger.
@@ -145,19 +146,18 @@ impl AuditLedger {
 
             let expected_hash = Blake3Hasher::hash_string(&entry_data);
             if entry.entry_hash != expected_hash {
-                return Err(CryptoError::HashError(format!(
-                    "Hash mismatch at entry {}",
-                    i
-                )));
+                return Err(CryptoError::Hash(format!("Hash mismatch at entry {i}")));
             }
 
             // Verify chain continuity
             if i > 0 {
-                let prev_entry = &self.entries[i - 1];
+                let prev_entry = self
+                    .entries
+                    .get(i.saturating_sub(1))
+                    .ok_or_else(|| CryptoError::Hash("Missing previous entry".to_owned()))?;
                 if entry.previous_hash != Some(prev_entry.entry_hash.clone()) {
-                    return Err(CryptoError::HashError(format!(
-                        "Chain discontinuity at entry {}",
-                        i
+                    return Err(CryptoError::Hash(format!(
+                        "Chain discontinuity at entry {i}"
                     )));
                 }
             }
@@ -199,8 +199,8 @@ mod tests {
     fn test_audit_entry_creation() {
         let entry = AuditEntry::new(
             1,
-            "test-actor".to_string(),
-            "test-action".to_string(),
+            "test-actor".to_owned(),
+            "test-action".to_owned(),
             b"test payload",
             None,
         );
@@ -214,8 +214,8 @@ mod tests {
     fn test_audit_ledger_integrity() {
         let mut ledger = AuditLedger::new();
 
-        ledger.add_entry("actor1".to_string(), "action1".to_string(), b"payload1");
-        ledger.add_entry("actor2".to_string(), "action2".to_string(), b"payload2");
+        ledger.add_entry("actor1".to_owned(), "action1".to_owned(), b"payload1");
+        ledger.add_entry("actor2".to_owned(), "action2".to_owned(), b"payload2");
 
         assert!(ledger.verify_integrity().is_ok());
         assert_eq!(ledger.get_entries().len(), 2);
@@ -224,11 +224,11 @@ mod tests {
     #[test]
     fn test_audit_ledger_tamper_detection() {
         let mut ledger = AuditLedger::new();
-        ledger.add_entry("actor1".to_string(), "action1".to_string(), b"payload1");
+        ledger.add_entry("actor1".to_owned(), "action1".to_owned(), b"payload1");
 
         // Tamper with the entry
         if let Some(entry) = ledger.entries.get_mut(0) {
-            entry.actor = "tampered".to_string();
+            entry.actor = "tampered".to_owned();
         }
 
         assert!(ledger.verify_integrity().is_err());

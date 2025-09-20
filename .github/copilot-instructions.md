@@ -18,6 +18,7 @@ Security boundaries: Only `procmond` runs with elevated privileges; `sentinelage
 - **Rust 2024 Edition** with MSRV 1.85+, pure workspace with independent crates
 - **Zero warnings policy**: `cargo clippy --workspace -- -D warnings` must pass
 - **Forbidden unsafe code**: `unsafe_code = "forbid"` enforced at workspace level
+- **Linter restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission
 - **Workspace members**: `procmond`, `sentinelagent`, `sentinelcli`, `sentinel-lib`
 - Use `just` for all development tasks (DRY composition with `@just <subrecipe>`)
 
@@ -144,7 +145,7 @@ just ci-check            # Run full CI pipeline (pre-commit + lint + test + buil
 
 ### Testing Standards
 
-- **Primary approach**: Integration tests with assert_cmd/predicates for CLI validation
+- **Primary approach**: Integration tests with insta for snapshot testing and predicates for validation
 - **Stable output**: Use `NO_COLOR=1 TERM=dumb` for CI-friendly testing
 - **Async testing**: `#[tokio::test]` with tokio-test utilities
 - **Performance**: Criterion benchmarks with regression detection

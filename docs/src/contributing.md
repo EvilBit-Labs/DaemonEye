@@ -291,8 +291,7 @@ All code must have comprehensive test coverage:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert_cmd::prelude::*;
-    use predicates::prelude::*;
+    use insta::assert_snapshot;
     use tempfile::TempDir;
 
     #[tokio::test]

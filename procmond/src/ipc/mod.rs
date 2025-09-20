@@ -92,7 +92,7 @@ pub fn create_ipc_server(config: IpcConfig) -> IpcResult<sentinel_lib::ipc::Inte
         crc32_variant: sentinel_lib::ipc::Crc32Variant::Ieee,
     };
 
-    sentinel_lib::ipc::InterprocessServer::new(lib_config).map_err(Into::into)
+    Ok(sentinel_lib::ipc::InterprocessServer::new(lib_config))
 }
 
 #[cfg(test)]

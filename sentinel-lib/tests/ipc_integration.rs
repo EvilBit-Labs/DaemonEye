@@ -3,6 +3,18 @@
 //! These tests validate the full client-server communication flow
 //! using the new interprocess transport implementation.
 
+#[allow(
+    clippy::expect_used,
+    clippy::str_to_string,
+    clippy::as_conversions,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::single_match_else,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::redundant_else
+)]
 mod tests {
     use sentinel_lib::ipc::codec::IpcError;
     use sentinel_lib::ipc::interprocess_transport::{InterprocessClient, InterprocessServer};
@@ -34,7 +46,7 @@ mod tests {
     }
 
     fn create_test_config() -> (IpcConfig, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let endpoint_path = create_test_endpoint(&temp_dir);
 
@@ -54,11 +66,11 @@ mod tests {
 
     fn create_test_task() -> DetectionTask {
         DetectionTask {
-            task_id: "test-task-1".to_string(),
-            task_type: TaskType::EnumerateProcesses as i32,
+            task_id: "test-task-1".to_owned(),
+            task_type: TaskType::EnumerateProcesses.into(),
             process_filter: None,
             hash_check: None,
-            metadata: Some("integration test".to_string()),
+            metadata: Some("integration test".to_owned()),
         }
     }
 
@@ -67,7 +79,7 @@ mod tests {
         let (config, _temp_dir) = create_test_config();
 
         // Start server
-        let mut server = InterprocessServer::new(config.clone()).unwrap();
+        let mut server = InterprocessServer::new(config.clone());
 
         // Set up a simple handler that echoes back success
         server.set_handler(|task: DetectionTask| async move {
@@ -81,13 +93,13 @@ mod tests {
         });
 
         // Start the server
-        server.start().await.unwrap();
+        server.start().await.expect("Failed to start server");
 
         // Give server time to start
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Create client and send task
-        let mut client = InterprocessClient::new(config.clone()).unwrap();
+        let mut client = InterprocessClient::new(config.clone());
         let task = create_test_task();
         let task_id = task.task_id.clone();
 
@@ -103,7 +115,7 @@ mod tests {
         assert!(result.error_message.is_none());
 
         // Clean up
-        server.stop().await.unwrap();
+        server.stop();
     }
 
     #[tokio::test]
@@ -111,19 +123,19 @@ mod tests {
         let (config, _temp_dir) = create_test_config();
 
         // Start server with handler that always fails
-        let mut server = InterprocessServer::new(config.clone()).unwrap();
+        let mut server = InterprocessServer::new(config.clone());
 
         server.set_handler(|_task: DetectionTask| async move {
             Err(sentinel_lib::ipc::codec::IpcError::Encode(
-                "Test error".to_string(),
+                "Test error".to_owned(),
             ))
         });
 
-        server.start().await.unwrap();
+        server.start().await.expect("Failed to start server");
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Create client and send task
-        let mut client = InterprocessClient::new(config.clone()).unwrap();
+        let mut client = InterprocessClient::new(config.clone());
         let task = create_test_task();
 
         // Send task and expect error response
@@ -135,10 +147,15 @@ mod tests {
         // Validate error result
         assert!(!result.success);
         assert!(result.error_message.is_some());
-        assert!(result.error_message.unwrap().contains("Test error"));
+        assert!(
+            result
+                .error_message
+                .expect("Expected error message")
+                .contains("Test error")
+        );
 
         // Clean up
-        server.stop().await.unwrap();
+        server.stop();
     }
 
     #[tokio::test]
@@ -146,7 +163,7 @@ mod tests {
         let (config, _temp_dir) = create_test_config();
 
         // Start server with a handler that includes client identification
-        let mut server = InterprocessServer::new(config.clone()).unwrap();
+        let mut server = InterprocessServer::new(config.clone());
 
         server.set_handler(|task: DetectionTask| async move {
             // Simulate some work
@@ -161,7 +178,7 @@ mod tests {
             })
         });
 
-        server.start().await.unwrap();
+        server.start().await.expect("Failed to start server");
 
         // Give server more time to start and create the endpoint
         // Windows named pipes need more time to become available
@@ -170,11 +187,11 @@ mod tests {
         // Test that the server is actually ready with retry logic
         let test_config = config.clone();
         let test_task = DetectionTask {
-            task_id: "connection-test".to_string(),
-            task_type: TaskType::EnumerateProcesses as i32,
+            task_id: "connection-test".to_owned(),
+            task_type: TaskType::EnumerateProcesses.into(),
             process_filter: None,
             hash_check: None,
-            metadata: Some("connection test".to_string()),
+            metadata: Some("connection test".to_owned()),
         };
 
         let mut retries = 0;
@@ -183,7 +200,7 @@ mod tests {
 
         loop {
             match timeout(Duration::from_secs(2), async {
-                let mut test_client = InterprocessClient::new(test_config.clone())?;
+                let mut test_client = InterprocessClient::new(test_config.clone());
                 test_client.send_task(test_task.clone()).await
             })
             .await
@@ -196,14 +213,12 @@ mod tests {
                     retries += 1;
                     if retries >= max_retries {
                         eprintln!(
-                            "Warning: Server connection test failed after {} retries: {}",
-                            max_retries, e
+                            "Warning: Server connection test failed after {max_retries} retries: {e}"
                         );
                         break;
                     }
                     eprintln!(
-                        "Server connection test failed (attempt {}/{}): {}, retrying in {:?}",
-                        retries, max_retries, e, retry_delay
+                        "Server connection test failed (attempt {retries}/{max_retries}): {e}, retrying in {retry_delay:?}"
                     );
                     tokio::time::sleep(retry_delay).await;
                     retry_delay = std::cmp::min(retry_delay * 2, Duration::from_millis(1000));
@@ -212,14 +227,12 @@ mod tests {
                     retries += 1;
                     if retries >= max_retries {
                         eprintln!(
-                            "Warning: Server connection test timed out after {} retries",
-                            max_retries
+                            "Warning: Server connection test timed out after {max_retries} retries"
                         );
                         break;
                     }
                     eprintln!(
-                        "Server connection test timed out (attempt {}/{}), retrying in {:?}",
-                        retries, max_retries, retry_delay
+                        "Server connection test timed out (attempt {retries}/{max_retries}), retrying in {retry_delay:?}"
                     );
                     tokio::time::sleep(retry_delay).await;
                     retry_delay = std::cmp::min(retry_delay * 2, Duration::from_millis(1000));
@@ -231,40 +244,39 @@ mod tests {
         let mut handles = vec![];
 
         for i in 0..3 {
-            let config = config.clone();
+            let client_config = config.clone();
             let handle = tokio::spawn(async move {
                 // Add retry logic for Windows named pipe connection
-                let mut retries = 0;
-                let max_retries = 5;
+                let mut client_retries = 0;
+                let client_max_retries = 5;
 
                 loop {
-                    match timeout(Duration::from_secs(10), async {
-                        let mut client = InterprocessClient::new(config.clone())?;
+                    let timeout_result = timeout(Duration::from_secs(10), async {
+                        let mut client = InterprocessClient::new(client_config.clone());
                         let task = DetectionTask {
-                            task_id: format!("concurrent-task-{}", i),
-                            task_type: TaskType::EnumerateProcesses as i32,
+                            task_id: format!("concurrent-task-{i}"),
+                            task_type: TaskType::EnumerateProcesses.into(),
                             process_filter: None,
                             hash_check: None,
-                            metadata: Some(format!("concurrent test {}", i)),
+                            metadata: Some(format!("concurrent test {i}")),
                         };
 
                         client.send_task(task).await
                     })
-                    .await
-                    {
-                        Ok(result) => return result,
-                        Err(_) => {
-                            retries += 1;
-                            if retries >= max_retries {
-                                return Err(IpcError::Io(std::io::Error::new(
-                                    std::io::ErrorKind::TimedOut,
-                                    "Client request timed out after retries",
-                                )));
-                            }
-                            // Wait before retry
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
+                    .await;
+
+                    if let Ok(result) = timeout_result {
+                        return result;
                     }
+                    client_retries += 1;
+                    if client_retries >= client_max_retries {
+                        return Err(IpcError::Io(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Client request timed out after retries",
+                        )));
+                    }
+                    // Wait before retry
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             });
 
@@ -278,16 +290,16 @@ mod tests {
         for (i, handle) in handles.into_iter().enumerate() {
             match handle.await {
                 Ok(Ok(result)) => {
-                    assert_eq!(result.task_id, format!("concurrent-task-{}", i));
+                    assert_eq!(result.task_id, format!("concurrent-task-{i}"));
                     assert!(result.success);
                     successful_clients += 1;
                 }
                 Ok(Err(e)) => {
-                    eprintln!("Client {} failed with error: {}", i, e);
+                    eprintln!("Client {i} failed with error: {e}");
                     failed_clients += 1;
                 }
                 Err(e) => {
-                    eprintln!("Client {} task panicked: {}", i, e);
+                    eprintln!("Client {i} task panicked: {e}");
                     failed_clients += 1;
                 }
             }
@@ -296,33 +308,31 @@ mod tests {
         // At least one client should succeed for the test to pass
         assert!(
             successful_clients > 0,
-            "No clients succeeded. {} successful, {} failed",
-            successful_clients,
-            failed_clients
+            "No clients succeeded. {successful_clients} successful, {failed_clients} failed"
         );
 
         // Log the results for debugging
         eprintln!(
-            "Concurrent clients test completed: {} successful, {} failed",
-            successful_clients, failed_clients
+            "Concurrent clients test completed: {successful_clients} successful, {failed_clients} failed"
         );
 
         // Clean up
-        server.stop().await.unwrap();
+        server.stop();
     }
 
     /// Test cross-platform endpoint creation
     #[tokio::test]
     async fn test_cross_platform_endpoint_creation() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let endpoint = create_test_endpoint(&temp_dir);
 
         // Endpoint should be platform-appropriate
         #[cfg(unix)]
         assert!(
-            endpoint.ends_with(".sock"),
-            "Unix endpoint should be socket file: {}",
-            endpoint
+            std::path::Path::new(&endpoint)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("sock")),
+            "Unix endpoint should be socket file: {endpoint}"
         );
 
         #[cfg(windows)]
@@ -344,10 +354,9 @@ mod tests {
             crc32_variant: Crc32Variant::Ieee,
         };
 
-        let server = InterprocessServer::new(config.clone());
-        let client = InterprocessClient::new(config);
+        let _server = InterprocessServer::new(config.clone());
+        let _client = InterprocessClient::new(config);
 
-        assert!(server.is_ok(), "Server creation should succeed");
-        assert!(client.is_ok(), "Client creation should succeed");
+        // Server and client creation should succeed (constructors don't return Result)
     }
 }
