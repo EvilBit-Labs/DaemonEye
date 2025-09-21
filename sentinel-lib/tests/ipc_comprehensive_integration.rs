@@ -78,6 +78,9 @@ fn create_test_task(task_id: &str) -> DetectionTask {
         process_filter: None,
         hash_check: None,
         metadata: Some("comprehensive integration test".to_owned()),
+        network_filter: None,
+        filesystem_filter: None,
+        performance_filter: None,
     }
 }
 
@@ -120,6 +123,9 @@ async fn test_cross_platform_transport_behavior() {
             error_message: None,
             processes: vec![create_test_process_record(1234)],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -204,6 +210,9 @@ async fn test_task_distribution_workflows() {
                 error_message: None,
                 processes,
                 hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
             })
         }
     });
@@ -221,6 +230,9 @@ async fn test_task_distribution_workflows() {
         process_filter: None,
         hash_check: None,
         metadata: Some("enumerate test".to_owned()),
+        network_filter: None,
+        filesystem_filter: None,
+        performance_filter: None,
     };
 
     let enum_result = timeout(Duration::from_secs(10), client.send_task(enum_task))
@@ -239,6 +251,9 @@ async fn test_task_distribution_workflows() {
         process_filter: None,
         hash_check: None,
         metadata: Some("hash check test".to_owned()),
+        network_filter: None,
+        filesystem_filter: None,
+        performance_filter: None,
     };
 
     let hash_result = timeout(Duration::from_secs(10), client.send_task(hash_task))
@@ -280,6 +295,9 @@ async fn test_concurrent_task_distribution() {
                 error_message: None,
                 processes: vec![create_test_process_record(task_num)],
                 hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
             })
         }
     });
@@ -388,6 +406,9 @@ async fn test_error_handling_and_recovery() {
                 error_message: None,
                 processes: vec![create_test_process_record(1000)],
                 hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
             })
         }
     });
@@ -488,6 +509,9 @@ async fn test_connection_limits_and_security() {
                 error_message: None,
                 processes: vec![create_test_process_record(conn_num)],
                 hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
             })
         }
     });
@@ -570,6 +594,9 @@ async fn test_server_shutdown_and_cleanup() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -637,6 +664,9 @@ async fn test_large_message_handling() {
             error_message: None,
             processes,
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -686,6 +716,9 @@ async fn test_timeout_handling() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 

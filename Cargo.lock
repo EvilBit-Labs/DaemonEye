@@ -376,6 +376,8 @@ dependencies = [
  "async-trait",
  "bitflags",
  "futures",
+ "prost",
+ "sentinel-lib",
  "serde",
  "serde_json",
  "tempfile",

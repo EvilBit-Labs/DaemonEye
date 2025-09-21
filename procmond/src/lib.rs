@@ -5,7 +5,9 @@ pub use ipc::{IpcConfig, create_ipc_server};
 
 // Re-export main functionality for testing
 pub use crate::ipc::error::IpcError;
-pub use sentinel_lib::proto::{DetectionResult, DetectionTask, ProtoProcessRecord, ProtoTaskType};
+pub use sentinel_lib::proto::{
+    DetectionResult, DetectionTask, ProtoProcessRecord, ProtoTaskType, TaskType,
+};
 pub use sentinel_lib::storage;
 
 use std::sync::Arc;
@@ -200,13 +202,7 @@ mod tests {
 
         let handler = ProcessMessageHandler::new(db_manager);
 
-        let task = DetectionTask {
-            task_id: "test-task".to_string(),
-            task_type: ProtoTaskType::EnumerateProcesses as i32,
-            process_filter: None,
-            hash_check: None,
-            metadata: None,
-        };
+        let task = DetectionTask::new_test_task("test-task", TaskType::EnumerateProcesses, None);
 
         let result = handler.handle_detection_task(task).await;
         assert!(result.is_ok());
@@ -235,6 +231,9 @@ mod tests {
             process_filter: None,
             hash_check: None,
             metadata: None,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
         };
 
         let result = handler.handle_detection_task(task).await;
@@ -288,13 +287,7 @@ mod tests {
 
         let handler = ProcessMessageHandler::new(db_manager);
 
-        let task = DetectionTask {
-            task_id: "test-task".to_string(),
-            task_type: ProtoTaskType::EnumerateProcesses as i32,
-            process_filter: None,
-            hash_check: None,
-            metadata: None,
-        };
+        let task = DetectionTask::new_test_task("test-task", TaskType::EnumerateProcesses, None);
 
         let result = handler.enumerate_processes(&task).await;
         assert!(result.is_ok());

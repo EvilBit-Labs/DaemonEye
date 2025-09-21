@@ -378,6 +378,9 @@ impl InterprocessServer {
                         error_message: Some(e.to_string()),
                         processes: vec![],
                         hash_result: None,
+                        network_events: vec![],
+                        filesystem_events: vec![],
+                        performance_events: vec![],
                     };
 
                     if let Err(write_err) = codec

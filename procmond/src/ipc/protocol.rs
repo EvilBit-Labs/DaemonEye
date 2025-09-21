@@ -510,6 +510,9 @@ mod tests {
             process_filter: None,
             hash_check: None,
             metadata: Some("test".to_string()),
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
         };
 
         let encoded = encoder.encode_message(&task).unwrap();
@@ -528,6 +531,9 @@ mod tests {
             process_filter: None,
             hash_check: None,
             metadata: Some("test".to_string()),
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
         };
 
         let encoded = encoder.encode_message(&task).unwrap();
@@ -548,6 +554,9 @@ mod tests {
             process_filter: None,
             hash_check: None,
             metadata: Some("test".to_string()),
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
         };
 
         // Test encoding

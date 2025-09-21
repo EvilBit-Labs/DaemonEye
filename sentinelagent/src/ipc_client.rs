@@ -94,13 +94,11 @@ impl IpcClientManager {
             .context("Failed to connect to procmond socket")?;
 
         // Test the connection by sending a simple ping task
-        let ping_task = DetectionTask {
-            task_id: format!("ping-{}", chrono::Utc::now().timestamp_millis()),
-            task_type: TaskType::EnumerateProcesses as i32,
-            process_filter: None,
-            hash_check: None,
-            metadata: Some("connection_test".to_string()),
-        };
+        let ping_task = DetectionTask::new_test_task(
+            format!("ping-{}", chrono::Utc::now().timestamp_millis()),
+            TaskType::EnumerateProcesses,
+            Some("connection_test".to_string()),
+        );
 
         let write_timeout = Duration::from_millis(self.config.write_timeout_ms);
         let read_timeout = Duration::from_millis(self.config.read_timeout_ms);
@@ -164,13 +162,11 @@ impl IpcClientManager {
             anyhow::bail!("Not connected to procmond");
         }
 
-        let task = DetectionTask {
-            task_id: format!("enumerate-{}", chrono::Utc::now().timestamp_millis()),
-            task_type: TaskType::EnumerateProcesses as i32,
-            process_filter: None,
-            hash_check: None,
-            metadata: Some("process_enumeration".to_string()),
-        };
+        let task = DetectionTask::new_test_task(
+            format!("enumerate-{}", chrono::Utc::now().timestamp_millis()),
+            TaskType::EnumerateProcesses,
+            Some("process_enumeration".to_string()),
+        );
 
         self.send_task_with_retry(task).await
     }

@@ -81,6 +81,9 @@ fn create_security_test_task(task_id: &str) -> DetectionTask {
         process_filter: None,
         hash_check: None,
         metadata: Some("security validation test".to_owned()),
+        network_filter: None,
+        filesystem_filter: None,
+        performance_filter: None,
     }
 }
 
@@ -102,6 +105,9 @@ async fn test_unix_socket_permissions() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -203,6 +209,9 @@ async fn test_connection_limits_enforcement() {
                     collection_time: chrono::Utc::now().timestamp_millis(),
                 }],
                 hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
             })
         }
     });
@@ -304,6 +313,9 @@ async fn test_message_size_limits() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -318,6 +330,9 @@ async fn test_message_size_limits() {
         process_filter: None,
         hash_check: None,
         metadata: Some("x".repeat(2048)), // Larger than 1KB limit
+        network_filter: None,
+        filesystem_filter: None,
+        performance_filter: None,
     };
 
     let result = timeout(Duration::from_secs(5), client.send_task(large_task)).await;
@@ -392,6 +407,9 @@ async fn test_malformed_frame_resistance() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -523,6 +541,9 @@ async fn test_timeout_dos_resistance() {
                 error_message: None,
                 processes: vec![],
                 hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
             })
         }
     });
@@ -616,6 +637,9 @@ async fn test_resource_exhaustion_resistance() {
                     collection_time: chrono::Utc::now().timestamp_millis(),
                 }],
                 hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
             })
         }
     });
@@ -739,6 +763,9 @@ async fn test_server_shutdown_security() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 

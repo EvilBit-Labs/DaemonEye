@@ -6,6 +6,7 @@
 use crate::{
     config::CollectorConfig,
     event::CollectionEvent,
+    ipc::CollectorIpcServer,
     source::{EventSource, SourceCaps},
 };
 use anyhow::{Context, Result};
@@ -81,6 +82,7 @@ pub struct CollectorRuntime {
     health_handles: HashMap<String, JoinHandle<Result<()>>>,
     shutdown_signal: Arc<AtomicBool>,
     capabilities: Arc<RwLock<HashMap<String, SourceCaps>>>,
+    ipc_server: Option<CollectorIpcServer>,
 }
 
 impl Collector {
@@ -213,6 +215,9 @@ impl Collector {
         // Create runtime
         let mut runtime = CollectorRuntime::new(self.config.clone(), event_tx.clone(), event_rx);
 
+        // Start IPC server
+        runtime.start_ipc_server().await?;
+
         // Start all event sources
         for source in self.sources {
             runtime.start_source(source).await?;
@@ -247,6 +252,7 @@ impl CollectorRuntime {
             health_handles: HashMap::new(),
             shutdown_signal: Arc::new(AtomicBool::new(false)),
             capabilities: Arc::new(RwLock::new(HashMap::new())),
+            ipc_server: None,
         }
     }
 
@@ -287,6 +293,10 @@ impl CollectorRuntime {
         });
 
         self.source_handles.insert(source_name, handle);
+
+        // Update IPC server capabilities
+        self.update_ipc_capabilities().await?;
+
         Ok(())
     }
 
@@ -416,6 +426,14 @@ impl CollectorRuntime {
     async fn shutdown_gracefully(&mut self) -> Result<()> {
         info!("Starting graceful shutdown");
 
+        // Shutdown IPC server first
+        if let Some(mut ipc_server) = self.ipc_server.take() {
+            debug!("Shutting down IPC server");
+            if let Err(e) = ipc_server.shutdown().await {
+                error!(error = %e, "Failed to shutdown IPC server gracefully");
+            }
+        }
+
         // Collect all handles
         let mut all_handles = Vec::new();
 
@@ -448,6 +466,89 @@ impl CollectorRuntime {
             }
         }
 
+        Ok(())
+    }
+
+    /// Starts the IPC server for communication with sentinelagent.
+    async fn start_ipc_server(&mut self) -> Result<()> {
+        info!("Starting IPC server for collector-core");
+
+        // Calculate aggregated capabilities
+        let aggregated_caps = {
+            let caps = self.capabilities.read().await;
+            caps.values()
+                .fold(SourceCaps::empty(), |acc, &cap| acc | cap)
+        };
+
+        // Create shared capabilities for IPC server
+        let ipc_capabilities = Arc::new(RwLock::new(aggregated_caps));
+
+        // Create IPC server
+        let mut ipc_server =
+            CollectorIpcServer::new(self.config.clone(), Arc::clone(&ipc_capabilities));
+
+        // Set up task handler that processes detection tasks
+        let event_tx = self.event_tx.clone();
+        let shutdown_signal = Arc::clone(&self.shutdown_signal);
+
+        ipc_server.start(move |task| {
+            let _tx = event_tx.clone();
+            let shutdown = Arc::clone(&shutdown_signal);
+
+            Box::pin(async move {
+                use sentinel_lib::proto::{DetectionResult, TaskType};
+
+                // Check if we're shutting down
+                if shutdown.load(Ordering::Relaxed) {
+                    return Ok(DetectionResult::failure(
+                        &task.task_id,
+                        "Collector is shutting down",
+                    ));
+                }
+
+                // For now, we'll implement a basic task handler
+                // In a full implementation, this would route tasks to appropriate event sources
+                match TaskType::try_from(task.task_type) {
+                    Ok(TaskType::EnumerateProcesses) => {
+                        debug!(task_id = %task.task_id, "Processing enumerate processes task");
+
+                        // This is a placeholder - in the full implementation,
+                        // this would trigger process enumeration via event sources
+                        Ok(DetectionResult::success(&task.task_id, vec![]))
+                    }
+                    Ok(task_type) => {
+                        warn!(task_id = %task.task_id, ?task_type, "Task type not yet implemented");
+                        Ok(DetectionResult::failure(
+                            &task.task_id,
+                            format!("Task type {:?} not yet implemented", task_type),
+                        ))
+                    }
+                    Err(_) => {
+                        error!(task_id = %task.task_id, task_type = task.task_type, "Unknown task type");
+                        Ok(DetectionResult::failure(
+                            &task.task_id,
+                            format!("Unknown task type: {}", task.task_type),
+                        ))
+                    }
+                }
+            })
+        }).await?;
+
+        self.ipc_server = Some(ipc_server);
+        info!("IPC server started successfully");
+
+        Ok(())
+    }
+
+    /// Updates IPC server capabilities when event sources change.
+    async fn update_ipc_capabilities(&self) -> Result<()> {
+        if let Some(ipc_server) = &self.ipc_server {
+            let caps = self.capabilities.read().await;
+            let aggregated_caps = caps
+                .values()
+                .fold(SourceCaps::empty(), |acc, &cap| acc | cap);
+            ipc_server.update_capabilities(aggregated_caps).await;
+        }
         Ok(())
     }
 }

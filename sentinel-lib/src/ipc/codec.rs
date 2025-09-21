@@ -244,13 +244,11 @@ mod tests {
     }
 
     fn create_test_message() -> DetectionTask {
-        DetectionTask {
-            task_id: "test-123".to_owned(),
-            task_type: i32::from(TaskType::EnumerateProcesses),
-            process_filter: None,
-            hash_check: None,
-            metadata: Some("test metadata".to_owned()),
-        }
+        DetectionTask::new_test_task(
+            "test-123",
+            TaskType::EnumerateProcesses,
+            Some("test metadata".to_owned()),
+        )
     }
 
     #[tokio::test]
@@ -303,13 +301,11 @@ mod tests {
         let codec = IpcCodec::new(100); // Very small limit
         let (mut client, _server) = duplex(1024);
 
-        let large_message = DetectionTask {
-            task_id: "x".repeat(200), // Larger than our 100-byte limit
-            task_type: TaskType::EnumerateProcesses as i32,
-            process_filter: None,
-            hash_check: None,
-            metadata: None,
-        };
+        let large_message = DetectionTask::new_test_task(
+            "x".repeat(200), // Larger than our 100-byte limit
+            TaskType::EnumerateProcesses,
+            None,
+        );
 
         let timeout_duration = Duration::from_secs(1);
         let result = codec

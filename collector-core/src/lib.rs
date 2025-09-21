@@ -65,10 +65,12 @@
 pub mod collector;
 pub mod config;
 pub mod event;
+pub mod ipc;
 pub mod source;
 
 // Re-export main types for convenience
 pub use collector::{Collector, CollectorRuntime};
 pub use config::CollectorConfig;
 pub use event::{CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent};
+pub use ipc::CollectorIpcServer;
 pub use source::{EventSource, SourceCaps};

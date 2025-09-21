@@ -74,7 +74,7 @@
   - Write unit tests for EventSource trait and Collector registration
   - _Requirements: 11.1, 11.2, 11.5_
 
-- [ ] 4.2 Integrate existing IPC infrastructure into collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.2 Integrate existing IPC infrastructure into collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Move existing IPC server logic from procmond to collector-core runtime
   - Integrate existing InterprocessServer and IpcCodec with collector-core event handling

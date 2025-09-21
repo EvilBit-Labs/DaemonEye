@@ -65,13 +65,11 @@ mod tests {
     }
 
     fn create_test_task() -> DetectionTask {
-        DetectionTask {
-            task_id: "test-task-1".to_owned(),
-            task_type: TaskType::EnumerateProcesses.into(),
-            process_filter: None,
-            hash_check: None,
-            metadata: Some("integration test".to_owned()),
-        }
+        DetectionTask::new_test_task(
+            "test-task-1",
+            TaskType::EnumerateProcesses,
+            Some("integration test".to_owned()),
+        )
     }
 
     #[tokio::test]
@@ -83,13 +81,7 @@ mod tests {
 
         // Set up a simple handler that echoes back success
         server.set_handler(|task: DetectionTask| async move {
-            Ok(DetectionResult {
-                task_id: task.task_id,
-                success: true,
-                error_message: None,
-                processes: vec![], // Empty for this test
-                hash_result: None,
-            })
+            Ok(DetectionResult::success(&task.task_id, vec![]))
         });
 
         // Start the server
@@ -169,13 +161,7 @@ mod tests {
             // Simulate some work
             tokio::time::sleep(Duration::from_millis(10)).await;
 
-            Ok(DetectionResult {
-                task_id: task.task_id,
-                success: true,
-                error_message: None,
-                processes: vec![],
-                hash_result: None,
-            })
+            Ok(DetectionResult::success(&task.task_id, vec![]))
         });
 
         server.start().await.expect("Failed to start server");
@@ -186,13 +172,11 @@ mod tests {
 
         // Test that the server is actually ready with retry logic
         let test_config = config.clone();
-        let test_task = DetectionTask {
-            task_id: "connection-test".to_owned(),
-            task_type: TaskType::EnumerateProcesses.into(),
-            process_filter: None,
-            hash_check: None,
-            metadata: Some("connection test".to_owned()),
-        };
+        let test_task = DetectionTask::new_test_task(
+            "connection-test",
+            TaskType::EnumerateProcesses,
+            Some("connection test".to_owned()),
+        );
 
         let mut retries = 0;
         let max_retries = 10;
@@ -253,13 +237,11 @@ mod tests {
                 loop {
                     let timeout_result = timeout(Duration::from_secs(10), async {
                         let mut client = InterprocessClient::new(client_config.clone());
-                        let task = DetectionTask {
-                            task_id: format!("concurrent-task-{i}"),
-                            task_type: TaskType::EnumerateProcesses.into(),
-                            process_filter: None,
-                            hash_check: None,
-                            metadata: Some(format!("concurrent test {i}")),
-                        };
+                        let task = DetectionTask::new_test_task(
+                            format!("concurrent-task-{i}"),
+                            TaskType::EnumerateProcesses,
+                            Some(format!("concurrent test {i}")),
+                        );
 
                         client.send_task(task).await
                     })

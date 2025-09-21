@@ -39,6 +39,9 @@ fn detection_task_strategy() -> impl Strategy<Value = DetectionTask> {
             process_filter: None,
             hash_check: None,
             metadata,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
         })
 }
 
@@ -77,6 +80,9 @@ fn detection_result_strategy() -> impl Strategy<Value = DetectionResult> {
                 error_message,
                 processes,
                 hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
             },
         )
 }
@@ -253,6 +259,9 @@ proptest! {
                 process_filter: None,
                 hash_check: None,
                 metadata: Some(large_metadata),
+        network_filter: None,
+        filesystem_filter: None,
+        performance_filter: None
             };
 
             // Should fail with TooLarge error
@@ -439,6 +448,9 @@ mod edge_case_tests {
             process_filter: None,
             hash_check: None,
             metadata: Some(boundary_metadata),
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
         };
 
         // This might succeed or fail depending on exact serialized size

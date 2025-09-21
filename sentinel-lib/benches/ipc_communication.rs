@@ -69,6 +69,9 @@ fn bench_ipc_serialization(c: &mut Criterion) {
                     collection_time: chrono::Utc::now().timestamp_millis(),
                 }],
                 hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
             };
 
             let serialized = prost::Message::encode_to_vec(&result);
@@ -99,6 +102,9 @@ fn bench_ipc_serialization(c: &mut Criterion) {
                 collection_time: chrono::Utc::now().timestamp_millis(),
             }],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         };
 
         let serialized = prost::Message::encode_to_vec(&result);

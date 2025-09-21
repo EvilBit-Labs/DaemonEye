@@ -113,6 +113,9 @@ impl DetectionTask {
             process_filter: filter,
             hash_check: None,
             metadata: None,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
         }
     }
 
@@ -137,6 +140,30 @@ impl DetectionTask {
             process_filter: None,
             hash_check: Some(hash_check),
             metadata: None,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
+        }
+    }
+
+    /// Create a new detection task with custom parameters (for testing).
+    ///
+    /// This is a convenience method for creating detection tasks in tests
+    /// without having to specify all the new optional fields.
+    pub fn new_test_task(
+        task_id: impl Into<String>,
+        task_type: TaskType,
+        metadata: Option<String>,
+    ) -> Self {
+        Self {
+            task_id: task_id.into(),
+            task_type: i32::from(task_type),
+            process_filter: None,
+            hash_check: None,
+            metadata,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
         }
     }
 }
@@ -159,6 +186,9 @@ impl DetectionResult {
             error_message: None,
             processes,
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         }
     }
 
@@ -179,6 +209,9 @@ impl DetectionResult {
             error_message: Some(error.into()),
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         }
     }
 
@@ -205,6 +238,9 @@ impl DetectionResult {
             error_message: None,
             processes: vec![],
             hash_result: Some(hash_result),
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         }
     }
 }
@@ -223,13 +259,11 @@ mod tests {
 
     #[test]
     fn test_detection_task_creation() {
-        let task = DetectionTask {
-            task_id: "test-123".to_string(),
-            task_type: ProtoTaskType::EnumerateProcesses as i32,
-            process_filter: None,
-            hash_check: None,
-            metadata: Some("test metadata".to_string()),
-        };
+        let task = DetectionTask::new_test_task(
+            "test-123",
+            TaskType::EnumerateProcesses,
+            Some("test metadata".to_string()),
+        );
 
         assert_eq!(task.task_id, "test-123");
         assert_eq!(task.task_type, ProtoTaskType::EnumerateProcesses as i32);

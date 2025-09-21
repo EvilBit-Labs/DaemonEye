@@ -28,7 +28,11 @@ tracing = { workspace = true }
 # Bitflags for capabilities
 bitflags = { workspace = true }
 
+# IPC integration
+sentinel-lib = { path = "../sentinel-lib" }
+
 [dev-dependencies]
 tokio-test = "0.4.4"
 tempfile = { workspace = true }
 serde_json = { workspace = true }
+prost = { workspace = true }
