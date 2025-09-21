@@ -92,5 +92,6 @@
     "rust-analyzer.assist.preferSelf": true,
     "rust-analyzer.completion.fullFunctionSignatures.enable": true,
     "rust-analyzer.completion.hideDeprecated": true,
-    "rust-analyzer.completion.privateEditable.enable": true
+    "rust-analyzer.completion.privateEditable.enable": true,
+    "kiroAgent.configureMCP": "Enabled"
 }
