@@ -1,12 +1,12 @@
-# SentinelD Pricing
+# DaemonEye Pricing
 
-> Part of the SentinelD suite of tools: _Continuous monitoring. Immediate alerts._
+> Part of the DaemonEye suite of tools: _Continuous monitoring. Immediate alerts._
 >
 > **"Auditd without the noise. Osquery without the bloat."**
 
-## SentinelD Architecture Note
+## DaemonEye Architecture Note
 
-ProcMonD is the privileged process monitoring component of the SentinelD package. SentinelD consists of three components:
+ProcMonD is the privileged process monitoring component of the DaemonEye package. DaemonEye consists of three components:
 
 - **ProcMonD (Collector):** Runs with high privileges, focused solely on process monitoring, with a minimal attack surface and no direct network functionality.
 - **Orchestrator:** Operates in user space with very few privileges, receives events from ProcMonD, handles all network communication and alert delivery to log sinks, and communicates with ProcMonD only via secure, memory-only IPC (e.g., Unix sockets).
@@ -121,8 +121,8 @@ _When compliance meets detection. Built for enclaves, critical infrastructure, a
 For Business and Enterprise licensing:
 
 - **Email**: [support@evilbitlabs.com](mailto:support@evilbitlabs.com)
-- **GitHub**: [EvilBit-Labs/sentineld](https://github.com/EvilBit-Labs/sentineld)
-- **Website**: [evilbitlabs.io/sentineld](https://evilbitlabs.io/sentineld)
+- **GitHub**: [EvilBit-Labs/daemoneye](https://github.com/EvilBit-Labs/daemoneye)
+- **Website**: [evilbitlabs.io/daemoneye](https://evilbitlabs.io/daemoneye)
 
 ---
 

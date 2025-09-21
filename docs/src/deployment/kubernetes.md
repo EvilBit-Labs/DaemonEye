@@ -1,6 +1,6 @@
-# SentinelD Kubernetes Deployment Guide
+# DaemonEye Kubernetes Deployment Guide
 
-This guide provides comprehensive instructions for deploying SentinelD on Kubernetes, including manifests, Helm charts, and production deployment strategies.
+This guide provides comprehensive instructions for deploying DaemonEye on Kubernetes, including manifests, Helm charts, and production deployment strategies.
 
 ---
 
@@ -12,7 +12,7 @@ This guide provides comprehensive instructions for deploying SentinelD on Kubern
 
 ## Kubernetes Overview
 
-SentinelD is designed to run efficiently on Kubernetes, providing:
+DaemonEye is designed to run efficiently on Kubernetes, providing:
 
 - **Scalability**: Horizontal pod autoscaling and cluster-wide deployment
 - **High Availability**: Multi-replica deployments with health checks
@@ -23,7 +23,7 @@ SentinelD is designed to run efficiently on Kubernetes, providing:
 ### Architecture Components
 
 - **procmond**: DaemonSet for process monitoring on each node
-- **sentinelagent**: Deployment for alerting and orchestration
+- **daemoneye-agent**: Deployment for alerting and orchestration
 - **sentinelcli**: Job/CronJob for management tasks
 - **Security Center**: Deployment for web-based management (Business/Enterprise)
 
@@ -71,10 +71,10 @@ curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: sentineld
+  name: daemoneye
   labels:
-    name: sentineld
-    app.kubernetes.io/name: sentineld
+    name: daemoneye
+    app.kubernetes.io/name: daemoneye
     app.kubernetes.io/version: 1.0.0
 ```
 
@@ -84,19 +84,19 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: sentineld-procmond
-  namespace: sentineld
+  name: daemoneye-procmond
+  namespace: daemoneye
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: sentineld-agent
-  namespace: sentineld
+  name: daemoneye-agent
+  namespace: daemoneye
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sentineld-procmond
+  name: daemoneye-procmond
 rules:
 - apiGroups: [""]
   resources: ["nodes", "pods"]
@@ -108,15 +108,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: sentineld-procmond
+  name: daemoneye-procmond
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sentineld-procmond
+  name: daemoneye-procmond
 subjects:
 - kind: ServiceAccount
-  name: sentineld-procmond
-  namespace: sentineld
+  name: daemoneye-procmond
+  namespace: daemoneye
 ```
 
 ### ConfigMap and Secrets
@@ -127,8 +127,8 @@ subjects:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: sentineld-config
-  namespace: sentineld
+  name: daemoneye-config
+  namespace: daemoneye
 data:
   procmond.yaml: |
     app:
@@ -145,7 +145,7 @@ data:
       drop_to_user: 1000
       drop_to_group: 1000
 
-  sentinelagent.yaml: |
+  daemoneye-agent.yaml: |
     app:
       scan_interval_ms: 30000
       batch_size: 1000
@@ -163,7 +163,7 @@ data:
           facility: daemon
         - type: webhook
           enabled: true
-          url: http://sentineld-webhook:8080/webhook
+          url: http://daemoneye-webhook:8080/webhook
 ```
 
 **secret.yaml**:
@@ -172,8 +172,8 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: sentineld-secrets
-  namespace: sentineld
+  name: daemoneye-secrets
+  namespace: daemoneye
 type: Opaque
 data:
   webhook-token: <base64-encoded-token>
@@ -188,8 +188,8 @@ data:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: sentineld-data
-  namespace: sentineld
+  name: daemoneye-data
+  namespace: daemoneye
 spec:
   accessModes:
     - ReadWriteOnce
@@ -207,21 +207,21 @@ spec:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: sentineld-procmond
-  namespace: sentineld
+  name: daemoneye-procmond
+  namespace: daemoneye
 spec:
   selector:
     matchLabels:
-      app: sentineld-procmond
+      app: daemoneye-procmond
   template:
     metadata:
       labels:
-        app: sentineld-procmond
+        app: daemoneye-procmond
     spec:
-      serviceAccountName: sentineld-procmond
+      serviceAccountName: daemoneye-procmond
       containers:
         - name: procmond
-          image: sentineld/procmond:1.0.0
+          image: daemoneye/procmond:1.0.0
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -272,10 +272,10 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: sentineld-config
+            name: daemoneye-config
         - name: data
           persistentVolumeClaim:
-            claimName: sentineld-data
+            claimName: daemoneye-data
         - name: logs
           emptyDir: {}
       tolerations:
@@ -287,30 +287,30 @@ spec:
           effect: NoSchedule
 ```
 
-### Deployment for sentinelagent
+### Deployment for daemoneye-agent
 
-**sentinelagent-deployment.yaml**:
+**daemoneye-agent-deployment.yaml**:
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sentineld-agent
-  namespace: sentineld
+  name: daemoneye-agent
+  namespace: daemoneye
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: sentineld-agent
+      app: daemoneye-agent
   template:
     metadata:
       labels:
-        app: sentineld-agent
+        app: daemoneye-agent
     spec:
-      serviceAccountName: sentineld-agent
+      serviceAccountName: daemoneye-agent
       containers:
-        - name: sentinelagent
-          image: sentineld/sentinelagent:1.0.0
+        - name: daemoneye-agent
+          image: daemoneye/daemoneye-agent:1.0.0
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 1000
@@ -331,9 +331,9 @@ spec:
             - name: SENTINELD_LOG_DIR
               value: /logs
             - name: SENTINELD_PROCMOND_ENDPOINT
-              value: tcp://sentineld-procmond:8080
-          command: [sentinelagent]
-          args: [--config, /config/sentinelagent.yaml]
+              value: tcp://daemoneye-procmond:8080
+          command: [daemoneye-agent]
+          args: [--config, /config/daemoneye-agent.yaml]
           resources:
             requests:
               memory: 512Mi
@@ -344,7 +344,7 @@ spec:
           livenessProbe:
             exec:
               command:
-                - sentinelagent
+                - daemoneye-agent
                 - health
             initialDelaySeconds: 30
             periodSeconds: 30
@@ -353,7 +353,7 @@ spec:
           readinessProbe:
             exec:
               command:
-                - sentinelagent
+                - daemoneye-agent
                 - health
             initialDelaySeconds: 10
             periodSeconds: 10
@@ -362,10 +362,10 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: sentineld-config
+            name: daemoneye-config
         - name: data
           persistentVolumeClaim:
-            claimName: sentineld-data
+            claimName: daemoneye-data
         - name: logs
           emptyDir: {}
 ```
@@ -378,11 +378,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: sentineld-agent
-  namespace: sentineld
+  name: daemoneye-agent
+  namespace: daemoneye
 spec:
   selector:
-    app: sentineld-agent
+    app: daemoneye-agent
   ports:
     - name: http
       port: 8080
@@ -409,12 +409,12 @@ kubectl apply -f pvc.yaml
 
 # Deploy components
 kubectl apply -f procmond-daemonset.yaml
-kubectl apply -f sentinelagent-deployment.yaml
+kubectl apply -f daemoneye-agent-deployment.yaml
 kubectl apply -f service.yaml
 
 # Check deployment status
-kubectl get pods -n sentineld
-kubectl get services -n sentineld
+kubectl get pods -n daemoneye
+kubectl get services -n daemoneye
 ```
 
 ## Production Deployment
@@ -427,8 +427,8 @@ kubectl get services -n sentineld
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: sentineld-config
-  namespace: sentineld
+  name: daemoneye-config
+  namespace: daemoneye
 data:
   procmond.yaml: |
     app:
@@ -452,7 +452,7 @@ data:
       enable_audit_logging: true
       audit_log_path: /logs/audit.log
 
-  sentinelagent.yaml: |
+  daemoneye-agent.yaml: |
     app:
       scan_interval_ms: 60000
       batch_size: 1000
@@ -479,7 +479,7 @@ data:
           priority: info
         - type: webhook
           enabled: true
-          url: http://sentineld-webhook:8080/webhook
+          url: http://daemoneye-webhook:8080/webhook
           timeout_ms: 5000
           retry_attempts: 3
         - type: file
@@ -519,29 +519,29 @@ data:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: sentineld-procmond
-  namespace: sentineld
+  name: daemoneye-procmond
+  namespace: daemoneye
 spec:
   selector:
     matchLabels:
-      app: sentineld-procmond
+      app: daemoneye-procmond
   template:
     metadata:
       labels:
-        app: sentineld-procmond
+        app: daemoneye-procmond
       annotations:
         prometheus.io/scrape: 'true'
         prometheus.io/port: '9090'
         prometheus.io/path: /metrics
     spec:
-      serviceAccountName: sentineld-procmond
+      serviceAccountName: daemoneye-procmond
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
       containers:
         - name: procmond
-          image: sentineld/procmond:1.0.0
+          image: daemoneye/procmond:1.0.0
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -614,15 +614,15 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: sentineld-config
+            name: daemoneye-config
         - name: data
           persistentVolumeClaim:
-            claimName: sentineld-data
+            claimName: daemoneye-data
         - name: logs
           emptyDir: {}
         - name: rules
           configMap:
-            name: sentineld-rules
+            name: daemoneye-rules
         - name: tmp
           emptyDir: {}
       tolerations:
@@ -656,36 +656,36 @@ spec:
 
 ### Production Deployment
 
-**production-sentinelagent-deployment.yaml**:
+**production-daemoneye-agent-deployment.yaml**:
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sentineld-agent
-  namespace: sentineld
+  name: daemoneye-agent
+  namespace: daemoneye
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: sentineld-agent
+      app: daemoneye-agent
   template:
     metadata:
       labels:
-        app: sentineld-agent
+        app: daemoneye-agent
       annotations:
         prometheus.io/scrape: 'true'
         prometheus.io/port: '9090'
         prometheus.io/path: /metrics
     spec:
-      serviceAccountName: sentineld-agent
+      serviceAccountName: daemoneye-agent
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
       containers:
-        - name: sentinelagent
-          image: sentineld/sentinelagent:1.0.0
+        - name: daemoneye-agent
+          image: daemoneye/daemoneye-agent:1.0.0
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -713,9 +713,9 @@ spec:
             - name: SENTINELD_LOG_DIR
               value: /logs
             - name: SENTINELD_PROCMOND_ENDPOINT
-              value: tcp://sentineld-procmond:8080
-          command: [sentinelagent]
-          args: [--config, /config/sentinelagent.yaml]
+              value: tcp://daemoneye-procmond:8080
+          command: [daemoneye-agent]
+          args: [--config, /config/daemoneye-agent.yaml]
           resources:
             requests:
               memory: 512Mi
@@ -726,7 +726,7 @@ spec:
           livenessProbe:
             exec:
               command:
-                - sentinelagent
+                - daemoneye-agent
                 - health
             initialDelaySeconds: 30
             periodSeconds: 30
@@ -735,7 +735,7 @@ spec:
           readinessProbe:
             exec:
               command:
-                - sentinelagent
+                - daemoneye-agent
                 - health
             initialDelaySeconds: 10
             periodSeconds: 10
@@ -751,10 +751,10 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: sentineld-config
+            name: daemoneye-config
         - name: data
           persistentVolumeClaim:
-            claimName: sentineld-data
+            claimName: daemoneye-data
         - name: logs
           emptyDir: {}
         - name: tmp
@@ -769,7 +769,7 @@ spec:
                     - key: app
                       operator: In
                       values:
-                        - sentineld-agent
+                        - daemoneye-agent
                 topologyKey: kubernetes.io/hostname
 ```
 
@@ -781,13 +781,13 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: sentineld-agent-hpa
-  namespace: sentineld
+  name: daemoneye-agent-hpa
+  namespace: daemoneye
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: sentineld-agent
+    name: daemoneye-agent
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -823,7 +823,7 @@ spec:
 ### Helm Chart Structure
 
 ```
-sentineld/
+daemoneye/
 ├── Chart.yaml
 ├── values.yaml
 ├── values-production.yaml
@@ -835,7 +835,7 @@ sentineld/
 │   ├── secret.yaml
 │   ├── pvc.yaml
 │   ├── procmond-daemonset.yaml
-│   ├── sentinelagent-deployment.yaml
+│   ├── daemoneye-agent-deployment.yaml
 │   ├── service.yaml
 │   ├── hpa.yaml
 │   ├── networkpolicy.yaml
@@ -847,8 +847,8 @@ sentineld/
 
 ```yaml
 apiVersion: v2
-name: sentineld
-description: SentinelD Security Monitoring Agent
+name: daemoneye
+description: DaemonEye Security Monitoring Agent
 type: application
 version: 1.0.0
 appVersion: 1.0.0
@@ -857,12 +857,12 @@ keywords:
   - monitoring
   - processes
   - threat-detection
-home: https://sentineld.com
+home: https://daemoneye.com
 sources:
-  - https://github.com/sentineld/sentineld
+  - https://github.com/daemoneye/daemoneye
 maintainers:
-  - name: SentinelD Team
-    email: team@sentineld.com
+  - name: DaemonEye Team
+    email: team@daemoneye.com
 dependencies:
   - name: prometheus
     version: 15.0.0
@@ -873,9 +873,9 @@ dependencies:
 ### values.yaml
 
 ```yaml
-# Default values for sentineld
+# Default values for daemoneye
 image:
-  repository: sentineld
+  repository: daemoneye
   tag: 1.0.0
   pullPolicy: IfNotPresent
 
@@ -909,7 +909,7 @@ ingress:
   className: ''
   annotations: {}
   hosts:
-    - host: sentineld.example.com
+    - host: daemoneye.example.com
       paths:
         - path: /
           pathType: Prefix
@@ -997,29 +997,29 @@ networkPolicy:
 ### Deploy with Helm
 
 ```bash
-# Add SentinelD Helm repository
-helm repo add sentineld https://charts.sentineld.com
+# Add DaemonEye Helm repository
+helm repo add daemoneye https://charts.daemoneye.com
 helm repo update
 
-# Install SentinelD
-helm install sentineld sentineld/sentineld \
-  --namespace sentineld \
+# Install DaemonEye
+helm install daemoneye daemoneye/daemoneye \
+  --namespace daemoneye \
   --create-namespace \
   --values values.yaml
 
 # Install with production values
-helm install sentineld sentineld/sentineld \
-  --namespace sentineld \
+helm install daemoneye daemoneye/daemoneye \
+  --namespace daemoneye \
   --create-namespace \
   --values values-production.yaml
 
 # Upgrade deployment
-helm upgrade sentineld sentineld/sentineld \
-  --namespace sentineld \
+helm upgrade daemoneye daemoneye/daemoneye \
+  --namespace daemoneye \
   --values values.yaml
 
 # Uninstall
-helm uninstall sentineld --namespace sentineld
+helm uninstall daemoneye --namespace daemoneye
 ```
 
 ## Security Configuration
@@ -1032,12 +1032,12 @@ helm uninstall sentineld --namespace sentineld
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: sentineld-network-policy
-  namespace: sentineld
+  name: daemoneye-network-policy
+  namespace: daemoneye
 spec:
   podSelector:
     matchLabels:
-      app: sentineld
+      app: daemoneye
   policyTypes:
     - Ingress
     - Egress
@@ -1045,10 +1045,10 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              name: sentineld
+              name: daemoneye
         - podSelector:
             matchLabels:
-              app: sentineld
+              app: daemoneye
       ports:
         - protocol: TCP
           port: 8080
@@ -1058,10 +1058,10 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              name: sentineld
+              name: daemoneye
         - podSelector:
             matchLabels:
-              app: sentineld
+              app: daemoneye
       ports:
         - protocol: TCP
           port: 8080
@@ -1083,7 +1083,7 @@ spec:
 apiVersion: policy/v1beta1
 kind: PodSecurityPolicy
 metadata:
-  name: sentineld-psp
+  name: daemoneye-psp
 spec:
   privileged: false
   allowPrivilegeEscalation: false
@@ -1112,19 +1112,19 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: sentineld-procmond
-  namespace: sentineld
+  name: daemoneye-procmond
+  namespace: daemoneye
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: sentineld-agent
-  namespace: sentineld
+  name: daemoneye-agent
+  namespace: daemoneye
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sentineld-procmond
+  name: daemoneye-procmond
 rules:
 - apiGroups: [""]
   resources: ["nodes", "pods"]
@@ -1136,20 +1136,20 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: sentineld-procmond
+  name: daemoneye-procmond
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sentineld-procmond
+  name: daemoneye-procmond
 subjects:
 - kind: ServiceAccount
-  name: sentineld-procmond
-  namespace: sentineld
+  name: daemoneye-procmond
+  namespace: daemoneye
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sentineld-agent
+  name: daemoneye-agent
 rules:
 - apiGroups: [""]
   resources: ["pods", "services", "endpoints"]
@@ -1158,15 +1158,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: sentineld-agent
+  name: daemoneye-agent
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: sentineld-agent
+  name: daemoneye-agent
 subjects:
 - kind: ServiceAccount
-  name: sentineld-agent
-  namespace: sentineld
+  name: daemoneye-agent
+  namespace: daemoneye
 ```
 
 ## Monitoring and Observability
@@ -1179,14 +1179,14 @@ subjects:
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: sentineld
-  namespace: sentineld
+  name: daemoneye
+  namespace: daemoneye
   labels:
-    app: sentineld
+    app: daemoneye
 spec:
   selector:
     matchLabels:
-      app: sentineld
+      app: daemoneye
   endpoints:
     - port: metrics
       path: /metrics
@@ -1202,22 +1202,22 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: sentineld-grafana-dashboard
-  namespace: sentineld
+  name: daemoneye-grafana-dashboard
+  namespace: daemoneye
   labels:
     grafana_dashboard: '1'
 data:
-  sentineld-dashboard.json: |
+  daemoneye-dashboard.json: |
     {
       "dashboard": {
-        "title": "SentinelD Monitoring",
+        "title": "DaemonEye Monitoring",
         "panels": [
           {
             "title": "Process Collection Rate",
             "type": "graph",
             "targets": [
               {
-                "expr": "rate(sentineld_processes_collected_total[5m])",
+                "expr": "rate(daemoneye_processes_collected_total[5m])",
                 "legendFormat": "Processes/sec"
               }
             ]
@@ -1227,7 +1227,7 @@ data:
             "type": "graph",
             "targets": [
               {
-                "expr": "sentineld_memory_usage_bytes",
+                "expr": "daemoneye_memory_usage_bytes",
                 "legendFormat": "Memory Usage"
               }
             ]
@@ -1245,43 +1245,43 @@ data:
 
 ```bash
 # Check pod status
-kubectl get pods -n sentineld
+kubectl get pods -n daemoneye
 
 # Check pod logs
-kubectl logs -n sentineld sentineld-procmond-xxx
+kubectl logs -n daemoneye daemoneye-procmond-xxx
 
 # Check pod events
-kubectl describe pod -n sentineld sentineld-procmond-xxx
+kubectl describe pod -n daemoneye daemoneye-procmond-xxx
 ```
 
 **Permission Denied**:
 
 ```bash
 # Check security context
-kubectl get pod -n sentineld sentineld-procmond-xxx -o yaml | grep securityContext
+kubectl get pod -n daemoneye daemoneye-procmond-xxx -o yaml | grep securityContext
 
 # Check file permissions
-kubectl exec -n sentineld sentineld-procmond-xxx -- ls -la /data
+kubectl exec -n daemoneye daemoneye-procmond-xxx -- ls -la /data
 ```
 
 **Network Issues**:
 
 ```bash
 # Check service endpoints
-kubectl get endpoints -n sentineld
+kubectl get endpoints -n daemoneye
 
 # Check network connectivity
-kubectl exec -n sentineld sentineld-agent-xxx -- ping sentineld-procmond
+kubectl exec -n daemoneye daemoneye-agent-xxx -- ping daemoneye-procmond
 ```
 
 **Database Issues**:
 
 ```bash
 # Check database status
-kubectl exec -n sentineld sentineld-agent-xxx -- sentinelcli database status
+kubectl exec -n daemoneye daemoneye-agent-xxx -- sentinelcli database status
 
 # Check database integrity
-kubectl exec -n sentineld sentineld-agent-xxx -- sentinelcli database integrity-check
+kubectl exec -n daemoneye daemoneye-agent-xxx -- sentinelcli database integrity-check
 ```
 
 ### Debug Mode
@@ -1293,8 +1293,8 @@ kubectl exec -n sentineld sentineld-agent-xxx -- sentinelcli database integrity-
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: sentineld-config
-  namespace: sentineld
+  name: daemoneye-config
+  namespace: daemoneye
 data:
   procmond.yaml: |
     app:
@@ -1306,10 +1306,10 @@ data:
 
 ```bash
 # Run debug pod
-kubectl run debug --image=sentineld/sentinelcli:1.0.0 -it --rm -- /bin/sh
+kubectl run debug --image=daemoneye/sentinelcli:1.0.0 -it --rm -- /bin/sh
 
 # Check system capabilities
-kubectl run debug --image=sentineld/sentinelcli:1.0.0 -it --rm -- capsh --print
+kubectl run debug --image=daemoneye/sentinelcli:1.0.0 -it --rm -- capsh --print
 ```
 
 ### Performance Issues
@@ -1318,35 +1318,35 @@ kubectl run debug --image=sentineld/sentinelcli:1.0.0 -it --rm -- capsh --print
 
 ```bash
 # Check resource usage
-kubectl top pods -n sentineld
+kubectl top pods -n daemoneye
 
 # Check HPA status
-kubectl get hpa -n sentineld
+kubectl get hpa -n daemoneye
 
 # Scale up manually
-kubectl scale deployment sentineld-agent --replicas=3 -n sentineld
+kubectl scale deployment daemoneye-agent --replicas=3 -n daemoneye
 ```
 
 **High Memory Usage**:
 
 ```bash
 # Check memory usage
-kubectl top pods -n sentineld
+kubectl top pods -n daemoneye
 
 # Check memory limits
-kubectl describe pod -n sentineld sentineld-agent-xxx | grep Limits
+kubectl describe pod -n daemoneye daemoneye-agent-xxx | grep Limits
 ```
 
 **Slow Database Operations**:
 
 ```bash
 # Check database performance
-kubectl exec -n sentineld sentineld-agent-xxx -- sentinelcli database query-stats
+kubectl exec -n daemoneye daemoneye-agent-xxx -- sentinelcli database query-stats
 
 # Optimize database
-kubectl exec -n sentineld sentineld-agent-xxx -- sentinelcli database optimize
+kubectl exec -n daemoneye daemoneye-agent-xxx -- sentinelcli database optimize
 ```
 
 ---
 
-*This Kubernetes deployment guide provides comprehensive instructions for deploying SentinelD on Kubernetes. For additional help, consult the troubleshooting section or contact support.*
+*This Kubernetes deployment guide provides comprehensive instructions for deploying DaemonEye on Kubernetes. For additional help, consult the troubleshooting section or contact support.*

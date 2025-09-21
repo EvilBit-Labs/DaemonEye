@@ -1,6 +1,6 @@
-# Contributing to SentinelD
+# Contributing to DaemonEye
 
-Thank you for your interest in contributing to SentinelD! This guide will help you get started with contributing to the project.
+Thank you for your interest in contributing to DaemonEye! This guide will help you get started with contributing to the project.
 
 ---
 
@@ -14,7 +14,7 @@ Thank you for your interest in contributing to SentinelD! This guide will help y
 
 ### Prerequisites
 
-Before contributing to SentinelD, ensure you have:
+Before contributing to DaemonEye, ensure you have:
 
 - **Rust 1.85+**: Latest stable Rust toolchain
 - **Git**: Version control system
@@ -29,14 +29,14 @@ Before contributing to SentinelD, ensure you have:
 2. Clone your fork locally:
 
    ```bash
-   git clone https://github.com/your-username/sentineld.git
-   cd sentineld
+   git clone https://github.com/your-username/daemoneye.git
+   cd daemoneye
    ```
 
 3. Add the upstream repository:
 
    ```bash
-   git remote add upstream https://github.com/EvilBit-Labs/sentineld.git
+   git remote add upstream https://github.com/EvilBit-Labs/daemoneye.git
    ```
 
 ### Development Setup
@@ -64,9 +64,9 @@ Before contributing to SentinelD, ensure you have:
 ### Project Structure
 
 ```text
-SentinelD/
+DaemonEye/
 ├── procmond/           # Process monitoring daemon
-├── sentinelagent/      # Agent orchestrator
+├── daemoneye-agent/      # Agent orchestrator
 ├── sentinelcli/        # CLI interface
 ├── sentinel-lib/       # Shared library
 ├── docs/               # Documentation
@@ -79,14 +79,14 @@ SentinelD/
 
 ### Workspace Configuration
 
-SentinelD uses a Cargo workspace with the following structure:
+DaemonEye uses a Cargo workspace with the following structure:
 
 ```toml
 [workspace]
 resolver = "2"
 members = [
   "procmond",
-  "sentinelagent",
+  "daemoneye-agent",
   "sentinelcli",
   "sentinel-lib",
 ]
@@ -136,7 +136,7 @@ just clean
 
 ### Rust Standards
 
-SentinelD follows strict Rust coding standards:
+DaemonEye follows strict Rust coding standards:
 
 1. **Edition**: Always use Rust 2024 Edition
 2. **Linting**: Zero warnings policy with `cargo clippy -- -D warnings`
@@ -463,7 +463,7 @@ Fixes #456
 
 When reporting bugs, please include:
 
-1. **Environment**: OS, Rust version, SentinelD version
+1. **Environment**: OS, Rust version, DaemonEye version
 2. **Steps to Reproduce**: Clear, numbered steps
 3. **Expected Behavior**: What should happen
 4. **Actual Behavior**: What actually happens
@@ -598,8 +598,8 @@ If you need help contributing:
 
 ## License
 
-By contributing to SentinelD, you agree that your contributions will be licensed under the same license as the project (Apache 2.0 for core features, commercial license for business/enterprise features).
+By contributing to DaemonEye, you agree that your contributions will be licensed under the same license as the project (Apache 2.0 for core features, commercial license for business/enterprise features).
 
 ---
 
-*Thank you for contributing to SentinelD! Your contributions help make the project better for everyone.*
+*Thank you for contributing to DaemonEye! Your contributions help make the project better for everyone.*

@@ -1,6 +1,6 @@
 # Security Documentation
 
-This document provides comprehensive security information for SentinelD, including threat model, security considerations, and best practices.
+This document provides comprehensive security information for DaemonEye, including threat model, security considerations, and best practices.
 
 ---
 
@@ -14,7 +14,7 @@ This document provides comprehensive security information for SentinelD, includi
 
 ### Attack Vectors
 
-SentinelD is designed to protect against various attack vectors:
+DaemonEye is designed to protect against various attack vectors:
 
 1. **Process Injection**: Monitoring for code injection techniques
 2. **Privilege Escalation**: Detecting unauthorized privilege changes
@@ -24,7 +24,7 @@ SentinelD is designed to protect against various attack vectors:
 
 ### Security Boundaries
 
-SentinelD implements strict security boundaries:
+DaemonEye implements strict security boundaries:
 
 - **Process Isolation**: Components run in separate processes
 - **Privilege Separation**: Minimal required privileges per component
@@ -76,7 +76,7 @@ The three-component architecture provides defense in depth:
 
 ### Memory Safety
 
-SentinelD is built in Rust with memory safety guarantees:
+DaemonEye is built in Rust with memory safety guarantees:
 
 ```rust
 // No unsafe code allowed
@@ -220,9 +220,9 @@ security:
 security:
   network:
     enable_tls: true
-    cert_file: /etc/sentineld/cert.pem
-    key_file: /etc/sentineld/key.pem
-    ca_file: /etc/sentineld/ca.pem
+    cert_file: /etc/daemoneye/cert.pem
+    key_file: /etc/daemoneye/key.pem
+    ca_file: /etc/daemoneye/ca.pem
     verify_peer: true
     cipher_suites: [TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256]
 
@@ -250,7 +250,7 @@ security:
 
   audit:
     enable_audit_logging: true
-    audit_log_path: /var/log/sentineld/audit.log
+    audit_log_path: /var/log/daemoneye/audit.log
     log_level: info
     include_sensitive_data: false
 ```
@@ -327,7 +327,7 @@ security:
 
 ### Threat Detection
 
-SentinelD can detect various security threats:
+DaemonEye can detect various security threats:
 
 1. **Malware Execution**:
 
@@ -383,7 +383,7 @@ SentinelD can detect various security threats:
 
 ### Security Standards
 
-SentinelD helps meet various security standards:
+DaemonEye helps meet various security standards:
 
 1. **NIST Cybersecurity Framework**:
 
@@ -513,4 +513,4 @@ SentinelD helps meet various security standards:
 
 ---
 
-*This security documentation provides comprehensive guidance for securing SentinelD deployments. For additional security information, consult the specific security guides or contact the security team.*
+*This security documentation provides comprehensive guidance for securing DaemonEye deployments. For additional security information, consult the specific security guides or contact the security team.*

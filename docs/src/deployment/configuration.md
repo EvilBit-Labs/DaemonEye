@@ -1,6 +1,6 @@
-# SentinelD Configuration Guide
+# DaemonEye Configuration Guide
 
-This guide provides comprehensive configuration instructions for SentinelD, covering all aspects of system setup, tuning, and customization.
+This guide provides comprehensive configuration instructions for DaemonEye, covering all aspects of system setup, tuning, and customization.
 
 ## Table of Contents
 
@@ -19,7 +19,7 @@ This guide provides comprehensive configuration instructions for SentinelD, cove
 
 ## Configuration Overview
 
-SentinelD uses a hierarchical configuration system that allows for flexible and maintainable settings across different environments and deployment scenarios.
+DaemonEye uses a hierarchical configuration system that allows for flexible and maintainable settings across different environments and deployment scenarios.
 
 ### Configuration Philosophy
 
@@ -33,8 +33,8 @@ SentinelD uses a hierarchical configuration system that allows for flexible and 
 
 1. **Command-line flags** (highest precedence)
 2. **Environment variables** (`SENTINELD_*`)
-3. **User configuration file** (`~/.config/sentineld/config.yaml`)
-4. **System configuration file** (`/etc/sentineld/config.yaml`)
+3. **User configuration file** (`~/.config/daemoneye/config.yaml`)
+4. **System configuration file** (`/etc/daemoneye/config.yaml`)
 5. **Embedded defaults** (lowest precedence)
 
 ## Configuration Sources
@@ -43,10 +43,10 @@ SentinelD uses a hierarchical configuration system that allows for flexible and 
 
 ```bash
 # Basic configuration
-sentinelagent --config /path/to/config.yaml --log-level debug
+daemoneye-agent --config /path/to/config.yaml --log-level debug
 
 # Override specific settings
-sentinelagent --scan-interval 30000 --batch-size 1000
+daemoneye-agent --scan-interval 30000 --batch-size 1000
 
 # Show effective configuration
 sentinelcli config show --include-defaults
@@ -58,12 +58,12 @@ sentinelcli config show --include-defaults
 # Set environment variables
 export SENTINELD_LOG_LEVEL=debug
 export SENTINELD_SCAN_INTERVAL_MS=30000
-export SENTINELD_DATABASE_PATH=/var/lib/sentineld/processes.db
+export SENTINELD_DATABASE_PATH=/var/lib/daemoneye/processes.db
 export SENTINELD_ALERTING_SINKS_0_TYPE=syslog
 export SENTINELD_ALERTING_SINKS_0_FACILITY=daemon
 
 # Run with environment configuration
-sentinelagent
+daemoneye-agent
 ```
 
 ### Configuration Files
@@ -71,16 +71,16 @@ sentinelagent
 **YAML Format** (recommended):
 
 ```yaml
-# /etc/sentineld/config.yaml
+# /etc/daemoneye/config.yaml
 app:
   scan_interval_ms: 30000
   batch_size: 1000
   log_level: info
-  data_dir: /var/lib/sentineld
-  log_dir: /var/log/sentineld
+  data_dir: /var/lib/daemoneye
+  log_dir: /var/log/daemoneye
 
 database:
-  path: /var/lib/sentineld/processes.db
+  path: /var/lib/daemoneye/processes.db
   max_connections: 10
   retention_days: 30
 
@@ -104,11 +104,11 @@ alerting:
     "scan_interval_ms": 30000,
     "batch_size": 1000,
     "log_level": "info",
-    "data_dir": "/var/lib/sentineld",
-    "log_dir": "/var/log/sentineld"
+    "data_dir": "/var/lib/daemoneye",
+    "log_dir": "/var/log/daemoneye"
   },
   "database": {
-    "path": "/var/lib/sentineld/processes.db",
+    "path": "/var/lib/daemoneye/processes.db",
     "max_connections": 10,
     "retention_days": 30
   },
@@ -131,11 +131,11 @@ alerting:
 scan_interval_ms = 30000
 batch_size = 1000
 log_level = "info"
-data_dir = "/var/lib/sentineld"
-log_dir = "/var/log/sentineld"
+data_dir = "/var/lib/daemoneye"
+log_dir = "/var/log/daemoneye"
 
 [database]
-path = "/var/lib/sentineld/processes.db"
+path = "/var/lib/daemoneye/processes.db"
 max_connections = 10
 retention_days = 30
 
@@ -155,17 +155,17 @@ app:
   scan_interval_ms: 30000          # Process scan interval in milliseconds
   batch_size: 1000                 # Batch size for database operations
   log_level: info                  # Logging level (trace, debug, info, warn, error)
-  data_dir: /var/lib/sentineld     # Data directory
-  log_dir: /var/log/sentineld      # Log directory
-  pid_file: /var/run/sentineld.pid # PID file location
-  user: sentineld                  # User to run as
-  group: sentineld                 # Group to run as
+  data_dir: /var/lib/daemoneye     # Data directory
+  log_dir: /var/log/daemoneye      # Log directory
+  pid_file: /var/run/daemoneye.pid # PID file location
+  user: daemoneye                  # User to run as
+  group: daemoneye                 # Group to run as
   max_memory_mb: 512               # Maximum memory usage in MB
   max_cpu_percent: 5.0             # Maximum CPU usage percentage
 
 # Database configuration
 database:
-  path: /var/lib/sentineld/processes.db  # Database file path
+  path: /var/lib/daemoneye/processes.db  # Database file path
   max_connections: 10                    # Maximum database connections
   retention_days: 30                     # Data retention period
   vacuum_interval_hours: 24              # Database vacuum interval
@@ -191,7 +191,7 @@ alerting:
       enabled: true                      # Enable this sink
       facility: daemon                   # Syslog facility
       priority: info                     # Syslog priority
-      tag: sentineld                     # Syslog tag
+      tag: daemoneye                     # Syslog tag
 
     - type: webhook                      # Webhook sink
       enabled: false                     # Disabled by default
@@ -206,7 +206,7 @@ alerting:
 
     - type: file                         # File sink
       enabled: false                     # Disabled by default
-      path: /var/log/sentineld/alerts.log
+      path: /var/log/daemoneye/alerts.log
       format: json                       # Output format (json, text)
       rotation: daily                    # Log rotation (daily, weekly, monthly)
       max_files: 30                      # Maximum log files to keep
@@ -218,15 +218,15 @@ alerting:
 # Security configuration
 security:
   enable_privilege_dropping: true        # Enable privilege dropping
-  drop_to_user: sentineld                # User to drop privileges to
-  drop_to_group: sentineld               # Group to drop privileges to
+  drop_to_user: daemoneye                # User to drop privileges to
+  drop_to_group: daemoneye               # Group to drop privileges to
   enable_audit_logging: true             # Enable audit logging
-  audit_log_path: /var/log/sentineld/audit.log
+  audit_log_path: /var/log/daemoneye/audit.log
   enable_integrity_checking: true        # Enable integrity checking
   hash_algorithm: blake3                 # Hash algorithm (blake3, sha256)
   enable_signature_verification: true    # Enable signature verification
-  public_key_path: /etc/sentineld/public.key
-  private_key_path: /etc/sentineld/private.key
+  public_key_path: /etc/daemoneye/public.key
+  private_key_path: /etc/daemoneye/private.key
 
   # Access control
   access_control:
@@ -238,9 +238,9 @@ security:
   # Network security
   network:
     enable_tls: false                    # Enable TLS for network connections
-    cert_file: /etc/sentineld/cert.pem
-    key_file: /etc/sentineld/key.pem
-    ca_file: /etc/sentineld/ca.pem
+    cert_file: /etc/daemoneye/cert.pem
+    key_file: /etc/daemoneye/key.pem
+    ca_file: /etc/daemoneye/ca.pem
     verify_peer: true                    # Verify peer certificates
 
 # Process collection configuration
@@ -282,7 +282,7 @@ collection:
 # Detection engine configuration
 detection:
   enable_detection: true                 # Enable detection engine
-  rule_directory: /etc/sentineld/rules   # Rules directory
+  rule_directory: /etc/daemoneye/rules   # Rules directory
   rule_file_pattern: '*.sql'             # Rule file pattern
   enable_hot_reload: true                # Enable hot reloading
   reload_interval_ms: 5000               # Reload check interval
@@ -320,7 +320,7 @@ observability:
     enable_tracing: false                # Enable distributed tracing
     trace_endpoint: http://jaeger:14268/api/traces
     trace_sampling_rate: 0.1             # Trace sampling rate
-    trace_service_name: sentineld        # Service name for traces
+    trace_service_name: daemoneye        # Service name for traces
 
   # Logging configuration
   logging:
@@ -334,7 +334,7 @@ observability:
   # Performance monitoring
   performance:
     enable_profiling: false              # Enable performance profiling
-    profile_output_dir: /tmp/sentineld/profiles
+    profile_output_dir: /tmp/daemoneye/profiles
     enable_memory_profiling: false       # Enable memory profiling
     enable_cpu_profiling: false          # Enable CPU profiling
 
@@ -342,19 +342,19 @@ observability:
 platform:
   linux:
     enable_ebpf: false                   # Enable eBPF monitoring (Enterprise)
-    ebpf_program_path: /etc/sentineld/ebpf/monitor.o
+    ebpf_program_path: /etc/daemoneye/ebpf/monitor.o
     enable_audit: false                  # Enable Linux audit integration
-    audit_rules_path: /etc/sentineld/audit.rules
+    audit_rules_path: /etc/daemoneye/audit.rules
 
   windows:
     enable_etw: false                    # Enable ETW monitoring (Enterprise)
-    etw_session_name: SentinelD
+    etw_session_name: DaemonEye
     enable_wmi: false                    # Enable WMI monitoring
     wmi_namespace: root\cimv2
 
   macos:
     enable_endpoint_security: false      # Enable EndpointSecurity (Enterprise)
-    es_client_name: com.sentineld.monitor
+    es_client_name: com.daemoneye.monitor
     enable_system_events: false          # Enable system event monitoring
 
 # Integration configuration
@@ -365,21 +365,21 @@ integrations:
       enabled: false
       hec_url: https://splunk.example.com:8088/services/collector
       hec_token: ${SPLUNK_HEC_TOKEN}
-      index: sentineld
-      source: sentineld
-      sourcetype: sentineld:processes
+      index: daemoneye
+      source: daemoneye
+      sourcetype: daemoneye:processes
 
     elasticsearch:
       enabled: false
       url: https://elasticsearch.example.com:9200
       username: ${ELASTIC_USERNAME}
       password: ${ELASTIC_PASSWORD}
-      index: sentineld-processes
+      index: daemoneye-processes
 
     kafka:
       enabled: false
       brokers: [kafka1.example.com:9092, kafka2.example.com:9092]
-      topic: sentineld.processes
+      topic: daemoneye.processes
       security_protocol: PLAINTEXT
       sasl_mechanism: PLAIN
       username: ${KAFKA_USERNAME}
@@ -389,21 +389,21 @@ integrations:
   export:
     cef:
       enabled: false
-      output_file: /var/log/sentineld/cef.log
+      output_file: /var/log/daemoneye/cef.log
       cef_version: '1.0'
-      device_vendor: SentinelD
+      device_vendor: DaemonEye
       device_product: Process Monitor
       device_version: 1.0.0
 
     stix:
       enabled: false
-      output_file: /var/log/sentineld/stix.json
+      output_file: /var/log/daemoneye/stix.json
       stix_version: '2.1'
-      stix_id: sentineld-process-monitor
+      stix_id: daemoneye-process-monitor
 
     json:
       enabled: false
-      output_file: /var/log/sentineld/events.json
+      output_file: /var/log/daemoneye/events.json
       pretty_print: true
       include_metadata: true
 ```
@@ -419,8 +419,8 @@ app:
   scan_interval_ms: 30000          # How often to scan processes (30 seconds)
   batch_size: 1000                 # Number of processes to process in each batch
   log_level: info                  # Logging verbosity
-  data_dir: /var/lib/sentineld     # Where to store data files
-  log_dir: /var/log/sentineld      # Where to store log files
+  data_dir: /var/lib/daemoneye     # Where to store data files
+  log_dir: /var/log/daemoneye      # Where to store log files
 ```
 
 **Performance Tuning**:
@@ -437,9 +437,9 @@ app:
 
 ```yaml
 app:
-  user: sentineld                  # Run as non-root user
-  group: sentineld                 # Run as non-root group
-  pid_file: /var/run/sentineld.pid # PID file location
+  user: daemoneye                  # Run as non-root user
+  group: daemoneye                 # Run as non-root group
+  pid_file: /var/run/daemoneye.pid # PID file location
 ```
 
 ### Logging Configuration
@@ -482,7 +482,7 @@ observability:
 
 ```yaml
 database:
-  path: /var/lib/sentineld/processes.db
+  path: /var/lib/daemoneye/processes.db
   max_connections: 10
   retention_days: 30
 ```
@@ -516,7 +516,7 @@ database:
   enable_encryption: false         # Enable database encryption
   encryption_key: ${DB_ENCRYPTION_KEY}
   enable_access_control: true      # Enable access control
-  allowed_users: [sentineld]       # Allowed database users
+  allowed_users: [daemoneye]       # Allowed database users
 ```
 
 ## Alerting Configuration
@@ -532,7 +532,7 @@ alerting:
       enabled: true
       facility: daemon
       priority: info
-      tag: sentineld
+      tag: daemoneye
 ```
 
 **Webhook Sink**:
@@ -558,7 +558,7 @@ alerting:
   sinks:
     - type: file
       enabled: true
-      path: /var/log/sentineld/alerts.log
+      path: /var/log/daemoneye/alerts.log
       format: json
       rotation: daily
       max_files: 30
@@ -599,8 +599,8 @@ alerting:
 ```yaml
 security:
   enable_privilege_dropping: true
-  drop_to_user: sentineld
-  drop_to_group: sentineld
+  drop_to_user: daemoneye
+  drop_to_group: daemoneye
 ```
 
 **Access Control**:
@@ -621,7 +621,7 @@ security:
 ```yaml
 security:
   enable_audit_logging: true
-  audit_log_path: /var/log/sentineld/audit.log
+  audit_log_path: /var/log/daemoneye/audit.log
 ```
 
 **Integrity Checking**:
@@ -631,8 +631,8 @@ security:
   enable_integrity_checking: true
   hash_algorithm: blake3
   enable_signature_verification: true
-  public_key_path: /etc/sentineld/public.key
-  private_key_path: /etc/sentineld/private.key
+  public_key_path: /etc/daemoneye/public.key
+  private_key_path: /etc/daemoneye/private.key
 ```
 
 ### Network Security
@@ -643,9 +643,9 @@ security:
 security:
   network:
     enable_tls: true
-    cert_file: /etc/sentineld/cert.pem
-    key_file: /etc/sentineld/key.pem
-    ca_file: /etc/sentineld/ca.pem
+    cert_file: /etc/daemoneye/cert.pem
+    key_file: /etc/daemoneye/key.pem
+    ca_file: /etc/daemoneye/ca.pem
     verify_peer: true
 ```
 
@@ -729,9 +729,9 @@ app:
 platform:
   linux:
     enable_ebpf: true
-    ebpf_program_path: /etc/sentineld/ebpf/monitor.o
+    ebpf_program_path: /etc/daemoneye/ebpf/monitor.o
     enable_audit: true
-    audit_rules_path: /etc/sentineld/audit.rules
+    audit_rules_path: /etc/daemoneye/audit.rules
 ```
 
 **System Integration**:
@@ -740,9 +740,9 @@ platform:
 platform:
   linux:
     enable_systemd_integration: true
-    systemd_unit: sentineld.service
+    systemd_unit: daemoneye.service
     enable_logrotate: true
-    logrotate_config: /etc/logrotate.d/sentineld
+    logrotate_config: /etc/logrotate.d/daemoneye
 ```
 
 ### Windows Configuration
@@ -753,7 +753,7 @@ platform:
 platform:
   windows:
     enable_etw: true
-    etw_session_name: SentinelD
+    etw_session_name: DaemonEye
     enable_wmi: true
     wmi_namespace: root\cimv2
 ```
@@ -763,8 +763,8 @@ platform:
 ```yaml
 platform:
   windows:
-    service_name: SentinelD Agent
-    service_display_name: SentinelD Security Monitoring Agent
+    service_name: DaemonEye Agent
+    service_display_name: DaemonEye Security Monitoring Agent
     service_description: Monitors system processes for security threats
 ```
 
@@ -776,7 +776,7 @@ platform:
 platform:
   macos:
     enable_endpoint_security: true
-    es_client_name: com.sentineld.monitor
+    es_client_name: com.daemoneye.monitor
     enable_system_events: true
 ```
 
@@ -785,7 +785,7 @@ platform:
 ```yaml
 platform:
   macos:
-    launchdaemon_plist: /Library/LaunchDaemons/com.sentineld.agent.plist
+    launchdaemon_plist: /Library/LaunchDaemons/com.daemoneye.agent.plist
     enable_console_logging: true
 ```
 
@@ -797,7 +797,7 @@ platform:
 
 ```yaml
 detection:
-  rule_directory: /etc/sentineld/rules
+  rule_directory: /etc/daemoneye/rules
   rule_file_pattern: '*.sql'
   enable_hot_reload: true
   reload_interval_ms: 5000
@@ -824,9 +824,9 @@ integrations:
       enabled: true
       hec_url: https://splunk.example.com:8088/services/collector
       hec_token: ${SPLUNK_HEC_TOKEN}
-      index: sentineld
-      source: sentineld
-      sourcetype: sentineld:processes
+      index: daemoneye
+      source: daemoneye
+      sourcetype: daemoneye:processes
 ```
 
 **Export Formats**:
@@ -836,9 +836,9 @@ integrations:
   export:
     cef:
       enabled: true
-      output_file: /var/log/sentineld/cef.log
+      output_file: /var/log/daemoneye/cef.log
       cef_version: '1.0'
-      device_vendor: SentinelD
+      device_vendor: DaemonEye
       device_product: Process Monitor
       device_version: 1.0.0
 ```
@@ -887,7 +887,7 @@ sentinelcli config show --include-defaults
 
 ```bash
 # Test configuration without starting service
-sentinelagent --config /path/to/config.yaml --dry-run
+daemoneye-agent --config /path/to/config.yaml --dry-run
 
 # Test specific settings
 sentinelcli config test --setting app.scan_interval_ms
@@ -912,10 +912,10 @@ sentinelcli config set app.scan_interval_ms 60000 app.batch_size 500
 
 ```bash
 # Backup current configuration
-sentinelcli config backup --output /backup/sentineld-config-$(date +%Y%m%d).yaml
+sentinelcli config backup --output /backup/daemoneye-config-$(date +%Y%m%d).yaml
 
 # Restore configuration
-sentinelcli config restore --input /backup/sentineld-config-20240101.yaml
+sentinelcli config restore --input /backup/daemoneye-config-20240101.yaml
 ```
 
 ### Environment Management
@@ -930,7 +930,7 @@ app:
   batch_size: 100
 
 database:
-  path: /tmp/sentineld-dev.db
+  path: /tmp/daemoneye-dev.db
   retention_days: 1
 ```
 
@@ -944,7 +944,7 @@ app:
   batch_size: 1000
 
 database:
-  path: /var/lib/sentineld/processes.db
+  path: /var/lib/daemoneye/processes.db
   retention_days: 30
 ```
 
@@ -958,7 +958,7 @@ app:
   batch_size: 500
 
 database:
-  path: /var/lib/sentineld/processes-staging.db
+  path: /var/lib/daemoneye/processes-staging.db
   retention_days: 7
 ```
 
@@ -996,11 +996,11 @@ sentinelcli config set app.scan_interval_ms 30000
 
 ```bash
 # Check file permissions
-ls -la /etc/sentineld/config.yaml
+ls -la /etc/daemoneye/config.yaml
 
 # Fix permissions
-sudo chown sentineld:sentineld /etc/sentineld/config.yaml
-sudo chmod 644 /etc/sentineld/config.yaml
+sudo chown daemoneye:daemoneye /etc/daemoneye/config.yaml
+sudo chmod 644 /etc/daemoneye/config.yaml
 ```
 
 ### Performance Issues
@@ -1082,7 +1082,7 @@ observability:
 sentinelcli config show --include-defaults --format json
 
 # Test configuration
-sentinelagent --config /path/to/config.yaml --dry-run
+daemoneye-agent --config /path/to/config.yaml --dry-run
 
 # Check configuration sources
 sentinelcli config sources
@@ -1094,11 +1094,11 @@ sentinelcli config sources
 observability:
   performance:
     enable_profiling: true
-    profile_output_dir: /tmp/sentineld/profiles
+    profile_output_dir: /tmp/daemoneye/profiles
     enable_memory_profiling: true
     enable_cpu_profiling: true
 ```
 
 ---
 
-*This configuration guide provides comprehensive instructions for configuring SentinelD. For additional help, consult the troubleshooting section or contact support.*
+*This configuration guide provides comprehensive instructions for configuring DaemonEye. For additional help, consult the troubleshooting section or contact support.*

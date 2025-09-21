@@ -2,7 +2,7 @@
 
 ## Overview
 
-SentinelD uses a secure, high-performance IPC system to coordinate between its three components (`procmond`, `sentinelagent`, and `sentinelcli`). The IPC layer provides reliable cross-platform communication using native OS primitives while maintaining strict security boundaries.
+DaemonEye uses a secure, high-performance IPC system to coordinate between its three components (`procmond`, `daemoneye-agent`, and `sentinelcli`). The IPC layer provides reliable cross-platform communication using native OS primitives while maintaining strict security boundaries.
 
 ## Transport Architecture
 
@@ -16,7 +16,7 @@ The IPC system is built on the `interprocess` crate, which provides a unified in
 
 ## Platform-Specific Transports
 
-SentinelD automatically selects the optimal IPC transport for each platform:
+DaemonEye automatically selects the optimal IPC transport for each platform:
 
 - **Linux/macOS**: Unix domain sockets for maximum performance and security
 - **Windows**: Named pipes with appropriate security descriptors
@@ -72,8 +72,8 @@ pub struct IpcConfig {
 
 #### Default Paths
 
-- **Unix/macOS**: `/var/run/sentineld/procmond.sock`
-- **Windows**: `\\.\pipe\sentineld\procmond`
+- **Unix/macOS**: `/var/run/daemoneye/procmond.sock`
+- **Windows**: `\\.\pipe\daemoneye\procmond`
 
 #### Custom Endpoints
 
@@ -81,9 +81,9 @@ You can specify custom endpoints in the configuration:
 
 ```yaml
 ipc:
-  endpoint_path: "/tmp/custom-sentineld.sock"  # Unix/macOS
+  endpoint_path: "/tmp/custom-daemoneye.sock"  # Unix/macOS
   # OR
-  endpoint_path: "\\\\.\\pipe\\custom-sentineld"    # Windows
+  endpoint_path: "\\\\.\\pipe\\custom-daemoneye"    # Windows
 ```
 
 #### Endpoint Permissions
@@ -151,7 +151,7 @@ pub enum IpcError {
 sentinelcli health-check --verbose
 
 # Verify endpoint accessibility
-ls -la /var/run/sentineld/  # Unix/macOS
+ls -la /var/run/daemoneye/  # Unix/macOS
 
 # Test IPC connectivity
 sentinelcli ipc test

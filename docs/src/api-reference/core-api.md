@@ -1,6 +1,6 @@
-# SentinelD Core API Reference
+# DaemonEye Core API Reference
 
-This document provides comprehensive API reference for the SentinelD core library (`sentinel-lib`) and its public interfaces.
+This document provides comprehensive API reference for the DaemonEye core library (`sentinel-lib`) and its public interfaces.
 
 ## Table of Contents
 
@@ -258,8 +258,8 @@ let mut builder = ConfigBuilder::new();
 // Load configuration from multiple sources
 builder
     .add_embedded_defaults()?
-    .add_file("/etc/sentineld/config.yaml")?
-    .add_file("~/.config/sentineld/config.yaml")?
+    .add_file("/etc/daemoneye/config.yaml")?
+    .add_file("~/.config/daemoneye/config.yaml")?
     .add_environment("SENTINELD_")?
     .add_cli_args(args)?;
 
@@ -306,7 +306,7 @@ use sentinel_lib::storage::{EventStore, EventStoreConfig, ProcessQuery};
 
 // Create event store
 let config = EventStoreConfig {
-    path: "/var/lib/sentineld/events.redb".into(),
+    path: "/var/lib/daemoneye/events.redb".into(),
     max_size_mb: 10240,
     wal_mode: true,
     max_connections: 10,
@@ -344,7 +344,7 @@ Tamper-evident audit trail with cryptographic integrity.
 use sentinel_lib::storage::{AuditLedger, AuditEntry, AuditRecord};
 
 // Create audit ledger
-let audit_ledger = AuditLedger::new("/var/lib/sentineld/audit.sqlite")?;
+let audit_ledger = AuditLedger::new("/var/lib/daemoneye/audit.sqlite")?;
 
 // Log audit entry
 let entry = AuditEntry {
@@ -443,7 +443,7 @@ use sentinel_lib::detection::{RuleManager, RuleManagerConfig};
 
 // Create rule manager
 let config = RuleManagerConfig {
-    rules_path: "/etc/sentineld/rules".into(),
+    rules_path: "/etc/daemoneye/rules".into(),
     enable_hot_reload: true,
     validation_enabled: true,
 };
@@ -510,7 +510,7 @@ use sentinel_lib::alerting::sinks::{AlertSink, StdoutSink, SyslogSink, WebhookSi
 let stdout_sink = StdoutSink::new(OutputFormat::Json);
 let syslog_sink = SyslogSink::new(SyslogConfig {
     facility: SyslogFacility::Daemon,
-    tag: "sentineld".to_string(),
+    tag: "daemoneye".to_string(),
     host: "localhost".to_string(),
     port: 514,
 });
@@ -550,7 +550,7 @@ use sentinel_lib::crypto::{HashChain, HashChainConfig, ChainVerificationResult};
 let config = HashChainConfig {
     algorithm: HashAlgorithm::Blake3,
     enable_signatures: true,
-    private_key_path: Some("/etc/sentineld/private.key".into()),
+    private_key_path: Some("/etc/daemoneye/private.key".into()),
 };
 
 let mut hash_chain = HashChain::new(config)?;
@@ -583,8 +583,8 @@ use sentinel_lib::crypto::{SignatureManager, SignatureConfig};
 
 // Create signature manager
 let config = SignatureConfig {
-    private_key_path: "/etc/sentineld/private.key".into(),
-    public_key_path: "/etc/sentineld/public.key".into(),
+    private_key_path: "/etc/daemoneye/private.key".into(),
+    public_key_path: "/etc/daemoneye/public.key".into(),
 };
 
 let signature_manager = SignatureManager::new(config)?;
@@ -680,4 +680,4 @@ match some_operation().await {
 
 ---
 
-*This API reference provides comprehensive documentation for the SentinelD core library. For additional examples and advanced usage, consult the source code and integration tests.*
+*This API reference provides comprehensive documentation for the DaemonEye core library. For additional examples and advanced usage, consult the source code and integration tests.*

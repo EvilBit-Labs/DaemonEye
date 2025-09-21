@@ -1,6 +1,6 @@
-# SentinelD Feature Tiers
+# DaemonEye Feature Tiers
 
-SentinelD is offered in three distinct tiers, each designed to meet different organizational needs and deployment scales. All tiers maintain the core security-first architecture while adding progressively more advanced capabilities.
+DaemonEye is offered in three distinct tiers, each designed to meet different organizational needs and deployment scales. All tiers maintain the core security-first architecture while adding progressively more advanced capabilities.
 
 ## Core Tier (Open Source)
 
@@ -9,7 +9,7 @@ SentinelD is offered in three distinct tiers, each designed to meet different or
 ### Core Components
 
 - **procmond**: Privileged process collector with minimal attack surface
-- **sentinelagent**: User-space detection orchestrator with SQL-based rules
+- **daemoneye-agent**: User-space detection orchestrator with SQL-based rules
 - **sentinelcli**: Command-line interface for queries and management
 - **sentinel-lib**: Shared library with common functionality
 
@@ -208,9 +208,9 @@ SentinelD is offered in three distinct tiers, each designed to meet different or
 
 ### **Dual-License Strategy**
 
-The SentinelD project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
+The DaemonEye project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
 
-- **Core Components**: Apache 2.0 licensed (procmond, sentinelagent, sentinelcli, sentinel-lib)
+- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, sentinelcli, sentinel-lib)
 - **Business Tier Features**: $199/site one-time license (Security Center, GUI, enhanced connectors, curated rules)
 - **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
 

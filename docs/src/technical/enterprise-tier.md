@@ -1,10 +1,10 @@
 # Enterprise Tier Features
 
-This document describes the Enterprise tier features of SentinelD, including kernel monitoring, network event monitoring, and federated security center architecture.
+This document describes the Enterprise tier features of DaemonEye, including kernel monitoring, network event monitoring, and federated security center architecture.
 
 ## Overview
 
-The Enterprise tier extends SentinelD with advanced monitoring capabilities and enterprise-grade features:
+The Enterprise tier extends DaemonEye with advanced monitoring capabilities and enterprise-grade features:
 
 - **Kernel Monitoring Layer**: eBPF, ETW, and EndpointSecurity integration
 - **Network Event Monitor**: Real-time network traffic analysis
@@ -16,7 +16,7 @@ The Enterprise tier extends SentinelD with advanced monitoring capabilities and 
 
 ### Linux eBPF Integration
 
-SentinelD uses eBPF (Extended Berkeley Packet Filter) for low-level system monitoring:
+DaemonEye uses eBPF (Extended Berkeley Packet Filter) for low-level system monitoring:
 
 ```rust
 use aya::{
@@ -71,7 +71,7 @@ impl ETWMonitor {
 
         let session_handle = StartTraceW(
             &mut 0,
-            PCWSTR::from_raw("SentinelD\0".as_ptr() as *const u16),
+            PCWSTR::from_raw("DaemonEye\0".as_ptr() as *const u16),
             &mut trace_properties,
         )?;
 
@@ -99,7 +99,7 @@ pub struct EndpointSecurityMonitor {
 impl EndpointSecurityMonitor {
     pub async fn new() -> Result<Self, MonitorError> {
         let client = ClientBuilder::new()
-            .name("com.sentineld.monitor")
+            .name("com.daemoneye.monitor")
             .build()
             .await?;
 
@@ -184,7 +184,7 @@ pub enum ConflictResolution {
 
 ## STIX/TAXII Integration
 
-SentinelD integrates with STIX/TAXII for threat intelligence sharing:
+DaemonEye integrates with STIX/TAXII for threat intelligence sharing:
 
 ```rust
 use stix::{
@@ -286,11 +286,11 @@ Enterprise tier configuration extends the base configuration:
 enterprise:
   kernel_monitoring:
     enable_ebpf: true
-    ebpf_program_path: /etc/sentineld/ebpf/monitor.o
+    ebpf_program_path: /etc/daemoneye/ebpf/monitor.o
     enable_etw: true
-    etw_session_name: SentinelD
+    etw_session_name: DaemonEye
     enable_endpoint_security: true
-    es_client_name: com.sentineld.monitor
+    es_client_name: com.daemoneye.monitor
 
   network_monitoring:
     enable_packet_capture: true
@@ -301,17 +301,17 @@ enterprise:
 
   federation:
     enable_federation: true
-    primary_endpoint: https://primary.sentineld.com
+    primary_endpoint: https://primary.daemoneye.com
     regional_endpoints:
-      - https://region1.sentineld.com
-      - https://region2.sentineld.com
+      - https://region1.daemoneye.com
+      - https://region2.daemoneye.com
     sync_interval: 300
     conflict_resolution: primary_wins
 
   stix_taxii:
     enable_integration: true
     taxii_endpoint: https://taxii.example.com
-    collection_id: sentineld-indicators
+    collection_id: daemoneye-indicators
     sync_interval: 3600
 
   analytics:

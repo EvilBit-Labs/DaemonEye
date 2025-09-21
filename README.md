@@ -1,24 +1,24 @@
-# :shield: SentinelD — High-Performance Security Process Monitoring
+# :shield: DaemonEye — High-Performance Security Process Monitoring
 
-**SentinelD** is a security-focused, high-performance process monitoring system built for cybersecurity professionals, threat hunters, and security operations centers. This is a complete **Rust 2024 rewrite** of the proven Python prototype, delivering enterprise-grade performance with **audit-grade integrity**.
+**DaemonEye** is a security-focused, high-performance process monitoring system built for cybersecurity professionals, threat hunters, and security operations centers. This is a complete **Rust 2024 rewrite** of the proven Python prototype, delivering enterprise-grade performance with **audit-grade integrity**.
 
 ## :classical_building: Architecture Overview
 
-**SentinelD** is a three-component security package designed for robust, secure, and auditable system monitoring:
+**DaemonEye** is a three-component security package designed for robust, secure, and auditable system monitoring:
 
 ```text
-SentinelD/
+DaemonEye/
 ├── procmond/         # :lock: Privileged Process Collector
-├── sentinelcli/      # :computer: Command-Line Interface
-├── sentinelagent/    # :satellite: User-Space Orchestrator
-└── sentinel-lib/     # :gear: Shared Library Components
+├── daemoneye-cli/    # :computer: Command-Line Interface
+├── daemoneye-agent/  # :satellite: User-Space Orchestrator
+└── daemoneye-lib/    # :gear: Shared Library Components
 ```
 
 ### Component Roles
 
-- **:lock: ProcMonD (Collector):** Runs with elevated privileges, focused solely on process monitoring with minimal attack surface. Writes to Certificate Transparency-style audit ledger and communicates via protobuf IPC with sentinelagent.
-- **:satellite: SentinelAgent (Orchestrator):** Operates in user space with minimal privileges. Manages procmond lifecycle, executes SQL detection rules, and handles alert delivery. Translates complex SQL rules into simple protobuf tasks for procmond.
-- **:computer: SentinelCLI:** Local command-line interface for data queries, result exports, and service configuration. Communicates with sentinelagent for all operations.
+- **:lock: ProcMonD (Collector):** Runs with elevated privileges, focused solely on process monitoring with minimal attack surface. Writes to Certificate Transparency-style audit ledger and communicates via protobuf IPC with daemoneye-agent.
+- **:satellite: DaemonEye Agent (Orchestrator):** Operates in user space with minimal privileges. Manages procmond lifecycle, executes SQL detection rules, and handles alert delivery. Translates complex SQL rules into simple protobuf tasks for procmond.
+- **:computer: DaemonEye CLI:** Local command-line interface for data queries, result exports, and service configuration. Communicates with daemoneye-agent for all operations.
 
 This separation ensures **robust security**: ProcMonD remains isolated and hardened, while orchestration/network tasks are delegated to low-privilege processes.
 
@@ -37,7 +37,7 @@ This separation ensures **robust security**: ProcMonD remains isolated and harde
 
 ## :gift: Free Forever
 
-The **Free Tier** of SentinelD is completely free forever with no time limits or feature restrictions. This includes:
+The **Free Tier** of DaemonEye is completely free forever with no time limits or feature restrictions. This includes:
 
 - Full process monitoring and detection capabilities
 - All built-in detection rules and SQL-based custom rules
@@ -65,32 +65,32 @@ just build
 just lint && just test
 
 # Start orchestrator agent (manages procmond automatically)
-just run-sentinelagent
+just run-daemoneye-agent
 
 # Launch CLI interface
-just run-sentinelcli --help
+just run-daemoneye-cli --help
 
 # Run single-shot collection (for testing)
-just run-sentinelagent --once
+just run-daemoneye-agent --once
 ```
 
 ### Example Usage
 
 ```bash
 # Start the orchestrator (manages procmond automatically)
-sentinelagent --config /etc/sentineld/config.yaml
+daemoneye-agent --config /etc/daemoneye/config.yaml
 
 # Query historical process data through orchestrator
-sentinelcli query --sql "SELECT * FROM processes WHERE name = 'suspicious_proc'"
+daemoneye-cli query --sql "SELECT * FROM processes WHERE name = 'suspicious_proc'"
 
 # Test alert delivery
-sentinelcli alerts send-test
+daemoneye-cli alerts send-test
 
 # Check system health
-sentinelcli health-check --verbose
+daemoneye-cli health-check --verbose
 
 # Export data for analysis
-sentinelcli export --format json --output /tmp/process_data.json
+daemoneye-cli export --format json --output /tmp/process_data.json
 ```
 
 ## :brain: Detection Capabilities
@@ -149,8 +149,8 @@ just build        # Build workspace
 
 # Component execution
 just run-procmond --once --verbose      # Run process monitor with flags
-just run-sentinelcli --help             # Run CLI interface
-just run-sentinelagent --config /path   # Run orchestrator agent
+just run-daemoneye-cli --help             # Run CLI interface
+just run-daemoneye-agent --config /path   # Run orchestrator agent
 ```
 
 ## :busts_in_silhouette: Target Users

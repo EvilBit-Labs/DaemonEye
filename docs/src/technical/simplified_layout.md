@@ -1,20 +1,20 @@
-# SentinelD Architecture Refactoring Complete ✅
+# DaemonEye Architecture Refactoring Complete ✅
 
 ## 🎉 Successfully Refactored: Workspace → Single Crate with Feature Flags
 
 ### **What We Achieved**
 
-SentinelD has been successfully refactored from a workspace-based architecture to a **single crate with multiple binaries and feature flags**. This was the optimal choice for your use case: **single developer, unified distribution, binaries only**.
+DaemonEye has been successfully refactored from a workspace-based architecture to a **single crate with multiple binaries and feature flags**. This was the optimal choice for your use case: **single developer, unified distribution, binaries only**.
 
 ### **Final Architecture**
 
 ```text
-SentinelD/
+DaemonEye/
 ├── Cargo.toml            # Single crate with [[bin]] entries
 ├── procmond/             # Privileged Process Collector (binary)
 │   ├── src/main.rs      # Uses sentinel_lib directly
 │   └── tests/           # Component tests
-├── sentinelagent/        # Detection Orchestrator (binary)
+├── daemoneye-agent/        # Detection Orchestrator (binary)
 │   ├── src/main.rs      # Uses sentinel_lib directly
 │   └── tests/           # Component tests
 ├── sentinelcli/          # CLI Interface (binary)
@@ -25,7 +25,7 @@ SentinelD/
 │   └── src/             # Feature-gated modules
 ├── tests/                # Integration tests
 │   ├── procmond.rs
-│   ├── sentinelagent.rs
+│   ├── daemoneye-agent.rs
 │   └── sentinelcli.rs
 └── .github/workflows/    # Updated CI configurations
 ```
@@ -66,7 +66,7 @@ minimal = ["cli"]
 | Component       | Required Features                             | Optional Dependencies Pulled                 |
 | --------------- | --------------------------------------------- | -------------------------------------------- |
 | `procmond`      | `["sysinfo", "process-collection"]`           | `sysinfo = "0.37.0"`                         |
-| `sentinelagent` | `["futures", "detection-engine", "alerting"]` | `futures = "0.3.31"`, `sqlparser = "0.58.0"` |
+| `daemoneye-agent` | `["futures", "detection-engine", "alerting"]` | `futures = "0.3.31"`, `sqlparser = "0.58.0"` |
 | `sentinelcli`   | `["serde_json", "terminal-ui"]`               | `serde_json = "1.0.145"`                     |
 
 #### Binary Target Configuration
@@ -78,8 +78,8 @@ path = "procmond/src/main.rs"
 required-features = ["procmond"]
 
 [[bin]]
-name = "sentinelagent"
-path = "sentinelagent/src/main.rs"
+name = "daemoneye-agent"
+path = "daemoneye-agent/src/main.rs"
 required-features = ["agent"]
 
 [[bin]]
@@ -145,7 +145,7 @@ sqlparser = { version = "0.58.0", optional = true }
 
 ### **Benefits Delivered**
 
-- ✅ **Single Distribution**: `cargo install sentineld` gets everything
+- ✅ **Single Distribution**: `cargo install daemoneye` gets everything
 - ✅ **Precise Dependencies**: Each binary only gets what it needs
 - ✅ **Development Simplicity**: Single `cargo clippy -- -D warnings` run
 - ✅ **CI Passes**: All tests pass, CI configurations updated
@@ -153,8 +153,8 @@ sqlparser = { version = "0.58.0", optional = true }
 
 #### Single Distribution
 
-- `cargo install sentineld` installs all components
-- `cargo install sentineld --features=cli --no-default-features` for CLI only
+- `cargo install daemoneye` installs all components
+- `cargo install daemoneye --features=cli --no-default-features` for CLI only
 - Custom combinations available
 
 #### Precise Dependencies
@@ -190,7 +190,7 @@ just ci-check                           ✅ PASS
 
 ```bash
 just run-procmond --help                ✅ Works
-just run-sentinelagent --help           ✅ Works
+just run-daemoneye-agent --help           ✅ Works
 just run-sentinelcli --help             ✅ Works
 ```
 
@@ -199,14 +199,14 @@ just run-sentinelcli --help             ✅ Works
 ```bash
 cargo build --bin procmond --features=procmond      ✅ Only needed deps
 cargo build --bin sentinelcli --features=cli        ✅ Only needed deps
-cargo build --bin sentinelagent --features=agent    ✅ Only needed deps
+cargo build --bin daemoneye-agent --features=agent    ✅ Only needed deps
 ```
 
 ### ✅ Distribution
 
 ```bash
 just dist-plan                          ✅ All 3 binaries in packages
-# Shows: procmond, sentinelagent, sentinelcli in all platform packages
+# Shows: procmond, daemoneye-agent, sentinelcli in all platform packages
 ```
 
 ## **Commands That Work**
@@ -232,7 +232,7 @@ just test                              # Via justfile
 ```bash
 just run-procmond --help               # Run procmond with help
 just run-sentinelcli --version         # Run CLI with version
-cargo run --bin sentinelagent --features=agent -- --help
+cargo run --bin daemoneye-agent --features=agent -- --help
 ```
 
 ### Linting
@@ -259,7 +259,7 @@ use sentinel_lib::{config, models, storage, telemetry};
 // Direct usage without intermediate re-export layer
 ```
 
-#### sentinelagent/src/main.rs
+#### daemoneye-agent/src/main.rs
 
 ```rust
 #![forbid(unsafe_code)]
@@ -314,7 +314,7 @@ Critical design decision - the root crate has **no library target**:
 ```toml
 # Cargo.toml - Notice: NO [lib] section
 [package]
-name = "sentineld"
+name = "daemoneye"
 # ... package metadata ...
 
 # Only binary targets
@@ -329,7 +329,7 @@ This eliminates the unnecessary abstraction layer that was re-exporting `sentine
 
 Cargo resolves features as follows:
 
-1. **User specifies**: `cargo install sentineld --features=cli --no-default-features`
+1. **User specifies**: `cargo install daemoneye --features=cli --no-default-features`
 2. **Cargo activates**: `cli = ["serde_json", "terminal-ui"]`
 3. **Dependencies pulled**: Only `serde_json` becomes available
 4. **sentinel-lib configured**: Only `terminal-ui` feature enabled
@@ -377,7 +377,7 @@ Cargo resolves features as follows:
 - ❌ **Meta-package directory**: `sentinel/` package that depended on components
 - ❌ **Individual Cargo.toml files**:
   - `procmond/Cargo.toml`
-  - `sentinelagent/Cargo.toml`
+  - `daemoneye-agent/Cargo.toml`
   - `sentinelcli/Cargo.toml`
 - ❌ **Root library target**: `src/lib.rs` that re-exported `sentinel-lib`
 - ❌ **Workspace commands**: `cargo build --workspace`, `cargo clippy --workspace`
@@ -395,15 +395,15 @@ Cargo resolves features as follows:
 
 - ✅ **Feature flag architecture**: Precise component and capability control
 - ✅ **Binary target configuration**: `[[bin]]` entries with `required-features`
-- ✅ **Single crate distribution**: `cargo install sentineld` installs all components
+- ✅ **Single crate distribution**: `cargo install daemoneye` installs all components
 - ✅ **Direct imports**: Binaries use `sentinel_lib::module` without intermediate layer
 - ✅ **Optional dependencies**: Features control which external crates are pulled
 - ✅ **Consolidated integration tests**: All tests in root `tests/` directory
 - ✅ **Simplified build commands**: Single `--all-features` instead of `--workspace`
 
-## **The "sentineld" Purpose Clarified**
+## **The "daemoneye" Purpose Clarified**
 
-**Q**: What was the purpose of the root `sentineld` library that re-exported `sentinel-lib`?
+**Q**: What was the purpose of the root `daemoneye` library that re-exported `sentinel-lib`?
 
 **A**: It was **unnecessary complexity** for your use case. Since you only ship binaries and `sentinel-lib` is internal, the extra layer added no value. The binaries now use `sentinel_lib::*` directly, which is much cleaner.
 
@@ -413,13 +413,13 @@ Cargo resolves features as follows:
 
 ```bash
 # Complete security suite (your target use case)
-cargo install sentineld
+cargo install daemoneye
 
 # Analysis workstation (CLI only)  
-cargo install sentineld --features=cli --no-default-features
+cargo install daemoneye --features=cli --no-default-features
 
 # Custom combinations
-cargo install sentineld --features=agent,cli --no-default-features
+cargo install daemoneye --features=agent,cli --no-default-features
 ```
 
 ### **Development**
@@ -437,7 +437,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 # Individual components
 just run-procmond --version
 just run-sentinelcli --help
-just run-sentinelagent --version
+just run-daemoneye-agent --version
 ```
 
 ## **Technical Architecture Comparison**
@@ -452,12 +452,12 @@ just run-sentinelagent --version
 | **Build command**          | `cargo build --workspace`                                              | `cargo build --all-features`                                   |
 | **Clippy command**         | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | `cargo clippy --all-targets --all-features -- -D warnings`     |
 | **Test command**           | `cargo test --workspace`                                               | `cargo test --all-features`                                    |
-| **Distribution**           | Meta-package `sentinel` depends on components                          | Single crate `sentineld` with multiple binaries                |
-| **Import structure**       | `use sentineld::models` (via re-export)                                | `use sentinel_lib::models` (direct)                            |
+| **Distribution**           | Meta-package `sentinel` depends on components                          | Single crate `daemoneye` with multiple binaries                |
+| **Import structure**       | `use daemoneye::models` (via re-export)                                | `use sentinel_lib::models` (direct)                            |
 | **Feature control**        | Package-level (all-or-nothing)                                         | Module-level with optional dependencies                        |
 | **CI complexity**          | Matrix across workspace members                                        | Single crate with feature combinations                         |
-| **Installation**           | `cargo install sentinel` (meta-package)                                | `cargo install sentineld` (direct)                             |
-| **Selective installation** | Not supported                                                          | `cargo install sentineld --features=cli --no-default-features` |
+| **Installation**           | `cargo install sentinel` (meta-package)                                | `cargo install daemoneye` (direct)                             |
+| **Selective installation** | Not supported                                                          | `cargo install daemoneye --features=cli --no-default-features` |
 
 ### **Technical Dependency Flow**
 
@@ -466,7 +466,7 @@ just run-sentinelagent --version
 ```text
 sentinel (meta-package)
 ├── procmond ──────┐
-├── sentinelagent ─┤ 
+├── daemoneye-agent ─┤ 
 ├── sentinelcli ───┤
 └── [dependencies] └─→ sentinel-lib
 ```
@@ -474,9 +474,9 @@ sentinel (meta-package)
 #### After (Single Crate)
 
 ```text
-sentineld (root crate)
+daemoneye (root crate)
 ├── [[bin]] procmond ─────┐
-├── [[bin]] sentinelagent ┤──→ sentinel-lib
+├── [[bin]] daemoneye-agent ┤──→ sentinel-lib
 ├── [[bin]] sentinelcli ──┘
 └── [dependencies.sentinel-lib]
 ```
@@ -494,7 +494,7 @@ sentineld (root crate)
 
 This refactoring successfully addresses the original question: **"What if we used `[[lib]]` and `[[bin]]` tags with features instead of a meta-package?"**
 
-**Answer**: For a single-developer, unified-distribution project like SentinelD, this approach provides:
+**Answer**: For a single-developer, unified-distribution project like DaemonEye, this approach provides:
 
 - **Better development ergonomics** (single clippy run, one Cargo.toml)
 - **Precise dependency control** (no bloat)
@@ -507,7 +507,7 @@ The hybrid approach with preserved component directories gives the benefits of b
 
 ## **Summary**
 
-The refactoring successfully transformed SentinelD from a workspace-based architecture to an optimal **single crate with multiple binaries** structure. This provides:
+The refactoring successfully transformed DaemonEye from a workspace-based architecture to an optimal **single crate with multiple binaries** structure. This provides:
 
 - **Better development ergonomics** (single clippy run, one primary Cargo.toml)
 - **Precise dependency control** (no bloat, feature-based)

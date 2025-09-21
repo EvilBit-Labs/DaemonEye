@@ -1,6 +1,6 @@
-# SentinelD Documentation
+# DaemonEye Documentation
 
-This directory contains the comprehensive documentation for SentinelD, built using [mdbook](https://rust-lang.github.io/mdBook/).
+This directory contains the comprehensive documentation for DaemonEye, built using [mdbook](https://rust-lang.github.io/mdBook/).
 
 ## Structure
 
@@ -121,4 +121,4 @@ See the [Contributing Guide](../CONTRIBUTING.md) for information on contributing
 
 ## License
 
-The documentation is licensed under the same terms as the SentinelD project.
+The documentation is licensed under the same terms as the DaemonEye project.

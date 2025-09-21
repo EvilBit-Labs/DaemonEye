@@ -1,6 +1,6 @@
 # API Reference
 
-This section contains comprehensive API documentation for SentinelD, covering all public interfaces, data structures, and usage examples.
+This section contains comprehensive API documentation for DaemonEye, covering all public interfaces, data structures, and usage examples.
 
 ## Core API
 
@@ -12,7 +12,7 @@ The core API provides the fundamental interfaces for process monitoring, alertin
 
 ### Component APIs
 
-SentinelD provides APIs for each component:
+DaemonEye provides APIs for each component:
 
 - **ProcMonD API**: Process collection and system monitoring
 - **SentinelAgent API**: Alerting and orchestration
@@ -664,4 +664,4 @@ impl AlertSink for CustomSink {
 
 ---
 
-*This API reference provides comprehensive documentation for all SentinelD APIs. For additional examples and usage patterns, consult the specific API documentation.*
+*This API reference provides comprehensive documentation for all DaemonEye APIs. For additional examples and usage patterns, consult the specific API documentation.*

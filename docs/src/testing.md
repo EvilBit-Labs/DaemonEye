@@ -1,6 +1,6 @@
 # Testing Documentation
 
-This document provides comprehensive testing strategies and guidelines for SentinelD, covering unit testing, integration testing, performance testing, and security testing.
+This document provides comprehensive testing strategies and guidelines for DaemonEye, covering unit testing, integration testing, performance testing, and security testing.
 
 ---
 
@@ -12,7 +12,7 @@ This document provides comprehensive testing strategies and guidelines for Senti
 
 ## Testing Philosophy
 
-SentinelD follows a comprehensive testing strategy that ensures:
+DaemonEye follows a comprehensive testing strategy that ensures:
 
 - **Reliability**: Robust error handling and edge case coverage
 - **Performance**: Meets performance requirements under load
@@ -47,7 +47,7 @@ SentinelD follows a comprehensive testing strategy that ensures:
 
 ### Core Testing Framework
 
-SentinelD uses a comprehensive unit testing framework:
+DaemonEye uses a comprehensive unit testing framework:
 
 ```rust
 #[cfg(test)]
@@ -266,7 +266,7 @@ fn test_cli_help() {
     let mut cmd = Command::cargo_bin("sentinelcli").unwrap();
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("SentinelD CLI"));
+        .stdout(predicate::str::contains("DaemonEye CLI"));
 }
 
 #[test]
@@ -307,7 +307,7 @@ async fn test_full_system_workflow() {
         procmond.run().await
     });
 
-    // Start sentinelagent
+    // Start daemoneye-agent
     let agent_handle = tokio::spawn(async move {
         let agent = SentinelAgent::new(&config_path).await.unwrap();
         agent.run().await
@@ -607,7 +607,7 @@ alerting:
 testing:
   enable_mocks: true
   mock_external_services: true
-  test_data_dir: /tmp/sentineld-test
+  test_data_dir: /tmp/daemoneye-test
   cleanup_after_tests: true
 ```
 
@@ -795,4 +795,4 @@ impl Drop for TestHelper {
 
 ---
 
-*This testing documentation provides comprehensive guidance for testing SentinelD. For additional testing information, consult the specific test files or contact the development team.*
+*This testing documentation provides comprehensive guidance for testing DaemonEye. For additional testing information, consult the specific test files or contact the development team.*

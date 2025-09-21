@@ -1,13 +1,13 @@
 # Protobuf IPC Implementation
 
-This document describes the Protocol Buffer implementation for Inter-Process Communication (IPC) between the `procmond` and `sentinelagent` components in SentinelD.
+This document describes the Protocol Buffer implementation for Inter-Process Communication (IPC) between the `procmond` and `daemoneye-agent` components in DaemonEye.
 
 ## Overview
 
 The protobuf schema defines type-safe message contracts that enable efficient and reliable communication between:
 
 - **procmond**: Privileged process collector
-- **sentinelagent**: Detection orchestrator
+- **daemoneye-agent**: Detection orchestrator
 
 ## Message Types
 
@@ -15,7 +15,7 @@ The protobuf schema defines type-safe message contracts that enable efficient an
 
 #### DetectionTask
 
-Sent from `sentinelagent` to `procmond` to request process data collection.
+Sent from `daemoneye-agent` to `procmond` to request process data collection.
 
 ```protobuf
 message DetectionTask {
@@ -29,7 +29,7 @@ message DetectionTask {
 
 #### DetectionResult
 
-Returned from `procmond` to `sentinelagent` with collection results.
+Returned from `procmond` to `daemoneye-agent` with collection results.
 
 ```protobuf
 message DetectionResult {

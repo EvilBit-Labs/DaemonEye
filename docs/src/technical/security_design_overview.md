@@ -1,10 +1,10 @@
-# SentinelD Security Design Overview
+# DaemonEye Security Design Overview
 
 ## Executive Summary
 
-SentinelD is a security-focused, high-performance process monitoring system designed to provide continuous threat detection and behavioral analysis while maintaining strict security boundaries and audit-grade integrity. The system implements a three-component architecture with privilege separation, cryptographic integrity verification, and comprehensive audit logging to meet enterprise security requirements.
+DaemonEye is a security-focused, high-performance process monitoring system designed to provide continuous threat detection and behavioral analysis while maintaining strict security boundaries and audit-grade integrity. The system implements a three-component architecture with privilege separation, cryptographic integrity verification, and comprehensive audit logging to meet enterprise security requirements.
 
-This document provides a comprehensive technical overview of SentinelD's security design, architecture, and implementation details for security professionals, compliance officers, and system architects responsible for threat detection and incident response capabilities.
+This document provides a comprehensive technical overview of DaemonEye's security design, architecture, and implementation details for security professionals, compliance officers, and system architects responsible for threat detection and incident response capabilities.
 
 ---
 
@@ -18,7 +18,7 @@ This document provides a comprehensive technical overview of SentinelD's securit
 
 ### Core Security Principles
 
-SentinelD is built on fundamental security principles that guide every aspect of its design and implementation:
+DaemonEye is built on fundamental security principles that guide every aspect of its design and implementation:
 
 **Principle of Least Privilege**: Each component operates with the minimum privileges required for its specific function, with immediate privilege dropping after initialization.
 
@@ -46,7 +46,7 @@ graph TB
         end
 
         subgraph "User Space Domain"
-            SA["sentinelagent<br/>(Detection Orchestrator)<br/>• SQL detection engine<br/>• Alert management<br/>• Multi-channel delivery<br/>• Database management<br/>• Outbound-only network"]
+            SA["daemoneye-agent<br/>(Detection Orchestrator)<br/>• SQL detection engine<br/>• Alert management<br/>• Multi-channel delivery<br/>• Database management<br/>• Outbound-only network"]
 
             CLI["sentinelcli<br/>(Operator Interface)<br/>• Query interface<br/>• System management<br/>• No direct DB access<br/>• No network access"]
         end
@@ -73,7 +73,7 @@ graph TB
 
 ### Security Control Matrix
 
-| Security Control            | procmond                | sentinelagent         | sentinelcli           | Implementation                     |
+| Security Control            | procmond                | daemoneye-agent         | sentinelcli           | Implementation                     |
 | --------------------------- | ----------------------- | --------------------- | --------------------- | ---------------------------------- |
 | **Privilege Separation**    | ✅ Elevated (temporary) | ✅ User space         | ✅ User space         | Platform-specific capabilities     |
 | **Network Isolation**       | ✅ No network           | ✅ Outbound only      | ✅ No network         | Firewall rules + code restrictions |
@@ -101,19 +101,19 @@ graph TB
 **Process Isolation**:
 
 - procmond runs in isolated process space with minimal privileges
-- sentinelagent operates in user space with restricted database access
+- daemoneye-agent operates in user space with restricted database access
 - sentinelcli has no direct system access, only IPC communication
 
 **Network Isolation**:
 
 - procmond: Zero network access (air-gapped)
-- sentinelagent: Outbound-only connections for alert delivery
+- daemoneye-agent: Outbound-only connections for alert delivery
 - sentinelcli: No network access, local IPC only
 
 **Data Access Controls**:
 
 - Audit ledger: Write-only for procmond, read-only for others
-- Event store: Read/write for sentinelagent, query-only for sentinelcli
+- Event store: Read/write for daemoneye-agent, query-only for sentinelcli
 - Configuration: Hierarchical access with validation
 
 ### Threat Mitigation Strategies
@@ -180,7 +180,7 @@ impl ProcessCollector {
 }
 ```
 
-### sentinelagent (Detection Orchestrator)
+### daemoneye-agent (Detection Orchestrator)
 
 **Security Role**: User-space detection engine with network alerting capabilities
 
@@ -235,7 +235,7 @@ impl SqlValidator {
 
 **Security Features**:
 
-- **No Direct Database Access**: All queries routed through sentinelagent
+- **No Direct Database Access**: All queries routed through daemoneye-agent
 - **Input Sanitization**: Comprehensive validation of all user inputs
 - **Safe SQL Execution**: Prepared statements with parameter binding[^20]
 - **Output Formats**: Support JSON, human-readable table, and CSV output[^21]
@@ -272,7 +272,7 @@ impl SqlValidator {
 
 **Common Criteria Evaluation**:
 
-- **Target of Evaluation (TOE)**: SentinelD security monitoring system
+- **Target of Evaluation (TOE)**: DaemonEye security monitoring system
 - **Security Target (ST)**: Comprehensive security requirements documentation
 - **Evaluation Assurance Level (EAL)**: EAL4+ evaluation support
 - **Protection Profile**: Custom protection profile development
@@ -383,7 +383,7 @@ impl AuditLedger {
 
 **Government Data Classifications** (All Tiers):
 
-SentinelD supports all standard government data classification levels with appropriate handling controls and access restrictions.
+DaemonEye supports all standard government data classification levels with appropriate handling controls and access restrictions.
 
 ### Privacy Controls
 
@@ -807,13 +807,13 @@ SentinelD supports all standard government data classification levels with appro
 
 ## US Government ISSO Considerations
 
-This section explains how SentinelD addresses specific concerns and requirements that US Government Information System Security Officers (ISSOs) must consider when evaluating security monitoring solutions for federal systems.
+This section explains how DaemonEye addresses specific concerns and requirements that US Government Information System Security Officers (ISSOs) must consider when evaluating security monitoring solutions for federal systems.
 
-### What SentinelD Provides for ISSOs
+### What DaemonEye Provides for ISSOs
 
 **Audit-Grade Evidence Collection**:
 
-SentinelD's Merkle tree audit ledger provides cryptographically verifiable evidence that ISSOs can use for compliance reporting and forensic investigations. The system generates inclusion proofs for every audit event, enabling ISSOs to demonstrate data integrity and non-repudiation to auditors and investigators.
+DaemonEye's Merkle tree audit ledger provides cryptographically verifiable evidence that ISSOs can use for compliance reporting and forensic investigations. The system generates inclusion proofs for every audit event, enabling ISSOs to demonstrate data integrity and non-repudiation to auditors and investigators.
 
 **Minimal Attack Surface for High-Risk Environments**:
 
@@ -821,13 +821,13 @@ The three-component architecture with privilege separation means that even if on
 
 **Airgapped Operation Capability**:
 
-SentinelD operates entirely offline, making it suitable for classified environments where network connectivity is restricted. ISSOs can deploy the system in airgapped networks without compromising security or functionality.
+DaemonEye operates entirely offline, making it suitable for classified environments where network connectivity is restricted. ISSOs can deploy the system in airgapped networks without compromising security or functionality.
 
 ### FISMA Compliance Support
 
 **NIST SP 800-53 Control Implementation**:
 
-SentinelD directly implements several NIST SP 800-53 controls that ISSOs must verify:
+DaemonEye directly implements several NIST SP 800-53 controls that ISSOs must verify:
 
 - **AU-2 (Audit Events)**: Comprehensive logging of all security-relevant events with structured JSON format
 - **AU-9 (Protection of Audit Information)**: Cryptographic integrity protection using BLAKE3 hashing
@@ -849,7 +849,7 @@ The system generates the audit evidence and documentation that ISSOs need for Au
 
 **Continuous Monitoring Capabilities**:
 
-SentinelD provides the continuous monitoring capabilities that ISSOs need for ongoing authorization, including:
+DaemonEye provides the continuous monitoring capabilities that ISSOs need for ongoing authorization, including:
 
 - Real-time security control effectiveness measurement
 - Automated compliance reporting
@@ -869,7 +869,7 @@ The system generates the technical documentation and evidence that ISSOs require
 
 **Cloud-Ready Security Architecture**:
 
-SentinelD's design supports FedRAMP authorization requirements:
+DaemonEye's design supports FedRAMP authorization requirements:
 
 - No inbound network connections (meets cloud security requirements)
 - Cryptographic data protection at rest and in transit
@@ -889,7 +889,7 @@ The system provides the technical controls and documentation that 3PAOs need to 
 
 **STIG Compliance**:
 
-SentinelD's architecture aligns with DoD Security Technical Implementation Guides:
+DaemonEye's architecture aligns with DoD Security Technical Implementation Guides:
 
 - Process isolation and privilege separation
 - Cryptographic data protection
@@ -907,7 +907,7 @@ The system supports Controlled Unclassified Information (CUI) protection require
 
 **Intelligence Community Requirements**:
 
-For IC environments, SentinelD provides:
+For IC environments, DaemonEye provides:
 
 - Airgapped operation capability
 - Multi-level security support through data classification
@@ -939,13 +939,13 @@ For IC environments, SentinelD provides:
 
 ## Additional NIST SP 800-53 Compliance Requirements
 
-Based on analysis of SentinelD's current design against NIST SP 800-53 requirements, the following additional controls should be addressed to improve compliance with US Government customers. Each control includes vendor-specific implementation notes for SentinelD product development:
+Based on analysis of DaemonEye's current design against NIST SP 800-53 requirements, the following additional controls should be addressed to improve compliance with US Government customers. Each control includes vendor-specific implementation notes for DaemonEye product development:
 
 ### Configuration Management (CM) Family
 
 **CM-2 (Baseline Configurations)**:
 
-- **Vendor Implementation**: Implement configuration baselines for all SentinelD components with version control
+- **Vendor Implementation**: Implement configuration baselines for all DaemonEye components with version control
 - **Product Requirements**: Provide secure default configurations, configuration templates, and version-controlled configuration schemas
 - **Implementation Notes**: Include configuration validation, rollback capabilities, and configuration drift detection. Already planned: hierarchical configuration management with embedded defaults, system files, user files, environment variables, and CLI flags. Additional work needed: formal configuration baselines and version control for configuration schemas.
 
@@ -989,7 +989,7 @@ Based on analysis of SentinelD's current design against NIST SP 800-53 requireme
 
 **CP-2 (Contingency Plan)**:
 
-- **Vendor Implementation**: Documented contingency plans for SentinelD operations
+- **Vendor Implementation**: Documented contingency plans for DaemonEye operations
 - **Product Requirements**: Provide disaster recovery procedures, failover documentation, and recovery time objectives
 - **Implementation Notes**: Include automated failover, data replication, and recovery procedures. Already planned: graceful degradation under resource constraints and fail-safe design. Additional work needed: formal contingency plans and disaster recovery procedures.
 
@@ -1175,19 +1175,19 @@ Based on analysis of SentinelD's current design against NIST SP 800-53 requireme
 
 **SC-1 (System and Communications Protection Policy and Procedures)**:
 
-- **Vendor Implementation**: Document comprehensive SC policies and procedures for SentinelD deployment
+- **Vendor Implementation**: Document comprehensive SC policies and procedures for DaemonEye deployment
 - **Product Requirements**: Provide security configuration guides, network isolation procedures, and communication protocols
 - **Implementation Notes**: Include deployment hardening guides, security configuration templates, and operational procedures for airgapped environments. Already planned: comprehensive security configuration guides, operational procedures, and development workflow documentation. Additional work needed: formal SC policy documentation and deployment hardening guides.
 
 **SC-2 (Application Partitioning)**:
 
-- **Vendor Implementation**: Implement strict application partitioning in SentinelD's three-component architecture
-- **Product Requirements**: Ensure procmond, sentinelagent, and sentinelcli operate in isolated process spaces with defined interfaces
-- **Implementation Notes**: Use process isolation, separate memory spaces, and controlled IPC communication channels between components. Already planned: three-component architecture with procmond (privileged collector), sentinelagent (user-space orchestrator), and sentinelcli (command interface) operating in isolated process spaces. Additional work needed: enhanced partitioning controls and formal partitioning documentation.
+- **Vendor Implementation**: Implement strict application partitioning in DaemonEye's three-component architecture
+- **Product Requirements**: Ensure procmond, daemoneye-agent, and sentinelcli operate in isolated process spaces with defined interfaces
+- **Implementation Notes**: Use process isolation, separate memory spaces, and controlled IPC communication channels between components. Already planned: three-component architecture with procmond (privileged collector), daemoneye-agent (user-space orchestrator), and sentinelcli (command interface) operating in isolated process spaces. Additional work needed: enhanced partitioning controls and formal partitioning documentation.
 
 **SC-3 (Security Function Isolation)**:
 
-- **Vendor Implementation**: Isolate security functions within dedicated components (procmond for collection, sentinelagent for detection)
+- **Vendor Implementation**: Isolate security functions within dedicated components (procmond for collection, daemoneye-agent for detection)
 - **Product Requirements**: Implement privilege separation with minimal privilege requirements per component
 - **Implementation Notes**: Use platform-specific capabilities (Linux capabilities, Windows privileges) with immediate privilege dropping after initialization. Already planned: privilege separation with immediate privilege dropping after initialization, platform-specific capability management for Linux, Windows, and macOS. Additional work needed: enhanced isolation controls and formal isolation documentation.
 
@@ -1199,19 +1199,19 @@ Based on analysis of SentinelD's current design against NIST SP 800-53 requireme
 
 **SC-5 (Denial of Service Protection)**:
 
-- **Vendor Implementation**: Implement DoS protection mechanisms for SentinelD components
+- **Vendor Implementation**: Implement DoS protection mechanisms for DaemonEye components
 - **Product Requirements**: Provide resource quotas, memory limits, and protection against resource exhaustion attacks
-- **Implementation Notes**: Include memory limits, CPU usage bounds, database connection limits, and graceful degradation under resource constraints. Note: SentinelD has no inbound network communications, so network-based DoS attacks are not applicable. Already planned: resource management with bounded channels, memory limits, timeout support, and circuit breaker patterns for external dependencies. Additional work needed: enhanced resource protection and formal DoS protection documentation.
+- **Implementation Notes**: Include memory limits, CPU usage bounds, database connection limits, and graceful degradation under resource constraints. Note: DaemonEye has no inbound network communications, so network-based DoS attacks are not applicable. Already planned: resource management with bounded channels, memory limits, timeout support, and circuit breaker patterns for external dependencies. Additional work needed: enhanced resource protection and formal DoS protection documentation.
 
 **SC-6 (Resource Availability)**:
 
-- **Vendor Implementation**: Ensure resource availability controls for SentinelD operations
+- **Vendor Implementation**: Ensure resource availability controls for DaemonEye operations
 - **Product Requirements**: Implement resource monitoring, automatic recovery, and failover mechanisms
 - **Implementation Notes**: Include health monitoring, automatic restart capabilities, and resource usage tracking with alerts. Already planned: resource management with graceful degradation, bounded channels, and cooperative yielding under resource constraints. Additional work needed: enhanced failover mechanisms and formal resource availability documentation.
 
 **SC-9 (Transmission Confidentiality)**:
 
-- **Vendor Implementation**: Ensure transmission confidentiality for all SentinelD communications
+- **Vendor Implementation**: Ensure transmission confidentiality for all DaemonEye communications
 - **Product Requirements**: Implement encryption for IPC channels, alert delivery, and data transmission
 - **Implementation Notes**: Use TLS for webhook alerts, encrypted IPC channels, and secure data export formats. Already planned: TLS for webhook alert delivery and secure data export formats for SIEM integration. Additional work needed: enhanced encryption for IPC channels and formal transmission confidentiality documentation.
 
@@ -1223,37 +1223,37 @@ Based on analysis of SentinelD's current design against NIST SP 800-53 requireme
 
 **SC-11 (Trusted Path)**:
 
-- **Vendor Implementation**: Provide trusted path for critical SentinelD operations
+- **Vendor Implementation**: Provide trusted path for critical DaemonEye operations
 - **Product Requirements**: Implement secure communication channels for administrative operations and configuration changes
 - **Implementation Notes**: Use authenticated IPC channels, secure configuration interfaces, and protected administrative access. Already planned: authenticated IPC channels with connection authentication and optional encryption for secure inter-process communication. Additional work needed: enhanced trusted path mechanisms and formal trusted path documentation.
 
 **SC-16 (Transmission of Security Attributes)**:
 
-- **Vendor Implementation**: Transmit security attributes with all SentinelD data and communications. **Already Planned**: Data classification support is specified in product.md. **Additional Required**: Enhanced security attribute transmission and formal security attribute documentation.
+- **Vendor Implementation**: Transmit security attributes with all DaemonEye data and communications. **Already Planned**: Data classification support is specified in product.md. **Additional Required**: Enhanced security attribute transmission and formal security attribute documentation.
 - **Product Requirements**: Include data classification, sensitivity labels, and security markings in all transmissions
 - **Implementation Notes**: Embed security attributes in protobuf messages, database records, and alert payloads
 
 **SC-17 (Public Key Infrastructure Certificates)**:
 
-- **Vendor Implementation**: Implement PKI certificate management for SentinelD components. **Already Planned**: mTLS authentication and certificate management are specified in product.md for Business/Enterprise tiers. **Additional Required**: Enhanced PKI certificate management and formal PKI documentation.
+- **Vendor Implementation**: Implement PKI certificate management for DaemonEye components. **Already Planned**: mTLS authentication and certificate management are specified in product.md for Business/Enterprise tiers. **Additional Required**: Enhanced PKI certificate management and formal PKI documentation.
 - **Product Requirements**: Support certificate-based authentication, mutual TLS, and certificate validation
 - **Implementation Notes**: Include certificate generation, validation, rotation, and revocation for agent authentication and alert delivery
 
 **SC-18 (Mobile Code)**:
 
-- **Vendor Implementation**: Control mobile code execution in SentinelD environment. **Already Planned**: Code signing verification is specified in product.md for Business/Enterprise tiers. **Additional Required**: Enhanced mobile code controls and formal mobile code documentation.
+- **Vendor Implementation**: Control mobile code execution in DaemonEye environment. **Already Planned**: Code signing verification is specified in product.md for Business/Enterprise tiers. **Additional Required**: Enhanced mobile code controls and formal mobile code documentation.
 - **Product Requirements**: Implement controls for mobile code execution and validation
 - **Implementation Notes**: Include code signing verification, execution sandboxing, and mobile code validation
 
 **SC-19 (Voice Over Internet Protocol)**:
 
-- **Vendor Implementation**: Secure VoIP communications for SentinelD (if applicable). **Not Currently Planned**: VoIP communications are not part of the current SentinelD design. **Additional Required**: VoIP security controls if voice communications are added to the product.
+- **Vendor Implementation**: Secure VoIP communications for DaemonEye (if applicable). **Not Currently Planned**: VoIP communications are not part of the current DaemonEye design. **Additional Required**: VoIP security controls if voice communications are added to the product.
 
 - **Product Requirements**: Implement encryption and security controls for VoIP communications
 
 - **Implementation Notes**: Include VoIP encryption, authentication, and security protocols for voice communications **SC-20 (Secure Name/Address Resolution Service)**:
 
-- **Vendor Implementation**: Implement secure DNS resolution for SentinelD. **Not Currently Planned**: DNS resolution is not part of the current SentinelD design. **Additional Required**: Secure DNS resolution capabilities if DNS functionality is added to the product.
+- **Vendor Implementation**: Implement secure DNS resolution for DaemonEye. **Not Currently Planned**: DNS resolution is not part of the current DaemonEye design. **Additional Required**: Secure DNS resolution capabilities if DNS functionality is added to the product.
 
 - **Product Requirements**: Provide secure name resolution and address resolution services
 
@@ -1261,67 +1261,67 @@ Based on analysis of SentinelD's current design against NIST SP 800-53 requireme
 
 **SC-21 (Secure Name/Address Resolution Service (Recursive or Caching Resolver))**:
 
-- **Vendor Implementation**: Implement secure recursive DNS resolution for SentinelD. **Not Currently Planned**: DNS resolution is not part of the current SentinelD design. **Additional Required**: Secure recursive DNS resolution capabilities if DNS functionality is added to the product.
+- **Vendor Implementation**: Implement secure recursive DNS resolution for DaemonEye. **Not Currently Planned**: DNS resolution is not part of the current DaemonEye design. **Additional Required**: Secure recursive DNS resolution capabilities if DNS functionality is added to the product.
 - **Product Requirements**: Provide secure recursive DNS resolution with caching capabilities
 - **Implementation Notes**: Include secure recursive DNS, DNS caching security, and resolution validation
 
 **SC-22 (Architecture and Provisioning for Name/Address Resolution Service)**:
 
-- **Vendor Implementation**: Design secure DNS architecture for SentinelD. **Not Currently Planned**: DNS architecture is not part of the current SentinelD design. **Additional Required**: Secure DNS architecture if DNS functionality is added to the product.
+- **Vendor Implementation**: Design secure DNS architecture for DaemonEye. **Not Currently Planned**: DNS architecture is not part of the current DaemonEye design. **Additional Required**: Secure DNS architecture if DNS functionality is added to the product.
 - **Product Requirements**: Implement secure DNS architecture and provisioning
 - **Implementation Notes**: Include secure DNS infrastructure, provisioning automation, and architecture security
 
 **SC-23 (Session Authenticity)**:
 
-- **Vendor Implementation**: Ensure session authenticity for SentinelD administrative sessions. **Already Planned**: Authentication and integrity verification are specified in tech.md. **Additional Required**: Enhanced session management and formal session authenticity documentation.
+- **Vendor Implementation**: Ensure session authenticity for DaemonEye administrative sessions. **Already Planned**: Authentication and integrity verification are specified in tech.md. **Additional Required**: Enhanced session management and formal session authenticity documentation.
 - **Product Requirements**: Implement session management, authentication, and integrity verification
 - **Implementation Notes**: Use secure session tokens, session timeout controls, and cryptographic session validation
 
 **SC-24 (Fail in Known State)**:
 
-- **Vendor Implementation**: Ensure SentinelD fails in a known, secure state. **Already Planned**: Graceful degradation and fail-safe design are specified in product.md. **Additional Required**: Enhanced fail-safe mechanisms and formal fail-safe documentation.
+- **Vendor Implementation**: Ensure DaemonEye fails in a known, secure state. **Already Planned**: Graceful degradation and fail-safe design are specified in product.md. **Additional Required**: Enhanced fail-safe mechanisms and formal fail-safe documentation.
 - **Product Requirements**: Implement fail-safe mechanisms that maintain security boundaries during failures
 - **Implementation Notes**: Include graceful shutdown procedures, secure state preservation, and recovery from known states
 
 **SC-25 (Thin Nodes)**:
 
-- **Vendor Implementation**: Support thin client security for SentinelD. **Not Currently Planned**: Thin client deployments are not part of the current SentinelD design. **Additional Required**: Thin client security controls if thin client functionality is added to the product.
+- **Vendor Implementation**: Support thin client security for DaemonEye. **Not Currently Planned**: Thin client deployments are not part of the current DaemonEye design. **Additional Required**: Thin client security controls if thin client functionality is added to the product.
 - **Product Requirements**: Implement security controls for thin client deployments
 - **Implementation Notes**: Include thin client authentication, secure communication, and minimal client footprint
 
 **SC-26 (Honeypots)**:
 
-- **Vendor Implementation**: Implement honeypot capabilities for SentinelD. **Not Currently Planned**: Honeypot capabilities are not part of the current SentinelD design. **Additional Required**: Honeypot capabilities if threat intelligence collection is expanded.
+- **Vendor Implementation**: Implement honeypot capabilities for DaemonEye. **Not Currently Planned**: Honeypot capabilities are not part of the current DaemonEye design. **Additional Required**: Honeypot capabilities if threat intelligence collection is expanded.
 - **Product Requirements**: Provide decoy systems and monitoring capabilities for threat detection
 - **Implementation Notes**: Include honeypot deployment, monitoring capabilities, and threat intelligence collection
 
 **SC-27 (Platform-Independent Applications)**:
 
-- **Vendor Implementation**: Ensure SentinelD operates consistently across different platforms. **Already Planned**: Cross-platform support and OS support matrix are specified in tech.md. **Additional Required**: Enhanced platform independence testing and formal platform independence documentation.
+- **Vendor Implementation**: Ensure DaemonEye operates consistently across different platforms. **Already Planned**: Cross-platform support and OS support matrix are specified in tech.md. **Additional Required**: Enhanced platform independence testing and formal platform independence documentation.
 - **Product Requirements**: Provide platform-independent security controls and consistent behavior
 - **Implementation Notes**: Use cross-platform libraries, consistent security policies, and platform-specific optimizations where needed
 
 **SC-29 (Heterogeneity)**:
 
-- **Vendor Implementation**: Support heterogeneous system environments for SentinelD deployment. **Already Planned**: Multi-platform support and OS support matrix are specified in tech.md. **Additional Required**: Enhanced heterogeneity testing and formal heterogeneity documentation.
+- **Vendor Implementation**: Support heterogeneous system environments for DaemonEye deployment. **Already Planned**: Multi-platform support and OS support matrix are specified in tech.md. **Additional Required**: Enhanced heterogeneity testing and formal heterogeneity documentation.
 - **Product Requirements**: Ensure compatibility across different operating systems, architectures, and configurations
 - **Implementation Notes**: Include multi-platform support, architecture-specific optimizations, and configuration flexibility
 
 **SC-30 (Concealment and Misdirection)**:
 
-- **Vendor Implementation**: Implement concealment and misdirection capabilities for SentinelD. **Not Currently Planned**: Concealment and misdirection capabilities are not part of the current SentinelD design. **Additional Required**: Concealment and misdirection capabilities if advanced threat detection is expanded.
+- **Vendor Implementation**: Implement concealment and misdirection capabilities for DaemonEye. **Not Currently Planned**: Concealment and misdirection capabilities are not part of the current DaemonEye design. **Additional Required**: Concealment and misdirection capabilities if advanced threat detection is expanded.
 - **Product Requirements**: Provide decoy systems and misdirection techniques for threat detection
 - **Implementation Notes**: Include honeypot deployment, decoy data generation, and misdirection techniques
 
 **SC-31 (Covert Channel Analysis)**:
 
-- **Vendor Implementation**: Analyze and mitigate covert channels in SentinelD design. **Already Planned**: Resource usage monitoring and channel capacity limitations are specified in tech.md. **Additional Required**: Enhanced covert channel analysis and formal covert channel documentation.
+- **Vendor Implementation**: Analyze and mitigate covert channels in DaemonEye design. **Already Planned**: Resource usage monitoring and channel capacity limitations are specified in tech.md. **Additional Required**: Enhanced covert channel analysis and formal covert channel documentation.
 - **Product Requirements**: Implement controls to prevent information leakage through covert channels
 - **Implementation Notes**: Include timing analysis, resource usage monitoring, and channel capacity limitations
 
 **SC-32 (Information System Partitioning)**:
 
-- **Vendor Implementation**: Implement system partitioning in SentinelD architecture. **Already Planned**: Process isolation and separate databases are specified in product.md and tech.md. **Additional Required**: Enhanced system partitioning and formal partitioning documentation.
+- **Vendor Implementation**: Implement system partitioning in DaemonEye architecture. **Already Planned**: Process isolation and separate databases are specified in product.md and tech.md. **Additional Required**: Enhanced system partitioning and formal partitioning documentation.
 - **Product Requirements**: Ensure logical and physical separation of different security domains
 - **Implementation Notes**: Use process isolation, separate databases, and controlled data flow between partitions
 
@@ -1333,37 +1333,37 @@ Based on analysis of SentinelD's current design against NIST SP 800-53 requireme
 
 **SC-34 (Modifiable Components)**:
 
-- **Vendor Implementation**: Control modification of SentinelD components. **Already Planned**: Code signing verification and integrity checking are specified in product.md for Business/Enterprise tiers. **Additional Required**: Enhanced tamper detection and formal modification control documentation.
+- **Vendor Implementation**: Control modification of DaemonEye components. **Already Planned**: Code signing verification and integrity checking are specified in product.md for Business/Enterprise tiers. **Additional Required**: Enhanced tamper detection and formal modification control documentation.
 - **Product Requirements**: Implement tamper detection, code signing verification, and modification controls
 - **Implementation Notes**: Include integrity checking, signature verification, and protection against unauthorized modifications
 
 **SC-35 (Honeytokens)**:
 
-- **Vendor Implementation**: Implement honeytoken capabilities for SentinelD. **Not Currently Planned**: Honeytoken capabilities are not part of the current SentinelD design. **Additional Required**: Honeytoken capabilities if advanced threat detection is expanded.
+- **Vendor Implementation**: Implement honeytoken capabilities for DaemonEye. **Not Currently Planned**: Honeytoken capabilities are not part of the current DaemonEye design. **Additional Required**: Honeytoken capabilities if advanced threat detection is expanded.
 - **Product Requirements**: Provide decoy data and monitoring capabilities for threat detection
 - **Implementation Notes**: Include fake process data, decoy alerts, and monitoring of access to honeytoken data
 
 **SC-36 (Distributed Processing and Storage)**:
 
-- **Vendor Implementation**: Support distributed processing and storage for SentinelD. **Already Planned**: Federated security centers and distributed data storage are specified in product.md for Enterprise tier. **Additional Required**: Enhanced distributed processing and formal distributed architecture documentation.
+- **Vendor Implementation**: Support distributed processing and storage for DaemonEye. **Already Planned**: Federated security centers and distributed data storage are specified in product.md for Enterprise tier. **Additional Required**: Enhanced distributed processing and formal distributed architecture documentation.
 - **Product Requirements**: Implement distributed architecture with secure communication and data consistency
 - **Implementation Notes**: Include federated security centers, distributed data storage, and secure inter-node communication
 
 **SC-37 (Out-of-Band Channels)**:
 
-- **Vendor Implementation**: Support out-of-band communication channels for SentinelD. **Already Planned**: Bundle-based configuration distribution for airgapped systems is specified in product.md. **Additional Required**: Enhanced out-of-band channels and formal out-of-band documentation.
+- **Vendor Implementation**: Support out-of-band communication channels for DaemonEye. **Already Planned**: Bundle-based configuration distribution for airgapped systems is specified in product.md. **Additional Required**: Enhanced out-of-band channels and formal out-of-band documentation.
 - **Product Requirements**: Implement alternative communication methods for critical operations
 - **Implementation Notes**: Include secure out-of-band alert delivery, administrative access, and emergency communication channels
 
 **SC-38 (Operations Security)**:
 
-- **Vendor Implementation**: Implement operations security controls for SentinelD. **Already Planned**: Operational security procedures are documented in AGENTS.md and WARP.md. **Additional Required**: Enhanced operations security and formal operations security documentation.
+- **Vendor Implementation**: Implement operations security controls for DaemonEye. **Already Planned**: Operational security procedures are documented in AGENTS.md and WARP.md. **Additional Required**: Enhanced operations security and formal operations security documentation.
 
 - **Product Requirements**: Protect operational information and prevent information leakage
 
 - **Implementation Notes**: Include operational security procedures, information protection, and security awareness training **SC-40 (Wireless Link Protection)**:
 
-- **Vendor Implementation**: Protect wireless communications for SentinelD (if applicable). **Not Currently Planned**: Wireless communications are not part of the current SentinelD design. **Additional Required**: Wireless security controls if wireless functionality is added to the product.
+- **Vendor Implementation**: Protect wireless communications for DaemonEye (if applicable). **Not Currently Planned**: Wireless communications are not part of the current DaemonEye design. **Additional Required**: Wireless security controls if wireless functionality is added to the product.
 
 - **Product Requirements**: Implement encryption and security controls for wireless communications
 
@@ -1371,55 +1371,55 @@ Based on analysis of SentinelD's current design against NIST SP 800-53 requireme
 
 **SC-41 (Port and I/O Device Access)**:
 
-- **Vendor Implementation**: Control access to ports and I/O devices for SentinelD. **Not Currently Planned**: Port and I/O device access controls are not part of the current SentinelD design. **Additional Required**: Port and I/O device access controls if device access functionality is added to the product.
+- **Vendor Implementation**: Control access to ports and I/O devices for DaemonEye. **Not Currently Planned**: Port and I/O device access controls are not part of the current DaemonEye design. **Additional Required**: Port and I/O device access controls if device access functionality is added to the product.
 - **Product Requirements**: Implement access controls and monitoring for system ports and devices
 - **Implementation Notes**: Include device access controls, port monitoring, and I/O device security policies
 
 **SC-42 (Sensor Capability and Data)**:
 
-- **Vendor Implementation**: Implement sensor capabilities and data protection for SentinelD. **Already Planned**: Process monitoring sensors and data collection security are specified in product.md and tech.md. **Additional Required**: Enhanced sensor capabilities and formal sensor documentation.
+- **Vendor Implementation**: Implement sensor capabilities and data protection for DaemonEye. **Already Planned**: Process monitoring sensors and data collection security are specified in product.md and tech.md. **Additional Required**: Enhanced sensor capabilities and formal sensor documentation.
 - **Product Requirements**: Provide sensor data collection, processing, and protection capabilities
 - **Implementation Notes**: Include process monitoring sensors, data collection security, and sensor data integrity verification
 
 **SC-43 (Usage Restrictions)**:
 
-- **Vendor Implementation**: Implement usage restrictions for SentinelD components. **Already Planned**: Resource usage limits and capability restrictions are specified in tech.md. **Additional Required**: Enhanced usage restrictions and formal usage restriction documentation.
+- **Vendor Implementation**: Implement usage restrictions for DaemonEye components. **Already Planned**: Resource usage limits and capability restrictions are specified in tech.md. **Additional Required**: Enhanced usage restrictions and formal usage restriction documentation.
 - **Product Requirements**: Control and monitor usage of system resources and capabilities
 - **Implementation Notes**: Include resource usage limits, capability restrictions, and usage monitoring and reporting
 
 **SC-44 (Detachable Media)**:
 
-- **Vendor Implementation**: Control access to detachable media for SentinelD. **Not Currently Planned**: Detachable media controls are not part of the current SentinelD design. **Additional Required**: Detachable media controls if media access functionality is added to the product.
+- **Vendor Implementation**: Control access to detachable media for DaemonEye. **Not Currently Planned**: Detachable media controls are not part of the current DaemonEye design. **Additional Required**: Detachable media controls if media access functionality is added to the product.
 - **Product Requirements**: Implement controls for removable media access and data protection
 - **Implementation Notes**: Include media access controls, data encryption for removable media, and media sanitization procedures
 
 **SC-45 (System Time Synchronization)**:
 
-- **Vendor Implementation**: Ensure time synchronization for SentinelD components. **Already Planned**: Millisecond-precision timestamps are specified in product.md. **Additional Required**: Enhanced time synchronization and formal time synchronization documentation.
+- **Vendor Implementation**: Ensure time synchronization for DaemonEye components. **Already Planned**: Millisecond-precision timestamps are specified in product.md. **Additional Required**: Enhanced time synchronization and formal time synchronization documentation.
 - **Product Requirements**: Implement accurate time synchronization and time-based security controls
 - **Implementation Notes**: Include NTP synchronization, time validation, and timestamp integrity verification
 
 **SC-46 (Cross-Service Attack Prevention)**:
 
-- **Vendor Implementation**: Prevent cross-service attacks in SentinelD. **Already Planned**: Service isolation and access controls are specified in product.md and tech.md. **Additional Required**: Enhanced cross-service attack prevention and formal attack prevention documentation.
+- **Vendor Implementation**: Prevent cross-service attacks in DaemonEye. **Already Planned**: Service isolation and access controls are specified in product.md and tech.md. **Additional Required**: Enhanced cross-service attack prevention and formal attack prevention documentation.
 - **Product Requirements**: Implement isolation and protection between different services and components
 - **Implementation Notes**: Include service isolation, access controls, and monitoring for cross-service attack attempts
 
 **SC-47 (Alternate Communications Paths)**:
 
-- **Vendor Implementation**: Provide alternate communication paths for SentinelD. **Already Planned**: Multiple alert delivery channels are specified in product.md. **Additional Required**: Enhanced alternate communication paths and formal communication path documentation.
+- **Vendor Implementation**: Provide alternate communication paths for DaemonEye. **Already Planned**: Multiple alert delivery channels are specified in product.md. **Additional Required**: Enhanced alternate communication paths and formal communication path documentation.
 - **Product Requirements**: Implement redundant communication channels and failover mechanisms
 - **Implementation Notes**: Include multiple alert delivery channels, backup communication methods, and automatic failover
 
 **SC-48 (Application Partitioning)**:
 
-- **Vendor Implementation**: Implement application partitioning for SentinelD security. **Already Planned**: Component isolation and data separation are specified in product.md and tech.md. **Additional Required**: Enhanced application partitioning and formal partitioning documentation.
+- **Vendor Implementation**: Implement application partitioning for DaemonEye security. **Already Planned**: Component isolation and data separation are specified in product.md and tech.md. **Additional Required**: Enhanced application partitioning and formal partitioning documentation.
 
 - **Product Requirements**: Ensure logical separation of application components and data
 
 - **Implementation Notes**: Include component isolation, data separation, and controlled interfaces between partitions **SC-49 (Replay-Resistant Authentication)**:
 
-- **Vendor Implementation**: Implement replay-resistant authentication for SentinelD. **Already Planned**: Authentication mechanisms are specified in tech.md. **Additional Required**: Enhanced replay-resistant authentication and formal authentication documentation.
+- **Vendor Implementation**: Implement replay-resistant authentication for DaemonEye. **Already Planned**: Authentication mechanisms are specified in tech.md. **Additional Required**: Enhanced replay-resistant authentication and formal authentication documentation.
 
 - **Product Requirements**: Provide authentication mechanisms that resist replay attacks
 
@@ -1427,61 +1427,61 @@ Based on analysis of SentinelD's current design against NIST SP 800-53 requireme
 
 **SC-50 (Software-Enforced Separation)**:
 
-- **Vendor Implementation**: Implement software-enforced separation in SentinelD. **Already Planned**: Process isolation and access control enforcement are specified in product.md and tech.md. **Additional Required**: Enhanced software-enforced separation and formal separation documentation.
+- **Vendor Implementation**: Implement software-enforced separation in DaemonEye. **Already Planned**: Process isolation and access control enforcement are specified in product.md and tech.md. **Additional Required**: Enhanced software-enforced separation and formal separation documentation.
 - **Product Requirements**: Use software controls to enforce security boundaries and separation
 - **Implementation Notes**: Include process isolation, memory protection, and access control enforcement
 
 **SC-51 (Hardware-Based Security)**:
 
-- **Vendor Implementation**: Leverage hardware-based security features for SentinelD. **Already Planned**: HSM integration and TPM support are specified in product.md for Enterprise tier. **Additional Required**: Enhanced hardware-based security and formal hardware security documentation.
+- **Vendor Implementation**: Leverage hardware-based security features for DaemonEye. **Already Planned**: HSM integration and TPM support are specified in product.md for Enterprise tier. **Additional Required**: Enhanced hardware-based security and formal hardware security documentation.
 - **Product Requirements**: Utilize hardware security modules and trusted platform modules where available
 - **Implementation Notes**: Include HSM integration, TPM support, and hardware-based key storage
 
 **SC-52 (Portable Storage Devices)**:
 
-- **Vendor Implementation**: Control portable storage device access for SentinelD. **Not Currently Planned**: Portable storage device controls are not part of the current SentinelD design. **Additional Required**: Portable storage device controls if device access functionality is added to the product.
+- **Vendor Implementation**: Control portable storage device access for DaemonEye. **Not Currently Planned**: Portable storage device controls are not part of the current DaemonEye design. **Additional Required**: Portable storage device controls if device access functionality is added to the product.
 - **Product Requirements**: Implement controls for portable storage devices and data protection
 - **Implementation Notes**: Include device access controls, data encryption, and portable storage security policies
 
 **SC-53 (Enforceable Flow Control)**:
 
-- **Vendor Implementation**: Implement enforceable flow control for SentinelD. **Already Planned**: Data flow monitoring and access controls are specified in tech.md. **Additional Required**: Enhanced flow control and formal flow control documentation.
+- **Vendor Implementation**: Implement enforceable flow control for DaemonEye. **Already Planned**: Data flow monitoring and access controls are specified in tech.md. **Additional Required**: Enhanced flow control and formal flow control documentation.
 - **Product Requirements**: Control and monitor data flow between system components
 - **Implementation Notes**: Include data flow monitoring, access controls, and flow restriction mechanisms
 
 **SC-54 (Shared Memory)**:
 
-- **Vendor Implementation**: Protect shared memory in SentinelD. **Already Planned**: Memory access controls are specified in tech.md. **Additional Required**: Enhanced shared memory protection and formal shared memory documentation.
+- **Vendor Implementation**: Protect shared memory in DaemonEye. **Already Planned**: Memory access controls are specified in tech.md. **Additional Required**: Enhanced shared memory protection and formal shared memory documentation.
 - **Product Requirements**: Implement secure shared memory access and protection
 - **Implementation Notes**: Include memory access controls, shared memory encryption, and access monitoring
 
 **SC-55 (Enforceable Access Control)**:
 
-- **Vendor Implementation**: Implement enforceable access control for SentinelD. **Already Planned**: Access control enforcement is specified in product.md and tech.md. **Additional Required**: Enhanced access control and formal access control documentation.
+- **Vendor Implementation**: Implement enforceable access control for DaemonEye. **Already Planned**: Access control enforcement is specified in product.md and tech.md. **Additional Required**: Enhanced access control and formal access control documentation.
 - **Product Requirements**: Provide mandatory access controls and enforcement mechanisms
 - **Implementation Notes**: Include role-based access control, mandatory access controls, and access enforcement
 
 **SC-56 (Enforceable Execution Domains)**:
 
-- **Vendor Implementation**: Implement enforceable execution domains for SentinelD. **Already Planned**: Execution isolation and domain separation are specified in product.md and tech.md. **Additional Required**: Enhanced execution domains and formal execution domain documentation.
+- **Vendor Implementation**: Implement enforceable execution domains for DaemonEye. **Already Planned**: Execution isolation and domain separation are specified in product.md and tech.md. **Additional Required**: Enhanced execution domains and formal execution domain documentation.
 - **Product Requirements**: Control execution environments and domain boundaries
 - **Implementation Notes**: Include execution isolation, domain separation, and execution environment controls
 
 **SC-57 (Data Location)**:
 
-- **Vendor Implementation**: Control data location for SentinelD. **Already Planned**: Data residency controls are specified in product.md for Enterprise tier. **Additional Required**: Enhanced data location controls and formal data location documentation.
+- **Vendor Implementation**: Control data location for DaemonEye. **Already Planned**: Data residency controls are specified in product.md for Enterprise tier. **Additional Required**: Enhanced data location controls and formal data location documentation.
 - **Product Requirements**: Implement data residency controls and location restrictions
 - **Implementation Notes**: Include data location tracking, residency controls, and geographic restrictions
 
 **SC-58 (Secure Operations)**:
 
-- **Vendor Implementation**: Ensure secure operations for SentinelD. **Already Planned**: Secure configuration and operational security procedures are documented in AGENTS.md and WARP.md. **Additional Required**: Enhanced secure operations and formal secure operations documentation.
+- **Vendor Implementation**: Ensure secure operations for DaemonEye. **Already Planned**: Secure configuration and operational security procedures are documented in AGENTS.md and WARP.md. **Additional Required**: Enhanced secure operations and formal secure operations documentation.
 - **Product Requirements**: Implement secure operational procedures and controls
 - **Implementation Notes**: Include secure configuration, operational security procedures, and security monitoring
 
 **SC-59 (Information Flow Enforcement)**:
 
-- **Vendor Implementation**: Implement information flow enforcement for SentinelD. **Already Planned**: Information flow monitoring is specified in tech.md. **Additional Required**: Enhanced information flow enforcement and formal information flow documentation.
+- **Vendor Implementation**: Implement information flow enforcement for DaemonEye. **Already Planned**: Information flow monitoring is specified in tech.md. **Additional Required**: Enhanced information flow enforcement and formal information flow documentation.
 - **Product Requirements**: Control and monitor information flow between system components
 - **Implementation Notes**: Include data flow controls, information flow monitoring, and flow restriction enforcement
 
@@ -1587,7 +1587,7 @@ Based on analysis of SentinelD's current design against NIST SP 800-53 requireme
 
 ## Conclusion
 
-SentinelD's security design provides a comprehensive framework for secure process monitoring and threat detection. The three-component architecture with strict privilege separation, cryptographic integrity verification, and comprehensive audit logging ensures that the system meets enterprise security requirements while maintaining high performance and operational efficiency.
+DaemonEye's security design provides a comprehensive framework for secure process monitoring and threat detection. The three-component architecture with strict privilege separation, cryptographic integrity verification, and comprehensive audit logging ensures that the system meets enterprise security requirements while maintaining high performance and operational efficiency.
 
 The system's defense-in-depth approach, combined with its air-gap compatibility and compliance features, makes it suitable for deployment in high-security environments where traditional monitoring solutions may not meet security requirements.
 

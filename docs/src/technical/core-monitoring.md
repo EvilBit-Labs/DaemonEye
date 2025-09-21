@@ -2,13 +2,13 @@
 
 ## Overview
 
-The Core Monitoring specification defines the fundamental process monitoring capabilities that form the foundation of SentinelD. This includes process enumeration, executable integrity verification, SQL-based detection engine, and multi-channel alerting across the three-component architecture.
+The Core Monitoring specification defines the fundamental process monitoring capabilities that form the foundation of DaemonEye. This includes process enumeration, executable integrity verification, SQL-based detection engine, and multi-channel alerting across the three-component architecture.
 
 ## Process Collection Architecture
 
 ### Cross-Platform Process Enumeration
 
-SentinelD uses a layered approach to process enumeration, providing a unified interface across different operating systems while allowing platform-specific optimizations.
+DaemonEye uses a layered approach to process enumeration, providing a unified interface across different operating systems while allowing platform-specific optimizations.
 
 #### Base Implementation (sysinfo crate)
 
@@ -909,4 +909,4 @@ impl ProcessCollector {
 
 ---
 
-*This core monitoring specification provides the foundation for SentinelD's process monitoring capabilities, ensuring high performance, security, and reliability across all supported platforms.*
+*This core monitoring specification provides the foundation for DaemonEye's process monitoring capabilities, ensuring high performance, security, and reliability across all supported platforms.*

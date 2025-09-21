@@ -1,14 +1,14 @@
-# SentinelD System Architecture
+# DaemonEye System Architecture
 
 ## Overview
 
-SentinelD implements a **single crate with multiple binaries architecture** using feature flags for precise dependency control. The system follows a sophisticated three-component security design around the principle of minimal attack surface while maintaining high performance and audit-grade integrity. The system follows a pipeline processing model where process data flows from collection through detection to alerting, with each component having clearly defined responsibilities and security boundaries.
+DaemonEye implements a **single crate with multiple binaries architecture** using feature flags for precise dependency control. The system follows a sophisticated three-component security design around the principle of minimal attack surface while maintaining high performance and audit-grade integrity. The system follows a pipeline processing model where process data flows from collection through detection to alerting, with each component having clearly defined responsibilities and security boundaries.
 
 ## High-Level Architecture
 
 ```mermaid
 graph TB
-    subgraph "SentinelD Three-Component Architecture"
+    subgraph "DaemonEye Three-Component Architecture"
         subgraph "procmond (Privileged Collector)"
             PM[Process Monitor]
             HC[Hash Computer]
@@ -16,7 +16,7 @@ graph TB
             IPC1[IPC Server]
         end
 
-        subgraph "sentinelagent (Detection Orchestrator)"
+        subgraph "daemoneye-agent (Detection Orchestrator)"
             DE[Detection Engine]
             AM[Alert Manager]
             RM[Rule Manager]
@@ -78,7 +78,7 @@ graph TB
 - **Process Enumeration**: Cross-platform process data collection using sysinfo crate
 - **Executable Hashing**: SHA-256 hash computation for integrity verification
 - **Audit Logging**: Tamper-evident logging with cryptographic chains
-- **IPC Communication**: Simple protobuf-based communication with sentinelagent
+- **IPC Communication**: Simple protobuf-based communication with daemoneye-agent
 
 #### Security Boundaries
 
@@ -146,7 +146,7 @@ impl ProcessCollector {
 }
 ```
 
-### sentinelagent (Detection Orchestrator)
+### daemoneye-agent (Detection Orchestrator)
 
 **Architectural Role**: User-space detection rule execution, alert management, and procmond lifecycle management.
 
@@ -248,10 +248,10 @@ impl DetectionEngine {
 #### Security Boundaries
 
 - **No Network Access**: No network access whatsoever
-- **No Direct Event Store Access**: Communicates through sentinelagent
+- **No Direct Event Store Access**: Communicates through daemoneye-agent
 - **Input Validation**: Comprehensive validation for all user-provided data
-- **Safe SQL Execution**: SQL execution via sentinelagent with prepared statements
-- **Local Communication Only**: Communicates only with sentinelagent
+- **Safe SQL Execution**: SQL execution via daemoneye-agent with prepared statements
+- **Local Communication Only**: Communicates only with daemoneye-agent
 
 #### Key Interfaces
 
@@ -342,7 +342,7 @@ pub mod telemetry {
 
 ```mermaid
 sequenceDiagram
-    participant SA as sentinelagent
+    participant SA as daemoneye-agent
     participant PM as procmond
     participant SYS as System
     participant AL as Audit Ledger
@@ -381,7 +381,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant CLI as sentinelcli
-    participant SA as sentinelagent
+    participant SA as daemoneye-agent
     participant DB as Event Store
 
     CLI->>SA: Execute query request
@@ -396,12 +396,12 @@ sequenceDiagram
 
 ### Protocol Specification
 
-The IPC protocol uses Protocol Buffers for efficient, type-safe communication between procmond and sentinelagent.
+The IPC protocol uses Protocol Buffers for efficient, type-safe communication between procmond and daemoneye-agent.
 
 ```protobuf
 syntax = "proto3";
 
-// Simple detection tasks sent from sentinelagent to procmond
+// Simple detection tasks sent from daemoneye-agent to procmond
 message DetectionTask {
     string task_id = 1;
     TaskType task_type = 2;
@@ -429,7 +429,7 @@ message HashCheck {
     string executable_path = 3;
 }
 
-// Results sent back from procmond to sentinelagent
+// Results sent back from procmond to daemoneye-agent
 message DetectionResult {
     string task_id = 1;
     bool success = 2;
@@ -788,4 +788,4 @@ impl<T> BoundedChannel<T> {
 
 ---
 
-*This architecture provides a robust foundation for implementing SentinelD's core monitoring functionality while maintaining security, performance, and reliability requirements across all supported platforms.*
+*This architecture provides a robust foundation for implementing DaemonEye's core monitoring functionality while maintaining security, performance, and reliability requirements across all supported platforms.*

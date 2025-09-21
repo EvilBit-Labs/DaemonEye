@@ -256,11 +256,11 @@ ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release
 run-procmond *args:
     @cargo run -p procmond -- {{ args }}
 
-run-sentinelcli *args:
-    @cargo run -p sentinelcli -- {{ args }}
+run-daemoneye-cli *args:
+    @cargo run -p daemoneye-cli -- {{ args }}
 
-run-sentinelagent *args:
-    @cargo run -p sentinelagent -- {{ args }}
+run-daemoneye-agent *args:
+    @cargo run -p daemoneye-agent -- {{ args }}
 
 # =============================================================================
 # DISTRIBUTION AND PACKAGING

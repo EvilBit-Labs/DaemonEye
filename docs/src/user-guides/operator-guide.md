@@ -1,6 +1,6 @@
-# SentinelD Operator Guide
+# DaemonEye Operator Guide
 
-This guide provides comprehensive instructions for operators managing SentinelD in production environments. It covers day-to-day operations, troubleshooting, and advanced configuration.
+This guide provides comprehensive instructions for operators managing DaemonEye in production environments. It covers day-to-day operations, troubleshooting, and advanced configuration.
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ This guide provides comprehensive instructions for operators managing SentinelD 
 
 ### Component Status
 
-Check the overall health of your SentinelD installation:
+Check the overall health of your DaemonEye installation:
 
 ```bash
 # Overall system health
@@ -26,7 +26,7 @@ sentinelcli health
 
 # Component-specific health
 sentinelcli health --component procmond
-sentinelcli health --component sentinelagent
+sentinelcli health --component daemoneye-agent
 sentinelcli health --component database
 ```
 
@@ -35,7 +35,7 @@ sentinelcli health --component database
 ```text
 System Health: Healthy
 ├── procmond: Running (PID: 1234)
-├── sentinelagent: Running (PID: 1235)
+├── daemoneye-agent: Running (PID: 1235)
 ├── database: Connected
 └── alerting: All sinks operational
 ```
@@ -46,41 +46,41 @@ System Health: Healthy
 
 ```bash
 # Linux (systemd)
-sudo systemctl start sentineld
+sudo systemctl start daemoneye
 
 # macOS (launchd)
-sudo launchctl load /Library/LaunchDaemons/com.sentineld.agent.plist
+sudo launchctl load /Library/LaunchDaemons/com.daemoneye.agent.plist
 
 # Windows (Service)
-sc start "SentinelD Agent"
+sc start "DaemonEye Agent"
 ```
 
 **Stop Services**:
 
 ```bash
 # Linux (systemd)
-sudo systemctl stop sentineld
+sudo systemctl stop daemoneye
 
 # macOS (launchd)
-sudo launchctl unload /Library/LaunchDaemons/com.sentineld.agent.plist
+sudo launchctl unload /Library/LaunchDaemons/com.daemoneye.agent.plist
 
 # Windows (Service)
-sc stop "SentinelD Agent"
+sc stop "DaemonEye Agent"
 ```
 
 **Restart Services**:
 
 ```bash
 # Linux (systemd)
-sudo systemctl restart sentineld
+sudo systemctl restart daemoneye
 
 # macOS (launchd)
-sudo launchctl unload /Library/LaunchDaemons/com.sentineld.agent.plist
-sudo launchctl load /Library/LaunchDaemons/com.sentineld.agent.plist
+sudo launchctl unload /Library/LaunchDaemons/com.daemoneye.agent.plist
+sudo launchctl load /Library/LaunchDaemons/com.daemoneye.agent.plist
 
 # Windows (Service)
-sc stop "SentinelD Agent"
-sc start "SentinelD Agent"
+sc stop "DaemonEye Agent"
+sc start "DaemonEye Agent"
 ```
 
 ## Basic Operations
@@ -454,7 +454,7 @@ sentinelcli rules delete suspicious-processes
 
 ```bash
 # Create a new rule file
-cat > /etc/sentineld/rules/custom-rule.sql << 'EOF'
+cat > /etc/daemoneye/rules/custom-rule.sql << 'EOF'
 -- Detect processes with suspicious names
 SELECT
     pid,
@@ -471,7 +471,7 @@ ORDER BY collection_time DESC;
 EOF
 
 # Validate the rule
-sentinelcli rules validate /etc/sentineld/rules/custom-rule.sql
+sentinelcli rules validate /etc/daemoneye/rules/custom-rule.sql
 
 # Enable the rule
 sentinelcli rules enable custom-rule
@@ -619,7 +619,7 @@ sentinelcli config reload
 
 ```bash
 # Validate configuration file
-sentinelcli config validate /etc/sentineld/config.yaml
+sentinelcli config validate /etc/daemoneye/config.yaml
 
 # Validate current configuration
 sentinelcli config validate
@@ -635,7 +635,7 @@ sentinelcli config check
 ```bash
 # Set environment variables
 export SENTINELD_LOG_LEVEL=debug
-export SENTINELD_DATABASE_PATH=/var/lib/sentineld/events.redb
+export SENTINELD_DATABASE_PATH=/var/lib/daemoneye/events.redb
 
 # View environment configuration
 sentinelcli config show --environment
@@ -645,11 +645,11 @@ sentinelcli config show --environment
 
 ```bash
 # Update service configuration
-sudo systemctl edit sentineld
+sudo systemctl edit daemoneye
 
 # Reload service configuration
 sudo systemctl daemon-reload
-sudo systemctl restart sentineld
+sudo systemctl restart daemoneye
 ```
 
 ## Troubleshooting
@@ -660,16 +660,16 @@ sudo systemctl restart sentineld
 
 ```bash
 # Check service status
-sudo systemctl status sentineld
+sudo systemctl status daemoneye
 
 # Check logs for errors
-sudo journalctl -u sentineld -f
+sudo journalctl -u daemoneye -f
 
 # Check configuration
 sentinelcli config validate
 
 # Check permissions
-ls -la /var/lib/sentineld/
+ls -la /var/lib/daemoneye/
 ```
 
 **Database Issues**:
@@ -713,7 +713,7 @@ sentinelcli logs --filter "delivery"
 sentinelcli config set app.log_level debug
 
 # Restart service
-sudo systemctl restart sentineld
+sudo systemctl restart daemoneye
 
 # Monitor debug logs
 sentinelcli logs --level debug --tail 100
@@ -725,8 +725,8 @@ sentinelcli logs --level debug --tail 100
 # Debug procmond
 sudo sentinelcli debug procmond --verbose
 
-# Debug sentinelagent
-sentinelcli debug sentinelagent --verbose
+# Debug daemoneye-agent
+sentinelcli debug daemoneye-agent --verbose
 
 # Debug database
 sentinelcli debug database --verbose
@@ -777,8 +777,8 @@ sentinelcli rules list --slow
 
 ### Security
 
-1. **Regular Updates**: Keep SentinelD updated to the latest version
-2. **Access Control**: Limit access to SentinelD configuration and data
+1. **Regular Updates**: Keep DaemonEye updated to the latest version
+2. **Access Control**: Limit access to DaemonEye configuration and data
 3. **Audit Logging**: Enable comprehensive audit logging
 4. **Network Security**: Use secure connections for remote management
 5. **Backup**: Regularly backup configuration and database
@@ -797,7 +797,7 @@ sentinelcli rules list --slow
 2. **Testing**: Test rules and configurations in non-production environments
 3. **Monitoring**: Set up comprehensive monitoring and alerting
 4. **Incident Response**: Develop procedures for security incidents
-5. **Training**: Train operators on SentinelD features and best practices
+5. **Training**: Train operators on DaemonEye features and best practices
 
 ### Maintenance
 
@@ -809,4 +809,4 @@ sentinelcli rules list --slow
 
 ---
 
-*This operator guide provides comprehensive instructions for managing SentinelD in production environments. For additional help, consult the troubleshooting section or contact support.*
+*This operator guide provides comprehensive instructions for managing DaemonEye in production environments. For additional help, consult the troubleshooting section or contact support.*

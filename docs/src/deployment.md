@@ -1,6 +1,6 @@
 # Deployment Documentation
 
-This section contains comprehensive deployment guides for SentinelD, covering installation, configuration, and deployment strategies across different platforms and environments.
+This section contains comprehensive deployment guides for DaemonEye, covering installation, configuration, and deployment strategies across different platforms and environments.
 
 ---
 
@@ -18,13 +18,13 @@ Complete installation instructions for all supported platforms including Linux, 
 
 ## Configuration Guide
 
-Comprehensive configuration management covering all aspects of SentinelD setup, tuning, and customization.
+Comprehensive configuration management covering all aspects of DaemonEye setup, tuning, and customization.
 
 [Read Configuration Guide →](./deployment/configuration.md)
 
 ## Docker Deployment
 
-Complete guide for containerizing and deploying SentinelD using Docker and Docker Compose.
+Complete guide for containerizing and deploying DaemonEye using Docker and Docker Compose.
 
 [Read Docker Guide →](./deployment/docker.md)
 
@@ -32,7 +32,7 @@ Complete guide for containerizing and deploying SentinelD using Docker and Docke
 
 ### Supported Platforms
 
-SentinelD supports deployment on:
+DaemonEye supports deployment on:
 
 - **Linux**: Ubuntu, RHEL, CentOS, Debian, Arch Linux
 - **macOS**: 10.14+ (Mojave or later)
@@ -57,7 +57,7 @@ SentinelD supports deployment on:
 6. **Cloud**: AWS, Azure, GCP marketplace deployments
 
 > [!CAUTION]
-> **Orchestration platforms (Kubernetes, Docker Swarm, Nomad) are not officially supported.** While technically possible to deploy SentinelD on these platforms, they are not recommended for production use due to:
+> **Orchestration platforms (Kubernetes, Docker Swarm, Nomad) are not officially supported.** While technically possible to deploy DaemonEye on these platforms, they are not recommended for production use due to:
 >
 > - Lack of native DaemonSet support (except Kubernetes)
 > - Complex privileged container requirements
@@ -157,17 +157,17 @@ graph TB
 
 ```bash
 # Pull the latest image
-docker pull sentineld/sentineld:latest
+docker pull daemoneye/daemoneye:latest
 
 # Run with basic configuration
-docker run -d --name sentineld \
+docker run -d --name daemoneye \
   --privileged \
-  -v /var/lib/sentineld:/data \
-  -v /var/log/sentineld:/logs \
-  sentineld/sentineld:latest
+  -v /var/lib/daemoneye:/data \
+  -v /var/log/daemoneye:/logs \
+  daemoneye/daemoneye:latest
 
 # Check status
-docker logs sentineld
+docker logs daemoneye
 ```
 
 ### Package Manager Quick Start
@@ -176,65 +176,65 @@ docker logs sentineld
 
 ```bash
 # Add repository
-wget -qO - https://packages.sentineld.com/apt/key.gpg | sudo apt-key add -
-echo "deb https://packages.sentineld.com/apt stable main" | sudo tee /etc/apt/sources.list.d/sentineld.list
+wget -qO - https://packages.daemoneye.com/apt/key.gpg | sudo apt-key add -
+echo "deb https://packages.daemoneye.com/apt stable main" | sudo tee /etc/apt/sources.list.d/daemoneye.list
 
 # Install
 sudo apt update
-sudo apt install sentineld
+sudo apt install daemoneye
 
 # Start service
-sudo systemctl start sentineld
-sudo systemctl enable sentineld
+sudo systemctl start daemoneye
+sudo systemctl enable daemoneye
 ```
 
 **RHEL/CentOS**:
 
 ```bash
 # Add repository
-sudo tee /etc/yum.repos.d/sentineld.repo << 'EOF'
-[sentineld]
-name=SentinelD
-baseurl=https://packages.sentineld.com/yum/stable/
+sudo tee /etc/yum.repos.d/daemoneye.repo << 'EOF'
+[daemoneye]
+name=DaemonEye
+baseurl=https://packages.daemoneye.com/yum/stable/
 enabled=1
 gpgcheck=1
-gpgkey=https://packages.sentineld.com/apt/key.gpg
+gpgkey=https://packages.daemoneye.com/apt/key.gpg
 EOF
 
 # Install
-sudo yum install sentineld
+sudo yum install daemoneye
 
 # Start service
-sudo systemctl start sentineld
-sudo systemctl enable sentineld
+sudo systemctl start daemoneye
+sudo systemctl enable daemoneye
 ```
 
 **macOS**:
 
 ```bash
 # Install with Homebrew
-brew tap sentineld/sentineld
-brew install sentineld
+brew tap daemoneye/daemoneye
+brew install daemoneye
 
 # Start service
-brew services start sentineld
+brew services start daemoneye
 ```
 
 **Windows**:
 
 ```powershell
 # Install with Chocolatey
-choco install sentineld
+choco install daemoneye
 
 # Start service
-Start-Service SentinelD
+Start-Service DaemonEye
 ```
 
 ## Configuration Management
 
 ### Environment Variables
 
-SentinelD supports configuration through environment variables:
+DaemonEye supports configuration through environment variables:
 
 ```bash
 # Basic configuration
@@ -243,7 +243,7 @@ export SENTINELD_SCAN_INTERVAL_MS=30000
 export SENTINELD_BATCH_SIZE=1000
 
 # Database configuration
-export SENTINELD_DATABASE_PATH=/var/lib/sentineld/processes.db
+export SENTINELD_DATABASE_PATH=/var/lib/daemoneye/processes.db
 export SENTINELD_DATABASE_RETENTION_DAYS=30
 
 # Alerting configuration
@@ -258,23 +258,23 @@ Hierarchical configuration with multiple sources:
 
 1. **Command-line flags** (highest precedence)
 2. **Environment variables** (`SENTINELD_*`)
-3. **User configuration file** (`~/.config/sentineld/config.yaml`)
-4. **System configuration file** (`/etc/sentineld/config.yaml`)
+3. **User configuration file** (`~/.config/daemoneye/config.yaml`)
+4. **System configuration file** (`/etc/daemoneye/config.yaml`)
 5. **Embedded defaults** (lowest precedence)
 
 ### Basic Configuration
 
 ```yaml
-# /etc/sentineld/config.yaml
+# /etc/daemoneye/config.yaml
 app:
   scan_interval_ms: 30000
   batch_size: 1000
   log_level: info
-  data_dir: /var/lib/sentineld
-  log_dir: /var/log/sentineld
+  data_dir: /var/lib/daemoneye
+  log_dir: /var/log/daemoneye
 
 database:
-  path: /var/lib/sentineld/processes.db
+  path: /var/lib/daemoneye/processes.db
   retention_days: 30
   max_connections: 10
 
@@ -293,8 +293,8 @@ alerting:
 
 security:
   enable_privilege_dropping: true
-  drop_to_user: sentineld
-  drop_to_group: sentineld
+  drop_to_user: daemoneye
+  drop_to_group: daemoneye
   enable_audit_logging: true
 ```
 
@@ -402,12 +402,12 @@ version: '3.8'
 
 services:
   procmond:
-    image: sentineld/procmond:latest
-    container_name: sentineld-procmond
+    image: daemoneye/procmond:latest
+    container_name: daemoneye-procmond
     privileged: true
     volumes:
-      - /var/lib/sentineld:/data
-      - /var/log/sentineld:/logs
+      - /var/lib/daemoneye:/data
+      - /var/log/daemoneye:/logs
       - ./config:/config:ro
     environment:
       - SENTINELD_LOG_LEVEL=info
@@ -416,14 +416,14 @@ services:
     command: [--config, /config/config.yaml]
     restart: unless-stopped
 
-  sentinelagent:
-    image: sentineld/sentinelagent:latest
-    container_name: sentineld-agent
+  daemoneye-agent:
+    image: daemoneye/daemoneye-agent:latest
+    container_name: daemoneye-agent
     depends_on:
       - procmond
     volumes:
-      - /var/lib/sentineld:/data
-      - /var/log/sentineld:/logs
+      - /var/lib/daemoneye:/data
+      - /var/log/daemoneye:/logs
       - ./config:/config:ro
     environment:
       - SENTINELD_LOG_LEVEL=info
@@ -433,12 +433,12 @@ services:
     restart: unless-stopped
 
   sentinelcli:
-    image: sentineld/sentinelcli:latest
-    container_name: sentineld-cli
+    image: daemoneye/sentinelcli:latest
+    container_name: daemoneye-cli
     depends_on:
-      - sentinelagent
+      - daemoneye-agent
     volumes:
-      - /var/lib/sentineld:/data
+      - /var/lib/daemoneye:/data
       - ./config:/config:ro
     environment:
       - SENTINELD_DATA_DIR=/data
@@ -471,8 +471,8 @@ aws ec2 run-instances \
 # Deploy container
 az container create \
   --resource-group myResourceGroup \
-  --name sentineld \
-  --image sentineld/sentineld:latest \
+  --name daemoneye \
+  --image daemoneye/daemoneye:latest \
   --cpu 1 \
   --memory 2 \
   --ports 8080 9090 \
@@ -487,10 +487,10 @@ az container create \
 
 ```bash
 # Check service status
-sudo systemctl status sentineld
+sudo systemctl status daemoneye
 
 # Check logs
-sudo journalctl -u sentineld -f
+sudo journalctl -u daemoneye -f
 
 # Check configuration
 sentinelcli config validate
@@ -500,12 +500,12 @@ sentinelcli config validate
 
 ```bash
 # Check file permissions
-ls -la /var/lib/sentineld/
-ls -la /var/log/sentineld/
+ls -la /var/lib/daemoneye/
+ls -la /var/log/daemoneye/
 
 # Fix permissions
-sudo chown -R sentineld:sentineld /var/lib/sentineld
-sudo chown -R sentineld:sentineld /var/log/sentineld
+sudo chown -R daemoneye:daemoneye /var/lib/daemoneye
+sudo chown -R daemoneye:daemoneye /var/log/daemoneye
 ```
 
 **Database Issues**:
@@ -543,7 +543,7 @@ sentinelcli config optimize
 sentinelcli config set app.log_level debug
 
 # Restart service
-sudo systemctl restart sentineld
+sudo systemctl restart daemoneye
 
 # Monitor debug logs
 sentinelcli logs --level debug --tail 100
@@ -572,7 +572,7 @@ sentinelcli health
 
 # Component health
 sentinelcli health --component procmond
-sentinelcli health --component sentinelagent
+sentinelcli health --component daemoneye-agent
 sentinelcli health --component database
 
 # Detailed health report
@@ -586,7 +586,7 @@ sentinelcli health --verbose
 1. **Start Small**: Begin with basic monitoring and gradually add features
 2. **Test Configuration**: Always validate configuration before deployment
 3. **Monitor Resources**: Keep an eye on CPU and memory usage
-4. **Regular Updates**: Keep SentinelD updated with latest releases
+4. **Regular Updates**: Keep DaemonEye updated with latest releases
 5. **Backup Data**: Regularly backup configuration and data
 
 ### Security
@@ -607,4 +607,4 @@ sentinelcli health --verbose
 
 ---
 
-*This deployment documentation provides comprehensive guidance for deploying SentinelD. For additional help, consult the specific deployment guides or contact support.*
+*This deployment documentation provides comprehensive guidance for deploying DaemonEye. For additional help, consult the specific deployment guides or contact support.*
