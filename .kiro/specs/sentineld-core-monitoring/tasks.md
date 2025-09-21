@@ -94,7 +94,7 @@
   - Write unit tests for shared infrastructure integration and lifecycle management
   - _Requirements: 11.1, 11.2, 13.1, 13.2, 13.5_
 
-- [ ] 4.4 Extend protobuf definitions for multi-domain support - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.4 Extend protobuf definitions for multi-domain support - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Add CollectionCapabilities message for capability negotiation between collector-core and sentinelagent
   - Extend existing TaskType enum with future network, filesystem, and performance task types
