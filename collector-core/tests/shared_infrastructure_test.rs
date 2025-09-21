@@ -132,7 +132,7 @@ async fn test_telemetry_collection_integration() {
 
     // Register a test event source
     let test_source = TestEventSource::new("telemetry-source", SourceCaps::PROCESS);
-    collector.register(Box::new(test_source));
+    let _ = collector.register(Box::new(test_source));
 
     // Test that telemetry is configured correctly
     assert_eq!(collector.source_count(), 1);
@@ -153,7 +153,7 @@ async fn test_health_monitoring_integration() {
 
     // Register a test event source
     let test_source = TestEventSource::new("health-source", SourceCaps::PROCESS);
-    collector.register(Box::new(test_source));
+    let _ = collector.register(Box::new(test_source));
 
     // Test that health monitoring is configured correctly
     assert_eq!(collector.source_count(), 1);
@@ -200,8 +200,8 @@ async fn test_graceful_shutdown_coordination() {
     let source1 = TestEventSource::new("shutdown-source-1", SourceCaps::PROCESS);
     let source2 = TestEventSource::new("shutdown-source-2", SourceCaps::NETWORK);
 
-    collector.register(Box::new(source1));
-    collector.register(Box::new(source2));
+    let _ = collector.register(Box::new(source1));
+    let _ = collector.register(Box::new(source2));
 
     // Test that sources are registered correctly
     assert_eq!(collector.source_count(), 2);
@@ -224,7 +224,7 @@ async fn test_error_handling_and_recovery() {
     // Register a test event source that can simulate errors
     let test_source = TestEventSource::new("error-source", SourceCaps::PROCESS);
     let error_source_ref = test_source.should_error.clone();
-    collector.register(Box::new(test_source));
+    let _ = collector.register(Box::new(test_source));
 
     // Test error simulation
     error_source_ref.store(true, Ordering::Relaxed);
@@ -253,8 +253,8 @@ async fn test_capability_negotiation() {
         SourceCaps::NETWORK | SourceCaps::SYSTEM_WIDE,
     );
 
-    collector.register(Box::new(process_source));
-    collector.register(Box::new(network_source));
+    let _ = collector.register(Box::new(process_source));
+    let _ = collector.register(Box::new(network_source));
 
     // Check aggregated capabilities
     let capabilities = collector.capabilities();

@@ -272,11 +272,21 @@ fn source_caps_to_proto_capabilities(caps: SourceCaps) -> CollectionCapabilities
 fn default_endpoint_path() -> String {
     #[cfg(unix)]
     {
-        "/var/run/sentineld/collector-core.sock".to_owned()
+        if cfg!(test) {
+            // Use a temporary path for tests
+            format!("/tmp/sentineld-test-{}.sock", std::process::id())
+        } else {
+            "/var/run/sentineld/collector-core.sock".to_owned()
+        }
     }
     #[cfg(windows)]
     {
-        r"\\.\pipe\sentineld\collector-core".to_owned()
+        if cfg!(test) {
+            // Use a temporary pipe name for tests
+            format!(r"\\.\pipe\sentineld-test-{}", std::process::id())
+        } else {
+            r"\\.\pipe\sentineld\collector-core".to_owned()
+        }
     }
 }
 
@@ -323,9 +333,22 @@ mod tests {
     fn test_default_endpoint_path() {
         let path = default_endpoint_path();
         #[cfg(unix)]
-        assert!(path.contains("collector-core.sock"));
+        {
+            if cfg!(test) {
+                assert!(path.contains("sentineld-test-"));
+                assert!(path.ends_with(".sock"));
+            } else {
+                assert!(path.contains("collector-core.sock"));
+            }
+        }
         #[cfg(windows)]
-        assert!(path.contains(r"\\.\pipe\"));
+        {
+            if cfg!(test) {
+                assert!(path.contains(r"\\.\pipe\sentineld-test-"));
+            } else {
+                assert!(path.contains(r"\\.\pipe\"));
+            }
+        }
     }
 
     #[tokio::test]

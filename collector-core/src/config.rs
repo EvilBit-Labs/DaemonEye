@@ -230,6 +230,12 @@ impl CollectorConfig {
         self
     }
 
+    /// Sets the maximum backpressure wait time.
+    pub fn with_max_backpressure_wait(mut self, wait: Duration) -> Self {
+        self.max_backpressure_wait = wait;
+        self
+    }
+
     /// Sets the maximum batch size.
     pub fn with_max_batch_size(mut self, size: usize) -> Self {
         self.max_batch_size = size;
@@ -302,7 +308,7 @@ impl CollectorConfig {
     ///
     /// This method reads collector-core specific environment variables
     /// using the component name as a prefix.
-    fn apply_env_overrides(mut self) -> Self {
+    pub fn apply_env_overrides(mut self) -> Self {
         let prefix = format!("{}_COLLECTOR", self.component_name.to_uppercase());
 
         if let Ok(val) = std::env::var(format!("{prefix}_MAX_EVENT_SOURCES")) {

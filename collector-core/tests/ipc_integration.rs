@@ -156,7 +156,7 @@ async fn test_collector_with_ipc_integration() {
 
     // Register a test event source
     let test_source = TestProcessSource::new();
-    collector.register(Box::new(test_source));
+    let _ = collector.register(Box::new(test_source));
 
     // Verify capabilities are aggregated correctly
     let capabilities = collector.capabilities();

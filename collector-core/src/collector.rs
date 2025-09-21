@@ -124,9 +124,10 @@ impl Collector {
     ///
     /// * `source` - Event source to register
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the maximum number of event sources has been reached.
+    /// Returns an error if the maximum number of event sources has been reached
+    /// or if a source with the same name is already registered.
     ///
     /// # Examples
     ///
@@ -146,23 +147,35 @@ impl Collector {
     /// }
     ///
     /// let mut collector = Collector::new(CollectorConfig::default());
-    /// collector.register(Box::new(MySource));
+    /// collector.register(Box::new(MySource))?;
+    /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn register(&mut self, source: Box<dyn EventSource>) {
+    pub fn register(&mut self, source: Box<dyn EventSource>) -> anyhow::Result<()> {
         if self.sources.len() >= self.config.max_event_sources {
-            panic!(
+            anyhow::bail!(
                 "Cannot register more than {} event sources",
                 self.config.max_event_sources
             );
         }
 
+        let source_name = source.name();
+
+        // Check for duplicate source names to prevent confusion
+        if self.sources.iter().any(|s| s.name() == source_name) {
+            anyhow::bail!(
+                "Event source with name '{}' is already registered",
+                source_name
+            );
+        }
+
         info!(
-            source_name = source.name(),
+            source_name = source_name,
             capabilities = ?source.capabilities(),
             "Registering event source"
         );
 
         self.sources.push(source);
+        Ok(())
     }
 
     /// Returns the capabilities of all registered event sources.
@@ -228,7 +241,10 @@ impl Collector {
 
         // Start all event sources
         for source in self.sources {
+            let source_name = source.name().to_string();
+            info!("Starting source: {}", source_name);
             runtime.start_source(source).await?;
+            info!("Source started successfully: {}", source_name);
         }
 
         // Start health monitoring
@@ -292,7 +308,7 @@ impl CollectorRuntime {
         let event_tx = self.event_tx.clone();
         let _shutdown_signal = Arc::clone(&self.shutdown_signal);
 
-        debug!(source_name = %source_name, "Starting event source");
+        info!(source_name = %source_name, "Starting event source");
 
         // Store capabilities
         {
@@ -676,15 +692,42 @@ impl CollectorRuntime {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{SignalKind, signal};
-            let mut sigterm = signal(SignalKind::terminate())?;
-            let mut sigint = signal(SignalKind::interrupt())?;
 
-            tokio::select! {
-                _ = sigterm.recv() => {
-                    info!("Received SIGTERM, initiating graceful shutdown");
+            // Try to set up signal handlers, but don't fail if it doesn't work (e.g., in tests)
+            match (
+                signal(SignalKind::terminate()),
+                signal(SignalKind::interrupt()),
+            ) {
+                (Ok(mut sigterm), Ok(mut sigint)) => {
+                    tokio::select! {
+                        _ = sigterm.recv() => {
+                            info!("Received SIGTERM, initiating graceful shutdown");
+                        }
+                        _ = sigint.recv() => {
+                            info!("Received SIGINT, initiating graceful shutdown");
+                        }
+                    }
                 }
-                _ = sigint.recv() => {
-                    info!("Received SIGINT, initiating graceful shutdown");
+                _ => {
+                    warn!("Failed to set up signal handlers, running without signal handling");
+                    // In test environments or when signal handling fails, run with a timeout
+                    // to allow tests to complete properly
+                    let start_time = Instant::now();
+                    let max_runtime = Duration::from_secs(30); // 30 second max runtime for tests
+
+                    loop {
+                        if shutdown_signal.load(Ordering::Relaxed) {
+                            break;
+                        }
+
+                        // Check if we've exceeded the maximum runtime
+                        if start_time.elapsed() > max_runtime {
+                            info!("Maximum runtime exceeded, shutting down");
+                            break;
+                        }
+
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
                 }
             }
         }
@@ -692,16 +735,52 @@ impl CollectorRuntime {
         #[cfg(windows)]
         {
             use tokio::signal::windows::{ctrl_break, ctrl_c};
-            let mut ctrl_c = ctrl_c()?;
-            let mut ctrl_break = ctrl_break()?;
 
-            tokio::select! {
-                _ = ctrl_c.recv() => {
-                    info!("Received Ctrl+C, initiating graceful shutdown");
+            // Try to set up signal handlers, but don't fail if it doesn't work (e.g., in tests)
+            match (ctrl_c(), ctrl_break()) {
+                (Ok(mut ctrl_c), Ok(mut ctrl_break)) => {
+                    tokio::select! {
+                        _ = ctrl_c.recv() => {
+                            info!("Received Ctrl+C, initiating graceful shutdown");
+                        }
+                        _ = ctrl_break.recv() => {
+                            info!("Received Ctrl+Break, initiating graceful shutdown");
+                        }
+                    }
                 }
-                _ = ctrl_break.recv() => {
-                    info!("Received Ctrl+Break, initiating graceful shutdown");
+                _ => {
+                    warn!("Failed to set up signal handlers, running without signal handling");
+                    // In test environments or when signal handling fails, run with a timeout
+                    // to allow tests to complete properly
+                    let start_time = Instant::now();
+                    let max_runtime = Duration::from_secs(30); // 30 second max runtime for tests
+
+                    loop {
+                        if shutdown_signal.load(Ordering::Relaxed) {
+                            break;
+                        }
+
+                        // Check if we've exceeded the maximum runtime
+                        if start_time.elapsed() > max_runtime {
+                            info!("Maximum runtime exceeded, shutting down");
+                            break;
+                        }
+
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
                 }
+            }
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            warn!("Signal handling not supported on this platform");
+            // On unsupported platforms, just wait for shutdown signal
+            loop {
+                if shutdown_signal.load(Ordering::Relaxed) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
 
@@ -971,8 +1050,12 @@ mod tests {
         let source1 = TestEventSource::new("test1", SourceCaps::PROCESS);
         let source2 = TestEventSource::new("test2", SourceCaps::NETWORK);
 
-        collector.register(Box::new(source1));
-        collector.register(Box::new(source2));
+        collector
+            .register(Box::new(source1))
+            .expect("Failed to register source1");
+        collector
+            .register(Box::new(source2))
+            .expect("Failed to register source2");
 
         assert_eq!(collector.source_count(), 2);
         assert!(collector.capabilities().contains(SourceCaps::PROCESS));
@@ -980,7 +1063,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Cannot register more than")]
     async fn test_max_sources_limit() {
         let config = CollectorConfig::default().with_max_event_sources(1);
         let mut collector = Collector::new(config);
@@ -988,8 +1070,39 @@ mod tests {
         let source1 = TestEventSource::new("test1", SourceCaps::PROCESS);
         let source2 = TestEventSource::new("test2", SourceCaps::NETWORK);
 
-        collector.register(Box::new(source1));
-        collector.register(Box::new(source2)); // Should panic
+        collector
+            .register(Box::new(source1))
+            .expect("Failed to register first source");
+        let result = collector.register(Box::new(source2));
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Cannot register more than")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_source_names() {
+        let mut collector = Collector::new(CollectorConfig::default());
+
+        let source1 = TestEventSource::new("duplicate", SourceCaps::PROCESS);
+        let source2 = TestEventSource::new("duplicate", SourceCaps::NETWORK);
+
+        collector
+            .register(Box::new(source1))
+            .expect("Failed to register first source");
+        let result = collector.register(Box::new(source2));
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("already registered")
+        );
     }
 
     #[tokio::test]

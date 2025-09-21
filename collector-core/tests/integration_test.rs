@@ -77,7 +77,7 @@ impl EventSource for MockProcessSource {
             }
 
             self.event_count.fetch_add(1, Ordering::Relaxed);
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
 
         Ok(())
@@ -110,7 +110,7 @@ async fn test_collector_with_single_source() {
     assert_eq!(collector.capabilities(), SourceCaps::empty());
 
     // Register source
-    collector.register(Box::new(source));
+    let _ = collector.register(Box::new(source));
 
     // Verify registration
     assert_eq!(collector.source_count(), 1);
@@ -128,9 +128,9 @@ async fn test_collector_with_multiple_sources() {
     let mut collector = Collector::new(config);
 
     // Register multiple sources
-    collector.register(Box::new(MockProcessSource::new("source-1")));
-    collector.register(Box::new(MockProcessSource::new("source-2")));
-    collector.register(Box::new(MockProcessSource::new("source-3")));
+    let _ = collector.register(Box::new(MockProcessSource::new("source-1")));
+    let _ = collector.register(Box::new(MockProcessSource::new("source-2")));
+    let _ = collector.register(Box::new(MockProcessSource::new("source-3")));
 
     // Verify registration
     assert_eq!(collector.source_count(), 3);
@@ -141,16 +141,23 @@ async fn test_collector_with_multiple_sources() {
 }
 
 #[tokio::test]
-#[should_panic(expected = "Cannot register more than")]
 async fn test_collector_max_sources_exceeded() {
     let config = CollectorConfig::default().with_max_event_sources(1);
     let mut collector = Collector::new(config);
 
     // Register first source (should succeed)
-    collector.register(Box::new(MockProcessSource::new("source-1")));
+    let result = collector.register(Box::new(MockProcessSource::new("source-1")));
+    assert!(result.is_ok(), "First source registration should succeed");
 
-    // Register second source (should panic)
-    collector.register(Box::new(MockProcessSource::new("source-2")));
+    // Register second source (should fail)
+    let result = collector.register(Box::new(MockProcessSource::new("source-2")));
+    assert!(result.is_err(), "Second source registration should fail");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot register more than")
+    );
 }
 
 #[tokio::test]

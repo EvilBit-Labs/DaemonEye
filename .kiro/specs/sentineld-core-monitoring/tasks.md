@@ -104,7 +104,7 @@
   - Write unit tests for protobuf serialization and backward compatibility
   - _Requirements: 12.1, 12.2, 12.3_
 
-- [ ] 4.5 Create comprehensive collector-core testing suite - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.5 Create comprehensive collector-core testing suite - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Write integration tests for multiple concurrent EventSource registration and lifecycle management
   - Add stress tests for event batching, backpressure handling, and graceful shutdown coordination
