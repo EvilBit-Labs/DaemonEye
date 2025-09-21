@@ -62,7 +62,7 @@ fn create_cross_platform_endpoint(temp_dir: &TempDir, test_name: &str) -> String
             .and_then(|name| name.to_str())
             .unwrap_or("cross_platform");
         format!(
-            r"\\.\pipe\sentineld\cross-platform-{}-{}",
+            r"\\.\pipe\daemoneye\cross-platform-{}-{}",
             test_name, dir_name
         )
     }
@@ -224,7 +224,7 @@ fn create_valid_endpoint_paths(temp_dir: &TempDir) -> Vec<(String, String)> {
         endpoints.push((
             "long_name_pipe".to_owned(),
             format!(
-                r"\\.\pipe\sentineld\very-long-pipe-name-for-testing-{}",
+                r"\\.\pipe\daemoneye\very-long-pipe-name-for-testing-{}",
                 base_name
             ),
         ));
@@ -232,7 +232,7 @@ fn create_valid_endpoint_paths(temp_dir: &TempDir) -> Vec<(String, String)> {
         endpoints.push((
             "long_name_pipe".to_owned(),
             format!(
-                r"\\.\pipe\sentineld\very-long-pipe-name-for-testing-{}",
+                r"\\.\pipe\daemoneye\very-long-pipe-name-for-testing-{}",
                 base_name
             ),
         ));

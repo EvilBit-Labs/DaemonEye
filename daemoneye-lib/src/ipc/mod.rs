@@ -88,11 +88,11 @@ impl IpcConfig {
 fn default_endpoint_path() -> String {
     #[cfg(unix)]
     {
-        "/var/run/sentineld/procmond.sock".to_owned()
+        "/var/run/daemoneye/procmond.sock".to_owned()
     }
     #[cfg(windows)]
     {
-        r"\\.\pipe\sentineld\procmond".to_owned()
+        r"\\.\pipe\daemoneye\procmond".to_owned()
     }
 }
 

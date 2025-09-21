@@ -66,7 +66,7 @@ fn create_test_endpoint(temp_dir: &TempDir, test_name: &str) -> String {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("test");
-        format!(r"\\.\pipe\sentineld\{}-{}", test_name, dir_name)
+        format!(r"\\.\pipe\daemoneye\{}-{}", test_name, dir_name)
     }
 }
 

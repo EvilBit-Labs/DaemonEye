@@ -1,7 +1,7 @@
 //! Performance telemetry and health monitoring.
 //!
 //! This module provides metrics collection, health monitoring, and performance
-//! telemetry for `SentinelD` components.
+//! telemetry for `DaemonEye` components.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

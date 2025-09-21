@@ -347,11 +347,11 @@ pub fn create_maximum_ipc_config() -> IpcConfig {
 fn default_endpoint_path() -> String {
     #[cfg(unix)]
     {
-        "/var/run/sentineld/procmond.sock".to_owned()
+        "/var/run/daemoneye/procmond.sock".to_owned()
     }
     #[cfg(windows)]
     {
-        r"\\.\pipe\sentineld\procmond".to_owned()
+        r"\\.\pipe\daemoneye\procmond".to_owned()
     }
 }
 
@@ -394,7 +394,7 @@ mod tests {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("test");
-            format!(r"\\.\pipe\sentineld\test-ipc-client-{}", dir_name)
+            format!(r"\\.\pipe\daemoneye\test-ipc-client-{}", dir_name)
         }
     }
 

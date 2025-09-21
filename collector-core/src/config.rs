@@ -251,7 +251,7 @@ impl CollectorConfig {
     /// Loads configuration from the existing sentinel-lib ConfigLoader.
     ///
     /// This method integrates with the hierarchical configuration system
-    /// used by other SentinelD components, applying overrides from:
+    /// used by other DaemonEye components, applying overrides from:
     /// 1. System configuration files
     /// 2. User configuration files
     /// 3. Environment variables

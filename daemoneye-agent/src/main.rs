@@ -10,11 +10,11 @@ use ipc_client::{IpcClientManager, create_default_ipc_config};
 
 #[derive(Parser)]
 #[command(name = "sentinelagent")]
-#[command(about = "SentinelD Detection and Alerting Orchestrator")]
+#[command(about = "DaemonEye Detection and Alerting Orchestrator")]
 #[command(version)]
 struct Cli {
     /// Database path
-    #[arg(short, long, default_value = "/var/lib/sentineld/processes.db")]
+    #[arg(short, long, default_value = "/var/lib/daemoneye/processes.db")]
     database: String,
 
     /// Log level

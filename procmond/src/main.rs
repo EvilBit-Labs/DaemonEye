@@ -14,11 +14,11 @@ use daemoneye_lib::proto::DetectionTask;
 
 #[derive(Parser)]
 #[command(name = "procmond")]
-#[command(about = "SentinelD Process Monitoring Daemon")]
+#[command(about = "DaemonEye Process Monitoring Daemon")]
 #[command(version)]
 struct Cli {
     /// Database path
-    #[arg(short, long, default_value = "/var/lib/sentineld/processes.db")]
+    #[arg(short, long, default_value = "/var/lib/daemoneye/processes.db")]
     database: String,
 
     /// Log level
@@ -26,7 +26,7 @@ struct Cli {
     log_level: String,
 
     /// IPC socket path
-    #[arg(short, long, default_value = "/tmp/sentineld-procmond.sock")]
+    #[arg(short, long, default_value = "/tmp/daemoneye-procmond.sock")]
     socket: String,
 }
 

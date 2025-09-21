@@ -162,7 +162,7 @@ pub enum ScanStatus {
     Failed,
 }
 
-/// Database manager for `SentinelD` storage operations.
+/// Database manager for `DaemonEye` storage operations.
 pub struct DatabaseManager {
     db: Database,
 }

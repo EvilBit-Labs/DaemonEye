@@ -274,18 +274,18 @@ fn default_endpoint_path() -> String {
     {
         if cfg!(test) {
             // Use a temporary path for tests
-            format!("/tmp/sentineld-test-{}.sock", std::process::id())
+            format!("/tmp/daemoneye-test-{}.sock", std::process::id())
         } else {
-            "/var/run/sentineld/collector-core.sock".to_owned()
+            "/var/run/daemoneye/collector-core.sock".to_owned()
         }
     }
     #[cfg(windows)]
     {
         if cfg!(test) {
             // Use a temporary pipe name for tests
-            format!(r"\\.\pipe\sentineld-test-{}", std::process::id())
+            format!(r"\\.\pipe\daemoneye-test-{}", std::process::id())
         } else {
-            r"\\.\pipe\sentineld\collector-core".to_owned()
+            r"\\.\pipe\daemoneye\collector-core".to_owned()
         }
     }
 }
@@ -335,7 +335,7 @@ mod tests {
         #[cfg(unix)]
         {
             if cfg!(test) {
-                assert!(path.contains("sentineld-test-"));
+                assert!(path.contains("daemoneye-test-"));
                 assert!(path.ends_with(".sock"));
             } else {
                 assert!(path.contains("collector-core.sock"));
@@ -344,7 +344,7 @@ mod tests {
         #[cfg(windows)]
         {
             if cfg!(test) {
-                assert!(path.contains(r"\\.\pipe\sentineld-test-"));
+                assert!(path.contains(r"\\.\pipe\daemoneye-test-"));
             } else {
                 assert!(path.contains(r"\\.\pipe\"));
             }

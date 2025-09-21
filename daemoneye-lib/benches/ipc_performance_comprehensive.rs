@@ -64,7 +64,7 @@ fn create_benchmark_endpoint(temp_dir: &TempDir, test_name: &str) -> String {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("bench");
-        format!(r"\\.\pipe\sentineld\bench-{}-{}", test_name, dir_name)
+        format!(r"\\.\pipe\daemoneye\bench-{}-{}", test_name, dir_name)
     }
 }
 

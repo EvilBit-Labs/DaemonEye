@@ -69,7 +69,7 @@ fn create_security_test_endpoint(temp_dir: &TempDir, test_name: &str) -> String 
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("security");
-        format!(r"\\.\pipe\sentineld\security-{}-{}", test_name, dir_name)
+        format!(r"\\.\pipe\daemoneye\security-{}-{}", test_name, dir_name)
     }
 }
 

@@ -197,7 +197,7 @@ impl AlertSink for FileSink {
     /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
     /// use std::path::PathBuf;
     ///
-    /// let path = PathBuf::from("/tmp/sentineld-alerts.log");
+    /// let path = PathBuf::from("/tmp/daemoneye-alerts.log");
     /// let sink = FileSink::new("file".to_owned(), path.clone(), OutputFormat::Json);
     /// let alert = Alert::new(
     ///     AlertSeverity::High,

@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 ///
 /// # Purpose
 ///
-/// This handler serves as the privileged process collector in the SentinelD
+/// This handler serves as the privileged process collector in the DaemonEye
 /// three-component security architecture. It runs with elevated privileges
 /// when necessary but drops them immediately after initialization to maintain
 /// a minimal attack surface. The handler is responsible for:
@@ -58,7 +58,7 @@ use tokio::sync::Mutex;
 ///
 /// // Create a database manager (typically done during procmond startup)
 /// let db_manager = Arc::new(Mutex::new(
-///     DatabaseManager::new("/var/lib/sentineld/audit.db")
+///     DatabaseManager::new("/var/lib/daemoneye/audit.db")
 ///         .expect("Failed to create database manager")
 /// ));
 ///

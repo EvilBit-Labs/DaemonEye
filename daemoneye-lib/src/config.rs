@@ -3,8 +3,8 @@
 //! Supports multiple configuration sources with precedence:
 //! 1. Command-line flags (highest precedence)
 //! 2. Environment variables (PROCMOND_*, SENTINELAGENT_*, SENTINELCLI_*)
-//! 3. User configuration file (~/.config/sentineld/config.yaml)
-//! 4. System configuration file (/etc/sentineld/config.yaml)
+//! 3. User configuration file (~/.config/daemoneye/config.yaml)
+//! 4. System configuration file (/etc/daemoneye/config.yaml)
 //! 5. Embedded defaults (lowest precedence)
 
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ pub enum ConfigError {
     ValidationError { message: String },
 }
 
-/// Main configuration structure for `SentinelD` components.
+/// Main configuration structure for `DaemonEye` components.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Config {
     /// Application-specific configuration
@@ -120,7 +120,7 @@ impl Default for AppConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            path: PathBuf::from("/var/lib/sentineld/processes.db"),
+            path: PathBuf::from("/var/lib/daemoneye/processes.db"),
             retention_days: 30,
             max_size_mb: None,
             encryption_enabled: false,
@@ -219,7 +219,7 @@ impl ConfigLoader {
 
     /// Load system-wide configuration file.
     fn load_system_config() -> Result<Config, ConfigError> {
-        let path = PathBuf::from("/etc/sentineld/config.yaml");
+        let path = PathBuf::from("/etc/daemoneye/config.yaml");
         if !path.exists() {
             return Err(ConfigError::FileNotFound { path });
         }
@@ -232,7 +232,7 @@ impl ConfigLoader {
     /// Load user-specific configuration file.
     fn load_user_config() -> Result<Config, ConfigError> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_owned());
-        let path = PathBuf::from(home).join(".config/sentineld/config.yaml");
+        let path = PathBuf::from(home).join(".config/daemoneye/config.yaml");
         if !path.exists() {
             return Err(ConfigError::FileNotFound { path });
         }
@@ -474,7 +474,7 @@ mod tests {
         let db_config = DatabaseConfig::default();
         assert_eq!(
             db_config.path,
-            std::path::PathBuf::from("/var/lib/sentineld/processes.db")
+            std::path::PathBuf::from("/var/lib/daemoneye/processes.db")
         );
         assert_eq!(db_config.retention_days, 30);
     }

@@ -28,7 +28,7 @@ pub struct IpcConfig {
 impl Default for IpcConfig {
     fn default() -> Self {
         Self {
-            path: "/var/run/sentineld/procmond.sock".to_string(),
+            path: "/var/run/daemoneye/procmond.sock".to_string(),
             max_connections: 10,
             connection_timeout_secs: 30,
             message_timeout_secs: 60,
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn test_ipc_config_default() {
         let config = IpcConfig::default();
-        assert_eq!(config.path, "/var/run/sentineld/procmond.sock");
+        assert_eq!(config.path, "/var/run/daemoneye/procmond.sock");
         assert_eq!(config.max_connections, 10);
         assert_eq!(config.connection_timeout_secs, 30);
         assert_eq!(config.message_timeout_secs, 60);

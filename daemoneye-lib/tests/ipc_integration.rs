@@ -41,7 +41,7 @@ mod tests {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("test");
-            format!(r"\\.\pipe\sentineld\test-{}", dir_name)
+            format!(r"\\.\pipe\daemoneye\test-{}", dir_name)
         }
     }
 

@@ -3,15 +3,15 @@
 use clap::Parser;
 use daemoneye_lib::{config, storage, telemetry};
 
-/// SentinelD CLI interface
+/// DaemonEye CLI interface
 #[derive(Parser)]
 #[command(name = "sentinelcli")]
-#[command(about = "SentinelD CLI interface")]
+#[command(about = "DaemonEye CLI interface")]
 #[command(version)]
 struct Cli {
     /// Database path
     #[arg(short = 'd', long = "database", value_name = "PATH")]
-    #[arg(default_value = "/var/lib/sentineld/processes.db")]
+    #[arg(default_value = "/var/lib/daemoneye/processes.db")]
     database: String,
 
     /// Output format
@@ -49,7 +49,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::to_string_pretty(&stats)?);
         }
         "human" => {
-            println!("SentinelD Database Statistics");
+            println!("DaemonEye Database Statistics");
             println!("============================");
             println!("Processes: {}", stats.processes);
             println!("Rules: {}", stats.rules);
