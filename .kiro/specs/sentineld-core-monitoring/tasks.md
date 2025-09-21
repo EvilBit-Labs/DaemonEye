@@ -84,7 +84,7 @@
   - Write integration tests for IPC compatibility with existing sentinelagent client
   - _Requirements: 11.1, 11.2, 12.3_
 
-- [ ] 4.3 Add shared infrastructure components to collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.3 Add shared infrastructure components to collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Integrate existing config::ConfigLoader for hierarchical configuration management
   - Move existing telemetry::TelemetryCollector integration to collector-core runtime

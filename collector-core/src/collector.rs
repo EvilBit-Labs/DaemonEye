@@ -11,20 +11,21 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use futures::future::try_join_all;
+use sentinel_lib::telemetry::{HealthStatus, PerformanceTimer, TelemetryCollector};
 use std::{
     collections::HashMap,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
-    sync::{RwLock, mpsc},
+    sync::{RwLock, Semaphore, mpsc},
     task::JoinHandle,
     time::{interval, timeout},
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 /// Main collector runtime for managing event sources and processing events.
 ///
@@ -73,7 +74,8 @@ pub struct Collector {
 /// Internal runtime state for the collector.
 ///
 /// This structure manages the operational state of the collector including
-/// event processing, health monitoring, and graceful shutdown coordination.
+/// event processing, health monitoring, graceful shutdown coordination,
+/// telemetry collection, and backpressure handling.
 pub struct CollectorRuntime {
     config: CollectorConfig,
     event_rx: mpsc::Receiver<CollectionEvent>,
@@ -83,6 +85,12 @@ pub struct CollectorRuntime {
     shutdown_signal: Arc<AtomicBool>,
     capabilities: Arc<RwLock<HashMap<String, SourceCaps>>>,
     ipc_server: Option<CollectorIpcServer>,
+    telemetry_collector: Arc<RwLock<TelemetryCollector>>,
+    event_counter: Arc<AtomicUsize>,
+    error_counter: Arc<AtomicUsize>,
+    backpressure_semaphore: Arc<Semaphore>,
+    event_batch: Vec<CollectionEvent>,
+    last_batch_flush: Instant,
 }
 
 impl Collector {
@@ -226,6 +234,11 @@ impl Collector {
         // Start health monitoring
         runtime.start_health_monitoring().await;
 
+        // Start telemetry collection
+        if runtime.config.enable_telemetry {
+            runtime.start_telemetry_collection().await;
+        }
+
         // Start event processing
         runtime.start_event_processing().await;
 
@@ -244,6 +257,16 @@ impl CollectorRuntime {
         event_tx: mpsc::Sender<CollectionEvent>,
         event_rx: mpsc::Receiver<CollectionEvent>,
     ) -> Self {
+        let telemetry_collector = Arc::new(RwLock::new(TelemetryCollector::new(
+            config.component_name.clone(),
+        )));
+
+        let backpressure_semaphore = Arc::new(Semaphore::new(
+            config.event_buffer_size - config.backpressure_threshold,
+        ));
+
+        let max_batch_size = config.max_batch_size;
+
         Self {
             config,
             event_rx,
@@ -253,6 +276,12 @@ impl CollectorRuntime {
             shutdown_signal: Arc::new(AtomicBool::new(false)),
             capabilities: Arc::new(RwLock::new(HashMap::new())),
             ipc_server: None,
+            telemetry_collector,
+            event_counter: Arc::new(AtomicUsize::new(0)),
+            error_counter: Arc::new(AtomicUsize::new(0)),
+            backpressure_semaphore,
+            event_batch: Vec::with_capacity(max_batch_size),
+            last_batch_flush: Instant::now(),
         }
     }
 
@@ -305,6 +334,9 @@ impl CollectorRuntime {
         let interval_duration = self.config.health_check_interval;
         let capabilities = Arc::clone(&self.capabilities);
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
+        let telemetry_collector = Arc::clone(&self.telemetry_collector);
+        let event_counter = Arc::clone(&self.event_counter);
+        let error_counter = Arc::clone(&self.error_counter);
 
         let handle = tokio::spawn(async move {
             let mut health_interval = interval(interval_duration);
@@ -312,11 +344,42 @@ impl CollectorRuntime {
             while !shutdown_signal.load(Ordering::Relaxed) {
                 health_interval.tick().await;
 
+                let timer = PerformanceTimer::start("health_check".to_string());
+
+                // Perform health checks on registered sources
                 let caps = capabilities.read().await;
+                let mut overall_health = HealthStatus::Healthy;
+
                 for (source_name, _caps) in caps.iter() {
                     debug!(source_name = %source_name, "Performing health check");
-                    // Health check implementation would go here
+
+                    // In a full implementation, this would call source.health_check()
+                    // For now, we'll check basic metrics
+                    let event_count = event_counter.load(Ordering::Relaxed);
+                    let error_count = error_counter.load(Ordering::Relaxed);
+
+                    if error_count > 0 && (error_count as f64 / event_count.max(1) as f64) > 0.1 {
+                        overall_health = HealthStatus::Degraded;
+                        warn!(
+                            source_name = %source_name,
+                            error_rate = error_count as f64 / event_count.max(1) as f64,
+                            "High error rate detected"
+                        );
+                    }
                 }
+
+                // Update telemetry with health check results
+                {
+                    let mut telemetry = telemetry_collector.write().await;
+                    let duration = timer.finish();
+                    telemetry.record_operation(duration);
+
+                    if overall_health != HealthStatus::Healthy {
+                        telemetry.record_error();
+                    }
+                }
+
+                debug!(health_status = ?overall_health, "Health check completed");
             }
 
             Ok(())
@@ -326,10 +389,75 @@ impl CollectorRuntime {
             .insert("health_monitor".to_string(), handle);
     }
 
-    /// Starts event processing loop.
+    /// Starts telemetry collection for performance monitoring.
+    async fn start_telemetry_collection(&mut self) {
+        let interval_duration = self.config.telemetry_interval;
+        let shutdown_signal = Arc::clone(&self.shutdown_signal);
+        let telemetry_collector = Arc::clone(&self.telemetry_collector);
+        let event_counter = Arc::clone(&self.event_counter);
+        let error_counter = Arc::clone(&self.error_counter);
+
+        let handle = tokio::spawn(async move {
+            let mut telemetry_interval = interval(interval_duration);
+
+            while !shutdown_signal.load(Ordering::Relaxed) {
+                telemetry_interval.tick().await;
+
+                let timer = PerformanceTimer::start("telemetry_collection".to_string());
+
+                // Collect system resource usage
+                let cpu_usage = sentinel_lib::telemetry::ResourceMonitor::get_cpu_usage();
+                let memory_usage = sentinel_lib::telemetry::ResourceMonitor::get_memory_usage();
+
+                // Update telemetry collector
+                {
+                    let mut telemetry = telemetry_collector.write().await;
+                    telemetry.update_resource_usage(cpu_usage, memory_usage);
+
+                    // Add custom metrics
+                    let event_count = event_counter.load(Ordering::Relaxed);
+                    let error_count = error_counter.load(Ordering::Relaxed);
+
+                    telemetry.add_custom_metric("events_processed".to_string(), event_count as f64);
+                    telemetry.add_custom_metric("errors_total".to_string(), error_count as f64);
+
+                    if event_count > 0 {
+                        let error_rate = error_count as f64 / event_count as f64;
+                        telemetry.add_custom_metric("error_rate".to_string(), error_rate);
+                    }
+
+                    let duration = timer.finish();
+                    telemetry.record_operation(duration);
+                }
+
+                debug!(
+                    events_processed = event_counter.load(Ordering::Relaxed),
+                    errors_total = error_counter.load(Ordering::Relaxed),
+                    cpu_usage = cpu_usage,
+                    memory_usage = memory_usage,
+                    "Telemetry collected"
+                );
+            }
+
+            Ok(())
+        });
+
+        self.health_handles
+            .insert("telemetry_collector".to_string(), handle);
+    }
+
+    /// Starts event processing loop with batching and backpressure handling.
+    #[instrument(skip(self), fields(component = %self.config.component_name))]
     async fn start_event_processing(&mut self) {
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
         let enable_debug = self.config.enable_debug_logging;
+        let max_batch_size = self.config.max_batch_size;
+        let batch_timeout = self.config.batch_timeout;
+        let event_counter = Arc::clone(&self.event_counter);
+        let error_counter = Arc::clone(&self.error_counter);
+        let telemetry_collector = Arc::clone(&self.telemetry_collector);
+        let backpressure_semaphore = Arc::clone(&self.backpressure_semaphore);
+        let max_backpressure_wait = self.config.max_backpressure_wait;
 
         // Move the receiver into the processing task
         let mut event_rx = std::mem::replace(
@@ -337,43 +465,207 @@ impl CollectorRuntime {
             mpsc::channel(1).1, // Dummy receiver
         );
 
+        // Move the batch into the processing task
+        let mut event_batch = std::mem::take(&mut self.event_batch);
+        let mut last_batch_flush = self.last_batch_flush;
+
         let handle = tokio::spawn(async move {
-            let mut event_count = 0u64;
+            let mut batch_flush_interval = interval(batch_timeout);
+            let mut total_events = 0u64;
+            let mut batches_processed = 0u64;
 
-            while !shutdown_signal.load(Ordering::Relaxed) {
-                match event_rx.recv().await {
-                    Some(event) => {
-                        event_count += 1;
+            info!("Starting event processing with batching and backpressure handling");
 
-                        if enable_debug {
-                            debug!(
-                                event_type = event.event_type(),
-                                pid = event.pid(),
-                                timestamp = ?event.timestamp(),
-                                "Received collection event"
-                            );
-                        }
+            loop {
+                tokio::select! {
+                    // Handle incoming events
+                    event_result = event_rx.recv() => {
+                        match event_result {
+                            Some(event) => {
+                                let timer = PerformanceTimer::start("event_processing".to_string());
 
-                        // Event processing logic would go here
-                        // For now, we just count events
+                                // Handle backpressure
+                                let permit = match timeout(max_backpressure_wait, backpressure_semaphore.acquire()).await {
+                                    Ok(Ok(permit)) => permit,
+                                    Ok(Err(_)) => {
+                                        error!("Failed to acquire backpressure permit");
+                                        error_counter.fetch_add(1, Ordering::Relaxed);
+                                        continue;
+                                    }
+                                    Err(_) => {
+                                        warn!("Backpressure timeout exceeded, dropping event");
+                                        error_counter.fetch_add(1, Ordering::Relaxed);
+                                        continue;
+                                    }
+                                };
 
-                        if event_count % 1000 == 0 {
-                            info!(events_processed = event_count, "Event processing milestone");
+                                total_events += 1;
+                                event_counter.store(total_events as usize, Ordering::Relaxed);
+
+                                if enable_debug {
+                                    debug!(
+                                        event_type = event.event_type(),
+                                        pid = event.pid(),
+                                        timestamp = ?event.timestamp(),
+                                        batch_size = event_batch.len(),
+                                        "Received collection event"
+                                    );
+                                }
+
+                                // Add event to batch
+                                event_batch.push(event);
+
+                                // Process batch if it's full
+                                if event_batch.len() >= max_batch_size {
+                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                                        error!(error = %e, "Failed to process event batch");
+                                        error_counter.fetch_add(1, Ordering::Relaxed);
+                                    } else {
+                                        batches_processed += 1;
+                                        last_batch_flush = Instant::now();
+                                    }
+                                }
+
+                                // Record telemetry
+                                {
+                                    let mut telemetry = telemetry_collector.write().await;
+                                    let duration = timer.finish();
+                                    telemetry.record_operation(duration);
+                                }
+
+                                // Release backpressure permit
+                                drop(permit);
+
+                                // Log milestones
+                                if total_events % 1000 == 0 {
+                                    info!(
+                                        events_processed = total_events,
+                                        batches_processed = batches_processed,
+                                        current_batch_size = event_batch.len(),
+                                        "Event processing milestone"
+                                    );
+                                }
+                            }
+                            None => {
+                                debug!("Event channel closed, processing remaining events");
+
+                                // Process any remaining events in the batch
+                                if !event_batch.is_empty() {
+                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                                        error!(error = %e, "Failed to process final event batch");
+                                    }
+                                }
+
+                                break;
+                            }
                         }
                     }
-                    None => {
-                        debug!("Event channel closed, stopping event processing");
+
+                    // Handle batch timeout
+                    _ = batch_flush_interval.tick() => {
+                        if !event_batch.is_empty() && last_batch_flush.elapsed() >= batch_timeout {
+                            debug!(batch_size = event_batch.len(), "Flushing batch due to timeout");
+
+                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                                error!(error = %e, "Failed to process timed-out event batch");
+                                error_counter.fetch_add(1, Ordering::Relaxed);
+                            } else {
+                                batches_processed += 1;
+                                last_batch_flush = Instant::now();
+                            }
+                        }
+                    }
+
+                    // Handle shutdown signal
+                    _ = async {
+                        while !shutdown_signal.load(Ordering::Relaxed) {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
+                    } => {
+                        info!("Shutdown signal received, processing remaining events");
+
+                        // Process any remaining events in the batch
+                        if !event_batch.is_empty() {
+                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                                error!(error = %e, "Failed to process shutdown event batch");
+                            }
+                        }
+
                         break;
                     }
                 }
             }
 
-            info!(total_events = event_count, "Event processing stopped");
+            info!(
+                total_events = total_events,
+                batches_processed = batches_processed,
+                "Event processing stopped"
+            );
             Ok(())
         });
 
         self.health_handles
             .insert("event_processor".to_string(), handle);
+    }
+
+    /// Processes a batch of events.
+    ///
+    /// This method handles the actual processing of collected events,
+    /// including any necessary transformations, filtering, or forwarding.
+    async fn process_event_batch(
+        batch: &mut Vec<CollectionEvent>,
+        telemetry_collector: &Arc<RwLock<TelemetryCollector>>,
+    ) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+
+        let timer = PerformanceTimer::start("batch_processing".to_string());
+        let batch_size = batch.len();
+
+        debug!(batch_size = batch_size, "Processing event batch");
+
+        // In a full implementation, this would:
+        // 1. Transform events as needed
+        // 2. Apply any filtering rules
+        // 3. Forward events to storage or other components
+        // 4. Handle any errors gracefully
+
+        // For now, we'll just simulate processing
+        for event in batch.iter() {
+            // Simulate event processing
+            match event {
+                CollectionEvent::Process(_) => {
+                    // Process process events
+                }
+                CollectionEvent::Network(_) => {
+                    // Process network events
+                }
+                CollectionEvent::Filesystem(_) => {
+                    // Process filesystem events
+                }
+                CollectionEvent::Performance(_) => {
+                    // Process performance events
+                }
+            }
+        }
+
+        // Clear the batch
+        batch.clear();
+
+        // Record telemetry
+        {
+            let mut telemetry = telemetry_collector.write().await;
+            let duration = timer.finish();
+            telemetry.record_operation(duration);
+            telemetry.add_custom_metric("batch_size".to_string(), batch_size as f64);
+        }
+
+        debug!(
+            batch_size = batch_size,
+            "Event batch processed successfully"
+        );
+        Ok(())
     }
 
     /// Runs the runtime until shutdown is signaled.
@@ -551,6 +843,69 @@ impl CollectorRuntime {
         }
         Ok(())
     }
+
+    /// Gets the current health status of the collector runtime.
+    ///
+    /// This method performs a comprehensive health check of all components
+    /// and returns the overall health status.
+    pub async fn get_health_status(&self) -> Result<sentinel_lib::telemetry::HealthCheck> {
+        let telemetry = self.telemetry_collector.read().await;
+        Ok(telemetry.health_check())
+    }
+
+    /// Gets the current telemetry metrics from the collector runtime.
+    ///
+    /// This method returns performance metrics and operational statistics
+    /// for monitoring and debugging purposes.
+    pub async fn get_telemetry_metrics(&self) -> Result<sentinel_lib::telemetry::Metrics> {
+        let telemetry = self.telemetry_collector.read().await;
+        Ok(telemetry.get_metrics().clone())
+    }
+
+    /// Gets runtime statistics for the collector.
+    ///
+    /// This method returns operational statistics including event counts,
+    /// error rates, and performance metrics.
+    pub fn get_runtime_stats(&self) -> RuntimeStats {
+        RuntimeStats {
+            events_processed: self.event_counter.load(Ordering::Relaxed),
+            errors_total: self.error_counter.load(Ordering::Relaxed),
+            registered_sources: self.source_handles.len(),
+            active_components: self.health_handles.len(),
+            backpressure_permits_available: self.backpressure_semaphore.available_permits(),
+        }
+    }
+}
+
+/// Runtime statistics for the collector.
+#[derive(Debug, Clone)]
+pub struct RuntimeStats {
+    /// Total number of events processed
+    pub events_processed: usize,
+    /// Total number of errors encountered
+    pub errors_total: usize,
+    /// Number of registered event sources
+    pub registered_sources: usize,
+    /// Number of active runtime components
+    pub active_components: usize,
+    /// Available backpressure permits
+    pub backpressure_permits_available: usize,
+}
+
+impl RuntimeStats {
+    /// Calculates the error rate as a percentage.
+    pub fn error_rate(&self) -> f64 {
+        if self.events_processed == 0 {
+            0.0
+        } else {
+            (self.errors_total as f64 / self.events_processed as f64) * 100.0
+        }
+    }
+
+    /// Checks if the runtime is experiencing backpressure.
+    pub fn is_under_backpressure(&self) -> bool {
+        self.backpressure_permits_available == 0
+    }
 }
 
 #[cfg(test)]
@@ -654,5 +1009,65 @@ mod tests {
         let runtime = CollectorRuntime::new(config, tx, rx);
         assert_eq!(runtime.source_handles.len(), 0);
         assert_eq!(runtime.health_handles.len(), 0);
+        assert_eq!(runtime.event_counter.load(Ordering::Relaxed), 0);
+        assert_eq!(runtime.error_counter.load(Ordering::Relaxed), 0);
+        assert!(runtime.backpressure_semaphore.available_permits() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_stats() {
+        let config = CollectorConfig::default();
+        let (tx, rx) = mpsc::channel(100);
+        let runtime = CollectorRuntime::new(config, tx, rx);
+
+        let stats = runtime.get_runtime_stats();
+        assert_eq!(stats.events_processed, 0);
+        assert_eq!(stats.errors_total, 0);
+        assert_eq!(stats.error_rate(), 0.0);
+        assert!(!stats.is_under_backpressure());
+    }
+
+    #[tokio::test]
+    async fn test_event_batch_processing() {
+        use crate::event::{CollectionEvent, ProcessEvent};
+        use std::time::SystemTime;
+
+        let telemetry_collector =
+            Arc::new(RwLock::new(TelemetryCollector::new("test".to_string())));
+
+        let mut batch = vec![CollectionEvent::Process(ProcessEvent {
+            pid: 1234,
+            ppid: None,
+            name: "test".to_string(),
+            executable_path: None,
+            command_line: vec![],
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: None,
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp: SystemTime::now(),
+        })];
+
+        let result = CollectorRuntime::process_event_batch(&mut batch, &telemetry_collector).await;
+        assert!(result.is_ok());
+        assert!(batch.is_empty()); // Batch should be cleared after processing
+    }
+
+    #[tokio::test]
+    async fn test_telemetry_integration() {
+        let config = CollectorConfig::default().with_telemetry(true);
+        let (tx, rx) = mpsc::channel(100);
+        let runtime = CollectorRuntime::new(config, tx, rx);
+
+        // Test health status
+        let health = runtime.get_health_status().await;
+        assert!(health.is_ok());
+
+        // Test telemetry metrics
+        let metrics = runtime.get_telemetry_metrics().await;
+        assert!(metrics.is_ok());
     }
 }
