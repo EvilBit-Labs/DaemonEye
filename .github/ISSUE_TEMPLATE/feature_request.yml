@@ -1,5 +1,5 @@
 name: ✨ Feature Request
-description: Suggest an idea for SentinelD
+description: Suggest an idea for DaemonEye
 title: "[Feature]: "
 labels: ["enhancement", "needs-triage"]
 assignees: []
@@ -14,10 +14,10 @@ body:
       id: component
       attributes:
           label: Component
-          description: Which SentinelD component would this feature affect?
+          description: Which DaemonEye component would this feature affect?
           options:
               - procmond (Process Collector)
-              - sentinelagent (Orchestrator)
+              - daemoneye-agent (Orchestrator)
               - sentinelcli (CLI Interface)
               - sentinel-lib (Shared Library)
               - Documentation

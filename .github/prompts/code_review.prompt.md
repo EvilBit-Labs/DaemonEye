@@ -5,7 +5,7 @@ tools: [githubRepo, edit, search, new, runCommands, runTasks, usages, vscodeAPI,
 description: Analyze diff, apply safe internal fixes, report results
 ---
 
-Analyze only the changed files (diff scope) and improve them while preserving public APIs. Focus categories: (1) Code Smells (large/duplicate/complex) (2) Design Patterns (traits, builder, newtype, factory) (3) Best Practices (Rust 2024, project conventions) (4) Readability (naming, structure, cohesion) (5) Maintainability (modularization, clarity) (6) Performance (async, redb I/O, allocation, blocking) (7) Type Safety (strong types, avoid needless Option/Result layering) (8) Error Handling (thiserror + anyhow context, no silent failures). Context: SentinelD = security-first, airgapped, zero-warnings, privilege separation, CLI-first, memory conscious. Prefer clear + secure over clever.
+Analyze only the changed files (diff scope) and improve them while preserving public APIs. Focus categories: (1) Code Smells (large/duplicate/complex) (2) Design Patterns (traits, builder, newtype, factory) (3) Best Practices (Rust 2024, project conventions) (4) Readability (naming, structure, cohesion) (5) Maintainability (modularization, clarity) (6) Performance (async, redb I/O, allocation, blocking) (7) Type Safety (strong types, avoid needless Option/Result layering) (8) Error Handling (thiserror + anyhow context, no silent failures). Context: DaemonEye = security-first, airgapped, zero-warnings, privilege separation, CLI-first, memory conscious. Prefer clear + secure over clever.
 
 ## ACTION WORKFLOW (MANDATORY)
 

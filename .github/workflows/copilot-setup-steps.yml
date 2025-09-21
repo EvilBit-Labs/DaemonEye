@@ -62,7 +62,7 @@ jobs:
 
             - name: Setup summary
               run: |
-                  echo "✅ SentinelD development environment setup complete!"
+                  echo "✅ DaemonEye development environment setup complete!"
                   echo ""
                   echo "Available tools:"
                   echo "  - Rust toolchain: $(rustc --version)"

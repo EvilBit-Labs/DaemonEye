@@ -12,13 +12,13 @@ description: Work on the next unchecked task in the current task list.
    - Review any referenced documentation or specifications
 3. Identify the next unchecked task in the checklist. The task will typically have an associated github issue linked to it with additional context and a potential solution that should be reviewed as well.
 
-> ⚠️ Important: Some tasks may appear implemented but are still unchecked. You must verify that each task meets all project standards defined in AGENTS.md. "Complete" means the code is fully implemented, idiomatic, tested, lint-free, follows SentinelD's security-first architecture, and aligns with all coding and architectural rules.
+> ⚠️ Important: Some tasks may appear implemented but are still unchecked. You must verify that each task meets all project standards defined in AGENTS.md. "Complete" means the code is fully implemented, idiomatic, tested, lint-free, follows DaemonEye's security-first architecture, and aligns with all coding and architectural rules.
 
 #### Task Execution Process
 
 - Review the codebase to determine whether the task is already complete **according to project standards**.
 - If the task is not fully compliant:
-  - Make necessary code changes using idiomatic, maintainable approaches following SentinelD's security-first patterns.
+  - Make necessary code changes using idiomatic, maintainable approaches following DaemonEye's security-first patterns.
   - Run `just fmt` to apply formatting rules.
   - Add or update tests to ensure correctness.
   - Run the test suites:
@@ -31,7 +31,7 @@ description: Work on the next unchecked task in the current task list.
 
 #### Completion Checklist
 
-- [x] Code conforms to SentinelD project rules and security standards (AGENTS.md)
+- [x] Code conforms to DaemonEye project rules and security standards (AGENTS.md)
 - [x] Tests pass (`just test`)
 - [x] Linting is clean (`just lint`)
 - [x] Full CI validation passes (`just ci-check`)
