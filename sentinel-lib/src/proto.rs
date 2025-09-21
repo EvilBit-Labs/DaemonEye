@@ -113,6 +113,9 @@ impl DetectionTask {
             process_filter: filter,
             hash_check: None,
             metadata: None,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
         }
     }
 
@@ -137,6 +140,125 @@ impl DetectionTask {
             process_filter: None,
             hash_check: Some(hash_check),
             metadata: None,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
+        }
+    }
+
+    /// Create a new detection task with custom parameters (for testing).
+    ///
+    /// This is a convenience method for creating detection tasks in tests
+    /// without having to specify all the new optional fields.
+    pub fn new_test_task(
+        task_id: impl Into<String>,
+        task_type: TaskType,
+        metadata: Option<String>,
+    ) -> Self {
+        Self {
+            task_id: task_id.into(),
+            task_type: i32::from(task_type),
+            process_filter: None,
+            hash_check: None,
+            metadata,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
+        }
+    }
+
+    /// Create a new network monitoring task.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::{DetectionTask, NetworkFilter};
+    /// let filter = NetworkFilter {
+    ///     protocols: vec!["TCP".to_string()],
+    ///     source_addresses: vec!["192.168.1.0/24".to_string()],
+    ///     destination_addresses: vec![],
+    ///     connection_states: vec!["ESTABLISHED".to_string()],
+    /// };
+    /// let task = DetectionTask::new_network_monitoring("net-123", Some(filter));
+    /// assert_eq!(task.task_id, "net-123");
+    /// ```
+    pub fn new_network_monitoring(
+        task_id: impl Into<String>,
+        filter: Option<NetworkFilter>,
+    ) -> Self {
+        Self {
+            task_id: task_id.into(),
+            task_type: i32::from(TaskType::MonitorNetworkConnections),
+            process_filter: None,
+            hash_check: None,
+            metadata: None,
+            network_filter: filter,
+            filesystem_filter: None,
+            performance_filter: None,
+        }
+    }
+
+    /// Create a new filesystem monitoring task.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::{DetectionTask, FilesystemFilter};
+    /// let filter = FilesystemFilter {
+    ///     path_patterns: vec!["/etc/*".to_string()],
+    ///     operation_types: vec!["CREATE".to_string(), "MODIFY".to_string()],
+    ///     file_extensions: vec![".conf".to_string()],
+    /// };
+    /// let task = DetectionTask::new_filesystem_monitoring("fs-456", Some(filter));
+    /// assert_eq!(task.task_id, "fs-456");
+    /// ```
+    pub fn new_filesystem_monitoring(
+        task_id: impl Into<String>,
+        filter: Option<FilesystemFilter>,
+    ) -> Self {
+        Self {
+            task_id: task_id.into(),
+            task_type: i32::from(TaskType::TrackFileOperations),
+            process_filter: None,
+            hash_check: None,
+            metadata: None,
+            network_filter: None,
+            filesystem_filter: filter,
+            performance_filter: None,
+        }
+    }
+
+    /// Create a new performance monitoring task.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::{DetectionTask, PerformanceFilter};
+    /// use std::collections::HashMap;
+    /// let mut min_thresholds = HashMap::new();
+    /// min_thresholds.insert("cpu_usage".to_string(), 10.0);
+    /// let filter = PerformanceFilter {
+    ///     metric_names: vec!["cpu_usage".to_string()],
+    ///     components: vec!["CPU".to_string()],
+    ///     min_thresholds,
+    ///     max_thresholds: HashMap::new(),
+    /// };
+    /// let task = DetectionTask::new_performance_monitoring("perf-789", Some(filter));
+    /// assert_eq!(task.task_id, "perf-789");
+    /// ```
+    pub fn new_performance_monitoring(
+        task_id: impl Into<String>,
+        filter: Option<PerformanceFilter>,
+    ) -> Self {
+        Self {
+            task_id: task_id.into(),
+            task_type: i32::from(TaskType::CollectPerformanceMetrics),
+            process_filter: None,
+            hash_check: None,
+            metadata: None,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: filter,
         }
     }
 }
@@ -159,6 +281,44 @@ impl DetectionResult {
             error_message: None,
             processes,
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
+        }
+    }
+
+    /// Create a successful multi-domain detection result.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::{DetectionResult, NetworkRecord, FilesystemRecord, PerformanceRecord};
+    /// let result = DetectionResult::multi_domain_success(
+    ///     "task-123",
+    ///     vec![],
+    ///     vec![],
+    ///     vec![],
+    ///     vec![]
+    /// );
+    /// assert!(result.success);
+    /// assert_eq!(result.task_id, "task-123");
+    /// ```
+    pub fn multi_domain_success(
+        task_id: impl Into<String>,
+        processes: Vec<ProtoProcessRecord>,
+        network_events: Vec<NetworkRecord>,
+        filesystem_events: Vec<FilesystemRecord>,
+        performance_events: Vec<PerformanceRecord>,
+    ) -> Self {
+        Self {
+            task_id: task_id.into(),
+            success: true,
+            error_message: None,
+            processes,
+            hash_result: None,
+            network_events,
+            filesystem_events,
+            performance_events,
         }
     }
 
@@ -179,6 +339,9 @@ impl DetectionResult {
             error_message: Some(error.into()),
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         }
     }
 
@@ -205,6 +368,120 @@ impl DetectionResult {
             error_message: None,
             processes: vec![],
             hash_result: Some(hash_result),
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
+        }
+    }
+}
+
+impl CollectionCapabilities {
+    /// Create new collection capabilities with basic process monitoring.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::CollectionCapabilities;
+    /// let capabilities = CollectionCapabilities::basic_process_monitoring();
+    /// assert!(!capabilities.supported_domains.is_empty());
+    /// ```
+    pub fn basic_process_monitoring() -> Self {
+        Self {
+            supported_domains: vec![i32::from(MonitoringDomain::Process)],
+            advanced: None,
+        }
+    }
+
+    /// Create new collection capabilities with all monitoring domains.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::{CollectionCapabilities, AdvancedCapabilities};
+    /// let advanced = AdvancedCapabilities {
+    ///     kernel_level: true,
+    ///     realtime: true,
+    ///     system_wide: true,
+    /// };
+    /// let capabilities = CollectionCapabilities::full_monitoring(Some(advanced));
+    /// assert_eq!(capabilities.supported_domains.len(), 4);
+    /// ```
+    pub fn full_monitoring(advanced: Option<AdvancedCapabilities>) -> Self {
+        Self {
+            supported_domains: vec![
+                i32::from(MonitoringDomain::Process),
+                i32::from(MonitoringDomain::Network),
+                i32::from(MonitoringDomain::Filesystem),
+                i32::from(MonitoringDomain::Performance),
+            ],
+            advanced,
+        }
+    }
+
+    /// Check if a specific monitoring domain is supported.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::{CollectionCapabilities, MonitoringDomain};
+    /// let capabilities = CollectionCapabilities::basic_process_monitoring();
+    /// assert!(capabilities.supports_domain(MonitoringDomain::Process));
+    /// assert!(!capabilities.supports_domain(MonitoringDomain::Network));
+    /// ```
+    pub fn supports_domain(&self, domain: MonitoringDomain) -> bool {
+        self.supported_domains.contains(&i32::from(domain))
+    }
+
+    /// Check if advanced capabilities are available.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::CollectionCapabilities;
+    /// let capabilities = CollectionCapabilities::basic_process_monitoring();
+    /// assert!(!capabilities.has_advanced_capabilities());
+    /// ```
+    pub const fn has_advanced_capabilities(&self) -> bool {
+        self.advanced.is_some()
+    }
+}
+
+impl AdvancedCapabilities {
+    /// Create new advanced capabilities with all features enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::AdvancedCapabilities;
+    /// let advanced = AdvancedCapabilities::full_featured();
+    /// assert!(advanced.kernel_level);
+    /// assert!(advanced.realtime);
+    /// assert!(advanced.system_wide);
+    /// ```
+    pub const fn full_featured() -> Self {
+        Self {
+            kernel_level: true,
+            realtime: true,
+            system_wide: true,
+        }
+    }
+
+    /// Create new advanced capabilities with basic features.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sentinel_lib::proto::AdvancedCapabilities;
+    /// let advanced = AdvancedCapabilities::basic();
+    /// assert!(!advanced.kernel_level);
+    /// assert!(!advanced.realtime);
+    /// assert!(advanced.system_wide);
+    /// ```
+    pub const fn basic() -> Self {
+        Self {
+            kernel_level: false,
+            realtime: false,
+            system_wide: true,
         }
     }
 }
@@ -223,13 +500,11 @@ mod tests {
 
     #[test]
     fn test_detection_task_creation() {
-        let task = DetectionTask {
-            task_id: "test-123".to_string(),
-            task_type: ProtoTaskType::EnumerateProcesses as i32,
-            process_filter: None,
-            hash_check: None,
-            metadata: Some("test metadata".to_string()),
-        };
+        let task = DetectionTask::new_test_task(
+            "test-123",
+            TaskType::EnumerateProcesses,
+            Some("test metadata".to_string()),
+        );
 
         assert_eq!(task.task_id, "test-123");
         assert_eq!(task.task_type, ProtoTaskType::EnumerateProcesses as i32);
@@ -357,5 +632,132 @@ mod tests {
         assert_eq!(TaskType::CheckProcessHash as i32, 1);
         assert_eq!(TaskType::MonitorProcessTree as i32, 2);
         assert_eq!(TaskType::VerifyExecutable as i32, 3);
+        // New multi-domain task types
+        assert_eq!(TaskType::MonitorNetworkConnections as i32, 4);
+        assert_eq!(TaskType::TrackFileOperations as i32, 5);
+        assert_eq!(TaskType::CollectPerformanceMetrics as i32, 6);
+    }
+
+    #[test]
+    fn test_multi_domain_task_builders() {
+        // Test network monitoring task
+        let network_filter = NetworkFilter {
+            protocols: vec!["TCP".to_string()],
+            source_addresses: vec!["192.168.1.0/24".to_string()],
+            destination_addresses: vec![],
+            connection_states: vec!["ESTABLISHED".to_string()],
+        };
+        let task = DetectionTask::new_network_monitoring("net-123", Some(network_filter));
+        assert_eq!(task.task_id, "net-123");
+        assert_eq!(task.task_type, TaskType::MonitorNetworkConnections as i32);
+        assert!(task.network_filter.is_some());
+
+        // Test filesystem monitoring task
+        let fs_filter = FilesystemFilter {
+            path_patterns: vec!["/etc/*".to_string()],
+            operation_types: vec!["CREATE".to_string()],
+            file_extensions: vec![".conf".to_string()],
+        };
+        let task = DetectionTask::new_filesystem_monitoring("fs-456", Some(fs_filter));
+        assert_eq!(task.task_id, "fs-456");
+        assert_eq!(task.task_type, TaskType::TrackFileOperations as i32);
+        assert!(task.filesystem_filter.is_some());
+
+        // Test performance monitoring task
+        let mut min_thresholds = std::collections::HashMap::new();
+        min_thresholds.insert("cpu_usage".to_string(), 10.0);
+        let perf_filter = PerformanceFilter {
+            metric_names: vec!["cpu_usage".to_string()],
+            components: vec!["CPU".to_string()],
+            min_thresholds,
+            max_thresholds: std::collections::HashMap::new(),
+        };
+        let task = DetectionTask::new_performance_monitoring("perf-789", Some(perf_filter));
+        assert_eq!(task.task_id, "perf-789");
+        assert_eq!(task.task_type, TaskType::CollectPerformanceMetrics as i32);
+        assert!(task.performance_filter.is_some());
+    }
+
+    #[test]
+    fn test_multi_domain_result_builder() {
+        let network_event = NetworkRecord {
+            connection_id: "conn-1".to_string(),
+            source_address: "192.168.1.100:8080".to_string(),
+            destination_address: "10.0.0.1:443".to_string(),
+            protocol: "TCP".to_string(),
+            state: "ESTABLISHED".to_string(),
+            pid: Some(1234),
+            bytes_sent: 1024,
+            bytes_received: 2048,
+            collection_time: 1_640_995_200_000,
+        };
+
+        let fs_event = FilesystemRecord {
+            operation_id: "fs-op-1".to_string(),
+            path: "/var/log/test.log".to_string(),
+            operation_type: "CREATE".to_string(),
+            pid: Some(1234),
+            file_size: Some(512),
+            permissions: Some("644".to_string()),
+            file_hash: Some("def456abc123".to_string()),
+            collection_time: 1_640_995_200_000,
+        };
+
+        let perf_event = PerformanceRecord {
+            metric_id: "perf-1".to_string(),
+            metric_name: "cpu_usage".to_string(),
+            value: 15.5,
+            unit: "percent".to_string(),
+            pid: Some(1234),
+            component: "CPU".to_string(),
+            collection_time: 1_640_995_200_000,
+        };
+
+        let result = DetectionResult::multi_domain_success(
+            "multi-task",
+            vec![],
+            vec![network_event],
+            vec![fs_event],
+            vec![perf_event],
+        );
+
+        assert_eq!(result.task_id, "multi-task");
+        assert!(result.success);
+        assert_eq!(result.network_events.len(), 1);
+        assert_eq!(result.filesystem_events.len(), 1);
+        assert_eq!(result.performance_events.len(), 1);
+    }
+
+    #[test]
+    fn test_collection_capabilities_builders() {
+        // Test basic process monitoring
+        let basic = CollectionCapabilities::basic_process_monitoring();
+        assert_eq!(basic.supported_domains.len(), 1);
+        assert!(basic.supports_domain(MonitoringDomain::Process));
+        assert!(!basic.supports_domain(MonitoringDomain::Network));
+        assert!(!basic.has_advanced_capabilities());
+
+        // Test full monitoring with advanced capabilities
+        let advanced = AdvancedCapabilities::full_featured();
+        let full = CollectionCapabilities::full_monitoring(Some(advanced));
+        assert_eq!(full.supported_domains.len(), 4);
+        assert!(full.supports_domain(MonitoringDomain::Process));
+        assert!(full.supports_domain(MonitoringDomain::Network));
+        assert!(full.supports_domain(MonitoringDomain::Filesystem));
+        assert!(full.supports_domain(MonitoringDomain::Performance));
+        assert!(full.has_advanced_capabilities());
+    }
+
+    #[test]
+    fn test_advanced_capabilities_builders() {
+        let full = AdvancedCapabilities::full_featured();
+        assert!(full.kernel_level);
+        assert!(full.realtime);
+        assert!(full.system_wide);
+
+        let basic = AdvancedCapabilities::basic();
+        assert!(!basic.kernel_level);
+        assert!(!basic.realtime);
+        assert!(basic.system_wide);
     }
 }

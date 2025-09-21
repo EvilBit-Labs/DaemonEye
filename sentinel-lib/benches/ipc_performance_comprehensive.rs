@@ -76,6 +76,9 @@ fn create_benchmark_task(task_id: &str, metadata_size: usize) -> DetectionTask {
         process_filter: None,
         hash_check: None,
         metadata: (metadata_size > 0).then(|| "x".repeat(metadata_size)),
+        network_filter: None,
+        filesystem_filter: None,
+        performance_filter: None,
     }
 }
 
@@ -116,6 +119,9 @@ fn create_benchmark_result(task_id: &str, num_processes: usize) -> DetectionResu
         error_message: None,
         processes,
         hash_result: None,
+        network_events: vec![],
+        filesystem_events: vec![],
+        performance_events: vec![],
     }
 }
 

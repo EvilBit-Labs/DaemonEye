@@ -173,6 +173,22 @@ test-fs:
 test-ci:
     cargo nextest run --workspace --nocapture
 
+# Run comprehensive tests (includes performance and security)
+test-comprehensive:
+    cargo nextest run --workspace --nocapture --package collector-core
+
+# Run only fast unit tests
+test-fast:
+    cargo test --workspace --lib --bins
+
+# Run performance-critical tests
+test-performance:
+    cargo test --package collector-core --test performance_critical_test
+
+# Run security-critical tests
+test-security:
+    cargo test --package collector-core --test security_critical_test
+
 # =============================================================================
 # BENCHMARKING
 # =============================================================================

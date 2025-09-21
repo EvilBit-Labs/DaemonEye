@@ -12,6 +12,12 @@ enum TaskType {
   MONITOR_PROCESS_TREE = 2;
   /// Verify executable integrity
   VERIFY_EXECUTABLE = 3;
+  /// Monitor network connections (future: netmond)
+  MONITOR_NETWORK_CONNECTIONS = 4;
+  /// Track file operations (future: fsmond)
+  TRACK_FILE_OPERATIONS = 5;
+  /// Collect performance metrics (future: perfmond)
+  COLLECT_PERFORMANCE_METRICS = 6;
 }
 
 /// Process filtering criteria for targeted collection
@@ -78,4 +84,98 @@ message ProcessRecord {
   bool file_exists = 13;
   /// Collection timestamp (Unix timestamp in milliseconds)
   int64 collection_time = 14;
+}
+
+/// Network filtering criteria (future: netmond)
+message NetworkFilter {
+  /// Filter by specific protocols
+  repeated string protocols = 1;
+  /// Filter by source addresses/ports
+  repeated string source_addresses = 2;
+  /// Filter by destination addresses/ports
+  repeated string destination_addresses = 3;
+  /// Filter by connection states
+  repeated string connection_states = 4;
+}
+
+/// Filesystem filtering criteria (future: fsmond)
+message FilesystemFilter {
+  /// Filter by file paths (glob patterns)
+  repeated string path_patterns = 1;
+  /// Filter by operation types
+  repeated string operation_types = 2;
+  /// Filter by file extensions
+  repeated string file_extensions = 3;
+}
+
+/// Performance filtering criteria (future: perfmond)
+message PerformanceFilter {
+  /// Filter by metric names
+  repeated string metric_names = 1;
+  /// Filter by system components
+  repeated string components = 2;
+  /// Minimum threshold values
+  map<string, double> min_thresholds = 3;
+  /// Maximum threshold values
+  map<string, double> max_thresholds = 4;
+}
+
+/// Network connection record (future: netmond)
+message NetworkRecord {
+  /// Connection identifier
+  string connection_id = 1;
+  /// Source address and port
+  string source_address = 2;
+  /// Destination address and port
+  string destination_address = 3;
+  /// Protocol (TCP, UDP, etc.)
+  string protocol = 4;
+  /// Connection state
+  string state = 5;
+  /// Associated process ID
+  optional uint32 pid = 6;
+  /// Bytes sent
+  uint64 bytes_sent = 7;
+  /// Bytes received
+  uint64 bytes_received = 8;
+  /// Collection timestamp (Unix timestamp in milliseconds)
+  int64 collection_time = 9;
+}
+
+/// Filesystem operation record (future: fsmond)
+message FilesystemRecord {
+  /// Operation identifier
+  string operation_id = 1;
+  /// File path
+  string path = 2;
+  /// Operation type (create, modify, delete, access)
+  string operation_type = 3;
+  /// Associated process ID
+  optional uint32 pid = 4;
+  /// File size
+  optional uint64 file_size = 5;
+  /// File permissions
+  optional string permissions = 6;
+  /// File hash (for integrity monitoring)
+  optional string file_hash = 7;
+  /// Collection timestamp (Unix timestamp in milliseconds)
+  int64 collection_time = 8;
+}
+
+/// Performance metric record (future: perfmond)
+message PerformanceRecord {
+  /// Metric identifier
+  string metric_id = 1;
+  /// Metric name
+  string metric_name = 2;
+  /// Metric value
+  double value = 3;
+  /// Metric unit
+  string unit = 4;
+  /// Associated process ID (if applicable)
+  optional uint32 pid = 5;
+  /// System component (CPU, memory, disk, network)
+  string component = 6;
+  /// Collection timestamp (Unix timestamp in milliseconds)
+  int64 collection_time = 7;
 }

@@ -76,6 +76,9 @@ fn create_cross_platform_task(task_id: &str) -> DetectionTask {
         process_filter: None,
         hash_check: None,
         metadata: Some("cross-platform test".to_owned()),
+        network_filter: None,
+        filesystem_filter: None,
+        performance_filter: None,
     }
 }
 
@@ -109,6 +112,9 @@ async fn test_basic_cross_platform_functionality() {
                 collection_time: chrono::Utc::now().timestamp_millis(),
             }],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -304,6 +310,9 @@ async fn test_cross_platform_concurrent_connections() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -410,6 +419,9 @@ async fn test_cross_platform_large_messages() {
             error_message: None,
             processes,
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -456,6 +468,9 @@ async fn test_cross_platform_server_restart() {
             error_message: Some("first_server".to_owned()),
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -491,6 +506,9 @@ async fn test_cross_platform_server_restart() {
             error_message: Some("second_server".to_owned()),
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -542,6 +560,9 @@ async fn test_cross_platform_timeout_behavior() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -597,6 +618,9 @@ async fn test_cross_platform_cleanup() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 

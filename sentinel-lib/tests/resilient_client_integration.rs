@@ -66,6 +66,9 @@ fn create_test_task(task_id: &str) -> DetectionTask {
         process_filter: None,
         hash_check: None,
         metadata: Some("resilient client test".to_owned()),
+        network_filter: None,
+        filesystem_filter: None,
+        performance_filter: None,
     }
 }
 
@@ -122,6 +125,9 @@ async fn test_automatic_reconnection() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -223,6 +229,9 @@ async fn test_concurrent_requests() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 
@@ -283,6 +292,9 @@ async fn test_force_reconnection() {
             error_message: None,
             processes: vec![],
             hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
         })
     });
 

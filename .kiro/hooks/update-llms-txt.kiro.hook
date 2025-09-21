@@ -4,7 +4,7 @@
   "description": "Automatically updates the llms.txt file when documentation, specifications, or repository structure changes to maintain accuracy for LLM consumption",
   "version": "1",
   "when": {
-    "type": "fileEdited",
+    "type": "userTriggered",
     "patterns": [
       "README.md",
       "AGENTS.md",

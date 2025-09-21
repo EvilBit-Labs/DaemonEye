@@ -64,7 +64,7 @@
 
 - [ ] 4. Implement collector-core framework for extensible monitoring architecture
 
-- [ ] 4.1 Create collector-core library foundation - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.1 Create collector-core library foundation - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Create new collector-core workspace member crate with public API exports
   - Define universal EventSource trait with start/stop lifecycle and capability reporting
@@ -74,7 +74,7 @@
   - Write unit tests for EventSource trait and Collector registration
   - _Requirements: 11.1, 11.2, 11.5_
 
-- [ ] 4.2 Integrate existing IPC infrastructure into collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.2 Integrate existing IPC infrastructure into collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Move existing IPC server logic from procmond to collector-core runtime
   - Integrate existing InterprocessServer and IpcCodec with collector-core event handling
@@ -84,7 +84,7 @@
   - Write integration tests for IPC compatibility with existing sentinelagent client
   - _Requirements: 11.1, 11.2, 12.3_
 
-- [ ] 4.3 Add shared infrastructure components to collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.3 Add shared infrastructure components to collector-core - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Integrate existing config::ConfigLoader for hierarchical configuration management
   - Move existing telemetry::TelemetryCollector integration to collector-core runtime
@@ -94,7 +94,7 @@
   - Write unit tests for shared infrastructure integration and lifecycle management
   - _Requirements: 11.1, 11.2, 13.1, 13.2, 13.5_
 
-- [ ] 4.4 Extend protobuf definitions for multi-domain support - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.4 Extend protobuf definitions for multi-domain support - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Add CollectionCapabilities message for capability negotiation between collector-core and sentinelagent
   - Extend existing TaskType enum with future network, filesystem, and performance task types
@@ -104,7 +104,7 @@
   - Write unit tests for protobuf serialization and backward compatibility
   - _Requirements: 12.1, 12.2, 12.3_
 
-- [ ] 4.5 Create comprehensive collector-core testing suite - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
+- [x] 4.5 Create comprehensive collector-core testing suite - [#76](https://github.com/EvilBit-Labs/SentinelD/issues/76)
 
   - Write integration tests for multiple concurrent EventSource registration and lifecycle management
   - Add stress tests for event batching, backpressure handling, and graceful shutdown coordination

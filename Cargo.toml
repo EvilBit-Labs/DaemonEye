@@ -2,7 +2,7 @@
 # This file defines the workspace and shared dependencies
 
 [workspace]
-members = ["procmond", "sentinel-lib", "sentinelagent", "sentinelcli"]
+members = ["collector-core", "procmond", "sentinel-lib", "sentinelagent", "sentinelcli"]
 resolver = "3"
 
 [workspace.package]
@@ -28,6 +28,9 @@ async-trait = "0.1"
 # Binary serialization
 bincode = "2.0.1"
 
+# Bitflags for capability flags
+bitflags = "2.6.0"
+
 # Cryptographic hashing
 blake3 = "1.8.2"
 bytes = "1.10.1"
@@ -48,7 +51,7 @@ insta = { version = "1.43.2", features = ["filters"] }
 # IPC communication
 interprocess = { version = "2.2.3", features = ["tokio"] }
 predicates = "3.1.3"
-proptest = "1.7.0"
+proptest = "1.8.0"
 
 # Protocol Buffers
 prost = "0.14.1"
