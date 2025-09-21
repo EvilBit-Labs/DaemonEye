@@ -16,13 +16,14 @@ The `collector-core` framework provides a unified foundation for multiple collec
 
 ## Architecture
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                    Collector Runtime                        │
-├─────────────────────────────────────────────────────────────┤
-│  EventSource    EventSource    EventSource    EventSource   │
-│  (Process)      (Network)      (Filesystem)   (Performance) │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph "Collector Runtime"
+        A["EventSource<br/>(Process)"]
+        B["EventSource<br/>(Network)"]
+        C["EventSource<br/>(Filesystem)"]
+        D["EventSource<br/>(Performance)"]
+    end
 ```
 
 ## Usage

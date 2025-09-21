@@ -277,9 +277,18 @@ impl CollectorRuntime {
             config.component_name.clone(),
         )));
 
-        let backpressure_semaphore = Arc::new(Semaphore::new(
-            config.event_buffer_size - config.backpressure_threshold,
-        ));
+        let semaphore_permits = config
+            .event_buffer_size
+            .saturating_sub(config.backpressure_threshold);
+        if semaphore_permits == 0 && config.backpressure_threshold >= config.event_buffer_size {
+            warn!(
+                backpressure_threshold = config.backpressure_threshold,
+                event_buffer_size = config.event_buffer_size,
+                "Backpressure threshold >= event buffer size, semaphore permits set to 0"
+            );
+        }
+
+        let backpressure_semaphore = Arc::new(Semaphore::new(semaphore_permits));
 
         let max_batch_size = config.max_batch_size;
 
@@ -306,7 +315,8 @@ impl CollectorRuntime {
         let source_name = source.name().to_string();
         let capabilities = source.capabilities();
         let event_tx = self.event_tx.clone();
-        let _shutdown_signal = Arc::clone(&self.shutdown_signal);
+        let shutdown_signal = Arc::clone(&self.shutdown_signal);
+        let startup_timeout = self.config.startup_timeout;
 
         info!(source_name = %source_name, "Starting event source");
 
@@ -316,23 +326,44 @@ impl CollectorRuntime {
             caps.insert(source_name.clone(), capabilities);
         }
 
-        // Start the source with timeout
+        // Start the source with configurable timeout and shutdown signal polling
         let source_name_clone = source_name.clone();
         let handle = tokio::spawn(async move {
-            let result = timeout(Duration::from_secs(10), source.start(event_tx)).await;
+            // Create a future that polls both the source startup and shutdown signal
+            let source_future = source.start(event_tx);
+            let shutdown_future = async {
+                while !shutdown_signal.load(Ordering::Relaxed) {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(anyhow::anyhow!("Shutdown signal received during startup"))
+            };
+
+            // Race between source startup and shutdown signal
+            let result = tokio::select! {
+                result = timeout(startup_timeout, source_future) => {
+                    match result {
+                        Ok(Ok(())) => Ok(()),
+                        Ok(Err(e)) => Err(e),
+                        Err(_) => Err(anyhow::anyhow!("Source startup timeout"))
+                    }
+                }
+                shutdown_result = shutdown_future => shutdown_result,
+            };
 
             match result {
-                Ok(Ok(())) => {
+                Ok(()) => {
                     info!(source_name = %source_name_clone, "Event source started successfully");
                     Ok(())
                 }
-                Ok(Err(e)) => {
-                    error!(source_name = %source_name_clone, error = %e, "Event source failed to start");
+                Err(e) => {
+                    if e.to_string().contains("Shutdown signal received") {
+                        info!(source_name = %source_name_clone, "Event source startup cancelled due to shutdown signal");
+                    } else if e.to_string().contains("timeout") {
+                        error!(source_name = %source_name_clone, "Event source startup timed out");
+                    } else {
+                        error!(source_name = %source_name_clone, error = %e, "Event source failed to start");
+                    }
                     Err(e)
-                }
-                Err(_) => {
-                    error!(source_name = %source_name_clone, "Event source startup timed out");
-                    anyhow::bail!("Source startup timeout")
                 }
             }
         });
