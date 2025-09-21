@@ -5,10 +5,10 @@ pub use ipc::{IpcConfig, create_ipc_server};
 
 // Re-export main functionality for testing
 pub use crate::ipc::error::IpcError;
-pub use sentinel_lib::proto::{
+pub use daemoneye_lib::proto::{
     DetectionResult, DetectionTask, ProtoProcessRecord, ProtoTaskType, TaskType,
 };
-pub use sentinel_lib::storage;
+pub use daemoneye_lib::storage;
 
 use std::sync::Arc;
 use sysinfo::System;
@@ -52,7 +52,7 @@ use tokio::sync::Mutex;
 ///
 /// ```rust,no_run
 /// use procmond::ProcessMessageHandler;
-/// use sentinel_lib::storage::DatabaseManager;
+/// use daemoneye_lib::storage::DatabaseManager;
 /// use std::sync::Arc;
 /// use tokio::sync::Mutex;
 ///

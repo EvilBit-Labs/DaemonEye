@@ -56,17 +56,17 @@ pub enum IpcError {
     HandlerError(#[from] Box<dyn Error + Send + Sync>),
 }
 
-impl From<sentinel_lib::ipc::IpcError> for IpcError {
-    fn from(err: sentinel_lib::ipc::IpcError) -> Self {
+impl From<daemoneye_lib::ipc::IpcError> for IpcError {
+    fn from(err: daemoneye_lib::ipc::IpcError) -> Self {
         match err {
-            sentinel_lib::ipc::IpcError::Io(io_err) => IpcError::Io(io_err),
-            sentinel_lib::ipc::IpcError::Decode(decode_err) => IpcError::Protobuf(decode_err),
-            sentinel_lib::ipc::IpcError::Encode(msg) => IpcError::InvalidMessage { reason: msg },
-            sentinel_lib::ipc::IpcError::Timeout => IpcError::MessageTimeout { timeout_secs: 30 },
-            sentinel_lib::ipc::IpcError::TooLarge { size, max_size } => IpcError::InvalidMessage {
+            daemoneye_lib::ipc::IpcError::Io(io_err) => IpcError::Io(io_err),
+            daemoneye_lib::ipc::IpcError::Decode(decode_err) => IpcError::Protobuf(decode_err),
+            daemoneye_lib::ipc::IpcError::Encode(msg) => IpcError::InvalidMessage { reason: msg },
+            daemoneye_lib::ipc::IpcError::Timeout => IpcError::MessageTimeout { timeout_secs: 30 },
+            daemoneye_lib::ipc::IpcError::TooLarge { size, max_size } => IpcError::InvalidMessage {
                 reason: format!("Message too large: {} bytes (max: {})", size, max_size),
             },
-            sentinel_lib::ipc::IpcError::CrcMismatch { expected, actual } => {
+            daemoneye_lib::ipc::IpcError::CrcMismatch { expected, actual } => {
                 IpcError::InvalidMessage {
                     reason: format!(
                         "CRC32 mismatch: expected {:08x}, got {:08x}",
@@ -74,8 +74,8 @@ impl From<sentinel_lib::ipc::IpcError> for IpcError {
                     ),
                 }
             }
-            sentinel_lib::ipc::IpcError::PeerClosed => IpcError::ServerNotRunning,
-            sentinel_lib::ipc::IpcError::InvalidLength { length } => IpcError::InvalidMessage {
+            daemoneye_lib::ipc::IpcError::PeerClosed => IpcError::ServerNotRunning,
+            daemoneye_lib::ipc::IpcError::InvalidLength { length } => IpcError::InvalidMessage {
                 reason: format!("Invalid message length: {}", length),
             },
             _ => IpcError::InvalidMessage {

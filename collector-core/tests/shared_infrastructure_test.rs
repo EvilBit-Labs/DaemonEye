@@ -108,7 +108,7 @@ impl EventSource for TestEventSource {
 }
 
 #[tokio::test]
-async fn test_config_integration_with_sentinel_lib() {
+async fn test_config_integration_with_daemoneye_lib() {
     // Test that collector-core can load configuration from sentinel-lib ConfigLoader
     let config = CollectorConfig::load_from_sentinel_config("test-component");
 

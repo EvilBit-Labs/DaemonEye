@@ -9,7 +9,7 @@ use collector_core::{
     CollectionEvent, Collector, CollectorConfig, CollectorIpcServer, EventSource, SourceCaps,
 };
 use prost::Message;
-use sentinel_lib::proto::{DetectionResult, DetectionTask, TaskType};
+use daemoneye_lib::proto::{DetectionResult, DetectionTask, TaskType};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{RwLock, mpsc};
 
@@ -64,7 +64,7 @@ async fn test_capability_negotiation() {
     let ipc_server = CollectorIpcServer::new(config, capabilities);
 
     // Test initial capabilities
-    use sentinel_lib::proto::MonitoringDomain;
+    use daemoneye_lib::proto::MonitoringDomain;
 
     let proto_caps = ipc_server.get_capabilities().await;
     assert!(
@@ -229,10 +229,10 @@ async fn test_protobuf_message_compatibility() {
 
 #[tokio::test]
 async fn test_collection_capabilities_message() {
-    use sentinel_lib::proto::CollectionCapabilities;
+    use daemoneye_lib::proto::CollectionCapabilities;
 
     // Test CollectionCapabilities message creation and serialization
-    use sentinel_lib::proto::{AdvancedCapabilities, MonitoringDomain};
+    use daemoneye_lib::proto::{AdvancedCapabilities, MonitoringDomain};
 
     let capabilities = CollectionCapabilities {
         supported_domains: vec![

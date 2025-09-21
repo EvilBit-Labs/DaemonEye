@@ -4,7 +4,7 @@
 //! collector runtime and event sources. It integrates with the existing
 //! sentinel-lib ConfigLoader for hierarchical configuration management.
 
-use sentinel_lib::config::{Config as SentinelConfig, ConfigError, ConfigLoader};
+use daemoneye_lib::config::{Config as SentinelConfig, ConfigError, ConfigLoader};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -518,11 +518,11 @@ mod tests {
     #[test]
     fn test_apply_sentinel_config() {
         let sentinel_config = SentinelConfig {
-            app: sentinel_lib::config::AppConfig {
+            app: daemoneye_lib::config::AppConfig {
                 batch_size: 2000,
                 ..Default::default()
             },
-            logging: sentinel_lib::config::LoggingConfig {
+            logging: daemoneye_lib::config::LoggingConfig {
                 level: "debug".to_string(),
                 ..Default::default()
             },

@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use futures::future::try_join_all;
-use sentinel_lib::telemetry::{HealthStatus, PerformanceTimer, TelemetryCollector};
+use daemoneye_lib::telemetry::{HealthStatus, PerformanceTimer, TelemetryCollector};
 use std::{
     collections::HashMap,
     sync::{
@@ -453,8 +453,8 @@ impl CollectorRuntime {
                 let timer = PerformanceTimer::start("telemetry_collection".to_string());
 
                 // Collect system resource usage
-                let cpu_usage = sentinel_lib::telemetry::ResourceMonitor::get_cpu_usage();
-                let memory_usage = sentinel_lib::telemetry::ResourceMonitor::get_memory_usage();
+                let cpu_usage = daemoneye_lib::telemetry::ResourceMonitor::get_cpu_usage();
+                let memory_usage = daemoneye_lib::telemetry::ResourceMonitor::get_memory_usage();
 
                 // Update telemetry collector
                 {
@@ -898,7 +898,7 @@ impl CollectorRuntime {
             let shutdown = Arc::clone(&shutdown_signal);
 
             Box::pin(async move {
-                use sentinel_lib::proto::{DetectionResult, TaskType};
+                use daemoneye_lib::proto::{DetectionResult, TaskType};
 
                 // Check if we're shutting down
                 if shutdown.load(Ordering::Relaxed) {
@@ -958,7 +958,7 @@ impl CollectorRuntime {
     ///
     /// This method performs a comprehensive health check of all components
     /// and returns the overall health status.
-    pub async fn get_health_status(&self) -> Result<sentinel_lib::telemetry::HealthCheck> {
+    pub async fn get_health_status(&self) -> Result<daemoneye_lib::telemetry::HealthCheck> {
         let telemetry = self.telemetry_collector.read().await;
         Ok(telemetry.health_check())
     }
@@ -967,7 +967,7 @@ impl CollectorRuntime {
     ///
     /// This method returns performance metrics and operational statistics
     /// for monitoring and debugging purposes.
-    pub async fn get_telemetry_metrics(&self) -> Result<sentinel_lib::telemetry::Metrics> {
+    pub async fn get_telemetry_metrics(&self) -> Result<daemoneye_lib::telemetry::Metrics> {
         let telemetry = self.telemetry_collector.read().await;
         Ok(telemetry.get_metrics().clone())
     }

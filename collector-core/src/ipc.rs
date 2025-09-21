@@ -6,7 +6,7 @@
 
 use crate::{config::CollectorConfig, source::SourceCaps};
 use anyhow::{Context, Result};
-use sentinel_lib::{
+use daemoneye_lib::{
     ipc::{InterprocessServer, IpcConfig, PanicStrategy, TransportType},
     proto::{CollectionCapabilities, DetectionResult, DetectionTask, TaskType},
 };
@@ -241,7 +241,7 @@ async fn validate_task_capabilities(
 
 /// Converts SourceCaps bitflags to protobuf CollectionCapabilities.
 fn source_caps_to_proto_capabilities(caps: SourceCaps) -> CollectionCapabilities {
-    use sentinel_lib::proto::{AdvancedCapabilities, MonitoringDomain};
+    use daemoneye_lib::proto::{AdvancedCapabilities, MonitoringDomain};
 
     let mut supported_domains = Vec::new();
 
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_source_caps_to_proto_capabilities() {
-        use sentinel_lib::proto::MonitoringDomain;
+        use daemoneye_lib::proto::MonitoringDomain;
 
         let caps = SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE;
         let proto_caps = source_caps_to_proto_capabilities(caps);
@@ -366,7 +366,7 @@ mod tests {
         let server = CollectorIpcServer::new(config, Arc::clone(&capabilities));
 
         // Test initial capabilities
-        use sentinel_lib::proto::MonitoringDomain;
+        use daemoneye_lib::proto::MonitoringDomain;
 
         let proto_caps = server.get_capabilities().await;
         assert!(

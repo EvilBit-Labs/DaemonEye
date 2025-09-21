@@ -375,11 +375,11 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bitflags",
+ "daemoneye-lib",
  "futures",
  "proptest",
  "prost",
  "rand",
- "sentinel-lib",
  "serde",
  "serde_json",
  "tempfile",
@@ -509,6 +509,92 @@ checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "daemoneye-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "clap",
+ "daemoneye-lib",
+ "futures",
+ "insta",
+ "interprocess",
+ "predicates",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "redb",
+ "serde",
+ "serde_json",
+ "sqlparser",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "daemoneye-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "chrono",
+ "clap",
+ "daemoneye-lib",
+ "insta",
+ "predicates",
+ "redb",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "daemoneye-lib"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "async-trait",
+ "blake3",
+ "bytes",
+ "chrono",
+ "crc32c",
+ "criterion",
+ "futures",
+ "futures-util",
+ "interprocess",
+ "predicates",
+ "proptest",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "rand",
+ "redb",
+ "rs_merkle",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "sqlparser",
+ "sysinfo",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1115,6 +1201,7 @@ dependencies = [
  "chrono",
  "clap",
  "crc32c",
+ "daemoneye-lib",
  "insta",
  "interprocess",
  "predicates",
@@ -1122,7 +1209,6 @@ dependencies = [
  "prost-build",
  "prost-types",
  "redb",
- "sentinel-lib",
  "serde",
  "sysinfo",
  "tempfile",
@@ -1431,92 +1517,6 @@ name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
-
-[[package]]
-name = "sentinel-lib"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "async-trait",
- "blake3",
- "bytes",
- "chrono",
- "crc32c",
- "criterion",
- "futures",
- "futures-util",
- "interprocess",
- "predicates",
- "proptest",
- "prost",
- "prost-build",
- "prost-types",
- "rand",
- "redb",
- "rs_merkle",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "sqlparser",
- "sysinfo",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "sentinelagent"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "async-trait",
- "bytes",
- "chrono",
- "clap",
- "futures",
- "insta",
- "interprocess",
- "predicates",
- "prost",
- "prost-build",
- "prost-types",
- "redb",
- "sentinel-lib",
- "serde",
- "serde_json",
- "sqlparser",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "sentinelcli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "chrono",
- "clap",
- "insta",
- "predicates",
- "redb",
- "sentinel-lib",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "serde"

@@ -1,5 +1,5 @@
 [package]
-name = "procmond"
+name = "daemoneye-agent"
 edition = "2024"
 version.workspace = true
 authors.workspace = true
@@ -7,35 +7,26 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "DaemonEye Process Monitoring Daemon"
+description = "DaemonEye Detection Orchestrator"
 publish = true
 
 [package.metadata.wix]
-upgrade-guid = "C3B17B71-0443-4060-A962-D4D4F88CC2A2"
-path-guid = "9011B6A9-5EF9-4CC3-9A4F-CA09D5C987C2"
+upgrade-guid = "93D6515D-DB7A-43E2-AF97-9CC73E38D93C"
+path-guid = "6E74EC37-C9F9-4E4F-9586-299D2E02B22C"
 license = false
 eula = false
-
-[lib]
-name = "procmond"
-path = "src/lib.rs"
-
-[[bin]]
-name = "procmond"
-path = "src/main.rs"
 
 [dependencies]
 # Core dependencies
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-bincode = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+futures = { workspace = true }
 
 # IPC communication
 interprocess = { workspace = true }
-crc32c = { workspace = true }
 
 # Protocol Buffers
 prost = { workspace = true }
@@ -47,9 +38,10 @@ redb = { workspace = true }
 # Internal library
 daemoneye-lib = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
-# System information
-sysinfo = { workspace = true }
+# SQL parsing
+sqlparser = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

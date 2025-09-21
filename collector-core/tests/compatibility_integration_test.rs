@@ -9,7 +9,7 @@ use collector_core::{
     CollectionEvent, Collector, CollectorConfig, EventSource, ProcessEvent, SourceCaps,
 };
 use prost::Message;
-use sentinel_lib::proto::{
+use daemoneye_lib::proto::{
     AdvancedCapabilities, CollectionCapabilities, DetectionResult, DetectionTask, MonitoringDomain,
     ProcessRecord, TaskType,
 };

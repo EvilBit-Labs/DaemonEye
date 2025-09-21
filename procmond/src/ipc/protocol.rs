@@ -423,7 +423,7 @@ impl ProtocolManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sentinel_lib::proto::DetectionTask;
+    use daemoneye_lib::proto::DetectionTask;
 
     #[test]
     fn test_message_envelope_creation() {

@@ -1,5 +1,5 @@
 [package]
-name = "procmond"
+name = "daemoneye-cli"
 edition = "2024"
 version.workspace = true
 authors.workspace = true
@@ -7,39 +7,20 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "DaemonEye Process Monitoring Daemon"
+description = "DaemonEye Command Line Interface"
 publish = true
 
 [package.metadata.wix]
-upgrade-guid = "C3B17B71-0443-4060-A962-D4D4F88CC2A2"
-path-guid = "9011B6A9-5EF9-4CC3-9A4F-CA09D5C987C2"
+upgrade-guid = "9821CB9C-4F06-4EF8-9763-2434C2D7D175"
+path-guid = "A0AC25BF-9512-4104-A6E8-9480B086F5D3"
 license = false
 eula = false
-
-[lib]
-name = "procmond"
-path = "src/lib.rs"
-
-[[bin]]
-name = "procmond"
-path = "src/main.rs"
 
 [dependencies]
 # Core dependencies
 anyhow = { workspace = true }
-async-trait = { workspace = true }
-bincode = { workspace = true }
-bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-
-# IPC communication
-interprocess = { workspace = true }
-crc32c = { workspace = true }
-
-# Protocol Buffers
-prost = { workspace = true }
-prost-types = { workspace = true }
 
 # Database
 redb = { workspace = true }
@@ -47,16 +28,11 @@ redb = { workspace = true }
 # Internal library
 daemoneye-lib = { workspace = true }
 serde = { workspace = true }
-
-# System information
-sysinfo = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-
-[build-dependencies]
-prost-build = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

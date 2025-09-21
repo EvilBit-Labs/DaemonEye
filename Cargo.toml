@@ -2,7 +2,7 @@
 # This file defines the workspace and shared dependencies
 
 [workspace]
-members = ["collector-core", "procmond", "sentinel-lib", "sentinelagent", "sentinelcli"]
+members = ["collector-core", "procmond", "daemoneye-lib", "daemoneye-agent", "daemoneye-cli"]
 resolver = "3"
 
 [workspace.package]
@@ -10,8 +10,8 @@ version = "0.1.0"
 authors = ["UncleSp1d3r", "Krypdo3"]
 license = "Apache-2.0"
 rust-version = "1.85"
-repository = "https://github.com/EvilBit-Labs/SentinelD"
-homepage = "https://evilbitlabs.io/sentineld"
+repository = "https://github.com/EvilBit-Labs/DaemonEye"
+homepage = "https://evilbitlabs.io/daemoneye"
 edition = "2024"
 
 # Overpinning the versions is breaking the cross-platform functionality, so we are limiting pinning to minor versions.
@@ -66,7 +66,7 @@ redb = "3.0.2"
 rs_merkle = "1.5.0"
 
 # Internal library
-sentinel-lib = { path = "sentinel-lib" }
+daemoneye-lib = { path = "daemoneye-lib" }
 
 # Serialization
 serde = { version = "1.0.225", features = ["derive"] }
