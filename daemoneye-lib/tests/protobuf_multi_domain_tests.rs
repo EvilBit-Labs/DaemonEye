@@ -17,8 +17,8 @@
 
 #![allow(clippy::as_conversions)] // Allow enum conversions in tests
 
-use prost::Message;
 use daemoneye_lib::proto::*;
+use prost::Message;
 
 /// Tests serialization and deserialization of `CollectionCapabilities` message.
 ///

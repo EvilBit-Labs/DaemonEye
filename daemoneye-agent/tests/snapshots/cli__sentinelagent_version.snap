@@ -1,5 +1,0 @@
----
-source: sentinelagent/tests/cli.rs
-expression: stdout
----
-sentinelagent 0.1.0

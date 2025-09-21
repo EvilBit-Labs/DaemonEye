@@ -1,0 +1,13 @@
+---
+source: daemoneye-agent/tests/cli.rs
+expression: stdout
+---
+DaemonEye Detection and Alerting Orchestrator
+
+Usage: daemoneye-agent [OPTIONS]
+
+Options:
+  -d, --database <DATABASE>    Database path [default: /var/lib/daemoneye/processes.db]
+  -l, --log-level <LOG_LEVEL>  Log level [default: info]
+  -h, --help                   Print help
+  -V, --version                Print version

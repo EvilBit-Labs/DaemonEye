@@ -7,10 +7,10 @@ use tokio::sync::Mutex;
 
 mod ipc;
 
+use daemoneye_lib::proto::DetectionTask;
 use ipc::error::IpcError;
 use ipc::{IpcConfig, create_ipc_server};
 use procmond::ProcessMessageHandler;
-use daemoneye_lib::proto::DetectionTask;
 
 #[derive(Parser)]
 #[command(name = "procmond")]

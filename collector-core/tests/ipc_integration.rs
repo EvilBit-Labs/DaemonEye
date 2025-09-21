@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use collector_core::{
     CollectionEvent, Collector, CollectorConfig, CollectorIpcServer, EventSource, SourceCaps,
 };
-use prost::Message;
 use daemoneye_lib::proto::{DetectionResult, DetectionTask, TaskType};
+use prost::Message;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{RwLock, mpsc};
 

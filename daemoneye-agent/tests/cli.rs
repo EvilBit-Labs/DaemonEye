@@ -8,21 +8,21 @@ fn prints_expected_greeting() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("sentinelagent")?;
-    cmd.env("SENTINELAGENT_DATABASE_PATH", db_path.to_str().unwrap());
+    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
+    cmd.env("DAEMONEYE_AGENT_DATABASE_PATH", db_path.to_str().unwrap());
     // Enable test mode so the agent exits immediately after startup banner.
-    cmd.env("SENTINELAGENT_TEST_MODE", "1");
+    cmd.env("DAEMONEYE_AGENT_TEST_MODE", "1");
 
     let output = cmd.output()?;
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_snapshot!("sentinelagent_greeting", stdout);
+    assert_snapshot!("daemoneye-agent_greeting", stdout);
     Ok(())
 }
 
 #[test]
 fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("sentinelagent")?;
+    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
     cmd.arg("--help");
 
     let output = cmd.output()?;
@@ -33,10 +33,10 @@ fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
     insta::with_settings!({
         filters => vec![
             // Normalize executable name: remove .exe extension on Windows
-            (r"\bsentinelagent\.exe\b", "sentinelagent"),
+            (r"\bdaemoneye-agent\.exe\b", "daemoneye-agent"),
         ]
     }, {
-        assert_snapshot!("sentinelagent_help", stdout.as_ref());
+        assert_snapshot!("daemoneye-agent_help", stdout.as_ref());
     });
 
     Ok(())
@@ -44,13 +44,13 @@ fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn shows_version() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("sentinelagent")?;
+    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
     cmd.arg("--version");
 
     let output = cmd.output()?;
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_snapshot!("sentinelagent_version", stdout);
+    assert_snapshot!("daemoneye-agent_version", stdout);
     Ok(())
 }
 
@@ -59,16 +59,16 @@ fn accepts_database_path() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("sentinelagent")?;
+    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
     cmd.arg("--database").arg(&db_path);
     cmd.arg("--log-level").arg("error");
-    cmd.env("SENTINELAGENT_TEST_MODE", "1");
+    cmd.env("DAEMONEYE_AGENT_TEST_MODE", "1");
 
     // The test mode should exit before database initialization
     let output = cmd.output()?;
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_snapshot!("sentinelagent_database_path", stdout);
+    assert_snapshot!("daemoneye-agent_database_path", stdout);
     Ok(())
 }
 
@@ -77,16 +77,16 @@ fn accepts_log_level() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("sentinelagent")?;
+    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
     cmd.arg("--database").arg(&db_path);
     cmd.arg("--log-level").arg("debug");
-    cmd.env("SENTINELAGENT_TEST_MODE", "1");
+    cmd.env("DAEMONEYE_AGENT_TEST_MODE", "1");
 
     // The test mode should exit before database initialization
     let output = cmd.output()?;
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_snapshot!("sentinelagent_log_level", stdout);
+    assert_snapshot!("daemoneye-agent_log_level", stdout);
     Ok(())
 }
 
@@ -95,11 +95,11 @@ fn handles_missing_database_gracefully() -> Result<(), Box<dyn std::error::Error
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("nonexistent").join("test.db");
 
-    let mut cmd = Command::cargo_bin("sentinelagent")?;
+    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
     cmd.arg("--database").arg(&db_path);
     cmd.arg("--log-level").arg("error");
     // Don't set test mode so it will try to initialize the database
-    // cmd.env("SENTINELAGENT_TEST_MODE", "1");
+    // cmd.env("DAEMONEYE_AGENT_TEST_MODE", "1");
 
     // Should fail due to missing directory
     let output = cmd.output()?;
@@ -128,7 +128,7 @@ fn handles_missing_database_gracefully() -> Result<(), Box<dyn std::error::Error
             (r"[A-Z]:\\Users\\[^\\]+\\AppData\\Local\\Temp\\[^\\]+\\nonexistent", "/tmp/<TEMP>/nonexistent"),
         ]
     }, {
-        assert_snapshot!("sentinelagent_missing_database", stderr.as_ref());
+        assert_snapshot!("daemoneye-agent_missing_database", stderr.as_ref());
     });
     Ok(())
 }

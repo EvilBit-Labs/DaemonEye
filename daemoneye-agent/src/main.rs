@@ -9,7 +9,7 @@ mod ipc_client;
 use ipc_client::{IpcClientManager, create_default_ipc_config};
 
 #[derive(Parser)]
-#[command(name = "sentinelagent")]
+#[command(name = "daemoneye-agent")]
 #[command(about = "DaemonEye Detection and Alerting Orchestrator")]
 #[command(version)]
 struct Cli {
@@ -37,24 +37,24 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
-    // Test mode: exit early to keep existing integration test semantics (set SENTINELAGENT_TEST_MODE=1)
-    if std::env::var("SENTINELAGENT_TEST_MODE")
+    // Test mode: exit early to keep existing integration test semantics (set DAEMONEYE_AGENT_TEST_MODE=1)
+    if std::env::var("DAEMONEYE_AGENT_TEST_MODE")
         .map(|v| v == "1")
         .unwrap_or(false)
     {
-        println!("sentinelagent started successfully");
+        println!("daemoneye-agent started successfully");
         return Ok(());
     }
 
     // Load configuration
-    let config_loader = config::ConfigLoader::new("sentinelagent");
+    let config_loader = config::ConfigLoader::new("daemoneye-agent");
     let mut config = config_loader.load()?;
 
     // Override database path from CLI argument if provided
     config.database.path = cli.database.into();
 
     // Initialize telemetry
-    let mut telemetry = telemetry::TelemetryCollector::new("sentinelagent".to_string());
+    let mut telemetry = telemetry::TelemetryCollector::new("daemoneye-agent".to_string());
 
     // Initialize database
     let _db_manager = storage::DatabaseManager::new(&config.database.path)?;
@@ -99,7 +99,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     alert_manager.add_sink(stdout_sink);
 
     // Indicate startup success before entering main loop
-    println!("sentinelagent started successfully");
+    println!("daemoneye-agent started successfully");
 
     // Main collection loop using IPC client
     let scan_interval = Duration::from_millis(config.app.scan_interval_ms);
@@ -201,6 +201,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("sentinelagent shutdown complete.");
+    println!("daemoneye-agent shutdown complete.");
     Ok(())
 }

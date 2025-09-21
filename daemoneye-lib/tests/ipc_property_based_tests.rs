@@ -20,9 +20,9 @@
     clippy::ignored_unit_patterns
 )]
 
-use proptest::prelude::*;
 use daemoneye_lib::ipc::codec::{IpcCodec, IpcError};
 use daemoneye_lib::proto::{DetectionResult, DetectionTask, ProcessRecord, TaskType};
+use proptest::prelude::*;
 use std::io::Cursor;
 use tokio::io::{DuplexStream, duplex};
 use tokio::time::Duration;

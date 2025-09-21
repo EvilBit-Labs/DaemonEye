@@ -11,10 +11,10 @@
 )]
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use futures::FutureExt;
-use prost::Message;
 use daemoneye_lib::ipc::{IpcConfig, ResilientIpcClient, TransportType};
 use daemoneye_lib::proto::{DetectionResult, DetectionTask, ProtoProcessRecord};
+use futures::FutureExt;
+use prost::Message;
 use std::hint::black_box;
 use tempfile::TempDir;
 

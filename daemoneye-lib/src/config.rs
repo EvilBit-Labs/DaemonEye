@@ -2,7 +2,7 @@
 //!
 //! Supports multiple configuration sources with precedence:
 //! 1. Command-line flags (highest precedence)
-//! 2. Environment variables (PROCMOND_*, SENTINELAGENT_*, SENTINELCLI_*)
+//! 2. Environment variables (PROCMOND_*, DAEMONEYE_AGENT_*, DAEMONEYE_CLI_*)
 //! 3. User configuration file (~/.config/daemoneye/config.yaml)
 //! 4. System configuration file (/etc/daemoneye/config.yaml)
 //! 5. Embedded defaults (lowest precedence)

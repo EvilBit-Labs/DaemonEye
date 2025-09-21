@@ -1,0 +1,5 @@
+---
+source: daemoneye-agent/tests/cli.rs
+expression: stdout
+---
+daemoneye-agent 0.1.0

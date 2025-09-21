@@ -5,7 +5,7 @@ use daemoneye_lib::{config, storage, telemetry};
 
 /// DaemonEye CLI interface
 #[derive(Parser)]
-#[command(name = "sentinelcli")]
+#[command(name = "daemoneye-cli")]
 #[command(about = "DaemonEye CLI interface")]
 #[command(version)]
 struct Cli {
@@ -27,18 +27,18 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let cli = Cli::parse();
 
-    let _database = cli.database;
+    let database_path = cli.database;
     let format = cli.format;
 
     // Load configuration
-    let config_loader = config::ConfigLoader::new("sentinelcli");
-    let config = config_loader.load_blocking()?;
+    let config_loader = config::ConfigLoader::new("daemoneye-cli");
+    let _config = config_loader.load_blocking()?;
 
     // Initialize telemetry
-    let mut telemetry = telemetry::TelemetryCollector::new("sentinelcli".to_owned());
+    let mut telemetry = telemetry::TelemetryCollector::new("daemoneye-cli".to_owned());
 
-    // Initialize database
-    let db_manager = storage::DatabaseManager::new(&config.database.path)?;
+    // Initialize database using the provided path
+    let db_manager = storage::DatabaseManager::new(&database_path)?;
 
     // Get database statistics
     let stats = db_manager.get_stats()?;
@@ -72,6 +72,6 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let health_check = telemetry.health_check_blocking();
     println!("Health status: {}", health_check.status);
 
-    println!("sentinelcli completed successfully");
+    println!("daemoneye-cli completed successfully");
     Ok(())
 }

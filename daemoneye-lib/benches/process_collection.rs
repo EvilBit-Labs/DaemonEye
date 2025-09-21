@@ -6,9 +6,9 @@
 )]
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use futures_util::StreamExt;
 use daemoneye_lib::collection::{ProcessCollectionService, SysinfoProcessCollector};
 use daemoneye_lib::models::{ProcessRecord, ProcessStatus};
+use futures_util::StreamExt;
 use std::hint::black_box;
 use std::time::Instant;
 use sysinfo::System;

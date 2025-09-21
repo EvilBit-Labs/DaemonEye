@@ -1,5 +1,5 @@
 ---
-source: sentinelagent/tests/cli.rs
+source: daemoneye-agent/tests/cli.rs
 expression: stderr.as_ref()
 ---
 Error: Database directory '/tmp/<TEMP>/nonexistent' does not exist

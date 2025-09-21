@@ -20,11 +20,11 @@
     clippy::panic
 )]
 
-use interprocess::local_socket::tokio::prelude::*;
 use daemoneye_lib::ipc::codec::{IpcCodec, IpcError};
 use daemoneye_lib::ipc::interprocess_transport::{InterprocessClient, InterprocessServer};
 use daemoneye_lib::ipc::{IpcConfig, TransportType};
 use daemoneye_lib::proto::{DetectionResult, DetectionTask, ProcessRecord, TaskType};
+use interprocess::local_socket::tokio::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};

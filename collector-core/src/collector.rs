@@ -10,8 +10,8 @@ use crate::{
     source::{EventSource, SourceCaps},
 };
 use anyhow::{Context, Result};
-use futures::future::try_join_all;
 use daemoneye_lib::telemetry::{HealthStatus, PerformanceTimer, TelemetryCollector};
+use futures::future::try_join_all;
 use std::{
     collections::HashMap,
     sync::{

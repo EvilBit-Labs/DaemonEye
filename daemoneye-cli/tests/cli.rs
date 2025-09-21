@@ -9,16 +9,16 @@ fn prints_expected_greeting() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempdir()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("sentinelcli")?;
-    if let Some(path_str) = db_path.to_str() {
-        cmd.env("SENTINELCLI_DATABASE_PATH", path_str);
-    } else {
-        return Err("Invalid database path".into());
-    }
+    let mut cmd = Command::cargo_bin("daemoneye-cli")?;
+    cmd.arg("--database").arg(&db_path);
 
     let output = cmd.output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Command failed with stderr: {}", stderr);
+    }
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_snapshot!("sentinelcli_greeting", stdout);
+    assert_snapshot!("daemoneye-cli_greeting", stdout);
     Ok(())
 }

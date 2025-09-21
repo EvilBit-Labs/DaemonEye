@@ -8,11 +8,11 @@ use async_trait::async_trait;
 use collector_core::{
     CollectionEvent, Collector, CollectorConfig, EventSource, ProcessEvent, SourceCaps,
 };
-use prost::Message;
 use daemoneye_lib::proto::{
     AdvancedCapabilities, CollectionCapabilities, DetectionResult, DetectionTask, MonitoringDomain,
     ProcessRecord, TaskType,
 };
+use prost::Message;
 use std::{
     sync::{
         Arc,
