@@ -66,6 +66,7 @@ DaemonEye/
 - **Lints**: `unsafe_code = "forbid"`, `warnings = "deny"`
 - **Quality**: Zero-warnings policy enforced by CI
 - **AI Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission
+- **Commit Message Style**: Always follow the commit message style in #[[file:.github/commit-instructions.md]].
 
 ### Module Organization
 

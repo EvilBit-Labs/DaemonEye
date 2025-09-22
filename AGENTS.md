@@ -1,8 +1,9 @@
-# DaemonEye Development Workflows (WARP)
+# DaemonEye Development Workflows
 
 This file contains operational commands and development workflows for **DaemonEye**.
 
-**Document Authority**: For AI assistant rules and architectural guidance, see [AGENTS.md](./AGENTS.md). **Source of Truth**: Technical requirements and architectural decisions are in [.kiro/steering/](./kiro/steering/) and [.kiro/specs/](./kiro/specs/).
+**Document Authority**: For AI assistant rules and architectural guidance, see [AGENTS.md](./AGENTS.md). \
+**Source of Truth**: Technical requirements and architectural decisions are in [.kiro/steering/](./kiro/steering/) and [.kiro/specs/](./kiro/specs/).
 
 ---
 
@@ -32,6 +33,8 @@ just run-procmond [args]      # Run procmond with optional args
 just run-daemoneye-cli [args]   # Run daemoneye-cli with optional args
 just run-daemoneye-agent [args] # Run daemoneye-agent with optional args
 ```
+
+Always follow the commit message style in [.github/commit-instructions.md](.github/commit-instructions.md).
 
 ### Core Development Commands
 

@@ -143,6 +143,8 @@ cargo build -p daemoneye-lib  # Build daemoneye-lib crate
 just ci-check            # Run full CI pipeline (pre-commit + lint + test + build + audit + coverage + dist)
 ```
 
+Always follow the commit message style in `commit-instructions.md`.
+
 ### Testing Standards
 
 - **Primary approach**: Integration tests with insta for snapshot testing and predicates for validation

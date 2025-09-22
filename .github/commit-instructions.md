@@ -1,0 +1,30 @@
+# Commit Message Style for DaemonEye
+
+- **Conventional Commits**: All commits must follow [Conventional Commits](https://www.conventionalcommits.org): `<type>(<scope>): <description>`
+- **Types**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`
+- **Scopes**: `(procmond)`, `(agent)`, `(cli)`, `(lib)`, `(security)`, `(ipc)`, `(detection)`, `(alerting)`, `(storage)`, `(crypto)`, `(config)`, `(telemetry)`, `(kernel)`, `(network)`, etc. Required for all commits.
+- **Description**:
+  - Imperative mood ("add", not "added")
+  - No period at the end
+  - ≤72 characters, capitalized, clear and specific
+- **Body (optional)**:
+  - Start after a blank line
+  - Use itemized lists for multiple changes
+  - Explain what/why, not how
+- **Footer (optional)**:
+  - Start after a blank line
+  - Use for issue refs (`Closes #123`) or breaking changes (`BREAKING CHANGE:`)
+- **Breaking Changes**:
+  - Add `!` after type/scope (e.g., `feat(api)!: ...`) or use `BREAKING CHANGE:` in footer
+- **Examples**:
+  - `feat(procmond): add process enumeration with privilege separation`
+  - `fix(security): prevent credential leakage in error messages`
+  - `docs(readme): update installation instructions for Rust 1.85+`
+  - `refactor(ipc): simplify protobuf message framing interface`
+  - `test(detection): add SQL injection prevention validation tests`
+  - `chore(deps): update tokio to v1.40 for security patches`
+  - `perf(storage): optimize redb write operations for 10k+ processes`
+  - `feat(alerting): add multi-channel alert delivery with circuit breakers`
+- **CI Compatibility**:
+  - Use `chore:` for meta or maintenance changes
+  - Use `security:` scope for security-related changes
