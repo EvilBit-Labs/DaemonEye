@@ -25,8 +25,10 @@ jobs:
                     target/
                   key: autofix-${{ hashFiles('**/Cargo.lock') }}
 
-            - run: rustup toolchain install ${{ env.rust_clippy }} --profile minimal --component rustfmt --component clippy
-            - run: rustup default ${{ env.rust_clippy }}
+            - name: Setup Rust
+              uses: dtolnay/rust-toolchain@1.90
+              with:
+                  components: rustfmt, clippy
 
             - run: cargo clippy --fix --workspace
             - run: cargo fmt --all
