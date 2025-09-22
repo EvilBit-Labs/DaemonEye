@@ -1,46 +1,35 @@
-name: autofix.ci # needed to securely identify the workflow
-
+name: autofix.ci
 on:
-    pull_request:
-    push:
-        branches: ["main"]
+  workflow_call:
+  pull_request:
+  push:
+    branches: [ "main" ]
 permissions:
-    contents: read
+  contents: read
+
+env:
+    rust_clippy: 1.90
 
 jobs:
     autofix:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v5
+            - uses: actions/cache@v4
+              with:
+                  path: |
+                    ~/.cargo/bin/
+                    ~/.cargo/registry/index/
+                    ~/.cargo/registry/cache/
+                    ~/.cargo/git/db/
+                    target/
+                  key: autofix-${{ hashFiles('**/Cargo.lock') }}
 
-            # Set up Prerequisites
-            - name: ⚙️ Set up Python 3.13
-              uses: actions/setup-python@v5
-              with:
-                  python-version: "3.13"
-            - name: 🧃 Install just
-              uses: extractions/setup-just@v1
-            - uses: dtolnay/rust-toolchain@1.90
-              with:
-                  components: rustfmt, clippy
-            - name: Install required tools
-              uses: taiki-e/install-action@v2
-              with:
-                  tool: cargo-audit
+            - run: rustup toolchain install ${{ env.rust_clippy }} --profile minimal --component rustfmt --component clippy
+            - run: rustup default ${{ env.rust_clippy }}
 
-            - name: Install protobuf
-              uses: arduino/setup-protoc@v3
-              with:
-                  repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-            # Fix rust code
             - run: cargo clippy --fix --workspace
             - run: cargo fmt --all
-
-            # run pre-commit hooks
-            - run: pip install pre-commit
-            - run: pre-commit install
-            - run: pre-commit run --all-files
 
             # run autofix-ci action
             - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27

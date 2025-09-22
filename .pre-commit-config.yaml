@@ -19,27 +19,13 @@ repos:
             args: [--fix=auto]
           - id: check-vcs-permalinks
 
-    # 🦀 Rust clippy linting
-    - repo: local
+    - repo: https://github.com/FeryET/pre-commit-rust
+      rev: v1.2.1
       hooks:
-          - id: rust-clippy
-            name: rust-clippy
-            entry: cargo clippy -- -D warnings
-            language: system
-            pass_filenames: false
-            always_run: true
-            types: [rust]
-
-    # 🦀 Rust formatting
-    - repo: local
-      hooks:
-          - id: rust-fmt
-            name: rust-fmt
-            entry: cargo fmt -- --check
-            language: system
-            pass_filenames: false
-            always_run: true
-            types: [rust]
+          - id: fmt
+          - id: clippy
+          - id: cargo-check
+          - id: build
 
     # 🧪 GitHub Actions validation
     - repo: https://github.com/rhysd/actionlint
