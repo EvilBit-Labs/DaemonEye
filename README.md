@@ -1,8 +1,6 @@
 # :shield: DaemonEye — High-Performance Security Process Monitoring
 
-[![CI](https://github.com/EvilBit-Labs/DaemonEye/actions/workflows/ci.yml/badge.svg)](https://github.com/EvilBit-Labs/DaemonEye/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/EvilBit-Labs/DaemonEye/graph/badge.svg?token=1SE3lJ84Cj)](https://codecov.io/gh/EvilBit-Labs/DaemonEye)
-[![wakatime](https://wakatime.com/badge/user/2d2fbc27-e3f7-4ec1-b2a7-935e48bad498/project/92ea48dd-4de1-4e17-9b61-7b6450f27963.svg)](https://wakatime.com/badge/user/2d2fbc27-e3f7-4ec1-b2a7-935e48bad498/project/92ea48dd-4de1-4e17-9b61-7b6450f27963)
+[![CI](https://github.com/EvilBit-Labs/DaemonEye/actions/workflows/ci.yml/badge.svg)](https://github.com/EvilBit-Labs/DaemonEye/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/EvilBit-Labs/DaemonEye/graph/badge.svg?token=1SE3lJ84Cj)](https://codecov.io/gh/EvilBit-Labs/DaemonEye) [![wakatime](https://wakatime.com/badge/user/2d2fbc27-e3f7-4ec1-b2a7-935e48bad498/project/92ea48dd-4de1-4e17-9b61-7b6450f27963.svg)](https://wakatime.com/badge/user/2d2fbc27-e3f7-4ec1-b2a7-935e48bad498/project/92ea48dd-4de1-4e17-9b61-7b6450f27963)
 
 **DaemonEye** is a security-focused, high-performance process monitoring system built for cybersecurity professionals, threat hunters, and security operations centers. This is a complete **Rust rewrite** of the proven Python prototype, delivering enterprise-grade performance with **audit-grade integrity**.
 
