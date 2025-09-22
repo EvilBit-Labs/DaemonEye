@@ -1,6 +1,6 @@
 # :shield: DaemonEye — High-Performance Security Process Monitoring
 
-**DaemonEye** is a security-focused, high-performance process monitoring system built for cybersecurity professionals, threat hunters, and security operations centers. This is a complete **Rust 2024 rewrite** of the proven Python prototype, delivering enterprise-grade performance with **audit-grade integrity**.
+**DaemonEye** is a security-focused, high-performance process monitoring system built for cybersecurity professionals, threat hunters, and security operations centers. This is a complete **Rust rewrite** of the proven Python prototype, delivering enterprise-grade performance with **audit-grade integrity**.
 
 ## :classical_building: Architecture Overview
 
@@ -178,4 +178,4 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ---
 
-**SentinelD** — When your process monitoring actually matters. :shield:
+**DaemonEye** — When your process monitoring actually matters. :shield:
