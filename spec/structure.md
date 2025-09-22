@@ -1,22 +1,22 @@
-# SentinelD Project Structure
+# DaemonEye Project Structure
 
 ## Workspace Organization
 
-SentinelD follows a **three-component security architecture** with strict privilege separation, extensible to multi-tier deployments:
+DaemonEye follows a **three-component security architecture** with strict privilege separation, extensible to multi-tier deployments:
 
 ```text
-SentinelD/
+DaemonEye/
 ├── procmond/         # Privileged Process Collector
-├── sentinelagent/    # User-Space Orchestrator
-├── sentinelcli/      # Command-Line Interface
-├── sentinel-lib/     # Shared Library Components
+├── daemoneye-agent/    # User-Space Orchestrator
+├── daemoneye-cli/      # Command-Line Interface
+├── daemoneye-lib/     # Shared Library Components
 ├── security-center/  # Centralized Management (Business/Enterprise)
 └── project_spec/     # Project Documentation
 ```
 
 **Deployment Tiers:**
 
-- **Free Tier**: Standalone agents (procmond + sentinelagent + sentinelcli)
+- **Free Tier**: Standalone agents (procmond + daemoneye-agent + daemoneye-cli)
 - **Business Tier**: + Security Center + Enterprise integrations
 - **Enterprise Tier**: + Kernel monitoring + Federated architecture + Advanced SIEM
 
@@ -28,9 +28,9 @@ SentinelD/
 - **Security**: Runs with elevated privileges, drops them immediately after init
 - **Network**: No network access whatsoever
 - **Database**: Write-only access to audit ledger
-- **Communication**: IPC server for receiving simple detection tasks from sentinelagent
+- **Communication**: IPC server for receiving simple detection tasks from daemoneye-agent
 
-### sentinelagent/ (Detection Orchestrator)
+### daemoneye-agent/ (Detection Orchestrator)
 
 - **Purpose**: User-space detection rule execution and alert dispatching
 - **Security**: Minimal privileges, outbound-only network connections
@@ -38,13 +38,13 @@ SentinelD/
 - **Features**: SQL-based detection engine, multi-channel alerting, IPC client
 - **Communication**: Translates complex SQL rules into simple protobuf tasks for procmond
 
-### sentinelcli/ (Operator Interface)
+### daemoneye-cli/ (Operator Interface)
 
 - **Purpose**: User-friendly CLI for queries, exports, and configuration
 - **Security**: No network access, read-only database operations
 - **Features**: JSON/table output, color handling, shell completions
 
-### sentinel-lib/ (Shared Core)
+### daemoneye-lib/ (Shared Core)
 
 - **Purpose**: Common functionality shared across all components
 - **Modules**: config, models, storage, detection, alerting, crypto, telemetry, kernel, network
@@ -88,7 +88,7 @@ pub mod storage; // Database abstractions
 ### Security Boundaries
 
 - **Database Access**: Component-specific access patterns (read-only vs write-only)
-- **Network Access**: Strict outbound-only for sentinelagent, none for others
+- **Network Access**: Strict outbound-only for daemoneye-agent, none for others
 - **Privilege Separation**: Immediate privilege dropping after initialization
 - **Input Validation**: Comprehensive validation at all boundaries
 
@@ -115,9 +115,9 @@ All development tasks use the `just` command runner:
 Hierarchical configuration with clear precedence:
 
 1. Command-line flags (highest precedence)
-2. Environment variables (`SENTINELD_*`)
-3. User configuration files (`~/.config/sentineld/`)
-4. System configuration files (`/etc/sentineld/`)
+2. Environment variables (`DaemonEye_*`)
+3. User configuration files (`~/.config/DaemonEye/`)
+4. System configuration files (`/etc/DaemonEye/`)
 5. Embedded defaults (lowest precedence)
 
 ## Database Schema Design
@@ -194,8 +194,8 @@ src/
 
 ### Configuration Files
 
-- **System**: `/etc/sentineld/config.yaml`
-- **User**: `~/.config/sentineld/config.yaml`
+- **System**: `/etc/DaemonEye/config.yaml`
+- **User**: `~/.config/DaemonEye/config.yaml`
 - **Service**: Platform-specific service definitions in `scripts/service/`
 
 ### Documentation Structure
