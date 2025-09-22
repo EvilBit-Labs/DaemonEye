@@ -10,7 +10,10 @@ use collector_core::{
 };
 use daemoneye_lib::proto::{DetectionResult, DetectionTask, TaskType};
 use prost::Message;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
+};
 use tokio::sync::{RwLock, mpsc};
 
 /// Test event source for integration testing.
@@ -36,7 +39,11 @@ impl EventSource for TestProcessSource {
         SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE
     }
 
-    async fn start(&self, _tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        _tx: mpsc::Sender<CollectionEvent>,
+        _shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         // Simulate event source running
         tokio::time::sleep(Duration::from_millis(100)).await;
         Ok(())
@@ -51,7 +58,8 @@ impl EventSource for TestProcessSource {
 async fn test_ipc_server_creation() {
     let config = CollectorConfig::default();
     let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS));
-    let _ipc_server = CollectorIpcServer::new(config, capabilities);
+    let _ipc_server =
+        CollectorIpcServer::new(config, capabilities).expect("Failed to create IPC server");
 
     // Server creation should succeed without starting
     // This tests the basic setup without requiring actual IPC socket creation
@@ -61,7 +69,8 @@ async fn test_ipc_server_creation() {
 async fn test_capability_negotiation() {
     let config = CollectorConfig::default();
     let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS | SourceCaps::REALTIME));
-    let ipc_server = CollectorIpcServer::new(config, capabilities);
+    let ipc_server =
+        CollectorIpcServer::new(config, capabilities).expect("Failed to create IPC server");
 
     // Test initial capabilities
     use daemoneye_lib::proto::MonitoringDomain;

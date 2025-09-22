@@ -57,7 +57,11 @@ impl EventSource for TestEventSource {
         self.capabilities
     }
 
-    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        tx: mpsc::Sender<CollectionEvent>,
+        _shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         let event_count = Arc::clone(&self.event_count);
         let should_error = Arc::clone(&self.should_error);
 

@@ -10,7 +10,7 @@ use collector_core::{
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime},
 };
@@ -45,7 +45,11 @@ impl EventSource for SecurityTestSource {
         self.capabilities
     }
 
-    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        tx: mpsc::Sender<CollectionEvent>,
+        _shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         if self.should_fail {
             return Err(anyhow::anyhow!("Simulated security failure"));
         }
@@ -110,12 +114,16 @@ async fn test_source_isolation() {
 
     // Test that the working source can be started
     let (tx, _rx) = mpsc::channel(100);
-    let result = working_test.start(tx).await;
+    let result = working_test
+        .start(tx, Arc::new(AtomicBool::new(false)))
+        .await;
     assert!(result.is_ok(), "Working source should start successfully");
 
     // Test that the failing source fails as expected
     let (tx, _rx) = mpsc::channel(100);
-    let result = failing_test.start(tx).await;
+    let result = failing_test
+        .start(tx, Arc::new(AtomicBool::new(false)))
+        .await;
     assert!(result.is_err(), "Failing source should fail as expected");
 }
 

@@ -44,7 +44,6 @@ fn accepts_database_path() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cmd = Command::cargo_bin("procmond")?;
     cmd.arg("--database").arg(&db_path);
-    cmd.arg("--socket").arg("/tmp/test-procmond.sock");
     cmd.arg("--log-level").arg("error");
 
     // The command should start but we'll kill it quickly
@@ -62,7 +61,6 @@ fn accepts_log_level() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cmd = Command::cargo_bin("procmond")?;
     cmd.arg("--database").arg(&db_path);
-    cmd.arg("--socket").arg("/tmp/test-procmond.sock");
     cmd.arg("--log-level").arg("debug");
 
     // The command should start but we'll kill it quickly
@@ -74,13 +72,13 @@ fn accepts_log_level() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn accepts_socket_path() -> Result<(), Box<dyn std::error::Error>> {
+fn accepts_collection_interval() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
     let mut cmd = Command::cargo_bin("procmond")?;
     cmd.arg("--database").arg(&db_path);
-    cmd.arg("--socket").arg("/tmp/custom-procmond.sock");
+    cmd.arg("--interval").arg("60");
     cmd.arg("--log-level").arg("error");
 
     // The command should start but we'll kill it quickly

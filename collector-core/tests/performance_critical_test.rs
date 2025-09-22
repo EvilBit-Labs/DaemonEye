@@ -10,7 +10,7 @@ use collector_core::{
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant, SystemTime},
 };
@@ -46,7 +46,11 @@ impl EventSource for PerformanceTestSource {
         self.capabilities
     }
 
-    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        tx: mpsc::Sender<CollectionEvent>,
+        _shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         self.running.store(true, Ordering::Relaxed);
 
         // Generate events at a reasonable rate for testing
@@ -106,7 +110,9 @@ async fn test_event_processing_performance() {
 
     let start_time = Instant::now();
     let source_handle = tokio::spawn(async move {
-        let _ = source_test.start(tx).await;
+        let _ = source_test
+            .start(tx, Arc::new(AtomicBool::new(false)))
+            .await;
     });
 
     // Let the source run briefly

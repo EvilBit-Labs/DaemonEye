@@ -1,15 +1,15 @@
 //! Library module for procmond to enable unit testing
 
-pub mod ipc;
-pub use ipc::{IpcConfig, create_ipc_server};
+pub mod event_source;
+pub use event_source::{ProcessEventSource, ProcessSourceConfig};
 
 // Re-export main functionality for testing
-pub use crate::ipc::error::IpcError;
 pub use daemoneye_lib::proto::{
     DetectionResult, DetectionTask, ProtoProcessRecord, ProtoTaskType, TaskType,
 };
 pub use daemoneye_lib::storage;
 
+use daemoneye_lib::ipc::IpcError;
 use std::sync::Arc;
 use sysinfo::System;
 use tokio::sync::Mutex;

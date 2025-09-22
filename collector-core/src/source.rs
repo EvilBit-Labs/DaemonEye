@@ -6,6 +6,7 @@
 use crate::event::CollectionEvent;
 use async_trait::async_trait;
 use bitflags::bitflags;
+use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::mpsc;
 
 bitflags! {
@@ -90,14 +91,15 @@ pub trait EventSource: Send + Sync {
     /// The capabilities should be static and not change during the source's lifetime.
     fn capabilities(&self) -> SourceCaps;
 
-    /// Starts the event source with the provided event channel.
+    /// Starts the event source with the provided event channel and shutdown signal.
     ///
     /// This method should begin event collection and send events via the provided
-    /// channel. It should run until `stop()` is called or an unrecoverable error occurs.
+    /// channel. It should run until the shutdown signal is triggered or an unrecoverable error occurs.
     ///
     /// # Arguments
     ///
     /// * `tx` - Channel sender for emitting collection events
+    /// * `shutdown_signal` - Atomic boolean that indicates when the source should stop
     ///
     /// # Errors
     ///
@@ -107,9 +109,14 @@ pub trait EventSource: Send + Sync {
     /// # Implementation Notes
     ///
     /// - This method should not block indefinitely
-    /// - Use `tokio::select!` or similar for graceful shutdown handling
+    /// - Use `tokio::select!` to monitor both collection tasks and the shutdown signal
+    /// - Check `shutdown_signal.load(Ordering::Relaxed)` to detect shutdown requests
     /// - Log errors appropriately but continue operation when possible
-    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()>;
+    async fn start(
+        &self,
+        tx: mpsc::Sender<CollectionEvent>,
+        shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()>;
 
     /// Stops the event source gracefully.
     ///

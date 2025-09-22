@@ -44,7 +44,8 @@ prost-types = { workspace = true }
 # Database
 redb = { workspace = true }
 
-# Internal library
+# Internal libraries
+collector-core = { workspace = true }
 daemoneye-lib = { workspace = true }
 serde = { workspace = true }
 

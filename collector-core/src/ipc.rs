@@ -14,8 +14,10 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use tempfile::TempDir;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 /// IPC server integration for collector-core runtime.
 ///
@@ -28,6 +30,7 @@ pub struct CollectorIpcServer {
     server: Option<InterprocessServer>,
     capabilities: Arc<RwLock<SourceCaps>>,
     shutdown_signal: Arc<AtomicBool>,
+    _temp_dir: TempDir, // Keep temp directory alive for socket lifetime
 }
 
 impl CollectorIpcServer {
@@ -38,6 +41,11 @@ impl CollectorIpcServer {
     /// * `collector_config` - Collector configuration for IPC settings
     /// * `capabilities` - Shared capabilities from registered event sources
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the temporary directory cannot be created or
+    /// the endpoint path cannot be generated.
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -45,14 +53,23 @@ impl CollectorIpcServer {
     /// use std::sync::Arc;
     /// use tokio::sync::RwLock;
     ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = CollectorConfig::default();
     /// let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS));
-    /// let ipc_server = CollectorIpcServer::new(config, capabilities);
+    /// let ipc_server = CollectorIpcServer::new(config, capabilities)?;
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn new(collector_config: CollectorConfig, capabilities: Arc<RwLock<SourceCaps>>) -> Self {
+    pub fn new(
+        collector_config: CollectorConfig,
+        capabilities: Arc<RwLock<SourceCaps>>,
+    ) -> Result<Self> {
+        let (endpoint_path, temp_dir) =
+            create_endpoint_path().context("Failed to create endpoint path")?;
+
         let ipc_config = IpcConfig {
             transport: TransportType::Interprocess,
-            endpoint_path: default_endpoint_path(),
+            endpoint_path,
             max_frame_bytes: 1024 * 1024, // 1MB
             accept_timeout_ms: 5000,      // 5 seconds
             read_timeout_ms: 30000,       // 30 seconds
@@ -65,12 +82,13 @@ impl CollectorIpcServer {
             }, // Use unwind for tests, abort for production
         };
 
-        Self {
+        Ok(Self {
             config: ipc_config,
             server: None,
             capabilities,
             shutdown_signal: Arc::new(AtomicBool::new(false)),
-        }
+            _temp_dir: temp_dir,
+        })
     }
 
     /// Starts the IPC server with task processing integration.
@@ -269,25 +287,33 @@ fn source_caps_to_proto_capabilities(caps: SourceCaps) -> CollectionCapabilities
 }
 
 /// Get the default endpoint path based on the platform.
-fn default_endpoint_path() -> String {
-    #[cfg(unix)]
-    {
-        if cfg!(test) {
-            // Use a temporary path for tests
-            format!("/tmp/daemoneye-test-{}.sock", std::process::id())
-        } else {
-            "/var/run/daemoneye/collector-core.sock".to_owned()
-        }
-    }
-    #[cfg(windows)]
-    {
-        if cfg!(test) {
-            // Use a temporary pipe name for tests
-            format!(r"\\.\pipe\daemoneye-test-{}", std::process::id())
-        } else {
-            r"\\.\pipe\daemoneye\collector-core".to_owned()
-        }
-    }
+///
+/// Creates a temporary directory and generates a deterministic unique ID
+/// for the socket path. Returns both the path and the TempDir handle
+/// to ensure proper cleanup.
+fn create_endpoint_path() -> Result<(String, TempDir)> {
+    let temp_dir = tempfile::Builder::new()
+        .prefix("daemoneye-")
+        .tempdir()
+        .context("Failed to create temp directory")?;
+
+    let unique_id = if cfg!(test) {
+        format!("test-{}", std::process::id())
+    } else {
+        Uuid::new_v4().to_string()
+    };
+
+    let socket_path = if cfg!(unix) {
+        let mut path = temp_dir.path().to_path_buf();
+        path.push(format!("collector-{}.sock", unique_id));
+        path.to_string_lossy().to_string()
+    } else if cfg!(windows) {
+        format!(r"\\.\pipe\daemoneye\collector-{}", unique_id)
+    } else {
+        return Err(anyhow::anyhow!("Unsupported platform"));
+    };
+
+    Ok((socket_path, temp_dir))
 }
 
 #[cfg(test)]
@@ -330,23 +356,30 @@ mod tests {
     }
 
     #[test]
-    fn test_default_endpoint_path() {
-        let path = default_endpoint_path();
+    fn test_create_endpoint_path() {
+        let (path, _temp_dir) = create_endpoint_path().expect("Failed to create endpoint path");
+
         #[cfg(unix)]
         {
             if cfg!(test) {
-                assert!(path.contains("daemoneye-test-"));
+                assert!(path.contains("/collector-test-"));
                 assert!(path.ends_with(".sock"));
+                assert!(path.contains(&format!("-{}.sock", std::process::id())));
             } else {
-                assert!(path.contains("collector-core.sock"));
+                assert!(path.contains("/collector-"));
+                assert!(path.ends_with(".sock"));
+                assert!(path.contains("daemoneye-"));
             }
         }
+
         #[cfg(windows)]
         {
+            assert!(path.starts_with(r"\\.\pipe\daemoneye\collector-"));
             if cfg!(test) {
-                assert!(path.contains(r"\\.\pipe\daemoneye-test-"));
+                assert!(path.contains(&format!("test-{}", std::process::id())));
             } else {
-                assert!(path.contains(r"\\.\pipe\"));
+                // For non-test builds, we use UUID which won't contain "daemoneye-"
+                assert!(path.len() > 30); // UUID-based path should be reasonably long
             }
         }
     }
@@ -355,7 +388,8 @@ mod tests {
     async fn test_collector_ipc_server_creation() {
         let config = CollectorConfig::default();
         let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS));
-        let _server = CollectorIpcServer::new(config, capabilities);
+        let _server =
+            CollectorIpcServer::new(config, capabilities).expect("Server creation should succeed");
         // Server creation should succeed
     }
 
@@ -363,7 +397,8 @@ mod tests {
     async fn test_capability_updates() {
         let config = CollectorConfig::default();
         let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS));
-        let server = CollectorIpcServer::new(config, Arc::clone(&capabilities));
+        let server = CollectorIpcServer::new(config, Arc::clone(&capabilities))
+            .expect("Server creation should succeed");
 
         // Test initial capabilities
         use daemoneye_lib::proto::MonitoringDomain;

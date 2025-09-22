@@ -387,6 +387,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1200,6 +1201,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "collector-core",
  "crc32c",
  "daemoneye-lib",
  "insta",

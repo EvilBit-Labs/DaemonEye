@@ -1,16 +1,36 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
+use collector_core::{Collector, CollectorConfig};
 use daemoneye_lib::{config, storage, telemetry};
+use procmond::{ProcessEventSource, ProcessSourceConfig};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
-mod ipc;
+/// Parse and validate the collection interval argument.
+///
+/// Ensures the interval is within acceptable bounds (5-3600 seconds).
+/// Returns a clear error message if validation fails.
+fn parse_interval(s: &str) -> Result<u64, String> {
+    let interval: u64 = s
+        .parse()
+        .map_err(|_| format!("Invalid interval '{}': must be a number", s))?;
 
-use daemoneye_lib::proto::DetectionTask;
-use ipc::error::IpcError;
-use ipc::{IpcConfig, create_ipc_server};
-use procmond::ProcessMessageHandler;
+    if interval < 5 {
+        Err(format!(
+            "Interval too small: {} seconds. Minimum allowed is 5 seconds",
+            interval
+        ))
+    } else if interval > 3600 {
+        Err(format!(
+            "Interval too large: {} seconds. Maximum allowed is 3600 seconds (1 hour)",
+            interval
+        ))
+    } else {
+        Ok(interval)
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "procmond")]
@@ -25,9 +45,21 @@ struct Cli {
     #[arg(short, long, default_value = "info")]
     log_level: String,
 
-    /// IPC socket path
-    #[arg(short, long, default_value = "/tmp/daemoneye-procmond.sock")]
-    socket: String,
+    /// Collection interval in seconds (minimum: 5, maximum: 3600)
+    #[arg(short, long, default_value = "30", value_parser = parse_interval)]
+    interval: u64,
+
+    /// Maximum processes to collect per cycle (0 = unlimited)
+    #[arg(long, default_value = "0")]
+    max_processes: usize,
+
+    /// Enable enhanced metadata collection
+    #[arg(long)]
+    enhanced_metadata: bool,
+
+    /// Enable executable hashing
+    #[arg(long)]
+    compute_hashes: bool,
 }
 
 #[tokio::main]
@@ -61,62 +93,33 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stats = db_manager.lock().await.get_stats()?;
     println!("Database stats: {:?}", stats);
 
-    // Initialize and start IPC server
-    let ipc_server = initialize_ipc_server(&db_manager, &cli.socket).await?;
+    // Create collector configuration
+    let collector_config = CollectorConfig::new()
+        .with_component_name("procmond".to_string())
+        .with_max_event_sources(1)
+        .with_event_buffer_size(1000)
+        .with_shutdown_timeout(Duration::from_secs(30))
+        .with_health_check_interval(Duration::from_secs(60))
+        .with_telemetry(true)
+        .with_debug_logging(cli.log_level == "debug");
 
-    // Keep the server running until shutdown signal
-    run_ipc_server(ipc_server).await?;
-
-    Ok(())
-}
-
-/// Initialize the IPC server with proper configuration
-async fn initialize_ipc_server(
-    db_manager: &Arc<Mutex<storage::DatabaseManager>>,
-    socket_path: &str,
-) -> Result<daemoneye_lib::ipc::InterprocessServer, IpcError> {
-    let ipc_config = IpcConfig {
-        path: socket_path.to_string(),
-        max_connections: 10,
-        connection_timeout_secs: 30,
-        message_timeout_secs: 60,
+    // Create process source configuration
+    let process_config = ProcessSourceConfig {
+        collection_interval: Duration::from_secs(cli.interval),
+        collect_enhanced_metadata: cli.enhanced_metadata,
+        max_processes_per_cycle: cli.max_processes,
+        compute_executable_hashes: cli.compute_hashes,
     };
 
-    let mut ipc_server = create_ipc_server(ipc_config)?;
+    // Create process event source
+    let process_source = ProcessEventSource::with_config(db_manager, process_config);
 
-    // Create and set the message handler
-    let process_handler = Arc::new(ProcessMessageHandler {
-        database: Arc::clone(db_manager),
-    });
-    ipc_server.set_handler(move |task: DetectionTask| {
-        let handler = Arc::clone(&process_handler);
-        async move {
-            let result = handler.handle_detection_task(task).await;
-            result.map_err(|e| {
-                tracing::error!("IPC handler error: {}", e);
-                daemoneye_lib::ipc::IpcError::Encode(format!("Handler error: {}", e))
-            })
-        }
-    });
+    // Create and configure collector
+    let mut collector = Collector::new(collector_config);
+    collector.register(Box::new(process_source))?;
 
-    // Start the IPC server
-    ipc_server.start().await?;
-    println!("IPC server started successfully");
-
-    Ok(ipc_server)
-}
-
-/// Run the IPC server until shutdown signal
-async fn run_ipc_server(
-    mut ipc_server: daemoneye_lib::ipc::InterprocessServer,
-) -> Result<(), IpcError> {
-    // Keep the server running until shutdown signal
-    tokio::signal::ctrl_c().await?;
-    println!("Shutdown signal received, stopping IPC server...");
-
-    // Stop the IPC server
-    ipc_server.stop();
-    println!("procmond stopped successfully");
+    // Run the collector (this will handle IPC, event processing, and lifecycle management)
+    collector.run().await?;
 
     Ok(())
 }
