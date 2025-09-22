@@ -140,13 +140,13 @@ pub struct RegexCompiler {
 
 #[derive(Debug, Clone)]
 pub struct RegexConfig {
-    pub max_pattern_latency_ms: u64,      // Default: 10ms
-    pub compilation_timeout_ms: u64,       // Default: 100ms
-    pub max_memory_per_pattern: usize,     // Default: 1MB
-    pub cache_size: usize,                 // Default: 1000 patterns
-    pub enable_precompilation: bool,       // Default: true
-    pub monitoring_enabled: bool,          // Default: true
-    pub alert_threshold_ms: u64,           // Default: 5ms
+    pub max_pattern_latency_ms: u64,   // Default: 10ms
+    pub compilation_timeout_ms: u64,   // Default: 100ms
+    pub max_memory_per_pattern: usize, // Default: 1MB
+    pub cache_size: usize,             // Default: 1000 patterns
+    pub enable_precompilation: bool,   // Default: true
+    pub monitoring_enabled: bool,      // Default: true
+    pub alert_threshold_ms: u64,       // Default: 5ms
 }
 
 #[derive(Debug)]
@@ -242,7 +242,8 @@ impl RegexCompiler {
         let start_time = std::time::Instant::now();
 
         // Execute with timeout
-        let result = self.execute_with_timeout(&compiled.regex, text, self.config.max_pattern_latency_ms)?;
+        let result =
+            self.execute_with_timeout(&compiled.regex, text, self.config.max_pattern_latency_ms)?;
 
         let execution_time = start_time.elapsed().as_millis() as u64;
 
@@ -312,10 +313,10 @@ impl RegexCompiler {
     fn has_exponential_complexity(&self, pattern: &str) -> bool {
         // Detect patterns like (a+)+, (a*)*, (a|a)*
         let dangerous_patterns = [
-            r"\([^)]*\+\)\+",           // (a+)+
-            r"\([^)]*\*\)\*",           // (a*)*
-            r"\([^)]*\|\1\)\*",         // (a|a)*
-            r"\([^)]*\{[0-9]+,\}\)\+",  // (a{n,})+
+            r"\([^)]*\+\)\+",          // (a+)+
+            r"\([^)]*\*\)\*",          // (a*)*
+            r"\([^)]*\|\1\)\*",        // (a|a)*
+            r"\([^)]*\{[0-9]+,\}\)\+", // (a{n,})+
         ];
 
         for dangerous in &dangerous_patterns {
@@ -415,24 +416,30 @@ impl RegexMetrics {
     }
 
     pub fn record_cache_hit(&self) {
-        self.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.cache_hits
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn record_cache_miss(&self) {
-        self.cache_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.cache_misses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn record_compilation(&self, time_ms: u64) {
-        self.compilations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.total_compilation_time_ms.fetch_add(time_ms, std::sync::atomic::Ordering::Relaxed);
+        self.compilations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.total_compilation_time_ms
+            .fetch_add(time_ms, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn record_timeout_violation(&self) {
-        self.timeout_violations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.timeout_violations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn record_slow_execution(&self, time_ms: u64) {
-        self.slow_executions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.slow_executions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn cache_hit_rate(&self) -> f64 {
@@ -453,8 +460,14 @@ pub enum RegexError {
     #[error("Regex compilation failed for pattern '{pattern}': {error}")]
     CompilationFailed { pattern: String, error: String },
 
-    #[error("Regex compilation timeout: pattern '{pattern}' took {actual_ms}ms (limit: {timeout_ms}ms)")]
-    CompilationTimeout { pattern: String, timeout_ms: u64, actual_ms: u64 },
+    #[error(
+        "Regex compilation timeout: pattern '{pattern}' took {actual_ms}ms (limit: {timeout_ms}ms)"
+    )]
+    CompilationTimeout {
+        pattern: String,
+        timeout_ms: u64,
+        actual_ms: u64,
+    },
 
     #[error("Regex execution timeout: {timeout_ms}ms exceeded for text length {text_length}")]
     ExecutionTimeout { timeout_ms: u64, text_length: usize },
@@ -463,7 +476,10 @@ pub enum RegexError {
     ExponentialComplexity { pattern: String, reason: String },
 
     #[error("Pattern too long: {pattern_length} characters (max: {max_length})")]
-    PatternTooLong { pattern_length: usize, max_length: usize },
+    PatternTooLong {
+        pattern_length: usize,
+        max_length: usize,
+    },
 
     #[error("Memory limit exceeded for pattern: estimated {estimated_bytes} bytes")]
     MemoryLimitExceeded { estimated_bytes: usize },
@@ -509,7 +525,10 @@ impl SqlAnalyzer {
         })
     }
 
-    fn extract_and_compile_regex_patterns(&self, ast: &Statement) -> Result<Vec<CompiledRegexPattern>, SqlError> {
+    fn extract_and_compile_regex_patterns(
+        &self,
+        ast: &Statement,
+    ) -> Result<Vec<CompiledRegexPattern>, SqlError> {
         let mut patterns = Vec::new();
 
         // Extract REGEXP operators from WHERE clauses
@@ -528,7 +547,10 @@ impl SqlAnalyzer {
         Ok(patterns)
     }
 
-    fn extract_collection_requirements(&self, ast: &Statement) -> Result<CollectionRequirements, SqlError> {
+    fn extract_collection_requirements(
+        &self,
+        ast: &Statement,
+    ) -> Result<CollectionRequirements, SqlError> {
         let mut requirements = CollectionRequirements::new();
 
         // Analyze FROM clauses for required tables
@@ -603,7 +625,10 @@ pub struct PushdownCapabilities {
 }
 
 impl SchemaCatalog {
-    pub fn register_collector(&mut self, descriptor: CollectorDescriptor) -> Result<(), CatalogError> {
+    pub fn register_collector(
+        &mut self,
+        descriptor: CollectorDescriptor,
+    ) -> Result<(), CatalogError> {
         // Validate schema compatibility
         self.validate_schema(&descriptor)?;
 
@@ -612,18 +637,25 @@ impl SchemaCatalog {
             self.tables.insert(table.name.clone(), table.clone());
         }
 
-        self.collectors.insert(descriptor.collector_id.clone(), descriptor.clone());
-        self.capabilities.insert(descriptor.collector_id.clone(), descriptor.capabilities);
+        self.collectors
+            .insert(descriptor.collector_id.clone(), descriptor.clone());
+        self.capabilities
+            .insert(descriptor.collector_id.clone(), descriptor.capabilities);
 
         Ok(())
     }
 
-    pub fn plan_collection(&self, requirements: &CollectionRequirements) -> Result<CollectionPlan, CatalogError> {
+    pub fn plan_collection(
+        &self,
+        requirements: &CollectionRequirements,
+    ) -> Result<CollectionPlan, CatalogError> {
         let mut plan = CollectionPlan::new();
 
         for table_ref in &requirements.tables {
             let collector_id = self.get_collector_for_table(table_ref)?;
-            let capabilities = self.capabilities.get(&collector_id)
+            let capabilities = self
+                .capabilities
+                .get(&collector_id)
                 .ok_or(CatalogError::CollectorNotFound(collector_id.clone()))?;
 
             // Generate collection task based on capabilities
@@ -632,7 +664,7 @@ impl SchemaCatalog {
                 table_ref,
                 &requirements.predicates,
                 &requirements.projections,
-                capabilities
+                capabilities,
             )?;
 
             plan.add_task(task);
@@ -654,7 +686,10 @@ pub struct PushdownPlanner {
 }
 
 impl PushdownPlanner {
-    pub fn plan_pushdown(&self, requirements: &CollectionRequirements) -> Result<PushdownPlan, PlannerError> {
+    pub fn plan_pushdown(
+        &self,
+        requirements: &CollectionRequirements,
+    ) -> Result<PushdownPlan, PlannerError> {
         let mut plan = PushdownPlan::new();
 
         // Analyze each table reference
@@ -665,7 +700,7 @@ impl PushdownPlanner {
             let (pushdown_ops, pipeline_ops) = self.partition_operations(
                 &requirements.predicates,
                 &requirements.projections,
-                &collector_caps
+                &collector_caps,
             )?;
 
             // Generate collection task
@@ -689,7 +724,7 @@ impl PushdownPlanner {
         &self,
         predicates: &[Predicate],
         projections: &[Projection],
-        capabilities: &CollectorCapabilities
+        capabilities: &CollectorCapabilities,
     ) -> Result<(PushdownOperations, PipelineOperations), PlannerError> {
         let mut pushdown = PushdownOperations::new();
         let mut pipeline = PipelineOperations::new();
@@ -1130,12 +1165,10 @@ const PROCESSES_BY_HASH: TableDefinition<u128, Vec<(u64, u32)>> =
     TableDefinition::new("idx.processes.exe_hash");
 
 // Materialized relation cache for fast parent/child joins
-const PARENT_CACHE: TableDefinition<u32, ParentInfo> =
-    TableDefinition::new("mrc.parent_map");
+const PARENT_CACHE: TableDefinition<u32, ParentInfo> = TableDefinition::new("mrc.parent_map");
 
 // Alert and correlation tracking
-const ALERTS: TableDefinition<u64, Alert> =
-    TableDefinition::new("alerts.events");
+const ALERTS: TableDefinition<u64, Alert> = TableDefinition::new("alerts.events");
 const ALERT_CORRELATIONS: TableDefinition<String, CorrelationMetadata> =
     TableDefinition::new("alerts.correlations");
 
