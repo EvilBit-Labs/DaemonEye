@@ -1,9 +1,6 @@
 # DaemonEye Spec – SQL-to-IPC Detection Architecture
 
-**Status:** Draft v0.2
-**Owner:** EvilBit Labs / DaemonEye Team
-**Scope:** Collector–Agent contract for SQL-driven detection across stream + database layers
-**Applies To:** `procmond` (and other collectors), `daemoneye-agent`, `daemoneye-lib`, `daemoneye-cli`
+**Status:** Draft v0.2 **Owner:** EvilBit Labs / DaemonEye Team **Scope:** Collector–Agent contract for SQL-driven detection across stream + database layers **Applies To:** `procmond` (and other collectors), `daemoneye-agent`, `daemoneye-lib`, `daemoneye-cli`
 
 ---
 
@@ -13,8 +10,8 @@
 
 ### Non-Goals
 
-* Building a general RDBMS. The agent executes a constrained, read-only SQL dialect for detections.
-* Requiring kernel hooks. Baseline collectors may be user-mode (e.g., `sysinfo`), with advanced sources added by tier (eBPF/ETW/EndpointSecurity).
+- Building a general RDBMS. The agent executes a constrained, read-only SQL dialect for detections.
+- Requiring kernel hooks. Baseline collectors may be user-mode (e.g., `sysinfo`), with advanced sources added by tier (eBPF/ETW/EndpointSecurity).
 
 ---
 
@@ -22,9 +19,9 @@
 
 Each collector contributes a **virtual schema**—logical, read-only tables backed by event streams. The agent exposes a **global catalog** (namespaced) used by rules. Examples:
 
-* `processes.*` (e.g., `processes.snapshots`, `processes.events.exec`)
-* `network.*` (e.g., `network.connections`)
-* `kernel.*` (e.g., `kernel.image_loads`)
+- `processes.*` (e.g., `processes.snapshots`, `processes.events.exec`)
+- `network.*` (e.g., `network.connections`)
+- `kernel.*` (e.g., `kernel.image_loads`)
 
 Collectors "insert" *records* into these tables by streaming IPC messages to the agent. The agent persists events in a **lightweight embedded store** and runs validated SQL rules over the persisted store **only when** the entire rule cannot be pushed down to the collector. If the collector's data exactly matches the rule result, it can be passed directly to the alert system without alteration (write-through).
 
@@ -32,10 +29,10 @@ Collectors "insert" *records* into these tables by streaming IPC messages to the
 
 ### Key Architectural Principles
 
-* **Logical Views:** SQL rules are treated as logical views, not materialized tables
-* **Pushdown Optimization:** Simple predicates and projections are pushed to collectors
-* **Operator Pipeline:** Complex operations (joins, aggregations) execute in the agent's operator pipeline
-* **Bounded Memory:** All operations use cardinality caps and time windows to prevent unbounded growth
+- **Logical Views:** SQL rules are treated as logical views, not materialized tables
+- **Pushdown Optimization:** Simple predicates and projections are pushed to collectors
+- **Operator Pipeline:** Complex operations (joins, aggregations) execute in the agent's operator pipeline
+- **Bounded Memory:** All operations use cardinality caps and time windows to prevent unbounded growth
 
 ---
 
@@ -83,10 +80,10 @@ sequenceDiagram
 
 Agent derives from the AST:
 
-* **Tables/aliases** → which collectors to engage
-* **Columns** → projection list for each collector
-* **Predicates** → pre-filter on collector side when feasible
-* **Windows/Aggregations/Joins** → kept for the agent's operator pipeline
+- **Tables/aliases** → which collectors to engage
+- **Columns** → projection list for each collector
+- **Predicates** → pre-filter on collector side when feasible
+- **Windows/Aggregations/Joins** → kept for the agent's operator pipeline
 
 If a collector cannot pushdown a predicate, it sends its minimal projection and the agent filters on ingest.
 
@@ -107,10 +104,49 @@ Standardize how collectors announce their tables, columns, and pushdown capabili
   "tables": [
     {
       "name": "<domain>.<table>",
-      "columns": {"col": "type[?]", "collection_time": "datetime"},
-      "keys": {"primary": ["collection_time", "seq"], "secondary": ["pid", "ppid", "name"]},
-      "join_hints": [{"left": "ppid", "right_table": "processes.snapshots", "right": "pid", "relation": "parent_of"}],
-      "pushdown": {"predicates": ["=","!=",">","<",">=","<=","IN","LIKE","REGEXP"], "project": true, "order_by": ["collection_time"], "limits": {"max_rate": 200000}}
+      "columns": {
+        "col": "type[?]",
+        "collection_time": "datetime"
+      },
+      "keys": {
+        "primary": [
+          "collection_time",
+          "seq"
+        ],
+        "secondary": [
+          "pid",
+          "ppid",
+          "name"
+        ]
+      },
+      "join_hints": [
+        {
+          "left": "ppid",
+          "right_table": "processes.snapshots",
+          "right": "pid",
+          "relation": "parent_of"
+        }
+      ],
+      "pushdown": {
+        "predicates": [
+          "=",
+          "!=",
+          ">",
+          "<",
+          ">=",
+          "<=",
+          "IN",
+          "LIKE",
+          "REGEXP"
+        ],
+        "project": true,
+        "order_by": [
+          "collection_time"
+        ],
+        "limits": {
+          "max_rate": 200000
+        }
+      }
     }
   ]
 }
@@ -118,14 +154,14 @@ Standardize how collectors announce their tables, columns, and pushdown capabili
 
 #### Agent Behavior
 
-* Validates schema → registers/updates global catalog
-* Unknown optional columns are ignored; missing required columns reject the table
-* Capabilities become the upper bound for pushdown during planning
+- Validates schema → registers/updates global catalog
+- Unknown optional columns are ignored; missing required columns reject the table
+- Capabilities become the upper bound for pushdown during planning
 
 #### Evolution
 
-* Additive columns allowed anytime
-* Breaking changes require version bump and a deprecation grace period
+- Additive columns allowed anytime
+- Breaking changes require version bump and a deprecation grace period
 
 #### Health & Metrics
 
@@ -197,21 +233,21 @@ These are the baseline tables/columns and pushdown minimums each collector must 
 
 #### General Requirements (All Collectors)
 
-* **Clock:** timestamps MUST be monotonic per host; include `clock_skew_ms` in heartbeat
-* **Sequence:** `seq_no` strictly increasing per `task_id`
-* **Types:** adhere to documented scalar types; `?` denotes optional
-* **Backpressure:** respect agent credits; cap local buffers; report drops with counters
+- **Clock:** timestamps MUST be monotonic per host; include `clock_skew_ms` in heartbeat
+- **Sequence:** `seq_no` strictly increasing per `task_id`
+- **Types:** adhere to documented scalar types; `?` denotes optional
+- **Backpressure:** respect agent credits; cap local buffers; report drops with counters
 
 #### Regex Implementation Requirements
 
 All collectors MUST implement regex pattern matching with the following specifications:
 
-* **Regex Engine:** Use a standard regex engine (e.g., Rust `regex` crate, RE2, PCRE)
-* **Case Sensitivity:** Support both case-sensitive and case-insensitive matching via `(?i)` flag
-* **Performance:** Regex operations MUST complete within 10ms per pattern for typical workloads
-* **Memory Bounds:** Regex compilation and execution MUST be bounded to prevent DoS attacks
-* **Error Handling:** Invalid regex patterns MUST be rejected with clear error messages
-* **Compilation Caching:** Compiled regex patterns SHOULD be cached to improve performance
+- **Regex Engine:** Use a standard regex engine (e.g., Rust `regex` crate, RE2, PCRE)
+- **Case Sensitivity:** Support both case-sensitive and case-insensitive matching via `(?i)` flag
+- **Performance:** Regex operations MUST complete within 10ms per pattern for typical workloads
+- **Memory Bounds:** Regex compilation and execution MUST be bounded to prevent DoS attacks
+- **Error Handling:** Invalid regex patterns MUST be rejected with clear error messages
+- **Compilation Caching:** Compiled regex patterns SHOULD be cached to improve performance
 
 **Example Regex Patterns:**
 
@@ -241,8 +277,8 @@ Handle sophisticated pattern matching scenarios like YARA rules that don't fit t
 
 YARA rules represent a fundamentally different detection paradigm from SQL-based key-value predicates:
 
-* **SQL-based rules**: Key-value predicates (`name = 'malware.exe'`, `cpu_usage > 80`)
-* **YARA rules**: Complex pattern matching against file content, memory, or process attributes using strings, regex, and logical operators
+- **SQL-based rules**: Key-value predicates (`name = 'malware.exe'`, `cpu_usage > 80`)
+- **YARA rules**: Complex pattern matching against file content, memory, or process attributes using strings, regex, and logical operators
 
 ### Integration Approach
 
@@ -316,15 +352,15 @@ WHERE y.rule_name = 'suspicious_behavior'
 
 #### Memory Management
 
-* YARA scanning happens **per-file** in the collector
-* Only **scan results** (not file content) stream to agent
-* Agent stores lightweight YARA results in redb
+- YARA scanning happens **per-file** in the collector
+- Only **scan results** (not file content) stream to agent
+- Agent stores lightweight YARA results in redb
 
 #### Rate Limiting
 
-* YARA scanning is CPU-intensive
-* Collector can implement **sampling** for high-volume files
-* Agent can **throttle** YARA scan requests
+- YARA scanning is CPU-intensive
+- Collector can implement **sampling** for high-volume files
+- Agent can **throttle** YARA scan requests
 
 #### Storage Strategy
 
@@ -335,7 +371,7 @@ struct YaraScanResult {
     rule_name: String,
     matches: Vec<YaraMatch>, // Compact match data
     scan_time: DateTime<Utc>,
-    file_hash: [u8; 32]
+    file_hash: [u8; 32],
 }
 ```
 
@@ -348,18 +384,14 @@ struct YaraScanResult {
 
 ### Key Benefits
 
-✅ **Unified Interface** - YARA results queryable via SQL
-✅ **Performance** - YARA scanning happens in collectors, not agent
-✅ **Flexibility** - Combine YARA with other data sources
-✅ **Scalability** - Bounded memory usage through sampling
-✅ **Familiarity** - Operators use SQL, not YARA syntax
+✅ **Unified Interface** - YARA results queryable via SQL ✅ **Performance** - YARA scanning happens in collectors, not agent ✅ **Flexibility** - Combine YARA with other data sources ✅ **Scalability** - Bounded memory usage through sampling ✅ **Familiarity** - Operators use SQL, not YARA syntax
 
 ### Real-World Use Cases
 
-* **File-based malware detection** - YARA rules against file content
-* **Memory pattern matching** - YARA rules against process memory
-* **Network traffic analysis** - eBPF programs for network payloads
-* **Cross-correlation** - Combine YARA results with behavioral data
+- **File-based malware detection** - YARA rules against file content
+- **Memory pattern matching** - YARA rules against process memory
+- **Network traffic analysis** - eBPF programs for network payloads
+- **Cross-correlation** - Combine YARA results with behavioral data
 
 ---
 
@@ -373,10 +405,10 @@ Define how specialized collectors (YARA, eBPF, ETW, etc.) handle their own rule 
 
 Different security domains require specialized rule engines:
 
-* **YARA Collectors** - File and memory pattern matching (cross-platform)
-* **eBPF Collectors** - Network traffic analysis and kernel events (Linux)
-* **Network Analysis Collectors** - Cross-platform network traffic analysis
-* **Platform-Specific Collectors** - OS-native event sources (ETW, EndpointSecurity, etc.)
+- **YARA Collectors** - File and memory pattern matching (cross-platform)
+- **eBPF Collectors** - Network traffic analysis and kernel events (Linux)
+- **Network Analysis Collectors** - Cross-platform network traffic analysis
+- **Platform-Specific Collectors** - OS-native event sources (ETW, EndpointSecurity, etc.)
 
 ### Supplemental Rule Data Schema
 
@@ -387,11 +419,26 @@ Specialty collectors receive **supplemental rule data** alongside standard SQL p
   "task_id": "t_9482",
   "rule_id": "r_network_anomaly",
   "table": "network.connections",
-  "project": ["pid", "dst_ip", "dst_port", "payload_hash"],
+  "project": [
+    "pid",
+    "dst_ip",
+    "dst_port",
+    "payload_hash"
+  ],
   "where": {
     "and": [
-      {"eq": ["proto", "tcp"]},
-      {"gt": ["dst_port", 1024]}
+      {
+        "eq": [
+          "proto",
+          "tcp"
+        ]
+      },
+      {
+        "gt": [
+          "dst_port",
+          1024
+        ]
+      }
     ]
   },
   "supplemental_rules": {
@@ -412,7 +459,9 @@ Specialty collectors receive **supplemental rule data** alongside standard SQL p
       ]
     }
   },
-  "rate_limit": {"per_sec": 50000},
+  "rate_limit": {
+    "per_sec": 50000
+  },
   "ttl_ms": 300000
 }
 ```
@@ -429,7 +478,10 @@ Specialty collectors receive **supplemental rule data** alongside standard SQL p
         {
           "rule_name": "suspicious_behavior",
           "rule_content": "rule suspicious_behavior {\n  strings:\n    $s1 = \"malware\" nocase\n    $s2 = /evil.*pattern/i\n  condition:\n    $s1 and $s2\n}",
-          "scan_targets": ["file_content", "memory_region"],
+          "scan_targets": [
+            "file_content",
+            "memory_region"
+          ],
           "scan_options": {
             "fast_scan": true,
             "timeout_ms": 1000
@@ -453,7 +505,10 @@ Specialty collectors receive **supplemental rule data** alongside standard SQL p
       "filters": [
         {
           "protocol": "tcp",
-          "port_range": [1024, 65535],
+          "port_range": [
+            1024,
+            65535
+          ],
           "direction": "outbound"
         }
       ],
@@ -496,8 +551,8 @@ pub enum SupplementalRuleData {
         config: NetworkAnalysisConfig,
     },
     PlatformSpecific {
-        platform: String, // "linux", "windows", "macos", "auto_detect"
-        rule_type: String, // "ebpf", "etw", "endpoint_security", etc.
+        platform: String,        // "linux", "windows", "macos", "auto_detect"
+        rule_type: String,       // "ebpf", "etw", "endpoint_security", etc.
         data: serde_json::Value, // Platform-specific rule data
     },
 }
@@ -562,7 +617,11 @@ Specialty collectors stream results in a unified format:
       }
     ],
     "analysis_time": "2025-01-20T15:30:00Z",
-    "platform_capabilities": ["ebpf", "tcpdump", "netstat"]
+    "platform_capabilities": [
+      "ebpf",
+      "tcpdump",
+      "netstat"
+    ]
   }
 }
 ```
@@ -597,24 +656,24 @@ WHERE y.rule_name = 'malware_signature'
 
 #### Rule Loading and Caching
 
-* **YARA Rules** - Compile and cache rules for fast scanning (cross-platform)
-* **Network Analysis** - Load platform-appropriate analysis engines (eBPF on Linux, WinPcap on Windows, etc.)
-* **Platform Detection** - Auto-detect platform capabilities and adapt rule execution
-* **Cross-Platform Fallbacks** - Graceful degradation when platform-specific features unavailable
+- **YARA Rules** - Compile and cache rules for fast scanning (cross-platform)
+- **Network Analysis** - Load platform-appropriate analysis engines (eBPF on Linux, WinPcap on Windows, etc.)
+- **Platform Detection** - Auto-detect platform capabilities and adapt rule execution
+- **Cross-Platform Fallbacks** - Graceful degradation when platform-specific features unavailable
 
 #### Resource Management
 
-* **Memory Bounds** - Limit rule compilation and execution memory
-* **CPU Limits** - Throttle specialty rule execution to prevent system impact
-* **Timeout Handling** - Fail-safe timeouts for rule execution
-* **Error Recovery** - Graceful degradation when specialty engines fail
+- **Memory Bounds** - Limit rule compilation and execution memory
+- **CPU Limits** - Throttle specialty rule execution to prevent system impact
+- **Timeout Handling** - Fail-safe timeouts for rule execution
+- **Error Recovery** - Graceful degradation when specialty engines fail
 
 #### Result Streaming
 
-* **Batched Results** - Stream results in batches to reduce IPC overhead
-* **Result Filtering** - Only stream results that match SQL pushdown criteria
-* **Deduplication** - Avoid duplicate results from multiple rule engines
-* **Correlation** - Maintain correlation IDs across different rule types
+- **Batched Results** - Stream results in batches to reduce IPC overhead
+- **Result Filtering** - Only stream results that match SQL pushdown criteria
+- **Deduplication** - Avoid duplicate results from multiple rule engines
+- **Correlation** - Maintain correlation IDs across different rule types
 
 ### Implementation Strategy
 
@@ -636,11 +695,11 @@ Define how the detection pipeline operates as a dynamic, reactive system where c
 
 The SQL-to-IPC detection engine operates as a **reactive pipeline** where:
 
-* **Initial Triggers** - Base collectors (procmond, network, fs) detect events
-* **JOIN-Driven Collection** - SQL JOINs trigger collection of the second half of the join
-* **Cascading Analysis** - Results from one collector trigger additional analysis
-* **Dynamic JOINs** - Agent orchestrates cross-collector correlation based on JOIN requirements
-* **Feedback Loops** - Results can trigger deeper analysis of the same data
+- **Initial Triggers** - Base collectors (procmond, network, fs) detect events
+- **JOIN-Driven Collection** - SQL JOINs trigger collection of the second half of the join
+- **Cascading Analysis** - Results from one collector trigger additional analysis
+- **Dynamic JOINs** - Agent orchestrates cross-collector correlation based on JOIN requirements
+- **Feedback Loops** - Results can trigger deeper analysis of the same data
 
 ### Reactive Analysis Flow
 
@@ -743,10 +802,20 @@ pub struct TriggerRule {
 }
 
 pub enum AnalysisType {
-    PeAnalysis { file_path: String },
-    YaraScanning { file_path: String, rules: Vec<String> },
-    MemoryAnalysis { pid: u32, regions: Vec<MemoryRegion> },
-    NetworkDeepPacket { connection_id: String },
+    PeAnalysis {
+        file_path: String,
+    },
+    YaraScanning {
+        file_path: String,
+        rules: Vec<String>,
+    },
+    MemoryAnalysis {
+        pid: u32,
+        regions: Vec<MemoryRegion>,
+    },
+    NetworkDeepPacket {
+        connection_id: String,
+    },
 }
 ```
 
@@ -814,21 +883,21 @@ impl DynamicJoinResolver {
 
 #### 1. Analysis Batching
 
-* **Batch Triggers** - Group related analysis requests to reduce overhead
-* **Priority Queuing** - Process high-priority analysis first
-* **Rate Limiting** - Prevent analysis storms from overwhelming collectors
+- **Batch Triggers** - Group related analysis requests to reduce overhead
+- **Priority Queuing** - Process high-priority analysis first
+- **Rate Limiting** - Prevent analysis storms from overwhelming collectors
 
 #### 2. Result Caching
 
-* **Analysis Cache** - Cache analysis results to avoid redundant work
-* **TTL Management** - Expire cached results based on data freshness
-* **Cache Invalidation** - Invalidate cache when source data changes
+- **Analysis Cache** - Cache analysis results to avoid redundant work
+- **TTL Management** - Expire cached results based on data freshness
+- **Cache Invalidation** - Invalidate cache when source data changes
 
 #### 3. Resource Management
 
-* **Analysis Limits** - Cap concurrent analysis operations
-* **Memory Bounds** - Limit analysis result storage
-* **Timeout Handling** - Fail analysis operations that take too long
+- **Analysis Limits** - Cap concurrent analysis operations
+- **Memory Bounds** - Limit analysis result storage
+- **Timeout Handling** - Fail analysis operations that take too long
 
 ### Implementation Strategy
 
@@ -840,11 +909,7 @@ impl DynamicJoinResolver {
 
 ### Key Benefits
 
-✅ **Deep Analysis** - Automatic escalation from simple to complex analysis
-✅ **Context Awareness** - Analysis decisions based on current context
-✅ **Efficient Resource Usage** - Only perform analysis when needed
-✅ **Comprehensive Coverage** - Combine multiple analysis techniques
-✅ **Operator Transparency** - SQL rules hide complexity of orchestration
+✅ **Deep Analysis** - Automatic escalation from simple to complex analysis ✅ **Context Awareness** - Analysis decisions based on current context ✅ **Efficient Resource Usage** - Only perform analysis when needed ✅ **Comprehensive Coverage** - Combine multiple analysis techniques ✅ **Operator Transparency** - SQL rules hide complexity of orchestration
 
 ---
 
@@ -1049,17 +1114,17 @@ WHERE p.name = 'malware.exe'
 
 #### 1. Auto-JOIN Optimization
 
-* **Lazy Collection** - Only collect auto-JOIN data when SQL rules require it
-* **Batch Collection** - Group multiple auto-JOIN requests to reduce overhead
-* **Result Caching** - Cache auto-JOIN results to avoid redundant collection
-* **Priority Queuing** - Process high-priority auto-JOINs first
+- **Lazy Collection** - Only collect auto-JOIN data when SQL rules require it
+- **Batch Collection** - Group multiple auto-JOIN requests to reduce overhead
+- **Result Caching** - Cache auto-JOIN results to avoid redundant collection
+- **Priority Queuing** - Process high-priority auto-JOINs first
 
 #### 2. Resource Management
 
-* **Collection Limits** - Cap concurrent auto-JOIN collections
-* **Memory Bounds** - Limit auto-JOIN result storage
-* **Timeout Handling** - Fail auto-JOIN collections that take too long
-* **Circuit Breaking** - Stop auto-JOIN collections when system is overloaded
+- **Collection Limits** - Cap concurrent auto-JOIN collections
+- **Memory Bounds** - Limit auto-JOIN result storage
+- **Timeout Handling** - Fail auto-JOIN collections that take too long
+- **Circuit Breaking** - Stop auto-JOIN collections when system is overloaded
 
 ### Implementation Strategy
 
@@ -1098,11 +1163,7 @@ This approach maintains full SQLite dialect compatibility while adding DaemonEye
 
 ### Key Benefits
 
-✅ **Implicit Correlation** - Automatic collection of related data without explicit JOINs
-✅ **Simplified SQL** - Operators write simpler rules with automatic correlation
-✅ **Performance** - Only collect data when needed by SQL rules
-✅ **Flexibility** - Configurable auto-JOIN rules for different use cases
-✅ **Transparency** - SQL rules hide complexity of automatic correlation
+✅ **Implicit Correlation** - Automatic collection of related data without explicit JOINs ✅ **Simplified SQL** - Operators write simpler rules with automatic correlation ✅ **Performance** - Only collect data when needed by SQL rules ✅ **Flexibility** - Configurable auto-JOIN rules for different use cases ✅ **Transparency** - SQL rules hide complexity of automatic correlation
 
 ---
 
@@ -1110,29 +1171,29 @@ This approach maintains full SQLite dialect compatibility while adding DaemonEye
 
 ### 11.1 Why Not a Full RDBMS?
 
-* Embedded SQL engines like SQLite are heavyweight, require unsafe code, and don't align with the zero-network, operator-focused design.
-* **redb** was initially considered, but it is a key-value store, not a relational engine.
+- Embedded SQL engines like SQLite are heavyweight, require unsafe code, and don't align with the zero-network, operator-focused design.
+- **redb** was initially considered, but it is a key-value store, not a relational engine.
 
 ### 11.2 Chosen Approach: Operator Pipeline
 
-* Parse SQL using `sqlparser` (SQLite dialect).
-* Translate AST → internal logical plan → chain of operators (scan, filter, project, join, aggregate).
-* Execute operators directly against **redb**.
-* Support streaming ingestion with append-only tables + time-indexed keys.
+- Parse SQL using `sqlparser` (SQLite dialect).
+- Translate AST → internal logical plan → chain of operators (scan, filter, project, join, aggregate).
+- Execute operators directly against **redb**.
+- Support streaming ingestion with append-only tables + time-indexed keys.
 
 ### 11.3 Store Abstraction
 
-* **KV API:** `put(key, value)`, `scan(range)`, `iter(prefix)`.
-* **Indexing:** time-based and ID-based composite keys.
-* **Pluggability:** abstracted storage API, but redb is the canonical backend.
+- **KV API:** `put(key, value)`, `scan(range)`, `iter(prefix)`.
+- **Indexing:** time-based and ID-based composite keys.
+- **Pluggability:** abstracted storage API, but redb is the canonical backend.
 
 ### 11.4 Operator Examples
 
-* **Scan**: Iterate table prefix → yield rows.
-* **Filter**: Apply predicate closures from AST.
-* **Project**: Yield only selected columns.
-* **Join**: Nested loop or hash join across KV scans.
-* **Aggregate**: Group-by implemented with temporary hash maps.
+- **Scan**: Iterate table prefix → yield rows.
+- **Filter**: Apply predicate closures from AST.
+- **Project**: Yield only selected columns.
+- **Join**: Nested loop or hash join across KV scans.
+- **Aggregate**: Group-by implemented with temporary hash maps.
 
 ### 11.5 Smart Joins (No Mandatory Time Window)
 
@@ -1140,62 +1201,62 @@ We support joins without *requiring* time windows, while still keeping memory an
 
 #### Minimal Executor Plan Requirements
 
-* **Time Windows:** Require explicit time windows for aggregations to bound memory usage; joins use cardinality caps instead.
-* **Index Strategy:** Index hot keys (`name`, `pid`, `ppid`, `exe_hash`) and primary key by `(ts, seq)` for efficient range scans and lookups.
-* **Bounded Operations:** Implement bounded hash-group and equi-join (parent/child) with per-rule memory caps to prevent unbounded growth.
-* **Pattern Matching:** Require collectors to support `LIKE` (including `%` wildcards) and `REGEXP` operations for pushdown; complex patterns that can't be pushed down execute in the agent's operator pipeline.
-* **Function Allow-list:** Maintain a strict allow-list of functions with a pushdown matrix (collector vs agent) to control what operations can be executed where.
+- **Time Windows:** Require explicit time windows for aggregations to bound memory usage; joins use cardinality caps instead.
+- **Index Strategy:** Index hot keys (`name`, `pid`, `ppid`, `exe_hash`) and primary key by `(ts, seq)` for efficient range scans and lookups.
+- **Bounded Operations:** Implement bounded hash-group and equi-join (parent/child) with per-rule memory caps to prevent unbounded growth.
+- **Pattern Matching:** Require collectors to support `LIKE` (including `%` wildcards) and `REGEXP` operations for pushdown; complex patterns that can't be pushed down execute in the agent's operator pipeline.
+- **Function Allow-list:** Maintain a strict allow-list of functions with a pushdown matrix (collector vs agent) to control what operations can be executed where.
 
 #### Join Scope & Keys
 
-* Only **equi-joins** on declared keys (e.g., `pid`, `ppid`, `exe_hash`, `image_base`).
-* Joinable keys are declared in the **catalog** per table with optional *join hints* (e.g., `parent_of: processes.snapshots.ppid -> processes.snapshots.pid`).
+- Only **equi-joins** on declared keys (e.g., `pid`, `ppid`, `exe_hash`, `image_base`).
+- Joinable keys are declared in the **catalog** per table with optional *join hints* (e.g., `parent_of: processes.snapshots.ppid -> processes.snapshots.pid`).
 
 #### Physical Strategies
 
 1. **Index Nested-Loop (INLJ)** *(default, selective)*
 
-   * Build side: the smaller/filtered input (chosen by predicate selectivity heuristics).
-   * Probe side: use secondary index on the join key to fetch matches.
-   * Complexity \~ O(n log m). Great when filters make one side small.
+   - Build side: the smaller/filtered input (chosen by predicate selectivity heuristics).
+   - Probe side: use secondary index on the join key to fetch matches.
+   - Complexity ~ O(n log m). Great when filters make one side small.
 
 2. **Bounded Symmetric Hash Join (SHJ)** *(for concurrent streams or large intermediate)*
 
-   * Hash both sides in **bounded** LRU maps keyed by join key.
-   * Evict by **cardinality budget** (e.g., max 100k keys) rather than time; evictions counted for diagnostics.
-   * Optional *soft time hint* improves locality but is not required.
+   - Hash both sides in **bounded** LRU maps keyed by join key.
+   - Evict by **cardinality budget** (e.g., max 100k keys) rather than time; evictions counted for diagnostics.
+   - Optional *soft time hint* improves locality but is not required.
 
 3. **Materialized Relation Cache (MRC)** *(parent/child fast path)*
 
-   * Maintain a compact map (e.g., `pid → {ppid, parent_name, start_time}`) updated on ingest.
-   * Parent/child joins collapse to single keyed lookup; avoids scanning the parent side entirely.
+   - Maintain a compact map (e.g., `pid → {ppid, parent_name, start_time}`) updated on ingest.
+   - Parent/child joins collapse to single keyed lookup; avoids scanning the parent side entirely.
 
 #### Bounding Without Time Windows
 
-* **Cardinality Caps:** per-join memory budget (keys + rows per key). Default caps are configurable per tier.
-* **Backpressure Aware:** if caps are reached, switch from SHJ → INLJ automatically and emit a **JOIN\_PARTIAL** metric.
-* **Spill to KV (optional):** oversize hash partitions spill to a KV-backed scratch area with capped size.
+- **Cardinality Caps:** per-join memory budget (keys + rows per key). Default caps are configurable per tier.
+- **Backpressure Aware:** if caps are reached, switch from SHJ → INLJ automatically and emit a **JOIN_PARTIAL** metric.
+- **Spill to KV (optional):** oversize hash partitions spill to a KV-backed scratch area with capped size.
 
 #### Selectivity & Planning Heuristics
 
-* Prefer INLJ when the planner sees highly selective predicates on one side (e.g., `name = 'rundll32.exe'`).
-* Prefer SHJ when both sides are similarly sized after filters.
-* Prefer MRC whenever a declared parent/child mapping exists.
+- Prefer INLJ when the planner sees highly selective predicates on one side (e.g., `name = 'rundll32.exe'`).
+- Prefer SHJ when both sides are similarly sized after filters.
+- Prefer MRC whenever a declared parent/child mapping exists.
 
 #### Late / Missing Matches
 
-* **Deferred Match Window:** unmatched rows are retained in a tiny pending set (by join key) for a short grace period to catch late-arriving counterparts.
-* **Emissions:** For LEFT JOINs, emit `NULL`-extended rows immediately; if a late match appears, emit a correction event with a `correlation_id` (Enterprise-only feature) or keep the LEFT result authoritative (Community).
+- **Deferred Match Window:** unmatched rows are retained in a tiny pending set (by join key) for a short grace period to catch late-arriving counterparts.
+- **Emissions:** For LEFT JOINs, emit `NULL`-extended rows immediately; if a late match appears, emit a correction event with a `correlation_id` (Enterprise-only feature) or keep the LEFT result authoritative (Community).
 
 #### Diagnostics & Guarantees
 
-* Emit counters: `join_plan_selected`, `join_evictions`, `join_spills`, `join_partial_results`.
-* Hard guarantees: joins complete with bounded memory; if limits are exceeded, results may be partial but are **never unbounded**.
+- Emit counters: `join_plan_selected`, `join_evictions`, `join_spills`, `join_partial_results`.
+- Hard guarantees: joins complete with bounded memory; if limits are exceeded, results may be partial but are **never unbounded**.
 
 #### Spec Examples
 
-* `JOIN ON c.ppid = p.pid` → MRC fast path (if parent map enabled); else INLJ with `idx:pid`.
-* `JOIN ON c.exe_hash = b.sha256` → INLJ with `idx:sha256`; SHJ if both sides large.
+- `JOIN ON c.ppid = p.pid` → MRC fast path (if parent map enabled); else INLJ with `idx:pid`.
+- `JOIN ON c.exe_hash = b.sha256` → INLJ with `idx:sha256`; SHJ if both sides large.
 
 ### 11.6 Write-Through & Persistence Semantics
 
@@ -1217,10 +1278,10 @@ On every IPC `StreamRecord`:
 
 If the active rule plan requires **no join/aggregation** (pure filter/project):
 
-* Evaluate predicate on the just-ingested row.
-* If it matches, compute the **dedupe key** and consult the per-rule dedupe cache.
-* **Emit alert** to sinks immediately and also **append an Alert row** to `alerts.events` in redb.
-* The original event row is already persisted via 5.6.1; no extra writes needed.
+- Evaluate predicate on the just-ingested row.
+- If it matches, compute the **dedupe key** and consult the per-rule dedupe cache.
+- **Emit alert** to sinks immediately and also **append an Alert row** to `alerts.events` in redb.
+- The original event row is already persisted via 5.6.1; no extra writes needed.
 
 **Data Flow:** `IPC → redb(events) → (predicate) → alerts.sinks & redb(alerts)`
 
@@ -1228,10 +1289,10 @@ If the active rule plan requires **no join/aggregation** (pure filter/project):
 
 When a rule involves a **JOIN**:
 
-* After ingest (5.6.1), the pipeline executes the selected join strategy (INLJ/SHJ/MRC) **over redb + in-memory state**.
-* Join **results are not materialized** as a table; they are ephemeral tuples.
-* If the joined tuple satisfies remaining predicates, we dedupe and **emit an alert** and **append** to `alerts.events`.
-* Optional (Enterprise): for troubleshooting, store a **compact correlation record** in `alerts.correlations` with `correlation_id`, join key, and pointers to base rows.
+- After ingest (5.6.1), the pipeline executes the selected join strategy (INLJ/SHJ/MRC) **over redb + in-memory state**.
+- Join **results are not materialized** as a table; they are ephemeral tuples.
+- If the joined tuple satisfies remaining predicates, we dedupe and **emit an alert** and **append** to `alerts.events`.
+- Optional (Enterprise): for troubleshooting, store a **compact correlation record** in `alerts.correlations` with `correlation_id`, join key, and pointers to base rows.
 
 **Data Flow:** `IPC → redb(events) → (join over base + indexes) → alerts.sinks & redb(alerts[, correlations])`
 
@@ -1239,20 +1300,20 @@ When a rule involves a **JOIN**:
 
 For `GROUP BY/HAVING` rules:
 
-* Maintain **in-memory hash aggregates** keyed by `GROUP BY` columns; periodically flush snapshots to `agg.state` (redb) for recovery.
-* On **HAVING** satisfaction transitions (e.g., `count > 50`), emit alert and append to `alerts.events`.
-* Aggregation **requires either** an explicit time window **or** a configured default window to bound state.
+- Maintain **in-memory hash aggregates** keyed by `GROUP BY` columns; periodically flush snapshots to `agg.state` (redb) for recovery.
+- On **HAVING** satisfaction transitions (e.g., `count > 50`), emit alert and append to `alerts.events`.
+- Aggregation **requires either** an explicit time window **or** a configured default window to bound state.
 
 #### 5.6.5 Idempotence & Dedupe
 
-* **Ingest idempotence:** `(task_id, seq_no)` forms the write id; duplicates are discarded.
-* **Alert dedupe:** per-rule configurable key (e.g., `(name, executable_path, host, window)`), with TTL.
+- **Ingest idempotence:** `(task_id, seq_no)` forms the write id; duplicates are discarded.
+- **Alert dedupe:** per-rule configurable key (e.g., `(name, executable_path, host, window)`), with TTL.
 
 #### 5.6.6 Crash Safety
 
-* Ingest commit is atomic; on restart, rebuild secondary indexes if needed.
-* Aggregation state restored from `agg.state` snapshots.
-* MRC (parent map) rebuilt by scanning a bounded recent window or incrementally from persisted events.
+- Ingest commit is atomic; on restart, rebuild secondary indexes if needed.
+- Aggregation state restored from `agg.state` snapshots.
+- MRC (parent map) rebuilt by scanning a bounded recent window or incrementally from persisted events.
 
 #### 5.6.7 Materialization Policy
 
@@ -1260,38 +1321,38 @@ For `GROUP BY/HAVING` rules:
 
 #### What We Persist (Always)
 
-* **Base event tables** per collector (e.g., `processes.events`, `image_loads.events`) plus their secondary indexes (`idx:pid`, `idx:name`, `idx:sha256`).
-* **Alert log** (`alerts.events`) with rule ID, dedupe key, pointers to source rows (table name + `(ts,seq)`).
-* **Operator state** required for correctness/recovery:
-  * Aggregation snapshots (`agg.state`) for `GROUP BY/HAVING`.
-  * MRC (materialized relation cache) for fast parent/child (e.g., `pid → {ppid,parent_name,start_time}`), rebuilt on startup if missing.
+- **Base event tables** per collector (e.g., `processes.events`, `image_loads.events`) plus their secondary indexes (`idx:pid`, `idx:name`, `idx:sha256`).
+- **Alert log** (`alerts.events`) with rule ID, dedupe key, pointers to source rows (table name + `(ts,seq)`).
+- **Operator state** required for correctness/recovery:
+  - Aggregation snapshots (`agg.state`) for `GROUP BY/HAVING`.
+  - MRC (materialized relation cache) for fast parent/child (e.g., `pid → {ppid,parent_name,start_time}`), rebuilt on startup if missing.
 
 #### What We Do Not Persist (By Default)
 
-* **Materialized join outputs** ("the realized view"). These are computed on-demand in the operator pipeline, used to trigger alerts, then discarded.
+- **Materialized join outputs** ("the realized view"). These are computed on-demand in the operator pipeline, used to trigger alerts, then discarded.
 
 #### Why (Trade-offs)
 
-* **Space & Simplicity:** Join results can blow up; persisting them multiplies storage & compaction work.
-* **Freshness:** On-demand joins always reflect current base data + indexes; no staleness/refresh logic.
-* **Traceability:** The alert record holds stable pointers to the exact base rows used, so you can reconstruct the join later if needed.
+- **Space & Simplicity:** Join results can blow up; persisting them multiplies storage & compaction work.
+- **Freshness:** On-demand joins always reflect current base data + indexes; no staleness/refresh logic.
+- **Traceability:** The alert record holds stable pointers to the exact base rows used, so you can reconstruct the join later if needed.
 
 #### When We Do Persist Derived Artifacts (Narrow Cases)
 
-* **Enterprise Debugging** (optional feature flag): Write a compact `alerts.correlations` record: `{correlation_id, rule_id, join_key, left_ref, right_ref, summary_fields}`. This is tiny (refs + a few columns) and helps "show your work" without saving the full joined row.
-* **Hot-path Speed-ups** (opt-in):
-  * Keep the MRC always; it's small and removes the most common parent/child joins.
-  * If a specific, high-volume rule is expensive, allow materialized view snapshots with a strict TTL/window (e.g., last 5 minutes) and caps. This is operationally a cache, not a source of truth.
+- **Enterprise Debugging** (optional feature flag): Write a compact `alerts.correlations` record: `{correlation_id, rule_id, join_key, left_ref, right_ref, summary_fields}`. This is tiny (refs + a few columns) and helps "show your work" without saving the full joined row.
+- **Hot-path Speed-ups** (opt-in):
+  - Keep the MRC always; it's small and removes the most common parent/child joins.
+  - If a specific, high-volume rule is expensive, allow materialized view snapshots with a strict TTL/window (e.g., last 5 minutes) and caps. This is operationally a cache, not a source of truth.
 
 #### Redb Schema (Concrete)
 
-* `processes.events` (primary table; key `(ts_ms, seq)` → value payload)
-* `processes.idx:pid` (multimap: `pid → (ts_ms, seq)`)
-* `image_loads.events`, `image_loads.idx:image_base`, etc.
-* `alerts.events` (append-only)
-* `alerts.correlations` (optional, compact)
-* `agg.state` (aggregation snapshots)
-* `mrc.parent_map` (`pid → {ppid,parent_name,start_time}`)
+- `processes.events` (primary table; key `(ts_ms, seq)` → value payload)
+- `processes.idx:pid` (multimap: `pid → (ts_ms, seq)`)
+- `image_loads.events`, `image_loads.idx:image_base`, etc.
+- `alerts.events` (append-only)
+- `alerts.correlations` (optional, compact)
+- `agg.state` (aggregation snapshots)
+- `mrc.parent_map` (`pid → {ppid,parent_name,start_time}`)
 
 ### 11.7 redb Performance Playbook
 
@@ -1303,91 +1364,91 @@ Partition by time, use fixed-width keys, build selective secondary indexes, and 
 
 **Partitioning Strategy:**
 
-* **Partitions:** One base table per logical source per time bucket:
-  * `processes.events@2025-09-22` (daily) or `@2025-09-22T14` (hourly for very chatty tables)
-* **Primary Key:** `(ts_ms: u64, seq: u32)` (16 bytes) — strictly increasing; great locality
-* **Value:** Compact, fixed-field struct (postcard/bincode with version byte) — avoid big strings
-* **Secondary Indexes** (multimap tables) inside the same bucket:
-  * `idx:pid` `(pid: u32)` → `(ts_ms, seq)`
-  * `idx:ppid` `(ppid: u32)` → `(ts_ms, seq)`
-  * `idx:name` `(lower(name_hash128))` → `(ts_ms, seq)` ← store hash; keep optional "catalog" for top offenders
-  * `idx:exe_hash` `(sha256_prefix: u128)` → `(ts_ms, seq)`
-  * Optional: `idx:path_prefix` `(prefix_hash)` → `(ts_ms, seq)` for `LIKE 'C:\\Windows\\%'`
+- **Partitions:** One base table per logical source per time bucket:
+  - `processes.events@2025-09-22` (daily) or `@2025-09-22T14` (hourly for very chatty tables)
+- **Primary Key:** `(ts_ms: u64, seq: u32)` (16 bytes) — strictly increasing; great locality
+- **Value:** Compact, fixed-field struct (postcard/bincode with version byte) — avoid big strings
+- **Secondary Indexes** (multimap tables) inside the same bucket:
+  - `idx:pid` `(pid: u32)` → `(ts_ms, seq)`
+  - `idx:ppid` `(ppid: u32)` → `(ts_ms, seq)`
+  - `idx:name` `(lower(name_hash128))` → `(ts_ms, seq)` ← store hash; keep optional "catalog" for top offenders
+  - `idx:exe_hash` `(sha256_prefix: u128)` → `(ts_ms, seq)`
+  - Optional: `idx:path_prefix` `(prefix_hash)` → `(ts_ms, seq)` for `LIKE 'C:\\Windows\\%'`
 
 **Why This Works:**
 
-* Partitioning makes every range scan small (a few MBs vs GBs)
-* Keys are fixed-width, so B-tree pages pack densely
-* Secondaries don't store copies of the row—just a 16-byte pointer back to `(ts,seq)`
+- Partitioning makes every range scan small (a few MBs vs GBs)
+- Keys are fixed-width, so B-tree pages pack densely
+- Secondaries don't store copies of the row—just a 16-byte pointer back to `(ts,seq)`
 
 #### 5.7.2 Query Planning = Index Math, Not Scans
 
 **Planning Strategy:**
 
-* **Time First:** Every plan starts by resolving the time window to one or more partitions and narrowing to key range `(t_start..t_end)`
-* **Driving Index:** Pick by estimated selectivity (track simple histograms: cardinality and last-N counts per index)
-* **Set-Based Intersections:** Intersect posting lists in memory:
-  * Example: `WHERE name='x' AND pid IN (…) AND ts BETWEEN …`
+- **Time First:** Every plan starts by resolving the time window to one or more partitions and narrowing to key range `(t_start..t_end)`
+- **Driving Index:** Pick by estimated selectivity (track simple histograms: cardinality and last-N counts per index)
+- **Set-Based Intersections:** Intersect posting lists in memory:
+  - Example: `WHERE name='x' AND pid IN (…) AND ts BETWEEN …`
   1. `L1 = fetch(idx:name['x'])` (already time-bounded because postings are `(ts,seq)`)
   2. `L2 = union(fetch(idx:pid[p1]), fetch(idx:pid[p2]) …)`
   3. `L = intersect_sorted(L1, L2)` ← both lists are sorted by `ts,seq`
   4. **Early LIMIT:** If rule has LIMIT or only need K rows for join/agg, stop early
-* **Pattern Matching:**
-  * **Prefix LIKE** (`LIKE 'foo%'`): use `idx:path_prefix` (hash of normalized prefix)
-  * **Contains LIKE/REGEXP:** agent-only; use driving index to pre-shrink candidate set, then evaluate on row
+- **Pattern Matching:**
+  - **Prefix LIKE** (`LIKE 'foo%'`): use `idx:path_prefix` (hash of normalized prefix)
+  - **Contains LIKE/REGEXP:** agent-only; use driving index to pre-shrink candidate set, then evaluate on row
 
 #### 5.7.3 Writer Architecture (High Throughput, Minimal Stalls)
 
 **Single Writer Design:**
 
-* **Single writer thread** bound to core; group commit every N=2,000 records or T=5–10ms, whichever first
-* **Pipeline:** IPC → lock-free MPSC → pre-serialized ring buffer → writer does only:
-  * (a) put to base
-  * (b) put to secondaries
-  * (c) commit
-* **Readers:** MVCC snapshots; no writer stalls reads
-* **Batch APIs:** Each transaction inserts base + all secondaries for the same batch to keep B-tree hot and minimize page churn
-* **ACK After Commit:** Safe and still fast because we commit in groups
+- **Single writer thread** bound to core; group commit every N=2,000 records or T=5–10ms, whichever first
+- **Pipeline:** IPC → lock-free MPSC → pre-serialized ring buffer → writer does only:
+  - (a) put to base
+  - (b) put to secondaries
+  - (c) commit
+- **Readers:** MVCC snapshots; no writer stalls reads
+- **Batch APIs:** Each transaction inserts base + all secondaries for the same batch to keep B-tree hot and minimize page churn
+- **ACK After Commit:** Safe and still fast because we commit in groups
 
 #### 5.7.4 Small Caches That Matter
 
 **Targeted Caching:**
 
-* **Posting-List Page Cache:** Tiny LRU (64–256 MB) keyed by `(index, bucket, term)` → compressed list of `(ts,seq)`
-  * Only cache lists we actually intersect often (name, exe_hash, top 1k pids)
-* **Parent Map (MRC):** `pid → {ppid, parent_name, start_time}` in lock-free map, rebuilt on start from last K minutes
-  * Parent/child join becomes one lookup; obliterates most common join cost
-* **Plan Cache:** SQL AST → plan with bound indexes for current stats window; revalidate every X seconds or on stats drift
+- **Posting-List Page Cache:** Tiny LRU (64–256 MB) keyed by `(index, bucket, term)` → compressed list of `(ts,seq)`
+  - Only cache lists we actually intersect often (name, exe_hash, top 1k pids)
+- **Parent Map (MRC):** `pid → {ppid, parent_name, start_time}` in lock-free map, rebuilt on start from last K minutes
+  - Parent/child join becomes one lookup; obliterates most common join cost
+- **Plan Cache:** SQL AST → plan with bound indexes for current stats window; revalidate every X seconds or on stats drift
 
 #### 5.7.5 Joins Without Pain (Applied to redb)
 
 **Join Strategies:**
 
-* **INLJ (default):** Drive from selective side; probe other via secondary index → `(ts,seq)` list → single fetch per match
-* **SHJ (bounded):** Only if both sides remain big after filters; cap keys + rows-per-key; optional spill to scratch table in same bucket (capped)
-* **MRC:** Take the win when `ON c.ppid=p.pid`—no need to touch B-tree for parent
+- **INLJ (default):** Drive from selective side; probe other via secondary index → `(ts,seq)` list → single fetch per match
+- **SHJ (bounded):** Only if both sides remain big after filters; cap keys + rows-per-key; optional spill to scratch table in same bucket (capped)
+- **MRC:** Take the win when `ON c.ppid=p.pid`—no need to touch B-tree for parent
 
 #### 5.7.6 Index Maintenance & Hygiene
 
 **Index Management:**
 
-* **Index Budget:** Per table (4–6 secondaries). Every added index justified by rule pack
-* **Cold Indexes:** If rule disappears, mark index "cold" and skip updating until re-enabled
-* **Partition TTL:** Configurable retention (7–30 days community; 90+ enterprise). Dropping old partitions is O(1) drop of handful of tables
-* **Checkpoints:** Periodic redb checkpoints to release old pages (copy-on-write housekeeping)
-* **Backfill Path:** If secondary added later, job scans only hot partitions first, then cold ones overnight
+- **Index Budget:** Per table (4–6 secondaries). Every added index justified by rule pack
+- **Cold Indexes:** If rule disappears, mark index "cold" and skip updating until re-enabled
+- **Partition TTL:** Configurable retention (7–30 days community; 90+ enterprise). Dropping old partitions is O(1) drop of handful of tables
+- **Checkpoints:** Periodic redb checkpoints to release old pages (copy-on-write housekeeping)
+- **Backfill Path:** If secondary added later, job scans only hot partitions first, then cold ones overnight
 
 #### 5.7.7 Tunables (Sane Defaults)
 
 **Configuration Parameters:**
 
-* `partition_kind = hourly` if > ~2M events/day; else daily
-* `writer_batch_records = 2,000`, `writer_batch_ms = 7`
-* `posting_cache_bytes = 128MiB`
-* `mrc_window = 30m`, rebuild on start within 2–5s
-* `join_cardinality_cap = 100k keys`, `rows_per_key_cap = 64`
-* `idx_budget_per_table = 6`
-* `contains_like_max_scan = 10k rows` (fail-safe)
+- `partition_kind = hourly` if > ~2M events/day; else daily
+- `writer_batch_records = 2,000`, `writer_batch_ms = 7`
+- `posting_cache_bytes = 128MiB`
+- `mrc_window = 30m`, rebuild on start within 2–5s
+- `join_cardinality_cap = 100k keys`, `rows_per_key_cap = 64`
+- `idx_budget_per_table = 6`
+- `contains_like_max_scan = 10k rows` (fail-safe)
 
 #### 5.7.8 Key Encoding (Concrete)
 
@@ -1397,7 +1458,7 @@ Partition by time, use fixed-width keys, build selective secondary indexes, and 
 struct RowKey {
     ts_ms: u64,
     seq: u32,
-    pad: u32
+    pad: u32,
 }
 
 // Secondary key example: name (hash) + ts to keep postings sorted by time
@@ -1406,22 +1467,22 @@ struct NameIdxKey {
     name_hash128_hi: u64,
     name_hash128_lo: u64,
     ts_ms: u64,
-    seq: u32
+    seq: u32,
 }
 ```
 
-* Never store whole name/path in secondary key—just stable hash
-* Collisions are fine; verify on primary row during filter evaluation
+- Never store whole name/path in secondary key—just stable hash
+- Collisions are fine; verify on primary row during filter evaluation
 
 #### 5.7.9 Why This Will Be Fast Enough
 
 **Performance Guarantees:**
 
-* Every operation is range scan over tiny partition or seek + short linear walk through posting list
-* Group commit amortizes fsync cost
-* Set intersections cut candidate sets down to thousands → tens, not millions
-* MRC deletes the common join
-* Readers are zero-copy; writer doesn't block them
+- Every operation is range scan over tiny partition or seek + short linear walk through posting list
+- Group commit amortizes fsync cost
+- Set intersections cut candidate sets down to thousands → tens, not millions
+- MRC deletes the common join
+- Readers are zero-copy; writer doesn't block them
 
 **Example:**
 
@@ -1437,25 +1498,25 @@ WHERE c.name = 'rundll32.exe';
 1. Ingest `c` into `processes.events` + indexes.
 2. Join via MRC (fast path) or `idx:pid` (INLJ).
 3. If it matches, emit alert to `alerts.events` with refs:
-   * `left_ref = ("processes.events", (ts_c, seq_c))`
-   * `right_ref = ("processes.events", (ts_p, seq_p))` (if found)
+   - `left_ref = ("processes.events", (ts_c, seq_c))`
+   - `right_ref = ("processes.events", (ts_p, seq_p))` (if found)
 4. No persisted "joined row". Optional: write tiny `alerts.correlations` with `join_key = c.ppid`.
 
 ### 4.3) Rule Lifecycle & Management
 
 #### Rule Loading & Registration
 
-* **Rule Packs:** Collections of related SQL rules with metadata (version, author, description)
-* **Hot Reloading:** Rules can be added/removed/updated without agent restart
-* **Validation:** AST parsing and safety checks before activation
-* **Dependency Resolution:** Rule dependencies on specific collector capabilities
+- **Rule Packs:** Collections of related SQL rules with metadata (version, author, description)
+- **Hot Reloading:** Rules can be added/removed/updated without agent restart
+- **Validation:** AST parsing and safety checks before activation
+- **Dependency Resolution:** Rule dependencies on specific collector capabilities
 
 #### Rule States & Transitions
 
-* **Draft** → **Active** → **Disabled** → **Archived**
-* **Versioning:** Rule changes create new versions with deprecation periods
-* **Rollback:** Ability to revert to previous rule versions
-* **A/B Testing:** Support for running multiple rule versions simultaneously
+- **Draft** → **Active** → **Disabled** → **Archived**
+- **Versioning:** Rule changes create new versions with deprecation periods
+- **Rollback:** Ability to revert to previous rule versions
+- **A/B Testing:** Support for running multiple rule versions simultaneously
 
 #### Rule Metadata
 
@@ -1468,11 +1529,22 @@ WHERE c.name = 'rundll32.exe';
   "author": "security-team",
   "created": "2025-01-15T10:30:00Z",
   "updated": "2025-01-20T14:22:00Z",
-  "tags": ["malware", "processes", "high-priority"],
+  "tags": [
+    "malware",
+    "processes",
+    "high-priority"
+  ],
   "dependencies": {
-    "collectors": ["procmond"],
-    "tables": ["processes.snapshots"],
-    "capabilities": ["pushdown_predicates", "projection"]
+    "collectors": [
+      "procmond"
+    ],
+    "tables": [
+      "processes.snapshots"
+    ],
+    "capabilities": [
+      "pushdown_predicates",
+      "projection"
+    ]
   },
   "performance": {
     "expected_matches_per_hour": 10,
@@ -1486,17 +1558,17 @@ WHERE c.name = 'rundll32.exe';
 
 #### Collector Failure Scenarios
 
-* **Connection Loss:** Agent detects collector disconnection, marks tables as unavailable
-* **Schema Mismatch:** Version incompatibility between agent and collector schemas
-* **Rate Limiting:** Collector exceeds configured rate limits, triggers backpressure
-* **Data Corruption:** CRC32 validation failures, sequence number gaps
+- **Connection Loss:** Agent detects collector disconnection, marks tables as unavailable
+- **Schema Mismatch:** Version incompatibility between agent and collector schemas
+- **Rate Limiting:** Collector exceeds configured rate limits, triggers backpressure
+- **Data Corruption:** CRC32 validation failures, sequence number gaps
 
 #### Recovery Procedures
 
-* **Automatic Reconnection:** Exponential backoff with jitter for collector reconnection
-* **Schema Reconciliation:** Agent requests updated schema descriptors on reconnection
-* **Data Consistency:** Replay of missed events from last known good sequence number
-* **Graceful Degradation:** Continue operation with reduced collector capabilities
+- **Automatic Reconnection:** Exponential backoff with jitter for collector reconnection
+- **Schema Reconciliation:** Agent requests updated schema descriptors on reconnection
+- **Data Consistency:** Replay of missed events from last known good sequence number
+- **Graceful Degradation:** Continue operation with reduced collector capabilities
 
 #### Error Codes & Responses
 
@@ -1506,7 +1578,9 @@ WHERE c.name = 'rundll32.exe';
   "severity": "ERROR",
   "message": "Collector schema version 2.1.0 incompatible with agent version 2.0.0",
   "recovery_action": "REQUEST_SCHEMA_UPDATE",
-  "affected_tables": ["processes.snapshots"],
+  "affected_tables": [
+    "processes.snapshots"
+  ],
   "timestamp": "2025-01-20T15:30:00Z"
 }
 ```
@@ -1515,47 +1589,47 @@ WHERE c.name = 'rundll32.exe';
 
 #### Collector Discovery
 
-* **Service Discovery:** Agents discover collectors via local service registry or configuration
-* **Capability Negotiation:** Mutual verification of supported features and versions
-* **Load Balancing:** Multiple collectors of same type with health-based routing
-* **Failover:** Automatic failover to backup collectors on primary failure
+- **Service Discovery:** Agents discover collectors via local service registry or configuration
+- **Capability Negotiation:** Mutual verification of supported features and versions
+- **Load Balancing:** Multiple collectors of same type with health-based routing
+- **Failover:** Automatic failover to backup collectors on primary failure
 
 #### Configuration Management
 
-* **Hierarchical Config:** System → Agent → Rule → Collector level configuration
-* **Environment Variables:** Override configuration via environment variables
-* **Hot Reloading:** Configuration changes without service restart
-* **Validation:** Configuration schema validation with detailed error messages
+- **Hierarchical Config:** System → Agent → Rule → Collector level configuration
+- **Environment Variables:** Override configuration via environment variables
+- **Hot Reloading:** Configuration changes without service restart
+- **Validation:** Configuration schema validation with detailed error messages
 
 #### Health Monitoring
 
-* **Collector Health:** Heartbeat monitoring with configurable timeouts
-* **Performance Metrics:** Throughput, latency, error rates per collector
-* **Resource Usage:** Memory, CPU, disk usage tracking
-* **Alert Generation:** Health check failures trigger operational alerts
+- **Collector Health:** Heartbeat monitoring with configurable timeouts
+- **Performance Metrics:** Throughput, latency, error rates per collector
+- **Resource Usage:** Memory, CPU, disk usage tracking
+- **Alert Generation:** Health check failures trigger operational alerts
 
 ### 4.6) Monitoring & Observability
 
 #### Metrics Collection
 
-* **Rule Execution:** Rule evaluation latency, match rates, error counts
-* **Collector Performance:** IPC message rates, serialization time, queue depths
-* **Storage Operations:** redb write latency, index maintenance time, compaction stats
-* **Alert Delivery:** Sink success rates, retry counts, delivery latency
+- **Rule Execution:** Rule evaluation latency, match rates, error counts
+- **Collector Performance:** IPC message rates, serialization time, queue depths
+- **Storage Operations:** redb write latency, index maintenance time, compaction stats
+- **Alert Delivery:** Sink success rates, retry counts, delivery latency
 
 #### Observability Endpoints
 
-* **Health Check:** `/health` - Overall system health status
-* **Metrics:** `/metrics` - Prometheus-format metrics export
-* **Debug Info:** `/debug` - Detailed system state for troubleshooting
-* **Schema Status:** `/catalog` - Current collector schema registry
+- **Health Check:** `/health` - Overall system health status
+- **Metrics:** `/metrics` - Prometheus-format metrics export
+- **Debug Info:** `/debug` - Detailed system state for troubleshooting
+- **Schema Status:** `/catalog` - Current collector schema registry
 
 #### Logging Standards
 
-* **Structured Logging:** JSON format with consistent field names
-* **Log Levels:** ERROR, WARN, INFO, DEBUG with appropriate filtering
-* **Correlation IDs:** Request tracing across collector → agent → storage
-* **Sensitive Data:** Automatic redaction of credentials and PII
+- **Structured Logging:** JSON format with consistent field names
+- **Log Levels:** ERROR, WARN, INFO, DEBUG with appropriate filtering
+- **Correlation IDs:** Request tracing across collector → agent → storage
+- **Sensitive Data:** Automatic redaction of credentials and PII
 
 ---
 
@@ -1570,11 +1644,11 @@ The SQL-to-IPC detection engine operates through a two-layer architecture:
 
 ### 11.2 Key Implementation Components
 
-* **SQL Parser** - `sqlparser` for SQLite dialect parsing and AST generation
-* **Pushdown Planner** - Analyzes AST to determine what can be pushed to collectors
-* **Operator Pipeline** - Executes complex operations (joins, aggregations) over redb
-* **Storage Engine** - redb-based storage with secondary indexes and partitioning
-* **Alert System** - Deduplication, correlation, and multi-channel delivery
+- **SQL Parser** - `sqlparser` for SQLite dialect parsing and AST generation
+- **Pushdown Planner** - Analyzes AST to determine what can be pushed to collectors
+- **Operator Pipeline** - Executes complex operations (joins, aggregations) over redb
+- **Storage Engine** - redb-based storage with secondary indexes and partitioning
+- **Alert System** - Deduplication, correlation, and multi-channel delivery
 
 ### 11.3 Development Workflow
 
@@ -1590,10 +1664,10 @@ The SQL-to-IPC detection engine operates through a two-layer architecture:
 
 ### 11.1 DetectionTask (Agent → Collector, IPC)
 
-* **Identity:** `task_id`, `rule_id`, `version`
-* **Scope:** target table(s), projection, simple predicates
-* **Hints:** sampling/Top-K, rate caps, backpressure window
-* **TTL:** expiry or explicit cancel
+- **Identity:** `task_id`, `rule_id`, `version`
+- **Scope:** target table(s), projection, simple predicates
+- **Hints:** sampling/Top-K, rate caps, backpressure window
+- **TTL:** expiry or explicit cancel
 
 **Example:**
 
@@ -1602,28 +1676,46 @@ The SQL-to-IPC detection engine operates through a two-layer architecture:
   "task_id": "t_9482",
   "rule_id": "r_process_name_exact",
   "table": "processes.snapshots",
-  "project": ["pid", "name", "executable_path", "cpu_usage", "collection_time"],
+  "project": [
+    "pid",
+    "name",
+    "executable_path",
+    "cpu_usage",
+    "collection_time"
+  ],
   "where": {
     "and": [
-      {"eq": ["name", "minidump.exe"]},
-      {"gt": ["cpu_usage", 0.0]}
+      {
+        "eq": [
+          "name",
+          "minidump.exe"
+        ]
+      },
+      {
+        "gt": [
+          "cpu_usage",
+          0.0
+        ]
+      }
     ]
   },
-  "rate_limit": {"per_sec": 25000},
+  "rate_limit": {
+    "per_sec": 25000
+  },
   "ttl_ms": 600000
 }
 ```
 
 ### 11.2 StreamRecord (Collector → Agent, IPC)
 
-* Envelope: `{ seq_no, task_id, table, checksum, record }`
-* Record is a typed row matching the advertised schema; unknown columns are rejected with metrics.
+- Envelope: `{ seq_no, task_id, table, checksum, record }`
+- Record is a typed row matching the advertised schema; unknown columns are rejected with metrics.
 
 ### 11.3 Persistence & Query (Agent-Side)
 
-* **Write path:** append-only into redb tables with periodic checkpoints.
-* **Read path:** prepared, read-only statements from the rule engine with timeouts and memory quotas.
-* **Dedupe:** rule-scoped dedupe key to avoid alert storms.
+- **Write path:** append-only into redb tables with periodic checkpoints.
+- **Read path:** prepared, read-only statements from the rule engine with timeouts and memory quotas.
+- **Dedupe:** rule-scoped dedupe key to avoid alert storms.
 
 ---
 
@@ -1637,18 +1729,18 @@ The SQL-to-IPC detection engine operates through a two-layer architecture:
 
 We use the **SQLite dialect** as implemented in `sqlparser`. Reasons:
 
-* **Simplicity:** SQLite grammar is small and easy to validate.
-* **Operator Familiarity:** Most security engineers have at least basic SQL knowledge; SQLite syntax feels natural.
-* **Implementation Support:** `sqlparser` offers stable support for SQLite, reducing parser complexity.
-* **Constrained Surface:** Limits scope compared to Postgres/T-SQL; easier to secure and fuzz.
-* **Portability:** Compatible with embedded use cases and aligns with redb's lightweight footprint.
+- **Simplicity:** SQLite grammar is small and easy to validate.
+- **Operator Familiarity:** Most security engineers have at least basic SQL knowledge; SQLite syntax feels natural.
+- **Implementation Support:** `sqlparser` offers stable support for SQLite, reducing parser complexity.
+- **Constrained Surface:** Limits scope compared to Postgres/T-SQL; easier to secure and fuzz.
+- **Portability:** Compatible with embedded use cases and aligns with redb's lightweight footprint.
 
 ### 11.2 Constraints
 
-* **Allowed Statements:** `SELECT` only.
-* **Banned Functions:** A curated list disallowed at AST validation (e.g., `load_extension`, `readfile`, `system`, `random`, `printf`).
-* **Allowed Functions:** Basic aggregations, string ops (`substr`, `length`, `instr`, `hex`), date/time helpers.
-* **Security:** AST validation enforces constraints before execution.
+- **Allowed Statements:** `SELECT` only.
+- **Banned Functions:** A curated list disallowed at AST validation (e.g., `load_extension`, `readfile`, `system`, `random`, `printf`).
+- **Allowed Functions:** Basic aggregations, string ops (`substr`, `length`, `instr`, `hex`), date/time helpers.
+- **Security:** AST validation enforces constraints before execution.
 
 ---
 
@@ -1718,59 +1810,59 @@ HAVING launches > 50;
 
 ## 14) Performance & Backpressure
 
-* **Targets:** <100ms/rule eval, >1k records/sec sustained write per agent; sub-second response for 100k+ events/min (Enterprise).
-* **Channels:** bounded MPSC with credit-based flow control.
-* **Rate Caps:** agent can issue `rate_limit` hints per task.
-* **Overload Policy:** drop oldest buffered streams per-task before global backoff.
+- **Targets:** \<100ms/rule eval, >1k records/sec sustained write per agent; sub-second response for 100k+ events/min (Enterprise).
+- **Channels:** bounded MPSC with credit-based flow control.
+- **Rate Caps:** agent can issue `rate_limit` hints per task.
+- **Overload Policy:** drop oldest buffered streams per-task before global backoff.
 
 **Operational Metrics:**
 
-* *Collector:* send rate, drops, serialization time, queue depth, last ACK seq.
-* *Agent:* ingest rate, redb write latency, rule eval latency, alert/sec, dedupe hits.
+- *Collector:* send rate, drops, serialization time, queue depth, last ACK seq.
+- *Agent:* ingest rate, redb write latency, rule eval latency, alert/sec, dedupe hits.
 
 ---
 
 ## 15) Reliability & Security
 
-* **Framing:** length-delimited protobuf, CRC32, monotonically increasing `seq_no`.
-* **AuthZ:** per-collector identity; table-level ACLs in the catalog.
-* **Sandbox:** read-only query engine, allow-listed functions, strict limits.
-* **Tamper-evidence:** audit ledger chained with cryptographic integrity.
-* **Graceful Degradation:** fallback to minimal projection + agent-side filtering.
+- **Framing:** length-delimited protobuf, CRC32, monotonically increasing `seq_no`.
+- **AuthZ:** per-collector identity; table-level ACLs in the catalog.
+- **Sandbox:** read-only query engine, allow-listed functions, strict limits.
+- **Tamper-evidence:** audit ledger chained with cryptographic integrity.
+- **Graceful Degradation:** fallback to minimal projection + agent-side filtering.
 
 ---
 
 ## 16) Testing & Validation
 
-* **AST Fuzzing:** fuzz SQL parser/validator and pushdown planner.
-* **Golden Tests:** SQL → DetectionTask JSON snapshots.
-* **Soak Tests:** synthetic high-rate streams with backpressure assertions.
-* **E2E:** collector → agent → redb → alert sinks; verify dedupe and delivery retries.
+- **AST Fuzzing:** fuzz SQL parser/validator and pushdown planner.
+- **Golden Tests:** SQL → DetectionTask JSON snapshots.
+- **Soak Tests:** synthetic high-rate streams with backpressure assertions.
+- **E2E:** collector → agent → redb → alert sinks; verify dedupe and delivery retries.
 
 ---
 
 ## 17) Versioning & Compatibility
 
-* **Contracts:** `catalog@vN`, `detection_task@vN`, `stream_record@vN`.
-* **Forward compat:** agent tolerates unknown *optional* fields.
-* **Deprecation:** announce in `catalog.changes` feed.
+- **Contracts:** `catalog@vN`, `detection_task@vN`, `stream_record@vN`.
+- **Forward compat:** agent tolerates unknown *optional* fields.
+- **Deprecation:** announce in `catalog.changes` feed.
 
 ---
 
 ## 18) Open Items
 
-* **Core Implementation:**
-  * Implement operator pipeline with redb as backend
-  * Optimize join and aggregation strategies for high event rates
-  * Validate redb performance with multiple secondary indexes
-* **Advanced Features:**
-  * Sliding/windowed aggregations helper primitives
-  * Collector-side lightweight top-K sampling spec
-  * Cross-table time correlation helper
-* **Performance Optimization:**
-  * Query plan caching and statistics collection
-  * Hybrid storage approaches (redb + in-memory for hot data)
-  * Partitioning strategies for high-volume deployments
+- **Core Implementation:**
+  - Implement operator pipeline with redb as backend
+  - Optimize join and aggregation strategies for high event rates
+  - Validate redb performance with multiple secondary indexes
+- **Advanced Features:**
+  - Sliding/windowed aggregations helper primitives
+  - Collector-side lightweight top-K sampling spec
+  - Cross-table time correlation helper
+- **Performance Optimization:**
+  - Query plan caching and statistics collection
+  - Hybrid storage approaches (redb + in-memory for hot data)
+  - Partitioning strategies for high-volume deployments
 
 ---
 
@@ -1780,8 +1872,8 @@ HAVING launches > 50;
 
 **Key Benefits:**
 
-* **Performance:** Pushdown reduces network traffic; operator pipeline handles complex logic efficiently
-* **Scalability:** Bounded memory usage prevents resource exhaustion
-* **Flexibility:** SQL-based rules are familiar to security operators
-* **Reliability:** ACK-after-commit semantics ensure data consistency
-* **Debugging:** Alert records contain pointers to reconstruct join results
+- **Performance:** Pushdown reduces network traffic; operator pipeline handles complex logic efficiently
+- **Scalability:** Bounded memory usage prevents resource exhaustion
+- **Flexibility:** SQL-based rules are familiar to security operators
+- **Reliability:** ACK-after-commit semantics ensure data consistency
+- **Debugging:** Alert records contain pointers to reconstruct join results
