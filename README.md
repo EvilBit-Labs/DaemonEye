@@ -1,5 +1,9 @@
 # :shield: DaemonEye — High-Performance Security Process Monitoring
 
+[![CI](https://github.com/EvilBit-Labs/DaemonEye/actions/workflows/ci.yml/badge.svg)](https://github.com/EvilBit-Labs/DaemonEye/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/EvilBit-Labs/DaemonEye/graph/badge.svg?token=1SE3lJ84Cj)](https://codecov.io/gh/EvilBit-Labs/DaemonEye)
+
+
 **DaemonEye** is a security-focused, high-performance process monitoring system built for cybersecurity professionals, threat hunters, and security operations centers. This is a complete **Rust rewrite** of the proven Python prototype, delivering enterprise-grade performance with **audit-grade integrity**.
 
 ## :classical_building: Architecture Overview
