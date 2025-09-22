@@ -8,7 +8,10 @@ pub mod client;
 pub mod codec;
 pub mod interprocess_transport;
 
-pub use client::{ClientStats, ConnectionState, ResilientIpcClient};
+pub use client::{
+    AdvancedClientStats, CircuitBreakerState, ClientStats, CollectorEndpoint, ConnectionState,
+    EndpointStats, IpcClientMetrics, LoadBalancingStrategy, ResilientIpcClient,
+};
 /// Re-export commonly used types
 pub use codec::{IpcCodec, IpcError, IpcResult};
 pub use interprocess_transport::{InterprocessClient, InterprocessServer};

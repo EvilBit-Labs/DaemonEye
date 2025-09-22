@@ -398,14 +398,14 @@ fn bench_resilient_client(c: &mut Criterion) {
     group.bench_function("client_creation", |b| {
         b.iter(|| {
             let (config, _temp_dir) = create_benchmark_config("client_creation");
-            let client = ResilientIpcClient::new(config);
+            let client = ResilientIpcClient::new(&config);
             black_box(client)
         });
     });
 
     group.bench_function("client_stats_retrieval", |b| {
         let (config, _temp_dir) = create_benchmark_config("client_stats");
-        let client = ResilientIpcClient::new(config);
+        let client = ResilientIpcClient::new(&config);
 
         b.iter(|| {
             rt.block_on(async {
@@ -417,11 +417,11 @@ fn bench_resilient_client(c: &mut Criterion) {
 
     group.bench_function("connection_state_check", |b| {
         let (config, _temp_dir) = create_benchmark_config("connection_state");
-        let client = ResilientIpcClient::new(config);
+        let client = ResilientIpcClient::new(&config);
 
         b.iter(|| {
             rt.block_on(async {
-                let state = client.get_connection_state().await;
+                let state = client.health_check().await;
                 black_box(state)
             })
         });

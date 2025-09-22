@@ -173,7 +173,7 @@ fn bench_ipc_client_operations(c: &mut Criterion) {
                 panic_strategy: daemoneye_lib::ipc::PanicStrategy::Unwind,
             };
 
-            let client = ResilientIpcClient::new(config);
+            let client = ResilientIpcClient::new(&config);
             black_box(client)
         });
     });
@@ -190,7 +190,7 @@ fn bench_ipc_client_operations(c: &mut Criterion) {
             panic_strategy: daemoneye_lib::ipc::PanicStrategy::Unwind,
         };
 
-        let client = ResilientIpcClient::new(config);
+        let client = ResilientIpcClient::new(&config);
 
         b.iter(|| {
             let stats = client.get_stats();
@@ -275,7 +275,7 @@ fn bench_concurrent_ipc_operations(c: &mut Criterion) {
             let clients: Vec<_> = (0..10)
                 .map(|_| {
                     let config = config.clone();
-                    handle.spawn(async move { ResilientIpcClient::new(config) })
+                    handle.spawn(async move { ResilientIpcClient::new(&config) })
                 })
                 .collect();
 

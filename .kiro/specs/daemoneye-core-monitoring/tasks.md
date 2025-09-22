@@ -37,7 +37,7 @@
   - Write comprehensive unit tests for client connection scenarios and cross-platform compatibility
   - _Requirements: 3.1, 3.2_
 
-- [ ] 3.3 Add advanced IPC client features - [#37](https://github.com/EvilBit-Labs/DaemonEye/issues/37)
+- [x] 3.3 Add advanced IPC client features - [#37](https://github.com/EvilBit-Labs/DaemonEye/issues/37)
 
   - Add connection pooling for multiple collector-core components
   - Implement load balancing and failover between multiple collectors
