@@ -2,7 +2,13 @@
 # This file defines the workspace and shared dependencies
 
 [workspace]
-members = ["collector-core", "procmond", "daemoneye-lib", "daemoneye-agent", "daemoneye-cli"]
+members = [
+    "collector-core",
+    "daemoneye-agent",
+    "daemoneye-cli",
+    "daemoneye-lib",
+    "procmond",
+]
 resolver = "3"
 
 [workspace.package]
@@ -44,6 +50,9 @@ clap = { version = "4.5.48", features = ["derive"] }
 # CRC32 checksum
 crc32c = "0.6.8"
 criterion = "0.7.0"
+
+# Internal library
+daemoneye-lib = { path = "daemoneye-lib" }
 futures = "0.3.31"
 futures-util = "0.3.31"
 insta = { version = "1.43.2", features = ["filters"] }
@@ -65,11 +74,8 @@ redb = "3.0.2"
 # Cryptographic operations
 rs_merkle = "1.5.0"
 
-# Internal library
-daemoneye-lib = { path = "daemoneye-lib" }
-
 # Serialization
-serde = { version = "1.0.225", features = ["derive"] }
+serde = { version = "1.0.226", features = ["derive"] }
 serde_json = "1.0.145"
 serde_yaml = "0.9.33"
 sha2 = "0.10.9"

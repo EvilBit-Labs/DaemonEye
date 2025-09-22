@@ -2,7 +2,7 @@
 //!
 //! Supports multiple configuration sources with precedence:
 //! 1. Command-line flags (highest precedence)
-//! 2. Environment variables (PROCMOND_*, DAEMONEYE_AGENT_*, DAEMONEYE_CLI_*)
+//! 2. Environment variables (`PROCMOND`_*, `DAEMONEYE_AGENT`_*, `DAEMONEYE_CLI`_*)
 //! 3. User configuration file (~/.config/daemoneye/config.yaml)
 //! 4. System configuration file (/etc/daemoneye/config.yaml)
 //! 5. Embedded defaults (lowest precedence)
@@ -245,15 +245,15 @@ impl ConfigLoader {
     /// Apply environment variable overrides to a Config using the loader's component name as a prefix.
     ///
     /// Environment variables are read with the prefix derived from `self.component` converted to
-    /// uppercase (e.g. component "procmond" => "`PROCMOND_SCAN_INTERVAL_MS`"). When present, the
+    /// uppercase (e.g. component "procmond" => "`PROCMOND`_`SCAN_INTERVAL_MS`"). When present, the
     /// following variables override their corresponding config fields:
     ///
-    /// - `{PREFIX}_SCAN_INTERVAL_MS` -> `config.app.scan_interval_ms` (parsed as integer)
-    /// - `{PREFIX}_BATCH_SIZE` -> `config.app.batch_size` (parsed as integer)
-    /// - `{PREFIX}_LOG_LEVEL` -> `config.logging.level` (string)
-    /// - `{PREFIX}_LOG_FORMAT` -> `config.logging.format` (string)
-    /// - `{PREFIX}_DATABASE_PATH` -> `config.database.path` (string -> `PathBuf`)
-    /// - `{PREFIX}_RECENT_THRESHOLD_SECONDS` -> `config.alerting.recent_threshold_seconds` (parsed as integer)
+    /// - ``{PREFIX}_SCAN_INTERVAL_MS`` -> `config.app.scan_interval_ms` (parsed as integer)
+    /// - ``{PREFIX}_BATCH_SIZE`` -> `config.app.batch_size` (parsed as integer)
+    /// - ``{PREFIX}_LOG_LEVEL`` -> `config.logging.level` (string)
+    /// - ``{PREFIX}_LOG_FORMAT`` -> `config.logging.format` (string)
+    /// - ``{PREFIX}_DATABASE_PATH`` -> `config.database.path` (string -> `PathBuf`)
+    /// - ``{PREFIX}_RECENT_THRESHOLD_SECONDS`` -> `config.alerting.recent_threshold_seconds` (parsed as integer)
     ///
     /// Parsing failures for numeric values are ignored and leave the existing config value unchanged.
     /// The function returns a new `Config` with any applied overrides; it does not modify external state.
