@@ -1,4 +1,4 @@
-# SentinelD Performance Guidelines
+# DaemonEye Performance Guidelines
 
 ## Performance Targets
 
@@ -21,7 +21,7 @@
 
 **Primary Storage**: redb pure Rust embedded database for optimal performance and security
 
-- **Event Store**: Read/write access for sentinelagent, read-only for sentinelcli
+- **Event Store**: Read/write access for daemoneye-agent, read-only for daemoneye-cli
 - **Audit Ledger**: Write-only access for procmond, read-only for others
 - **Features**: Concurrent access, ACID transactions, zero-copy deserialization
 - **Performance**: Optimized for time-series queries and high-throughput writes
@@ -145,10 +145,10 @@ Use `interprocess` crate for cross-platform IPC communication:
 
 ```rust
 use interprocess::local_socket::LocalSocketStream;
-use sentinel_lib::proto::{DetectionTask, DetectionResult};
+use daemoneye_lib::proto::{DetectionTask, DetectionResult};
 
 // Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
-let stream = LocalSocketStream::connect("/tmp/sentineld.sock")?;
+let stream = LocalSocketStream::connect("/tmp/DaemonEye.sock")?;
 
 // Protobuf message serialization with CRC32 checksums
 let task = DetectionTask::new()

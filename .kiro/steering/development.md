@@ -1,4 +1,4 @@
-# SentinelD Development Guidelines
+# DaemonEye Development Guidelines
 
 ## AI Assistant Behavior Rules
 
@@ -41,8 +41,8 @@ just test         # Run all tests
 
 # Component Execution
 just run-procmond [args]      # Run procmond with optional args
-just run-sentinelcli [args]   # Run sentinelcli with optional args
-just run-sentinelagent [args] # Run sentinelagent with optional args
+just run-daemoneye-cli [args]   # Run daemoneye-cli with optional args
+just run-daemoneye-agent [args] # Run daemoneye-agent with optional args
 ```
 
 ### Justfile Conventions
@@ -78,7 +78,7 @@ just run-sentinelagent [args] # Run sentinelagent with optional args
 NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific testing
-RUST_BACKTRACE=1 cargo test -p sentinel-lib --nocapture
+RUST_BACKTRACE=1 cargo test -p daemoneye-lib --nocapture
 
 # Performance regression testing
 cargo bench --baseline previous

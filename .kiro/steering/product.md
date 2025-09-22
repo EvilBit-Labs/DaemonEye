@@ -1,6 +1,6 @@
-# SentinelD Product Overview
+# DaemonEye Product Overview
 
-SentinelD is a security-focused, high-performance process monitoring system built for cybersecurity professionals, threat hunters, and security operations centers. **Its primary purpose is to detect suspicious activity on systems by monitoring abnormal process behavior and patterns.** This is a complete Rust 2024 rewrite of a proven Python prototype, delivering enterprise-grade performance with audit-grade integrity.
+DaemonEye is a security-focused, high-performance process monitoring system built for cybersecurity professionals, threat hunters, and security operations centers. **Its primary purpose is to detect suspicious activity on systems by monitoring abnormal process behavior and patterns.** This is a complete Rust 2024 rewrite of a proven Python prototype, delivering enterprise-grade performance with audit-grade integrity.
 
 ## Core Mission
 
@@ -16,15 +16,15 @@ Detect and alert on suspicious system activity through continuous process monito
 
 ## Three-Component Architecture
 
-1. **procmond** (Privileged Process Collector): Runs with elevated privileges, focused solely on process monitoring with minimal attack surface. Communicates via protobuf IPC with sentinelagent.
-2. **sentinelagent** (User-Space Orchestrator): Operates in user space with minimal privileges for alerting and network delivery. Manages procmond lifecycle and translates SQL rules to simple detection tasks.
-3. **sentinelcli** (Command-Line Interface): Local interface for data queries, result exports, and service configuration. Communicates with sentinelagent for all operations.
+1. **procmond** (Privileged Process Collector): Runs with elevated privileges, focused solely on process monitoring with minimal attack surface. Communicates via protobuf IPC with daemoneye-agent.
+2. **daemoneye-agent** (User-Space Orchestrator): Operates in user space with minimal privileges for alerting and network delivery. Manages procmond lifecycle and translates SQL rules to simple detection tasks.
+3. **daemoneye-cli** (Command-Line Interface): Local interface for data queries, result exports, and service configuration. Communicates with daemoneye-agent for all operations.
 
 ## Tiered Deployment Architecture
 
 ### Free Tier
 
-- Standalone agent deployment (procmond + sentinelagent + sentinelcli)
+- Standalone agent deployment (procmond + daemoneye-agent + daemoneye-cli)
 - Local process monitoring and detection
 - Basic alerting and data export
 

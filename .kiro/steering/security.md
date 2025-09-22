@@ -1,4 +1,4 @@
-# SentinelD Security Guidelines
+# DaemonEye Security Guidelines
 
 ## Core Security Requirements
 

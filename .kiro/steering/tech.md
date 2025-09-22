@@ -1,4 +1,4 @@
-# SentinelD Technical Stack
+# DaemonEye Technical Stack
 
 ## Language & Runtime
 
@@ -63,8 +63,8 @@ just coverage     # Generate coverage report with tarpaulin
 
 # Component execution
 just run-procmond --once --verbose      # Run process monitor
-just run-sentinelcli --help             # Run CLI interface
-just run-sentinelagent --config /path   # Run orchestrator agent
+just run-daemoneye-cli --help             # Run CLI interface
+just run-daemoneye-agent --config /path   # Run orchestrator agent
 ```
 
 ### Build Configuration
