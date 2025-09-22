@@ -2,18 +2,18 @@
 alwaysApply: true
 ---
 
-# SentinelD Workspace Structure
+# DaemonEye Workspace Structure
 
 ## Project Architecture
 
-SentinelD is a **multi-tier security architecture** workspace supporting:
+DaemonEye is a **multi-tier security architecture** workspace supporting:
 
 **Core Components:**
 
 1. **procmond/**: Process monitoring daemon (privileged collector)
-2. **sentinelagent/**: User-space orchestrator for alerting and network operations
-3. **sentinelcli/**: Command-line interface for queries and configuration
-4. **sentinel-lib/**: Shared library providing common functionality
+2. **daemoneye-agent/**: User-space orchestrator for alerting and network operations
+3. **daemoneye-cli/**: Command-line interface for queries and configuration
+4. **daemoneye-lib/**: Shared library providing common functionality
 
 **Enterprise Components:**
 5. **security-center/**: Centralized management (Business/Enterprise tiers)
@@ -21,7 +21,7 @@ SentinelD is a **multi-tier security architecture** workspace supporting:
 
 **Deployment Tiers:**
 
-- **Free Tier**: Standalone agents (procmond + sentinelagent + sentinelcli)
+- **Free Tier**: Standalone agents (procmond + daemoneye-agent + daemoneye-cli)
 - **Business Tier**: + Security Center + Enterprise integrations
 - **Enterprise Tier**: + Kernel monitoring + Federated architecture + Advanced SIEM
 
@@ -29,7 +29,7 @@ SentinelD is a **multi-tier security architecture** workspace supporting:
 
 - **Language**: Rust 2024 Edition (MSRV: 1.85+)
 - **Resolver**: Version 3 as specified in [Cargo.toml](mdc:Cargo.toml)
-- **Members**: procmond, sentinelcli, sentinelagent, sentinel-lib
+- **Members**: procmond, daemoneye-cli, daemoneye-agent, daemoneye-lib
 - **Linting**: Zero warnings policy with `unsafe_code = "forbid"`
 
 ## Key Files
@@ -48,5 +48,5 @@ SentinelD is a **multi-tier security architecture** workspace supporting:
 
 ## Security Principles
 
-- Isolate privileged operations (procmond) from network functionality (sentinelagent)
+- Isolate privileged operations (procmond) from network functionality (daemoneye-agent)
 - Follow principle of least privilege

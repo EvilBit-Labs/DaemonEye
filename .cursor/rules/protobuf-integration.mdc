@@ -7,27 +7,27 @@ description: Protobuf integration and code generation standards
 
 ## File Organization
 
-- **Protobuf files**: Located in [sentinel-lib/proto/](mdc:sentinel-lib/proto/)
-- **Build script**: [sentinel-lib/build.rs](mdc:sentinel-lib/build.rs) handles protobuf compilation
-- **Generated code**: Included in [sentinel-lib/src/proto.rs](mdc:sentinel-lib/src/proto.rs)
+- **Protobuf files**: Located in [daemoneye-lib/proto/](mdc:daemoneye-lib/proto/)
+- **Build script**: [daemoneye-lib/build.rs](mdc:daemoneye-lib/build.rs) handles protobuf compilation
+- **Generated code**: Included in [daemoneye-lib/src/proto.rs](mdc:daemoneye-lib/src/proto.rs)
 
 ## Key Files
 
-- [sentinel-lib/proto/common.proto](mdc:sentinel-lib/proto/common.proto): Common message types
-- [sentinel-lib/proto/ipc.proto](mdc:sentinel-lib/proto/ipc.proto): IPC communication messages
-- [sentinel-lib/build.rs](mdc:sentinel-lib/build.rs): Protobuf compilation script
-- [sentinel-lib/src/proto.rs](mdc:sentinel-lib/src/proto.rs): Generated code integration
+- [daemoneye-lib/proto/common.proto](mdc:daemoneye-lib/proto/common.proto): Common message types
+- [daemoneye-lib/proto/ipc.proto](mdc:daemoneye-lib/proto/ipc.proto): IPC communication messages
+- [daemoneye-lib/build.rs](mdc:daemoneye-lib/build.rs): Protobuf compilation script
+- [daemoneye-lib/src/proto.rs](mdc:daemoneye-lib/src/proto.rs): Generated code integration
 
 ## Build Process
 
 1. **Compilation**: `prost-build` compiles `.proto` files to Rust code
 2. **Inclusion**: Generated code is included using `include!(concat!(env!("OUT_DIR"), "/_.rs"))`
 3. **Re-exports**: Clean type names are re-exported for easier usage
-4. **Dependencies**: All crates that need protobuf types depend on `sentinel-lib`
+4. **Dependencies**: All crates that need protobuf types depend on `daemoneye-lib`
 
 ## Usage Patterns
 
-- Access protobuf types through `sentinel-lib::proto`
+- Access protobuf types through `daemoneye-lib::proto`
 - Use generated builders for message construction
 - Implement proper serialization/deserialization with prost
 - Handle protobuf errors gracefully
@@ -53,10 +53,10 @@ The `interprocess` crate provides the transport layer for protobuf messages:
 
 ```rust
 use interprocess::local_socket::LocalSocketStream;
-use sentinel_lib::proto::{DetectionTask, DetectionResult};
+use daemoneye_lib::proto::{DetectionTask, DetectionResult};
 
 // Create IPC connection
-let stream = LocalSocketStream::connect("/tmp/sentineld.sock")?;
+let stream = LocalSocketStream::connect("/tmp/DaemonEye.sock")?;
 
 // Send protobuf message
 let task = DetectionTask::new()
@@ -98,7 +98,7 @@ The protobuf messages work in conjunction with the IPC transport layer:
 
 ```rust
 use tempfile::tempdir;
-use sentinel_lib::ipc::interprocess_transport::IpcServer;
+use daemoneye_lib::ipc::interprocess_transport::IpcServer;
 
 #[tokio::test]
 async fn test_protobuf_ipc_roundtrip() {
@@ -121,8 +121,8 @@ async fn test_protobuf_ipc_roundtrip() {
 
 ## Development Workflow
 
-- Modify `.proto` files in [sentinel-lib/proto/](mdc:sentinel-lib/proto/)
+- Modify `.proto` files in [daemoneye-lib/proto/](mdc:daemoneye-lib/proto/)
 - Run `cargo build` to regenerate Rust code
-- Update [sentinel-lib/src/proto.rs](mdc:sentinel-lib/src/proto.rs) if needed
+- Update [daemoneye-lib/src/proto.rs](mdc:daemoneye-lib/src/proto.rs) if needed
 - Test changes with `cargo test --workspace`
 - Test IPC integration with `cargo test --test ipc_integration`

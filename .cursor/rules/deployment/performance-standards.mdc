@@ -2,7 +2,7 @@
 globs: **/*.rs
 ---
 
-# Performance Standards for SentinelD
+# Performance Standards for DaemonEye
 
 ## Performance Requirements
 

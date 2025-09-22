@@ -2,7 +2,7 @@
 globs: tests/**/*.rs,**/*test*.rs
 alwaysApply: false
 ---
-# Testing Standards for SentinelD
+# Testing Standards for DaemonEye
 
 ## Testing Architecture
 

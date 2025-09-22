@@ -2,9 +2,9 @@
 globs: **/*.rs
 ---
 
-# Rust Linting Rules for SentinelD
+# Rust Linting Rules for DaemonEye
 
-This document explains the intent behind each clippy lint rule in SentinelD's Cargo.toml. These rules are carefully chosen for a security-critical process monitoring system and should not be disabled without understanding their purpose.
+This document explains the intent behind each clippy lint rule in DaemonEye's Cargo.toml. These rules are carefully chosen for a security-critical process monitoring system and should not be disabled without understanding their purpose.
 
 ## Critical Security Rules (FORBIDDEN)
 

@@ -2,7 +2,7 @@
 globs: *.md,*.rs
 ---
 
-# Documentation Standards for SentinelD
+# Documentation Standards for DaemonEye
 
 ## Code Documentation
 

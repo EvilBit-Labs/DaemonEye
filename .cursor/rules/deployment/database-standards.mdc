@@ -2,7 +2,7 @@
 globs: **/*.rs
 ---
 
-# Database and Storage Standards for SentinelD
+# Database and Storage Standards for DaemonEye
 
 ## Primary Database: redb
 

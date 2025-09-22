@@ -2,11 +2,11 @@
 globs: **/*.rs
 ---
 
-# Security Standards for SentinelD
+# Security Standards for DaemonEye
 
 ## Security Architecture
 
-SentinelD follows a **multi-tier security architecture** with strict privilege separation and enterprise extensions.
+DaemonEye follows a **multi-tier security architecture** with strict privilege separation and enterprise extensions.
 
 ## Core Security Requirements
 

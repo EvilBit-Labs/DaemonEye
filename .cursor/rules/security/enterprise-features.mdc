@@ -2,15 +2,15 @@
 globs: **/*.rs
 ---
 
-# Enterprise Features for SentinelD
+# Enterprise Features for DaemonEye
 
 ## Multi-Tier Architecture
 
-SentinelD supports **three deployment tiers**:
+DaemonEye supports **three deployment tiers**:
 
 ### Free Tier
 
-- Standalone agent deployment (procmond + sentinelagent + sentinelcli)
+- Standalone agent deployment (procmond + daemoneye-agent + daemoneye-cli)
 - Local process monitoring and detection
 - Basic alerting and data export
 
@@ -42,7 +42,7 @@ SentinelD supports **three deployment tiers**:
 ### Message Types
 
 ```rust
-// DetectionTask - sent from sentinelagent to procmond
+// DetectionTask - sent from daemoneye-agent to procmond
 message DetectionTask {
     string rule_id = 1;
     string query = 2;
@@ -50,7 +50,7 @@ message DetectionTask {
     map<string, string> parameters = 4;
 }
 
-// DetectionResult - sent from procmond to sentinelagent
+// DetectionResult - sent from procmond to daemoneye-agent
 message DetectionResult {
     string rule_id = 1;
     bool matched = 2;
