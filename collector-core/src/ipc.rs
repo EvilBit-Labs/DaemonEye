@@ -1,8 +1,8 @@
 //! IPC integration for collector-core framework.
 //!
-//! This module integrates the existing IPC infrastructure from sentinel-lib
+//! This module integrates the existing IPC infrastructure from daemoneye-lib
 //! with the collector-core runtime, enabling communication between collector-core
-//! components and sentinelagent.
+//! components and daemoneye-agent.
 
 use crate::{config::CollectorConfig, source::SourceCaps};
 use anyhow::{Context, Result};
@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 /// IPC server integration for collector-core runtime.
 ///
 /// This struct manages the IPC server that handles communication between
-/// collector-core components and sentinelagent, preserving the existing
+/// collector-core components and daemoneye-agent, preserving the existing
 /// protobuf protocol and CRC32 framing while integrating with the
 /// collector-core event handling system.
 pub struct CollectorIpcServer {
@@ -158,7 +158,7 @@ impl CollectorIpcServer {
     ///
     /// This method converts the collector-core SourceCaps bitflags into
     /// a protobuf CollectionCapabilities message for capability negotiation
-    /// with sentinelagent.
+    /// with daemoneye-agent.
     pub async fn get_capabilities(&self) -> CollectionCapabilities {
         let caps = self.capabilities.read().await;
         source_caps_to_proto_capabilities(*caps)

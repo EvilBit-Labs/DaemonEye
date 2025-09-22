@@ -871,7 +871,7 @@ impl CollectorRuntime {
         Ok(())
     }
 
-    /// Starts the IPC server for communication with sentinelagent.
+    /// Starts the IPC server for communication with daemoneye-agent.
     async fn start_ipc_server(&mut self) -> Result<()> {
         info!("Starting IPC server for collector-core");
 

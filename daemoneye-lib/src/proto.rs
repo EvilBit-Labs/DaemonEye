@@ -1,7 +1,7 @@
 //! Protocol Buffer definitions for IPC communication.
 //!
 //! This module provides type-safe protobuf message definitions for communication
-//! between procmond and sentinelagent components. The types are automatically
+//! between procmond and daemoneye-agent components. The types are automatically
 //! generated from the .proto files in the `proto/` directory during build.
 
 use crate::models::{ProcessId, process::ProcessRecord as NativeProcessRecord};

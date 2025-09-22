@@ -1,7 +1,7 @@
 //! IPC (Inter-Process Communication) module for procmond.
 //!
 //! This module provides the server-side IPC implementation for communication
-//! between procmond and sentinelagent using the interprocess crate for
+//! between procmond and daemoneye-agent using the interprocess crate for
 //! cross-platform support.
 
 pub mod error;

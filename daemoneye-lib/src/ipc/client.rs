@@ -1,6 +1,6 @@
 //! Advanced IPC client implementation with connection management and resilience.
 //!
-//! This module provides a robust client implementation for sentinelagent that includes
+//! This module provides a robust client implementation for daemoneye-agent that includes
 //! automatic reconnection, connection pooling, circuit breaker patterns, and comprehensive
 //! error handling for reliable communication with procmond.
 

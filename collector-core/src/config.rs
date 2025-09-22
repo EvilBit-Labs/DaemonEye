@@ -2,9 +2,9 @@
 //!
 //! This module provides configuration structures and validation for the
 //! collector runtime and event sources. It integrates with the existing
-//! sentinel-lib ConfigLoader for hierarchical configuration management.
+//! daemoneye-lib ConfigLoader for hierarchical configuration management.
 
-use daemoneye_lib::config::{Config as SentinelConfig, ConfigError, ConfigLoader};
+use daemoneye_lib::config::{Config as DaemonEyeConfig, ConfigError, ConfigLoader};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -248,7 +248,7 @@ impl CollectorConfig {
         self
     }
 
-    /// Loads configuration from the existing sentinel-lib ConfigLoader.
+    /// Loads configuration from the existing daemoneye-lib ConfigLoader.
     ///
     /// This method integrates with the hierarchical configuration system
     /// used by other DaemonEye components, applying overrides from:
@@ -263,14 +263,14 @@ impl CollectorConfig {
     /// # Errors
     ///
     /// Returns an error if configuration loading or validation fails.
-    pub fn load_from_sentinel_config(component_name: &str) -> Result<Self, ConfigError> {
+    pub fn load_from_daemoneye_config(component_name: &str) -> Result<Self, ConfigError> {
         let config_loader = ConfigLoader::new(component_name);
-        let sentinel_config = config_loader.load()?;
+        let daemoneye_config = config_loader.load()?;
 
         let mut collector_config = Self::default().with_component_name(component_name.to_string());
 
-        // Apply sentinel-lib configuration overrides
-        collector_config = collector_config.apply_sentinel_config(&sentinel_config);
+        // Apply daemoneye-lib configuration overrides
+        collector_config = collector_config.apply_daemoneye_config(&daemoneye_config);
 
         // Validate the final configuration
         collector_config
@@ -282,11 +282,11 @@ impl CollectorConfig {
         Ok(collector_config)
     }
 
-    /// Applies configuration from sentinel-lib Config structure.
+    /// Applies configuration from daemoneye-lib Config structure.
     ///
-    /// This method maps relevant fields from the sentinel-lib configuration
+    /// This method maps relevant fields from the daemoneye-lib configuration
     /// to collector-core configuration fields.
-    fn apply_sentinel_config(mut self, config: &SentinelConfig) -> Self {
+    fn apply_daemoneye_config(mut self, config: &DaemonEyeConfig) -> Self {
         // Map app configuration
         self.max_batch_size = config.app.batch_size;
 
@@ -516,8 +516,8 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_sentinel_config() {
-        let sentinel_config = SentinelConfig {
+    fn test_apply_daemoneye_config() {
+        let daemoneye_config = DaemonEyeConfig {
             app: daemoneye_lib::config::AppConfig {
                 batch_size: 2000,
                 ..Default::default()
@@ -529,7 +529,7 @@ mod tests {
             ..Default::default()
         };
 
-        let config = CollectorConfig::default().apply_sentinel_config(&sentinel_config);
+        let config = CollectorConfig::default().apply_daemoneye_config(&daemoneye_config);
 
         assert_eq!(config.max_batch_size, 2000);
         assert_eq!(config.event_buffer_size, 20000); // batch_size * 10

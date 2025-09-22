@@ -1,6 +1,6 @@
-//! IPC client implementation for sentinelagent.
+//! IPC client implementation for daemoneye-agent.
 //!
-//! This module provides a high-level IPC client for sentinelagent to communicate
+//! This module provides a high-level IPC client for daemoneye-agent to communicate
 //! with procmond using the interprocess crate with protobuf messages and CRC32
 //! integrity validation. It includes connection management, automatic reconnection,
 //! and robust error handling.
@@ -20,7 +20,7 @@ use interprocess::local_socket::{GenericFilePath, ToFsName};
 #[cfg(windows)]
 use interprocess::local_socket::{GenericNamespaced, ToNsName};
 
-/// IPC client manager for sentinelagent
+/// IPC client manager for daemoneye-agent
 pub struct IpcClientManager {
     config: IpcConfig,
     codec: IpcCodec,
@@ -306,7 +306,7 @@ impl IpcClientManager {
     }
 }
 
-/// Create a default IPC configuration for sentinelagent
+/// Create a default IPC configuration for daemoneye-agent
 ///
 /// This configuration follows the coding guidelines with:
 /// - Max message size: 16KB (default 8KB)

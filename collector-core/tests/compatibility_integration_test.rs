@@ -1,4 +1,4 @@
-//! Compatibility tests ensuring collector-core works with existing procmond and sentinelagent.
+//! Compatibility tests ensuring collector-core works with existing procmond and daemoneye-agent.
 //!
 //! This test suite verifies that the collector-core framework maintains backward
 //! compatibility with existing components and preserves the established IPC protocol
@@ -161,8 +161,8 @@ impl EventSource for LegacyCompatibleSource {
     }
 }
 
-/// Mock sentinelagent client that tests IPC compatibility.
-struct MockSentinelAgentClient {
+/// Mock daemoneye-agent client that tests IPC compatibility.
+struct MockDaemonEyeAgentClient {
     name: &'static str,
     tasks_sent: Arc<AtomicUsize>,
     results_received: Arc<AtomicUsize>,
@@ -171,7 +171,7 @@ struct MockSentinelAgentClient {
     running: Arc<AtomicBool>,
 }
 
-impl MockSentinelAgentClient {
+impl MockDaemonEyeAgentClient {
     fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -194,7 +194,7 @@ impl MockSentinelAgentClient {
         self.capabilities_received.load(Ordering::Relaxed)
     }
 
-    // Simulate sending detection tasks like sentinelagent would
+    // Simulate sending detection tasks like daemoneye-agent would
     async fn send_detection_tasks(&self) -> Vec<DetectionTask> {
         let tasks = vec![
             DetectionTask {
@@ -223,7 +223,7 @@ impl MockSentinelAgentClient {
         tasks
     }
 
-    // Simulate processing detection results like sentinelagent would
+    // Simulate processing detection results like daemoneye-agent would
     async fn process_detection_result(&self, result: DetectionResult) -> bool {
         info!(
             client = self.name,
@@ -248,7 +248,7 @@ impl MockSentinelAgentClient {
         true
     }
 
-    // Simulate capability negotiation like sentinelagent would
+    // Simulate capability negotiation like daemoneye-agent would
     async fn negotiate_capabilities(&self, capabilities: CollectionCapabilities) -> bool {
         info!(
             client = self.name,
@@ -356,7 +356,7 @@ async fn test_legacy_procmond_compatibility() {
 }
 
 #[tokio::test]
-async fn test_sentinelagent_ipc_compatibility() {
+async fn test_daemoneye_agent_ipc_compatibility() {
     use collector_core::ipc::CollectorIpcServer;
 
     let config = CollectorConfig::default();
@@ -365,8 +365,8 @@ async fn test_sentinelagent_ipc_compatibility() {
     ));
     let ipc_server = CollectorIpcServer::new(config, Arc::clone(&capabilities));
 
-    // Create mock sentinelagent client
-    let mock_client = MockSentinelAgentClient::new("mock-sentinelagent");
+    // Create mock daemoneye-agent client
+    let mock_client = MockDaemonEyeAgentClient::new("mock-daemoneye-agent");
 
     // Test capability negotiation
     let proto_capabilities = ipc_server.get_capabilities().await;
@@ -542,7 +542,7 @@ async fn test_protobuf_backward_compatibility() {
 
 #[tokio::test]
 async fn test_configuration_compatibility() {
-    // Test that collector-core can load existing sentinel-lib configurations
+    // Test that collector-core can load existing daemoneye-lib configurations
 
     // Create configuration that mimics existing procmond config
     let legacy_config = CollectorConfig::default()
@@ -559,7 +559,7 @@ async fn test_configuration_compatibility() {
 
     // Test configuration builder pattern compatibility
     let builder_config = CollectorConfig::new()
-        .with_component_name("sentinelagent".to_string())
+        .with_component_name("daemoneye-agent".to_string())
         .with_max_event_sources(32)
         .with_event_buffer_size(2000)
         .with_debug_logging(true);
@@ -568,7 +568,7 @@ async fn test_configuration_compatibility() {
         builder_config.validate().is_ok(),
         "Builder config should be valid"
     );
-    assert_eq!(builder_config.component_name, "sentinelagent");
+    assert_eq!(builder_config.component_name, "daemoneye-agent");
     assert_eq!(builder_config.max_event_sources, 32);
     assert_eq!(builder_config.event_buffer_size, 2000);
     assert!(builder_config.enable_debug_logging);
@@ -611,18 +611,18 @@ async fn test_operational_behavior_compatibility() {
     )
     .with_legacy_mode(true);
 
-    let sentinelagent_like = LegacyCompatibleSource::new(
-        "sentinelagent-like",
+    let daemoneye_agent_like = LegacyCompatibleSource::new(
+        "daemoneye-agent-like",
         SourceCaps::NETWORK | SourceCaps::PERFORMANCE,
     )
     .with_legacy_mode(false);
 
     // Store references for testing (unused but kept for future use)
     let _procmond_events = procmond_like.events_sent.clone();
-    let _sentinelagent_events = sentinelagent_like.events_sent.clone();
+    let _daemoneye_agent_events = daemoneye_agent_like.events_sent.clone();
 
     let _ = collector.register(Box::new(procmond_like));
-    let _ = collector.register(Box::new(sentinelagent_like));
+    let _ = collector.register(Box::new(daemoneye_agent_like));
 
     // Verify capability aggregation matches expected operational behavior
     let capabilities = collector.capabilities();
@@ -643,23 +643,23 @@ async fn test_operational_behavior_compatibility() {
     )
     .with_legacy_mode(true);
 
-    let sentinelagent_like_test = LegacyCompatibleSource::new(
-        "sentinelagent-like",
+    let daemoneye_agent_like_test = LegacyCompatibleSource::new(
+        "daemoneye-agent-like",
         SourceCaps::NETWORK | SourceCaps::PERFORMANCE,
     )
     .with_legacy_mode(false);
 
     let procmond_events_test = procmond_like_test.events_sent.clone();
-    let sentinelagent_events_test = sentinelagent_like_test.events_sent.clone();
+    let daemoneye_agent_events_test = daemoneye_agent_like_test.events_sent.clone();
 
     // Start procmond-like source
     let procmond_handle = tokio::spawn(async move {
         let _ = procmond_like_test.start(tx1).await;
     });
 
-    // Start sentinelagent-like source
-    let sentinelagent_handle = tokio::spawn(async move {
-        let _ = sentinelagent_like_test.start(tx2).await;
+    // Start daemoneye-agent-like source
+    let daemoneye_agent_handle = tokio::spawn(async move {
+        let _ = daemoneye_agent_like_test.start(tx2).await;
     });
 
     // Let sources run for a bit
@@ -669,14 +669,14 @@ async fn test_operational_behavior_compatibility() {
 
     // Stop sources
     procmond_handle.abort();
-    sentinelagent_handle.abort();
+    daemoneye_agent_handle.abort();
 
     let procmond_count = procmond_events_test.load(Ordering::Relaxed);
-    let sentinelagent_count = sentinelagent_events_test.load(Ordering::Relaxed);
+    let daemoneye_agent_count = daemoneye_agent_events_test.load(Ordering::Relaxed);
 
     info!(
         procmond_events = procmond_count,
-        sentinelagent_events = sentinelagent_count,
+        daemoneye_agent_events = daemoneye_agent_count,
         elapsed_ms = elapsed.as_millis(),
         "Operational behavior compatibility test completed"
     );
@@ -687,8 +687,8 @@ async fn test_operational_behavior_compatibility() {
         "Procmond-like source should generate events"
     );
     assert!(
-        sentinelagent_count > 0,
-        "Sentinelagent-like source should generate events"
+        daemoneye_agent_count > 0,
+        "DaemonEye-agent-like source should generate events"
     );
 
     // Verify timing characteristics are reasonable
@@ -702,7 +702,7 @@ async fn test_operational_behavior_compatibility() {
     );
 
     // Verify event generation rates are reasonable
-    let total_events = procmond_count + sentinelagent_count;
+    let total_events = procmond_count + daemoneye_agent_count;
     let events_per_second = if elapsed.as_secs_f64() > 0.0 {
         total_events as f64 / elapsed.as_secs_f64()
     } else {

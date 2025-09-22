@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 /// Message handler for IPC communication with process monitoring.
 ///
 /// The `ProcessMessageHandler` is the core component of procmond that handles
-/// inter-process communication with sentinelagent. It provides functionality for
+/// inter-process communication with daemoneye-agent. It provides functionality for
 /// process enumeration, system monitoring, and task processing through a secure
 /// IPC protocol using protobuf messages and CRC32 integrity validation.
 ///
@@ -30,7 +30,7 @@ use tokio::sync::Mutex;
 ///
 /// - Enumerating system processes using the `sysinfo` crate
 /// - Converting process data to protobuf format for IPC transmission
-/// - Handling detection tasks from sentinelagent via IPC
+/// - Handling detection tasks from daemoneye-agent via IPC
 /// - Managing database operations for audit logging
 /// - Providing process metadata including CPU usage, memory consumption, and execution details
 ///
@@ -40,7 +40,7 @@ use tokio::sync::Mutex;
 /// - No network access whatsoever
 /// - Write-only access to audit ledger for tamper-evident logging
 /// - Minimal complexity to reduce attack surface
-/// - All complex logic (SQL parsing, networking, detection) handled by sentinelagent
+/// - All complex logic (SQL parsing, networking, detection) handled by daemoneye-agent
 ///
 /// # Usage
 ///

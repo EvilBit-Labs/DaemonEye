@@ -2,7 +2,7 @@ syntax = "proto3";
 
 import "common.proto";
 
-// IPC message definitions for communication between collector-core components and sentinelagent
+// IPC message definitions for communication between collector-core components and daemoneye-agent
 
 /// Capability negotiation message for collector-core components
 message CollectionCapabilities {
@@ -34,7 +34,7 @@ message AdvancedCapabilities {
   bool system_wide = 3;
 }
 
-/// Detection task sent from sentinelagent to collector-core components
+/// Detection task sent from daemoneye-agent to collector-core components
 message DetectionTask {
   /// Unique task identifier for correlation
   string task_id = 1;
@@ -54,7 +54,7 @@ message DetectionTask {
   optional PerformanceFilter performance_filter = 8;
 }
 
-/// Detection result returned from collector-core components to sentinelagent
+/// Detection result returned from collector-core components to daemoneye-agent
 message DetectionResult {
   /// Task identifier matching the original request
   string task_id = 1;

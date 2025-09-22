@@ -1,7 +1,7 @@
 //! Integration tests for collector-core IPC functionality.
 //!
 //! These tests verify that the IPC integration preserves compatibility
-//! with existing sentinelagent clients while adding collector-core
+//! with existing daemoneye-agent clients while adding collector-core
 //! functionality.
 
 use async_trait::async_trait;

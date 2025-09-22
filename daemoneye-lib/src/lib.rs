@@ -40,7 +40,7 @@ pub mod network;
 /// Return a greeting message from the shared library for a specific component.
 #[must_use]
 pub fn greet(component: &str) -> String {
-    format!("Hello from sentinel-lib to {component}!")
+    format!("Hello from daemoneye-lib to {component}!")
 }
 
 #[cfg(test)]
@@ -50,6 +50,6 @@ mod tests {
     #[test]
     fn greet_returns_expected_message() {
         let got = greet("tests");
-        assert_eq!(got, "Hello from sentinel-lib to tests!");
+        assert_eq!(got, "Hello from daemoneye-lib to tests!");
     }
 }

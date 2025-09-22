@@ -1,7 +1,7 @@
 //! IPC communication support for interprocess transport.
 //!
 //! This module provides codec functionality for secure, efficient communication
-//! between procmond and sentinelagent using the interprocess crate with
+//! between procmond and daemoneye-agent using the interprocess crate with
 //! protobuf message framing and CRC32 integrity validation.
 
 pub mod client;

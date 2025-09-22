@@ -1,6 +1,6 @@
 # collector-core
 
-A reusable collection infrastructure framework for SentinelD monitoring components.
+A reusable collection infrastructure framework for DaemonEye monitoring components.
 
 ## Overview
 
