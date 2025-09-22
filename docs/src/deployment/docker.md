@@ -26,7 +26,7 @@ DaemonEye uses a multi-container architecture:
 
 - **procmond**: Privileged process monitoring daemon
 - **daemoneye-agent**: User-space orchestrator and alerting
-- **sentinelcli**: Command-line interface and management
+- **daemoneye-cli**: Command-line interface and management
 - **Security Center**: Web-based management interface (Business/Enterprise tiers)
 
 ## Container Images
@@ -45,8 +45,8 @@ docker pull daemoneye/daemoneye-agent:latest
 docker pull daemoneye/daemoneye-agent:1.0.0
 
 # CLI interface
-docker pull daemoneye/sentinelcli:latest
-docker pull daemoneye/sentinelcli:1.0.0
+docker pull daemoneye/daemoneye-cli:latest
+docker pull daemoneye/daemoneye-cli:1.0.0
 
 # Security Center (Business/Enterprise)
 docker pull daemoneye/security-center:latest
@@ -115,7 +115,7 @@ docker run -d \
   -v /etc/daemoneye:/config \
   -v /var/lib/daemoneye:/data \
   -v /var/log/daemoneye:/logs \
-  -e SENTINELD_LOG_LEVEL=info \
+  -e DaemonEye_LOG_LEVEL=info \
   daemoneye/procmond:latest --config /config/config.yaml
 ```
 
@@ -137,7 +137,7 @@ docker run -d \
   -v /etc/daemoneye:/config \
   -v /var/lib/daemoneye:/data \
   -v /var/log/daemoneye:/logs \
-  -e SENTINELD_LOG_LEVEL=info \
+  -e DaemonEye_LOG_LEVEL=info \
   daemoneye/daemoneye-agent:latest --config /config/config.yaml
 ```
 
@@ -149,13 +149,13 @@ docker run -it \
   --rm \
   --link daemoneye-agent:agent \
   -v /var/lib/daemoneye:/data \
-  daemoneye/sentinelcli:latest
+  daemoneye/daemoneye-cli:latest
 
 # Execute specific command
 docker run --rm \
   --link daemoneye-agent:agent \
   -v /var/lib/daemoneye:/data \
-  daemoneye/sentinelcli:latest query "SELECT * FROM processes LIMIT 10"
+  daemoneye/daemoneye-cli:latest query "SELECT * FROM processes LIMIT 10"
 ```
 
 ### Multi-Container Deployment
@@ -200,9 +200,9 @@ services:
       - /var/log/daemoneye:/logs
       - ./config:/config:ro
     environment:
-      - SENTINELD_LOG_LEVEL=info
-      - SENTINELD_DATA_DIR=/data
-      - SENTINELD_LOG_DIR=/logs
+      - DaemonEye_LOG_LEVEL=info
+      - DaemonEye_DATA_DIR=/data
+      - DaemonEye_LOG_DIR=/logs
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
@@ -218,16 +218,16 @@ services:
       - /var/log/daemoneye:/logs
       - ./config:/config:ro
     environment:
-      - SENTINELD_LOG_LEVEL=info
-      - SENTINELD_DATA_DIR=/data
-      - SENTINELD_LOG_DIR=/logs
+      - DaemonEye_LOG_LEVEL=info
+      - DaemonEye_DATA_DIR=/data
+      - DaemonEye_LOG_DIR=/logs
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
       - daemoneye-network
 
-  sentinelcli:
-    image: daemoneye/sentinelcli:latest
+  daemoneye-cli:
+    image: daemoneye/daemoneye-cli:latest
     container_name: daemoneye-cli
     depends_on:
       - daemoneye-agent
@@ -235,7 +235,7 @@ services:
       - /var/lib/daemoneye:/data
       - ./config:/config:ro
     environment:
-      - SENTINELD_DATA_DIR=/data
+      - DaemonEye_DATA_DIR=/data
     command: [--help]
     restart: no
     networks:
@@ -271,10 +271,10 @@ services:
       - ./config/procmond.yaml:/config/config.yaml:ro
       - ./rules:/rules:ro
     environment:
-      - SENTINELD_LOG_LEVEL=info
-      - SENTINELD_DATA_DIR=/data
-      - SENTINELD_LOG_DIR=/logs
-      - SENTINELD_RULE_DIR=/rules
+      - DaemonEye_LOG_LEVEL=info
+      - DaemonEye_DATA_DIR=/data
+      - DaemonEye_LOG_DIR=/logs
+      - DaemonEye_RULE_DIR=/rules
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
@@ -298,10 +298,10 @@ services:
       - daemoneye-logs:/logs
       - ./config/daemoneye-agent.yaml:/config/config.yaml:ro
     environment:
-      - SENTINELD_LOG_LEVEL=info
-      - SENTINELD_DATA_DIR=/data
-      - SENTINELD_LOG_DIR=/logs
-      - SENTINELD_PROCMOND_ENDPOINT=tcp://procmond:8080
+      - DaemonEye_LOG_LEVEL=info
+      - DaemonEye_DATA_DIR=/data
+      - DaemonEye_LOG_DIR=/logs
+      - DaemonEye_PROCMOND_ENDPOINT=tcp://procmond:8080
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
@@ -324,10 +324,10 @@ services:
       - daemoneye-data:/data
       - ./config/security-center.yaml:/config/config.yaml:ro
     environment:
-      - SENTINELD_LOG_LEVEL=info
-      - SENTINELD_DATA_DIR=/data
-      - SENTINELD_AGENT_ENDPOINT=tcp://daemoneye-agent:8080
-      - SENTINELD_WEB_PORT=8080
+      - DaemonEye_LOG_LEVEL=info
+      - DaemonEye_DATA_DIR=/data
+      - DaemonEye_AGENT_ENDPOINT=tcp://daemoneye-agent:8080
+      - DaemonEye_WEB_PORT=8080
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
@@ -391,10 +391,10 @@ services:
       - ./config:/config:ro
       - ./rules:/rules:ro
     environment:
-      - SENTINELD_LOG_LEVEL=debug
-      - SENTINELD_DATA_DIR=/data
-      - SENTINELD_LOG_DIR=/logs
-      - SENTINELD_RULE_DIR=/rules
+      - DaemonEye_LOG_LEVEL=debug
+      - DaemonEye_DATA_DIR=/data
+      - DaemonEye_LOG_DIR=/logs
+      - DaemonEye_RULE_DIR=/rules
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
@@ -412,19 +412,19 @@ services:
       - ./logs:/logs
       - ./config:/config:ro
     environment:
-      - SENTINELD_LOG_LEVEL=debug
-      - SENTINELD_DATA_DIR=/data
-      - SENTINELD_LOG_DIR=/logs
-      - SENTINELD_PROCMOND_ENDPOINT=tcp://procmond:8080
+      - DaemonEye_LOG_LEVEL=debug
+      - DaemonEye_DATA_DIR=/data
+      - DaemonEye_LOG_DIR=/logs
+      - DaemonEye_PROCMOND_ENDPOINT=tcp://procmond:8080
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
       - daemoneye-network
 
-  sentinelcli:
+  daemoneye-cli:
     build:
       context: .
-      dockerfile: sentinelcli/Dockerfile
+      dockerfile: daemoneye-cli/Dockerfile
     container_name: daemoneye-cli-dev
     depends_on:
       - daemoneye-agent
@@ -432,7 +432,7 @@ services:
       - ./data:/data
       - ./config:/config:ro
     environment:
-      - SENTINELD_DATA_DIR=/data
+      - DaemonEye_DATA_DIR=/data
     command: [--help]
     restart: no
     networks:
@@ -451,11 +451,11 @@ networks:
 
 ```bash
 # .env file
-SENTINELD_VERSION=1.0.0
-SENTINELD_LOG_LEVEL=info
-SENTINELD_DATA_DIR=/var/lib/daemoneye
-SENTINELD_LOG_DIR=/var/log/daemoneye
-SENTINELD_CONFIG_DIR=/etc/daemoneye
+DaemonEye_VERSION=1.0.0
+DaemonEye_LOG_LEVEL=info
+DaemonEye_DATA_DIR=/var/lib/daemoneye
+DaemonEye_LOG_DIR=/var/log/daemoneye
+DaemonEye_CONFIG_DIR=/etc/daemoneye
 
 # Database settings
 DATABASE_PATH=/var/lib/daemoneye/processes.db
@@ -488,7 +488,7 @@ version: '3.8'
 
 services:
   procmond:
-    image: daemoneye/procmond:${SENTINELD_VERSION}
+    image: daemoneye/procmond:${DaemonEye_VERSION}
     container_name: daemoneye-procmond
     privileged: true
     user: ${SECURITY_DROP_TO_USER}:${SECURITY_DROP_TO_GROUP}
@@ -498,10 +498,10 @@ services:
       - ./config/procmond.yaml:/config/config.yaml:ro
       - ./rules:/rules:ro
     environment:
-      - SENTINELD_LOG_LEVEL=${SENTINELD_LOG_LEVEL}
-      - SENTINELD_DATA_DIR=${SENTINELD_DATA_DIR}
-      - SENTINELD_LOG_DIR=${SENTINELD_LOG_DIR}
-      - SENTINELD_RULE_DIR=/rules
+      - DaemonEye_LOG_LEVEL=${DaemonEye_LOG_LEVEL}
+      - DaemonEye_DATA_DIR=${DaemonEye_DATA_DIR}
+      - DaemonEye_LOG_DIR=${DaemonEye_LOG_DIR}
+      - DaemonEye_RULE_DIR=/rules
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
@@ -519,7 +519,7 @@ services:
         max-file: '5'
 
   daemoneye-agent:
-    image: daemoneye/daemoneye-agent:${SENTINELD_VERSION}
+    image: daemoneye/daemoneye-agent:${DaemonEye_VERSION}
     container_name: daemoneye-agent
     depends_on:
       procmond:
@@ -530,10 +530,10 @@ services:
       - daemoneye-logs:/logs
       - ./config/daemoneye-agent.yaml:/config/config.yaml:ro
     environment:
-      - SENTINELD_LOG_LEVEL=${SENTINELD_LOG_LEVEL}
-      - SENTINELD_DATA_DIR=${SENTINELD_DATA_DIR}
-      - SENTINELD_LOG_DIR=${SENTINELD_LOG_DIR}
-      - SENTINELD_PROCMOND_ENDPOINT=tcp://procmond:8080
+      - DaemonEye_LOG_LEVEL=${DaemonEye_LOG_LEVEL}
+      - DaemonEye_DATA_DIR=${DaemonEye_DATA_DIR}
+      - DaemonEye_LOG_DIR=${DaemonEye_LOG_DIR}
+      - DaemonEye_PROCMOND_ENDPOINT=tcp://procmond:8080
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
@@ -551,7 +551,7 @@ services:
         max-file: '5'
 
   security-center:
-    image: daemoneye/security-center:${SENTINELD_VERSION}
+    image: daemoneye/security-center:${DaemonEye_VERSION}
     container_name: daemoneye-security-center
     depends_on:
       daemoneye-agent:
@@ -561,10 +561,10 @@ services:
       - daemoneye-data:/data
       - ./config/security-center.yaml:/config/config.yaml:ro
     environment:
-      - SENTINELD_LOG_LEVEL=${SENTINELD_LOG_LEVEL}
-      - SENTINELD_DATA_DIR=${SENTINELD_DATA_DIR}
-      - SENTINELD_AGENT_ENDPOINT=tcp://daemoneye-agent:8080
-      - SENTINELD_WEB_PORT=8080
+      - DaemonEye_LOG_LEVEL=${DaemonEye_LOG_LEVEL}
+      - DaemonEye_DATA_DIR=${DaemonEye_DATA_DIR}
+      - DaemonEye_AGENT_ENDPOINT=tcp://daemoneye-agent:8080
+      - DaemonEye_WEB_PORT=8080
     command: [--config, /config/config.yaml]
     restart: unless-stopped
     networks:
@@ -924,11 +924,11 @@ spec:
               mountPath: /rules
               readOnly: true
           env:
-            - name: SENTINELD_LOG_LEVEL
+            - name: DaemonEye_LOG_LEVEL
               value: info
-            - name: SENTINELD_DATA_DIR
+            - name: DaemonEye_DATA_DIR
               value: /data
-            - name: SENTINELD_LOG_DIR
+            - name: DaemonEye_LOG_DIR
               value: /logs
           command: [procmond]
           args: [--config, /config/procmond.yaml]
@@ -1014,13 +1014,13 @@ spec:
             - name: logs
               mountPath: /logs
           env:
-            - name: SENTINELD_LOG_LEVEL
+            - name: DaemonEye_LOG_LEVEL
               value: info
-            - name: SENTINELD_DATA_DIR
+            - name: DaemonEye_DATA_DIR
               value: /data
-            - name: SENTINELD_LOG_DIR
+            - name: DaemonEye_LOG_DIR
               value: /logs
-            - name: SENTINELD_PROCMOND_ENDPOINT
+            - name: DaemonEye_PROCMOND_ENDPOINT
               value: tcp://daemoneye-procmond:8080
           command: [daemoneye-agent]
           args: [--config, /config/daemoneye-agent.yaml]
@@ -1525,13 +1525,13 @@ docker exec daemoneye-agent nslookup daemoneye-procmond
 
 ```bash
 # Check database status
-docker exec daemoneye-agent sentinelcli database status
+docker exec daemoneye-agent daemoneye-cli database status
 
 # Check database integrity
-docker exec daemoneye-agent sentinelcli database integrity-check
+docker exec daemoneye-agent daemoneye-cli database integrity-check
 
 # Repair database
-docker exec daemoneye-agent sentinelcli database repair
+docker exec daemoneye-agent daemoneye-cli database repair
 ```
 
 ### Debug Mode
@@ -1543,7 +1543,7 @@ docker exec daemoneye-agent sentinelcli database repair
 services:
   procmond:
     environment:
-      - SENTINELD_LOG_LEVEL=debug
+      - DaemonEye_LOG_LEVEL=debug
     command: [procmond, --config, /config/config.yaml, --log-level, debug]
 ```
 
@@ -1569,7 +1569,7 @@ docker run --rm --privileged daemoneye/procmond:latest capsh --print
 docker stats daemoneye-procmond
 
 # Reduce scan frequency
-docker exec daemoneye-procmond sentinelcli config set app.scan_interval_ms 120000
+docker exec daemoneye-procmond daemoneye-cli config set app.scan_interval_ms 120000
 ```
 
 **High Memory Usage**:
@@ -1586,10 +1586,10 @@ docker run -d --memory=512m daemoneye/procmond:latest
 
 ```bash
 # Check database performance
-docker exec daemoneye-agent sentinelcli database query-stats
+docker exec daemoneye-agent daemoneye-cli database query-stats
 
 # Optimize database
-docker exec daemoneye-agent sentinelcli database optimize
+docker exec daemoneye-agent daemoneye-cli database optimize
 ```
 
 ### Health Checks

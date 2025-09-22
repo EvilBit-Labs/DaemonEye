@@ -66,13 +66,13 @@ DaemonEye implements a **three-component security architecture** with strict pri
 - **Database**: Read/write access to event store
 - **Features**: SQL-based detection engine, multi-channel alerting, procmond lifecycle management
 
-### 3. **sentinelcli** (Operator Interface)
+### 3. **daemoneye-cli** (Operator Interface)
 
 - **Purpose**: Command-line interface for queries, management, and diagnostics
 - **Security**: No network access, read-only database operations
 - **Features**: JSON/table output, color handling, shell completions, system health monitoring
 
-### 4. **sentinel-lib** (Shared Core)
+### 4. **daemoneye-lib** (Shared Core)
 
 - **Purpose**: Common functionality shared across all components
 - **Modules**: config, models, storage, detection, alerting, crypto, telemetry
@@ -240,7 +240,7 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 ### **Dual-License Strategy**
 
-- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, sentinelcli, sentinel-lib)
+- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
 - **Business Tier Features**: $199/site one-time license (Security Center, GUI, enhanced connectors, curated rules)
 - **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
 

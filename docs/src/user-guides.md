@@ -121,25 +121,25 @@ docker run -d --name daemoneye \
 **Check Status**:
 
 ```bash
-sentinelcli health
+daemoneye-cli health
 ```
 
 **Query Processes**:
 
 ```bash
-sentinelcli query "SELECT pid, name, executable_path FROM processes LIMIT 10"
+daemoneye-cli query "SELECT pid, name, executable_path FROM processes LIMIT 10"
 ```
 
 **List Alerts**:
 
 ```bash
-sentinelcli alerts list
+daemoneye-cli alerts list
 ```
 
 **View Logs**:
 
 ```bash
-sentinelcli logs --tail 100
+daemoneye-cli logs --tail 100
 ```
 
 ## Common Tasks
@@ -150,29 +150,29 @@ sentinelcli logs --tail 100
 
 ```bash
 # Monitor processes by name
-sentinelcli watch processes --filter "name LIKE '%apache%'"
+daemoneye-cli watch processes --filter "name LIKE '%apache%'"
 
 # Monitor processes by CPU usage
-sentinelcli watch processes --filter "cpu_usage > 10.0"
+daemoneye-cli watch processes --filter "cpu_usage > 10.0"
 
 # Monitor processes by memory usage
-sentinelcli watch processes --filter "memory_usage > 1000000"
+daemoneye-cli watch processes --filter "memory_usage > 1000000"
 ```
 
 **Query Process Information**:
 
 ```bash
 # Get all processes
-sentinelcli query "SELECT * FROM processes"
+daemoneye-cli query "SELECT * FROM processes"
 
 # Get processes by PID
-sentinelcli query "SELECT * FROM processes WHERE pid = 1234"
+daemoneye-cli query "SELECT * FROM processes WHERE pid = 1234"
 
 # Get processes by name pattern
-sentinelcli query "SELECT * FROM processes WHERE name LIKE '%nginx%'"
+daemoneye-cli query "SELECT * FROM processes WHERE name LIKE '%nginx%'"
 
 # Get processes by executable path
-sentinelcli query "SELECT * FROM processes WHERE executable_path LIKE '%/usr/bin/%'"
+daemoneye-cli query "SELECT * FROM processes WHERE executable_path LIKE '%/usr/bin/%'"
 ```
 
 ### Alert Management
@@ -181,30 +181,30 @@ sentinelcli query "SELECT * FROM processes WHERE executable_path LIKE '%/usr/bin
 
 ```bash
 # Enable syslog alerts
-sentinelcli config set alerting.sinks[0].enabled true
-sentinelcli config set alerting.sinks[0].type syslog
-sentinelcli config set alerting.sinks[0].facility daemon
+daemoneye-cli config set alerting.sinks[0].enabled true
+daemoneye-cli config set alerting.sinks[0].type syslog
+daemoneye-cli config set alerting.sinks[0].facility daemon
 
 # Enable webhook alerts
-sentinelcli config set alerting.sinks[1].enabled true
-sentinelcli config set alerting.sinks[1].type webhook
-sentinelcli config set alerting.sinks[1].url "https://alerts.example.com/webhook"
+daemoneye-cli config set alerting.sinks[1].enabled true
+daemoneye-cli config set alerting.sinks[1].type webhook
+daemoneye-cli config set alerting.sinks[1].url "https://alerts.example.com/webhook"
 ```
 
 **View Alerts**:
 
 ```bash
 # List recent alerts
-sentinelcli alerts list
+daemoneye-cli alerts list
 
 # List alerts by severity
-sentinelcli alerts list --severity high
+daemoneye-cli alerts list --severity high
 
 # List alerts by rule
-sentinelcli alerts list --rule "suspicious_processes"
+daemoneye-cli alerts list --rule "suspicious_processes"
 
 # Get alert details
-sentinelcli alerts show <alert-id>
+daemoneye-cli alerts show <alert-id>
 ```
 
 ### Rule Management
@@ -230,24 +230,24 @@ ORDER BY collection_time DESC;
 EOF
 
 # Validate the rule
-sentinelcli rules validate /etc/daemoneye/rules/suspicious-processes.sql
+daemoneye-cli rules validate /etc/daemoneye/rules/suspicious-processes.sql
 
 # Test the rule
-sentinelcli rules test suspicious-processes
+daemoneye-cli rules test suspicious-processes
 ```
 
 **Manage Rules**:
 
 ```bash
 # List all rules
-sentinelcli rules list
+daemoneye-cli rules list
 
 # Enable/disable rules
-sentinelcli rules enable suspicious-processes
-sentinelcli rules disable suspicious-processes
+daemoneye-cli rules enable suspicious-processes
+daemoneye-cli rules disable suspicious-processes
 
 # Reload rules
-sentinelcli rules reload
+daemoneye-cli rules reload
 ```
 
 ### Configuration Management
@@ -256,36 +256,36 @@ sentinelcli rules reload
 
 ```bash
 # Show current configuration
-sentinelcli config show
+daemoneye-cli config show
 
 # Show specific setting
-sentinelcli config get app.scan_interval_ms
+daemoneye-cli config get app.scan_interval_ms
 
 # Show all settings with defaults
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 **Update Configuration**:
 
 ```bash
 # Set a single value
-sentinelcli config set app.scan_interval_ms 60000
+daemoneye-cli config set app.scan_interval_ms 60000
 
 # Set multiple values
-sentinelcli config set app.scan_interval_ms 60000 app.batch_size 500
+daemoneye-cli config set app.scan_interval_ms 60000 app.batch_size 500
 
 # Update from file
-sentinelcli config load /path/to/config.yaml
+daemoneye-cli config load /path/to/config.yaml
 ```
 
 **Validate Configuration**:
 
 ```bash
 # Validate configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Check configuration syntax
-sentinelcli config check
+daemoneye-cli config check
 ```
 
 ## Troubleshooting
@@ -302,7 +302,7 @@ sudo systemctl status daemoneye
 sudo journalctl -u daemoneye -f
 
 # Check configuration
-sentinelcli config validate
+daemoneye-cli config validate
 ```
 
 **Permission Denied**:
@@ -321,26 +321,26 @@ sudo chown -R daemoneye:daemoneye /var/log/daemoneye
 
 ```bash
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 
 # Check database integrity
-sentinelcli database integrity-check
+daemoneye-cli database integrity-check
 
 # Repair database
-sentinelcli database repair
+daemoneye-cli database repair
 ```
 
 **Performance Issues**:
 
 ```bash
 # Check system metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # Check resource usage
-sentinelcli system status
+daemoneye-cli system status
 
 # Optimize configuration
-sentinelcli config optimize
+daemoneye-cli config optimize
 ```
 
 ### Debug Mode
@@ -349,26 +349,26 @@ sentinelcli config optimize
 
 ```bash
 # Set debug level
-sentinelcli config set app.log_level debug
+daemoneye-cli config set app.log_level debug
 
 # Restart service
 sudo systemctl restart daemoneye
 
 # Monitor debug logs
-sentinelcli logs --level debug --tail 100
+daemoneye-cli logs --level debug --tail 100
 ```
 
 **Debug Specific Components**:
 
 ```bash
 # Debug process collection
-sentinelcli debug collector
+daemoneye-cli debug collector
 
 # Debug alert delivery
-sentinelcli debug alerts
+daemoneye-cli debug alerts
 
 # Debug database operations
-sentinelcli debug database
+daemoneye-cli debug database
 ```
 
 ### Health Checks
@@ -377,28 +377,28 @@ sentinelcli debug database
 
 ```bash
 # Overall health
-sentinelcli health
+daemoneye-cli health
 
 # Component health
-sentinelcli health --component procmond
-sentinelcli health --component daemoneye-agent
-sentinelcli health --component database
+daemoneye-cli health --component procmond
+daemoneye-cli health --component daemoneye-agent
+daemoneye-cli health --component database
 
 # Detailed health report
-sentinelcli health --verbose
+daemoneye-cli health --verbose
 ```
 
 **Performance Health**:
 
 ```bash
 # Performance metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # Resource usage
-sentinelcli system resources
+daemoneye-cli system resources
 
 # Performance analysis
-sentinelcli system analyze
+daemoneye-cli system analyze
 ```
 
 ## Advanced Usage

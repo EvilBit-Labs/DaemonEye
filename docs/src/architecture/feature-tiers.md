@@ -10,8 +10,8 @@ DaemonEye is offered in three distinct tiers, each designed to meet different or
 
 - **procmond**: Privileged process collector with minimal attack surface
 - **daemoneye-agent**: User-space detection orchestrator with SQL-based rules
-- **sentinelcli**: Command-line interface for queries and management
-- **sentinel-lib**: Shared library with common functionality
+- **daemoneye-cli**: Command-line interface for queries and management
+- **daemoneye-lib**: Shared library with common functionality
 
 ### Key Features
 
@@ -210,7 +210,7 @@ DaemonEye is offered in three distinct tiers, each designed to meet different or
 
 The DaemonEye project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
 
-- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, sentinelcli, sentinel-lib)
+- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
 - **Business Tier Features**: $199/site one-time license (Security Center, GUI, enhanced connectors, curated rules)
 - **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
 

@@ -111,7 +111,7 @@ async fn test_agent_with_mock_collector() {
         .times(1)
         .returning(|| Ok(CollectionResult::default()));
 
-    let agent = SentinelAgent::new(Box::new(mock_collector));
+    let agent = daemoneye-agent::new(Box::new(mock_collector));
     let result = agent.run_collection_cycle().await;
 
     assert!(result.is_ok());
@@ -263,7 +263,7 @@ use std::process::Command;
 
 #[test]
 fn test_cli_help() {
-    let mut cmd = Command::cargo_bin("sentinelcli").unwrap();
+    let mut cmd = Command::cargo_bin("daemoneye-cli").unwrap();
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("DaemonEye CLI"));
@@ -271,7 +271,7 @@ fn test_cli_help() {
 
 #[test]
 fn test_cli_query() {
-    let mut cmd = Command::cargo_bin("sentinelcli").unwrap();
+    let mut cmd = Command::cargo_bin("daemoneye-cli").unwrap();
     cmd.args(&["query", "SELECT * FROM processes LIMIT 1"])
         .assert()
         .success();
@@ -279,7 +279,7 @@ fn test_cli_query() {
 
 #[test]
 fn test_cli_config() {
-    let mut cmd = Command::cargo_bin("sentinelcli").unwrap();
+    let mut cmd = Command::cargo_bin("daemoneye-cli").unwrap();
     cmd.args(&["config", "show"])
         .assert()
         .success()
@@ -309,7 +309,7 @@ async fn test_full_system_workflow() {
 
     // Start daemoneye-agent
     let agent_handle = tokio::spawn(async move {
-        let agent = SentinelAgent::new(&config_path).await.unwrap();
+        let agent = daemoneye-agent::new(&config_path).await.unwrap();
         agent.run().await
     });
 
@@ -317,7 +317,7 @@ async fn test_full_system_workflow() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Test CLI operations
-    let mut cmd = Command::cargo_bin("sentinelcli").unwrap();
+    let mut cmd = Command::cargo_bin("daemoneye-cli").unwrap();
     cmd.args(&["--config", config_path.to_str().unwrap(), "query", "SELECT COUNT(*) FROM processes"])
         .assert()
         .success();

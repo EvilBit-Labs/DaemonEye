@@ -20,8 +20,8 @@ DaemonEye is a complete rewrite of the Python prototype, designed for cybersecur
 DaemonEye follows a robust three-component security architecture:
 
 1. **ProcMonD (Collector)**: Privileged process monitoring daemon with minimal attack surface
-2. **SentinelAgent (Orchestrator)**: User-space process for alerting and network operations
-3. **SentinelCLI**: Command-line interface for queries and configuration
+2. **daemoneye-agent (Orchestrator)**: User-space process for alerting and network operations
+3. **daemoneye-cli**: Command-line interface for queries and configuration
 
 This separation ensures robust security by isolating privileged operations from network functionality.
 
@@ -63,7 +63,7 @@ If you need help with DaemonEye:
 
 DaemonEye follows a dual-license strategy:
 
-- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, sentinelcli, sentinel-lib)
+- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
 - **Business Tier Features**: $199/site one-time license (Security Center, GUI, enhanced connectors, curated rules)
 - **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
 

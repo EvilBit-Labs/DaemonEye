@@ -83,8 +83,8 @@ curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoney
 
 ```bash
 # Linux/macOS
-sudo cp procmond daemoneye-agent sentinelcli /usr/local/bin/
-sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/sentinelcli
+sudo cp procmond daemoneye-agent daemoneye-cli /usr/local/bin/
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 
 # Create system directories
 sudo mkdir -p /etc/daemoneye
@@ -190,8 +190,8 @@ cd daemoneye
 cargo build --release
 
 # Install built binaries
-sudo cp target/release/procmond target/release/daemoneye-agent target/release/sentinelcli /usr/local/bin/
-sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/sentinelcli
+sudo cp target/release/procmond target/release/daemoneye-agent target/release/daemoneye-cli /usr/local/bin/
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 ```
 
 **Cross-Platform Building**:
@@ -377,8 +377,8 @@ brew services start daemoneye
 curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-macos-x86_64.tar.gz | tar -xz
 
 # Install to system directories
-sudo cp procmond daemoneye-agent sentinelcli /usr/local/bin/
-sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/sentinelcli
+sudo cp procmond daemoneye-agent daemoneye-cli /usr/local/bin/
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 
 # Create directories
 sudo mkdir -p /Library/Application\ Support/DaemonEye
@@ -547,10 +547,10 @@ Get-Service "DaemonEye Agent"
 
 ```bash
 # Generate default configuration
-sentinelcli config init --output /etc/daemoneye/config.yaml
+daemoneye-cli config init --output /etc/daemoneye/config.yaml
 
 # Or for user-specific configuration
-sentinelcli config init --output ~/.config/daemoneye/config.yaml
+daemoneye-cli config init --output ~/.config/daemoneye/config.yaml
 ```
 
 ### Create Data Directories
@@ -591,22 +591,22 @@ ORDER BY collection_time DESC;
 EOF
 
 # Validate the rule
-sentinelcli rules validate /etc/daemoneye/rules/suspicious-processes.sql
+daemoneye-cli rules validate /etc/daemoneye/rules/suspicious-processes.sql
 ```
 
 ### Configure Alerting
 
 ```bash
 # Enable syslog alerts
-sentinelcli config set alerting.sinks[0].enabled true
-sentinelcli config set alerting.sinks[0].type syslog
-sentinelcli config set alerting.sinks[0].facility daemon
+daemoneye-cli config set alerting.sinks[0].enabled true
+daemoneye-cli config set alerting.sinks[0].type syslog
+daemoneye-cli config set alerting.sinks[0].facility daemon
 
 # Enable webhook alerts (if SIEM is available)
-sentinelcli config set alerting.sinks[1].enabled true
-sentinelcli config set alerting.sinks[1].type webhook
-sentinelcli config set alerting.sinks[1].url "https://your-siem.com/webhook"
-sentinelcli config set alerting.sinks[1].headers.Authorization "Bearer ${WEBHOOK_TOKEN}"
+daemoneye-cli config set alerting.sinks[1].enabled true
+daemoneye-cli config set alerting.sinks[1].type webhook
+daemoneye-cli config set alerting.sinks[1].url "https://your-siem.com/webhook"
+daemoneye-cli config set alerting.sinks[1].headers.Authorization "Bearer ${WEBHOOK_TOKEN}"
 ```
 
 ## Verification
@@ -617,7 +617,7 @@ sentinelcli config set alerting.sinks[1].headers.Authorization "Bearer ${WEBHOOK
 # Check binary versions
 procmond --version
 daemoneye-agent --version
-sentinelcli --version
+daemoneye-cli --version
 
 # Check service status
 # Linux
@@ -634,29 +634,29 @@ Get-Service "DaemonEye Agent"
 
 ```bash
 # Check system health
-sentinelcli health
+daemoneye-cli health
 
 # List recent processes
-sentinelcli query "SELECT pid, name, executable_path FROM processes LIMIT 10"
+daemoneye-cli query "SELECT pid, name, executable_path FROM processes LIMIT 10"
 
 # Check alerts
-sentinelcli alerts list
+daemoneye-cli alerts list
 
 # Test rule execution
-sentinelcli rules test suspicious-processes
+daemoneye-cli rules test suspicious-processes
 ```
 
 ### Performance Verification
 
 ```bash
 # Check system metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # Monitor process collection
-sentinelcli watch processes --filter "cpu_usage > 10.0"
+daemoneye-cli watch processes --filter "cpu_usage > 10.0"
 
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 ```
 
 ## Troubleshooting
@@ -669,10 +669,10 @@ sentinelcli database status
 # Check file permissions
 ls -la /usr/local/bin/procmond
 ls -la /usr/local/bin/daemoneye-agent
-ls -la /usr/local/bin/sentinelcli
+ls -la /usr/local/bin/daemoneye-cli
 
 # Fix permissions
-sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/sentinelcli
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 ```
 
 **Service Won't Start**:
@@ -693,33 +693,33 @@ Get-EventLog -LogName Application -Source "DaemonEye" -Newest 10
 
 ```bash
 # Validate configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Check configuration syntax
-sentinelcli config check
+daemoneye-cli config check
 
 # Show effective configuration
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 **Database Issues**:
 
 ```bash
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 
 # Check database integrity
-sentinelcli database integrity-check
+daemoneye-cli database integrity-check
 
 # Repair database
-sentinelcli database repair
+daemoneye-cli database repair
 ```
 
 ### Debug Mode
 
 ```bash
 # Enable debug logging
-sentinelcli config set app.log_level debug
+daemoneye-cli config set app.log_level debug
 
 # Restart service
 # Linux
@@ -733,7 +733,7 @@ sudo launchctl load /Library/LaunchDaemons/com.daemoneye.agent.plist
 Restart-Service "DaemonEye Agent"
 
 # Monitor debug logs
-sentinelcli logs --level debug --tail 100
+daemoneye-cli logs --level debug --tail 100
 ```
 
 ### Performance Issues
@@ -742,46 +742,46 @@ sentinelcli logs --level debug --tail 100
 
 ```bash
 # Check process collection rate
-sentinelcli metrics --metric collection_rate
+daemoneye-cli metrics --metric collection_rate
 
 # Reduce scan interval
-sentinelcli config set app.scan_interval_ms 60000
+daemoneye-cli config set app.scan_interval_ms 60000
 
 # Check for problematic rules
-sentinelcli rules list --performance
+daemoneye-cli rules list --performance
 ```
 
 **High Memory Usage**:
 
 ```bash
 # Check memory usage
-sentinelcli metrics --metric memory_usage
+daemoneye-cli metrics --metric memory_usage
 
 # Reduce batch size
-sentinelcli config set app.batch_size 500
+daemoneye-cli config set app.batch_size 500
 
 # Check database size
-sentinelcli database size
+daemoneye-cli database size
 ```
 
 **Slow Queries**:
 
 ```bash
 # Check query performance
-sentinelcli database query-stats
+daemoneye-cli database query-stats
 
 # Optimize database
-sentinelcli database optimize
+daemoneye-cli database optimize
 
 # Check for slow rules
-sentinelcli rules list --slow
+daemoneye-cli rules list --slow
 ```
 
 ### Getting Help
 
 - **Documentation**: Check the full documentation in `docs/`
-- **Logs**: Review logs with `sentinelcli logs`
-- **Health Checks**: Use `sentinelcli health` for system status
+- **Logs**: Review logs with `daemoneye-cli logs`
+- **Health Checks**: Use `daemoneye-cli health` for system status
 - **Community**: Join discussions on GitHub or community forums
 - **Support**: Contact support for commercial assistance
 

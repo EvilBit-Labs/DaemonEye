@@ -24,13 +24,13 @@ graph TB
             NS[Network Sinks]
         end
 
-        subgraph "sentinelcli (Operator Interface)"
+        subgraph "daemoneye-cli (Operator Interface)"
             QE[Query Executor]
             HC2[Health Checker]
             DM[Data Manager]
         end
 
-        subgraph "sentinel-lib (Shared Core)"
+        subgraph "daemoneye-lib (Shared Core)"
             CFG[Configuration]
             MOD[Models]
             STO[Storage]
@@ -234,7 +234,7 @@ impl DetectionEngine {
 }
 ```
 
-### sentinelcli (Operator Interface)
+### daemoneye-cli (Operator Interface)
 
 **Architectural Role**: Command-line interface for queries, management, and diagnostics.
 
@@ -275,7 +275,7 @@ pub trait DataManager: Send + Sync {
 }
 ```
 
-### sentinel-lib (Shared Core)
+### daemoneye-lib (Shared Core)
 
 **Architectural Role**: Common functionality shared across all components.
 
@@ -380,7 +380,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant CLI as sentinelcli
+    participant CLI as daemoneye-cli
     participant SA as daemoneye-agent
     participant DB as Event Store
 

@@ -60,8 +60,8 @@ DaemonEye requires elevated privileges for process monitoring. The system is des
 
    ```bash
    # Linux/macOS
-   sudo cp procmond daemoneye-agent sentinelcli /usr/local/bin/
-   sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/sentinelcli
+   sudo cp procmond daemoneye-agent daemoneye-cli /usr/local/bin/
+   sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 
    # Windows
    # Copy to C:\Program Files\DaemonEye\
@@ -87,7 +87,7 @@ DaemonEye requires elevated privileges for process monitoring. The system is des
 3. **Install built binaries**:
 
    ```bash
-   sudo cp target/release/procmond target/release/daemoneye-agent target/release/sentinelcli /usr/local/bin/
+   sudo cp target/release/procmond target/release/daemoneye-agent target/release/daemoneye-cli /usr/local/bin/
    ```
 
 ### Option 3: Package Managers
@@ -130,7 +130,7 @@ mkdir C:\ProgramData\DaemonEye
 
 ```bash
 # Generate default configuration
-sentinelcli config init --output /etc/daemoneye/config.yaml
+daemoneye-cli config init --output /etc/daemoneye/config.yaml
 ```
 
 This creates a basic configuration file:
@@ -189,7 +189,7 @@ mkdir C:\ProgramData\DaemonEye\data
 daemoneye-agent --config /etc/daemoneye/config.yaml
 
 # Terminal 2: Use CLI for queries
-sentinelcli --config /etc/daemoneye/config.yaml query "SELECT * FROM processes LIMIT 10"
+daemoneye-cli --config /etc/daemoneye/config.yaml query "SELECT * FROM processes LIMIT 10"
 ```
 
 **Option B: System Service (Production)**
@@ -215,16 +215,16 @@ sc start "DaemonEye Agent"
 
 ```bash
 # Check service status
-sentinelcli health
+daemoneye-cli health
 
 # View recent processes
-sentinelcli query "SELECT pid, name, executable_path FROM processes ORDER BY collection_time DESC LIMIT 10"
+daemoneye-cli query "SELECT pid, name, executable_path FROM processes ORDER BY collection_time DESC LIMIT 10"
 
 # Check alerts
-sentinelcli alerts list
+daemoneye-cli alerts list
 
 # View system metrics
-sentinelcli metrics
+daemoneye-cli metrics
 ```
 
 ## Basic Configuration
@@ -320,26 +320,26 @@ ORDER BY collection_time DESC;
 
 ```bash
 # Validate the rule
-sentinelcli rules validate /etc/daemoneye/rules/suspicious-processes.sql
+daemoneye-cli rules validate /etc/daemoneye/rules/suspicious-processes.sql
 
 # Test the rule
-sentinelcli rules test /etc/daemoneye/rules/suspicious-processes.sql
+daemoneye-cli rules test /etc/daemoneye/rules/suspicious-processes.sql
 
 # Enable the rule
-sentinelcli rules enable suspicious-processes
+daemoneye-cli rules enable suspicious-processes
 ```
 
 ### 4. Monitor for Alerts
 
 ```bash
 # Watch for new alerts
-sentinelcli alerts watch
+daemoneye-cli alerts watch
 
 # List recent alerts
-sentinelcli alerts list --limit 10
+daemoneye-cli alerts list --limit 10
 
 # Export alerts
-sentinelcli alerts export --format json --output alerts.json
+daemoneye-cli alerts export --format json --output alerts.json
 ```
 
 ## Common Operations
@@ -350,23 +350,23 @@ sentinelcli alerts export --format json --output alerts.json
 
 ```bash
 # List all processes
-sentinelcli query "SELECT * FROM processes LIMIT 10"
+daemoneye-cli query "SELECT * FROM processes LIMIT 10"
 
 # Find processes by name
-sentinelcli query "SELECT * FROM processes WHERE name = 'chrome'"
+daemoneye-cli query "SELECT * FROM processes WHERE name = 'chrome'"
 
 # Find high CPU processes
-sentinelcli query "SELECT * FROM processes WHERE cpu_usage > 50.0"
+daemoneye-cli query "SELECT * FROM processes WHERE cpu_usage > 50.0"
 
 # Find processes by user
-sentinelcli query "SELECT * FROM processes WHERE user_id = '1000'"
+daemoneye-cli query "SELECT * FROM processes WHERE user_id = '1000'"
 ```
 
 **Advanced Queries**:
 
 ```bash
 # Process tree analysis
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     p1.pid as parent_pid,
     p1.name as parent_name,
@@ -378,7 +378,7 @@ WHERE p1.name = 'systemd'
 "
 
 # Suspicious process patterns
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     pid,
     name,
@@ -395,41 +395,41 @@ HAVING occurrence_count > 5
 
 ```bash
 # List all rules
-sentinelcli rules list
+daemoneye-cli rules list
 
 # Enable/disable rules
-sentinelcli rules enable rule-name
-sentinelcli rules disable rule-name
+daemoneye-cli rules enable rule-name
+daemoneye-cli rules disable rule-name
 
 # Validate rule syntax
-sentinelcli rules validate rule-file.sql
+daemoneye-cli rules validate rule-file.sql
 
 # Test rule execution
-sentinelcli rules test rule-file.sql
+daemoneye-cli rules test rule-file.sql
 
 # Import/export rules
-sentinelcli rules import rules-bundle.tar.gz
-sentinelcli rules export --output rules-backup.tar.gz
+daemoneye-cli rules import rules-bundle.tar.gz
+daemoneye-cli rules export --output rules-backup.tar.gz
 ```
 
 ### System Health Monitoring
 
 ```bash
 # Check overall health
-sentinelcli health
+daemoneye-cli health
 
 # Check component status
-sentinelcli health --component procmond
-sentinelcli health --component daemoneye-agent
+daemoneye-cli health --component procmond
+daemoneye-cli health --component daemoneye-agent
 
 # View performance metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 
 # View recent logs
-sentinelcli logs --tail 50
+daemoneye-cli logs --tail 50
 ```
 
 ## Troubleshooting
@@ -440,7 +440,7 @@ sentinelcli logs --tail 50
 
 ```bash
 # Check if running with sufficient privileges
-sudo sentinelcli health
+sudo daemoneye-cli health
 
 # Verify capability requirements
 getcap /usr/local/bin/procmond
@@ -450,7 +450,7 @@ getcap /usr/local/bin/procmond
 
 ```bash
 # Check for running processes
-ps aux | grep sentinel
+ps aux | grep daemoneye
 
 # Stop services and restart
 sudo systemctl stop daemoneye
@@ -461,13 +461,13 @@ sudo systemctl start daemoneye
 
 ```bash
 # Check scan interval
-sentinelcli config get app.scan_interval_ms
+daemoneye-cli config get app.scan_interval_ms
 
 # Verify database path
-sentinelcli config get database.event_store_path
+daemoneye-cli config get database.event_store_path
 
 # Check logs for errors
-sentinelcli logs --level error
+daemoneye-cli logs --level error
 ```
 
 ### Debug Mode
@@ -488,8 +488,8 @@ daemoneye-agent --config /etc/daemoneye/config.yaml --log-level debug
 ### Getting Help
 
 - **Documentation**: Check the full documentation in `docs/`
-- **Logs**: Review logs with `sentinelcli logs`
-- **Health Checks**: Use `sentinelcli health` for system status
+- **Logs**: Review logs with `daemoneye-cli logs`
+- **Health Checks**: Use `daemoneye-cli health` for system status
 - **Community**: Join discussions on GitHub or community forums
 
 ## Next Steps

@@ -40,7 +40,7 @@ The three-component architecture provides defense in depth:
 
 ```text
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│    ProcMonD     │    │ SentinelAgent   │    │   SentinelCLI   │
+│    ProcMonD     │    │ daemoneye-agent   │    │   daemoneye-cli   │
 │  (Privileged)   │◄──►│  (User Space)   │◄──►│  (Management)   │
 │                 │    │                 │    │                 │
 │ • Process Enum  │    │ • Alerting      │    │ • Queries       │
@@ -58,14 +58,14 @@ The three-component architecture provides defense in depth:
 - Drops privileges after initialization
 - Isolated from network operations
 
-**SentinelAgent (User Space)**:
+**daemoneye-agent (User Space)**:
 
 - Runs as non-privileged user
 - Handles network operations
 - No direct system access
 - Communicates via IPC only
 
-**SentinelCLI (Management)**:
+**daemoneye-cli (Management)**:
 
 - Runs as regular user
 - Read-only access to data

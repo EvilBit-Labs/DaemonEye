@@ -22,13 +22,13 @@ graph TB
             NS[Network Sinks]
         end
 
-        subgraph "sentinelcli (Operator Interface)"
+        subgraph "daemoneye-cli (Operator Interface)"
             QE[Query Executor]
             HC2[Health Checker]
             DM[Data Manager]
         end
 
-        subgraph "sentinel-lib (Shared Core)"
+        subgraph "daemoneye-lib (Shared Core)"
             CFG[Configuration]
             MOD[Models]
             STO[Storage]
@@ -135,7 +135,7 @@ pub trait AlertManager {
 }
 ```
 
-### **sentinelcli (Operator Interface)**
+### **daemoneye-cli (Operator Interface)**
 
 **Primary Purpose**: Command-line interface for queries, management, and diagnostics.
 
@@ -164,7 +164,7 @@ pub trait QueryExecutor {
 }
 ```
 
-### **sentinel-lib (Shared Core)**
+### **daemoneye-lib (Shared Core)**
 
 **Primary Purpose**: Common functionality shared across all components.
 
@@ -279,7 +279,7 @@ message DetectionResult {
 ### **Event Store (redb)**
 
 - **Purpose**: High-performance process data storage
-- **Access**: daemoneye-agent read/write, sentinelcli read-only
+- **Access**: daemoneye-agent read/write, daemoneye-cli read-only
 - **Features**: WAL mode, concurrent access, embedded database
 - **Schema**: process_snapshots, scans, detection_rules, alerts
 
@@ -358,10 +358,10 @@ message DetectionResult {
 - **Direction**: Bidirectional with simple task/result pattern
 - **Security**: Process isolation, no network access
 
-### **daemoneye-agent ↔ sentinelcli**
+### **daemoneye-agent ↔ daemoneye-cli**
 
 - **Protocol**: Local IPC or direct database access
-- **Direction**: sentinelcli queries daemoneye-agent
+- **Direction**: daemoneye-cli queries daemoneye-agent
 - **Security**: Local communication only, input validation
 
 ### **External Communication**

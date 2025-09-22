@@ -22,12 +22,12 @@ Check the overall health of your DaemonEye installation:
 
 ```bash
 # Overall system health
-sentinelcli health
+daemoneye-cli health
 
 # Component-specific health
-sentinelcli health --component procmond
-sentinelcli health --component daemoneye-agent
-sentinelcli health --component database
+daemoneye-cli health --component procmond
+daemoneye-cli health --component daemoneye-agent
+daemoneye-cli health --component database
 ```
 
 **Expected Output**:
@@ -91,20 +91,20 @@ sc start "DaemonEye Agent"
 
 ```bash
 # Last 10 processes
-sentinelcli query "SELECT pid, name, executable_path, collection_time FROM processes ORDER BY collection_time DESC LIMIT 10"
+daemoneye-cli query "SELECT pid, name, executable_path, collection_time FROM processes ORDER BY collection_time DESC LIMIT 10"
 
 # Processes by name
-sentinelcli query "SELECT * FROM processes WHERE name = 'chrome'"
+daemoneye-cli query "SELECT * FROM processes WHERE name = 'chrome'"
 
 # High CPU processes
-sentinelcli query "SELECT pid, name, cpu_usage FROM processes WHERE cpu_usage > 50.0 ORDER BY cpu_usage DESC"
+daemoneye-cli query "SELECT pid, name, cpu_usage FROM processes WHERE cpu_usage > 50.0 ORDER BY cpu_usage DESC"
 ```
 
 **Process Tree Analysis**:
 
 ```bash
 # Find child processes of a specific parent
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     p1.pid as parent_pid,
     p1.name as parent_name,
@@ -116,7 +116,7 @@ WHERE p1.name = 'systemd'
 "
 
 # Process hierarchy depth
-sentinelcli query "
+daemoneye-cli query "
 WITH RECURSIVE process_tree AS (
     SELECT pid, ppid, name, 0 as depth
     FROM processes
@@ -134,7 +134,7 @@ SELECT pid, name, depth FROM process_tree ORDER BY depth, pid
 
 ```bash
 # Processes with suspicious names
-sentinelcli query "
+daemoneye-cli query "
 SELECT pid, name, executable_path, command_line
 FROM processes
 WHERE name IN ('malware.exe', 'backdoor.exe', 'trojan.exe')
@@ -143,7 +143,7 @@ WHERE name IN ('malware.exe', 'backdoor.exe', 'trojan.exe')
 "
 
 # Processes with unusual parent-child relationships
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     p1.pid as parent_pid,
     p1.name as parent_name,
@@ -162,26 +162,26 @@ WHERE p1.name = 'explorer.exe'
 
 ```bash
 # JSON export
-sentinelcli query "SELECT * FROM processes WHERE cpu_usage > 10.0" --format json > high_cpu_processes.json
+daemoneye-cli query "SELECT * FROM processes WHERE cpu_usage > 10.0" --format json > high_cpu_processes.json
 
 # CSV export
-sentinelcli query "SELECT pid, name, cpu_usage, memory_usage FROM processes" --format csv > process_metrics.csv
+daemoneye-cli query "SELECT pid, name, cpu_usage, memory_usage FROM processes" --format csv > process_metrics.csv
 
 # Table format (default)
-sentinelcli query "SELECT * FROM processes LIMIT 5" --format table
+daemoneye-cli query "SELECT * FROM processes LIMIT 5" --format table
 ```
 
 **Export with Filters**:
 
 ```bash
 # Export processes from last hour
-sentinelcli query "
+daemoneye-cli query "
 SELECT * FROM processes
 WHERE collection_time > (strftime('%s', 'now') - 3600) * 1000
 " --format json > recent_processes.json
 
 # Export by user
-sentinelcli query "
+daemoneye-cli query "
 SELECT * FROM processes
 WHERE user_id = '1000'
 " --format csv > user_processes.csv
@@ -195,20 +195,20 @@ WHERE user_id = '1000'
 
 ```bash
 # Monitor new processes in real-time
-sentinelcli watch processes --filter "name LIKE '%chrome%'"
+daemoneye-cli watch processes --filter "name LIKE '%chrome%'"
 
 # Monitor high CPU processes
-sentinelcli watch processes --filter "cpu_usage > 50.0"
+daemoneye-cli watch processes --filter "cpu_usage > 50.0"
 
 # Monitor specific user processes
-sentinelcli watch processes --filter "user_id = '1000'"
+daemoneye-cli watch processes --filter "user_id = '1000'"
 ```
 
 **Process Statistics**:
 
 ```bash
 # Process count by name
-sentinelcli query "
+daemoneye-cli query "
 SELECT name, COUNT(*) as count
 FROM processes
 GROUP BY name
@@ -217,7 +217,7 @@ LIMIT 10
 "
 
 # CPU usage distribution
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     CASE
         WHEN cpu_usage IS NULL THEN 'Unknown'
@@ -234,7 +234,7 @@ ORDER BY process_count DESC
 "
 
 # Memory usage statistics
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     AVG(memory_usage) as avg_memory,
     MIN(memory_usage) as min_memory,
@@ -251,7 +251,7 @@ WHERE memory_usage IS NOT NULL
 
 ```bash
 # Get detailed information about a specific process
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     pid,
     name,
@@ -268,7 +268,7 @@ WHERE pid = 1234
 "
 
 # Find processes with the same executable
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     executable_path,
     COUNT(*) as instance_count,
@@ -281,7 +281,7 @@ ORDER BY instance_count DESC
 "
 
 # Process execution timeline
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     pid,
     name,
@@ -303,29 +303,29 @@ LIMIT 20
 
 ```bash
 # Last 10 alerts
-sentinelcli alerts list --limit 10
+daemoneye-cli alerts list --limit 10
 
 # Alerts by severity
-sentinelcli alerts list --severity high,critical
+daemoneye-cli alerts list --severity high,critical
 
 # Alerts by rule
-sentinelcli alerts list --rule "suspicious-processes"
+daemoneye-cli alerts list --rule "suspicious-processes"
 
 # Alerts from specific time range
-sentinelcli alerts list --since "2024-01-15 10:00:00" --until "2024-01-15 18:00:00"
+daemoneye-cli alerts list --since "2024-01-15 10:00:00" --until "2024-01-15 18:00:00"
 ```
 
 **Alert Details**:
 
 ```bash
 # Get detailed information about a specific alert
-sentinelcli alerts show <alert-id>
+daemoneye-cli alerts show <alert-id>
 
 # Export alerts to file
-sentinelcli alerts export --format json --output alerts.json
+daemoneye-cli alerts export --format json --output alerts.json
 
 # Export alerts with filters
-sentinelcli alerts export --severity high,critical --format csv --output critical_alerts.csv
+daemoneye-cli alerts export --severity high,critical --format csv --output critical_alerts.csv
 ```
 
 ### Alert Filtering and Search
@@ -334,7 +334,7 @@ sentinelcli alerts export --severity high,critical --format csv --output critica
 
 ```bash
 # Alerts affecting specific processes
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     a.id,
     a.title,
@@ -347,7 +347,7 @@ ORDER BY a.alert_time DESC
 "
 
 # Alerts by hostname
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     a.id,
     a.title,
@@ -360,7 +360,7 @@ ORDER BY a.alert_time DESC
 "
 
 # Alert frequency by rule
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     rule_id,
     COUNT(*) as alert_count,
@@ -377,26 +377,26 @@ ORDER BY alert_count DESC
 
 ```bash
 # Acknowledge a specific alert
-sentinelcli alerts acknowledge <alert-id> --comment "Investigating"
+daemoneye-cli alerts acknowledge <alert-id> --comment "Investigating"
 
 # Acknowledge multiple alerts
-sentinelcli alerts acknowledge --rule "suspicious-processes" --comment "False positive"
+daemoneye-cli alerts acknowledge --rule "suspicious-processes" --comment "False positive"
 
 # List acknowledged alerts
-sentinelcli alerts list --status acknowledged
+daemoneye-cli alerts list --status acknowledged
 ```
 
 **Alert Suppression**:
 
 ```bash
 # Suppress alerts for a specific rule
-sentinelcli alerts suppress --rule "suspicious-processes" --duration "1h" --reason "Maintenance"
+daemoneye-cli alerts suppress --rule "suspicious-processes" --duration "1h" --reason "Maintenance"
 
 # Suppress alerts for specific processes
-sentinelcli alerts suppress --process 1234 --duration "30m" --reason "Known good process"
+daemoneye-cli alerts suppress --process 1234 --duration "30m" --reason "Known good process"
 
 # List active suppressions
-sentinelcli alerts suppressions list
+daemoneye-cli alerts suppressions list
 ```
 
 ## Rule Management
@@ -407,45 +407,45 @@ sentinelcli alerts suppressions list
 
 ```bash
 # List all rules
-sentinelcli rules list
+daemoneye-cli rules list
 
 # List enabled rules only
-sentinelcli rules list --enabled
+daemoneye-cli rules list --enabled
 
 # List rules by category
-sentinelcli rules list --category "malware"
+daemoneye-cli rules list --category "malware"
 
 # List rules by severity
-sentinelcli rules list --severity high,critical
+daemoneye-cli rules list --severity high,critical
 ```
 
 **Rule Validation**:
 
 ```bash
 # Validate a rule file
-sentinelcli rules validate /path/to/rule.sql
+daemoneye-cli rules validate /path/to/rule.sql
 
 # Validate all rules
-sentinelcli rules validate --all
+daemoneye-cli rules validate --all
 
 # Test a rule with sample data
-sentinelcli rules test /path/to/rule.sql --sample-data
+daemoneye-cli rules test /path/to/rule.sql --sample-data
 ```
 
 **Rule Management**:
 
 ```bash
 # Enable a rule
-sentinelcli rules enable suspicious-processes
+daemoneye-cli rules enable suspicious-processes
 
 # Disable a rule
-sentinelcli rules disable suspicious-processes
+daemoneye-cli rules disable suspicious-processes
 
 # Update a rule
-sentinelcli rules update suspicious-processes --file /path/to/new-rule.sql
+daemoneye-cli rules update suspicious-processes --file /path/to/new-rule.sql
 
 # Delete a rule
-sentinelcli rules delete suspicious-processes
+daemoneye-cli rules delete suspicious-processes
 ```
 
 ### Rule Development
@@ -471,23 +471,23 @@ ORDER BY collection_time DESC;
 EOF
 
 # Validate the rule
-sentinelcli rules validate /etc/daemoneye/rules/custom-rule.sql
+daemoneye-cli rules validate /etc/daemoneye/rules/custom-rule.sql
 
 # Enable the rule
-sentinelcli rules enable custom-rule
+daemoneye-cli rules enable custom-rule
 ```
 
 **Rule Testing**:
 
 ```bash
 # Test rule against current data
-sentinelcli rules test custom-rule --live
+daemoneye-cli rules test custom-rule --live
 
 # Test rule with specific time range
-sentinelcli rules test custom-rule --since "2024-01-15 00:00:00" --until "2024-01-15 23:59:59"
+daemoneye-cli rules test custom-rule --since "2024-01-15 00:00:00" --until "2024-01-15 23:59:59"
 
 # Test rule performance
-sentinelcli rules test custom-rule --benchmark
+daemoneye-cli rules test custom-rule --benchmark
 ```
 
 ### Rule Import/Export
@@ -496,26 +496,26 @@ sentinelcli rules test custom-rule --benchmark
 
 ```bash
 # Export all rules
-sentinelcli rules export --output rules-backup.tar.gz
+daemoneye-cli rules export --output rules-backup.tar.gz
 
 # Export specific rules
-sentinelcli rules export --rules "suspicious-processes,high-cpu" --output selected-rules.tar.gz
+daemoneye-cli rules export --rules "suspicious-processes,high-cpu" --output selected-rules.tar.gz
 
 # Export rules by category
-sentinelcli rules export --category "malware" --output malware-rules.tar.gz
+daemoneye-cli rules export --category "malware" --output malware-rules.tar.gz
 ```
 
 **Import Rules**:
 
 ```bash
 # Import rules from file
-sentinelcli rules import rules-backup.tar.gz
+daemoneye-cli rules import rules-backup.tar.gz
 
 # Import rules with validation
-sentinelcli rules import rules-backup.tar.gz --validate
+daemoneye-cli rules import rules-backup.tar.gz --validate
 
 # Import rules with conflict resolution
-sentinelcli rules import rules-backup.tar.gz --resolve-conflicts
+daemoneye-cli rules import rules-backup.tar.gz --resolve-conflicts
 ```
 
 ## System Health Monitoring
@@ -526,32 +526,32 @@ sentinelcli rules import rules-backup.tar.gz --resolve-conflicts
 
 ```bash
 # View system metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # CPU usage over time
-sentinelcli metrics --metric cpu_usage --duration 1h
+daemoneye-cli metrics --metric cpu_usage --duration 1h
 
 # Memory usage over time
-sentinelcli metrics --metric memory_usage --duration 1h
+daemoneye-cli metrics --metric memory_usage --duration 1h
 
 # Process collection rate
-sentinelcli metrics --metric collection_rate --duration 1h
+daemoneye-cli metrics --metric collection_rate --duration 1h
 ```
 
 **Database Performance**:
 
 ```bash
 # Database status
-sentinelcli database status
+daemoneye-cli database status
 
 # Database size
-sentinelcli database size
+daemoneye-cli database size
 
 # Database performance metrics
-sentinelcli database metrics
+daemoneye-cli database metrics
 
 # Database maintenance
-sentinelcli database maintenance --vacuum
+daemoneye-cli database maintenance --vacuum
 ```
 
 ### Log Analysis
@@ -560,29 +560,29 @@ sentinelcli database maintenance --vacuum
 
 ```bash
 # Recent logs
-sentinelcli logs --tail 50
+daemoneye-cli logs --tail 50
 
 # Logs by level
-sentinelcli logs --level error
+daemoneye-cli logs --level error
 
 # Logs by component
-sentinelcli logs --component procmond
+daemoneye-cli logs --component procmond
 
 # Logs with filters
-sentinelcli logs --filter "error" --tail 100
+daemoneye-cli logs --filter "error" --tail 100
 ```
 
 **Log Analysis**:
 
 ```bash
 # Error frequency
-sentinelcli logs --analyze --level error
+daemoneye-cli logs --analyze --level error
 
 # Performance issues
-sentinelcli logs --analyze --filter "slow"
+daemoneye-cli logs --analyze --filter "slow"
 
 # Security events
-sentinelcli logs --analyze --filter "security"
+daemoneye-cli logs --analyze --filter "security"
 ```
 
 ## Configuration Management
@@ -593,39 +593,39 @@ sentinelcli logs --analyze --filter "security"
 
 ```bash
 # Show current configuration
-sentinelcli config show
+daemoneye-cli config show
 
 # Show specific configuration section
-sentinelcli config show alerting
+daemoneye-cli config show alerting
 
 # Show configuration with defaults
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 **Update Configuration**:
 
 ```bash
 # Update configuration value
-sentinelcli config set app.scan_interval_ms 60000
+daemoneye-cli config set app.scan_interval_ms 60000
 
 # Update multiple values
-sentinelcli config set alerting.sinks[0].enabled true
+daemoneye-cli config set alerting.sinks[0].enabled true
 
 # Reload configuration
-sentinelcli config reload
+daemoneye-cli config reload
 ```
 
 **Configuration Validation**:
 
 ```bash
 # Validate configuration file
-sentinelcli config validate /etc/daemoneye/config.yaml
+daemoneye-cli config validate /etc/daemoneye/config.yaml
 
 # Validate current configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Check configuration for issues
-sentinelcli config check
+daemoneye-cli config check
 ```
 
 ### Environment Management
@@ -634,11 +634,11 @@ sentinelcli config check
 
 ```bash
 # Set environment variables
-export SENTINELD_LOG_LEVEL=debug
-export SENTINELD_DATABASE_PATH=/var/lib/daemoneye/events.redb
+export DAEMONEYE_LOG_LEVEL=debug
+export DAEMONEYE_DATABASE_PATH=/var/lib/daemoneye/events.redb
 
 # View environment configuration
-sentinelcli config show --environment
+daemoneye-cli config show --environment
 ```
 
 **Service Configuration**:
@@ -666,7 +666,7 @@ sudo systemctl status daemoneye
 sudo journalctl -u daemoneye -f
 
 # Check configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Check permissions
 ls -la /var/lib/daemoneye/
@@ -676,32 +676,32 @@ ls -la /var/lib/daemoneye/
 
 ```bash
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 
 # Check database integrity
-sentinelcli database integrity-check
+daemoneye-cli database integrity-check
 
 # Repair database
-sentinelcli database repair
+daemoneye-cli database repair
 
 # Rebuild database
-sentinelcli database rebuild
+daemoneye-cli database rebuild
 ```
 
 **Alert Delivery Issues**:
 
 ```bash
 # Check alert sink status
-sentinelcli alerts sinks status
+daemoneye-cli alerts sinks status
 
 # Test alert delivery
-sentinelcli alerts test-delivery
+daemoneye-cli alerts test-delivery
 
 # Check network connectivity
-sentinelcli network test
+daemoneye-cli network test
 
 # View delivery logs
-sentinelcli logs --filter "delivery"
+daemoneye-cli logs --filter "delivery"
 ```
 
 ### Debug Mode
@@ -710,26 +710,26 @@ sentinelcli logs --filter "delivery"
 
 ```bash
 # Set debug log level
-sentinelcli config set app.log_level debug
+daemoneye-cli config set app.log_level debug
 
 # Restart service
 sudo systemctl restart daemoneye
 
 # Monitor debug logs
-sentinelcli logs --level debug --tail 100
+daemoneye-cli logs --level debug --tail 100
 ```
 
 **Component Debugging**:
 
 ```bash
 # Debug procmond
-sudo sentinelcli debug procmond --verbose
+sudo daemoneye-cli debug procmond --verbose
 
 # Debug daemoneye-agent
-sentinelcli debug daemoneye-agent --verbose
+daemoneye-cli debug daemoneye-agent --verbose
 
 # Debug database
-sentinelcli debug database --verbose
+daemoneye-cli debug database --verbose
 ```
 
 ### Performance Issues
@@ -738,39 +738,39 @@ sentinelcli debug database --verbose
 
 ```bash
 # Check process collection rate
-sentinelcli metrics --metric collection_rate
+daemoneye-cli metrics --metric collection_rate
 
 # Reduce scan interval
-sentinelcli config set app.scan_interval_ms 60000
+daemoneye-cli config set app.scan_interval_ms 60000
 
 # Check for problematic rules
-sentinelcli rules list --performance
+daemoneye-cli rules list --performance
 ```
 
 **High Memory Usage**:
 
 ```bash
 # Check memory usage
-sentinelcli metrics --metric memory_usage
+daemoneye-cli metrics --metric memory_usage
 
 # Reduce batch size
-sentinelcli config set app.batch_size 500
+daemoneye-cli config set app.batch_size 500
 
 # Check database size
-sentinelcli database size
+daemoneye-cli database size
 ```
 
 **Slow Queries**:
 
 ```bash
 # Check query performance
-sentinelcli database query-stats
+daemoneye-cli database query-stats
 
 # Optimize database
-sentinelcli database optimize
+daemoneye-cli database optimize
 
 # Check for slow rules
-sentinelcli rules list --slow
+daemoneye-cli rules list --slow
 ```
 
 ## Best Practices

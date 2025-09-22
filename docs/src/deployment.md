@@ -74,7 +74,7 @@ For small to medium environments:
 graph TB
     subgraph "Single Node"
         A[<b>ProcMonD</b>]
-        B[<b>SentinelAgent</b>]
+        B[<b>daemoneye-agent</b>]
         C[<b>CLI</b>]
         D[<b>Database</b>]
 
@@ -92,19 +92,19 @@ For large environments with multiple monitoring targets:
 graph TB
     subgraph "Node 1"
         A1[<b>ProcMonD</b>]
-        B1[<b>SentinelAgent</b>]
+        B1[<b>daemoneye-agent</b>]
         A1 <--> B1
     end
 
     subgraph "Node 2"
         A2[<b>ProcMonD</b>]
-        B2[<b>SentinelAgent</b>]
+        B2[<b>daemoneye-agent</b>]
         A2 <--> B2
     end
 
     subgraph "Node 3"
         A3[<b>ProcMonD</b>]
-        B3[<b>SentinelAgent</b>]
+        B3[<b>daemoneye-agent</b>]
         A3 <--> B3
     end
 
@@ -133,7 +133,7 @@ graph TB
 
         subgraph "Containers"
             A1[<strong>ProcMonD</strong><br/>Container<br/>privileged]
-            B[<b>SentinelAgent</b><br/>Container]
+            B[<b>daemoneye-agent</b><br/>Container]
             C[<b>CLI</b>]
         end
 
@@ -238,18 +238,18 @@ DaemonEye supports configuration through environment variables:
 
 ```bash
 # Basic configuration
-export SENTINELD_LOG_LEVEL=info
-export SENTINELD_SCAN_INTERVAL_MS=30000
-export SENTINELD_BATCH_SIZE=1000
+export DaemonEye_LOG_LEVEL=info
+export DaemonEye_SCAN_INTERVAL_MS=30000
+export DaemonEye_BATCH_SIZE=1000
 
 # Database configuration
-export SENTINELD_DATABASE_PATH=/var/lib/daemoneye/processes.db
-export SENTINELD_DATABASE_RETENTION_DAYS=30
+export DaemonEye_DATABASE_PATH=/var/lib/daemoneye/processes.db
+export DaemonEye_DATABASE_RETENTION_DAYS=30
 
 # Alerting configuration
-export SENTINELD_ALERTING_ENABLED=true
-export SENTINELD_ALERTING_SINKS_0_TYPE=syslog
-export SENTINELD_ALERTING_SINKS_0_FACILITY=daemon
+export DaemonEye_ALERTING_ENABLED=true
+export DaemonEye_ALERTING_SINKS_0_TYPE=syslog
+export DaemonEye_ALERTING_SINKS_0_FACILITY=daemon
 ```
 
 ### Configuration Files
@@ -257,7 +257,7 @@ export SENTINELD_ALERTING_SINKS_0_FACILITY=daemon
 Hierarchical configuration with multiple sources:
 
 1. **Command-line flags** (highest precedence)
-2. **Environment variables** (`SENTINELD_*`)
+2. **Environment variables** (`DaemonEye_*`)
 3. **User configuration file** (`~/.config/daemoneye/config.yaml`)
 4. **System configuration file** (`/etc/daemoneye/config.yaml`)
 5. **Embedded defaults** (lowest precedence)
@@ -410,9 +410,9 @@ services:
       - /var/log/daemoneye:/logs
       - ./config:/config:ro
     environment:
-      - SENTINELD_LOG_LEVEL=info
-      - SENTINELD_DATA_DIR=/data
-      - SENTINELD_LOG_DIR=/logs
+      - DaemonEye_LOG_LEVEL=info
+      - DaemonEye_DATA_DIR=/data
+      - DaemonEye_LOG_DIR=/logs
     command: [--config, /config/config.yaml]
     restart: unless-stopped
 
@@ -426,14 +426,14 @@ services:
       - /var/log/daemoneye:/logs
       - ./config:/config:ro
     environment:
-      - SENTINELD_LOG_LEVEL=info
-      - SENTINELD_DATA_DIR=/data
-      - SENTINELD_LOG_DIR=/logs
+      - DaemonEye_LOG_LEVEL=info
+      - DaemonEye_DATA_DIR=/data
+      - DaemonEye_LOG_DIR=/logs
     command: [--config, /config/config.yaml]
     restart: unless-stopped
 
-  sentinelcli:
-    image: daemoneye/sentinelcli:latest
+  daemoneye-cli:
+    image: daemoneye/daemoneye-cli:latest
     container_name: daemoneye-cli
     depends_on:
       - daemoneye-agent
@@ -441,7 +441,7 @@ services:
       - /var/lib/daemoneye:/data
       - ./config:/config:ro
     environment:
-      - SENTINELD_DATA_DIR=/data
+      - DaemonEye_DATA_DIR=/data
     command: [--help]
     restart: no
 ```
@@ -476,7 +476,7 @@ az container create \
   --cpu 1 \
   --memory 2 \
   --ports 8080 9090 \
-  --environment-variables SENTINELD_LOG_LEVEL=info
+  --environment-variables DaemonEye_LOG_LEVEL=info
 ```
 
 ## Troubleshooting
@@ -493,7 +493,7 @@ sudo systemctl status daemoneye
 sudo journalctl -u daemoneye -f
 
 # Check configuration
-sentinelcli config validate
+daemoneye-cli config validate
 ```
 
 **Permission Denied**:
@@ -512,26 +512,26 @@ sudo chown -R daemoneye:daemoneye /var/log/daemoneye
 
 ```bash
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 
 # Check database integrity
-sentinelcli database integrity-check
+daemoneye-cli database integrity-check
 
 # Repair database
-sentinelcli database repair
+daemoneye-cli database repair
 ```
 
 **Performance Issues**:
 
 ```bash
 # Check system metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # Check resource usage
-sentinelcli system resources
+daemoneye-cli system resources
 
 # Optimize configuration
-sentinelcli config optimize
+daemoneye-cli config optimize
 ```
 
 ### Debug Mode
@@ -540,26 +540,26 @@ sentinelcli config optimize
 
 ```bash
 # Set debug level
-sentinelcli config set app.log_level debug
+daemoneye-cli config set app.log_level debug
 
 # Restart service
 sudo systemctl restart daemoneye
 
 # Monitor debug logs
-sentinelcli logs --level debug --tail 100
+daemoneye-cli logs --level debug --tail 100
 ```
 
 **Debug Specific Components**:
 
 ```bash
 # Debug process collection
-sentinelcli debug collector
+daemoneye-cli debug collector
 
 # Debug alert delivery
-sentinelcli debug alerts
+daemoneye-cli debug alerts
 
 # Debug database operations
-sentinelcli debug database
+daemoneye-cli debug database
 ```
 
 ### Health Checks
@@ -568,15 +568,15 @@ sentinelcli debug database
 
 ```bash
 # Overall health
-sentinelcli health
+daemoneye-cli health
 
 # Component health
-sentinelcli health --component procmond
-sentinelcli health --component daemoneye-agent
-sentinelcli health --component database
+daemoneye-cli health --component procmond
+daemoneye-cli health --component daemoneye-agent
+daemoneye-cli health --component database
 
 # Detailed health report
-sentinelcli health --verbose
+daemoneye-cli health --verbose
 ```
 
 ## Best Practices

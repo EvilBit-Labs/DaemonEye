@@ -48,7 +48,7 @@ graph TB
         subgraph "User Space Domain"
             SA["daemoneye-agent<br/>(Detection Orchestrator)<br/>• SQL detection engine<br/>• Alert management<br/>• Multi-channel delivery<br/>• Database management<br/>• Outbound-only network"]
 
-            CLI["sentinelcli<br/>(Operator Interface)<br/>• Query interface<br/>• System management<br/>• No direct DB access<br/>• No network access"]
+            CLI["daemoneye-cli<br/>(Operator Interface)<br/>• Query interface<br/>• System management<br/>• No direct DB access<br/>• No network access"]
         end
 
         subgraph "Data Storage"
@@ -73,7 +73,7 @@ graph TB
 
 ### Security Control Matrix
 
-| Security Control            | procmond                | daemoneye-agent       | sentinelcli           | Implementation                     |
+| Security Control            | procmond                | daemoneye-agent       | daemoneye-cli         | Implementation                     |
 | --------------------------- | ----------------------- | --------------------- | --------------------- | ---------------------------------- |
 | **Privilege Separation**    | ✅ Elevated (temporary) | ✅ User space         | ✅ User space         | Platform-specific capabilities     |
 | **Network Isolation**       | ✅ No network           | ✅ Outbound only      | ✅ No network         | Firewall rules + code restrictions |
@@ -102,18 +102,18 @@ graph TB
 
 - procmond runs in isolated process space with minimal privileges
 - daemoneye-agent operates in user space with restricted database access
-- sentinelcli has no direct system access, only IPC communication
+- daemoneye-cli has no direct system access, only IPC communication
 
 **Network Isolation**:
 
 - procmond: Zero network access (air-gapped)
 - daemoneye-agent: Outbound-only connections for alert delivery
-- sentinelcli: No network access, local IPC only
+- daemoneye-cli: No network access, local IPC only
 
 **Data Access Controls**:
 
 - Audit ledger: Write-only for procmond, read-only for others
-- Event store: Read/write for daemoneye-agent, query-only for sentinelcli
+- Event store: Read/write for daemoneye-agent, query-only for daemoneye-cli
 - Configuration: Hierarchical access with validation
 
 ### Threat Mitigation Strategies
@@ -229,7 +229,7 @@ impl SqlValidator {
 }
 ```
 
-### sentinelcli (Operator Interface)
+### daemoneye-cli (Operator Interface)
 
 **Security Role**: Secure query interface with no direct system access
 
@@ -1182,8 +1182,8 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 **SC-2 (Application Partitioning)**:
 
 - **Vendor Implementation**: Implement strict application partitioning in DaemonEye's three-component architecture
-- **Product Requirements**: Ensure procmond, daemoneye-agent, and sentinelcli operate in isolated process spaces with defined interfaces
-- **Implementation Notes**: Use process isolation, separate memory spaces, and controlled IPC communication channels between components. Already planned: three-component architecture with procmond (privileged collector), daemoneye-agent (user-space orchestrator), and sentinelcli (command interface) operating in isolated process spaces. Additional work needed: enhanced partitioning controls and formal partitioning documentation.
+- **Product Requirements**: Ensure procmond, daemoneye-agent, and daemoneye-cli operate in isolated process spaces with defined interfaces
+- **Implementation Notes**: Use process isolation, separate memory spaces, and controlled IPC communication channels between components. Already planned: three-component architecture with procmond (privileged collector), daemoneye-agent (user-space orchestrator), and daemoneye-cli (command interface) operating in isolated process spaces. Additional work needed: enhanced partitioning controls and formal partitioning documentation.
 
 **SC-3 (Security Function Isolation)**:
 

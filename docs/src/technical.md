@@ -35,16 +35,16 @@ Enterprise tier features provide advanced monitoring capabilities including kern
 DaemonEye follows a three-component security architecture:
 
 1. **ProcMonD**: Privileged process monitoring daemon
-2. **SentinelAgent**: User-space orchestrator and alerting
-3. **SentinelCLI**: Command-line interface and management
+2. **daemoneye-agent**: User-space orchestrator and alerting
+3. **daemoneye-cli**: Command-line interface and management
 
 ### Data Flow
 
 ```mermaid
 graph LR
-    A[<b>ProcMonD</b><br/>• Process Enum<br/>• Hashing<br/>• Audit] -->|Process Data<br/>Alerts| B[<b>SentinelAgent</b><br/>• Alerting<br/>• Rules<br/>• Network<br/>• Storage]
+    A[<b>ProcMonD</b><br/>• Process Enum<br/>• Hashing<br/>• Audit] -->|Process Data<br/>Alerts| B[<b>daemoneye-agent</b><br/>• Alerting<br/>• Rules<br/>• Network<br/>• Storage]
     B -->|Lifecycle Mgmt<br/>Tasking| A
-    B -->|Query Results<br/>Status| C[<b>SentinelCLI</b><br/>• Queries<br/>• Config<br/>• Monitor<br/>• Manage]
+    B -->|Query Results<br/>Status| C[<b>daemoneye-cli</b><br/>• Queries<br/>• Config<br/>• Monitor<br/>• Manage]
     C -->|Commands<br/>Config| B
 ```
 
@@ -282,7 +282,7 @@ mod tests {
             .times(1)
             .returning(|| Ok(CollectionResult::default()));
 
-        let agent = SentinelAgent::new(Box::new(mock_collector));
+        let agent = daemoneye-agent::new(Box::new(mock_collector));
         let result = agent.run_collection_cycle().await;
 
         assert!(result.is_ok());
@@ -359,7 +359,7 @@ Cross-platform support with platform-specific optimizations:
 Hierarchical configuration with multiple sources:
 
 1. **Command-line flags** (highest precedence)
-2. **Environment variables** (`SENTINELD_*`)
+2. **Environment variables** (`DaemonEye_*`)
 3. **User configuration file** (`~/.config/daemoneye/config.yaml`)
 4. **System configuration file** (`/etc/daemoneye/config.yaml`)
 5. **Embedded defaults** (lowest precedence)

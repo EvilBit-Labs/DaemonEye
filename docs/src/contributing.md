@@ -67,8 +67,8 @@ Before contributing to DaemonEye, ensure you have:
 DaemonEye/
 ├── procmond/           # Process monitoring daemon
 ├── daemoneye-agent/      # Agent orchestrator
-├── sentinelcli/        # CLI interface
-├── sentinel-lib/       # Shared library
+├── daemoneye-cli/        # CLI interface
+├── daemoneye-lib/       # Shared library
 ├── docs/               # Documentation
 ├── tests/              # Integration tests
 ├── examples/           # Example configurations
@@ -87,8 +87,8 @@ resolver = "2"
 members = [
   "procmond",
   "daemoneye-agent",
-  "sentinelcli",
-  "sentinel-lib",
+  "daemoneye-cli",
+  "daemoneye-lib",
 ]
 
 [workspace.dependencies]
@@ -191,7 +191,7 @@ pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
 /// # Examples
 ///
 /// ```rust
-/// use sentinel_lib::collector::ProcessCollector;
+/// use daemoneye_lib::collector::ProcessCollector;
 ///
 /// let collector = ProcessCollector::new();
 /// let processes = collector.collect_processes().await?;
@@ -224,7 +224,7 @@ All public APIs must be documented with rustdoc comments:
 /// # Examples
 ///
 /// ```rust
-/// use sentinel_lib::ProcessInfo;
+/// use daemoneye_lib::ProcessInfo;
 ///
 /// let process = ProcessInfo {
 ///     pid: 1234,

@@ -23,7 +23,7 @@ DaemonEye uses a hierarchical configuration system that allows you to override s
 1. **Embedded defaults** (lowest precedence)
 2. **System configuration files** (`/etc/daemoneye/config.yaml`)
 3. **User configuration files** (`~/.config/daemoneye/config.yaml`)
-4. **Environment variables** (`SENTINELD_*`)
+4. **Environment variables** (`DAEMONEYE_*`)
 5. **Command-line flags** (highest precedence)
 
 ## Configuration Hierarchy
@@ -358,7 +358,7 @@ platform:
     enable_ebpf: false
 
     # eBPF program path
-    ebpf_program_path: /usr/lib/daemoneye/sentinel_monitor.o
+    ebpf_program_path: /usr/lib/daemoneye/daemoneye_monitor.o
 
     # eBPF ring buffer size
     ebpf_ring_buffer_size: 1048576  # 1MB
@@ -460,7 +460,7 @@ business_tier:
   # License configuration
   license:
     # License key
-    key: ${SENTINELD_LICENSE_KEY}
+    key: ${DAEMONEYE_LICENSE_KEY}
 
     # License validation endpoint (optional)
     validation_endpoint:
@@ -591,7 +591,7 @@ enterprise_tier:
     # eBPF configuration (Linux)
     ebpf:
       enabled: false
-      program_path: /usr/lib/daemoneye/sentinel_monitor.o
+      program_path: /usr/lib/daemoneye/daemoneye_monitor.o
       ring_buffer_size: 2097152  # 2MB
       max_events_per_second: 10000
 
@@ -707,34 +707,34 @@ enterprise_tier:
 
 ```bash
 # Application settings
-export SENTINELD_LOG_LEVEL=info
-export SENTINELD_SCAN_INTERVAL_MS=30000
-export SENTINELD_BATCH_SIZE=1000
-export SENTINELD_RETENTION_DAYS=30
+export DAEMONEYE_LOG_LEVEL=info
+export DAEMONEYE_SCAN_INTERVAL_MS=30000
+export DAEMONEYE_BATCH_SIZE=1000
+export DAEMONEYE_RETENTION_DAYS=30
 
 # Database settings
-export SENTINELD_DATABASE_PATH=/var/lib/daemoneye/events.redb
-export SENTINELD_AUDIT_LEDGER_PATH=/var/lib/daemoneye/audit.sqlite
+export DAEMONEYE_DATABASE_PATH=/var/lib/daemoneye/events.redb
+export DAEMONEYE_AUDIT_LEDGER_PATH=/var/lib/daemoneye/audit.sqlite
 
 # Alerting settings
-export SENTINELD_ALERTING_ENABLED=true
-export SENTINELD_WEBHOOK_URL=https://your-siem.com/webhook
-export SENTINELD_WEBHOOK_TOKEN=your-webhook-token
+export DAEMONEYE_ALERTING_ENABLED=true
+export DAEMONEYE_WEBHOOK_URL=https://your-siem.com/webhook
+export DAEMONEYE_WEBHOOK_TOKEN=your-webhook-token
 
 # Platform settings
-export SENTINELD_ENABLE_EBPF=false
-export SENTINELD_ENABLE_ETW=false
-export SENTINELD_ENABLE_ENDPOINT_SECURITY=false
+export DAEMONEYE_ENABLE_EBPF=false
+export DAEMONEYE_ENABLE_ETW=false
+export DAEMONEYE_ENABLE_ENDPOINT_SECURITY=false
 ```
 
 ### Business Tier Variables
 
 ```bash
 # Security Center
-export SENTINELD_SECURITY_CENTER_ENABLED=false
-export SENTINELD_SECURITY_CENTER_ENDPOINT=https://security-center.example.com:8443
-export SENTINELD_CLIENT_CERT_PATH=/etc/daemoneye/agent.crt
-export SENTINELD_CLIENT_KEY_PATH=/etc/daemoneye/agent.key
+export DAEMONEYE_SECURITY_CENTER_ENABLED=false
+export DAEMONEYE_SECURITY_CENTER_ENDPOINT=https://security-center.example.com:8443
+export DAEMONEYE_CLIENT_CERT_PATH=/etc/daemoneye/agent.crt
+export DAEMONEYE_CLIENT_KEY_PATH=/etc/daemoneye/agent.key
 
 # Enhanced connectors
 export SPLUNK_HEC_TOKEN=your-splunk-token
@@ -748,14 +748,14 @@ export KAFKA_PASSWORD=your-kafka-password
 
 ```bash
 # Kernel monitoring
-export SENTINELD_KERNEL_MONITORING_ENABLED=false
-export SENTINELD_EBPF_ENABLED=false
-export SENTINELD_ETW_ENABLED=false
-export SENTINELD_ENDPOINT_SECURITY_ENABLED=false
+export DAEMONEYE_KERNEL_MONITORING_ENABLED=false
+export DAEMONEYE_EBPF_ENABLED=false
+export DAEMONEYE_ETW_ENABLED=false
+export DAEMONEYE_ENDPOINT_SECURITY_ENABLED=false
 
 # Federation
-export SENTINELD_FEDERATION_ENABLED=false
-export SENTINELD_REGIONAL_CENTER_ENDPOINT=https://regional.example.com:8443
+export DAEMONEYE_FEDERATION_ENABLED=false
+export DAEMONEYE_REGIONAL_CENTER_ENDPOINT=https://regional.example.com:8443
 
 # STIX/TAXII
 export TAXII_USERNAME=your-taxii-username
@@ -925,16 +925,16 @@ database:
 
 ```bash
 # Validate configuration file
-sentinelcli config validate /etc/daemoneye/config.yaml
+daemoneye-cli config validate /etc/daemoneye/config.yaml
 
 # Validate current configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Check for configuration issues
-sentinelcli config check
+daemoneye-cli config check
 
 # Show effective configuration
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 ### Common Configuration Issues
@@ -953,10 +953,10 @@ python -c "import yaml; yaml.safe_load(open('/etc/daemoneye/config.yaml'))"
 
 ```bash
 # Check for missing required fields
-sentinelcli config check --strict
+daemoneye-cli config check --strict
 
 # Show configuration with defaults
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 **Permission Issues**:
@@ -975,10 +975,10 @@ sudo chmod 755 /var/lib/daemoneye/
 
 ```bash
 # Check environment variables
-env | grep SENTINELD
+env | grep DAEMONEYE
 
 # Test environment variable substitution
-sentinelcli config show --environment
+daemoneye-cli config show --environment
 ```
 
 ### Configuration Debugging
@@ -994,20 +994,20 @@ app:
 
 ```bash
 # Show configuration loading process
-sentinelcli config debug
+daemoneye-cli config debug
 
 # Show configuration sources
-sentinelcli config sources
+daemoneye-cli config sources
 ```
 
 **Test Configuration Changes**:
 
 ```bash
 # Test configuration without applying
-sentinelcli config test /path/to/new-config.yaml
+daemoneye-cli config test /path/to/new-config.yaml
 
 # Apply configuration with validation
-sentinelcli config apply /path/to/new-config.yaml --validate
+daemoneye-cli config apply /path/to/new-config.yaml --validate
 ```
 
 ---

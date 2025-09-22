@@ -24,7 +24,7 @@ DaemonEye is designed to run efficiently on Kubernetes, providing:
 
 - **procmond**: DaemonSet for process monitoring on each node
 - **daemoneye-agent**: Deployment for alerting and orchestration
-- **sentinelcli**: Job/CronJob for management tasks
+- **daemoneye-cli**: Job/CronJob for management tasks
 - **Security Center**: Deployment for web-based management (Business/Enterprise)
 
 ## Prerequisites
@@ -236,11 +236,11 @@ spec:
             - name: logs
               mountPath: /logs
           env:
-            - name: SENTINELD_LOG_LEVEL
+            - name: DaemonEye_LOG_LEVEL
               value: info
-            - name: SENTINELD_DATA_DIR
+            - name: DaemonEye_DATA_DIR
               value: /data
-            - name: SENTINELD_LOG_DIR
+            - name: DaemonEye_LOG_DIR
               value: /logs
           command: [procmond]
           args: [--config, /config/procmond.yaml]
@@ -324,13 +324,13 @@ spec:
             - name: logs
               mountPath: /logs
           env:
-            - name: SENTINELD_LOG_LEVEL
+            - name: DaemonEye_LOG_LEVEL
               value: info
-            - name: SENTINELD_DATA_DIR
+            - name: DaemonEye_DATA_DIR
               value: /data
-            - name: SENTINELD_LOG_DIR
+            - name: DaemonEye_LOG_DIR
               value: /logs
-            - name: SENTINELD_PROCMOND_ENDPOINT
+            - name: DaemonEye_PROCMOND_ENDPOINT
               value: tcp://daemoneye-procmond:8080
           command: [daemoneye-agent]
           args: [--config, /config/daemoneye-agent.yaml]
@@ -569,13 +569,13 @@ spec:
             - name: tmp
               mountPath: /tmp
           env:
-            - name: SENTINELD_LOG_LEVEL
+            - name: DaemonEye_LOG_LEVEL
               value: info
-            - name: SENTINELD_DATA_DIR
+            - name: DaemonEye_DATA_DIR
               value: /data
-            - name: SENTINELD_LOG_DIR
+            - name: DaemonEye_LOG_DIR
               value: /logs
-            - name: SENTINELD_RULE_DIR
+            - name: DaemonEye_RULE_DIR
               value: /rules
           command: [procmond]
           args: [--config, /config/procmond.yaml]
@@ -706,13 +706,13 @@ spec:
             - name: tmp
               mountPath: /tmp
           env:
-            - name: SENTINELD_LOG_LEVEL
+            - name: DaemonEye_LOG_LEVEL
               value: info
-            - name: SENTINELD_DATA_DIR
+            - name: DaemonEye_DATA_DIR
               value: /data
-            - name: SENTINELD_LOG_DIR
+            - name: DaemonEye_LOG_DIR
               value: /logs
-            - name: SENTINELD_PROCMOND_ENDPOINT
+            - name: DaemonEye_PROCMOND_ENDPOINT
               value: tcp://daemoneye-procmond:8080
           command: [daemoneye-agent]
           args: [--config, /config/daemoneye-agent.yaml]
@@ -1278,10 +1278,10 @@ kubectl exec -n daemoneye daemoneye-agent-xxx -- ping daemoneye-procmond
 
 ```bash
 # Check database status
-kubectl exec -n daemoneye daemoneye-agent-xxx -- sentinelcli database status
+kubectl exec -n daemoneye daemoneye-agent-xxx -- daemoneye-cli database status
 
 # Check database integrity
-kubectl exec -n daemoneye daemoneye-agent-xxx -- sentinelcli database integrity-check
+kubectl exec -n daemoneye daemoneye-agent-xxx -- daemoneye-cli database integrity-check
 ```
 
 ### Debug Mode
@@ -1306,10 +1306,10 @@ data:
 
 ```bash
 # Run debug pod
-kubectl run debug --image=daemoneye/sentinelcli:1.0.0 -it --rm -- /bin/sh
+kubectl run debug --image=daemoneye/daemoneye-cli:1.0.0 -it --rm -- /bin/sh
 
 # Check system capabilities
-kubectl run debug --image=daemoneye/sentinelcli:1.0.0 -it --rm -- capsh --print
+kubectl run debug --image=daemoneye/daemoneye-cli:1.0.0 -it --rm -- capsh --print
 ```
 
 ### Performance Issues
@@ -1341,10 +1341,10 @@ kubectl describe pod -n daemoneye daemoneye-agent-xxx | grep Limits
 
 ```bash
 # Check database performance
-kubectl exec -n daemoneye daemoneye-agent-xxx -- sentinelcli database query-stats
+kubectl exec -n daemoneye daemoneye-agent-xxx -- daemoneye-cli database query-stats
 
 # Optimize database
-kubectl exec -n daemoneye daemoneye-agent-xxx -- sentinelcli database optimize
+kubectl exec -n daemoneye daemoneye-agent-xxx -- daemoneye-cli database optimize
 ```
 
 ---

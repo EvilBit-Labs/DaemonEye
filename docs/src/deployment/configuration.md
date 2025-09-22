@@ -32,7 +32,7 @@ DaemonEye uses a hierarchical configuration system that allows for flexible and 
 ### Configuration Precedence
 
 1. **Command-line flags** (highest precedence)
-2. **Environment variables** (`SENTINELD_*`)
+2. **Environment variables** (`DaemonEye_*`)
 3. **User configuration file** (`~/.config/daemoneye/config.yaml`)
 4. **System configuration file** (`/etc/daemoneye/config.yaml`)
 5. **Embedded defaults** (lowest precedence)
@@ -49,18 +49,18 @@ daemoneye-agent --config /path/to/config.yaml --log-level debug
 daemoneye-agent --scan-interval 30000 --batch-size 1000
 
 # Show effective configuration
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 ### Environment Variables
 
 ```bash
 # Set environment variables
-export SENTINELD_LOG_LEVEL=debug
-export SENTINELD_SCAN_INTERVAL_MS=30000
-export SENTINELD_DATABASE_PATH=/var/lib/daemoneye/processes.db
-export SENTINELD_ALERTING_SINKS_0_TYPE=syslog
-export SENTINELD_ALERTING_SINKS_0_FACILITY=daemon
+export DaemonEye_LOG_LEVEL=debug
+export DaemonEye_SCAN_INTERVAL_MS=30000
+export DaemonEye_DATABASE_PATH=/var/lib/daemoneye/processes.db
+export DaemonEye_ALERTING_SINKS_0_TYPE=syslog
+export DaemonEye_ALERTING_SINKS_0_FACILITY=daemon
 
 # Run with environment configuration
 daemoneye-agent
@@ -874,13 +874,13 @@ alerting:
 
 ```bash
 # Validate configuration file
-sentinelcli config validate /path/to/config.yaml
+daemoneye-cli config validate /path/to/config.yaml
 
 # Check configuration syntax
-sentinelcli config check
+daemoneye-cli config check
 
 # Show effective configuration
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 **Configuration Testing**:
@@ -890,7 +890,7 @@ sentinelcli config show --include-defaults
 daemoneye-agent --config /path/to/config.yaml --dry-run
 
 # Test specific settings
-sentinelcli config test --setting app.scan_interval_ms
+daemoneye-cli config test --setting app.scan_interval_ms
 ```
 
 ### Configuration Updates
@@ -899,23 +899,23 @@ sentinelcli config test --setting app.scan_interval_ms
 
 ```bash
 # Reload configuration without restart
-sentinelcli config reload
+daemoneye-cli config reload
 
 # Update specific setting
-sentinelcli config set app.scan_interval_ms 60000
+daemoneye-cli config set app.scan_interval_ms 60000
 
 # Update multiple settings
-sentinelcli config set app.scan_interval_ms 60000 app.batch_size 500
+daemoneye-cli config set app.scan_interval_ms 60000 app.batch_size 500
 ```
 
 **Configuration Backup**:
 
 ```bash
 # Backup current configuration
-sentinelcli config backup --output /backup/daemoneye-config-$(date +%Y%m%d).yaml
+daemoneye-cli config backup --output /backup/daemoneye-config-$(date +%Y%m%d).yaml
 
 # Restore configuration
-sentinelcli config restore --input /backup/daemoneye-config-20240101.yaml
+daemoneye-cli config restore --input /backup/daemoneye-config-20240101.yaml
 ```
 
 ### Environment Management
@@ -970,26 +970,26 @@ database:
 
 ```bash
 # Check configuration syntax
-sentinelcli config check
+daemoneye-cli config check
 
 # Validate configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Show configuration errors
-sentinelcli config show --errors
+daemoneye-cli config show --errors
 ```
 
 **Missing Settings**:
 
 ```bash
 # Show all settings with defaults
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 
 # Show specific setting
-sentinelcli config get app.scan_interval_ms
+daemoneye-cli config get app.scan_interval_ms
 
 # Set missing setting
-sentinelcli config set app.scan_interval_ms 30000
+daemoneye-cli config set app.scan_interval_ms 30000
 ```
 
 **Permission Issues**:
@@ -1079,13 +1079,13 @@ observability:
 
 ```bash
 # Show effective configuration
-sentinelcli config show --include-defaults --format json
+daemoneye-cli config show --include-defaults --format json
 
 # Test configuration
 daemoneye-agent --config /path/to/config.yaml --dry-run
 
 # Check configuration sources
-sentinelcli config sources
+daemoneye-cli config sources
 ```
 
 **Performance Debugging**:

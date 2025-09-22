@@ -1,6 +1,6 @@
 # DaemonEye Core API Reference
 
-This document provides comprehensive API reference for the DaemonEye core library (`sentinel-lib`) and its public interfaces.
+This document provides comprehensive API reference for the DaemonEye core library (`daemoneye-lib`) and its public interfaces.
 
 ## Table of Contents
 
@@ -78,7 +78,7 @@ pub struct ProcessRecord {
 **Example Usage**:
 
 ```rust
-use sentinel_lib::models::ProcessRecord;
+use daemoneye_lib::models::ProcessRecord;
 use uuid::Uuid;
 
 let process = ProcessRecord {
@@ -161,7 +161,7 @@ pub enum AlertSeverity {
 **Example Usage**:
 
 ```rust
-use sentinel_lib::models::{Alert, AlertSeverity};
+use daemoneye_lib::models::{Alert, AlertSeverity};
 use uuid::Uuid;
 
 let alert = Alert {
@@ -250,7 +250,7 @@ pub enum RuleSourceType {
 The configuration system supports hierarchical loading with environment variable substitution.
 
 ```rust
-use sentinel_lib::config::{Config, ConfigBuilder, ConfigError};
+use daemoneye_lib::config::{Config, ConfigBuilder, ConfigError};
 
 // Create configuration builder
 let mut builder = ConfigBuilder::new();
@@ -260,7 +260,7 @@ builder
     .add_embedded_defaults()?
     .add_file("/etc/daemoneye/config.yaml")?
     .add_file("~/.config/daemoneye/config.yaml")?
-    .add_environment("SENTINELD_")?
+    .add_environment("DaemonEye_")?
     .add_cli_args(args)?;
 
 // Build final configuration
@@ -274,7 +274,7 @@ let log_level = config.get::<String>("app.log_level")?;
 ### Configuration Validation
 
 ```rust
-use sentinel_lib::config::{ConfigValidator, ValidationResult};
+use daemoneye_lib::config::{ConfigValidator, ValidationResult};
 
 let validator = ConfigValidator::new();
 let result: ValidationResult = validator.validate(&config)?;
@@ -289,7 +289,7 @@ if !result.is_valid() {
 ### Environment Variable Substitution
 
 ```rust
-use sentinel_lib::config::EnvironmentSubstitutor;
+use daemoneye_lib::config::EnvironmentSubstitutor;
 
 let substitutor = EnvironmentSubstitutor::new();
 let config_with_env = substitutor.substitute(config)?;
@@ -302,7 +302,7 @@ let config_with_env = substitutor.substitute(config)?;
 High-performance embedded database for process data storage.
 
 ```rust
-use sentinel_lib::storage::{EventStore, EventStoreConfig, ProcessQuery};
+use daemoneye_lib::storage::{EventStore, EventStoreConfig, ProcessQuery};
 
 // Create event store
 let config = EventStoreConfig {
@@ -341,7 +341,7 @@ event_store.export_data(&export_config).await?;
 Tamper-evident audit trail with cryptographic integrity.
 
 ```rust
-use sentinel_lib::storage::{AuditLedger, AuditEntry, AuditRecord};
+use daemoneye_lib::storage::{AuditLedger, AuditEntry, AuditRecord};
 
 // Create audit ledger
 let audit_ledger = AuditLedger::new("/var/lib/daemoneye/audit.sqlite")?;
@@ -372,7 +372,7 @@ if !verification_result.is_valid() {
 Comprehensive SQL validation to prevent injection attacks.
 
 ```rust
-use sentinel_lib::detection::{SqlValidator, ValidationResult, ValidationError};
+use daemoneye_lib::detection::{SqlValidator, ValidationResult, ValidationError};
 
 // Create SQL validator
 let validator = SqlValidator::new()
@@ -403,7 +403,7 @@ match result {
 SQL-based detection rule execution with security validation.
 
 ```rust
-use sentinel_lib::detection::{DetectionEngine, DetectionResult, RuleExecutionConfig};
+use daemoneye_lib::detection::{DetectionEngine, DetectionResult, RuleExecutionConfig};
 
 // Create detection engine
 let config = DetectionEngineConfig {
@@ -439,7 +439,7 @@ for result in results {
 Detection rule management with hot-reloading support.
 
 ```rust
-use sentinel_lib::detection::{RuleManager, RuleManagerConfig};
+use daemoneye_lib::detection::{RuleManager, RuleManagerConfig};
 
 // Create rule manager
 let config = RuleManagerConfig {
@@ -471,7 +471,7 @@ let test_result = rule_manager.test_rule("suspicious-processes", test_data).awai
 Alert generation, deduplication, and delivery management.
 
 ```rust
-use sentinel_lib::alerting::{AlertManager, AlertManagerConfig, DeduplicationConfig};
+use daemoneye_lib::alerting::{AlertManager, AlertManagerConfig, DeduplicationConfig};
 
 // Create alert manager
 let config = AlertManagerConfig {
@@ -504,7 +504,7 @@ if let Some(alert) = alert {
 Pluggable alert delivery channels.
 
 ```rust
-use sentinel_lib::alerting::sinks::{AlertSink, StdoutSink, SyslogSink, WebhookSink};
+use daemoneye_lib::alerting::sinks::{AlertSink, StdoutSink, SyslogSink, WebhookSink};
 
 // Create alert sinks
 let stdout_sink = StdoutSink::new(OutputFormat::Json);
@@ -544,7 +544,7 @@ for sink in sinks {
 Cryptographic hash chain for audit trail integrity.
 
 ```rust
-use sentinel_lib::crypto::{HashChain, HashChainConfig, ChainVerificationResult};
+use daemoneye_lib::crypto::{HashChain, HashChainConfig, ChainVerificationResult};
 
 // Create hash chain
 let config = HashChainConfig {
@@ -579,7 +579,7 @@ if verification_result.is_valid() {
 Ed25519 digital signatures for enhanced integrity.
 
 ```rust
-use sentinel_lib::crypto::{SignatureManager, SignatureConfig};
+use daemoneye_lib::crypto::{SignatureManager, SignatureConfig};
 
 // Create signature manager
 let config = SignatureConfig {
@@ -605,7 +605,7 @@ println!("Signature valid: {}", is_valid);
 Prometheus-compatible metrics collection.
 
 ```rust
-use sentinel_lib::telemetry::{MetricsCollector, MetricType, MetricValue};
+use daemoneye_lib::telemetry::{MetricsCollector, MetricType, MetricValue};
 
 // Create metrics collector
 let metrics_collector = MetricsCollector::new()?;
@@ -625,7 +625,7 @@ println!("Metrics: {}", metrics_data);
 System health monitoring and status reporting.
 
 ```rust
-use sentinel_lib::telemetry::{HealthMonitor, HealthStatus, ComponentHealth};
+use daemoneye_lib::telemetry::{HealthMonitor, HealthStatus, ComponentHealth};
 
 // Create health monitor
 let health_monitor = HealthMonitor::new()?;
@@ -648,18 +648,18 @@ println!("Database Health: {:?}", db_health);
 ### Core Error Types
 
 ```rust
-use sentinel_lib::errors::{SentinelError, SentinelErrorKind};
+use daemoneye_lib::errors::{DaemonEyeError, DaemonEyeErrorKind};
 
 // Error handling example
 match some_operation().await {
     Ok(result) => println!("Success: {:?}", result),
-    Err(SentinelError::Configuration(e)) => {
+    Err(DaemonEyeError::Configuration(e)) => {
         eprintln!("Configuration error: {}", e);
     }
-    Err(SentinelError::Database(e)) => {
+    Err(DaemonEyeError::Database(e)) => {
         eprintln!("Database error: {}", e);
     }
-    Err(SentinelError::Detection(e)) => {
+    Err(DaemonEyeError::Detection(e)) => {
         eprintln!("Detection error: {}", e);
     }
     Err(e) => {

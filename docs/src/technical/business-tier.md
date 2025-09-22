@@ -27,13 +27,13 @@ graph TB
         subgraph "Agent Node 1"
             PM1[procmond]
             SA1[daemoneye-agent]
-            CLI1[sentinelcli]
+            CLI1[daemoneye-cli]
         end
 
         subgraph "Agent Node 2"
             PM2[procmond]
             SA2[daemoneye-agent]
-            CLI2[sentinelcli]
+            CLI2[daemoneye-cli]
         end
 
         subgraph "External Integrations"
@@ -225,15 +225,15 @@ impl AgentRegistry {
 **Uplink Communication**: Secure connection to Security Center with fallback to standalone operation.
 
 ```rust
-pub struct EnhancedSentinelAgent {
-    base_agent: SentinelAgent,
+pub struct Enhanceddaemoneye-agent {
+    base_agent: daemoneye-agent,
     security_center_client: Option<SecurityCenterClient>,
     uplink_config: UplinkConfig,
 }
 
-impl EnhancedSentinelAgent {
+impl Enhanceddaemoneye-agent {
     pub async fn new(config: AgentConfig) -> Result<Self> {
-        let base_agent = SentinelAgent::new(config.clone()).await?;
+        let base_agent = daemoneye-agent::new(config.clone()).await?;
 
         let security_center_client = if config.uplink.enabled {
             Some(SecurityCenterClient::new(&config.uplink).await?)
@@ -748,7 +748,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/daemoneye-agent /usr/local/bin/
 COPY --from=builder /app/target/release/procmond /usr/local/bin/
-COPY --from=builder /app/target/release/sentinelcli /usr/local/bin/
+COPY --from=builder /app/target/release/daemoneye-cli /usr/local/bin/
 
 # Create non-root user
 RUN useradd -r -s /bin/false daemoneye

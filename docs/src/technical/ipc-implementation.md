@@ -2,7 +2,7 @@
 
 ## Overview
 
-DaemonEye uses a secure, high-performance IPC system to coordinate between its three components (`procmond`, `daemoneye-agent`, and `sentinelcli`). The IPC layer provides reliable cross-platform communication using native OS primitives while maintaining strict security boundaries.
+DaemonEye uses a secure, high-performance IPC system to coordinate between its three components (`procmond`, `daemoneye-agent`, and `daemoneye-cli`). The IPC layer provides reliable cross-platform communication using native OS primitives while maintaining strict security boundaries.
 
 ## Transport Architecture
 
@@ -148,11 +148,11 @@ pub enum IpcError {
 
 ```bash
 # Check IPC status
-sentinelcli health-check --verbose
+daemoneye-cli health-check --verbose
 
 # Verify endpoint accessibility
 ls -la /var/run/daemoneye/  # Unix/macOS
 
 # Test IPC connectivity
-sentinelcli ipc test
+daemoneye-cli ipc test
 ```
