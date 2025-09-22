@@ -17,7 +17,7 @@
   - Write unit tests for data model validation and serialization
   - _Requirements: 1.3, 4.1, 4.3_
 
-- [x] 3. Migrate to interprocess crate for IPC protocol
+- [-] 3. Implement IPC client infrastructure for daemoneye-agent
 
 - [x] 3.1 Define protobuf schema for IPC messages - [#35](https://github.com/EvilBit-Labs/DaemonEye/issues/35)
 
@@ -26,40 +26,42 @@
   - Generate Rust code from protobuf definitions and verify compilation
   - _Requirements: 3.1, 3.2_
 
-- [x] 3.2 Implement legacy custom IPC server for procmond - [#36](https://github.com/EvilBit-Labs/DaemonEye/issues/36)
-
-  - Create IpcServer trait with async message handling methods
-  - Implement Unix socket server for Linux/macOS with proper error handling
-  - Add named pipe server implementation for Windows
-  - Write unit tests for server connection handling and message parsing
-  - _Requirements: 3.1, 3.2_
-
-- [x] 3.3 Migrate to interprocess crate with unified local socket API
+- [x] 3.2 Implement IPC client infrastructure with interprocess crate - [#36](https://github.com/EvilBit-Labs/DaemonEye/issues/36)
 
   - Add interprocess crate dependency with tokio feature for cross-platform local sockets
-  - Implement interprocess-based IpcServer maintaining same trait interface
-  - Create codec layer preserving protobuf framing with CRC32 validation
-  - Ensure Unix domain socket permissions (0700 dir, 0600 socket) and Windows named pipe SDDL restrictions (revisit later)
+  - Create IpcCodec with protobuf framing and CRC32 validation
+  - Implement IpcClientManager with automatic reconnection logic and exponential backoff
+  - Add connection lifecycle management (connect, disconnect, health checks)
+  - Implement message timeout, size limits, and comprehensive error handling
+  - Integrate with daemoneye-agent main loop for task distribution and result collection
+  - Write comprehensive unit tests for client connection scenarios and cross-platform compatibility
   - _Requirements: 3.1, 3.2_
 
-- [x] 3.4 Implement interprocess IpcClient for daemoneye-agent - [#37](https://github.com/EvilBit-Labs/DaemonEye/issues/37)
+- [ ] 3.3 Add advanced IPC client features - [#37](https://github.com/EvilBit-Labs/DaemonEye/issues/37)
 
-  - Create IpcClient using `interprocess` LocalSocketStream with connection management
-  - Add automatic reconnection logic with exponential backoff using existing patterns
-  - Implement connection lifecycle management (connect, disconnect, health checks)
-  - Implement message timeout, size limits, and error handling implementation, maximizing cross-platform portability and reusability
-  - Write unit tests for client connection scenarios and cross-platform compatibility
+  - Add connection pooling for multiple collector-core components
+  - Implement load balancing and failover between multiple collectors
+  - Add metrics collection for IPC client performance monitoring
+  - Enhance error recovery with circuit breaker patterns
   - _Requirements: 3.1, 3.2_
 
-- [x] 3.5 Comprehensive testing and validation for interprocess communication - [#38](https://github.com/EvilBit-Labs/DaemonEye/issues/38)
+- [ ] 3.4 Add capability negotiation to IPC client - [#38](https://github.com/EvilBit-Labs/DaemonEye/issues/38)
 
-  - Create integration tests for `interprocess` transport behavior
+  - Implement capability discovery and negotiation with collector-core components
+  - Add support for multi-domain task routing based on collector capabilities
+  - Integrate with detection engine for SQL-to-IPC task translation
+  - Handle capability changes and component reconnection scenarios
+  - Write integration tests for capability negotiation workflows
+  - _Requirements: 3.1, 3.2, 11.1, 11.2_
+
+- [ ] 3.5 Add comprehensive IPC client testing and validation - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+
+  - Create integration tests for daemoneye-agent IPC client connecting to collector-core servers
   - Add cross-platform tests (Linux, macOS, Windows) for local socket functionality
-  - Implement integration tests for cross-component interaction with `interprocess`, specifically testing task distribution and result collection workflows
-  - Implement integration tests for error handling and recovery scenarios on both client and server sides for communication reliability
-  - Implement property-based tests for codec robustness with malformed inputs, ensuring maximum resilience and security
-  - Add performance benchmarks ensuring no regression in message throughput or latency
-  - Create security validation tests for socket permissions and connection limits
+  - Implement integration tests for task distribution from daemoneye-agent to collector components
+  - Add property-based tests for codec robustness with malformed inputs
+  - Create performance benchmarks ensuring no regression in message throughput or latency
+  - Write security validation tests for connection authentication and message integrity
   - _Requirements: 3.1, 3.2_
 
 - [ ] 4. Implement collector-core framework for extensible monitoring architecture
@@ -74,14 +76,15 @@
   - Write unit tests for EventSource trait and Collector registration
   - _Requirements: 11.1, 11.2, 11.5_
 
-- [x] 4.2 Integrate existing IPC infrastructure into collector-core - [#76](https://github.com/EvilBit-Labs/DaemonEye/issues/76)
+- [x] 4.2 Implement IPC server integration in collector-core - [#77](https://github.com/EvilBit-Labs/DaemonEye/issues/77)
 
-  - Move existing IPC server logic from procmond to collector-core runtime
-  - Integrate existing InterprocessServer and IpcCodec with collector-core event handling
-  - Preserve existing protobuf protocol and CRC32 framing from docs/src/technical/ipc-implementation.md
-  - Add capability negotiation to existing IPC protocol with CollectionCapabilities message
-  - Extend existing DetectionTask and DetectionResult messages for multi-domain support
-  - Write integration tests for IPC compatibility with existing daemoneye-agent client
+  - Implement CollectorIpcServer with full functionality
+  - Integrate InterprocessServer and IpcCodec with collector-core event handling
+  - Add capability advertisement to IPC protocol with CollectionCapabilities message
+  - Handle incoming DetectionTask messages from daemoneye-agent and route to appropriate EventSources
+  - Send DetectionResult messages back to daemoneye-agent with collected data
+  - Add task validation against collector capabilities
+  - Write comprehensive unit tests for IPC server functionality
   - _Requirements: 11.1, 11.2, 12.3_
 
 - [x] 4.3 Add shared infrastructure components to collector-core - [#76](https://github.com/EvilBit-Labs/DaemonEye/issues/76)
@@ -104,7 +107,7 @@
   - Write unit tests for protobuf serialization and backward compatibility
   - _Requirements: 12.1, 12.2, 12.3_
 
-- [x] 4.5 Create comprehensive collector-core testing suite - [#76](https://github.com/EvilBit-Labs/DaemonEye/issues/76)
+- [ ] 4.5 Complete collector-core testing suite - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
 
   - Write integration tests for multiple concurrent EventSource registration and lifecycle management
   - Add stress tests for event batching, backpressure handling, and graceful shutdown coordination
@@ -115,27 +118,77 @@
   - Create compatibility tests ensuring collector-core works with existing procmond and daemoneye-agent
   - _Requirements: 11.1, 11.2, 12.1, 12.2, 13.1, 13.2, 13.5_
 
-- [ ] 5. Implement cross-platform process enumeration in procmond - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+- [ ] 5. Implement cross-platform process enumeration in procmond
 
-  - Create ProcessCollector trait with platform-specific implementations using sysinfo crate
-  - Implement process metadata extraction (PID, PPID, name, executable path, command line)
-  - Add enhanced metadata collection when privileges allow (memory usage, CPU%, start time) - procmond should run as root or with CAP_SYS_PTRACE but we need to fail gracefully if we don't have the privileges
-  - Handle inaccessible processes gracefully with proper error logging
-  - Write unit tests with mock process data and integration tests on real systems
+- [x] 5.1 Create basic ProcessMessageHandler with sysinfo - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+
+  - Implement ProcessMessageHandler with basic sysinfo-based process enumeration
+  - Add process metadata extraction (PID, PPID, name, executable path, command line, CPU, memory)
+  - Create convert_process_to_record method for ProtoProcessRecord conversion
+  - Add basic unit tests for ProcessMessageHandler functionality
   - _Requirements: 1.1, 1.5_
+
+- [ ] 5.2 Create ProcessCollector trait and refactor for extensibility - [#80](https://github.com/EvilBit-Labs/DaemonEye/issues/80)
+
+  - Define ProcessCollector trait with platform-agnostic interface for process enumeration
+  - Refactor ProcessMessageHandler to use ProcessCollector trait
+  - Create SysinfoProcessCollector as default cross-platform implementation
+  - Add proper error handling for inaccessible processes with structured logging
+  - Write comprehensive unit tests with mock process data
+  - _Requirements: 1.1, 1.5_
+
+- [ ] 5.3 Implement Linux-specific optimizations - [#81](https://github.com/EvilBit-Labs/DaemonEye/issues/81)
+
+  - Create LinuxProcessCollector with direct /proc filesystem access for enhanced performance
+  - Add CAP_SYS_PTRACE capability detection and privilege management
+  - Implement enhanced metadata collection (memory maps, file descriptors, network connections)
+  - Add support for process namespaces and container detection
+  - Handle permission denied gracefully for restricted processes
+  - Write Linux-specific integration tests
+  - _Requirements: 1.1, 1.5, 6.1, 6.2_
+
+- [ ] 5.4 Implement macOS-specific optimizations - [#82](https://github.com/EvilBit-Labs/DaemonEye/issues/82)
+
+  - Create macOSProcessCollector using libproc and sysctl APIs
+  - Add macOS entitlements detection and privilege management
+  - Implement enhanced metadata collection with macOS-specific process attributes
+  - Add support for System Integrity Protection (SIP) awareness
+  - Handle sandboxed process restrictions gracefully
+  - Write macOS-specific integration tests
+  - _Requirements: 1.1, 1.5, 6.1, 6.2_
+
+- [ ] 5.5 Implement Windows-specific optimizations - [#83](https://github.com/EvilBit-Labs/DaemonEye/issues/83)
+
+  - Create WindowsProcessCollector using Windows API (Process32First/Next, NtQuerySystemInformation)
+  - Add SeDebugPrivilege detection and privilege management
+  - Implement enhanced metadata collection with Windows-specific process attributes
+  - Add support for Windows process tokens and security contexts
+  - Handle protected processes and system processes gracefully
+  - Write Windows-specific integration tests
+  - _Requirements: 1.1, 1.5, 6.1, 6.2_
+
+- [ ] 5.6 Add comprehensive cross-platform testing - [#84](https://github.com/EvilBit-Labs/DaemonEye/issues/84)
+
+  - Create cross-platform integration tests for all ProcessCollector implementations
+  - Add performance benchmarks comparing platform-specific vs sysinfo implementations
+  - Implement privilege escalation/dropping tests for all platforms
+  - Add stress tests with high process counts (10,000+ processes)
+  - Create compatibility tests for different OS versions and configurations
+  - Write property-based tests for process enumeration edge cases
+  - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
 - [ ] 6. Implement executable integrity verification with SHA-256 hashing - [#40](https://github.com/EvilBit-Labs/DaemonEye/issues/40)
 
   - Create HashComputer trait for cryptographic hashing of executable files
-  - Implement SHA-256 hash computation for accessible executable files
+  - Implement SHA-256 hash computation for accessible executable files in ProcessMessageHandler
   - Handle missing or inaccessible executable files without failing enumeration
-  - Store hash_algorithm field ('sha256') with computed hash values
+  - Store hash_algorithm field ('sha256') with computed hash values in ProtoProcessRecord
   - Write performance tests to ensure hashing doesn't impact enumeration speed
   - _Requirements: 2.1, 2.2, 2.4_
 
 - [ ] 7. Create ProcessEventSource and refactor procmond to use collector-core
 
-- [ ] 7.1 Create ProcessEventSource wrapping existing ProcessMessageHandler - [#76](https://github.com/EvilBit-Labs/DaemonEye/issues/76)
+- [x] 7.1 Create ProcessEventSource wrapping existing ProcessMessageHandler - [#76](https://github.com/EvilBit-Labs/DaemonEye/issues/76)
 
   - Implement ProcessEventSource that wraps existing ProcessMessageHandler from procmond/src/lib.rs
   - Reuse existing enumerate_processes() and convert_process_to_record() logic
@@ -166,79 +219,72 @@
 
 - [ ] 9. Create tamper-evident audit logging system - [#42](https://github.com/EvilBit-Labs/DaemonEye/issues/42)
 
-  - Implement AuditChain with BLAKE3 hashing for cryptographic integrity
-  - Create append-only audit ledger with monotonic sequence numbers
+  - Implement AuditChain with BLAKE3 hashing for cryptographic integrity using rs_merkle crate
+  - Create append-only audit ledger with monotonic sequence numbers in separate redb database
   - Add audit entry structure with timestamp, actor, action, payload hash, previous hash, entry hash
   - Implement chain verification function to detect tampering attempts
-  - Write cryptographic tests for hash chain integrity and optional Ed25519 signatures
+  - Add periodic checkpoints with optional Ed25519 signatures for external verification
+  - Write cryptographic tests for hash chain integrity and inclusion proofs
   - _Requirements: 7.1, 7.2, 7.4, 7.5_
 
 - [ ] 10. Implement redb database layer for daemoneye-agent
 
-- [ ] 10.1 Set up redb database foundation - [#43](https://github.com/EvilBit-Labs/DaemonEye/issues/43)
+- [x] 10.1 Create basic DatabaseManager structure and error handling - [#43](https://github.com/EvilBit-Labs/DaemonEye/issues/43)
 
-  - Add redb dependency and create database initialization code
+  - Add redb dependency and create basic DatabaseManager structure
+  - Create database initialization with table definitions using `Vec<u8>` placeholders
+  - Add comprehensive error handling with platform-agnostic error messages
+  - Write basic unit tests for database creation and error scenarios
+  - _Requirements: 1.3, 4.4, 7.4_
+
+- [ ] 10.2 Implement actual redb database operations - [#44](https://github.com/EvilBit-Labs/DaemonEye/issues/44)
+
   - Configure optimal redb settings for concurrent access and performance
-  - Create database connection management with proper error handling
-  - Write unit tests for database creation and basic operations
-  - _Requirements: 1.3, 4.4, 7.4_
-
-- [ ] 10.2 Define database schema and table structures - [#44](https://github.com/EvilBit-Labs/DaemonEye/issues/44)
-
-  - Create table definitions for processes, scans, detection_rules, alerts, and alert_deliveries
-  - Implement data serialization/deserialization for complex types
+  - Replace all placeholder TODO implementations with actual redb operations
+  - Implement proper data serialization/deserialization for ProcessRecord, DetectionRule, Alert types
   - Add proper indexing strategy for query performance
-  - Write unit tests for schema creation and data type handling
+  - Implement transaction handling for atomic operations
+  - Write comprehensive integration tests for all database operations
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 10.3 Implement transaction handling and error recovery - [#45](https://github.com/EvilBit-Labs/DaemonEye/issues/45)
+- [ ] 10.3 Add database migration system and advanced features - [#45](https://github.com/EvilBit-Labs/DaemonEye/issues/45)
 
-  - Add transaction management for atomic operations
-  - Implement proper error recovery and rollback mechanisms
-  - Create connection pooling and lifecycle management
-  - Write integration tests for transaction scenarios and error conditions
-  - _Requirements: 1.3, 4.4, 7.4_
-
-- [ ] 10.4 Add database migration system - [#46](https://github.com/EvilBit-Labs/DaemonEye/issues/46)
-
-  - Create schema versioning and migration framework
-  - Implement upgrade/downgrade migration scripts
-  - Add migration validation and rollback capabilities
+  - Add database migration system with schema versioning
+  - Implement connection pooling and lifecycle management
+  - Add proper error recovery and rollback mechanisms
+  - Create data cleanup and retention policy implementation
   - Write integration tests for migration scenarios and version compatibility
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 10.5 Create comprehensive database testing and validation - [#46](https://github.com/EvilBit-Labs/DaemonEye/issues/46)
-
-  - Add property-based tests for redb transaction handling and concurrent access patterns
-  - Create stress tests for high-volume process data ingestion and query performance
-  - Implement corruption detection tests and database integrity validation
-  - Add performance benchmarks for query execution times and storage efficiency
-  - Write chaos tests for database recovery scenarios and transaction rollback behavior
-  - Create data consistency tests for audit ledger integrity and tamper detection
-  - Add memory usage tests for long-running database operations and cleanup verification
-  - _Requirements: 1.3, 4.4, 7.1, 7.2, 7.4_
-
 - [ ] 11. Implement SQL-based detection engine with SQL-to-IPC translation pipeline
 
-- [ ] 11.1 Create SQL validator and collection requirements extractor - [#47](https://github.com/EvilBit-Labs/DaemonEye/issues/47)
+- [x] 11.1 Create basic DetectionEngine structure and rule management - [#47](https://github.com/EvilBit-Labs/DaemonEye/issues/47)
 
-  - Implement SqlValidator using sqlparser-rs for AST parsing and validation
+  - Create DetectionEngine struct with rule loading and execution capabilities
+  - Implement basic SQL validation using sqlparser-rs for AST parsing
+  - Create rule management functions (load, remove, enable/disable)
+  - Write basic unit tests for detection engine structure and rule management
+  - _Requirements: 3.1, 3.2, 3.3, 3.5_
+
+- [ ] 11.2 Implement placeholder rule execution for testing - [#48](https://github.com/EvilBit-Labs/DaemonEye/issues/48)
+
+  - Replace current placeholder rule execution with more comprehensive pattern matching
+  - Add support for more rule categories beyond suspicious_process and high_cpu
+  - Implement proper alert generation from placeholder rule matches
+  - Write comprehensive unit tests for placeholder rule execution
+  - _Requirements: 3.1, 3.2, 3.3, 3.5_
+
+- [ ] 11.3 Implement full SQL-to-IPC translation pipeline - [#49](https://github.com/EvilBit-Labs/DaemonEye/issues/49)
+
+  - Replace placeholder rule execution with actual SQL-to-IPC translation
   - Create CollectionRequirementsExtractor to analyze SQL AST and extract collection needs
   - Add SQL-to-IPC translation logic that converts complex SQL rules into simple protobuf collection tasks
-  - Create whitelist of allowed SQL constructs (SELECT statements, approved functions from docs/src/technical/query-pipeline.md)
-  - Write unit tests for SQL validation and collection requirements extraction
+  - Implement two-phase execution: SQL-to-IPC translation + SQL rule execution against collected data
+  - Create whitelist of allowed SQL constructs (SELECT statements, approved functions)
+  - Write integration tests for complete SQL-to-IPC pipeline
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.2 Implement detection engine with two-phase execution - [#48](https://github.com/EvilBit-Labs/DaemonEye/issues/48)
-
-  - Create DetectionEngine struct implementing the two-phase query pipeline from docs/src/technical/query-pipeline.md
-  - Add Phase 1: SQL-to-IPC translation that generates protobuf tasks for collector-core components
-  - Add Phase 2: SQL rule execution against collected data in redb event store
-  - Implement overcollection strategy where collector-core may collect broader data than SQL requires
-  - Write unit tests for both phases of the detection pipeline
-  - _Requirements: 3.1, 3.2, 3.3, 3.5_
-
-- [ ] 11.3 Add query execution with resource limits and sandboxing - [#49](https://github.com/EvilBit-Labs/DaemonEye/issues/49)
+- [ ] 11.4 Add query execution with resource limits and sandboxing - [#50](https://github.com/EvilBit-Labs/DaemonEye/issues/50)
 
   - Implement query timeouts (30 seconds) and memory limits for SQL rule execution
   - Add sandboxed execution environment with read-only database connections
@@ -247,7 +293,7 @@
   - Write integration tests for resource limit enforcement and timeout scenarios
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.4 Create comprehensive security testing for SQL-to-IPC pipeline - [#50](https://github.com/EvilBit-Labs/DaemonEye/issues/50)
+- [ ] 11.5 Create comprehensive security testing for SQL-to-IPC pipeline - [#51](https://github.com/EvilBit-Labs/DaemonEye/issues/51)
 
   - Implement OWASP SQL injection test vector validation for both AST parsing and collection extraction
   - Add fuzzing tests for malformed SQL input in both translation and execution phases
@@ -256,7 +302,7 @@
   - Test that complex SQL rules are properly translated to simple, secure protobuf tasks
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 12. Create alert generation and management system - [#51](https://github.com/EvilBit-Labs/DaemonEye/issues/51)
+- [x] 12. Create alert generation and management system - [#51](https://github.com/EvilBit-Labs/DaemonEye/issues/51)
 
   - Implement AlertManager for generating structured alerts from detection results
   - Add alert deduplication using configurable keys and time windows
@@ -267,12 +313,13 @@
 
 - [ ] 13. Implement multi-channel alert delivery system
 
-- [ ] 13.1 Create AlertSink trait and basic sinks - [#52](https://github.com/EvilBit-Labs/DaemonEye/issues/52)
+- [x] 13.1 Create AlertSink trait and basic sinks - [#52](https://github.com/EvilBit-Labs/DaemonEye/issues/52)
 
   - Define AlertSink trait with async delivery methods
   - Implement StdoutSink and FileSink for basic alert output
-  - Add structured alert formatting (JSON) and human-readable text
-  - Write unit tests for basic sink implementations and formatting
+  - Add structured alert formatting (JSON, YAML, CSV) and human-readable text
+  - Create AlertSinkFactory for creating sinks from configuration
+  - Write comprehensive unit tests for basic sink implementations and formatting
   - _Requirements: 5.1, 5.2_
 
 - [ ] 13.2 Implement network-based alert sinks - [#53](https://github.com/EvilBit-Labs/DaemonEye/issues/53)
@@ -283,11 +330,12 @@
   - Write integration tests for network sinks with mock endpoints
   - _Requirements: 5.1, 5.2_
 
-- [ ] 13.3 Add parallel delivery and tracking - [#54](https://github.com/EvilBit-Labs/DaemonEye/issues/54)
+- [x] 13.3 Add parallel delivery and tracking - [#54](https://github.com/EvilBit-Labs/DaemonEye/issues/54)
 
   - Implement parallel alert delivery to multiple sinks without blocking
   - Add delivery tracking with success/failure status recording
   - Create delivery attempt logging and metrics collection
+  - Add health monitoring for all alert sinks
   - Write integration tests for concurrent delivery scenarios
   - _Requirements: 5.1, 5.2_
 
@@ -300,12 +348,46 @@
   - Write chaos testing scenarios for network failures and endpoint unavailability
   - _Requirements: 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 15. Implement daemoneye-cli core infrastructure and query commands - [#56](https://github.com/EvilBit-Labs/DaemonEye/issues/56)
+- [ ] 14.5. Complete collector-core IPC server integration - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
+
+  - Implement CollectorIpcServer in collector-core/src/ipc.rs with full functionality
+  - Add capability negotiation and task routing between collector-core and daemoneye-agent
+  - Integrate IPC server with collector runtime for event source management
+  - Add proper error handling and connection management
+  - Write integration tests for IPC server functionality
+  - _Requirements: 11.1, 11.2, 12.1, 12.2_
+
+- [ ] 14.6. Complete IPC client implementation in daemoneye-agent - [#77](https://github.com/EvilBit-Labs/DaemonEye/issues/77)
+
+  - Complete IpcClientManager implementation with proper error handling and reconnection logic
+  - Add capability negotiation between daemoneye-agent and collector-core components
+  - Implement task distribution and result collection workflows
+  - Add comprehensive integration tests for IPC client functionality
+  - Ensure compatibility with existing procmond ProcessMessageHandler
+  - _Requirements: 3.1, 3.2, 11.1, 11.2_
+
+- [ ] 15. Implement daemoneye-cli basic infrastructure - [#56](https://github.com/EvilBit-Labs/DaemonEye/issues/56)
+
+- [x] 15.1 Create basic CLI structure and database stats - [#56](https://github.com/EvilBit-Labs/DaemonEye/issues/56)
+
+  - Implement clap-based CLI with basic options (--database, --format, --help, --version)
+  - Add basic database statistics display functionality
+  - Implement multiple output formats (JSON, human-readable)
+  - Add basic telemetry integration and health checking
+  - _Requirements: 8.1, 8.2, 10.5_
+
+- [ ] 15.2 Add comprehensive CLI testing and error handling - [#79](https://github.com/EvilBit-Labs/DaemonEye/issues/79)
+
+  - Write comprehensive CLI tests using insta for snapshot testing
+  - Add proper error handling with helpful error messages
+  - Implement configuration file support and validation
+  - Add shell completion support for bash, zsh, fish, and PowerShell
+  - _Requirements: 8.1, 8.2, 10.5_
+
+- [ ] 15.3 Extend daemoneye-cli with advanced query capabilities - [#80](https://github.com/EvilBit-Labs/DaemonEye/issues/80)
 
   - Create IPC client to communicate with daemoneye-agent using existing interprocess crate infrastructure
-  - Implement clap-based CLI with global options (--config, --output, --no-color, --verbose, --help, --version)
   - Add query command with subcommands: interactive shell, single query execution, history, explain, validate
-  - Implement multiple output formats (JSON, table with borders, CSV) with terminal capability detection
   - Add streaming and pagination support for large result sets via IPC protocol
   - Create interactive query shell with syntax highlighting, auto-completion, and command history
   - Implement query parameter binding and prepared statement support through daemoneye-agent
