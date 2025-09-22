@@ -1,12 +1,12 @@
 //! IPC integration for collector-core framework.
 //!
-//! This module integrates the existing IPC infrastructure from sentinel-lib
+//! This module integrates the existing IPC infrastructure from daemoneye-lib
 //! with the collector-core runtime, enabling communication between collector-core
-//! components and sentinelagent.
+//! components and daemoneye-agent.
 
 use crate::{config::CollectorConfig, source::SourceCaps};
 use anyhow::{Context, Result};
-use sentinel_lib::{
+use daemoneye_lib::{
     ipc::{InterprocessServer, IpcConfig, PanicStrategy, TransportType},
     proto::{CollectionCapabilities, DetectionResult, DetectionTask, TaskType},
 };
@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 /// IPC server integration for collector-core runtime.
 ///
 /// This struct manages the IPC server that handles communication between
-/// collector-core components and sentinelagent, preserving the existing
+/// collector-core components and daemoneye-agent, preserving the existing
 /// protobuf protocol and CRC32 framing while integrating with the
 /// collector-core event handling system.
 pub struct CollectorIpcServer {
@@ -158,7 +158,7 @@ impl CollectorIpcServer {
     ///
     /// This method converts the collector-core SourceCaps bitflags into
     /// a protobuf CollectionCapabilities message for capability negotiation
-    /// with sentinelagent.
+    /// with daemoneye-agent.
     pub async fn get_capabilities(&self) -> CollectionCapabilities {
         let caps = self.capabilities.read().await;
         source_caps_to_proto_capabilities(*caps)
@@ -241,7 +241,7 @@ async fn validate_task_capabilities(
 
 /// Converts SourceCaps bitflags to protobuf CollectionCapabilities.
 fn source_caps_to_proto_capabilities(caps: SourceCaps) -> CollectionCapabilities {
-    use sentinel_lib::proto::{AdvancedCapabilities, MonitoringDomain};
+    use daemoneye_lib::proto::{AdvancedCapabilities, MonitoringDomain};
 
     let mut supported_domains = Vec::new();
 
@@ -274,18 +274,18 @@ fn default_endpoint_path() -> String {
     {
         if cfg!(test) {
             // Use a temporary path for tests
-            format!("/tmp/sentineld-test-{}.sock", std::process::id())
+            format!("/tmp/daemoneye-test-{}.sock", std::process::id())
         } else {
-            "/var/run/sentineld/collector-core.sock".to_owned()
+            "/var/run/daemoneye/collector-core.sock".to_owned()
         }
     }
     #[cfg(windows)]
     {
         if cfg!(test) {
             // Use a temporary pipe name for tests
-            format!(r"\\.\pipe\sentineld-test-{}", std::process::id())
+            format!(r"\\.\pipe\daemoneye-test-{}", std::process::id())
         } else {
-            r"\\.\pipe\sentineld\collector-core".to_owned()
+            r"\\.\pipe\daemoneye\collector-core".to_owned()
         }
     }
 }
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_source_caps_to_proto_capabilities() {
-        use sentinel_lib::proto::MonitoringDomain;
+        use daemoneye_lib::proto::MonitoringDomain;
 
         let caps = SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE;
         let proto_caps = source_caps_to_proto_capabilities(caps);
@@ -335,7 +335,7 @@ mod tests {
         #[cfg(unix)]
         {
             if cfg!(test) {
-                assert!(path.contains("sentineld-test-"));
+                assert!(path.contains("daemoneye-test-"));
                 assert!(path.ends_with(".sock"));
             } else {
                 assert!(path.contains("collector-core.sock"));
@@ -344,7 +344,7 @@ mod tests {
         #[cfg(windows)]
         {
             if cfg!(test) {
-                assert!(path.contains(r"\\.\pipe\sentineld-test-"));
+                assert!(path.contains(r"\\.\pipe\daemoneye-test-"));
             } else {
                 assert!(path.contains(r"\\.\pipe\"));
             }
@@ -366,7 +366,7 @@ mod tests {
         let server = CollectorIpcServer::new(config, Arc::clone(&capabilities));
 
         // Test initial capabilities
-        use sentinel_lib::proto::MonitoringDomain;
+        use daemoneye_lib::proto::MonitoringDomain;
 
         let proto_caps = server.get_capabilities().await;
         assert!(

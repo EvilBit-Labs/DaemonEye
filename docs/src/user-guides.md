@@ -1,6 +1,6 @@
 # User Guides
 
-This section contains comprehensive user guides for SentinelD, covering everything from basic usage to advanced configuration and troubleshooting.
+This section contains comprehensive user guides for DaemonEye, covering everything from basic usage to advanced configuration and troubleshooting.
 
 ---
 
@@ -12,13 +12,13 @@ This section contains comprehensive user guides for SentinelD, covering everythi
 
 ## Operator Guide
 
-The operator guide provides comprehensive information for system administrators and security operators who need to deploy, configure, and maintain SentinelD in production environments.
+The operator guide provides comprehensive information for system administrators and security operators who need to deploy, configure, and maintain DaemonEye in production environments.
 
 [Read Operator Guide →](./user-guides/operator-guide.md)
 
 ## Configuration Guide
 
-The configuration guide covers all aspects of SentinelD configuration, from basic settings to advanced tuning and security hardening.
+The configuration guide covers all aspects of DaemonEye configuration, from basic settings to advanced tuning and security hardening.
 
 [Read Configuration Guide →](./user-guides/configuration.md)
 
@@ -26,37 +26,37 @@ The configuration guide covers all aspects of SentinelD configuration, from basi
 
 ### Installation
 
-Install SentinelD using your preferred method:
+Install DaemonEye using your preferred method:
 
 **Using Package Managers**:
 
 ```bash
 # Ubuntu/Debian
-sudo apt install sentineld
+sudo apt install daemoneye
 
 # RHEL/CentOS
-sudo yum install sentineld
+sudo yum install daemoneye
 
 # macOS
-brew install sentineld
+brew install daemoneye
 
 # Windows
-choco install sentineld
+choco install daemoneye
 ```
 
 **Using Docker**:
 
 ```bash
 docker run -d --privileged \
-  -v /var/lib/sentineld:/data \
-  -v /var/log/sentineld:/logs \
-  sentineld/sentineld:latest
+  -v /var/lib/daemoneye:/data \
+  -v /var/log/daemoneye:/logs \
+  daemoneye/daemoneye:latest
 ```
 
 **Using Kubernetes**:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/EvilBit-Labs/sentineld/main/deploy/kubernetes/sentineld.yaml
+kubectl apply -f https://raw.githubusercontent.com/EvilBit-Labs/daemoneye/main/deploy/kubernetes/daemoneye.yaml
 ```
 
 ### Basic Configuration
@@ -64,16 +64,16 @@ kubectl apply -f https://raw.githubusercontent.com/EvilBit-Labs/sentineld/main/d
 Create a basic configuration file:
 
 ```yaml
-# /etc/sentineld/config.yaml
+# /etc/daemoneye/config.yaml
 app:
   scan_interval_ms: 30000
   batch_size: 1000
   log_level: info
-  data_dir: /var/lib/sentineld
-  log_dir: /var/log/sentineld
+  data_dir: /var/lib/daemoneye
+  log_dir: /var/log/daemoneye
 
 database:
-  path: /var/lib/sentineld/processes.db
+  path: /var/lib/daemoneye/processes.db
   retention_days: 30
 
 alerting:
@@ -84,36 +84,36 @@ alerting:
       facility: daemon
 ```
 
-### Starting SentinelD
+### Starting DaemonEye
 
 **Linux (systemd)**:
 
 ```bash
-sudo systemctl start sentineld
-sudo systemctl enable sentineld
+sudo systemctl start daemoneye
+sudo systemctl enable daemoneye
 ```
 
 **macOS (launchd)**:
 
 ```bash
-sudo launchctl load /Library/LaunchDaemons/com.sentineld.agent.plist
+sudo launchctl load /Library/LaunchDaemons/com.daemoneye.agent.plist
 ```
 
 **Windows (Service)**:
 
 ```powershell
-Start-Service SentinelD
+Start-Service DaemonEye
 ```
 
 **Docker**:
 
 ```bash
-docker run -d --name sentineld \
+docker run -d --name daemoneye \
   --privileged \
-  -v /etc/sentineld:/config:ro \
-  -v /var/lib/sentineld:/data \
-  -v /var/log/sentineld:/logs \
-  sentineld/sentineld:latest
+  -v /etc/daemoneye:/config:ro \
+  -v /var/lib/daemoneye:/data \
+  -v /var/log/daemoneye:/logs \
+  daemoneye/daemoneye:latest
 ```
 
 ### Basic Usage
@@ -121,25 +121,25 @@ docker run -d --name sentineld \
 **Check Status**:
 
 ```bash
-sentinelcli health
+daemoneye-cli health
 ```
 
 **Query Processes**:
 
 ```bash
-sentinelcli query "SELECT pid, name, executable_path FROM processes LIMIT 10"
+daemoneye-cli query "SELECT pid, name, executable_path FROM processes LIMIT 10"
 ```
 
 **List Alerts**:
 
 ```bash
-sentinelcli alerts list
+daemoneye-cli alerts list
 ```
 
 **View Logs**:
 
 ```bash
-sentinelcli logs --tail 100
+daemoneye-cli logs --tail 100
 ```
 
 ## Common Tasks
@@ -150,29 +150,29 @@ sentinelcli logs --tail 100
 
 ```bash
 # Monitor processes by name
-sentinelcli watch processes --filter "name LIKE '%apache%'"
+daemoneye-cli watch processes --filter "name LIKE '%apache%'"
 
 # Monitor processes by CPU usage
-sentinelcli watch processes --filter "cpu_usage > 10.0"
+daemoneye-cli watch processes --filter "cpu_usage > 10.0"
 
 # Monitor processes by memory usage
-sentinelcli watch processes --filter "memory_usage > 1000000"
+daemoneye-cli watch processes --filter "memory_usage > 1000000"
 ```
 
 **Query Process Information**:
 
 ```bash
 # Get all processes
-sentinelcli query "SELECT * FROM processes"
+daemoneye-cli query "SELECT * FROM processes"
 
 # Get processes by PID
-sentinelcli query "SELECT * FROM processes WHERE pid = 1234"
+daemoneye-cli query "SELECT * FROM processes WHERE pid = 1234"
 
 # Get processes by name pattern
-sentinelcli query "SELECT * FROM processes WHERE name LIKE '%nginx%'"
+daemoneye-cli query "SELECT * FROM processes WHERE name LIKE '%nginx%'"
 
 # Get processes by executable path
-sentinelcli query "SELECT * FROM processes WHERE executable_path LIKE '%/usr/bin/%'"
+daemoneye-cli query "SELECT * FROM processes WHERE executable_path LIKE '%/usr/bin/%'"
 ```
 
 ### Alert Management
@@ -181,30 +181,30 @@ sentinelcli query "SELECT * FROM processes WHERE executable_path LIKE '%/usr/bin
 
 ```bash
 # Enable syslog alerts
-sentinelcli config set alerting.sinks[0].enabled true
-sentinelcli config set alerting.sinks[0].type syslog
-sentinelcli config set alerting.sinks[0].facility daemon
+daemoneye-cli config set alerting.sinks[0].enabled true
+daemoneye-cli config set alerting.sinks[0].type syslog
+daemoneye-cli config set alerting.sinks[0].facility daemon
 
 # Enable webhook alerts
-sentinelcli config set alerting.sinks[1].enabled true
-sentinelcli config set alerting.sinks[1].type webhook
-sentinelcli config set alerting.sinks[1].url "https://alerts.example.com/webhook"
+daemoneye-cli config set alerting.sinks[1].enabled true
+daemoneye-cli config set alerting.sinks[1].type webhook
+daemoneye-cli config set alerting.sinks[1].url "https://alerts.example.com/webhook"
 ```
 
 **View Alerts**:
 
 ```bash
 # List recent alerts
-sentinelcli alerts list
+daemoneye-cli alerts list
 
 # List alerts by severity
-sentinelcli alerts list --severity high
+daemoneye-cli alerts list --severity high
 
 # List alerts by rule
-sentinelcli alerts list --rule "suspicious_processes"
+daemoneye-cli alerts list --rule "suspicious_processes"
 
 # Get alert details
-sentinelcli alerts show <alert-id>
+daemoneye-cli alerts show <alert-id>
 ```
 
 ### Rule Management
@@ -213,7 +213,7 @@ sentinelcli alerts show <alert-id>
 
 ```bash
 # Create a rule file
-cat > /etc/sentineld/rules/suspicious-processes.sql << 'EOF'
+cat > /etc/daemoneye/rules/suspicious-processes.sql << 'EOF'
 -- Detect processes with suspicious names
 SELECT
     pid,
@@ -230,24 +230,24 @@ ORDER BY collection_time DESC;
 EOF
 
 # Validate the rule
-sentinelcli rules validate /etc/sentineld/rules/suspicious-processes.sql
+daemoneye-cli rules validate /etc/daemoneye/rules/suspicious-processes.sql
 
 # Test the rule
-sentinelcli rules test suspicious-processes
+daemoneye-cli rules test suspicious-processes
 ```
 
 **Manage Rules**:
 
 ```bash
 # List all rules
-sentinelcli rules list
+daemoneye-cli rules list
 
 # Enable/disable rules
-sentinelcli rules enable suspicious-processes
-sentinelcli rules disable suspicious-processes
+daemoneye-cli rules enable suspicious-processes
+daemoneye-cli rules disable suspicious-processes
 
 # Reload rules
-sentinelcli rules reload
+daemoneye-cli rules reload
 ```
 
 ### Configuration Management
@@ -256,36 +256,36 @@ sentinelcli rules reload
 
 ```bash
 # Show current configuration
-sentinelcli config show
+daemoneye-cli config show
 
 # Show specific setting
-sentinelcli config get app.scan_interval_ms
+daemoneye-cli config get app.scan_interval_ms
 
 # Show all settings with defaults
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 **Update Configuration**:
 
 ```bash
 # Set a single value
-sentinelcli config set app.scan_interval_ms 60000
+daemoneye-cli config set app.scan_interval_ms 60000
 
 # Set multiple values
-sentinelcli config set app.scan_interval_ms 60000 app.batch_size 500
+daemoneye-cli config set app.scan_interval_ms 60000 app.batch_size 500
 
 # Update from file
-sentinelcli config load /path/to/config.yaml
+daemoneye-cli config load /path/to/config.yaml
 ```
 
 **Validate Configuration**:
 
 ```bash
 # Validate configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Check configuration syntax
-sentinelcli config check
+daemoneye-cli config check
 ```
 
 ## Troubleshooting
@@ -296,51 +296,51 @@ sentinelcli config check
 
 ```bash
 # Check service status
-sudo systemctl status sentineld
+sudo systemctl status daemoneye
 
 # Check logs
-sudo journalctl -u sentineld -f
+sudo journalctl -u daemoneye -f
 
 # Check configuration
-sentinelcli config validate
+daemoneye-cli config validate
 ```
 
 **Permission Denied**:
 
 ```bash
 # Check file permissions
-ls -la /var/lib/sentineld/
-ls -la /var/log/sentineld/
+ls -la /var/lib/daemoneye/
+ls -la /var/log/daemoneye/
 
 # Fix permissions
-sudo chown -R sentineld:sentineld /var/lib/sentineld
-sudo chown -R sentineld:sentineld /var/log/sentineld
+sudo chown -R daemoneye:daemoneye /var/lib/daemoneye
+sudo chown -R daemoneye:daemoneye /var/log/daemoneye
 ```
 
 **Database Issues**:
 
 ```bash
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 
 # Check database integrity
-sentinelcli database integrity-check
+daemoneye-cli database integrity-check
 
 # Repair database
-sentinelcli database repair
+daemoneye-cli database repair
 ```
 
 **Performance Issues**:
 
 ```bash
 # Check system metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # Check resource usage
-sentinelcli system status
+daemoneye-cli system status
 
 # Optimize configuration
-sentinelcli config optimize
+daemoneye-cli config optimize
 ```
 
 ### Debug Mode
@@ -349,26 +349,26 @@ sentinelcli config optimize
 
 ```bash
 # Set debug level
-sentinelcli config set app.log_level debug
+daemoneye-cli config set app.log_level debug
 
 # Restart service
-sudo systemctl restart sentineld
+sudo systemctl restart daemoneye
 
 # Monitor debug logs
-sentinelcli logs --level debug --tail 100
+daemoneye-cli logs --level debug --tail 100
 ```
 
 **Debug Specific Components**:
 
 ```bash
 # Debug process collection
-sentinelcli debug collector
+daemoneye-cli debug collector
 
 # Debug alert delivery
-sentinelcli debug alerts
+daemoneye-cli debug alerts
 
 # Debug database operations
-sentinelcli debug database
+daemoneye-cli debug database
 ```
 
 ### Health Checks
@@ -377,28 +377,28 @@ sentinelcli debug database
 
 ```bash
 # Overall health
-sentinelcli health
+daemoneye-cli health
 
 # Component health
-sentinelcli health --component procmond
-sentinelcli health --component sentinelagent
-sentinelcli health --component database
+daemoneye-cli health --component procmond
+daemoneye-cli health --component daemoneye-agent
+daemoneye-cli health --component database
 
 # Detailed health report
-sentinelcli health --verbose
+daemoneye-cli health --verbose
 ```
 
 **Performance Health**:
 
 ```bash
 # Performance metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # Resource usage
-sentinelcli system resources
+daemoneye-cli system resources
 
 # Performance analysis
-sentinelcli system analyze
+daemoneye-cli system analyze
 ```
 
 ## Advanced Usage
@@ -415,7 +415,7 @@ integrations:
       enabled: true
       hec_url: https://splunk.example.com:8088/services/collector
       hec_token: ${SPLUNK_HEC_TOKEN}
-      index: sentineld
+      index: daemoneye
 
 # Elasticsearch
 integrations:
@@ -425,7 +425,7 @@ integrations:
       url: https://elasticsearch.example.com:9200
       username: ${ELASTIC_USERNAME}
       password: ${ELASTIC_PASSWORD}
-      index: sentineld-processes
+      index: daemoneye-processes
 ```
 
 **Export Formats**:
@@ -436,9 +436,9 @@ integrations:
   export:
     cef:
       enabled: true
-      output_file: /var/log/sentineld/cef.log
+      output_file: /var/log/daemoneye/cef.log
       cef_version: "1.0"
-      device_vendor: "SentinelD"
+      device_vendor: "DaemonEye"
       device_product: "Process Monitor"
 
 # STIX Export
@@ -446,7 +446,7 @@ integrations:
   export:
     stix:
       enabled: true
-      output_file: /var/log/sentineld/stix.json
+      output_file: /var/log/daemoneye/stix.json
       stix_version: "2.1"
 ```
 
@@ -488,8 +488,8 @@ detection:
 ```yaml
 security:
   enable_privilege_dropping: true
-  drop_to_user: sentineld
-  drop_to_group: sentineld
+  drop_to_user: daemoneye
+  drop_to_group: daemoneye
   enable_audit_logging: true
   enable_integrity_checking: true
   hash_algorithm: blake3
@@ -502,9 +502,9 @@ security:
 security:
   network:
     enable_tls: true
-    cert_file: /etc/sentineld/cert.pem
-    key_file: /etc/sentineld/key.pem
-    ca_file: /etc/sentineld/ca.pem
+    cert_file: /etc/daemoneye/cert.pem
+    key_file: /etc/daemoneye/key.pem
+    ca_file: /etc/daemoneye/ca.pem
     verify_peer: true
 ```
 
@@ -515,7 +515,7 @@ security:
 1. **Start Small**: Begin with basic monitoring and gradually add features
 2. **Test Configuration**: Always validate configuration before deployment
 3. **Monitor Resources**: Keep an eye on CPU and memory usage
-4. **Regular Updates**: Keep SentinelD updated with latest releases
+4. **Regular Updates**: Keep DaemonEye updated with latest releases
 5. **Backup Data**: Regularly backup configuration and data
 
 ### Configuration
@@ -544,4 +544,4 @@ security:
 
 ---
 
-*This user guide provides comprehensive information for using SentinelD. For additional help, consult the specific user guides or contact support.*
+*This user guide provides comprehensive information for using DaemonEye. For additional help, consult the specific user guides or contact support.*

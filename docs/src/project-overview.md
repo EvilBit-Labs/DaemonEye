@@ -1,8 +1,8 @@
-# SentinelD Project Overview
+# DaemonEye Project Overview
 
 ## Mission Statement
 
-SentinelD is a security-focused, high-performance process monitoring system designed to detect suspicious activity on systems through continuous process monitoring, behavioral analysis, and pattern recognition. **Its primary purpose is to detect suspicious activity on systems by monitoring abnormal process behavior and patterns.**
+DaemonEye is a security-focused, high-performance process monitoring system designed to detect suspicious activity on systems through continuous process monitoring, behavioral analysis, and pattern recognition. **Its primary purpose is to detect suspicious activity on systems by monitoring abnormal process behavior and patterns.**
 
 This is a complete Rust 2024 rewrite of a proven Python prototype, delivering enterprise-grade performance with audit-grade integrity while maintaining the security-first, offline-capable philosophy.
 
@@ -49,7 +49,7 @@ Detect and alert on suspicious system activity through continuous process monito
 
 ## Three-Component Architecture
 
-SentinelD implements a **three-component security architecture** with strict privilege separation:
+DaemonEye implements a **three-component security architecture** with strict privilege separation:
 
 ### 1. **procmond** (Privileged Process Collector)
 
@@ -59,20 +59,20 @@ SentinelD implements a **three-component security architecture** with strict pri
 - **Database**: Write-only access to audit ledger
 - **Features**: Process enumeration, executable hashing, Certificate Transparency-style audit ledger
 
-### 2. **sentinelagent** (Detection Orchestrator)
+### 2. **daemoneye-agent** (Detection Orchestrator)
 
 - **Purpose**: User-space detection rule execution and alert management
 - **Security**: Minimal privileges, outbound-only network connections
 - **Database**: Read/write access to event store
 - **Features**: SQL-based detection engine, multi-channel alerting, procmond lifecycle management
 
-### 3. **sentinelcli** (Operator Interface)
+### 3. **daemoneye-cli** (Operator Interface)
 
 - **Purpose**: Command-line interface for queries, management, and diagnostics
 - **Security**: No network access, read-only database operations
 - **Features**: JSON/table output, color handling, shell completions, system health monitoring
 
-### 4. **sentinel-lib** (Shared Core)
+### 4. **daemoneye-lib** (Shared Core)
 
 - **Purpose**: Common functionality shared across all components
 - **Modules**: config, models, storage, detection, alerting, crypto, telemetry
@@ -240,7 +240,7 @@ SentinelD implements a **three-component security architecture** with strict pri
 
 ### **Dual-License Strategy**
 
-- **Core Components**: Apache 2.0 licensed (procmond, sentinelagent, sentinelcli, sentinel-lib)
+- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
 - **Business Tier Features**: $199/site one-time license (Security Center, GUI, enhanced connectors, curated rules)
 - **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
 
@@ -255,7 +255,7 @@ SentinelD implements a **three-component security architecture** with strict pri
 
 ### **Quick Start**
 
-1. **Install**: Download and install SentinelD for your platform
+1. **Install**: Download and install DaemonEye for your platform
 2. **Configure**: Set up basic configuration and detection rules
 3. **Deploy**: Start the monitoring services
 4. **Monitor**: Use the CLI to query data and manage alerts
@@ -269,4 +269,4 @@ SentinelD implements a **three-component security architecture** with strict pri
 
 ---
 
-*SentinelD represents the next generation of process monitoring, combining the security and performance benefits of Rust with proven threat detection techniques to provide a comprehensive solution for modern security operations.*
+*DaemonEye represents the next generation of process monitoring, combining the security and performance benefits of Rust with proven threat detection techniques to provide a comprehensive solution for modern security operations.*

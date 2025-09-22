@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "SentinelD Process Monitoring Daemon"
+description = "DaemonEye Process Monitoring Daemon"
 publish = true
 
 [package.metadata.wix]
@@ -45,7 +45,7 @@ prost-types = { workspace = true }
 redb = { workspace = true }
 
 # Internal library
-sentinel-lib = { workspace = true }
+daemoneye-lib = { workspace = true }
 serde = { workspace = true }
 
 # System information

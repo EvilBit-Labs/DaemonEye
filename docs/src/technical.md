@@ -1,6 +1,6 @@
 # Technical Documentation
 
-This section contains comprehensive technical documentation for SentinelD, covering implementation details, architecture specifications, and technical guides.
+This section contains comprehensive technical documentation for DaemonEye, covering implementation details, architecture specifications, and technical guides.
 
 ---
 
@@ -12,7 +12,7 @@ This section contains comprehensive technical documentation for SentinelD, cover
 
 ## Core Monitoring
 
-The core monitoring system provides real-time process monitoring and threat detection capabilities. This is the foundation of SentinelD and is available in all tiers.
+The core monitoring system provides real-time process monitoring and threat detection capabilities. This is the foundation of DaemonEye and is available in all tiers.
 
 [Read Core Monitoring Documentation →](./technical/core-monitoring.md)
 
@@ -32,19 +32,19 @@ Enterprise tier features provide advanced monitoring capabilities including kern
 
 ### Component Overview
 
-SentinelD follows a three-component security architecture:
+DaemonEye follows a three-component security architecture:
 
 1. **ProcMonD**: Privileged process monitoring daemon
-2. **SentinelAgent**: User-space orchestrator and alerting
-3. **SentinelCLI**: Command-line interface and management
+2. **daemoneye-agent**: User-space orchestrator and alerting
+3. **daemoneye-cli**: Command-line interface and management
 
 ### Data Flow
 
 ```mermaid
 graph LR
-    A[<b>ProcMonD</b><br/>• Process Enum<br/>• Hashing<br/>• Audit] -->|Process Data<br/>Alerts| B[<b>SentinelAgent</b><br/>• Alerting<br/>• Rules<br/>• Network<br/>• Storage]
+    A[<b>ProcMonD</b><br/>• Process Enum<br/>• Hashing<br/>• Audit] -->|Process Data<br/>Alerts| B[<b>daemoneye-agent</b><br/>• Alerting<br/>• Rules<br/>• Network<br/>• Storage]
     B -->|Lifecycle Mgmt<br/>Tasking| A
-    B -->|Query Results<br/>Status| C[<b>SentinelCLI</b><br/>• Queries<br/>• Config<br/>• Monitor<br/>• Manage]
+    B -->|Query Results<br/>Status| C[<b>daemoneye-cli</b><br/>• Queries<br/>• Config<br/>• Monitor<br/>• Manage]
     C -->|Commands<br/>Config| B
 ```
 
@@ -96,7 +96,7 @@ impl ProcessCollector {
 
 ### Event Store Operations
 
-SentinelD uses redb for high-performance event storage:
+DaemonEye uses redb for high-performance event storage:
 
 ```rust
 use redb::{Database, ReadableTable, WritableTable};
@@ -166,7 +166,7 @@ impl AlertManager {
 
 ### Memory Management
 
-SentinelD is designed for minimal memory usage:
+DaemonEye is designed for minimal memory usage:
 
 - **Process Collection**: ~1MB per 1000 processes
 - **Database Operations**: ~10MB for 100,000 records
@@ -282,7 +282,7 @@ mod tests {
             .times(1)
             .returning(|| Ok(CollectionResult::default()));
 
-        let agent = SentinelAgent::new(Box::new(mock_collector));
+        let agent = daemoneye-agent::new(Box::new(mock_collector));
         let result = agent.run_collection_cycle().await;
 
         assert!(result.is_ok());
@@ -339,7 +339,7 @@ criterion_main!(benches);
 
 ### Container Deployment
 
-SentinelD is designed for containerized deployment:
+DaemonEye is designed for containerized deployment:
 
 - **Docker**: Multi-stage builds for minimal images
 - **Kubernetes**: DaemonSet for process monitoring
@@ -359,11 +359,11 @@ Cross-platform support with platform-specific optimizations:
 Hierarchical configuration with multiple sources:
 
 1. **Command-line flags** (highest precedence)
-2. **Environment variables** (`SENTINELD_*`)
-3. **User configuration file** (`~/.config/sentineld/config.yaml`)
-4. **System configuration file** (`/etc/sentineld/config.yaml`)
+2. **Environment variables** (`DaemonEye_*`)
+3. **User configuration file** (`~/.config/daemoneye/config.yaml`)
+4. **System configuration file** (`/etc/daemoneye/config.yaml`)
 5. **Embedded defaults** (lowest precedence)
 
 ---
 
-*This technical documentation provides comprehensive information about SentinelD's implementation. For specific implementation details, consult the individual technical guides.*
+*This technical documentation provides comprehensive information about DaemonEye's implementation. For specific implementation details, consult the individual technical guides.*

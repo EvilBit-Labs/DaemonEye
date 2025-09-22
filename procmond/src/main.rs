@@ -1,24 +1,24 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use sentinel_lib::{config, storage, telemetry};
+use daemoneye_lib::{config, storage, telemetry};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 mod ipc;
 
+use daemoneye_lib::proto::DetectionTask;
 use ipc::error::IpcError;
 use ipc::{IpcConfig, create_ipc_server};
 use procmond::ProcessMessageHandler;
-use sentinel_lib::proto::DetectionTask;
 
 #[derive(Parser)]
 #[command(name = "procmond")]
-#[command(about = "SentinelD Process Monitoring Daemon")]
+#[command(about = "DaemonEye Process Monitoring Daemon")]
 #[command(version)]
 struct Cli {
     /// Database path
-    #[arg(short, long, default_value = "/var/lib/sentineld/processes.db")]
+    #[arg(short, long, default_value = "/var/lib/daemoneye/processes.db")]
     database: String,
 
     /// Log level
@@ -26,7 +26,7 @@ struct Cli {
     log_level: String,
 
     /// IPC socket path
-    #[arg(short, long, default_value = "/tmp/sentineld-procmond.sock")]
+    #[arg(short, long, default_value = "/tmp/daemoneye-procmond.sock")]
     socket: String,
 }
 
@@ -74,7 +74,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn initialize_ipc_server(
     db_manager: &Arc<Mutex<storage::DatabaseManager>>,
     socket_path: &str,
-) -> Result<sentinel_lib::ipc::InterprocessServer, IpcError> {
+) -> Result<daemoneye_lib::ipc::InterprocessServer, IpcError> {
     let ipc_config = IpcConfig {
         path: socket_path.to_string(),
         max_connections: 10,
@@ -94,7 +94,7 @@ async fn initialize_ipc_server(
             let result = handler.handle_detection_task(task).await;
             result.map_err(|e| {
                 tracing::error!("IPC handler error: {}", e);
-                sentinel_lib::ipc::IpcError::Encode(format!("Handler error: {}", e))
+                daemoneye_lib::ipc::IpcError::Encode(format!("Handler error: {}", e))
             })
         }
     });
@@ -108,7 +108,7 @@ async fn initialize_ipc_server(
 
 /// Run the IPC server until shutdown signal
 async fn run_ipc_server(
-    mut ipc_server: sentinel_lib::ipc::InterprocessServer,
+    mut ipc_server: daemoneye_lib::ipc::InterprocessServer,
 ) -> Result<(), IpcError> {
     // Keep the server running until shutdown signal
     tokio::signal::ctrl_c().await?;

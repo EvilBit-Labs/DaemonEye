@@ -199,22 +199,22 @@ bench:
 
 # Run specific benchmark suites
 bench-process:
-    @cargo bench -p sentinel-lib --bench process_collection
+    @cargo bench -p daemoneye-lib --bench process_collection
 
 bench-database:
-    @cargo bench -p sentinel-lib --bench database_operations
+    @cargo bench -p daemoneye-lib --bench database_operations
 
 bench-detection:
-    @cargo bench -p sentinel-lib --bench detection_engine
+    @cargo bench -p daemoneye-lib --bench detection_engine
 
 bench-ipc:
-    @cargo bench -p sentinel-lib --bench ipc_communication
+    @cargo bench -p daemoneye-lib --bench ipc_communication
 
 bench-alerts:
-    @cargo bench -p sentinel-lib --bench alert_processing
+    @cargo bench -p daemoneye-lib --bench alert_processing
 
 bench-crypto:
-    @cargo bench -p sentinel-lib --bench cryptographic_operations
+    @cargo bench -p daemoneye-lib --bench cryptographic_operations
 
 # Run benchmarks with HTML output
 bench-html:
@@ -256,11 +256,11 @@ ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release
 run-procmond *args:
     @cargo run -p procmond -- {{ args }}
 
-run-sentinelcli *args:
-    @cargo run -p sentinelcli -- {{ args }}
+run-daemoneye-cli *args:
+    @cargo run -p daemoneye-cli -- {{ args }}
 
-run-sentinelagent *args:
-    @cargo run -p sentinelagent -- {{ args }}
+run-daemoneye-agent *args:
+    @cargo run -p daemoneye-agent -- {{ args }}
 
 # =============================================================================
 # DISTRIBUTION AND PACKAGING

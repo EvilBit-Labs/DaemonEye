@@ -2,7 +2,7 @@
 globs: *.md,*.rs
 ---
 
-# Documentation Standards for SentinelD
+# Documentation Standards for DaemonEye
 
 ## Code Documentation
 
@@ -45,3 +45,4 @@ globs: *.md,*.rs
 - Document the development workflow and testing strategy
 - Include performance requirements and benchmarks
 - Document the migration strategy from Python prototype
+- Always follow the commit message style in [.github/commit-instructions.md](mdc:.github/commit-instructions.md).

@@ -1,12 +1,12 @@
-# SentinelD Architecture Overview
+# DaemonEye Architecture Overview
 
 ## Three-Component Security Architecture
 
-SentinelD implements a **single crate with multiple binaries architecture** using feature flags for precise dependency control. The system follows a three-component security design with strict privilege separation to provide continuous process monitoring and threat detection. The system is designed around the principle of minimal attack surface while maintaining high performance and audit-grade integrity.
+DaemonEye implements a **single crate with multiple binaries architecture** using feature flags for precise dependency control. The system follows a three-component security design with strict privilege separation to provide continuous process monitoring and threat detection. The system is designed around the principle of minimal attack surface while maintaining high performance and audit-grade integrity.
 
 ```mermaid
 graph TB
-    subgraph "SentinelD Three-Component Architecture"
+    subgraph "DaemonEye Three-Component Architecture"
         subgraph "procmond (Privileged Collector)"
             PM[Process Monitor]
             HC[Hash Computer]
@@ -14,7 +14,7 @@ graph TB
             IPC1[IPC Server]
         end
 
-        subgraph "sentinelagent (Detection Orchestrator)"
+        subgraph "daemoneye-agent (Detection Orchestrator)"
             DE[Detection Engine]
             AM[Alert Manager]
             RM[Rule Manager]
@@ -22,13 +22,13 @@ graph TB
             NS[Network Sinks]
         end
 
-        subgraph "sentinelcli (Operator Interface)"
+        subgraph "daemoneye-cli (Operator Interface)"
             QE[Query Executor]
             HC2[Health Checker]
             DM[Data Manager]
         end
 
-        subgraph "sentinel-lib (Shared Core)"
+        subgraph "daemoneye-lib (Shared Core)"
             CFG[Configuration]
             MOD[Models]
             STO[Storage]
@@ -76,7 +76,7 @@ graph TB
 - **Process Enumeration**: Cross-platform process data collection using sysinfo crate
 - **Executable Hashing**: SHA-256 hash computation for integrity verification
 - **Audit Logging**: Certificate Transparency-style Merkle tree with inclusion proofs
-- **IPC Communication**: Simple protobuf-based communication with sentinelagent
+- **IPC Communication**: Simple protobuf-based communication with daemoneye-agent
 
 **Security Boundaries**:
 
@@ -98,7 +98,7 @@ pub trait ProcessCollector {
 }
 ```
 
-### **sentinelagent (Detection Orchestrator)**
+### **daemoneye-agent (Detection Orchestrator)**
 
 **Primary Purpose**: User-space detection rule execution, alert management, and procmond lifecycle management.
 
@@ -135,7 +135,7 @@ pub trait AlertManager {
 }
 ```
 
-### **sentinelcli (Operator Interface)**
+### **daemoneye-cli (Operator Interface)**
 
 **Primary Purpose**: Command-line interface for queries, management, and diagnostics.
 
@@ -149,10 +149,10 @@ pub trait AlertManager {
 **Security Boundaries**:
 
 - No network access
-- No direct database access (communicates through sentinelagent)
+- No direct database access (communicates through daemoneye-agent)
 - Input validation for all user-provided data
-- Safe SQL execution via sentinelagent with prepared statements
-- Communicates only with sentinelagent for all operations
+- Safe SQL execution via daemoneye-agent with prepared statements
+- Communicates only with daemoneye-agent for all operations
 
 **Key Interfaces**:
 
@@ -164,7 +164,7 @@ pub trait QueryExecutor {
 }
 ```
 
-### **sentinel-lib (Shared Core)**
+### **daemoneye-lib (Shared Core)**
 
 **Primary Purpose**: Common functionality shared across all components.
 
@@ -186,7 +186,7 @@ The system implements a pipeline processing model with clear phases and strict c
 
 ```mermaid
 sequenceDiagram
-    participant SA as sentinelagent
+    participant SA as daemoneye-agent
     participant PM as procmond
     participant SYS as System
 
@@ -233,14 +233,14 @@ sequenceDiagram
 
 ## IPC Protocol Design
 
-**Purpose**: Secure, efficient communication between procmond and sentinelagent.
+**Purpose**: Secure, efficient communication between procmond and daemoneye-agent.
 
 **Protocol Specification**:
 
 ```protobuf
 syntax = "proto3";
 
-// Simple detection tasks sent from sentinelagent to procmond
+// Simple detection tasks sent from daemoneye-agent to procmond
 message DetectionTask {
     string task_id = 1;
     TaskType task_type = 2;
@@ -256,7 +256,7 @@ enum TaskType {
     VERIFY_EXECUTABLE = 3;
 }
 
-// Results sent back from procmond to sentinelagent
+// Results sent back from procmond to daemoneye-agent
 message DetectionResult {
     string task_id = 1;
     bool success = 2;
@@ -279,7 +279,7 @@ message DetectionResult {
 ### **Event Store (redb)**
 
 - **Purpose**: High-performance process data storage
-- **Access**: sentinelagent read/write, sentinelcli read-only
+- **Access**: daemoneye-agent read/write, daemoneye-cli read-only
 - **Features**: WAL mode, concurrent access, embedded database
 - **Schema**: process_snapshots, scans, detection_rules, alerts
 
@@ -352,16 +352,16 @@ message DetectionResult {
 
 ## Component Communication
 
-### **procmond ↔ sentinelagent**
+### **procmond ↔ daemoneye-agent**
 
 - **Protocol**: Custom Protobuf over Unix Sockets/Named Pipes
 - **Direction**: Bidirectional with simple task/result pattern
 - **Security**: Process isolation, no network access
 
-### **sentinelagent ↔ sentinelcli**
+### **daemoneye-agent ↔ daemoneye-cli**
 
 - **Protocol**: Local IPC or direct database access
-- **Direction**: sentinelcli queries sentinelagent
+- **Direction**: daemoneye-cli queries daemoneye-agent
 - **Security**: Local communication only, input validation
 
 ### **External Communication**
@@ -388,4 +388,4 @@ message DetectionResult {
 
 ---
 
-*This architecture provides a robust foundation for implementing SentinelD's core monitoring functionality while maintaining security, performance, and reliability requirements across all supported platforms.*
+*This architecture provides a robust foundation for implementing DaemonEye's core monitoring functionality while maintaining security, performance, and reliability requirements across all supported platforms.*

@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+import "common.proto";
+
+// IPC message definitions for communication between collector-core components and daemoneye-agent
+
+/// Capability negotiation message for collector-core components
+message CollectionCapabilities {
+  /// Supported monitoring domains
+  repeated MonitoringDomain supported_domains = 1;
+  /// Advanced monitoring capabilities
+  AdvancedCapabilities advanced = 2;
+}
+
+/// Monitoring domain types
+enum MonitoringDomain {
+  /// Process monitoring
+  PROCESS = 0;
+  /// Network monitoring (future: netmond)
+  NETWORK = 1;
+  /// Filesystem monitoring (future: fsmond)
+  FILESYSTEM = 2;
+  /// Performance monitoring (future: perfmond)
+  PERFORMANCE = 3;
+}
+
+/// Advanced monitoring capabilities
+message AdvancedCapabilities {
+  /// Supports kernel-level monitoring
+  bool kernel_level = 1;
+  /// Supports real-time event streaming
+  bool realtime = 2;
+  /// Supports system-wide monitoring
+  bool system_wide = 3;
+}
+
+/// Detection task sent from daemoneye-agent to collector-core components
+message DetectionTask {
+  /// Unique task identifier for correlation
+  string task_id = 1;
+  /// Type of detection task to perform
+  TaskType task_type = 2;
+  /// Optional process filtering criteria
+  optional ProcessFilter process_filter = 3;
+  /// Optional hash verification request
+  optional HashCheck hash_check = 4;
+  /// Optional metadata for the task
+  optional string metadata = 5;
+  /// Optional network filtering criteria (future: netmond)
+  optional NetworkFilter network_filter = 6;
+  /// Optional filesystem filtering criteria (future: fsmond)
+  optional FilesystemFilter filesystem_filter = 7;
+  /// Optional performance filtering criteria (future: perfmond)
+  optional PerformanceFilter performance_filter = 8;
+}
+
+/// Detection result returned from collector-core components to daemoneye-agent
+message DetectionResult {
+  /// Task identifier matching the original request
+  string task_id = 1;
+  /// Whether the task completed successfully
+  bool success = 2;
+  /// Error message if task failed
+  optional string error_message = 3;
+  /// Process records collected (for enumeration tasks)
+  repeated ProcessRecord processes = 4;
+  /// Hash verification result (for hash check tasks)
+  optional HashResult hash_result = 5;
+  /// Network events collected (future: netmond)
+  repeated NetworkRecord network_events = 6;
+  /// Filesystem events collected (future: fsmond)
+  repeated FilesystemRecord filesystem_events = 7;
+  /// Performance events collected (future: perfmond)
+  repeated PerformanceRecord performance_events = 8;
+}

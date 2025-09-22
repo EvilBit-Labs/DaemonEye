@@ -50,46 +50,46 @@
   destination for 32-bit versus 64-bit installers. Removal of these lines will
   cause installation errors.
 -->
-<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
-    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
-<?else ?>
-    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
-<?endif ?>
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder"?>
+<?else?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder"?>
+<?endif?>
 
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
 
-    <Product
-        Id='*'
-        Name='sentineld'
-        UpgradeCode='C447BDE5-2A00-43F3-A75B-EC69BA427B7E'
-        Manufacturer='UncleSp1d3r; Krypdo3'
-        Language='1033'
-        Codepage='1252'
-        Version='$(var.Version)'>
+  <Product
+    Id='*'
+    Name='DaemonEye'
+    UpgradeCode='C447BDE5-2A00-43F3-A75B-EC69BA427B7E'
+    Manufacturer='UncleSp1d3r; Krypdo3'
+    Language='1033'
+    Codepage='1252'
+    Version='$(var.Version)'>
 
-        <Package Id='*'
-            Keywords='Installer'
-            Description='SentinelD: High-performance process monitoring system for security operations'
-            Manufacturer='UncleSp1d3r; Krypdo3'
-            InstallerVersion='450'
-            Languages='1033'
-            Compressed='yes'
-            InstallScope='perMachine'
-            SummaryCodepage='1252'
-            />
+    <Package Id='*'
+      Keywords='Installer'
+      Description='DaemonEye: High-performance process monitoring system for security operations'
+      Manufacturer='UncleSp1d3r; Krypdo3'
+      InstallerVersion='450'
+      Languages='1033'
+      Compressed='yes'
+      InstallScope='perMachine'
+      SummaryCodepage='1252'
+    />
 
-        <MajorUpgrade
-            Schedule='afterInstallInitialize'
-            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
+    <MajorUpgrade
+      Schedule='afterInstallInitialize'
+      DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.' />
 
-        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
-        <Property Id='DiskPrompt' Value='sentineld Installation'/>
+    <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
+    <Property Id='DiskPrompt' Value='DaemonEye Installation' />
 
-        <Directory Id='TARGETDIR' Name='SourceDir'>
-            <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-                <Directory Id='APPLICATIONFOLDER' Name='sentineld'>
-                    
-                    <!--
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+      <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
+        <Directory Id='APPLICATIONFOLDER' Name='DaemonEye'>
+
+          <!--
                       Enabling the license sidecar file in the installer is a four step process:
 
                       1. Uncomment the `Component` tag and its contents.
@@ -103,100 +103,103 @@
                       4. Uncomment the `ComponentRef` tag with the Id attribute value of "License"
                          further down in this file.
                     -->
-                    <!--
+          <!--
                     <Component Id='License' Guid='*'>
                         <File Id='LicenseFile' Name='ChangeMe' DiskId='1' Source='C:\Path\To\File' KeyPath='yes'/>
                     </Component>
                     -->
 
-                    <Directory Id='Bin' Name='bin'>
-                        <Component Id='Path' Guid='B39EF01E-BA27-4430-8770-8D16E84BB0F3' KeyPath='yes'>
-                            <Environment
-                                Id='PATH'
-                                Name='PATH'
-                                Value='[Bin]'
-                                Permanent='no'
-                                Part='last'
-                                Action='set'
-                                System='yes'/>
-                        </Component>
-                        <Component Id='binary0' Guid='*'>
-                            <File
-                                Id='exe0'
-                                Name='procmond.exe'
-                                DiskId='1'
-                                Source='$(var.CargoTargetBinDir)\procmond.exe'
-                                KeyPath='yes'/>
-                        </Component>
-                        <Component Id='binary1' Guid='*'>
-                            <File
-                                Id='exe1'
-                                Name='sentinelagent.exe'
-                                DiskId='1'
-                                Source='$(var.CargoTargetBinDir)\sentinelagent.exe'
-                                KeyPath='yes'/>
-                        </Component>
-                        <Component Id='binary2' Guid='*'>
-                            <File
-                                Id='exe2'
-                                Name='sentinelcli.exe'
-                                DiskId='1'
-                                Source='$(var.CargoTargetBinDir)\sentinelcli.exe'
-                                KeyPath='yes'/>
-                        </Component>
-                    </Directory>
-                </Directory>
-            </Directory>
+          <Directory Id='Bin' Name='bin'>
+            <Component Id='Path' Guid='B39EF01E-BA27-4430-8770-8D16E84BB0F3' KeyPath='yes'>
+              <Environment
+                Id='PATH'
+                Name='PATH'
+                Value='[Bin]'
+                Permanent='no'
+                Part='last'
+                Action='set'
+                System='yes' />
+            </Component>
+            <Component Id='binary0' Guid='*'>
+              <File
+                Id='exe0'
+                Name='procmond.exe'
+                DiskId='1'
+                Source='$(var.CargoTargetBinDir)\procmond.exe'
+                KeyPath='yes' />
+            </Component>
+            <Component Id='binary1' Guid='*'>
+              <File
+                Id='exe1'
+                Name='daemoneye-agent.exe'
+                DiskId='1'
+                Source='$(var.CargoTargetBinDir)\daemoneye-agent.exe'
+                KeyPath='yes' />
+            </Component>
+            <Component Id='binary2' Guid='*'>
+              <File
+                Id='exe2'
+                Name='daemoneye-cli.exe'
+                DiskId='1'
+                Source='$(var.CargoTargetBinDir)\daemoneye-cli.exe'
+                KeyPath='yes' />
+            </Component>
+          </Directory>
         </Directory>
+      </Directory>
+    </Directory>
 
-        <Feature
-            Id='Binaries'
-            Title='Application'
-            Description='Installs all binaries and the license.'
-            Level='1'
-            ConfigurableDirectory='APPLICATIONFOLDER'
-            AllowAdvertise='no'
-            Display='expand'
-            Absent='disallow'>
-            
-            <!--
+    <Feature
+      Id='Binaries'
+      Title='Application'
+      Description='Installs all binaries and the license.'
+      Level='1'
+      ConfigurableDirectory='APPLICATIONFOLDER'
+      AllowAdvertise='no'
+      Display='expand'
+      Absent='disallow'>
+
+      <!--
               Uncomment the following `ComponentRef` tag to add the license
               sidecar file to the installer.
             -->
-            <!--<ComponentRef Id='License'/>-->
+      <!--<ComponentRef
+      Id='License'/>-->
 
-            <ComponentRef Id='binary0'/>
-            <ComponentRef Id='binary1'/>
-            <ComponentRef Id='binary2'/>
+      <ComponentRef Id='binary0' />
+      <ComponentRef Id='binary1' />
+      <ComponentRef Id='binary2' />
 
-            <Feature
-                Id='Environment'
-                Title='PATH Environment Variable'
-                Description='Add the install location of the [ProductName] executable to the PATH system environment variable. This allows the [ProductName] executable to be called from any location.'
-                Level='1'
-                Absent='allow'>
-                <ComponentRef Id='Path'/>
-            </Feature>
-        </Feature>
+      <Feature
+        Id='Environment'
+        Title='PATH Environment Variable'
+        Description='Add the install location of the [ProductName] executable to the PATH system environment variable. This allows the [ProductName] executable to be called from any location.'
+        Level='1'
+        Absent='allow'>
+        <ComponentRef Id='Path' />
+      </Feature>
+    </Feature>
 
-        <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
+    <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize' />
 
-        
-        <!--
+
+    <!--
           Uncomment the following `Icon` and `Property` tags to change the product icon.
 
           The product icon is the graphic that appears in the Add/Remove
           Programs control panel for the application.
         -->
-        <!--<Icon Id='ProductICO' SourceFile='wix\Product.ico'/>-->
-        <!--<Property Id='ARPPRODUCTICON' Value='ProductICO' />-->
+    <!--<Icon
+    Id='ProductICO' SourceFile='wix\Product.ico'/>-->
+    <!--<Property
+    Id='ARPPRODUCTICON' Value='ProductICO' />-->
 
-        <Property Id='ARPHELPLINK' Value='https://evilbitlabs.io/sentineld'/>
-        
-        <UI>
-            <UIRef Id='WixUI_FeatureTree'/>
-            
-            <!--
+    <Property Id='ARPHELPLINK' Value='https://evilbitlabs.io/DaemonEye' />
+
+    <UI>
+      <UIRef Id='WixUI_FeatureTree' />
+
+      <!--
               Enabling the EULA dialog in the installer is a three step process:
 
                 1. Comment out or remove the two `Publish` tags that follow the
@@ -206,21 +209,23 @@
                    the path to a RTF file that will be used as the EULA and
                    displayed in the license agreement dialog.
             -->
-            <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='CustomizeDlg' Order='99'>1</Publish>
-            <Publish Dialog='CustomizeDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>1</Publish>
+      <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='CustomizeDlg' Order='99'>
+        1</Publish>
+      <Publish Dialog='CustomizeDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>
+        1</Publish>
 
-        </UI>
+    </UI>
 
-        
-        <!--
+
+    <!--
           Enabling the EULA dialog in the installer requires uncommenting
           the following `WixUILicenseRTF` tag and changing the `Value`
           attribute.
         -->
-        <!-- <WixVariable Id='WixUILicenseRtf' Value='Relative\Path\to\Eula.rtf'/> -->
+    <!-- <WixVariable Id='WixUILicenseRtf' Value='Relative\Path\to\Eula.rtf'/> -->
 
-        
-        <!--
+
+    <!--
           Uncomment the next `WixVariable` tag to customize the installer's
           Graphical User Interface (GUI) and add a custom banner image across
           the top of each screen. See the WiX Toolset documentation for details
@@ -228,10 +233,11 @@
 
           The banner BMP dimensions are 493 x 58 pixels.
         -->
-        <!--<WixVariable Id='WixUIBannerBmp' Value='wix\Banner.bmp'/>-->
+    <!--<WixVariable
+    Id='WixUIBannerBmp' Value='wix\Banner.bmp'/>-->
 
-        
-        <!--
+
+    <!--
           Uncomment the next `WixVariable` tag to customize the installer's
           Graphical User Interface (GUI) and add a custom image to the first
           dialog, or screen. See the WiX Toolset documentation for details about
@@ -239,8 +245,9 @@
 
           The dialog BMP dimensions are 493 x 312 pixels.
         -->
-        <!--<WixVariable Id='WixUIDialogBmp' Value='wix\Dialog.bmp'/>-->
+    <!--<WixVariable
+    Id='WixUIDialogBmp' Value='wix\Dialog.bmp'/>-->
 
-    </Product>
+  </Product>
 
 </Wix>

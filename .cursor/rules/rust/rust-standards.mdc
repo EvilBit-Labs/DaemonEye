@@ -2,7 +2,7 @@
 globs: **/*.rs
 alwaysApply: false
 ---
-# Rust Coding Standards for SentinelD
+# Rust Coding Standards for DaemonEye
 
 ## Language and Edition
 

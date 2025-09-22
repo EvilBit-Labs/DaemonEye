@@ -2,23 +2,23 @@
 
 ## Supported Versions
 
-SentinelD follows semantic versioning (SemVer) with security updates provided for the current major version and the previous major version.
+DaemonEye follows semantic versioning (SemVer) with security updates provided for the current major version and the previous major version.
 
 | Version | Supported          | Notes                              |
 | ------- | ------------------ | ---------------------------------- |
 | 0.1.x   | :white_check_mark: | Current development version        |
 | < 0.1   | :x:                | Pre-release versions not supported |
 
-**Note**: As SentinelD is currently in pre-1.0 development, we focus security updates on the latest 0.1.x series. Once we reach 1.0, we will support the current major version and one previous major version.
+**Note**: As DaemonEye is currently in pre-1.0 development, we focus security updates on the latest 0.1.x series. Once we reach 1.0, we will support the current major version and one previous major version.
 
 ## Security Architecture
 
-SentinelD implements a **three-component security architecture** with strict privilege separation:
+DaemonEye implements a **three-component security architecture** with strict privilege separation:
 
 - **procmond**: Privileged process collector with minimal attack surface
-- **sentinelagent**: User-space orchestrator for detection and alerting
-- **sentinelcli**: Command-line interface for operators
-- **sentinel-lib**: Shared library providing core functionality
+- **daemoneye-agent**: User-space orchestrator for detection and alerting
+- **daemoneye-cli**: Command-line interface for operators
+- **daemoneye-lib**: Shared library providing core functionality
 
 ### Security Principles
 
@@ -51,11 +51,11 @@ SentinelD implements a **three-component security architecture** with strict pri
 
 ### How to Report
 
-**For security vulnerabilities in SentinelD, please report them privately to:**
+**For security vulnerabilities in DaemonEye, please report them privately to:**
 
 - **Email**: <support@evilbitlabs.io>
 - **PGP Key**: [Available on our website](https://evilbitlabs.io/security)
-- **Subject**: `[SECURITY] SentinelD Vulnerability Report`
+- **Subject**: `[SECURITY] DaemonEye Vulnerability Report`
 
 ### What to Include
 
@@ -64,7 +64,7 @@ Please include the following information in your report:
 1. **Description**: Clear description of the vulnerability
 2. **Impact**: Potential security impact and affected components
 3. **Reproduction**: Steps to reproduce the issue (if applicable)
-4. **Environment**: OS, architecture, and SentinelD version
+4. **Environment**: OS, architecture, and DaemonEye version
 5. **Timeline**: Any disclosure timeline requirements
 6. **Contact**: Your preferred contact method for follow-up
 
@@ -94,7 +94,7 @@ Please include the following information in your report:
 
 ### For Users
 
-- **Keep Updated**: Always run the latest version of SentinelD
+- **Keep Updated**: Always run the latest version of DaemonEye
 - **Secure Configuration**: Use strong authentication and encryption
 - **Monitor Logs**: Regularly review audit logs for anomalies
 - **Principle of Least Privilege**: Run components with minimal required permissions
@@ -112,7 +112,7 @@ Please include the following information in your report:
 
 Security advisories are published at:
 
-- **GitHub Security Advisories**: [github.com/EvilBit-Labs/SentinelD/security/advisories](https://github.com/EvilBit-Labs/SentinelD/security/advisories)
+- **GitHub Security Advisories**: [github.com/EvilBit-Labs/DaemonEye/security/advisories](https://github.com/EvilBit-Labs/DaemonEye/security/advisories)
 - **Security Website**: [evilbitlabs.io/security](https://evilbitlabs.io/security)
 - **Mailing List**: Subscribe to <support@evilbitlabs.io>
 

@@ -4,11 +4,11 @@
 
 ## Summary
 
-Migrate SentinelD's custom IPC implementation from hand-rolled Unix domain sockets and Windows named pipes to a unified transport layer using standard tokio networking APIs as a stepping stone toward the `interprocess` crate.
+Migrate DaemonEye's custom IPC implementation from hand-rolled Unix domain sockets and Windows named pipes to a unified transport layer using standard tokio networking APIs as a stepping stone toward the `interprocess` crate.
 
 ## Context
 
-SentinelD currently implements IPC communication between `procmond` and `sentinelagent` using custom implementations:
+DaemonEye currently implements IPC communication between `procmond` and `daemoneye-agent` using custom implementations:
 
 - **Custom Unix socket server** (~400 lines) with manual varint length framing, CRC32 validation, and connection management
 - **Custom Windows named pipe server** with platform-specific error handling
@@ -238,7 +238,7 @@ Frame format (little-endian):
 
 - [Interprocess crate documentation](https://docs.rs/interprocess/)
 - [Tokio networking guide](https://tokio.rs/tokio/tutorial/streams)
-- [SentinelD IPC requirements](../.kiro/specs/sentineld-core-monitoring/requirements.md)
+- [DaemonEye IPC requirements](../.kiro/specs/DaemonEye-core-monitoring/requirements.md)
 - [Current IPC implementation](../procmond/src/ipc)
 
 ---

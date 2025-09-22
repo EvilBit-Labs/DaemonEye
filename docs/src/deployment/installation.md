@@ -1,6 +1,6 @@
-# SentinelD Installation Guide
+# DaemonEye Installation Guide
 
-This guide provides comprehensive installation instructions for SentinelD across different platforms and deployment scenarios.
+This guide provides comprehensive installation instructions for DaemonEye across different platforms and deployment scenarios.
 
 ---
 
@@ -62,18 +62,18 @@ This guide provides comprehensive installation instructions for SentinelD across
 
 ```bash
 # Linux x86_64
-wget https://github.com/sentineld/sentineld/releases/latest/download/sentineld-linux-x86_64.tar.gz
-tar -xzf sentineld-linux-x86_64.tar.gz
+wget https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-linux-x86_64.tar.gz
+tar -xzf daemoneye-linux-x86_64.tar.gz
 
 # Linux ARM64
-wget https://github.com/sentineld/sentineld/releases/latest/download/sentineld-linux-aarch64.tar.gz
-tar -xzf sentineld-linux-aarch64.tar.gz
+wget https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-linux-aarch64.tar.gz
+tar -xzf daemoneye-linux-aarch64.tar.gz
 
 # macOS x86_64
-curl -L https://github.com/sentineld/sentineld/releases/latest/download/sentineld-macos-x86_64.tar.gz | tar -xz
+curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-macos-x86_64.tar.gz | tar -xz
 
 # macOS ARM64 (Apple Silicon)
-curl -L https://github.com/sentineld/sentineld/releases/latest/download/sentineld-macos-aarch64.tar.gz | tar -xz
+curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-macos-aarch64.tar.gz | tar -xz
 
 # Windows x86_64
 # Download from GitHub releases and extract
@@ -83,21 +83,21 @@ curl -L https://github.com/sentineld/sentineld/releases/latest/download/sentinel
 
 ```bash
 # Linux/macOS
-sudo cp procmond sentinelagent sentinelcli /usr/local/bin/
-sudo chmod +x /usr/local/bin/procmond /usr/local/bin/sentinelagent /usr/local/bin/sentinelcli
+sudo cp procmond daemoneye-agent daemoneye-cli /usr/local/bin/
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 
 # Create system directories
-sudo mkdir -p /etc/sentineld
-sudo mkdir -p /var/lib/sentineld
-sudo mkdir -p /var/log/sentineld
+sudo mkdir -p /etc/daemoneye
+sudo mkdir -p /var/lib/daemoneye
+sudo mkdir -p /var/log/daemoneye
 
 # Set ownership
-sudo chown -R $USER:$USER /etc/sentineld
-sudo chown -R $USER:$USER /var/lib/sentineld
-sudo chown -R $USER:$USER /var/log/sentineld
+sudo chown -R $USER:$USER /etc/daemoneye
+sudo chown -R $USER:$USER /var/lib/daemoneye
+sudo chown -R $USER:$USER /var/log/daemoneye
 
 # Windows
-# Copy to C:\Program Files\SentinelD\
+# Copy to C:\Program Files\DaemonEye\
 # Add to PATH environment variable
 ```
 
@@ -106,67 +106,67 @@ sudo chown -R $USER:$USER /var/log/sentineld
 **Homebrew (macOS)**:
 
 ```bash
-# Add SentinelD tap
-brew tap sentineld/sentineld
+# Add DaemonEye tap
+brew tap daemoneye/daemoneye
 
-# Install SentinelD
-brew install sentineld
+# Install DaemonEye
+brew install daemoneye
 
 # Start service
-brew services start sentineld
+brew services start daemoneye
 ```
 
 **APT (Ubuntu/Debian)**:
 
 ```bash
 # Add repository key
-wget -qO - https://packages.sentineld.com/apt/key.gpg | sudo apt-key add -
+wget -qO - https://packages.daemoneye.com/apt/key.gpg | sudo apt-key add -
 
 # Add repository
-echo "deb https://packages.sentineld.com/apt stable main" | sudo tee /etc/apt/sources.list.d/sentineld.list
+echo "deb https://packages.daemoneye.com/apt stable main" | sudo tee /etc/apt/sources.list.d/daemoneye.list
 
 # Update package list
 sudo apt update
 
-# Install SentinelD
-sudo apt install sentineld
+# Install DaemonEye
+sudo apt install daemoneye
 
 # Start service
-sudo systemctl start sentineld
-sudo systemctl enable sentineld
+sudo systemctl start daemoneye
+sudo systemctl enable daemoneye
 ```
 
 **YUM/DNF (RHEL/CentOS/Fedora)**:
 
 ```bash
 # Add repository
-sudo tee /etc/yum.repos.d/sentineld.repo << 'EOF'
-[sentineld]
-name=SentinelD
-baseurl=https://packages.sentineld.com/yum/stable/
+sudo tee /etc/yum.repos.d/daemoneye.repo << 'EOF'
+[daemoneye]
+name=DaemonEye
+baseurl=https://packages.daemoneye.com/yum/stable/
 enabled=1
 gpgcheck=1
-gpgkey=https://packages.sentineld.com/apt/key.gpg
+gpgkey=https://packages.daemoneye.com/apt/key.gpg
 EOF
 
-# Install SentinelD
-sudo yum install sentineld  # RHEL/CentOS
+# Install DaemonEye
+sudo yum install daemoneye  # RHEL/CentOS
 # or
-sudo dnf install sentineld  # Fedora
+sudo dnf install daemoneye  # Fedora
 
 # Start service
-sudo systemctl start sentineld
-sudo systemctl enable sentineld
+sudo systemctl start daemoneye
+sudo systemctl enable daemoneye
 ```
 
 **Chocolatey (Windows)**:
 
 ```powershell
-# Install SentinelD
-choco install sentineld
+# Install DaemonEye
+choco install daemoneye
 
 # Start service
-Start-Service SentinelD
+Start-Service DaemonEye
 ```
 
 ### Method 3: From Source
@@ -183,15 +183,15 @@ rustup update
 
 ```bash
 # Clone repository
-git clone https://github.com/sentineld/sentineld.git
-cd sentineld
+git clone https://github.com/daemoneye/daemoneye.git
+cd daemoneye
 
 # Build in release mode
 cargo build --release
 
 # Install built binaries
-sudo cp target/release/procmond target/release/sentinelagent target/release/sentinelcli /usr/local/bin/
-sudo chmod +x /usr/local/bin/procmond /usr/local/bin/sentinelagent /usr/local/bin/sentinelcli
+sudo cp target/release/procmond target/release/daemoneye-agent target/release/daemoneye-cli /usr/local/bin/
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 ```
 
 **Cross-Platform Building**:
@@ -212,7 +212,7 @@ cargo build --release --target aarch64-apple-darwin
 
 ### Method 4: Using cargo-dist (Release Tooling)
 
-SentinelD uses `cargo-dist` and `cargo-release` for automated building, packaging, and releasing. This is the recommended method for developers and contributors who want to build release-quality binaries.
+DaemonEye uses `cargo-dist` and `cargo-release` for automated building, packaging, and releasing. This is the recommended method for developers and contributors who want to build release-quality binaries.
 
 **Install cargo-dist and cargo-release**:
 
@@ -285,7 +285,7 @@ cargo dist publish
 ```
 
 > [!NOTE]
-> **For Contributors**: If you're contributing to SentinelD and need to test your changes, use `cargo dist build` to create release-quality binaries that match the official distribution format.
+> **For Contributors**: If you're contributing to DaemonEye and need to test your changes, use `cargo dist build` to create release-quality binaries that match the official distribution format.
 
 ## Platform-Specific Installation
 
@@ -300,17 +300,17 @@ sudo apt update && sudo apt upgrade -y
 # Install dependencies
 sudo apt install -y ca-certificates curl wget gnupg lsb-release
 
-# Add SentinelD repository
-wget -qO - https://packages.sentineld.com/apt/key.gpg | sudo apt-key add -
-echo "deb https://packages.sentineld.com/apt stable main" | sudo tee /etc/apt/sources.list.d/sentineld.list
+# Add DaemonEye repository
+wget -qO - https://packages.daemoneye.com/apt/key.gpg | sudo apt-key add -
+echo "deb https://packages.daemoneye.com/apt stable main" | sudo tee /etc/apt/sources.list.d/daemoneye.list
 
-# Install SentinelD
+# Install DaemonEye
 sudo apt update
-sudo apt install sentineld
+sudo apt install daemoneye
 
 # Configure service
-sudo systemctl enable sentineld
-sudo systemctl start sentineld
+sudo systemctl enable daemoneye
+sudo systemctl start daemoneye
 ```
 
 **RHEL/CentOS**:
@@ -322,33 +322,33 @@ sudo yum update -y
 # Install dependencies
 sudo yum install -y ca-certificates curl wget
 
-# Add SentinelD repository
-sudo tee /etc/yum.repos.d/sentineld.repo << 'EOF'
-[sentineld]
-name=SentinelD
-baseurl=https://packages.sentineld.com/yum/stable/
+# Add DaemonEye repository
+sudo tee /etc/yum.repos.d/daemoneye.repo << 'EOF'
+[daemoneye]
+name=DaemonEye
+baseurl=https://packages.daemoneye.com/yum/stable/
 enabled=1
 gpgcheck=1
-gpgkey=https://packages.sentineld.com/apt/key.gpg
+gpgkey=https://packages.daemoneye.com/apt/key.gpg
 EOF
 
-# Install SentinelD
-sudo yum install sentineld
+# Install DaemonEye
+sudo yum install daemoneye
 
 # Configure service
-sudo systemctl enable sentineld
-sudo systemctl start sentineld
+sudo systemctl enable daemoneye
+sudo systemctl start daemoneye
 ```
 
 **Arch Linux**:
 
 ```bash
 # Install from AUR
-yay -S sentineld
+yay -S daemoneye
 
 # Or build from source
-git clone https://aur.archlinux.org/sentineld.git
-cd sentineld
+git clone https://aur.archlinux.org/daemoneye.git
+cd daemoneye
 makepkg -si
 ```
 
@@ -360,35 +360,35 @@ makepkg -si
 # Install Homebrew if not already installed
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Add SentinelD tap
-brew tap sentineld/sentineld
+# Add DaemonEye tap
+brew tap daemoneye/daemoneye
 
-# Install SentinelD
-brew install sentineld
+# Install DaemonEye
+brew install daemoneye
 
 # Start service
-brew services start sentineld
+brew services start daemoneye
 ```
 
 **Manual Installation**:
 
 ```bash
 # Download and extract
-curl -L https://github.com/sentineld/sentineld/releases/latest/download/sentineld-macos-x86_64.tar.gz | tar -xz
+curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-macos-x86_64.tar.gz | tar -xz
 
 # Install to system directories
-sudo cp procmond sentinelagent sentinelcli /usr/local/bin/
-sudo chmod +x /usr/local/bin/procmond /usr/local/bin/sentinelagent /usr/local/bin/sentinelcli
+sudo cp procmond daemoneye-agent daemoneye-cli /usr/local/bin/
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 
 # Create directories
-sudo mkdir -p /Library/Application\ Support/SentinelD
-sudo mkdir -p /var/lib/sentineld
-sudo mkdir -p /var/log/sentineld
+sudo mkdir -p /Library/Application\ Support/DaemonEye
+sudo mkdir -p /var/lib/daemoneye
+sudo mkdir -p /var/log/daemoneye
 
 # Set ownership
-sudo chown -R $(whoami):staff /Library/Application\ Support/SentinelD
-sudo chown -R $(whoami):staff /var/lib/sentineld
-sudo chown -R $(whoami):staff /var/log/sentineld
+sudo chown -R $(whoami):staff /Library/Application\ Support/DaemonEye
+sudo chown -R $(whoami):staff /var/lib/daemoneye
+sudo chown -R $(whoami):staff /var/log/daemoneye
 ```
 
 ### Windows Installation
@@ -399,26 +399,26 @@ sudo chown -R $(whoami):staff /var/log/sentineld
 # Install Chocolatey if not already installed
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
-# Install SentinelD
-choco install sentineld
+# Install DaemonEye
+choco install daemoneye
 
 # Start service
-Start-Service SentinelD
+Start-Service DaemonEye
 ```
 
 **Manual Installation**:
 
 ```powershell
 # Download from GitHub releases
-# Extract to C:\Program Files\SentinelD\
+# Extract to C:\Program Files\DaemonEye\
 
 # Add to PATH
-$env:PATH += ";C:\Program Files\SentinelD"
+$env:PATH += ";C:\Program Files\DaemonEye"
 
 # Create data directories
-New-Item -ItemType Directory -Path "C:\ProgramData\SentinelD" -Force
-New-Item -ItemType Directory -Path "C:\ProgramData\SentinelD\data" -Force
-New-Item -ItemType Directory -Path "C:\ProgramData\SentinelD\logs" -Force
+New-Item -ItemType Directory -Path "C:\ProgramData\DaemonEye" -Force
+New-Item -ItemType Directory -Path "C:\ProgramData\DaemonEye\data" -Force
+New-Item -ItemType Directory -Path "C:\ProgramData\DaemonEye\logs" -Force
 ```
 
 ## Service Configuration
@@ -428,18 +428,18 @@ New-Item -ItemType Directory -Path "C:\ProgramData\SentinelD\logs" -Force
 **Create Service File**:
 
 ```bash
-sudo tee /etc/systemd/system/sentineld.service << 'EOF'
+sudo tee /etc/systemd/system/daemoneye.service << 'EOF'
 [Unit]
-Description=SentinelD Security Monitoring Agent
-Documentation=https://docs.sentineld.com
+Description=DaemonEye Security Monitoring Agent
+Documentation=https://docs.daemoneye.com
 After=network.target
 Wants=network.target
 
 [Service]
 Type=notify
-User=sentineld
-Group=sentineld
-ExecStart=/usr/local/bin/sentinelagent --config /etc/sentineld/config.yaml
+User=daemoneye
+Group=daemoneye
+ExecStart=/usr/local/bin/daemoneye-agent --config /etc/daemoneye/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=mixed
 KillSignal=SIGTERM
@@ -448,14 +448,14 @@ Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=sentineld
+SyslogIdentifier=daemoneye
 
 # Security settings
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/sentineld /var/log/sentineld
+ReadWritePaths=/var/lib/daemoneye /var/log/daemoneye
 CapabilityBoundingSet=CAP_SYS_PTRACE
 AmbientCapabilities=CAP_SYS_PTRACE
 
@@ -467,18 +467,18 @@ EOF
 **Create User and Directories**:
 
 ```bash
-# Create sentineld user
-sudo useradd -r -s /bin/false -d /var/lib/sentineld sentineld
+# Create daemoneye user
+sudo useradd -r -s /bin/false -d /var/lib/daemoneye daemoneye
 
 # Set ownership
-sudo chown -R sentineld:sentineld /var/lib/sentineld
-sudo chown -R sentineld:sentineld /var/log/sentineld
-sudo chown -R sentineld:sentineld /etc/sentineld
+sudo chown -R daemoneye:daemoneye /var/lib/daemoneye
+sudo chown -R daemoneye:daemoneye /var/log/daemoneye
+sudo chown -R daemoneye:daemoneye /etc/daemoneye
 
 # Reload systemd and start service
 sudo systemctl daemon-reload
-sudo systemctl enable sentineld
-sudo systemctl start sentineld
+sudo systemctl enable daemoneye
+sudo systemctl start daemoneye
 ```
 
 ### macOS (launchd)
@@ -486,29 +486,29 @@ sudo systemctl start sentineld
 **Create LaunchDaemon**:
 
 ```bash
-sudo tee /Library/LaunchDaemons/com.sentineld.agent.plist << 'EOF'
+sudo tee /Library/LaunchDaemons/com.daemoneye.agent.plist << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.sentineld.agent</string>
+    <string>com.daemoneye.agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/sentinelagent</string>
+        <string>/usr/local/bin/daemoneye-agent</string>
         <string>--config</string>
-        <string>/Library/Application Support/SentinelD/config.yaml</string>
+        <string>/Library/Application Support/DaemonEye/config.yaml</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/var/log/sentineld/agent.log</string>
+    <string>/var/log/daemoneye/agent.log</string>
     <key>StandardErrorPath</key>
-    <string>/var/log/sentineld/agent.error.log</string>
+    <string>/var/log/daemoneye/agent.error.log</string>
     <key>UserName</key>
-    <string>sentineld</string>
+    <string>daemoneye</string>
     <key>GroupName</key>
     <string>staff</string>
 </dict>
@@ -520,10 +520,10 @@ EOF
 
 ```bash
 # Load service
-sudo launchctl load /Library/LaunchDaemons/com.sentineld.agent.plist
+sudo launchctl load /Library/LaunchDaemons/com.daemoneye.agent.plist
 
 # Check status
-sudo launchctl list | grep sentineld
+sudo launchctl list | grep daemoneye
 ```
 
 ### Windows (Service)
@@ -532,13 +532,13 @@ sudo launchctl list | grep sentineld
 
 ```powershell
 # Create service
-New-Service -Name "SentinelD Agent" -BinaryPathName "C:\Program Files\SentinelD\sentinelagent.exe --config C:\ProgramData\SentinelD\config.yaml" -DisplayName "SentinelD Security Monitoring Agent" -StartupType Automatic
+New-Service -Name "DaemonEye Agent" -BinaryPathName "C:\Program Files\DaemonEye\daemoneye-agent.exe --config C:\ProgramData\DaemonEye\config.yaml" -DisplayName "DaemonEye Security Monitoring Agent" -StartupType Automatic
 
 # Start service
-Start-Service "SentinelD Agent"
+Start-Service "DaemonEye Agent"
 
 # Check status
-Get-Service "SentinelD Agent"
+Get-Service "DaemonEye Agent"
 ```
 
 ## Post-Installation Setup
@@ -547,34 +547,34 @@ Get-Service "SentinelD Agent"
 
 ```bash
 # Generate default configuration
-sentinelcli config init --output /etc/sentineld/config.yaml
+daemoneye-cli config init --output /etc/daemoneye/config.yaml
 
 # Or for user-specific configuration
-sentinelcli config init --output ~/.config/sentineld/config.yaml
+daemoneye-cli config init --output ~/.config/daemoneye/config.yaml
 ```
 
 ### Create Data Directories
 
 ```bash
 # Linux/macOS
-sudo mkdir -p /var/lib/sentineld
-sudo mkdir -p /var/log/sentineld
-sudo chown -R $USER:$USER /var/lib/sentineld
-sudo chown -R $USER:$USER /var/log/sentineld
+sudo mkdir -p /var/lib/daemoneye
+sudo mkdir -p /var/log/daemoneye
+sudo chown -R $USER:$USER /var/lib/daemoneye
+sudo chown -R $USER:$USER /var/log/daemoneye
 
 # Windows
-mkdir "C:\ProgramData\SentinelD\data"
-mkdir "C:\ProgramData\SentinelD\logs"
+mkdir "C:\ProgramData\DaemonEye\data"
+mkdir "C:\ProgramData\DaemonEye\logs"
 ```
 
 ### Set Up Basic Rules
 
 ```bash
 # Create rules directory
-mkdir -p /etc/sentineld/rules
+mkdir -p /etc/daemoneye/rules
 
 # Create a basic rule
-cat > /etc/sentineld/rules/suspicious-processes.sql << 'EOF'
+cat > /etc/daemoneye/rules/suspicious-processes.sql << 'EOF'
 -- Detect processes with suspicious names
 SELECT
     pid,
@@ -591,22 +591,22 @@ ORDER BY collection_time DESC;
 EOF
 
 # Validate the rule
-sentinelcli rules validate /etc/sentineld/rules/suspicious-processes.sql
+daemoneye-cli rules validate /etc/daemoneye/rules/suspicious-processes.sql
 ```
 
 ### Configure Alerting
 
 ```bash
 # Enable syslog alerts
-sentinelcli config set alerting.sinks[0].enabled true
-sentinelcli config set alerting.sinks[0].type syslog
-sentinelcli config set alerting.sinks[0].facility daemon
+daemoneye-cli config set alerting.sinks[0].enabled true
+daemoneye-cli config set alerting.sinks[0].type syslog
+daemoneye-cli config set alerting.sinks[0].facility daemon
 
 # Enable webhook alerts (if SIEM is available)
-sentinelcli config set alerting.sinks[1].enabled true
-sentinelcli config set alerting.sinks[1].type webhook
-sentinelcli config set alerting.sinks[1].url "https://your-siem.com/webhook"
-sentinelcli config set alerting.sinks[1].headers.Authorization "Bearer ${WEBHOOK_TOKEN}"
+daemoneye-cli config set alerting.sinks[1].enabled true
+daemoneye-cli config set alerting.sinks[1].type webhook
+daemoneye-cli config set alerting.sinks[1].url "https://your-siem.com/webhook"
+daemoneye-cli config set alerting.sinks[1].headers.Authorization "Bearer ${WEBHOOK_TOKEN}"
 ```
 
 ## Verification
@@ -616,47 +616,47 @@ sentinelcli config set alerting.sinks[1].headers.Authorization "Bearer ${WEBHOOK
 ```bash
 # Check binary versions
 procmond --version
-sentinelagent --version
-sentinelcli --version
+daemoneye-agent --version
+daemoneye-cli --version
 
 # Check service status
 # Linux
-sudo systemctl status sentineld
+sudo systemctl status daemoneye
 
 # macOS
-sudo launchctl list | grep sentineld
+sudo launchctl list | grep daemoneye
 
 # Windows
-Get-Service "SentinelD Agent"
+Get-Service "DaemonEye Agent"
 ```
 
 ### Test Basic Functionality
 
 ```bash
 # Check system health
-sentinelcli health
+daemoneye-cli health
 
 # List recent processes
-sentinelcli query "SELECT pid, name, executable_path FROM processes LIMIT 10"
+daemoneye-cli query "SELECT pid, name, executable_path FROM processes LIMIT 10"
 
 # Check alerts
-sentinelcli alerts list
+daemoneye-cli alerts list
 
 # Test rule execution
-sentinelcli rules test suspicious-processes
+daemoneye-cli rules test suspicious-processes
 ```
 
 ### Performance Verification
 
 ```bash
 # Check system metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # Monitor process collection
-sentinelcli watch processes --filter "cpu_usage > 10.0"
+daemoneye-cli watch processes --filter "cpu_usage > 10.0"
 
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 ```
 
 ## Troubleshooting
@@ -668,11 +668,11 @@ sentinelcli database status
 ```bash
 # Check file permissions
 ls -la /usr/local/bin/procmond
-ls -la /usr/local/bin/sentinelagent
-ls -la /usr/local/bin/sentinelcli
+ls -la /usr/local/bin/daemoneye-agent
+ls -la /usr/local/bin/daemoneye-cli
 
 # Fix permissions
-sudo chmod +x /usr/local/bin/procmond /usr/local/bin/sentinelagent /usr/local/bin/sentinelcli
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 ```
 
 **Service Won't Start**:
@@ -680,60 +680,60 @@ sudo chmod +x /usr/local/bin/procmond /usr/local/bin/sentinelagent /usr/local/bi
 ```bash
 # Check service logs
 # Linux
-sudo journalctl -u sentineld -f
+sudo journalctl -u daemoneye -f
 
 # macOS
-sudo log show --predicate 'process == "sentinelagent"' --last 1h
+sudo log show --predicate 'process == "daemoneye-agent"' --last 1h
 
 # Windows
-Get-EventLog -LogName Application -Source "SentinelD" -Newest 10
+Get-EventLog -LogName Application -Source "DaemonEye" -Newest 10
 ```
 
 **Configuration Errors**:
 
 ```bash
 # Validate configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Check configuration syntax
-sentinelcli config check
+daemoneye-cli config check
 
 # Show effective configuration
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 **Database Issues**:
 
 ```bash
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 
 # Check database integrity
-sentinelcli database integrity-check
+daemoneye-cli database integrity-check
 
 # Repair database
-sentinelcli database repair
+daemoneye-cli database repair
 ```
 
 ### Debug Mode
 
 ```bash
 # Enable debug logging
-sentinelcli config set app.log_level debug
+daemoneye-cli config set app.log_level debug
 
 # Restart service
 # Linux
-sudo systemctl restart sentineld
+sudo systemctl restart daemoneye
 
 # macOS
-sudo launchctl unload /Library/LaunchDaemons/com.sentineld.agent.plist
-sudo launchctl load /Library/LaunchDaemons/com.sentineld.agent.plist
+sudo launchctl unload /Library/LaunchDaemons/com.daemoneye.agent.plist
+sudo launchctl load /Library/LaunchDaemons/com.daemoneye.agent.plist
 
 # Windows
-Restart-Service "SentinelD Agent"
+Restart-Service "DaemonEye Agent"
 
 # Monitor debug logs
-sentinelcli logs --level debug --tail 100
+daemoneye-cli logs --level debug --tail 100
 ```
 
 ### Performance Issues
@@ -742,49 +742,49 @@ sentinelcli logs --level debug --tail 100
 
 ```bash
 # Check process collection rate
-sentinelcli metrics --metric collection_rate
+daemoneye-cli metrics --metric collection_rate
 
 # Reduce scan interval
-sentinelcli config set app.scan_interval_ms 60000
+daemoneye-cli config set app.scan_interval_ms 60000
 
 # Check for problematic rules
-sentinelcli rules list --performance
+daemoneye-cli rules list --performance
 ```
 
 **High Memory Usage**:
 
 ```bash
 # Check memory usage
-sentinelcli metrics --metric memory_usage
+daemoneye-cli metrics --metric memory_usage
 
 # Reduce batch size
-sentinelcli config set app.batch_size 500
+daemoneye-cli config set app.batch_size 500
 
 # Check database size
-sentinelcli database size
+daemoneye-cli database size
 ```
 
 **Slow Queries**:
 
 ```bash
 # Check query performance
-sentinelcli database query-stats
+daemoneye-cli database query-stats
 
 # Optimize database
-sentinelcli database optimize
+daemoneye-cli database optimize
 
 # Check for slow rules
-sentinelcli rules list --slow
+daemoneye-cli rules list --slow
 ```
 
 ### Getting Help
 
 - **Documentation**: Check the full documentation in `docs/`
-- **Logs**: Review logs with `sentinelcli logs`
-- **Health Checks**: Use `sentinelcli health` for system status
+- **Logs**: Review logs with `daemoneye-cli logs`
+- **Health Checks**: Use `daemoneye-cli health` for system status
 - **Community**: Join discussions on GitHub or community forums
 - **Support**: Contact support for commercial assistance
 
 ---
 
-*This installation guide provides comprehensive instructions for installing SentinelD across different platforms. For additional help, consult the troubleshooting section or contact support.*
+*This installation guide provides comprehensive instructions for installing DaemonEye across different platforms. For additional help, consult the troubleshooting section or contact support.*

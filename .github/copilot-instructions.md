@@ -1,15 +1,15 @@
-# SentinelD AI Coding Assistant Instructions
+# DaemonEye AI Coding Assistant Instructions
 
 ## Architecture Overview
 
-SentinelD is a **three-component security architecture** with strict privilege separation:
+DaemonEye is a **three-component security architecture** with strict privilege separation:
 
 - **`procmond/`**: Privileged process collector (minimal attack surface, protobuf IPC)
-- **`sentinelagent/`**: User-space orchestrator (detection engine, alert delivery)
-- **`sentinelcli/`**: CLI interface (read-only database access, operator queries)
-- **`sentinel-lib/`**: Shared library (config, models, storage, detection, alerting, crypto, telemetry)
+- **`daemoneye-agent/`**: User-space orchestrator (detection engine, alert delivery)
+- **`daemoneye-cli/`**: CLI interface (read-only database access, operator queries)
+- **`daemoneye-lib/`**: Shared library (config, models, storage, detection, alerting, crypto, telemetry)
 
-Security boundaries: Only `procmond` runs with elevated privileges; `sentinelagent` handles network/detection; `sentinelcli` is query-only.
+Security boundaries: Only `procmond` runs with elevated privileges; `daemoneye-agent` handles network/detection; `daemoneye-cli` is query-only.
 
 ## Essential Patterns
 
@@ -19,7 +19,7 @@ Security boundaries: Only `procmond` runs with elevated privileges; `sentinelage
 - **Zero warnings policy**: `cargo clippy --workspace -- -D warnings` must pass
 - **Forbidden unsafe code**: `unsafe_code = "forbid"` enforced at workspace level
 - **Linter restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission
-- **Workspace members**: `procmond`, `sentinelagent`, `sentinelcli`, `sentinel-lib`
+- **Workspace members**: `procmond`, `daemoneye-agent`, `daemoneye-cli`, `daemoneye-lib`
 - Use `just` for all development tasks (DRY composition with `@just <subrecipe>`)
 
 ### Error Handling
@@ -59,10 +59,10 @@ fn read_process_config(path: &Path) -> Result<ProcessConfig, CollectionError> {
 
 ```rust
 use interprocess::local_socket::LocalSocketStream;
-use sentinel_lib::proto::{DetectionTask, DetectionResult};
+use daemoneye_lib::proto::{DetectionTask, DetectionResult};
 
 // Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
-let stream = LocalSocketStream::connect("/tmp/sentineld.sock")?;
+let stream = LocalSocketStream::connect("/tmp/daemoneye.sock")?;
 
 // Protobuf message serialization with CRC32 checksums
 let task = DetectionTask::new()
@@ -130,18 +130,20 @@ just build               # Build all binaries with features
 
 # Component building and running
 just run-procmond        # Run procmond (with args)
-just run-sentinelagent   # Run sentinelagent (with args)
-just run-sentinelcli     # Run sentinelcli (with args)
+just run-daemoneye-agent   # Run daemoneye-agent (with args)
+just run-daemoneye-cli     # Run daemoneye-cli (with args)
 
 # Workspace-specific builds
 cargo build -p procmond      # Build procmond crate
-cargo build -p sentinelagent # Build sentinelagent crate
-cargo build -p sentinelcli   # Build sentinelcli crate
-cargo build -p sentinel-lib  # Build sentinel-lib crate
+cargo build -p daemoneye-agent # Build daemoneye-agent crate
+cargo build -p daemoneye-cli   # Build daemoneye-cli crate
+cargo build -p daemoneye-lib  # Build daemoneye-lib crate
 
 # CI aggregate (recommended for CI)
 just ci-check            # Run full CI pipeline (pre-commit + lint + test + build + audit + coverage + dist)
 ```
+
+Always follow the commit message style in `commit-instructions.md`.
 
 ### Testing Standards
 
@@ -156,7 +158,7 @@ just ci-check            # Run full CI pipeline (pre-commit + lint + test + buil
 
 - SQL detection rules are **never executed directly** against processes
 - `sqlparser` extracts collection requirements from SQL AST to generate protobuf tasks
-- `sentinelagent` translates complex SQL queries into simple collection tasks for `procmond`
+- `daemoneye-agent` translates complex SQL queries into simple collection tasks for `procmond`
 - `procmond` may overcollect data (granularity limitations), then SQL runs against stored data
 - This ensures privilege separation: only `procmond` touches live processes, SQL stays in userspace
 
@@ -177,7 +179,7 @@ just ci-check            # Run full CI pipeline (pre-commit + lint + test + buil
 
 - **Backpressure Semantics**:
 
-  - Credit-based flow control: procmond grants collection credits to sentinelagent
+  - Credit-based flow control: procmond grants collection credits to daemoneye-agent
   - Default credit limit: 1000 pending process records
   - ACK/NACK responses required for credit replenishment
   - Windowing: Max 10 concurrent collection tasks in-flight
@@ -200,27 +202,27 @@ just ci-check            # Run full CI pipeline (pre-commit + lint + test + buil
 
 **procmond (Privileged Collector):**
 
-- Dedicated Unix user/group: `sentineld-proc:sentineld-proc`
+- Dedicated Unix user/group: `daemoneye-proc:daemoneye-proc`
 - Audit ledger: `open(path, O_WRONLY|O_APPEND|O_CREAT, 0600)` with owner-only write
 - Drop capabilities: `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE` after init, retain minimal set
 - SELinux/AppArmor: Block read syscalls on audit ledger files
 - Seccomp filter: Whitelist only required syscalls (write, openat, close)
 
-**sentinelagent (Detection Engine):**
+**daemoneye-agent (Detection Engine):**
 
-- Dedicated Unix user/group: `sentineld-agent:sentineld-agent`
+- Dedicated Unix user/group: `daemoneye-agent:daemoneye-agent`
 - Event store: Standard R/W access with `open(path, O_RDWR)`
-- Mount options: `/var/lib/sentineld` with `nodev,nosuid,noexec`
+- Mount options: `/var/lib/daemoneye` with `nodev,nosuid,noexec`
 - Network: Outbound-only via iptables rules, no listening sockets
 - Filesystem ACLs: Read access to audit ledger, no write permissions
 
-**sentinelcli (Query Interface):**
+**daemoneye-cli (Query Interface):**
 
-- Dedicated Unix user/group: `sentineld-cli:sentineld-cli`
+- Dedicated Unix user/group: `daemoneye-cli:daemoneye-cli`
 - Database access: `open(path, O_RDONLY)` only
 - Seccomp filter: Block write, unlink, rename syscalls on database files
 - No network capabilities, filesystem read-only except for temp output files
-- Group membership: Add to `sentineld-agent` group for IPC communication only
+- Group membership: Add to `daemoneye-agent` group for IPC communication only
 
 ### Input Validation
 
@@ -276,7 +278,7 @@ fn validate_query_complexity(statement: &Statement) -> Result<(), ValidationErro
         Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
     };
 
-    // Limits derived from SentinelD security / DoS prevention policy
+    // Limits derived from DaemonEye security / DoS prevention policy
     const MAX_JOINS: usize = 5;
     const MAX_SUBQUERIES: usize = 3;
     const MAX_PROJECTIONS: usize = 50;

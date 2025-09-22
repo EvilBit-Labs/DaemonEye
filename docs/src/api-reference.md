@@ -1,6 +1,6 @@
 # API Reference
 
-This section contains comprehensive API documentation for SentinelD, covering all public interfaces, data structures, and usage examples.
+This section contains comprehensive API documentation for DaemonEye, covering all public interfaces, data structures, and usage examples.
 
 ## Core API
 
@@ -12,12 +12,12 @@ The core API provides the fundamental interfaces for process monitoring, alertin
 
 ### Component APIs
 
-SentinelD provides APIs for each component:
+DaemonEye provides APIs for each component:
 
 - **ProcMonD API**: Process collection and system monitoring
-- **SentinelAgent API**: Alerting and orchestration
-- **SentinelCLI API**: Command-line interface and management
-- **Sentinel-lib API**: Shared library interfaces
+- **daemoneye-agent API**: Alerting and orchestration
+- **daemoneye-cli API**: Command-line interface and management
+- **daemoneye-lib API**: Shared library interfaces
 
 ### API Design Principles
 
@@ -32,7 +32,7 @@ SentinelD provides APIs for each component:
 ### Process Collection
 
 ```rust
-use sentinel_lib::collector::ProcessCollector;
+use daemoneye_lib::collector::ProcessCollector;
 
 let collector = ProcessCollector::new();
 let processes = collector.collect_processes().await?;
@@ -41,7 +41,7 @@ let processes = collector.collect_processes().await?;
 ### Database Operations
 
 ```rust
-use sentinel_lib::storage::Database;
+use daemoneye_lib::storage::Database;
 
 let db = Database::new("processes.db").await?;
 let processes = db.query_processes("SELECT * FROM processes WHERE pid = ?", &[1234]).await?;
@@ -50,7 +50,7 @@ let processes = db.query_processes("SELECT * FROM processes WHERE pid = ?", &[12
 ### Alert Management
 
 ```rust
-use sentinel_lib::alerting::AlertManager;
+use daemoneye_lib::alerting::AlertManager;
 
 let mut alert_manager = AlertManager::new();
 alert_manager.add_sink(Box::new(SyslogSink::new("daemon")?));
@@ -60,7 +60,7 @@ alert_manager.send_alert(alert).await?;
 ### Configuration Management
 
 ```rust
-use sentinel_lib::config::Config;
+use daemoneye_lib::config::Config;
 
 let config = Config::load_from_file("config.yaml").await?;
 let scan_interval = config.get::<u64>("app.scan_interval_ms")?;
@@ -529,7 +529,7 @@ All APIs use structured error types:
 
 ```rust
 #[derive(Debug, Error)]
-pub enum SentinelError {
+pub enum DaemonEyeError {
     #[error("Collection error: {0}")]
     Collection(#[from] CollectionError),
 
@@ -574,9 +574,9 @@ pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
 ### Basic Process Monitoring
 
 ```rust
-use sentinel_lib::collector::ProcessCollector;
-use sentinel_lib::storage::Database;
-use sentinel_lib::alerting::AlertManager;
+use daemoneye_lib::collector::ProcessCollector;
+use daemoneye_lib::storage::Database;
+use daemoneye_lib::alerting::AlertManager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -615,7 +615,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Custom Alert Sink
 
 ```rust
-use sentinel_lib::alerting::{AlertSink, Alert, DeliveryResult, DeliveryError};
+use daemoneye_lib::alerting::{AlertSink, Alert, DeliveryResult, DeliveryError};
 use async_trait::async_trait;
 
 pub struct CustomSink {
@@ -664,4 +664,4 @@ impl AlertSink for CustomSink {
 
 ---
 
-*This API reference provides comprehensive documentation for all SentinelD APIs. For additional examples and usage patterns, consult the specific API documentation.*
+*This API reference provides comprehensive documentation for all DaemonEye APIs. For additional examples and usage patterns, consult the specific API documentation.*

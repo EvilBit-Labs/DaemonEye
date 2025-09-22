@@ -2,7 +2,7 @@
 globs: src/main.rs,src/cli.rs
 ---
 
-# CLI Design Standards for SentinelD
+# CLI Design Standards for DaemonEye
 
 ## Command Structure
 

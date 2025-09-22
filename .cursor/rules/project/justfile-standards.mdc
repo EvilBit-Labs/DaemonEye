@@ -2,7 +2,7 @@
 globs: justfile
 ---
 
-# Justfile Standards for SentinelD
+# Justfile Standards for DaemonEye
 
 ## Task Runner Principles
 
@@ -22,8 +22,8 @@ Use DRY principles in justfile recipes as specified in [AGENTS.md](mdc:AGENTS.md
 ## Component-Specific Commands
 
 - `just run-procmond args=''`: Run the procmond binary
-- `just run-sentinelcli args=''`: Run the sentinelcli binary
-- `just run-sentinelagent args=''`: Run the sentinelagent binary
+- `just run-daemoneye-cli args=''`: Run the daemoneye-cli binary
+- `just run-daemoneye-agent args=''`: Run the daemoneye-agent binary
 
 ## Shell Configuration
 

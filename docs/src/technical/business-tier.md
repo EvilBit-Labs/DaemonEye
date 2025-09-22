@@ -2,9 +2,9 @@
 
 ## Overview
 
-The Business Tier Features extend the core SentinelD architecture with professional-grade capabilities targeting small teams and consultancies. The design maintains the security-first, offline-capable philosophy while adding enterprise integrations, curated content, and centralized management capabilities.
+The Business Tier Features extend the core DaemonEye architecture with professional-grade capabilities targeting small teams and consultancies. The design maintains the security-first, offline-capable philosophy while adding enterprise integrations, curated content, and centralized management capabilities.
 
-The key architectural addition is the **SentinelD Security Center**, a new component that provides centralized aggregation, management, and visualization capabilities while preserving the autonomous operation of individual agents.
+The key architectural addition is the **DaemonEye Security Center**, a new component that provides centralized aggregation, management, and visualization capabilities while preserving the autonomous operation of individual agents.
 
 ---
 
@@ -26,14 +26,14 @@ graph TB
 
         subgraph "Agent Node 1"
             PM1[procmond]
-            SA1[sentinelagent]
-            CLI1[sentinelcli]
+            SA1[daemoneye-agent]
+            CLI1[daemoneye-cli]
         end
 
         subgraph "Agent Node 2"
             PM2[procmond]
-            SA2[sentinelagent]
-            CLI2[sentinelcli]
+            SA2[daemoneye-agent]
+            CLI2[daemoneye-cli]
         end
 
         subgraph "External Integrations"
@@ -61,7 +61,7 @@ graph TB
 - **Framework**: Axum web framework with tokio async runtime
 - **Database**: PostgreSQL with connection pooling for scalable data storage
 - **Authentication**: Mutual TLS (mTLS) for agent connections, JWT for web GUI
-- **Configuration**: Same hierarchical config system as core SentinelD
+- **Configuration**: Same hierarchical config system as core DaemonEye
 - **Observability**: OpenTelemetry tracing with Prometheus metrics export
 
 **Core Modules**:
@@ -225,15 +225,15 @@ impl AgentRegistry {
 **Uplink Communication**: Secure connection to Security Center with fallback to standalone operation.
 
 ```rust
-pub struct EnhancedSentinelAgent {
-    base_agent: SentinelAgent,
+pub struct Enhanceddaemoneye-agent {
+    base_agent: daemoneye-agent,
     security_center_client: Option<SecurityCenterClient>,
     uplink_config: UplinkConfig,
 }
 
-impl EnhancedSentinelAgent {
+impl Enhanceddaemoneye-agent {
     pub async fn new(config: AgentConfig) -> Result<Self> {
-        let base_agent = SentinelAgent::new(config.clone()).await?;
+        let base_agent = daemoneye-agent::new(config.clone()).await?;
 
         let security_center_client = if config.uplink.enabled {
             Some(SecurityCenterClient::new(&config.uplink).await?)
@@ -297,7 +297,7 @@ metadata:
   name: Malware TTPs
   version: 1.2.0
   description: Common malware tactics, techniques, and procedures
-  author: SentinelD Security Team
+  author: DaemonEye Security Team
   signature: ed25519:base64-signature
 
 rules:
@@ -412,7 +412,7 @@ impl SplunkHecConnector {
         let hec_event = HecEvent {
             time: event.timestamp.timestamp(),
             host: event.hostname.clone(),
-            source: "sentineld",
+            source: "daemoneye",
             sourcetype: &self.source_type,
             index: self.index.as_deref(),
             event: serde_json::to_value(event)?,
@@ -541,7 +541,7 @@ pub struct CefFormatter;
 impl CefFormatter {
     pub fn format_process_alert(alert: &ProcessAlert) -> String {
         format!(
-            "CEF:0|SentinelD|SentinelD|1.0|{}|{}|{}|{}",
+            "CEF:0|DaemonEye|DaemonEye|1.0|{}|{}|{}|{}",
             alert.rule_id,
             alert.rule_name,
             Self::map_severity(&alert.severity),
@@ -709,8 +709,8 @@ alerting:
   security_center:
     enabled: true
     endpoint: https://security-center.example.com:8443
-    certificate_path: /etc/sentineld/agent.crt
-    key_path: /etc/sentineld/agent.key
+    certificate_path: /etc/daemoneye/agent.crt
+    key_path: /etc/daemoneye/agent.key
 ```
 
 ### Pattern 3: Hybrid (Recommended)
@@ -746,15 +746,15 @@ RUN cargo build --release
 # Runtime stage
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/sentinelagent /usr/local/bin/
+COPY --from=builder /app/target/release/daemoneye-agent /usr/local/bin/
 COPY --from=builder /app/target/release/procmond /usr/local/bin/
-COPY --from=builder /app/target/release/sentinelcli /usr/local/bin/
+COPY --from=builder /app/target/release/daemoneye-cli /usr/local/bin/
 
 # Create non-root user
-RUN useradd -r -s /bin/false sentineld
-USER sentineld
+RUN useradd -r -s /bin/false daemoneye
+USER daemoneye
 
-ENTRYPOINT ["sentinelagent"]
+ENTRYPOINT ["daemoneye-agent"]
 ```
 
 ### Kubernetes Manifests
@@ -765,23 +765,23 @@ ENTRYPOINT ["sentinelagent"]
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: sentineld-agent
+  name: daemoneye-agent
   namespace: security
 spec:
   selector:
     matchLabels:
-      app: sentineld-agent
+      app: daemoneye-agent
   template:
     metadata:
       labels:
-        app: sentineld-agent
+        app: daemoneye-agent
     spec:
-      serviceAccountName: sentineld-agent
+      serviceAccountName: daemoneye-agent
       hostPID: true
       hostNetwork: true
       containers:
         - name: procmond
-          image: sentineld/procmond:latest
+          image: daemoneye/procmond:latest
           securityContext:
             privileged: true
             capabilities:
@@ -791,27 +791,27 @@ spec:
               mountPath: /host/proc
               readOnly: true
             - name: data
-              mountPath: /var/lib/sentineld
-        - name: sentinelagent
-          image: sentineld/sentinelagent:latest
+              mountPath: /var/lib/daemoneye
+        - name: daemoneye-agent
+          image: daemoneye/daemoneye-agent:latest
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
           volumeMounts:
             - name: data
-              mountPath: /var/lib/sentineld
+              mountPath: /var/lib/daemoneye
             - name: config
-              mountPath: /etc/sentineld
+              mountPath: /etc/daemoneye
       volumes:
         - name: proc
           hostPath:
             path: /proc
         - name: data
           hostPath:
-            path: /var/lib/sentineld
+            path: /var/lib/daemoneye
         - name: config
           configMap:
-            name: sentineld-config
+            name: daemoneye-config
 ```
 
 ## Performance and Scalability
@@ -870,4 +870,4 @@ impl BatchProcessor {
 
 ---
 
-*The Business Tier Features provide professional-grade capabilities for small to medium teams while maintaining SentinelD's core security principles and performance characteristics.*
+*The Business Tier Features provide professional-grade capabilities for small to medium teams while maintaining DaemonEye's core security principles and performance characteristics.*

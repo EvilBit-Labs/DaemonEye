@@ -1,5 +1,5 @@
 name: 🔒 Security Report
-description: Report a security vulnerability in SentinelD
+description: Report a security vulnerability in DaemonEye
 title: "[Security]: "
 labels: ["security", "needs-triage"]
 assignees: []
@@ -23,7 +23,7 @@ body:
           value: |
               ## 🔐 Security Reporting Process
 
-              We take security seriously and appreciate your responsible disclosure. Please review our [Security Policy](https://github.com/EvilBit-Labs/SentinelD/blob/main/SECURITY.md) before submitting.
+              We take security seriously and appreciate your responsible disclosure. Please review our [Security Policy](https://github.com/EvilBit-Labs/DaemonEye/blob/main/SECURITY.md) before submitting.
 
               **For critical vulnerabilities, please contact us directly at support@evilbitlabs.io with the subject `[SECURITY] Critical Vulnerability Report`.**
 
@@ -44,12 +44,12 @@ body:
       id: component
       attributes:
           label: Affected Component
-          description: Which SentinelD component is affected?
+          description: Which DaemonEye component is affected?
           options:
               - procmond (Process Collector)
-              - sentinelagent (Orchestrator)
-              - sentinelcli (CLI Interface)
-              - sentinel-lib (Shared Library)
+              - daemoneye-agent (Orchestrator)
+              - daemoneye-cli (CLI Interface)
+              - daemoneye-lib (Shared Library)
               - Security Center (Business/Enterprise)
               - Build System / Dependencies
               - Documentation
@@ -61,8 +61,8 @@ body:
     - type: input
       id: version
       attributes:
-          label: SentinelD Version
-          description: What version of SentinelD is affected?
+          label: DaemonEye Version
+          description: What version of DaemonEye is affected?
           placeholder: "e.g., 0.1.0, commit hash, or 'latest'"
       validations:
           required: true

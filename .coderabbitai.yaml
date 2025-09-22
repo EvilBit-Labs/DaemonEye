@@ -10,7 +10,7 @@ reviews:
     high_level_summary_placeholder: "@coderabbitai summary"
     high_level_summary_in_walkthrough: true
     auto_title_placeholder: "@coderabbitai"
-    auto_title_instructions: "Generate PR/MR titles following Conventional Commits format: type(scope): description. Use types: feat, fix, docs, style, refactor, perf, test, build, ci, chore. Use scopes: procmond, sentinelagent, sentinelcli, sentinel-lib, security-center, gui, core-feature, process-monitoring, data-models, ipc, database, crypto, async, testing, integration, cross-platform. Keep descriptions concise and action-oriented."
+    auto_title_instructions: "Generate PR/MR titles following Conventional Commits format: type(scope): description. Use types: feat, fix, docs, style, refactor, perf, test, build, ci, chore. Use scopes: procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib, security-center, gui, core-feature, process-monitoring, data-models, ipc, database, crypto, async, testing, integration, cross-platform. Keep descriptions concise and action-oriented."
     review_status: true
     commit_status: true
     fail_commit_status: false
@@ -34,7 +34,7 @@ reviews:
             },
             {
                 "label": "core-feature",
-                "instructions": "Apply when the PR/MR implements or modifies core system functionality including procmond, sentinelagent, sentinelcli, or sentinel-lib components. Focus on fundamental security monitoring capabilities.",
+                "instructions": "Apply when the PR/MR implements or modifies core system functionality including procmond, daemoneye-agent, daemoneye-cli, or daemoneye-lib components. Focus on fundamental security monitoring capabilities.",
             },
             {
                 "label": "process-monitoring",
@@ -50,7 +50,7 @@ reviews:
             },
             {
                 "label": "ipc",
-                "instructions": "Apply when the PR/MR involves Inter-Process Communication between procmond, sentinelagent, or sentinelcli components. Includes protobuf definitions, Unix sockets, or named pipes.",
+                "instructions": "Apply when the PR/MR involves Inter-Process Communication between procmond, daemoneye-agent, or daemoneye-cli components. Includes protobuf definitions, Unix sockets, or named pipes.",
             },
             {
                 "label": "protobuf",
@@ -81,8 +81,8 @@ reviews:
                 "instructions": "Apply when the PR/MR involves multi-platform compatibility features for Linux, macOS, or Windows. Includes platform-specific code or cross-platform abstractions.",
             },
             {
-                "label": "sentinelagent",
-                "instructions": "Apply when the PR/MR specifically involves the sentinelagent component. Includes detection orchestration, alert management, or service lifecycle management.",
+                "label": "daemoneye-agent",
+                "instructions": "Apply when the PR/MR specifically involves the daemoneye-agent component. Includes detection orchestration, alert management, or service lifecycle management.",
             },
             {
                 "label": "documentation",
@@ -100,9 +100,9 @@ reviews:
     path_filters:
         [
             "procmond/**",
-            "sentinelagent/**",
-            "sentinelcli/**",
-            "sentinel-lib/**",
+            "daemoneye-agent/**",
+            "daemoneye-cli/**",
+            "daemoneye-lib/**",
             "docs/src/**",
             "spec/**",
             ".kiro/**",
@@ -135,15 +135,15 @@ reviews:
                 "instructions": "CRITICAL: Privileged process collector with minimal attack surface. Enforce principle of least privilege, immediate privilege dropping after init, no network access, write-only access to audit ledger. Flag any unsafe code, privilege escalation risks, or attack surface expansions. Focus on security, performance, and minimal dependencies.",
             },
             {
-                "path": "sentinelagent/**",
+                "path": "daemoneye-agent/**",
                 "instructions": "User-space orchestrator for detection, alerting, and procmond lifecycle management. Enforce outbound-only network connections, read/write event store access, IPC client patterns. Focus on SQL-to-IPC translation using sqlparser, task generation for procmond, overcollection handling, SQL injection prevention, concurrent alert delivery, service management, and error handling with thiserror/anyhow. Flag performance regressions in detection rule execution.",
             },
             {
-                "path": "sentinelcli/**",
-                "instructions": "Operator CLI interface. Enforce NO direct database access - communicates only through sentinelagent. No network access, comprehensive error messages, JSON/table output support. Focus on user experience, shell completions, color handling, and operational efficiency for SOC environments.",
+                "path": "daemoneye-cli/**",
+                "instructions": "Operator CLI interface. Enforce NO direct database access - communicates only through daemoneye-agent. No network access, comprehensive error messages, JSON/table output support. Focus on user experience, shell completions, color handling, and operational efficiency for SOC environments.",
             },
             {
-                "path": "sentinel-lib/**",
+                "path": "daemoneye-lib/**",
                 "instructions": "Shared library providing common functionality across all components. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments.",
             },
             # Not yet implemented
@@ -365,11 +365,11 @@ code_generation:
                     "instructions": "Generate rustdoc comments following standard format: /// for public items, //! for module docs. Include brief description, parameter docs with # Arguments, return docs with # Returns, error docs with # Errors, and examples with # Examples. Use ```rust for runnable examples, ```rust,no_run for non-runnable. Focus on security implications and performance characteristics.",
                 },
                 {
-                    "path": "sentinelcli/**",
+                    "path": "daemoneye-cli/**",
                     "instructions": "Generate rustdoc comments following standard format with CLI focus: /// for public items, //! for module docs. Include # Arguments, # Returns, # Errors, and # Examples sections. Focus on operator workflows, error messages, and output formatting. Use ```rust,no_run for security-sensitive CLI examples.",
                 },
                 {
-                    "path": "sentinel-lib/**",
+                    "path": "daemoneye-lib/**",
                     "instructions": "Generate rustdoc comments following standard format with shared library focus: /// for public items, //! for module docs. Include # Arguments, # Returns, # Errors, and # Examples sections. Emphasize trait-based abstractions, security boundaries, and cross-component usage. Use ```rust for runnable examples.",
                 },
                 # Not yet implemented
@@ -389,7 +389,7 @@ code_generation:
                     "instructions": "Generate security-focused unit tests for privileged process collector. Test privilege escalation scenarios, privilege dropping behavior, and attack surface boundaries. Use mock system calls and test error conditions thoroughly.",
                 },
                 {
-                    "path": "sentinelcli/**",
+                    "path": "daemoneye-cli/**",
                     "instructions": "Generate CLI-focused unit tests using insta for snapshot testing and predicates for validation. Test JSON/table output formatting, shell completions, error messages, and user experience. Test both interactive and non-interactive modes.",
                 },
                 # Not yet implemented

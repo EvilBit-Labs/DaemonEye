@@ -1,13 +1,13 @@
 # Protobuf IPC Implementation
 
-This document describes the Protocol Buffer implementation for Inter-Process Communication (IPC) between the `procmond` and `sentinelagent` components in SentinelD.
+This document describes the Protocol Buffer implementation for Inter-Process Communication (IPC) between the `procmond` and `daemoneye-agent` components in DaemonEye.
 
 ## Overview
 
 The protobuf schema defines type-safe message contracts that enable efficient and reliable communication between:
 
 - **procmond**: Privileged process collector
-- **sentinelagent**: Detection orchestrator
+- **daemoneye-agent**: Detection orchestrator
 
 ## Message Types
 
@@ -15,7 +15,7 @@ The protobuf schema defines type-safe message contracts that enable efficient an
 
 #### DetectionTask
 
-Sent from `sentinelagent` to `procmond` to request process data collection.
+Sent from `daemoneye-agent` to `procmond` to request process data collection.
 
 ```protobuf
 message DetectionTask {
@@ -29,7 +29,7 @@ message DetectionTask {
 
 #### DetectionResult
 
-Returned from `procmond` to `sentinelagent` with collection results.
+Returned from `procmond` to `daemoneye-agent` with collection results.
 
 ```protobuf
 message DetectionResult {
@@ -115,10 +115,10 @@ message HashResult {
 
 ### Module Structure
 
-The protobuf types are available in the `sentinel_lib::proto` module:
+The protobuf types are available in the `daemoneye_lib::proto` module:
 
 ```rust
-use sentinel_lib::proto::{
+use daemoneye_lib::proto::{
     DetectionResult, DetectionTask, ProtoHashCheck, ProtoHashResult, ProtoProcessFilter,
     ProtoProcessRecord, ProtoTaskType,
 };
@@ -129,8 +129,8 @@ use sentinel_lib::proto::{
 Automatic conversions between native and protobuf types:
 
 ```rust
-use sentinel_lib::models::process::ProcessRecord;
-use sentinel_lib::proto::ProtoProcessRecord;
+use daemoneye_lib::models::process::ProcessRecord;
+use daemoneye_lib::proto::ProtoProcessRecord;
 
 // Convert native to protobuf
 let native_process = ProcessRecord::new(1234, "firefox".to_string());
@@ -247,7 +247,7 @@ if result.success {
 ### Filtered Process Collection
 
 ```rust
-use sentinel_lib::proto::ProtoProcessFilter;
+use daemoneye_lib::proto::ProtoProcessFilter;
 
 // Create filter for specific processes
 let filter = ProtoProcessFilter {
@@ -262,7 +262,7 @@ let task = DetectionTask::new_enumerate_processes("filtered-001", Some(filter));
 ### Hash Verification
 
 ```rust
-use sentinel_lib::proto::ProtoHashCheck;
+use daemoneye_lib::proto::ProtoHashCheck;
 
 let hash_check = ProtoHashCheck {
     expected_hash: "a1b2c3d4...".to_string(),

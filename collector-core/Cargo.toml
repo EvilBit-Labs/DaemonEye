@@ -7,7 +7,7 @@ rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 edition.workspace = true
-description = "Extensible collection framework for SentinelD monitoring components"
+description = "Extensible collection framework for DaemonEye monitoring components"
 
 [dependencies]
 # Core async runtime and utilities
@@ -29,7 +29,7 @@ tracing = { workspace = true }
 bitflags = { workspace = true }
 
 # IPC integration
-sentinel-lib = { path = "../sentinel-lib" }
+daemoneye-lib = { path = "../daemoneye-lib" }
 
 [dev-dependencies]
 tokio-test = "0.4.4"

@@ -69,7 +69,7 @@
 
         <Package Id='*'
             Keywords='Installer'
-            Description='SentinelD Process Monitoring Daemon'
+            Description='DaemonEye Process Monitoring Daemon'
             Manufacturer='UncleSp1d3r; Krypdo3'
             InstallerVersion='450'
             Languages='1033'
@@ -173,7 +173,7 @@
         <!--<Icon Id='ProductICO' SourceFile='wix\Product.ico'/>-->
         <!--<Property Id='ARPPRODUCTICON' Value='ProductICO' />-->
 
-        <Property Id='ARPHELPLINK' Value='https://evilbitlabs.io/sentineld'/>
+        <Property Id='ARPHELPLINK' Value='https://evilbitlabs.io/daemoneye'/>
         
         <UI>
             <UIRef Id='WixUI_FeatureTree'/>

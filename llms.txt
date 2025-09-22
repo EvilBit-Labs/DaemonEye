@@ -1,8 +1,8 @@
-# SentinelD
+# DaemonEye
 
 > Security-focused, privilege-separated process monitoring and detection system providing process collection, SQL-driven detection rules, and tamper-evident audit logging.
 
-SentinelD implements a three-component architecture (`procmond`, `sentinelagent`, `sentinelcli`) with strict privilege separation and a shared core library. Use this index to locate normative specifications, core conceptual docs, and operational guidance. Prefer Documentation first for orientation; Specifications define authoritative requirements and limits; Configuration covers install/deploy/hardening guidance.
+DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agent`, `daemoneye-cli`) with strict privilege separation and a shared core library. Use this index to locate normative specifications, core conceptual docs, and operational guidance. Prefer Documentation first for orientation; Specifications define authoritative requirements and limits; Configuration covers install/deploy/hardening guidance.
 
 ## Documentation
 - [README](README.md): Project overview, goals, quick start

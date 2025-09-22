@@ -1,4 +1,4 @@
-# SentinelD Testing Strategy
+# DaemonEye Testing Strategy
 
 ## Three-Tier Testing Architecture
 
@@ -46,7 +46,7 @@
 NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific testing
-RUST_BACKTRACE=1 cargo test -p sentinel-lib --nocapture
+RUST_BACKTRACE=1 cargo test -p daemoneye-lib --nocapture
 
 # Performance regression testing
 cargo bench --baseline previous
@@ -109,9 +109,9 @@ mod tests {
 
 **Files to Touch:**
 
-- `sentinel-lib/src/detection.rs` - Rule implementation
-- `sentinel-lib/src/models.rs` - Rule data structure
-- `sentinelagent/src/rules/` - Rule registration
+- `daemoneye-lib/src/detection.rs` - Rule implementation
+- `daemoneye-lib/src/models.rs` - Rule data structure
+- `daemoneye-agent/src/rules/` - Rule registration
 - `tests/integration/` - Rule validation tests
 
 **Checklist:**
@@ -119,8 +119,8 @@ mod tests {
 1. [ ] Define rule structure with SQL query and metadata
 2. [ ] Implement rule validation with AST parsing (sqlparser)
 3. [ ] Add comprehensive unit tests with mock data
-4. [ ] Create integration test via sentinelagent
-5. [ ] Validate alert delivery through sentinelcli
+4. [ ] Create integration test via daemoneye-agent
+5. [ ] Validate alert delivery through daemoneye-cli
 6. [ ] Run `cargo clippy -- -D warnings` (zero warnings)
 7. [ ] Performance test with criterion if rule is complex
 8. [ ] Document rule purpose and expected matches in rustdoc
@@ -129,14 +129,14 @@ mod tests {
 
 **Files to Touch:**
 
-- `sentinelcli/src/main.rs` - CLI argument definition
-- `sentinel-lib/src/config.rs` - Configuration handling
+- `daemoneye-cli/src/main.rs` - CLI argument definition
+- `daemoneye-lib/src/config.rs` - Configuration handling
 - `tests/integration/` - CLI behavior tests
 
 **Checklist:**
 
 1. [ ] Update clap derive structures with new argument
-2. [ ] Implement configuration handling in sentinel-lib
+2. [ ] Implement configuration handling in daemoneye-lib
 3. [ ] Add help text and default values
 4. [ ] Create insta snapshot tests for CLI output
 5. [ ] Test both short and long option forms
@@ -148,7 +148,7 @@ mod tests {
 
 **Files to Touch:**
 
-- `sentinel-lib/src/storage.rs` - Database operations
+- `daemoneye-lib/src/storage.rs` - Database operations
 - `procmond/src/collector.rs` - Collection logic
 - `benches/` - Performance benchmarks
 

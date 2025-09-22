@@ -1,8 +1,8 @@
-# cargo-release configuration for SentinelD
+# cargo-release configuration for DaemonEye
 
 [workspace]
 # Only release the distribution package
-members = ["sentinel"]
+members = ["daemoneye"]
 
 # Version bump strategy
 version-bump = "patch" # patch, minor, major, or auto
@@ -44,17 +44,17 @@ release-body = """
 
 ```bash
 # Install via cargo
-cargo install sentinel
+cargo install daemoneye
 
 # Or download from GitHub releases
-# https://github.com/EvilBit-Labs/SentinelD/releases/tag/{{tag}}
+# https://github.com/EvilBit-Labs/DaemonEye/releases/tag/{{tag}}
 ```
 
 ## Binaries
 
 - `procmond` - Process monitoring daemon
-- `sentinelcli` - CLI interface
-- `sentinelagent` - Orchestrator agent
+- `daemoneye-cli` - CLI interface
+- `daemoneye-agent` - Orchestrator agent
 """
 
 # Changelog configuration

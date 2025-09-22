@@ -12,7 +12,7 @@ bitflags! {
     /// Capability flags for event sources.
     ///
     /// These flags enable capability negotiation between collector-core components
-    /// and sentinelagent, allowing dynamic feature discovery and task routing.
+    /// and daemoneye-agent, allowing dynamic feature discovery and task routing.
     ///
     /// # Examples
     ///
@@ -86,7 +86,7 @@ pub trait EventSource: Send + Sync {
 
     /// Returns the capabilities supported by this event source.
     ///
-    /// This is used for capability negotiation with sentinelagent and task routing.
+    /// This is used for capability negotiation with daemoneye-agent and task routing.
     /// The capabilities should be static and not change during the source's lifetime.
     fn capabilities(&self) -> SourceCaps;
 

@@ -1,10 +1,10 @@
-# SentinelD Documentation
+# DaemonEye Documentation
 
-Welcome to the SentinelD documentation! This comprehensive guide covers everything you need to know about SentinelD, a high-performance, security-focused process monitoring system built in Rust.
+Welcome to the DaemonEye documentation! This comprehensive guide covers everything you need to know about DaemonEye, a high-performance, security-focused process monitoring system built in Rust.
 
-## What is SentinelD?
+## What is DaemonEye?
 
-SentinelD is a complete rewrite of the Python prototype, designed for cybersecurity professionals, threat hunters, and security operations centers. It provides real-time process monitoring, threat detection, and alerting capabilities across multiple platforms.
+DaemonEye is a complete rewrite of the Python prototype, designed for cybersecurity professionals, threat hunters, and security operations centers. It provides real-time process monitoring, threat detection, and alerting capabilities across multiple platforms.
 
 ## Key Features
 
@@ -17,11 +17,11 @@ SentinelD is a complete rewrite of the Python prototype, designed for cybersecur
 
 ## Three-Component Security Architecture
 
-SentinelD follows a robust three-component security architecture:
+DaemonEye follows a robust three-component security architecture:
 
 1. **ProcMonD (Collector)**: Privileged process monitoring daemon with minimal attack surface
-2. **SentinelAgent (Orchestrator)**: User-space process for alerting and network operations
-3. **SentinelCLI**: Command-line interface for queries and configuration
+2. **daemoneye-agent (Orchestrator)**: User-space process for alerting and network operations
+3. **daemoneye-cli**: Command-line interface for queries and configuration
 
 This separation ensures robust security by isolating privileged operations from network functionality.
 
@@ -51,7 +51,7 @@ This documentation is organized into several sections:
 
 ## Getting Help
 
-If you need help with SentinelD:
+If you need help with DaemonEye:
 
 1. Check the [Getting Started](./getting-started.md) guide
 2. Review the [Troubleshooting](./user-guides/operator-guide.md#troubleshooting) section
@@ -61,9 +61,9 @@ If you need help with SentinelD:
 
 ## License
 
-SentinelD follows a dual-license strategy:
+DaemonEye follows a dual-license strategy:
 
-- **Core Components**: Apache 2.0 licensed (procmond, sentinelagent, sentinelcli, sentinel-lib)
+- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
 - **Business Tier Features**: $199/site one-time license (Security Center, GUI, enhanced connectors, curated rules)
 - **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
 

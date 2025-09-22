@@ -1,6 +1,6 @@
-# SentinelD Configuration Guide
+# DaemonEye Configuration Guide
 
-This guide provides comprehensive information about configuring SentinelD for different deployment scenarios and requirements.
+This guide provides comprehensive information about configuring DaemonEye for different deployment scenarios and requirements.
 
 ## Table of Contents
 
@@ -18,12 +18,12 @@ This guide provides comprehensive information about configuring SentinelD for di
 
 ## Configuration Overview
 
-SentinelD uses a hierarchical configuration system that allows you to override settings at different levels. The configuration is loaded in the following order (later sources override earlier ones):
+DaemonEye uses a hierarchical configuration system that allows you to override settings at different levels. The configuration is loaded in the following order (later sources override earlier ones):
 
 1. **Embedded defaults** (lowest precedence)
-2. **System configuration files** (`/etc/sentineld/config.yaml`)
-3. **User configuration files** (`~/.config/sentineld/config.yaml`)
-4. **Environment variables** (`SENTINELD_*`)
+2. **System configuration files** (`/etc/daemoneye/config.yaml`)
+3. **User configuration files** (`~/.config/daemoneye/config.yaml`)
+4. **Environment variables** (`DAEMONEYE_*`)
 5. **Command-line flags** (highest precedence)
 
 ## Configuration Hierarchy
@@ -32,24 +32,24 @@ SentinelD uses a hierarchical configuration system that allows you to override s
 
 **System Configuration**:
 
-- Linux: `/etc/sentineld/config.yaml`
-- macOS: `/Library/Application Support/SentinelD/config.yaml`
-- Windows: `C:\ProgramData\SentinelD\config.yaml`
+- Linux: `/etc/daemoneye/config.yaml`
+- macOS: `/Library/Application Support/DaemonEye/config.yaml`
+- Windows: `C:\ProgramData\DaemonEye\config.yaml`
 
 **User Configuration**:
 
-- Linux/macOS: `~/.config/sentineld/config.yaml`
-- Windows: `%APPDATA%\SentinelD\config.yaml`
+- Linux/macOS: `~/.config/daemoneye/config.yaml`
+- Windows: `%APPDATA%\DaemonEye\config.yaml`
 
 **Service-Specific Configuration**:
 
-- Linux: `/etc/sentineld/procmond.yaml`, `/etc/sentineld/sentinelagent.yaml`
-- macOS: `/Library/Application Support/SentinelD/procmond.yaml`
-- Windows: `C:\ProgramData\SentinelD\procmond.yaml`
+- Linux: `/etc/daemoneye/procmond.yaml`, `/etc/daemoneye/daemoneye-agent.yaml`
+- macOS: `/Library/Application Support/DaemonEye/procmond.yaml`
+- Windows: `C:\ProgramData\DaemonEye\procmond.yaml`
 
 ### Configuration Formats
 
-SentinelD supports multiple configuration formats:
+DaemonEye supports multiple configuration formats:
 
 - **YAML** (recommended): Human-readable, supports comments
 - **JSON**: Machine-readable, no comments
@@ -114,7 +114,7 @@ collection:
 ```yaml
 detection:
   # Path to detection rules directory
-  rules_path: /etc/sentineld/rules
+  rules_path: /etc/daemoneye/rules
 
   # Enable rule hot-reloading
   enable_hot_reload: true
@@ -163,7 +163,7 @@ alerting:
     # File output sink
     - type: file
       enabled: false
-      path: /var/log/sentineld/alerts.json
+      path: /var/log/daemoneye/alerts.json
       format: json
       rotation:
         max_size_mb: 100
@@ -173,7 +173,7 @@ alerting:
     - type: syslog
       enabled: true
       facility: daemon
-      tag: sentineld
+      tag: daemoneye
       host: localhost
       port: 514
       protocol: udp    # udp, tcp
@@ -198,18 +198,18 @@ alerting:
       smtp_username: ${SMTP_USERNAME}
       smtp_password: ${SMTP_PASSWORD}
       smtp_tls: true
-      from: sentineld@example.com
+      from: daemoneye@example.com
       to: [security@example.com]
-      subject: 'SentinelD Alert: {severity} - {title}'
+      subject: 'DaemonEye Alert: {severity} - {title}'
 
     # Splunk HEC sink (Business Tier)
     - type: splunk_hec
       enabled: false
       endpoint: https://splunk.example.com:8088/services/collector
       token: ${SPLUNK_HEC_TOKEN}
-      index: sentineld
-      source_type: sentineld:alert
-      sourcetype: sentineld:alert
+      index: daemoneye
+      source_type: daemoneye:alert
+      sourcetype: daemoneye:alert
 
     # Elasticsearch sink (Business Tier)
     - type: elasticsearch
@@ -217,14 +217,14 @@ alerting:
       hosts: [https://elastic.example.com:9200]
       username: ${ELASTIC_USERNAME}
       password: ${ELASTIC_PASSWORD}
-      index_pattern: sentineld-{YYYY.MM.DD}
-      pipeline: sentineld-alerts
+      index_pattern: daemoneye-{YYYY.MM.DD}
+      pipeline: daemoneye-alerts
 
     # Kafka sink (Business Tier)
     - type: kafka
       enabled: false
       brokers: [kafka.example.com:9092]
-      topic: sentineld.alerts
+      topic: daemoneye.alerts
       security_protocol: SASL_SSL
       sasl_mechanism: PLAIN
       sasl_username: ${KAFKA_USERNAME}
@@ -273,7 +273,7 @@ database:
   # Event store configuration
   event_store:
     # Database file path
-    path: /var/lib/sentineld/events.redb
+    path: /var/lib/daemoneye/events.redb
 
     # Maximum database size in MB
     max_size_mb: 10240
@@ -301,7 +301,7 @@ database:
   # Audit ledger configuration
   audit_ledger:
     # Database file path
-    path: /var/lib/sentineld/audit.sqlite
+    path: /var/lib/daemoneye/audit.sqlite
 
     # Enable WAL mode for durability
     wal_mode: true
@@ -358,7 +358,7 @@ platform:
     enable_ebpf: false
 
     # eBPF program path
-    ebpf_program_path: /usr/lib/sentineld/sentinel_monitor.o
+    ebpf_program_path: /usr/lib/daemoneye/daemoneye_monitor.o
 
     # eBPF ring buffer size
     ebpf_ring_buffer_size: 1048576  # 1MB
@@ -393,7 +393,7 @@ platform:
     enable_etw: false
 
     # ETW session name
-    etw_session_name: SentinelD
+    etw_session_name: DaemonEye
 
     # ETW buffer size in KB
     etw_buffer_size_kb: 64
@@ -460,7 +460,7 @@ business_tier:
   # License configuration
   license:
     # License key
-    key: ${SENTINELD_LICENSE_KEY}
+    key: ${DAEMONEYE_LICENSE_KEY}
 
     # License validation endpoint (optional)
     validation_endpoint:
@@ -477,13 +477,13 @@ business_tier:
     endpoint: https://security-center.example.com:8443
 
     # Client certificate path
-    client_cert_path: /etc/sentineld/agent.crt
+    client_cert_path: /etc/daemoneye/agent.crt
 
     # Client key path
-    client_key_path: /etc/sentineld/agent.key
+    client_key_path: /etc/daemoneye/agent.key
 
     # CA certificate path
-    ca_cert_path: /etc/sentineld/ca.crt
+    ca_cert_path: /etc/daemoneye/ca.crt
 
     # Connection timeout in seconds
     connection_timeout_secs: 30
@@ -514,7 +514,7 @@ business_tier:
     # Rule pack sources
     sources:
       - name: official
-        url: https://rules.sentineld.com/packs/
+        url: https://rules.daemoneye.com/packs/
         signature_key: ed25519:public-key
         enabled: true
 
@@ -524,7 +524,7 @@ business_tier:
         enabled: true
 
     # Local rule pack directory
-    local_directory: /etc/sentineld/rule-packs
+    local_directory: /etc/daemoneye/rule-packs
 
     # Signature validation
     signature_validation:
@@ -544,9 +544,9 @@ business_tier:
       enabled: false
       endpoint: https://splunk.example.com:8088/services/collector
       token: ${SPLUNK_HEC_TOKEN}
-      index: sentineld
-      source_type: sentineld:alert
-      sourcetype: sentineld:alert
+      index: daemoneye
+      source_type: daemoneye:alert
+      sourcetype: daemoneye:alert
       batch_size: 100
       batch_timeout_ms: 5000
 
@@ -556,8 +556,8 @@ business_tier:
       hosts: [https://elastic.example.com:9200]
       username: ${ELASTIC_USERNAME}
       password: ${ELASTIC_PASSWORD}
-      index_pattern: sentineld-{YYYY.MM.DD}
-      pipeline: sentineld-alerts
+      index_pattern: daemoneye-{YYYY.MM.DD}
+      pipeline: daemoneye-alerts
       batch_size: 1000
       batch_timeout_ms: 10000
 
@@ -565,7 +565,7 @@ business_tier:
     kafka:
       enabled: false
       brokers: [kafka.example.com:9092]
-      topic: sentineld.alerts
+      topic: daemoneye.alerts
       security_protocol: SASL_SSL
       sasl_mechanism: PLAIN
       sasl_username: ${KAFKA_USERNAME}
@@ -591,14 +591,14 @@ enterprise_tier:
     # eBPF configuration (Linux)
     ebpf:
       enabled: false
-      program_path: /usr/lib/sentineld/sentinel_monitor.o
+      program_path: /usr/lib/daemoneye/daemoneye_monitor.o
       ring_buffer_size: 2097152  # 2MB
       max_events_per_second: 10000
 
     # ETW configuration (Windows)
     etw:
       enabled: false
-      session_name: SentinelD
+      session_name: DaemonEye
       buffer_size_kb: 128
       max_buffers: 200
       providers:
@@ -633,14 +633,14 @@ enterprise_tier:
     # Regional Security Center
     regional_center:
       endpoint: https://regional-center.example.com:8443
-      certificate_path: /etc/sentineld/regional.crt
-      key_path: /etc/sentineld/regional.key
+      certificate_path: /etc/daemoneye/regional.crt
+      key_path: /etc/daemoneye/regional.key
 
     # Primary Security Center
     primary_center:
       endpoint: https://primary-center.example.com:8443
-      certificate_path: /etc/sentineld/primary.crt
-      key_path: /etc/sentineld/primary.key
+      certificate_path: /etc/daemoneye/primary.crt
+      key_path: /etc/daemoneye/primary.key
 
     # Data synchronization
     sync:
@@ -707,34 +707,34 @@ enterprise_tier:
 
 ```bash
 # Application settings
-export SENTINELD_LOG_LEVEL=info
-export SENTINELD_SCAN_INTERVAL_MS=30000
-export SENTINELD_BATCH_SIZE=1000
-export SENTINELD_RETENTION_DAYS=30
+export DAEMONEYE_LOG_LEVEL=info
+export DAEMONEYE_SCAN_INTERVAL_MS=30000
+export DAEMONEYE_BATCH_SIZE=1000
+export DAEMONEYE_RETENTION_DAYS=30
 
 # Database settings
-export SENTINELD_DATABASE_PATH=/var/lib/sentineld/events.redb
-export SENTINELD_AUDIT_LEDGER_PATH=/var/lib/sentineld/audit.sqlite
+export DAEMONEYE_DATABASE_PATH=/var/lib/daemoneye/events.redb
+export DAEMONEYE_AUDIT_LEDGER_PATH=/var/lib/daemoneye/audit.sqlite
 
 # Alerting settings
-export SENTINELD_ALERTING_ENABLED=true
-export SENTINELD_WEBHOOK_URL=https://your-siem.com/webhook
-export SENTINELD_WEBHOOK_TOKEN=your-webhook-token
+export DAEMONEYE_ALERTING_ENABLED=true
+export DAEMONEYE_WEBHOOK_URL=https://your-siem.com/webhook
+export DAEMONEYE_WEBHOOK_TOKEN=your-webhook-token
 
 # Platform settings
-export SENTINELD_ENABLE_EBPF=false
-export SENTINELD_ENABLE_ETW=false
-export SENTINELD_ENABLE_ENDPOINT_SECURITY=false
+export DAEMONEYE_ENABLE_EBPF=false
+export DAEMONEYE_ENABLE_ETW=false
+export DAEMONEYE_ENABLE_ENDPOINT_SECURITY=false
 ```
 
 ### Business Tier Variables
 
 ```bash
 # Security Center
-export SENTINELD_SECURITY_CENTER_ENABLED=false
-export SENTINELD_SECURITY_CENTER_ENDPOINT=https://security-center.example.com:8443
-export SENTINELD_CLIENT_CERT_PATH=/etc/sentineld/agent.crt
-export SENTINELD_CLIENT_KEY_PATH=/etc/sentineld/agent.key
+export DAEMONEYE_SECURITY_CENTER_ENABLED=false
+export DAEMONEYE_SECURITY_CENTER_ENDPOINT=https://security-center.example.com:8443
+export DAEMONEYE_CLIENT_CERT_PATH=/etc/daemoneye/agent.crt
+export DAEMONEYE_CLIENT_KEY_PATH=/etc/daemoneye/agent.key
 
 # Enhanced connectors
 export SPLUNK_HEC_TOKEN=your-splunk-token
@@ -748,14 +748,14 @@ export KAFKA_PASSWORD=your-kafka-password
 
 ```bash
 # Kernel monitoring
-export SENTINELD_KERNEL_MONITORING_ENABLED=false
-export SENTINELD_EBPF_ENABLED=false
-export SENTINELD_ETW_ENABLED=false
-export SENTINELD_ENDPOINT_SECURITY_ENABLED=false
+export DAEMONEYE_KERNEL_MONITORING_ENABLED=false
+export DAEMONEYE_EBPF_ENABLED=false
+export DAEMONEYE_ETW_ENABLED=false
+export DAEMONEYE_ENDPOINT_SECURITY_ENABLED=false
 
 # Federation
-export SENTINELD_FEDERATION_ENABLED=false
-export SENTINELD_REGIONAL_CENTER_ENDPOINT=https://regional.example.com:8443
+export DAEMONEYE_FEDERATION_ENABLED=false
+export DAEMONEYE_REGIONAL_CENTER_ENDPOINT=https://regional.example.com:8443
 
 # STIX/TAXII
 export TAXII_USERNAME=your-taxii-username
@@ -767,7 +767,7 @@ export TAXII_PASSWORD=your-taxii-password
 ### Basic Production Configuration
 
 ```yaml
-# /etc/sentineld/config.yaml
+# /etc/daemoneye/config.yaml
 app:
   scan_interval_ms: 30000
   batch_size: 1000
@@ -782,7 +782,7 @@ collection:
   skip_system_processes: true
 
 detection:
-  rules_path: /etc/sentineld/rules
+  rules_path: /etc/daemoneye/rules
   enable_hot_reload: true
   rule_timeout_secs: 30
   max_concurrent_rules: 10
@@ -794,7 +794,7 @@ alerting:
     - type: syslog
       enabled: true
       facility: daemon
-      tag: sentineld
+      tag: daemoneye
     - type: webhook
       enabled: true
       url: https://your-siem.com/webhook
@@ -803,11 +803,11 @@ alerting:
 
 database:
   event_store:
-    path: /var/lib/sentineld/events.redb
+    path: /var/lib/daemoneye/events.redb
     max_size_mb: 10240
     wal_mode: true
   audit_ledger:
-    path: /var/lib/sentineld/audit.sqlite
+    path: /var/lib/daemoneye/audit.sqlite
     wal_mode: true
     synchronous: FULL
 ```
@@ -815,7 +815,7 @@ database:
 ### High-Performance Configuration
 
 ```yaml
-# /etc/sentineld/config.yaml
+# /etc/daemoneye/config.yaml
 app:
   scan_interval_ms: 15000  # More frequent scanning
   batch_size: 2000         # Larger batches
@@ -832,7 +832,7 @@ collection:
   max_hash_time_ms: 2000   # Faster hash computation
 
 detection:
-  rules_path: /etc/sentineld/rules
+  rules_path: /etc/daemoneye/rules
   enable_hot_reload: true
   rule_timeout_secs: 15    # Faster rule execution
   max_concurrent_rules: 20 # More concurrent rules
@@ -846,17 +846,17 @@ alerting:
     - type: syslog
       enabled: true
       facility: daemon
-      tag: sentineld
+      tag: daemoneye
     - type: kafka
       enabled: true
       brokers: [kafka.example.com:9092]
-      topic: sentineld.alerts
+      topic: daemoneye.alerts
       batch_size: 100
       batch_timeout_ms: 1000
 
 database:
   event_store:
-    path: /var/lib/sentineld/events.redb
+    path: /var/lib/daemoneye/events.redb
     max_size_mb: 20480
     wal_mode: true
     wal_checkpoint_interval_secs: 60
@@ -871,7 +871,7 @@ database:
 ### Airgapped Environment Configuration
 
 ```yaml
-# /etc/sentineld/config.yaml
+# /etc/daemoneye/config.yaml
 app:
   scan_interval_ms: 60000  # Less frequent scanning
   batch_size: 500          # Smaller batches
@@ -886,7 +886,7 @@ collection:
   skip_system_processes: true
 
 detection:
-  rules_path: /etc/sentineld/rules
+  rules_path: /etc/daemoneye/rules
   enable_hot_reload: false  # Disable hot reload
   rule_timeout_secs: 60
   max_concurrent_rules: 5
@@ -897,7 +897,7 @@ alerting:
   sinks:
     - type: file
       enabled: true
-      path: /var/log/sentineld/alerts.json
+      path: /var/log/daemoneye/alerts.json
       format: json
       rotation:
         max_size_mb: 50
@@ -905,15 +905,15 @@ alerting:
     - type: syslog
       enabled: true
       facility: daemon
-      tag: sentineld
+      tag: daemoneye
 
 database:
   event_store:
-    path: /var/lib/sentineld/events.redb
+    path: /var/lib/daemoneye/events.redb
     max_size_mb: 5120
     wal_mode: true
   audit_ledger:
-    path: /var/lib/sentineld/audit.sqlite
+    path: /var/lib/daemoneye/audit.sqlite
     wal_mode: true
     synchronous: FULL
     journal_mode: WAL
@@ -925,16 +925,16 @@ database:
 
 ```bash
 # Validate configuration file
-sentinelcli config validate /etc/sentineld/config.yaml
+daemoneye-cli config validate /etc/daemoneye/config.yaml
 
 # Validate current configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Check for configuration issues
-sentinelcli config check
+daemoneye-cli config check
 
 # Show effective configuration
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 ### Common Configuration Issues
@@ -943,7 +943,7 @@ sentinelcli config show --include-defaults
 
 ```bash
 # Check YAML syntax
-python -c "import yaml; yaml.safe_load(open('/etc/sentineld/config.yaml'))"
+python -c "import yaml; yaml.safe_load(open('/etc/daemoneye/config.yaml'))"
 
 # Use online YAML validator
 # https://www.yamllint.com/
@@ -953,32 +953,32 @@ python -c "import yaml; yaml.safe_load(open('/etc/sentineld/config.yaml'))"
 
 ```bash
 # Check for missing required fields
-sentinelcli config check --strict
+daemoneye-cli config check --strict
 
 # Show configuration with defaults
-sentinelcli config show --include-defaults
+daemoneye-cli config show --include-defaults
 ```
 
 **Permission Issues**:
 
 ```bash
 # Check file permissions
-ls -la /etc/sentineld/config.yaml
-ls -la /var/lib/sentineld/
+ls -la /etc/daemoneye/config.yaml
+ls -la /var/lib/daemoneye/
 
 # Fix permissions
-sudo chown sentineld:sentineld /var/lib/sentineld/
-sudo chmod 755 /var/lib/sentineld/
+sudo chown daemoneye:daemoneye /var/lib/daemoneye/
+sudo chmod 755 /var/lib/daemoneye/
 ```
 
 **Environment Variable Issues**:
 
 ```bash
 # Check environment variables
-env | grep SENTINELD
+env | grep DAEMONEYE
 
 # Test environment variable substitution
-sentinelcli config show --environment
+daemoneye-cli config show --environment
 ```
 
 ### Configuration Debugging
@@ -994,22 +994,22 @@ app:
 
 ```bash
 # Show configuration loading process
-sentinelcli config debug
+daemoneye-cli config debug
 
 # Show configuration sources
-sentinelcli config sources
+daemoneye-cli config sources
 ```
 
 **Test Configuration Changes**:
 
 ```bash
 # Test configuration without applying
-sentinelcli config test /path/to/new-config.yaml
+daemoneye-cli config test /path/to/new-config.yaml
 
 # Apply configuration with validation
-sentinelcli config apply /path/to/new-config.yaml --validate
+daemoneye-cli config apply /path/to/new-config.yaml --validate
 ```
 
 ---
 
-*This configuration guide provides comprehensive information about configuring SentinelD for different deployment scenarios. For additional help, consult the troubleshooting section or contact support.*
+*This configuration guide provides comprehensive information about configuring DaemonEye for different deployment scenarios. For additional help, consult the troubleshooting section or contact support.*

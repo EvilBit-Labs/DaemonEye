@@ -1,6 +1,6 @@
 //! Integration tests for shared infrastructure components in collector-core.
 //!
-//! This test suite verifies that the integrated components from sentinel-lib
+//! This test suite verifies that the integrated components from daemoneye-lib
 //! (ConfigLoader, TelemetryCollector, health monitoring) work correctly
 //! within the collector-core framework.
 
@@ -108,9 +108,9 @@ impl EventSource for TestEventSource {
 }
 
 #[tokio::test]
-async fn test_config_integration_with_sentinel_lib() {
-    // Test that collector-core can load configuration from sentinel-lib ConfigLoader
-    let config = CollectorConfig::load_from_sentinel_config("test-component");
+async fn test_config_integration_with_daemoneye_lib() {
+    // Test that collector-core can load configuration from daemoneye-lib ConfigLoader
+    let config = CollectorConfig::load_from_daemoneye_config("test-component");
 
     // Should succeed even if no config files exist (uses defaults)
     assert!(config.is_ok());

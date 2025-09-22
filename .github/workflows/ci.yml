@@ -6,9 +6,6 @@ on:
     pull_request:
         branches: [main]
     workflow_dispatch:
-    workflow_run:
-        workflows: ["autofix.ci"]
-        types: [completed]
 
 defaults:
     run:
@@ -160,4 +157,4 @@ jobs:
                   files: lcov.info
                   fail_ci_if_error: false
                   token: ${{ secrets.CODECOV_TOKEN }}
-                  slug: EvilBit-Labs/sentineld
+                  slug: EvilBit-Labs/daemoneye

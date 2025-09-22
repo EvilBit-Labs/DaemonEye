@@ -1,8 +1,9 @@
-# SentinelD Development Workflows (WARP)
+# DaemonEye Development Workflows
 
-This file contains operational commands and development workflows for **SentinelD**.
+This file contains operational commands and development workflows for **DaemonEye**.
 
-**Document Authority**: For AI assistant rules and architectural guidance, see [AGENTS.md](./AGENTS.md). **Source of Truth**: Technical requirements and architectural decisions are in [.kiro/steering/](./kiro/steering/) and [.kiro/specs/](./kiro/specs/).
+**Document Authority**: For AI assistant rules and architectural guidance, see [AGENTS.md](./AGENTS.md). \
+**Source of Truth**: Technical requirements and architectural decisions are in [.kiro/steering/](./kiro/steering/) and [.kiro/specs/](./kiro/specs/).
 
 ---
 
@@ -29,9 +30,11 @@ just test         # Run all tests
 
 # Component Execution
 just run-procmond [args]      # Run procmond with optional args
-just run-sentinelcli [args]   # Run sentinelcli with optional args
-just run-sentinelagent [args] # Run sentinelagent with optional args
+just run-daemoneye-cli [args]   # Run daemoneye-cli with optional args
+just run-daemoneye-agent [args] # Run daemoneye-agent with optional args
 ```
+
+Always follow the commit message style in [.github/commit-instructions.md](.github/commit-instructions.md).
 
 ### Core Development Commands
 
@@ -48,16 +51,16 @@ NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific building
 cargo build -p procmond
-cargo build -p sentinelagent
-cargo build -p sentinelcli
-cargo build -p sentinel-lib
+cargo build -p daemoneye-agent
+cargo build -p daemoneye-cli
+cargo build -p daemoneye-lib
 
 # Performance testing
 cargo bench  # Run criterion benchmarks
 
 # IPC testing
-cargo test --test ipc_integration -p sentinel-lib  # Test interprocess transport
-cargo test ipc::codec -p sentinel-lib             # Test codec implementation
+cargo test --test ipc_integration -p daemoneye-lib  # Test interprocess transport
+cargo test ipc::codec -p daemoneye-lib             # Test codec implementation
 ```
 
 ## Quality Assurance
@@ -78,7 +81,7 @@ cargo test ipc::codec -p sentinel-lib             # Test codec implementation
 NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific testing
-RUST_BACKTRACE=1 cargo test -p sentinel-lib --nocapture
+RUST_BACKTRACE=1 cargo test -p daemoneye-lib --nocapture
 
 # Performance regression testing
 cargo bench --baseline previous
@@ -112,18 +115,18 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
 ## System Overview
 
-SentinelD implements a **three-component security architecture** with strict privilege separation, extensible to **multi-tier deployments**:
+DaemonEye implements a **three-component security architecture** with strict privilege separation, extensible to **multi-tier deployments**:
 
 ### Core Architecture
 
 - **procmond**: Privileged process collector with minimal attack surface
-- **sentinelagent**: User-space orchestrator for detection and alerting
-- **sentinelcli**: Command-line interface for operators
-- **sentinel-lib**: Shared library providing core functionality
+- **daemoneye-agent**: User-space orchestrator for detection and alerting
+- **daemoneye-cli**: Command-line interface for operators
+- **daemoneye-lib**: Shared library providing core functionality
 
 ### Deployment Tiers
 
-- **Free Tier**: Standalone agents (procmond + sentinelagent + sentinelcli)
+- **Free Tier**: Standalone agents (procmond + daemoneye-agent + daemoneye-cli)
 - **Business Tier**: + Security Center + Enterprise integrations ($199/site)
 - **Enterprise Tier**: + Kernel monitoring + Federated architecture + Advanced SIEM (custom pricing)
 
@@ -133,15 +136,15 @@ This separation ensures **robust security** by isolating privileged operations f
 
 ## Architecture
 
-SentinelD follows a **three-component security architecture** with privilege separation and IPC communication:
+DaemonEye follows a **three-component security architecture** with privilege separation and IPC communication:
 
 ```mermaid
 flowchart LR
     subgraph "Host System"
         P[procmond<br/>Privileged Collector<br/>Minimal Attack Surface]
-        A[sentinelagent<br/>User-Space Orchestrator<br/>Detection & Alerting]
-        C[sentinelcli<br/>Operator CLI<br/>Query Interface]
-        L[sentinel-lib<br/>Shared Components]:::lib
+        A[daemoneye-agent<br/>User-Space Orchestrator<br/>Detection & Alerting]
+        C[daemoneye-cli<br/>Operator CLI<br/>Query Interface]
+        L[daemoneye-lib<br/>Shared Components]:::lib
 
         DB1[(Event Store<br/>redb)]
         DB2[(Audit Ledger<br/>redb)]
@@ -179,7 +182,7 @@ flowchart LR
 - **Communication**: Tokio-based IPC server with protobuf + CRC32 framing for secure task processing
 - **Function**: Minimal privileged component for process data collection
 
-#### sentinelagent (Detection Orchestrator)
+#### daemoneye-agent (Detection Orchestrator)
 
 - **Security**: Minimal privileges, outbound-only network connections
 - **Database**: Read/write access to event store, manages procmond lifecycle
@@ -187,13 +190,13 @@ flowchart LR
 - **Communication**: IPC client with automatic reconnection, translates SQL rules into protobuf tasks
 - **Function**: User-space detection rule execution and alert dispatching
 
-#### sentinelcli (Operator Interface)
+#### daemoneye-cli (Operator Interface)
 
 - **Security**: No network access, read-only database operations
 - **Features**: JSON/table output, color handling, shell completions
 - **Function**: User-friendly CLI for queries, exports, and configuration
 
-#### sentinel-lib (Shared Core)
+#### daemoneye-lib (Shared Core)
 
 - **Purpose**: Common functionality shared across all components
 - **Modules**: config, models, storage, detection, alerting, crypto, telemetry, kernel, network
@@ -212,7 +215,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant P as procmond
-    participant A as sentinelagent
+    participant A as daemoneye-agent
     participant DB as Event Store
     participant AL as Audit Ledger
     participant S as Alert Sinks
@@ -251,10 +254,10 @@ sequenceDiagram
 
 ```rust
 use interprocess::local_socket::LocalSocketStream;
-use sentinel_lib::proto::{DetectionTask, DetectionResult};
+use daemoneye_libb::proto::{DetectionTask, DetectionResult};
 
 // Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
-let stream = LocalSocketStream::connect("/tmp/sentineld.sock")?;
+let stream = LocalSocketStream::connect("/tmp/DaemonEye.sock")?;
 
 // Protobuf message serialization with CRC32 checksums
 let task = DetectionTask::new()
@@ -306,7 +309,7 @@ let serialized = prost::Message::encode_to_vec(&task)?;
 
 #### Database & Storage
 
-- **redb** (3.0+) - Pure Rust embedded database for optimal performance and security (used only in sentinelagent)
+- **redb** (3.0+) - Pure Rust embedded database for optimal performance and security (used only in daemoneye-agent)
 
 #### System Monitoring
 
@@ -635,8 +638,8 @@ just test         # Run all tests
 
 # Component Execution
 just run-procmond [args]      # Run procmond with optional args
-just run-sentinelcli [args]   # Run sentinelcli with optional args
-just run-sentinelagent [args] # Run sentinelagent with optional args
+just run-daemoneye-cli [args]   # Run daemoneye-cli with optional args
+just run-daemoneye-agent [args] # Run daemoneye-agent with optional args
 ```
 
 ### Core Development Commands
@@ -654,9 +657,9 @@ NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific building
 cargo build -p procmond
-cargo build -p sentinelagent
-cargo build -p sentinelcli
-cargo build -p sentinel-lib
+cargo build -p daemoneye-agent
+cargo build -p daemoneye-cli
+cargo build -p daemoneye-lib
 
 # Performance testing
 cargo bench  # Run criterion benchmarks
@@ -682,24 +685,24 @@ cargo bench  # Run criterion benchmarks
 ### Workspace Structure
 
 ```text
-SentinelD/
+DaemonEye/
 ├── Cargo.toml            # Workspace root with shared dependencies
 ├── procmond/             # Privileged Process Collector (independent crate)
 │   ├── Cargo.toml       # Crate-specific dependencies
 │   ├── src/
 │   │   └── main.rs      # Binary implementation
 │   └── tests/           # Component-specific tests
-├── sentinelagent/        # User-Space Orchestrator (independent crate)
+├── daemoneye-agent/        # User-Space Orchestrator (independent crate)
 │   ├── Cargo.toml       # Crate-specific dependencies
 │   ├── src/
 │   │   └── main.rs      # Binary implementation
 │   └── tests/           # Component-specific tests
-├── sentinelcli/          # Command-Line Interface (independent crate)
+├── daemoneye-cli/          # Command-Line Interface (independent crate)
 │   ├── Cargo.toml       # Crate-specific dependencies
 │   ├── src/
 │   │   └── main.rs      # Binary implementation
 │   └── tests/           # Component-specific tests
-├── sentinel-lib/         # Shared Library Components (independent crate)
+├── daemoneye-lib/         # Shared Library Components (independent crate)
 │   ├── Cargo.toml       # Crate-specific dependencies
 │   ├── build.rs         # Protobuf compilation
 │   ├── proto/           # Protobuf definitions
@@ -714,18 +717,18 @@ SentinelD/
 │   └── tests/           # Library tests
 ├── tests/                # Integration tests
 │   ├── procmond.rs
-│   ├── sentinelagent.rs
-│   └── sentinelcli.rs
+│   ├── daemoneye-agent.rs
+│   └── daemoneye-cli.rs
 ├── .kiro/                # Project Documentation
 │   ├── steering/         # Architectural decisions
 │   └── specs/            # Technical specifications
 └── project_spec/         # Legacy documentation
 ```
 
-### Module Organization (sentinel-lib)
+### Module Organization (daemoneye-lib)
 
 ```rust
-//! Sentinel library modules for core functionality
+//! DaemonEye library modules for core functionality
 
 pub mod alerting; // Multi-channel alert delivery
 pub mod config; // Configuration management
@@ -845,7 +848,7 @@ flowchart TB
 NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific testing
-RUST_BACKTRACE=1 cargo test -p sentinel-lib --nocapture
+RUST_BACKTRACE=1 cargo test -p daemoneye-lib --nocapture
 
 # Performance regression testing
 cargo bench --baseline previous
@@ -926,7 +929,7 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
 **Primary Storage**: redb pure Rust embedded database for optimal performance and security
 
-- **Event Store**: Read/write access for sentinelagent, read-only for sentinelcli
+- **Event Store**: Read/write access for daemoneye-agent, read-only for daemoneye-cli
 - **Audit Ledger**: Write-only access for procmond, read-only for others
 - **Features**: Concurrent access, ACID transactions, zero-copy deserialization
 - **Performance**: Optimized for time-series queries and high-throughput writes
@@ -1283,7 +1286,7 @@ struct PrometheusMetrics {
 
 ## Code Generation Guidelines
 
-When generating code for SentinelD:
+When generating code for DaemonEye:
 
 01. **Always use Rust 2024 Edition** in Cargo.toml files
 02. **Implement comprehensive error handling** with thiserror
@@ -1336,9 +1339,9 @@ When generating code for SentinelD:
 
 **Files to Touch:**
 
-- `sentinel-lib/src/detection.rs` - Rule implementation
-- `sentinel-lib/src/models.rs` - Rule data structure
-- `sentinelagent/src/rules/` - Rule registration
+- `daemoneye-lib/src/detection.rs` - Rule implementation
+- `daemoneye-lib/src/models.rs` - Rule data structure
+- `daemoneye-agent/src/rules/` - Rule registration
 - `tests/integration/` - Rule validation tests
 
 **Checklist:**
@@ -1346,8 +1349,8 @@ When generating code for SentinelD:
 1. [ ] Define rule structure with SQL query and metadata
 2. [ ] Implement rule validation with AST parsing (sqlparser)
 3. [ ] Add comprehensive unit tests with mock data
-4. [ ] Create integration test via sentinelagent
-5. [ ] Validate alert delivery through sentinelcli
+4. [ ] Create integration test via daemoneye-agent
+5. [ ] Validate alert delivery through daemoneye-cli
 6. [ ] Run `cargo clippy -- -D warnings` (zero warnings)
 7. [ ] Performance test with criterion if rule is complex
 8. [ ] Document rule purpose and expected matches in rustdoc
@@ -1356,14 +1359,14 @@ When generating code for SentinelD:
 
 **Files to Touch:**
 
-- `sentinelcli/src/main.rs` - CLI argument definition
-- `sentinel-lib/src/config.rs` - Configuration handling
+- `daemoneye-cli/src/main.rs` - CLI argument definition
+- `daemoneye-lib/src/config.rs` - Configuration handling
 - `tests/integration/` - CLI behavior tests
 
 **Checklist:**
 
 1. [ ] Update clap derive structures with new argument
-2. [ ] Implement configuration handling in sentinel-lib
+2. [ ] Implement configuration handling in daemoneye-lib
 3. [ ] Add help text and default values
 4. [ ] Create insta snapshot tests for CLI output
 5. [ ] Test both short and long option forms
@@ -1375,7 +1378,7 @@ When generating code for SentinelD:
 
 **Files to Touch:**
 
-- `sentinel-lib/src/storage.rs` - Database operations
+- `daemoneye-lib/src/storage.rs` - Database operations
 - `procmond/src/collector.rs` - Collection logic
 - `benches/` - Performance benchmarks
 
@@ -1478,7 +1481,7 @@ pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionErro
 | **Architecture**         | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                     | Component organization, security boundaries |
 | **Technology Stack**     | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                               | Technology choices, dependencies            |
 | **Product Features**     | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                         | Feature tiers, business requirements        |
-| **Core Requirements**    | [.kiro/specs/sentineld-core-monitoring/requirements.md](./.kiro/specs/sentineld-core-monitoring/requirements.md) | Functional requirements                     |
+| **Core Requirements**    | [.kiro/specs/DaemonEye-core-monitoring/requirements.md](./.kiro/specs/DaemonEye-core-monitoring/requirements.md) | Functional requirements                     |
 | **Business Features**    | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md)       | Business tier specifications                |
 | **Enterprise Features**  | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md)   | Enterprise tier specifications              |
 | **Development Workflow** | [WARP.md](./WARP.md)                                                                                             | Commands, justfile recipes, testing         |
@@ -1524,7 +1527,7 @@ pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionErro
 
 ---
 
-**Remember**: SentinelD is a security-focused system. Always prioritize security, performance, and reliability in implementation decisions. When in doubt, choose the more secure and observable approach.
+**Remember**: DaemonEye is a security-focused system. Always prioritize security, performance, and reliability in implementation decisions. When in doubt, choose the more secure and observable approach.
 
 [^5]: Windows 10: EOL October 14, 2025. Organizations should plan migration to Windows 11.
 

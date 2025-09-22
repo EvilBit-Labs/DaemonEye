@@ -1,5 +1,5 @@
 {
-    "name": "SentinelD Rust Development",
+    "name": "DaemonEye Rust Development",
     "image": "mcr.microsoft.com/devcontainers/rust:latest",
     "features": {
         "ghcr.io/devcontainers/features/common-utils:2": {

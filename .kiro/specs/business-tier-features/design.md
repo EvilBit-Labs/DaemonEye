@@ -2,9 +2,9 @@
 
 ## Overview
 
-The Business Tier Features design extends the core SentinelD architecture with professional-grade capabilities targeting small teams and consultancies. The design maintains the security-first, offline-capable philosophy while adding enterprise integrations, curated content, and centralized management capabilities.
+The Business Tier Features design extends the core DaemonEye architecture with professional-grade capabilities targeting small teams and consultancies. The design maintains the security-first, offline-capable philosophy while adding enterprise integrations, curated content, and centralized management capabilities.
 
-The key architectural addition is the **SentinelD Security Center**, a new component that provides centralized aggregation, management, and visualization capabilities while preserving the autonomous operation of individual agents.
+The key architectural addition is the **DaemonEye Security Center**, a new component that provides centralized aggregation, management, and visualization capabilities while preserving the autonomous operation of individual agents.
 
 ## Architecture
 
@@ -18,14 +18,14 @@ graph TB
 
         subgraph "Agent Node 1"
             PM1[procmond]
-            SA1[sentinelagent]
-            CLI1[sentinelcli]
+            SA1[daemoneye-agent]
+            CLI1[daemoneye-cli]
         end
 
         subgraph "Agent Node 2"
             PM2[procmond]
-            SA2[sentinelagent]
-            CLI2[sentinelcli]
+            SA2[daemoneye-agent]
+            CLI2[daemoneye-cli]
         end
 
         subgraph "External Integrations"
@@ -55,9 +55,9 @@ The business tier supports three flexible deployment patterns:
 ```mermaid
 graph LR
     subgraph "Agent Nodes"
-        SA1[sentinelagent-1]
-        SA2[sentinelagent-2]
-        SA3[sentinelagent-3]
+        SA1[daemoneye-agent-1]
+        SA2[daemoneye-agent-2]
+        SA3[daemoneye-agent-3]
     end
 
     subgraph "SIEM Infrastructure"
@@ -76,9 +76,9 @@ graph LR
 ```mermaid
 graph LR
     subgraph "Agent Nodes"
-        SA1[sentinelagent-1]
-        SA2[sentinelagent-2]
-        SA3[sentinelagent-3]
+        SA1[daemoneye-agent-1]
+        SA2[daemoneye-agent-2]
+        SA3[daemoneye-agent-3]
     end
 
     SC[Security Center]
@@ -102,9 +102,9 @@ graph LR
 ```mermaid
 graph LR
     subgraph "Agent Nodes"
-        SA1[sentinelagent-1]
-        SA2[sentinelagent-2]
-        SA3[sentinelagent-3]
+        SA1[daemoneye-agent-1]
+        SA2[daemoneye-agent-2]
+        SA3[daemoneye-agent-3]
     end
 
     SC[Security Center]
@@ -134,14 +134,14 @@ graph LR
 
 The Security Center is a new Rust service that provides:
 
-- **Agent Management**: Secure registration and authentication of sentinelagent instances
+- **Agent Management**: Secure registration and authentication of daemoneye-agent instances
 - **Data Aggregation**: Centralized collection of alerts, process snapshots, and audit logs
 - **Configuration Distribution**: Centralized rule management and configuration deployment
 - **Integration Hub**: Single point for external SIEM and alerting integrations
 
 ### Enhanced Agent Capabilities
 
-Existing sentinelagent instances gain:
+Existing daemoneye-agent instances gain:
 
 - **Uplink Communication**: Secure connection to Security Center with fallback to standalone operation
 - **Rule Synchronization**: Automatic download and validation of curated rule packs
@@ -158,7 +158,7 @@ Existing sentinelagent instances gain:
 - **Framework**: Axum web framework with tokio async runtime
 - **Database**: PostgreSQL with connection pooling for scalable data storage
 - **Authentication**: Mutual TLS (mTLS) for agent connections, JWT for web GUI
-- **Configuration**: Same hierarchical config system as core SentinelD
+- **Configuration**: Same hierarchical config system as core DaemonEye
 - **Observability**: OpenTelemetry tracing with Prometheus metrics export
 - **Monitoring**: Built-in health checks and performance metrics
 
@@ -217,7 +217,7 @@ metadata:
   name: Malware TTPs
   version: 1.2.0
   description: Common malware tactics, techniques, and procedures
-  author: SentinelD Security Team
+  author: DaemonEye Security Team
   signature: ed25519:base64-signature
 
 rules:
@@ -257,7 +257,7 @@ impl SplunkHecConnector {
         let hec_event = HecEvent {
             time: event.timestamp.timestamp(),
             host: event.hostname.clone(),
-            source: "sentineld",
+            source: "DaemonEye",
             sourcetype: &self.source_type,
             index: self.index.as_deref(),
             event: serde_json::to_value(event)?,
@@ -322,7 +322,7 @@ pub struct CefFormatter;
 impl CefFormatter {
     pub fn format_process_alert(alert: &ProcessAlert) -> String {
         format!(
-            "CEF:0|SentinelD|SentinelD|1.0|{}|{}|{}|{}",
+            "CEF:0|DaemonEye|DaemonEye|1.0|{}|{}|{}|{}",
             alert.rule_id,
             alert.rule_name,
             Self::map_severity(&alert.severity),
@@ -374,9 +374,9 @@ impl StixExporter {
 
 ### Licensing Architecture
 
-**Dual-License Strategy:** The SentinelD project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
+**Dual-License Strategy:** The DaemonEye project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
 
-- **Core Components**: Apache 2.0 licensed (procmond, sentinelagent, sentinelcli, sentinel-lib)
+- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
 - **Business Tier Features**: Commercial license required (Security Center, GUI, enhanced connectors, curated rules)
 
 **Feature Gating Implementation:**
@@ -440,23 +440,23 @@ impl LicenseValidator {
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: sentineld-agent
+  name: DaemonEye-agent
   namespace: security
 spec:
   selector:
     matchLabels:
-      app: sentineld-agent
+      app: DaemonEye-agent
   template:
     metadata:
       labels:
-        app: sentineld-agent
+        app: DaemonEye-agent
     spec:
-      serviceAccountName: sentineld-agent
+      serviceAccountName: DaemonEye-agent
       hostPID: true
       hostNetwork: true
       containers:
         - name: procmond
-          image: sentineld/procmond:latest
+          image: DaemonEye/procmond:latest
           securityContext:
             privileged: true
             capabilities:
@@ -466,27 +466,27 @@ spec:
               mountPath: /host/proc
               readOnly: true
             - name: data
-              mountPath: /var/lib/sentineld
-        - name: sentinelagent
-          image: sentineld/sentinelagent:latest
+              mountPath: /var/lib/DaemonEye
+        - name: daemoneye-agent
+          image: DaemonEye/daemoneye-agent:latest
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
           volumeMounts:
             - name: data
-              mountPath: /var/lib/sentineld
+              mountPath: /var/lib/DaemonEye
             - name: config
-              mountPath: /etc/sentineld
+              mountPath: /etc/DaemonEye
       volumes:
         - name: proc
           hostPath:
             path: /proc
         - name: data
           hostPath:
-            path: /var/lib/sentineld
+            path: /var/lib/DaemonEye
         - name: config
           configMap:
-            name: sentineld-config
+            name: DaemonEye-config
 ```
 
 ### Web GUI Frontend
@@ -606,12 +606,12 @@ business_tier:
     enabled: true
     bind_address: 0.0.0.0:8443
     tls:
-      cert_path: /etc/sentineld/tls/server.crt
-      key_path: /etc/sentineld/tls/server.key
-      ca_path: /etc/sentineld/tls/ca.crt
+      cert_path: /etc/DaemonEye/tls/server.crt
+      key_path: /etc/DaemonEye/tls/server.key
+      ca_path: /etc/DaemonEye/tls/ca.crt
     database:
       url: 
-        postgresql://sentineld:${DB_PASSWORD}@localhost:5432/sentineld_security_center
+        postgresql://DaemonEye:${DB_PASSWORD}@localhost:5432/DaemonEye_security_center
       max_connections: 20
       min_connections: 5
       connection_timeout: 30s
@@ -621,7 +621,7 @@ business_tier:
     auto_update: true
     sources:
       - name: official
-        url: https://rules.sentineld.com/packs/
+        url: https://rules.DaemonEye.com/packs/
         signature_key: ed25519:public-key
   output_connectors:
     # Routing strategy: "direct", "proxy", or "hybrid"
@@ -634,20 +634,20 @@ business_tier:
       enabled: false
       endpoint: https://splunk.example.com:8088/services/collector
       token: ${SPLUNK_HEC_TOKEN}
-      index: sentineld
-      source_type: sentineld:alert
+      index: DaemonEye
+      source_type: DaemonEye:alert
       # Available on both agents and Security Center
     elasticsearch:
       enabled: false
       hosts: [https://elastic.example.com:9200]
       username: ${ELASTIC_USERNAME}
       password: ${ELASTIC_PASSWORD}
-      index_pattern: sentineld-{YYYY.MM.DD}
+      index_pattern: DaemonEye-{YYYY.MM.DD}
       # Available on both agents and Security Center
     kafka:
       enabled: false
       brokers: [kafka.example.com:9092]
-      topic: sentineld.alerts
+      topic: DaemonEye.alerts
       security_protocol: SASL_SSL
       sasl_mechanism: PLAIN
       # Available on both agents and Security Center
@@ -661,7 +661,7 @@ business_tier:
     tracing:
       enabled: true
       endpoint: http://jaeger:14268/api/traces
-      service_name: sentineld-security-center
+      service_name: DaemonEye-security-center
       sample_rate: 0.1
 
     metrics:
@@ -910,12 +910,12 @@ impl SecurityCenterMetrics {
     pub fn new(registry: &Registry) -> Self {
         let metrics = Self {
             agents_connected: Gauge::new(
-                "sentineld_agents_connected",
+                "DaemonEye_agents_connected",
                 "Number of currently connected agents",
             )
             .unwrap(),
             alerts_received_total: Counter::new(
-                "sentineld_alerts_received_total",
+                "DaemonEye_alerts_received_total",
                 "Total number of alerts received from agents",
             )
             .unwrap(),
@@ -1016,9 +1016,9 @@ async fn test_rule_pack_signature_validation() {
 
 ## Licensing Architecture
 
-**Dual-License Strategy:** The SentinelD project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
+**Dual-License Strategy:** The DaemonEye project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
 
-- **Core Components**: Apache 2.0 licensed (procmond, sentinelagent, sentinelcli, sentinel-lib)
+- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
 - **Business Tier Features**: Commercial license required (Security Center, GUI, enhanced connectors, curated rules)
 
 **Feature Gating Implementation:**

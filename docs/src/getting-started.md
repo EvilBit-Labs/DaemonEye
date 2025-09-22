@@ -1,6 +1,6 @@
-# Getting Started with SentinelD
+# Getting Started with DaemonEye
 
-This guide will help you get SentinelD up and running quickly on your system. SentinelD is designed to be simple to deploy while providing powerful security monitoring capabilities
+This guide will help you get DaemonEye up and running quickly on your system. DaemonEye is designed to be simple to deploy while providing powerful security monitoring capabilities
 
 ---
 
@@ -30,7 +30,7 @@ This guide will help you get SentinelD up and running quickly on your system. Se
 
 ### Privilege Requirements
 
-SentinelD requires elevated privileges for process monitoring. The system is designed to:
+DaemonEye requires elevated privileges for process monitoring. The system is designed to:
 
 1. **Request minimal privileges** during startup
 2. **Drop privileges immediately** after initialization
@@ -46,11 +46,11 @@ SentinelD requires elevated privileges for process monitoring. The system is des
 
    ```bash
    # Linux
-   wget https://github.com/sentineld/sentineld/releases/latest/download/sentineld-linux-x86_64.tar.gz
-   tar -xzf sentineld-linux-x86_64.tar.gz
+   wget https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-linux-x86_64.tar.gz
+   tar -xzf daemoneye-linux-x86_64.tar.gz
 
    # macOS
-   curl -L https://github.com/sentineld/sentineld/releases/latest/download/sentineld-macos-x86_64.tar.gz | tar -xz
+   curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-macos-x86_64.tar.gz | tar -xz
 
    # Windows
    # Download and extract from GitHub releases
@@ -60,11 +60,11 @@ SentinelD requires elevated privileges for process monitoring. The system is des
 
    ```bash
    # Linux/macOS
-   sudo cp procmond sentinelagent sentinelcli /usr/local/bin/
-   sudo chmod +x /usr/local/bin/procmond /usr/local/bin/sentinelagent /usr/local/bin/sentinelcli
+   sudo cp procmond daemoneye-agent daemoneye-cli /usr/local/bin/
+   sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
 
    # Windows
-   # Copy to C:\Program Files\SentinelD\
+   # Copy to C:\Program Files\DaemonEye\
    ```
 
 ### Option 2: From Source
@@ -79,15 +79,15 @@ SentinelD requires elevated privileges for process monitoring. The system is des
 2. **Clone and build**:
 
    ```bash
-   git clone https://github.com/sentineld/sentineld.git
-   cd sentineld
+   git clone https://github.com/daemoneye/daemoneye.git
+   cd daemoneye
    cargo build --release
    ```
 
 3. **Install built binaries**:
 
    ```bash
-   sudo cp target/release/procmond target/release/sentinelagent target/release/sentinelcli /usr/local/bin/
+   sudo cp target/release/procmond target/release/daemoneye-agent target/release/daemoneye-cli /usr/local/bin/
    ```
 
 ### Option 3: Package Managers
@@ -95,7 +95,7 @@ SentinelD requires elevated privileges for process monitoring. The system is des
 **Homebrew (macOS)**:
 
 ```bash
-brew install sentineld/sentineld/sentineld
+brew install daemoneye/daemoneye/daemoneye
 ```
 
 **APT (Ubuntu/Debian)**:
@@ -103,14 +103,14 @@ brew install sentineld/sentineld/sentineld
 ```bash
 # Add repository (when available)
 sudo apt update
-sudo apt install sentineld
+sudo apt install daemoneye
 ```
 
 **YUM/DNF (RHEL/CentOS)**:
 
 ```bash
 # Add repository (when available)
-sudo yum install sentineld
+sudo yum install daemoneye
 ```
 
 ## Quick Start
@@ -119,36 +119,36 @@ sudo yum install sentineld
 
 ```bash
 # Linux/macOS
-sudo mkdir -p /etc/sentineld
-sudo chown $USER:$USER /etc/sentineld
+sudo mkdir -p /etc/daemoneye
+sudo chown $USER:$USER /etc/daemoneye
 
 # Windows
-mkdir C:\ProgramData\SentinelD
+mkdir C:\ProgramData\DaemonEye
 ```
 
 ### 2. Generate Initial Configuration
 
 ```bash
 # Generate default configuration
-sentinelcli config init --output /etc/sentineld/config.yaml
+daemoneye-cli config init --output /etc/daemoneye/config.yaml
 ```
 
 This creates a basic configuration file:
 
 ```yaml
-# SentinelD Configuration
+# DaemonEye Configuration
 app:
   scan_interval_ms: 30000
   batch_size: 1000
   log_level: info
 
 database:
-  event_store_path: /var/lib/sentineld/events.redb
-  audit_ledger_path: /var/lib/sentineld/audit.sqlite
+  event_store_path: /var/lib/daemoneye/events.redb
+  audit_ledger_path: /var/lib/daemoneye/audit.sqlite
   retention_days: 30
 
 detection:
-  rules_path: /etc/sentineld/rules
+  rules_path: /etc/daemoneye/rules
   enabled_rules: ['*']
 
 alerting:
@@ -173,11 +173,11 @@ platform:
 
 ```bash
 # Linux/macOS
-sudo mkdir -p /var/lib/sentineld
-sudo chown $USER:$USER /var/lib/sentineld
+sudo mkdir -p /var/lib/daemoneye
+sudo chown $USER:$USER /var/lib/daemoneye
 
 # Windows
-mkdir C:\ProgramData\SentinelD\data
+mkdir C:\ProgramData\DaemonEye\data
 ```
 
 ### 4. Start the Services
@@ -185,46 +185,46 @@ mkdir C:\ProgramData\SentinelD\data
 **Option A: Manual Start (Testing)**
 
 ```bash
-# Terminal 1: Start sentinelagent (manages procmond)
-sentinelagent --config /etc/sentineld/config.yaml
+# Terminal 1: Start daemoneye-agent (manages procmond)
+daemoneye-agent --config /etc/daemoneye/config.yaml
 
 # Terminal 2: Use CLI for queries
-sentinelcli --config /etc/sentineld/config.yaml query "SELECT * FROM processes LIMIT 10"
+daemoneye-cli --config /etc/daemoneye/config.yaml query "SELECT * FROM processes LIMIT 10"
 ```
 
 **Option B: System Service (Production)**
 
 ```bash
 # Linux (systemd)
-sudo cp scripts/systemd/sentineld.service /etc/systemd/system/
+sudo cp scripts/systemd/daemoneye.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable sentineld
-sudo systemctl start sentineld
+sudo systemctl enable daemoneye
+sudo systemctl start daemoneye
 
 # macOS (launchd)
-sudo cp scripts/launchd/com.sentineld.agent.plist /Library/LaunchDaemons/
-sudo launchctl load /Library/LaunchDaemons/com.sentineld.agent.plist
+sudo cp scripts/launchd/com.daemoneye.agent.plist /Library/LaunchDaemons/
+sudo launchctl load /Library/LaunchDaemons/com.daemoneye.agent.plist
 
 # Windows (Service)
 # Run as Administrator
-sc create "SentinelD Agent" binPath="C:\Program Files\SentinelD\sentinelagent.exe --config C:\ProgramData\SentinelD\config.yaml"
-sc start "SentinelD Agent"
+sc create "DaemonEye Agent" binPath="C:\Program Files\DaemonEye\daemoneye-agent.exe --config C:\ProgramData\DaemonEye\config.yaml"
+sc start "DaemonEye Agent"
 ```
 
 ### 5. Verify Installation
 
 ```bash
 # Check service status
-sentinelcli health
+daemoneye-cli health
 
 # View recent processes
-sentinelcli query "SELECT pid, name, executable_path FROM processes ORDER BY collection_time DESC LIMIT 10"
+daemoneye-cli query "SELECT pid, name, executable_path FROM processes ORDER BY collection_time DESC LIMIT 10"
 
 # Check alerts
-sentinelcli alerts list
+daemoneye-cli alerts list
 
 # View system metrics
-sentinelcli metrics
+daemoneye-cli metrics
 ```
 
 ## Basic Configuration
@@ -262,7 +262,7 @@ alerting:
     - type: syslog
       enabled: true
       facility: daemon
-      tag: sentineld
+      tag: daemoneye
 ```
 
 **Enable Webhook Alerts**:
@@ -284,7 +284,7 @@ alerting:
   sinks:
     - type: file
       enabled: true
-      path: /var/log/sentineld/alerts.json
+      path: /var/log/daemoneye/alerts.json
       format: json
 ```
 
@@ -293,12 +293,12 @@ alerting:
 ### 1. Create Rules Directory
 
 ```bash
-mkdir -p /etc/sentineld/rules
+mkdir -p /etc/daemoneye/rules
 ```
 
 ### 2. Create a Simple Rule
 
-Create `/etc/sentineld/rules/suspicious-processes.sql`:
+Create `/etc/daemoneye/rules/suspicious-processes.sql`:
 
 ```sql
 -- Detect processes with suspicious names
@@ -320,26 +320,26 @@ ORDER BY collection_time DESC;
 
 ```bash
 # Validate the rule
-sentinelcli rules validate /etc/sentineld/rules/suspicious-processes.sql
+daemoneye-cli rules validate /etc/daemoneye/rules/suspicious-processes.sql
 
 # Test the rule
-sentinelcli rules test /etc/sentineld/rules/suspicious-processes.sql
+daemoneye-cli rules test /etc/daemoneye/rules/suspicious-processes.sql
 
 # Enable the rule
-sentinelcli rules enable suspicious-processes
+daemoneye-cli rules enable suspicious-processes
 ```
 
 ### 4. Monitor for Alerts
 
 ```bash
 # Watch for new alerts
-sentinelcli alerts watch
+daemoneye-cli alerts watch
 
 # List recent alerts
-sentinelcli alerts list --limit 10
+daemoneye-cli alerts list --limit 10
 
 # Export alerts
-sentinelcli alerts export --format json --output alerts.json
+daemoneye-cli alerts export --format json --output alerts.json
 ```
 
 ## Common Operations
@@ -350,23 +350,23 @@ sentinelcli alerts export --format json --output alerts.json
 
 ```bash
 # List all processes
-sentinelcli query "SELECT * FROM processes LIMIT 10"
+daemoneye-cli query "SELECT * FROM processes LIMIT 10"
 
 # Find processes by name
-sentinelcli query "SELECT * FROM processes WHERE name = 'chrome'"
+daemoneye-cli query "SELECT * FROM processes WHERE name = 'chrome'"
 
 # Find high CPU processes
-sentinelcli query "SELECT * FROM processes WHERE cpu_usage > 50.0"
+daemoneye-cli query "SELECT * FROM processes WHERE cpu_usage > 50.0"
 
 # Find processes by user
-sentinelcli query "SELECT * FROM processes WHERE user_id = '1000'"
+daemoneye-cli query "SELECT * FROM processes WHERE user_id = '1000'"
 ```
 
 **Advanced Queries**:
 
 ```bash
 # Process tree analysis
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     p1.pid as parent_pid,
     p1.name as parent_name,
@@ -378,7 +378,7 @@ WHERE p1.name = 'systemd'
 "
 
 # Suspicious process patterns
-sentinelcli query "
+daemoneye-cli query "
 SELECT
     pid,
     name,
@@ -395,41 +395,41 @@ HAVING occurrence_count > 5
 
 ```bash
 # List all rules
-sentinelcli rules list
+daemoneye-cli rules list
 
 # Enable/disable rules
-sentinelcli rules enable rule-name
-sentinelcli rules disable rule-name
+daemoneye-cli rules enable rule-name
+daemoneye-cli rules disable rule-name
 
 # Validate rule syntax
-sentinelcli rules validate rule-file.sql
+daemoneye-cli rules validate rule-file.sql
 
 # Test rule execution
-sentinelcli rules test rule-file.sql
+daemoneye-cli rules test rule-file.sql
 
 # Import/export rules
-sentinelcli rules import rules-bundle.tar.gz
-sentinelcli rules export --output rules-backup.tar.gz
+daemoneye-cli rules import rules-bundle.tar.gz
+daemoneye-cli rules export --output rules-backup.tar.gz
 ```
 
 ### System Health Monitoring
 
 ```bash
 # Check overall health
-sentinelcli health
+daemoneye-cli health
 
 # Check component status
-sentinelcli health --component procmond
-sentinelcli health --component sentinelagent
+daemoneye-cli health --component procmond
+daemoneye-cli health --component daemoneye-agent
 
 # View performance metrics
-sentinelcli metrics
+daemoneye-cli metrics
 
 # Check database status
-sentinelcli database status
+daemoneye-cli database status
 
 # View recent logs
-sentinelcli logs --tail 50
+daemoneye-cli logs --tail 50
 ```
 
 ## Troubleshooting
@@ -440,7 +440,7 @@ sentinelcli logs --tail 50
 
 ```bash
 # Check if running with sufficient privileges
-sudo sentinelcli health
+sudo daemoneye-cli health
 
 # Verify capability requirements
 getcap /usr/local/bin/procmond
@@ -450,24 +450,24 @@ getcap /usr/local/bin/procmond
 
 ```bash
 # Check for running processes
-ps aux | grep sentinel
+ps aux | grep daemoneye
 
 # Stop services and restart
-sudo systemctl stop sentineld
-sudo systemctl start sentineld
+sudo systemctl stop daemoneye
+sudo systemctl start daemoneye
 ```
 
 **No Processes Detected**:
 
 ```bash
 # Check scan interval
-sentinelcli config get app.scan_interval_ms
+daemoneye-cli config get app.scan_interval_ms
 
 # Verify database path
-sentinelcli config get database.event_store_path
+daemoneye-cli config get database.event_store_path
 
 # Check logs for errors
-sentinelcli logs --level error
+daemoneye-cli logs --level error
 ```
 
 ### Debug Mode
@@ -482,19 +482,19 @@ app:
 Or use command-line flag:
 
 ```bash
-sentinelagent --config /etc/sentineld/config.yaml --log-level debug
+daemoneye-agent --config /etc/daemoneye/config.yaml --log-level debug
 ```
 
 ### Getting Help
 
 - **Documentation**: Check the full documentation in `docs/`
-- **Logs**: Review logs with `sentinelcli logs`
-- **Health Checks**: Use `sentinelcli health` for system status
+- **Logs**: Review logs with `daemoneye-cli logs`
+- **Health Checks**: Use `daemoneye-cli health` for system status
 - **Community**: Join discussions on GitHub or community forums
 
 ## Next Steps
 
-Now that you have SentinelD running:
+Now that you have DaemonEye running:
 
 1. **Read the [Operator Guide](../user-guides/operator-guide.md)** for detailed usage instructions
 2. **Explore [Configuration Guide](../user-guides/configuration.md)** for advanced configuration
@@ -511,4 +511,4 @@ Now that you have SentinelD running:
 
 ---
 
-*Congratulations! You now have SentinelD running and monitoring your system. The system will continue to collect process data and execute detection rules according to your configuration.*
+*Congratulations! You now have DaemonEye running and monitoring your system. The system will continue to collect process data and execute detection rules according to your configuration.*

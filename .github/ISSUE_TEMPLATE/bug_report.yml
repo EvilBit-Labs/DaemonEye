@@ -1,5 +1,5 @@
 name: 🐛 Bug Report
-description: Report a bug or unexpected behavior in SentinelD
+description: Report a bug or unexpected behavior in DaemonEye
 title: "[Bug]: "
 labels: ["bug", "needs-triage"]
 assignees: []
@@ -14,12 +14,12 @@ body:
       id: component
       attributes:
           label: Component
-          description: Which SentinelD component is affected?
+          description: Which DaemonEye component is affected?
           options:
               - procmond (Process Collector)
-              - sentinelagent (Orchestrator)
-              - sentinelcli (CLI Interface)
-              - sentinel-lib (Shared Library)
+              - daemoneye-agent (Orchestrator)
+              - daemoneye-cli (CLI Interface)
+              - daemoneye-lib (Shared Library)
               - Documentation
               - Build System
               - Other
@@ -42,8 +42,8 @@ body:
     - type: input
       id: version
       attributes:
-          label: SentinelD Version
-          description: What version of SentinelD are you running?
+          label: DaemonEye Version
+          description: What version of DaemonEye are you running?
           placeholder: "e.g., 0.1.0, commit hash, or 'latest'"
       validations:
           required: true

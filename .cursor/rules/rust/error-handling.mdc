@@ -2,7 +2,7 @@
 globs: **/*.rs
 ---
 
-# Error Handling Standards for SentinelD
+# Error Handling Standards for DaemonEye
 
 ## Error Types
 

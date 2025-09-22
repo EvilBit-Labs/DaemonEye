@@ -2,7 +2,7 @@
 globs: Cargo.toml
 ---
 
-# Cargo.toml Standards for SentinelD
+# Cargo.toml Standards for DaemonEye
 
 ## Workspace Configuration
 
@@ -19,9 +19,9 @@ Example (root `Cargo.toml` excerpt):
 resolver = "3"
 members = [
   "procmond",
-  "sentinelagent",
-  "sentinelcli",
-  "sentinel-lib",
+  "daemoneye-agent",
+  "daemoneye-cli",
+  "daemoneye-lib",
 ]
 
 [workspace.package]
@@ -35,11 +35,11 @@ warnings = "deny"
 
 ```
 
-Each member crate enables inheritance (e.g. in `sentinel-lib/Cargo.toml`):
+Each member crate enables inheritance (e.g. in `daemoneye-lib/Cargo.toml`):
 
 ```toml
 [package]
-name = "sentinel-lib"
+name = "daemoneye-lib"
 version = "0.1.0"
 edition = "2024"
 
@@ -68,9 +68,9 @@ Reference: RFC 3389 (Workspace Lint Configuration) for standardized manifest-bas
 ## Member Crates
 
 - **procmond**: Process monitoring daemon (bin)
-- **sentinelcli**: CLI interface (bin)
-- **sentinelagent**: Orchestrator agent (bin)
-- **sentinel-lib**: Shared library
+- **daemoneye-cli**: CLI interface (bin)
+- **daemoneye-agent**: Orchestrator agent (bin)
+- **daemoneye-lib**: Shared library
 
 ## Shared Test Dependencies
 

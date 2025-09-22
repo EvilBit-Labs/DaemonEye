@@ -1,7 +1,7 @@
 //! IPC (Inter-Process Communication) module for procmond.
 //!
 //! This module provides the server-side IPC implementation for communication
-//! between procmond and sentinelagent using the interprocess crate for
+//! between procmond and daemoneye-agent using the interprocess crate for
 //! cross-platform support.
 
 pub mod error;
@@ -28,7 +28,7 @@ pub struct IpcConfig {
 impl Default for IpcConfig {
     fn default() -> Self {
         Self {
-            path: "/var/run/sentineld/procmond.sock".to_string(),
+            path: "/var/run/daemoneye/procmond.sock".to_string(),
             max_connections: 10,
             connection_timeout_secs: 30,
             message_timeout_secs: 60,
@@ -75,8 +75,8 @@ fn ensure_secure_directory(socket_path: &str) -> IpcResult<()> {
 }
 
 /// Create an IPC server using the interprocess transport
-pub fn create_ipc_server(config: IpcConfig) -> IpcResult<sentinel_lib::ipc::InterprocessServer> {
-    use sentinel_lib::ipc::{IpcConfig as LibIpcConfig, PanicStrategy, TransportType};
+pub fn create_ipc_server(config: IpcConfig) -> IpcResult<daemoneye_lib::ipc::InterprocessServer> {
+    use daemoneye_lib::ipc::{IpcConfig as LibIpcConfig, PanicStrategy, TransportType};
 
     // Ensure the secure directory exists with proper permissions
     ensure_secure_directory(&config.path)?;
@@ -92,7 +92,7 @@ pub fn create_ipc_server(config: IpcConfig) -> IpcResult<sentinel_lib::ipc::Inte
         panic_strategy: PanicStrategy::Abort, // Production configuration
     };
 
-    Ok(sentinel_lib::ipc::InterprocessServer::new(lib_config))
+    Ok(daemoneye_lib::ipc::InterprocessServer::new(lib_config))
 }
 
 #[cfg(test)]
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn test_ipc_config_default() {
         let config = IpcConfig::default();
-        assert_eq!(config.path, "/var/run/sentineld/procmond.sock");
+        assert_eq!(config.path, "/var/run/daemoneye/procmond.sock");
         assert_eq!(config.max_connections, 10);
         assert_eq!(config.connection_timeout_secs, 30);
         assert_eq!(config.message_timeout_secs, 60);

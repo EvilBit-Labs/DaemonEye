@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This document outlines the requirements for implementing Enterprise tier features for SentinelD, targeting SOCs, IR teams, and industrial/government environments that require advanced process visibility, fleet monitoring, and enterprise-grade security features. The Enterprise tier builds upon the Business tier to provide kernel-level visibility, centralized fleet management, advanced SIEM integrations, and hardened security features suitable for critical infrastructure and compliance-sensitive environments.
+This document outlines the requirements for implementing Enterprise tier features for DaemonEye, targeting SOCs, IR teams, and industrial/government environments that require advanced process visibility, fleet monitoring, and enterprise-grade security features. The Enterprise tier builds upon the Business tier to provide kernel-level visibility, centralized fleet management, advanced SIEM integrations, and hardened security features suitable for critical infrastructure and compliance-sensitive environments.
 
 ## Requirements
 
@@ -29,7 +29,7 @@ This document outlines the requirements for implementing Enterprise tier feature
 
 #### Acceptance Criteria
 
-1. WHEN multiple SentinelD agents are deployed THEN they SHALL connect to regional Security Center collectors for initial data aggregation
+1. WHEN multiple DaemonEye agents are deployed THEN they SHALL connect to regional Security Center collectors for initial data aggregation
 2. WHEN regional Security Centers are deployed THEN they SHALL act as store-and-forward proxies to higher-tier Security Centers or the primary Security Center
 3. WHEN an agent or Security Center connects THEN the system SHALL authenticate using mutual TLS certificates with certificate chain validation
 4. WHEN network connectivity is lost THEN agents and regional Security Centers SHALL buffer events locally and resume transmission when connectivity is restored
@@ -65,7 +65,7 @@ This document outlines the requirements for implementing Enterprise tier feature
 
 ### Requirement 5
 
-**User Story:** As an enterprise customer, I want optional commercial licensing, so that I can deploy SentinelD in environments where Apache 2.0 licensing is not compatible with organizational policies.
+**User Story:** As an enterprise customer, I want optional commercial licensing, so that I can deploy DaemonEye in environments where Apache 2.0 licensing is not compatible with organizational policies.
 
 #### Acceptance Criteria
 
@@ -101,7 +101,7 @@ This document outlines the requirements for implementing Enterprise tier feature
 
 ### Requirement 8
 
-**User Story:** As a system administrator, I want native integration with platform-specific logging systems, so that SentinelD events are properly integrated with existing system logging infrastructure and can be consumed by platform-native tools.
+**User Story:** As a system administrator, I want native integration with platform-specific logging systems, so that DaemonEye events are properly integrated with existing system logging infrastructure and can be consumed by platform-native tools.
 
 #### Acceptance Criteria
 
@@ -158,7 +158,7 @@ This document outlines the requirements for implementing Enterprise tier feature
 
 ### Requirement 12
 
-**User Story:** As an enterprise IT administrator, I want comprehensive platform support with clearly defined compatibility requirements, so that I can deploy SentinelD Enterprise across my heterogeneous infrastructure with confidence.
+**User Story:** As an enterprise IT administrator, I want comprehensive platform support with clearly defined compatibility requirements, so that I can deploy DaemonEye Enterprise across my heterogeneous infrastructure with confidence.
 
 #### Acceptance Criteria
 
