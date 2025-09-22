@@ -24,5 +24,6 @@
   - [Docker](./deployment/docker.md)
   - [Kubernetes](./deployment/kubernetes.md)
 - [Security](./security.md)
+  - [Security Design Overview](./technical/security_design_overview.md)
 - [Testing](./testing.md)
 - [Contributing](./contributing.md)

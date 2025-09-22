@@ -73,7 +73,7 @@ graph TB
 
 ### Security Control Matrix
 
-| Security Control            | procmond                | daemoneye-agent         | sentinelcli           | Implementation                     |
+| Security Control            | procmond                | daemoneye-agent       | sentinelcli           | Implementation                     |
 | --------------------------- | ----------------------- | --------------------- | --------------------- | ---------------------------------- |
 | **Privilege Separation**    | ✅ Elevated (temporary) | ✅ User space         | ✅ User space         | Platform-specific capabilities     |
 | **Network Isolation**       | ✅ No network           | ✅ Outbound only      | ✅ No network         | Firewall rules + code restrictions |
