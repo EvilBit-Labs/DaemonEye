@@ -415,8 +415,8 @@ fn bench_resilient_client(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("connection_state_check", |b| {
-        let (config, _temp_dir) = create_benchmark_config("connection_state");
+    group.bench_function("get_stats", |b| {
+        let (config, _temp_dir) = create_benchmark_config("get_stats");
         let client = ResilientIpcClient::new(&config);
 
         b.iter(|| {

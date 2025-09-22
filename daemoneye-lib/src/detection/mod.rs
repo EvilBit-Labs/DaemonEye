@@ -117,8 +117,8 @@ impl DetectionEngine {
         // 4. Generate alerts based on results
 
         // For now, we'll create a simple placeholder implementation
-        // Pre-allocate with an upper bound (processes.len()); some categories may alert often.
-        let mut alerts = Vec::with_capacity(processes.len());
+        // Pre-allocate with conservative capacity since most processes won't generate alerts
+        let mut alerts = Vec::with_capacity(4);
         let rule_id = rule.id.raw().to_owned();
 
         // Simple pattern matching based on rule category

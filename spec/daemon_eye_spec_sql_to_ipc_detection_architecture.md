@@ -244,26 +244,109 @@ All collectors MUST implement regex pattern matching with the following specific
 
 - **Regex Engine:** Use a standard regex engine (e.g., Rust `regex` crate, RE2, PCRE)
 - **Case Sensitivity:** Support both case-sensitive and case-insensitive matching via `(?i)` flag
-- **Performance:** Regex operations MUST complete within 10ms per pattern for typical workloads
+- **Performance:** Regex operations MUST complete within configurable per-pattern latency bounds
 - **Memory Bounds:** Regex compilation and execution MUST be bounded to prevent DoS attacks
 - **Error Handling:** Invalid regex patterns MUST be rejected with clear error messages
-- **Compilation Caching:** Compiled regex patterns SHOULD be cached to improve performance
+- **Compilation Caching:** Compiled regex patterns MUST be cached to improve performance
+- **Pattern Complexity Monitoring:** Execution times MUST be monitored and patterns exceeding limits flagged or rejected
+
+#### Configurable Performance Bounds
+
+**Default Configuration:**
+
+- **Per-Pattern Latency:** 10ms (configurable via `regex.max_pattern_latency_ms`)
+- **Compilation Timeout:** 100ms (configurable via `regex.compilation_timeout_ms`)
+- **Memory Limit:** 1MB per pattern (configurable via `regex.max_memory_per_pattern`)
+
+**Configuration Example:**
+
+```yaml
+detection:
+  regex:
+    max_pattern_latency_ms: 10        # Per-pattern execution timeout
+    compilation_timeout_ms: 100        # Pattern compilation timeout
+    max_memory_per_pattern: 1048576    # 1MB memory limit per pattern
+    enable_precompilation: true        # Pre-compile patterns at startup
+    cache_size: 1000                   # Maximum cached patterns
+    monitoring:
+      enable_metrics: true             # Track pattern performance
+      alert_threshold_ms: 5            # Alert when patterns exceed threshold
+```
+
+#### Pattern Complexity Guidelines
+
+**Acceptable Pattern Complexity:**
+
+- **Simple Patterns:** Basic literals, character classes, and quantifiers (`*`, `+`, `?`)
+- **Moderate Patterns:** Alternation with limited branches (`(a|b|c)`)
+- **Complex Patterns:** Backreferences, lookahead/lookbehind (with execution limits)
+
+**Performance Optimization Strategies:**
+
+1. **Pre-compilation:** Compile all patterns at startup to avoid runtime compilation overhead
+2. **Safe Regex Engines:** Use RE2-like engines with guaranteed linear time complexity
+3. **Backtrack Limits:** Implement backtrack limits to prevent catastrophic backtracking
+4. **Pattern Validation:** Reject patterns with exponential complexity characteristics
+5. **Compilation Caching:** Cache compiled patterns with LRU eviction policy
+
+**Pattern Rejection Criteria:**
+
+- Patterns exceeding compilation timeout
+- Patterns requiring excessive memory allocation
+- Patterns with exponential backtracking potential
+- Patterns with nested quantifiers beyond safe limits
+
+**Monitoring and Metrics:**
+
+- **Pattern Execution Time:** Track per-pattern execution duration
+- **Compilation Time:** Monitor pattern compilation overhead
+- **Memory Usage:** Track memory consumption per pattern
+- **Cache Hit Rate:** Monitor compilation cache effectiveness
+- **Rejection Rate:** Track patterns rejected due to complexity limits
 
 **Example Regex Patterns:**
 
 ```sql
--- Case-insensitive malware detection
-WHERE name REGEXP '(?i)malware|trojan|virus'
+-- Simple patterns (recommended for production)
+WHERE name REGEXP '(?i)malware|trojan|virus'           -- Case-insensitive malware detection
+WHERE dst_ip REGEXP '^192\.168\.\d+\.\d+$'             -- IP address pattern matching
+WHERE path REGEXP '^/tmp/.*\.(exe|bat|cmd)$'           -- File path pattern matching
+WHERE name REGEXP '^[a-z]+\.exe$'                      -- Process name with wildcards
 
--- IP address pattern matching
-WHERE dst_ip REGEXP '^192\.168\.\d+\.\d+$'
+-- Moderate complexity patterns (use with caution)
+WHERE command REGEXP '(?i)(curl|wget).*--insecure'     -- Insecure download detection
+WHERE path REGEXP '^/home/[^/]+/\.ssh/.*\.(pub|pem)$' -- SSH key file detection
 
--- File path pattern matching
-WHERE path REGEXP '^/tmp/.*\.(exe|bat|cmd)$'
-
--- Process name with wildcards
-WHERE name REGEXP '^[a-z]+\.exe$'
+-- Complex patterns (require pre-compilation and monitoring)
+WHERE content REGEXP '(?s)^BEGIN\s+PRIVATE\s+KEY.*END\s+PRIVATE\s+KEY$' -- Private key detection
 ```
+
+**Pattern Complexity Examples:**
+
+```sql
+-- GOOD: Simple, fast patterns
+WHERE name = 'malware.exe'
+WHERE path LIKE '/tmp/%'
+WHERE port IN (22, 80, 443)
+
+-- ACCEPTABLE: Moderate complexity with bounds
+WHERE command REGEXP '(?i)(curl|wget).*--insecure'
+WHERE path REGEXP '^/home/[^/]+/\.ssh/.*\.(pub|pem)$'
+
+-- AVOID: Exponential complexity patterns
+WHERE content REGEXP '(a+)+$'                    -- Catastrophic backtracking
+WHERE path REGEXP '^(.*,){100,}.*$'              -- Excessive alternation
+WHERE data REGEXP '(?=.*a)(?=.*b)(?=.*c).*'      -- Multiple lookaheads
+```
+
+**Performance Tuning Recommendations:**
+
+1. **Start Simple:** Begin with literal string matching and basic patterns
+2. **Profile Patterns:** Use monitoring to identify slow patterns
+3. **Pre-compile:** Compile complex patterns at startup
+4. **Cache Aggressively:** Cache compiled patterns with appropriate TTL
+5. **Set Bounds:** Configure appropriate latency and memory limits per deployment
+6. **Monitor Continuously:** Track pattern performance and adjust limits as needed
 
 ---
 

@@ -73,3 +73,25 @@ message DetectionResult {
   /// Performance events collected (future: perfmond)
   repeated PerformanceRecord performance_events = 8;
 }
+
+/// Capability negotiation request from daemoneye-agent to collector-core
+message CapabilityRequest {
+  /// Unique client identifier for this agent instance
+  string client_id = 1;
+  /// Requested monitoring domains the client is interested in
+  repeated MonitoringDomain requested_domains = 2;
+  /// Client version for compatibility checking
+  optional string client_version = 3;
+}
+
+/// Capability negotiation response from collector-core to daemoneye-agent
+message CapabilityResponse {
+  /// Whether capability negotiation was successful
+  bool negotiation_success = 1;
+  /// Available collection capabilities
+  CollectionCapabilities capabilities = 2;
+  /// Error message if negotiation failed
+  optional string error_message = 3;
+  /// Server version for compatibility checking
+  optional string server_version = 4;
+}

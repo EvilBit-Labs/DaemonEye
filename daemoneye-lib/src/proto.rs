@@ -23,6 +23,7 @@ pub use generated::*;
 
 // Re-export commonly used types with cleaner names
 pub use self::{
+    CapabilityRequest as ProtoCapabilityRequest, CapabilityResponse as ProtoCapabilityResponse,
     HashCheck as ProtoHashCheck, HashResult as ProtoHashResult,
     ProcessFilter as ProtoProcessFilter, ProcessRecord as ProtoProcessRecord,
     TaskType as ProtoTaskType,

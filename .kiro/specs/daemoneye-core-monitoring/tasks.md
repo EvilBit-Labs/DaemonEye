@@ -256,7 +256,7 @@
   - Write integration tests for migration scenarios and version compatibility
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 11. Implement SQL-based detection engine with SQL-to-IPC translation pipeline
+- [ ] 11. Integrate SQL-to-IPC detection engine (see dedicated spec: sql-to-ipc-detection-engine)
 
 - [x] 11.1 Create basic DetectionEngine structure and rule management - [#47](https://github.com/EvilBit-Labs/DaemonEye/issues/47)
 
@@ -266,40 +266,45 @@
   - Write basic unit tests for detection engine structure and rule management
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.2 Implement placeholder rule execution for testing - [#48](https://github.com/EvilBit-Labs/DaemonEye/issues/48)
+- [ ] 11.2 Replace existing detection engine with SQL-to-IPC implementation
 
-  - Replace current placeholder rule execution with more comprehensive pattern matching
-  - Add support for more rule categories beyond suspicious_process and high_cpu
-  - Implement proper alert generation from placeholder rule matches
-  - Write comprehensive unit tests for placeholder rule execution
+  - **Note**: This task is now covered by the dedicated sql-to-ipc-detection-engine spec
+  - Integrate SQL-to-IPC engine as replacement for placeholder detection logic
+  - Implement SQL parsing, pushdown planning, and two-layer execution architecture
+  - Add schema registry integration for collector capability negotiation
+  - Create reactive pipeline orchestrator for cascading analysis and auto-correlation
+  - Integrate specialty collectors (YARA, PE analysis, network analysis) with SQL queries
+  - **Reference**: See #[[file:.kiro/specs/sql-to-ipc-detection-engine/tasks.md]] for complete implementation plan
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.3 Implement full SQL-to-IPC translation pipeline - [#49](https://github.com/EvilBit-Labs/DaemonEye/issues/49)
+- [ ] 11.3 Integrate SQL-to-IPC engine with existing daemoneye-agent infrastructure
 
-  - Replace placeholder rule execution with actual SQL-to-IPC translation
-  - Create CollectionRequirementsExtractor to analyze SQL AST and extract collection needs
-  - Add SQL-to-IPC translation logic that converts complex SQL rules into simple protobuf collection tasks
-  - Implement two-phase execution: SQL-to-IPC translation + SQL rule execution against collected data
-  - Create whitelist of allowed SQL constructs (SELECT statements, approved functions)
-  - Write integration tests for complete SQL-to-IPC pipeline
+  - Create integration wrapper that implements existing DetectionEngine trait
+  - Replace placeholder rule execution with SQL-to-IPC query planning and execution
+  - Integrate with existing IPC client infrastructure for collector communication
+  - Maintain backward compatibility with existing rule file formats and configuration
+  - Add SQL-to-IPC engine configuration to existing daemoneye-agent config system
+  - Write integration tests comparing old vs new detection engine behavior
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.4 Add query execution with resource limits and sandboxing - [#50](https://github.com/EvilBit-Labs/DaemonEye/issues/50)
+- [ ] 11.4 Extend collector-core framework for SQL-to-IPC task handling
 
-  - Implement query timeouts (30 seconds) and memory limits for SQL rule execution
-  - Add sandboxed execution environment with read-only database connections
-  - Create resource cleanup and cancellation mechanisms for both translation and execution phases
-  - Ensure privilege separation where SQL execution never directly touches live processes
-  - Write integration tests for resource limit enforcement and timeout scenarios
+  - Modify EventSource trait to accept DetectionTask with supplemental rule data
+  - Add capability advertisement methods for schema registry integration
+  - Update existing ProcessEventSource to handle SQL-to-IPC generated tasks
+  - Integrate schema registry with collector-core startup and capability advertisement
+  - Create task validation and execution logic in collector-core runtime
+  - Write integration tests for schema registry with existing procmond and collector-core
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.5 Create comprehensive security testing for SQL-to-IPC pipeline - [#51](https://github.com/EvilBit-Labs/DaemonEye/issues/51)
+- [ ] 11.5 Validate SQL-to-IPC integration with comprehensive testing
 
-  - Implement OWASP SQL injection test vector validation for both AST parsing and collection extraction
-  - Add fuzzing tests for malformed SQL input in both translation and execution phases
-  - Create penetration testing scenarios for SQL validation bypass attempts
-  - Write security audit tests for rule execution sandboxing and IPC task generation
-  - Test that complex SQL rules are properly translated to simple, secure protobuf tasks
+  - Create end-to-end integration tests for SQL rules with multi-collector queries
+  - Add performance validation comparing SQL-to-IPC vs placeholder detection
+  - Implement security testing for SQL parsing and pushdown optimization
+  - Create integration tests for reactive pipeline orchestration and auto-correlation
+  - Write compatibility tests ensuring existing detection workflows continue to function
+  - Add performance benchmarks for SQL parsing, planning, and execution phases
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
 - [x] 12. Create alert generation and management system - [#51](https://github.com/EvilBit-Labs/DaemonEye/issues/51)

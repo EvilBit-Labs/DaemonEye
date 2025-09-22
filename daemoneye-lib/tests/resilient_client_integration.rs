@@ -24,7 +24,7 @@
     clippy::let_underscore_must_use
 )]
 
-use daemoneye_lib::ipc::client::{CircuitBreakerState, ResilientIpcClient};
+use daemoneye_lib::ipc::client::{CircuitBreakerState, CollectorEndpoint, ResilientIpcClient};
 use daemoneye_lib::ipc::interprocess_transport::InterprocessServer;
 use daemoneye_lib::ipc::{IpcConfig, TransportType};
 use daemoneye_lib::proto::{DetectionResult, DetectionTask, TaskType};
@@ -311,7 +311,22 @@ async fn test_concurrent_requests() {
     let mut server = InterprocessServer::new(config.clone());
 
     server.set_handler(|task: DetectionTask| async move {
-        // Simulate some processing time
+        // Check if this is a capability negotiation request
+        if task.metadata.as_deref() == Some("capability_negotiation") {
+            // Return capability information in the result
+            return Ok(DetectionResult {
+                task_id: task.task_id,
+                success: true,
+                error_message: None,
+                processes: vec![], // Empty for capability negotiation
+                hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
+            });
+        }
+
+        // Normal task processing
         sleep(Duration::from_millis(50)).await;
 
         Ok(DetectionResult {
@@ -329,8 +344,19 @@ async fn test_concurrent_requests() {
     server.start().await.expect("Failed to start server");
     sleep(Duration::from_millis(200)).await;
 
-    // Create a client and make endpoint healthy by sending a successful task
+    // Create a client and configure endpoint
     let client = Arc::new(ResilientIpcClient::new(&config));
+
+    // Add endpoint to client
+    let endpoint = CollectorEndpoint::new("default".to_string(), config.endpoint_path.clone(), 1);
+    client.add_endpoint(endpoint).await;
+
+    // Negotiate capabilities
+    client
+        .negotiate_capabilities("default")
+        .await
+        .expect("Capability negotiation failed");
+
     let dummy_task = create_test_task("health-check");
     let _ = client.send_task_to_endpoint(dummy_task, "default").await; // This will make the endpoint healthy
 
@@ -382,6 +408,22 @@ async fn test_force_reconnection() {
     let mut server = InterprocessServer::new(config.clone());
 
     server.set_handler(|task: DetectionTask| async move {
+        // Check if this is a capability negotiation request
+        if task.metadata.as_deref() == Some("capability_negotiation") {
+            // Return capability information in the result
+            return Ok(DetectionResult {
+                task_id: task.task_id,
+                success: true,
+                error_message: None,
+                processes: vec![], // Empty for capability negotiation
+                hash_result: None,
+                network_events: vec![],
+                filesystem_events: vec![],
+                performance_events: vec![],
+            });
+        }
+
+        // Normal task processing
         Ok(DetectionResult {
             task_id: task.task_id,
             success: true,
@@ -397,8 +439,19 @@ async fn test_force_reconnection() {
     server.start().await.expect("Failed to start server");
     sleep(Duration::from_millis(200)).await;
 
-    // Create client and make endpoint healthy
+    // Create client and configure endpoint
     let client = ResilientIpcClient::new(&config);
+
+    // Add endpoint to client
+    let endpoint = CollectorEndpoint::new("default".to_string(), config.endpoint_path.clone(), 1);
+    client.add_endpoint(endpoint).await;
+
+    // Negotiate capabilities
+    client
+        .negotiate_capabilities("default")
+        .await
+        .expect("Capability negotiation failed");
+
     let dummy_task = create_test_task("health-check");
     let _ = client.send_task_to_endpoint(dummy_task, "default").await; // Make endpoint healthy
 

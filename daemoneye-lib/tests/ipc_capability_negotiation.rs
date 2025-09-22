@@ -279,7 +279,10 @@ async fn test_task_routing_with_capabilities() {
     match result {
         Err(daemoneye_lib::ipc::codec::IpcError::Io(io_err)) => {
             assert_eq!(io_err.kind(), std::io::ErrorKind::NotFound);
-            assert!(io_err.to_string().contains("No endpoints available"));
+            assert_eq!(
+                io_err.to_string(),
+                "No endpoints available for task type: EnumerateProcesses"
+            );
         }
         Err(e) => panic!("Unexpected error type: {e:?}"),
         Ok(_) => panic!("Expected task routing to fail with no endpoints"),

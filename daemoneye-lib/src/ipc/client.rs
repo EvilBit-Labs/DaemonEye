@@ -894,23 +894,22 @@ impl ResilientIpcClient {
                 _ => IpcError::Io(err),
             })?;
 
-        // Create a capability negotiation task
+        // Create a special detection task for capability negotiation
         let capability_task = DetectionTask {
             task_id: format!("capability-negotiation-{}", uuid::Uuid::new_v4()),
             task_type: i32::from(TaskType::EnumerateProcesses), // Use a basic task type for negotiation
             process_filter: None,
             hash_check: None,
-            metadata: Some("capability_negotiation".to_owned()),
+            metadata: Some("capability_negotiation".to_owned()), // Special marker
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
         };
 
-        // Send capability negotiation request
+        // Send capability negotiation request using existing task mechanism
         let result = self.send_task_on_stream(stream, capability_task).await?;
 
-        // For now, we'll extract capabilities from the result metadata
-        // In a full implementation, this would be a dedicated capability negotiation protocol
+        // Extract capabilities from the result metadata
         let capabilities = if result.success {
             // Parse capabilities from result or use default process capabilities
             CollectionCapabilities {
