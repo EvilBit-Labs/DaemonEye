@@ -3,10 +3,17 @@
 //! This module provides the core detection engine that executes SQL-based rules
 //! against process data with comprehensive security validation to prevent SQL injection.
 
+pub mod sql_to_ipc;
+
 use crate::models::{Alert, DetectionRule, ProcessRecord};
 // Removed unused imports
 use std::collections::HashMap;
 use thiserror::Error;
+
+pub use sql_to_ipc::{
+    CollectionRequirements, FilesystemRequirements, NetworkRequirements, PerformanceRequirements,
+    ProcessRequirements, SqlToIpcTranslator,
+};
 
 /// Detection engine errors.
 #[derive(Debug, Error)]

@@ -421,8 +421,8 @@ fn bench_resilient_client(c: &mut Criterion) {
 
         b.iter(|| {
             rt.block_on(async {
-                let state = client.health_check().await;
-                black_box(state)
+                let stats = client.get_stats().await;
+                black_box(stats)
             })
         });
     });

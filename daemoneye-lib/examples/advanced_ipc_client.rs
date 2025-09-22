@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create advanced client with multiple endpoints and weighted load balancing
-    let mut client = ResilientIpcClient::new_with_endpoints(
+    let client = ResilientIpcClient::new_with_endpoints(
         &config,
         endpoints,
         LoadBalancingStrategy::Weighted, // Use health-based weighted selection
@@ -152,24 +152,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metrics.success_rate() * 100.0
     );
 
-    // Simulate sending tasks (these will fail since no servers are running)
-    println!("\n\u{1f504} Simulating task distribution...");
-    for i in 1..=3 {
+    // Demonstrate capability negotiation
+    println!("\n\u{1f91d} Capability Negotiation Demo...");
+    for endpoint in &client_endpoints {
+        println!("  \u{1f4e1} Negotiating capabilities with: {}", endpoint.id);
+
+        match tokio::time::timeout(
+            Duration::from_millis(500),
+            client.negotiate_capabilities(&endpoint.id),
+        )
+        .await
+        {
+            Ok(Ok(capabilities)) => {
+                println!("    \u{2705} Capabilities negotiated:");
+                println!(
+                    "      - Supported domains: {}",
+                    capabilities
+                        .supported_domains
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                if let Some(ref advanced) = capabilities.advanced {
+                    println!("      - Kernel level: {}", advanced.kernel_level);
+                    println!("      - Realtime: {}", advanced.realtime);
+                    println!("      - System wide: {}", advanced.system_wide);
+                }
+            }
+            Ok(Err(e)) => {
+                println!("    \u{274c} Capability negotiation failed: {e}");
+            }
+            Err(_) => {
+                println!(
+                    "    \u{23f0} Capability negotiation timed out (expected - no servers running)"
+                );
+            }
+        }
+    }
+
+    // Simulate task routing based on capabilities
+    println!("\n\u{1f504} Simulating capability-aware task routing...");
+
+    let task_types = vec![
+        (TaskType::EnumerateProcesses, "Process enumeration"),
+        (TaskType::MonitorNetworkConnections, "Network monitoring"),
+        (TaskType::TrackFileOperations, "Filesystem monitoring"),
+        (
+            TaskType::CollectPerformanceMetrics,
+            "Performance monitoring",
+        ),
+    ];
+
+    for (task_type, description) in task_types {
         let task = DetectionTask {
-            task_id: format!("demo-task-{i}"),
-            task_type: TaskType::EnumerateProcesses.into(),
+            task_id: format!("demo-task-{}", uuid::Uuid::new_v4()),
+            task_type: i32::from(task_type),
             process_filter: None,
             hash_check: None,
-            metadata: Some("Advanced client demo".to_owned()),
+            metadata: Some(format!("Capability demo: {description}")),
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
         };
 
-        println!("  \u{1f4e4} Sending task: {}", task.task_id);
+        println!("  \u{1f4e4} Routing {} task: {}", description, task.task_id);
 
-        // Use a short timeout for demo purposes
-        match tokio::time::timeout(Duration::from_millis(500), client.send_task(task)).await {
+        // Use capability-aware routing
+        match tokio::time::timeout(
+            Duration::from_millis(500),
+            client.send_task_with_routing(task),
+        )
+        .await
+        {
             Ok(Ok(result)) => {
                 println!("    \u{2705} Task completed: {}", result.task_id);
             }
@@ -232,6 +287,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  \u{2022} Comprehensive metrics collection");
     println!("  \u{2022} Dynamic endpoint configuration");
     println!("  \u{2022} Health monitoring and diagnostics");
+    println!("  \u{2022} Capability negotiation with collector-core components");
+    println!("  \u{2022} Multi-domain task routing based on capabilities");
+    println!("  \u{2022} Automatic endpoint selection for task types");
 
     Ok(())
 }

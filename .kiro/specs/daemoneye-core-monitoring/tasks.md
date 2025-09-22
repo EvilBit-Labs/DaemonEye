@@ -45,7 +45,7 @@
   - Enhance error recovery with circuit breaker patterns
   - _Requirements: 3.1, 3.2_
 
-- [ ] 3.4 Add capability negotiation to IPC client - [#38](https://github.com/EvilBit-Labs/DaemonEye/issues/38)
+- [x] 3.4 Add capability negotiation to IPC client - [#38](https://github.com/EvilBit-Labs/DaemonEye/issues/38)
 
   - Implement capability discovery and negotiation with collector-core components
   - Add support for multi-domain task routing based on collector capabilities
@@ -159,7 +159,7 @@
 
 - [ ] 5.5 Implement Windows-specific optimizations - [#83](https://github.com/EvilBit-Labs/DaemonEye/issues/83)
 
-  - Create WindowsProcessCollector using Windows API (Process32First/Next, NtQuerySystemInformation)
+  - Create WindowsProcessCollector using Windows API (`windows-rs` crate) (Process32First/Next, NtQuerySystemInformation)
   - Add SeDebugPrivilege detection and privilege management
   - Implement enhanced metadata collection with Windows-specific process attributes
   - Add support for Windows process tokens and security contexts

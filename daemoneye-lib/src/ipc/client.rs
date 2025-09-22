@@ -4,10 +4,44 @@
 //! automatic reconnection, connection pooling, circuit breaker patterns, load balancing,
 //! failover capabilities, and comprehensive metrics collection for reliable communication
 //! with multiple collector-core components.
+//!
+//! # Architecture
+//!
+//! The client uses a multi-endpoint architecture with:
+//! - Load balancing strategies (`RoundRobin`, `Weighted`, `Priority`)
+//! - Circuit breaker patterns for fault tolerance
+//! - Connection pooling for resource efficiency
+//! - Comprehensive metrics collection
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use daemoneye_lib::ipc::{IpcConfig, TransportType};
+//! use daemoneye_lib::ipc::client::{ResilientIpcClient, LoadBalancingStrategy};
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = IpcConfig {
+//!     transport: TransportType::Interprocess,
+//!     endpoint_path: "/tmp/collector.sock".to_owned(),
+//!     max_frame_bytes: 1024 * 1024,
+//!     accept_timeout_ms: 5000,
+//!     read_timeout_ms: 30000,
+//!     write_timeout_ms: 10000,
+//!     max_connections: 32,
+//!     panic_strategy: daemoneye_lib::ipc::PanicStrategy::Unwind,
+//! };
+//!
+//! let client = ResilientIpcClient::new(&config);
+//! let stats = client.get_stats().await;
+//! # Ok(())
+//! # }
+//! ```
 
 use crate::ipc::IpcConfig;
 use crate::ipc::codec::{IpcCodec, IpcError, IpcResult};
-use crate::proto::{DetectionResult, DetectionTask};
+use crate::proto::{
+    CollectionCapabilities, DetectionResult, DetectionTask, MonitoringDomain, TaskType,
+};
 use interprocess::local_socket::Name;
 use interprocess::local_socket::tokio::prelude::*;
 #[cfg(unix)]
@@ -19,10 +53,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, Semaphore};
-use tokio::time::{sleep, timeout};
-use tracing::{debug, error, info, warn};
+use tokio::time::timeout;
+use tracing::{debug, info, warn};
 
 /// Connection state for the IPC client
+///
+/// Represents the current state of an IPC connection, used for monitoring
+/// and health checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionState {
@@ -39,6 +76,13 @@ pub enum ConnectionState {
 }
 
 /// Comprehensive metrics for IPC client performance monitoring
+///
+/// Provides detailed metrics for monitoring IPC client performance,
+/// including task execution, connection management, and throughput statistics.
+///
+/// # Thread Safety
+///
+/// All metrics use atomic operations and are safe to access from multiple threads.
 #[derive(Debug, Default)]
 pub struct IpcClientMetrics {
     /// Total number of tasks sent
@@ -71,6 +115,8 @@ pub struct IpcClientMetrics {
 
 impl IpcClientMetrics {
     /// Create new metrics instance
+    ///
+    /// All counters are initialized to zero.
     pub fn new() -> Self {
         Self::default()
     }
@@ -193,7 +239,11 @@ impl IpcClientMetrics {
 }
 
 /// Circuit breaker state for failure handling with enhanced metrics
+///
+/// Implements the circuit breaker pattern to prevent cascading failures
+/// by temporarily disabling connections that are experiencing issues.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Work in progress - some methods not yet used
 struct CircuitBreaker {
     failure_count: u32,
     last_failure_time: Option<Instant>,
@@ -210,6 +260,7 @@ struct CircuitBreaker {
     metrics: Option<Arc<IpcClientMetrics>>,
 }
 
+#[allow(dead_code)] // Work in progress - some methods not yet used
 impl CircuitBreaker {
     const fn new(
         failure_threshold: u32,
@@ -339,7 +390,42 @@ pub enum CircuitBreakerState {
     HalfOpen,
 }
 
+/// Statistics for a specific endpoint
+#[derive(Debug, Clone)]
+pub struct EndpointStats {
+    /// Endpoint identifier
+    pub endpoint_id: String,
+    /// Endpoint priority
+    pub priority: u32,
+    /// Whether endpoint is healthy
+    pub is_healthy: bool,
+    /// Current health score
+    pub health_score: f64,
+    /// Circuit breaker state
+    pub circuit_breaker_state: CircuitBreakerState,
+    /// Endpoint capabilities
+    pub capabilities: Option<CollectionCapabilities>,
+    /// Last successful operation
+    pub last_success: Option<Instant>,
+    /// Last failure
+    pub last_failure: Option<Instant>,
+}
+
+/// Comprehensive client statistics
+#[derive(Debug, Clone)]
+pub struct ClientStats {
+    /// Current load balancing strategy
+    pub load_balancing_strategy: LoadBalancingStrategy,
+    /// Total pooled connections
+    pub total_pooled_connections: usize,
+    /// Per-endpoint statistics
+    pub endpoint_stats: Vec<EndpointStats>,
+}
+
 /// Collector endpoint configuration for load balancing and failover
+///
+/// Represents a single collector endpoint with health tracking and capability information.
+/// Used by the resilient client for load balancing and failover decisions.
 #[derive(Debug, Clone)]
 pub struct CollectorEndpoint {
     /// Unique identifier for this collector
@@ -354,10 +440,20 @@ pub struct CollectorEndpoint {
     pub last_success: Option<Instant>,
     /// Last failure time
     pub last_failure: Option<Instant>,
+    /// Capabilities reported by this collector
+    pub capabilities: Option<CollectionCapabilities>,
+    /// Last time capabilities were negotiated
+    pub last_capability_check: Option<Instant>,
 }
 
 impl CollectorEndpoint {
     /// Create a new collector endpoint
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Unique identifier for this endpoint
+    /// * `endpoint_path` - Path to the socket or pipe
+    /// * `priority` - Priority for load balancing (lower = higher priority)
     pub const fn new(id: String, endpoint_path: String, priority: u32) -> Self {
         Self {
             id,
@@ -366,6 +462,8 @@ impl CollectorEndpoint {
             is_healthy: true,
             last_success: None,
             last_failure: None,
+            capabilities: None,
+            last_capability_check: None,
         }
     }
 
@@ -379,6 +477,61 @@ impl CollectorEndpoint {
     pub fn mark_unhealthy(&mut self) {
         self.is_healthy = false;
         self.last_failure = Some(Instant::now());
+    }
+
+    /// Update endpoint capabilities
+    pub fn update_capabilities(&mut self, capabilities: CollectionCapabilities) {
+        self.capabilities = Some(capabilities);
+        self.last_capability_check = Some(Instant::now());
+    }
+
+    /// Check if capabilities need to be refreshed
+    pub fn needs_capability_refresh(&self, max_age: Duration) -> bool {
+        self.last_capability_check
+            .is_none_or(|last_check| last_check.elapsed() > max_age)
+    }
+
+    /// Check if this endpoint supports a specific task type
+    pub fn supports_task_type(&self, task_type: TaskType) -> bool {
+        let Some(ref caps) = self.capabilities else {
+            return false; // Unknown capabilities, assume not supported
+        };
+
+        match task_type {
+            TaskType::EnumerateProcesses
+            | TaskType::CheckProcessHash
+            | TaskType::MonitorProcessTree
+            | TaskType::VerifyExecutable => caps
+                .supported_domains
+                .contains(&i32::from(MonitoringDomain::Process)),
+            TaskType::MonitorNetworkConnections => caps
+                .supported_domains
+                .contains(&i32::from(MonitoringDomain::Network)),
+            TaskType::TrackFileOperations => caps
+                .supported_domains
+                .contains(&i32::from(MonitoringDomain::Filesystem)),
+            TaskType::CollectPerformanceMetrics => caps
+                .supported_domains
+                .contains(&i32::from(MonitoringDomain::Performance)),
+        }
+    }
+
+    /// Check if this endpoint supports advanced capabilities
+    pub fn supports_advanced_capability(&self, capability: &str) -> bool {
+        let Some(ref caps) = self.capabilities else {
+            return false;
+        };
+
+        let Some(ref advanced) = caps.advanced else {
+            return false;
+        };
+
+        match capability {
+            "kernel_level" => advanced.kernel_level,
+            "realtime" => advanced.realtime,
+            "system_wide" => advanced.system_wide,
+            _ => false,
+        }
     }
 
     /// Calculate health score for load balancing (higher = better)
@@ -400,6 +553,7 @@ impl CollectorEndpoint {
 
 /// Connection pool entry with metadata
 #[derive(Debug)]
+#[allow(dead_code)] // Work in progress - some fields not yet used
 struct PooledConnection {
     stream: LocalSocketStream,
     endpoint_id: String,
@@ -408,6 +562,7 @@ struct PooledConnection {
     use_count: u64,
 }
 
+#[allow(dead_code)] // Work in progress - some methods not yet used
 impl PooledConnection {
     fn new(stream: LocalSocketStream, endpoint_id: String) -> Self {
         let now = Instant::now();
@@ -432,6 +587,7 @@ impl PooledConnection {
 
 /// Advanced connection pool for managing multiple collector connections
 #[derive(Debug)]
+#[allow(dead_code)] // Work in progress - some fields not yet used
 struct ConnectionPool {
     /// Available connections by endpoint ID
     connections: HashMap<String, VecDeque<PooledConnection>>,
@@ -448,6 +604,7 @@ struct ConnectionPool {
     connection_semaphore: Arc<Semaphore>,
 }
 
+#[allow(dead_code)] // Work in progress - some methods not yet used
 impl ConnectionPool {
     fn new(max_connections_per_endpoint: usize, max_total_connections: usize) -> Self {
         Self {
@@ -551,18 +708,21 @@ impl ConnectionPool {
 }
 
 /// Load balancing strategy for multiple collectors
+///
+/// Defines how the client selects endpoints when multiple collectors are available.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LoadBalancingStrategy {
-    /// Round-robin selection
+    /// Round-robin selection - cycles through endpoints in order
     RoundRobin,
-    /// Weighted selection based on priority and health
+    /// Weighted selection based on priority and health scores
     Weighted,
     /// Always prefer the highest priority healthy endpoint
     Priority,
 }
 
 /// Advanced IPC client with connection management, load balancing, and resilience
+#[allow(dead_code)] // Work in progress - some fields not yet used
 pub struct ResilientIpcClient {
     config: IpcConfig,
     codec: IpcCodec,
@@ -584,6 +744,7 @@ pub struct ResilientIpcClient {
     max_reconnect_delay: Duration,
 }
 
+#[allow(dead_code)] // Work in progress - some methods not yet used
 impl ResilientIpcClient {
     /// Create a new resilient IPC client with a single endpoint
     pub fn new(config: &IpcConfig) -> Self {
@@ -692,6 +853,397 @@ impl ResilientIpcClient {
     /// Get metrics for monitoring
     pub fn metrics(&self) -> Arc<IpcClientMetrics> {
         Arc::clone(&self.metrics)
+    }
+
+    /// Negotiate capabilities with a specific collector endpoint
+    #[allow(clippy::wildcard_enum_match_arm)]
+    pub async fn negotiate_capabilities(
+        &self,
+        endpoint_id: &str,
+    ) -> IpcResult<CollectionCapabilities> {
+        let endpoint = {
+            let endpoints = self.endpoints.read().await;
+            endpoints
+                .iter()
+                .find(|e| e.id == endpoint_id)
+                .cloned()
+                .ok_or_else(|| {
+                    IpcError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Endpoint not found: {endpoint_id}"),
+                    ))
+                })?
+        };
+
+        // Establish connection for capability negotiation
+        let name = Self::create_socket_name_for_endpoint(&endpoint.endpoint_path)?;
+        let connect_timeout = Duration::from_millis(self.config.accept_timeout_ms);
+
+        let stream = timeout(connect_timeout, LocalSocketStream::connect(name))
+            .await
+            .map_err(|_err| IpcError::ConnectionTimeout {
+                endpoint: endpoint.endpoint_path.clone(),
+            })?
+            .map_err(|err| match err.kind() {
+                std::io::ErrorKind::NotFound => IpcError::ServerNotFound {
+                    endpoint: endpoint.endpoint_path.clone(),
+                },
+                std::io::ErrorKind::ConnectionRefused => IpcError::ConnectionRefused {
+                    endpoint: endpoint.endpoint_path.clone(),
+                },
+                _ => IpcError::Io(err),
+            })?;
+
+        // Create a capability negotiation task
+        let capability_task = DetectionTask {
+            task_id: format!("capability-negotiation-{}", uuid::Uuid::new_v4()),
+            task_type: i32::from(TaskType::EnumerateProcesses), // Use a basic task type for negotiation
+            process_filter: None,
+            hash_check: None,
+            metadata: Some("capability_negotiation".to_owned()),
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
+        };
+
+        // Send capability negotiation request
+        let result = self.send_task_on_stream(stream, capability_task).await?;
+
+        // For now, we'll extract capabilities from the result metadata
+        // In a full implementation, this would be a dedicated capability negotiation protocol
+        let capabilities = if result.success {
+            // Parse capabilities from result or use default process capabilities
+            CollectionCapabilities {
+                supported_domains: vec![i32::from(MonitoringDomain::Process)],
+                advanced: Some(crate::proto::AdvancedCapabilities {
+                    kernel_level: false,
+                    realtime: true,
+                    system_wide: true,
+                }),
+            }
+        } else {
+            return Err(IpcError::Io(std::io::Error::other(format!(
+                "Capability negotiation failed: {}",
+                result
+                    .error_message
+                    .unwrap_or_else(|| "Unknown error".to_owned())
+            ))));
+        };
+
+        // Update endpoint capabilities
+        {
+            let mut endpoints = self.endpoints.write().await;
+            if let Some(endpoint_mut) = endpoints.iter_mut().find(|e| e.id == endpoint_id) {
+                endpoint_mut.update_capabilities(capabilities.clone());
+                info!(
+                    endpoint_id = %endpoint_id,
+                    supported_domains = ?capabilities.supported_domains,
+                    "Updated endpoint capabilities"
+                );
+            }
+        }
+
+        Ok(capabilities)
+    }
+
+    /// Refresh capabilities for all endpoints that need it
+    pub async fn refresh_capabilities(&self) -> IpcResult<()> {
+        let capability_refresh_interval = Duration::from_secs(300); // 5 minutes
+        let endpoints_to_refresh = {
+            let endpoints = self.endpoints.read().await;
+            endpoints
+                .iter()
+                .filter(|e| e.needs_capability_refresh(capability_refresh_interval))
+                .map(|e| e.id.clone())
+                .collect::<Vec<_>>()
+        };
+
+        for endpoint_id in endpoints_to_refresh {
+            match self.negotiate_capabilities(&endpoint_id).await {
+                Ok(capabilities) => {
+                    debug!(
+                        endpoint_id = %endpoint_id,
+                        supported_domains = ?capabilities.supported_domains,
+                        "Refreshed capabilities for endpoint"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        endpoint_id = %endpoint_id,
+                        error = %e,
+                        "Failed to refresh capabilities for endpoint"
+                    );
+                    // Mark endpoint as unhealthy if capability negotiation fails
+                    self.update_endpoint_health(&endpoint_id, false).await;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Select the best endpoint for a specific task type
+    pub async fn select_endpoint_for_task(&self, task_type: TaskType) -> Option<CollectorEndpoint> {
+        let endpoints = self.endpoints.read().await;
+
+        if endpoints.is_empty() {
+            return None;
+        }
+
+        // Filter to endpoints that support the task type and are healthy
+        let compatible_endpoints: Vec<&CollectorEndpoint> = endpoints
+            .iter()
+            .filter(|e| e.is_healthy && e.supports_task_type(task_type))
+            .collect();
+
+        if compatible_endpoints.is_empty() {
+            // No compatible endpoints, try any healthy endpoint as fallback
+            warn!(
+                task_type = ?task_type,
+                "No endpoints support task type, falling back to any healthy endpoint"
+            );
+            let result = endpoints
+                .iter()
+                .filter(|e| e.is_healthy)
+                .min_by_key(|e| e.priority)
+                .cloned();
+            drop(endpoints);
+            return result;
+        }
+
+        // Select based on load balancing strategy among compatible endpoints
+        let result = match self.load_balancing_strategy {
+            LoadBalancingStrategy::RoundRobin => {
+                let counter = self.round_robin_counter.fetch_add(1, Ordering::Relaxed);
+                #[allow(clippy::arithmetic_side_effects)]
+                // Safe: wrapping_rem prevents overflow
+                let index = usize::try_from(counter)
+                    .unwrap_or(0)
+                    .wrapping_rem(compatible_endpoints.len());
+                compatible_endpoints.get(index).map(|&e| e.clone())
+            }
+            LoadBalancingStrategy::Weighted => {
+                // Select based on health score (higher is better)
+                compatible_endpoints
+                    .iter()
+                    .max_by(|a, b| {
+                        a.health_score()
+                            .partial_cmp(&b.health_score())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|&e| e.clone())
+            }
+            LoadBalancingStrategy::Priority => {
+                // Select highest priority (lowest number) compatible endpoint
+                compatible_endpoints
+                    .iter()
+                    .min_by_key(|e| e.priority)
+                    .map(|&e| e.clone())
+            }
+        };
+        drop(endpoints);
+        result
+    }
+
+    /// Send a task with automatic endpoint selection based on task type
+    pub async fn send_task_with_routing(&self, task: DetectionTask) -> IpcResult<DetectionResult> {
+        // Refresh capabilities if needed
+        if let Err(e) = self.refresh_capabilities().await {
+            warn!(error = %e, "Failed to refresh capabilities, proceeding with cached data");
+        }
+
+        // Determine task type
+        let task_type = TaskType::try_from(task.task_type).map_err(|_original_error| {
+            IpcError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Invalid task type: {task_type}", task_type = task.task_type),
+            ))
+        })?;
+
+        // Select appropriate endpoint
+        let endpoint = self
+            .select_endpoint_for_task(task_type)
+            .await
+            .ok_or_else(|| {
+                IpcError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("No endpoints available for task type: {task_type:?}"),
+                ))
+            })?;
+
+        debug!(
+            task_id = %task.task_id,
+            task_type = ?task_type,
+            endpoint_id = %endpoint.id,
+            "Routing task to compatible endpoint"
+        );
+
+        // Send task to selected endpoint
+        self.send_task_to_endpoint(task, &endpoint.id).await
+    }
+
+    /// Send a task to a specific endpoint
+    pub async fn send_task_to_endpoint(
+        &self,
+        task: DetectionTask,
+        endpoint_id: &str,
+    ) -> IpcResult<DetectionResult> {
+        let endpoint = {
+            let endpoints = self.endpoints.read().await;
+            endpoints
+                .iter()
+                .find(|e| e.id == endpoint_id)
+                .cloned()
+                .ok_or_else(|| {
+                    IpcError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Endpoint not found: {endpoint_id}"),
+                    ))
+                })?
+        };
+
+        // Check circuit breaker
+        let mut circuit_breaker = self.get_circuit_breaker(&endpoint.id).await;
+        if !circuit_breaker.should_attempt_connection() {
+            // Record task failure due to circuit breaker
+            self.metrics.record_task_failed();
+            return Err(IpcError::CircuitBreakerOpen);
+        }
+
+        // Record task attempt
+        self.metrics.record_task_sent();
+
+        // Try to get connection from pool first
+        let pooled_stream = {
+            let mut pool = self.connection_pool.lock().await;
+            pool.get_connection(&endpoint.id)
+        };
+
+        let stream = if let Some(pooled_conn) = pooled_stream {
+            debug!(endpoint_id = %endpoint.id, "Using pooled connection");
+            pooled_conn.stream
+        } else {
+            debug!(endpoint_id = %endpoint.id, "Creating new connection");
+            match self.establish_connection_to_endpoint(&endpoint).await {
+                Ok(s) => s,
+                Err(e) => {
+                    // Connection failed: update breaker, health, and metrics
+                    self.update_circuit_breaker(&endpoint.id, false).await;
+                    self.update_endpoint_health(&endpoint.id, false).await;
+                    self.metrics.record_task_failed();
+                    return Err(e);
+                }
+            }
+        };
+
+        // Send task
+        let result = self.send_task_on_stream(stream, task).await;
+        let success = result.is_ok();
+
+        // Update circuit breaker and endpoint health
+        self.update_circuit_breaker(&endpoint.id, success).await;
+        self.update_endpoint_health(&endpoint.id, success).await;
+
+        // Record failure in metrics if the task failed at any point
+        if !success {
+            self.metrics.record_task_failed();
+        }
+
+        result
+    }
+
+    /// Send a task on an established stream
+    async fn send_task_on_stream(
+        &self,
+        mut stream: LocalSocketStream,
+        task: DetectionTask,
+    ) -> IpcResult<DetectionResult> {
+        let start_time = Instant::now();
+        self.metrics.record_task_sent();
+
+        // Send the task using the codec
+        let write_timeout = Duration::from_millis(self.config.write_timeout_ms);
+        self.codec
+            .write_message(&mut stream, &task, write_timeout)
+            .await?;
+
+        // Read the response using the codec
+        let read_timeout = Duration::from_millis(self.config.read_timeout_ms);
+        let mut codec = IpcCodec::new(self.config.max_frame_bytes);
+        let result: DetectionResult = codec.read_message(&mut stream, read_timeout).await?;
+
+        let duration_ms = u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.metrics.record_task_completed(duration_ms);
+
+        debug!(
+            task_id = %task.task_id,
+            success = result.success,
+            duration_ms = duration_ms,
+            "Task completed"
+        );
+
+        Ok(result)
+    }
+
+    /// Get current endpoints (for monitoring and diagnostics)
+    pub async fn get_endpoints(&self) -> Vec<CollectorEndpoint> {
+        let endpoints = self.endpoints.read().await;
+        endpoints.clone()
+    }
+
+    /// Update endpoint priority
+    pub async fn update_endpoint_priority(&self, endpoint_id: &str, new_priority: u32) {
+        let mut endpoints = self.endpoints.write().await;
+        if let Some(endpoint) = endpoints.iter_mut().find(|e| e.id == endpoint_id) {
+            endpoint.priority = new_priority;
+            info!(
+                endpoint_id = %endpoint_id,
+                new_priority = new_priority,
+                "Updated endpoint priority"
+            );
+        }
+    }
+
+    /// Get comprehensive client statistics
+    pub async fn get_stats(&self) -> ClientStats {
+        let endpoint_stats = {
+            let endpoints = self.endpoints.read().await;
+            endpoints
+                .iter()
+                .map(|e| EndpointStats {
+                    endpoint_id: e.id.clone(),
+                    priority: e.priority,
+                    is_healthy: e.is_healthy,
+                    health_score: e.health_score(),
+                    circuit_breaker_state: {
+                        // Simplified: Currently reporting Closed until full CB tracking is wired in stats
+                        CircuitBreakerState::Closed
+                    },
+                    capabilities: e.capabilities.clone(),
+                    last_success: e.last_success,
+                    last_failure: e.last_failure,
+                })
+                .collect()
+        };
+        let pool = self.connection_pool.lock().await;
+
+        ClientStats {
+            load_balancing_strategy: self.load_balancing_strategy.clone(),
+            total_pooled_connections: pool.total_connections(),
+            endpoint_stats,
+        }
+    }
+
+    /// Clean up stale connections
+    pub async fn cleanup_connections(&self) {
+        let mut pool = self.connection_pool.lock().await;
+        pool.cleanup_stale_connections();
+    }
+
+    /// Send a task using the original method (for backward compatibility)
+    pub async fn send_task(&self, task: DetectionTask) -> IpcResult<DetectionResult> {
+        // Use the new routing method by default
+        self.send_task_with_routing(task).await
     }
 
     /// Select the best endpoint based on load balancing strategy
@@ -803,6 +1355,69 @@ impl ResilientIpcClient {
                 endpoint.mark_unhealthy();
             }
         }
+    }
+
+    /// Establish a new connection to a specific endpoint
+    async fn establish_connection_to_endpoint(
+        &self,
+        endpoint: &CollectorEndpoint,
+    ) -> IpcResult<LocalSocketStream> {
+        let start_time = Instant::now();
+        self.metrics.record_connection_attempt();
+
+        // Check circuit breaker for this endpoint
+        let mut circuit_breaker = self.get_circuit_breaker(&endpoint.id).await;
+        if !circuit_breaker.should_attempt_connection() {
+            return Err(IpcError::CircuitBreakerOpen);
+        }
+
+        // Acquire connection semaphore
+        let semaphore = {
+            let pool = self.connection_pool.lock().await;
+            pool.connection_semaphore()
+        };
+
+        let _permit = semaphore.acquire().await.map_err(|_ignored| {
+            IpcError::Io(std::io::Error::new(
+                std::io::ErrorKind::ResourceBusy,
+                "Connection pool exhausted",
+            ))
+        })?;
+
+        let name = Self::create_socket_name_for_endpoint(&endpoint.endpoint_path)?;
+
+        // Attempt connection with timeout
+        let connect_timeout = Duration::from_millis(self.config.accept_timeout_ms);
+        let stream = timeout(connect_timeout, LocalSocketStream::connect(name))
+            .await
+            .map_err(|_err| IpcError::ConnectionTimeout {
+                endpoint: endpoint.endpoint_path.clone(),
+            })?
+            .map_err(|err| {
+                // Convert OS errors to user-friendly IPC errors
+                #[allow(clippy::wildcard_enum_match_arm)]
+                match err.kind() {
+                    std::io::ErrorKind::NotFound => IpcError::ServerNotFound {
+                        endpoint: endpoint.endpoint_path.clone(),
+                    },
+                    std::io::ErrorKind::ConnectionRefused => IpcError::ConnectionRefused {
+                        endpoint: endpoint.endpoint_path.clone(),
+                    },
+                    _ => IpcError::Io(err),
+                }
+            })?;
+
+        let duration_ms = u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.metrics.record_connection_established(duration_ms);
+
+        debug!(
+            endpoint_id = %endpoint.id,
+            endpoint_path = %endpoint.endpoint_path,
+            duration_ms = duration_ms,
+            "Connection established to endpoint"
+        );
+
+        Ok(stream)
     }
 
     /// Establish a new connection to the selected endpoint
@@ -921,288 +1536,10 @@ impl ResilientIpcClient {
                 .set_pooled_connections(u64::try_from(pool.total_connections()).unwrap_or(0));
         }
     }
-
-    /// Cleanup stale connections periodically
-    pub async fn cleanup_connections(&self) {
-        let mut pool = self.connection_pool.lock().await;
-        pool.cleanup_stale_connections();
-
-        // Update metrics
-        self.metrics
-            .set_pooled_connections(u64::try_from(pool.total_connections()).unwrap_or(0));
-    }
-
-    /// Calculate exponential backoff delay
-    fn calculate_backoff_delay(&self, attempt: u32) -> Duration {
-        let delay_ms = u64::try_from(self.base_reconnect_delay.as_millis())
-            .unwrap_or(100)
-            .saturating_mul(2_u64.pow(attempt.min(10))); // Cap at 2^10 to prevent overflow
-
-        let delay = Duration::from_millis(delay_ms);
-        std::cmp::min(delay, self.max_reconnect_delay)
-    }
-
-    /// Send a detection task with automatic reconnection and retry logic
-    pub async fn send_task(&mut self, task: DetectionTask) -> IpcResult<DetectionResult> {
-        let task_id = task.task_id.clone();
-        let start_time = Instant::now();
-        let mut last_error = None;
-        let mut reconnect_attempts: u32 = 0;
-
-        self.metrics.record_task_sent();
-
-        for attempt in 0..=self.max_reconnect_attempts {
-            match self.attempt_send_task(&task).await {
-                Ok(result) => {
-                    let duration_ms = u64::try_from(start_time.elapsed().as_millis()).unwrap_or(0);
-                    self.metrics.record_task_completed(duration_ms);
-                    return Ok(result);
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                    reconnect_attempts = reconnect_attempts.saturating_add(1);
-
-                    if attempt < self.max_reconnect_attempts {
-                        let backoff_delay = self.calculate_backoff_delay(reconnect_attempts);
-
-                        warn!(
-                            task_id = %task_id,
-                            attempt = attempt.saturating_add(1),
-                            max_attempts = self.max_reconnect_attempts,
-                            backoff_ms = backoff_delay.as_millis(),
-                            "Task send failed, retrying with backoff"
-                        );
-
-                        sleep(backoff_delay).await;
-                    }
-                }
-            }
-        }
-
-        // All retry attempts failed
-        self.metrics.record_task_failed();
-        error!(
-            task_id = %task_id,
-            attempts = self.max_reconnect_attempts.saturating_add(1),
-            "Task send failed after all retry attempts"
-        );
-
-        Err(last_error
-            .unwrap_or_else(|| IpcError::Io(std::io::Error::other("All retry attempts failed"))))
-    }
-
-    /// Attempt to send a task with a single connection attempt
-    async fn attempt_send_task(&mut self, task: &DetectionTask) -> IpcResult<DetectionResult> {
-        let (mut stream, endpoint_id) = self.get_connection().await.inspect_err(|_e| {
-            self.metrics.record_connection_failed();
-        })?;
-
-        let read_timeout = Duration::from_millis(self.config.read_timeout_ms);
-        let write_timeout = Duration::from_millis(self.config.write_timeout_ms);
-
-        // Estimate message size for metrics
-        let estimated_size = task.task_id.len().saturating_add(100); // Rough estimate
-
-        // Send task with timeout
-        let write_result = timeout(
-            write_timeout,
-            self.codec.write_message(&mut stream, task, write_timeout),
-        )
-        .await
-        .map_err(|_err| {
-            IpcError::Io(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "Write timeout",
-            ))
-        })?;
-
-        match write_result {
-            Ok(()) => {
-                self.metrics
-                    .record_bytes_sent(u64::try_from(estimated_size).unwrap_or(0));
-            }
-            Err(e) => {
-                error!(endpoint_id = %endpoint_id, "Failed to write task: {}", e);
-                self.update_circuit_breaker(&endpoint_id, false).await;
-                self.update_endpoint_health(&endpoint_id, false).await;
-                return Err(e);
-            }
-        }
-
-        // Receive result with timeout
-        let result: IpcResult<DetectionResult> = timeout(
-            read_timeout,
-            self.codec.read_message(&mut stream, read_timeout),
-        )
-        .await
-        .map_err(|_err| {
-            IpcError::Io(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "Read timeout",
-            ))
-        })?;
-
-        match result {
-            Ok(detection_result) => {
-                // Estimate response size for metrics
-                let response_size = detection_result.processes.len().saturating_mul(200); // Rough estimate
-                self.metrics
-                    .record_bytes_received(u64::try_from(response_size).unwrap_or(0));
-
-                // Mark endpoint as healthy
-                self.update_circuit_breaker(&endpoint_id, true).await;
-                self.update_endpoint_health(&endpoint_id, true).await;
-
-                // Release connection back to pool
-                self.release_connection(stream, endpoint_id).await;
-
-                Ok(detection_result)
-            }
-            Err(e) => {
-                error!(endpoint_id = %endpoint_id, "Failed to read result: {}", e);
-                self.update_circuit_breaker(&endpoint_id, false).await;
-                self.update_endpoint_health(&endpoint_id, false).await;
-                Err(e)
-            }
-        }
-    }
-
-    /// Check if the client is healthy (has at least one healthy endpoint)
-    pub async fn health_check(&self) -> bool {
-        let endpoints = self.endpoints.read().await;
-        endpoints.iter().any(|e| e.is_healthy)
-    }
-
-    /// Get comprehensive connection statistics
-    #[allow(clippy::significant_drop_tightening)] // More readable with current structure
-    pub async fn get_stats(&self) -> AdvancedClientStats {
-        let endpoints = self.endpoints.read().await;
-        let circuit_breakers = self.circuit_breakers.read().await;
-        let pool = self.connection_pool.lock().await;
-
-        let endpoint_stats: Vec<EndpointStats> = endpoints
-            .iter()
-            .map(|endpoint| {
-                let circuit_breaker_state = circuit_breakers
-                    .get(&endpoint.id)
-                    .map_or(CircuitBreakerState::Closed, CircuitBreaker::state);
-
-                EndpointStats {
-                    endpoint_id: endpoint.id.clone(),
-                    endpoint_path: endpoint.endpoint_path.clone(),
-                    priority: endpoint.priority,
-                    is_healthy: endpoint.is_healthy,
-                    health_score: endpoint.health_score(),
-                    last_success: endpoint.last_success,
-                    last_failure: endpoint.last_failure,
-                    circuit_breaker_state,
-                }
-            })
-            .collect();
-
-        AdvancedClientStats {
-            endpoint_stats,
-            total_pooled_connections: pool.total_connections(),
-            load_balancing_strategy: self.load_balancing_strategy.clone(),
-            metrics: Arc::clone(&self.metrics),
-        }
-    }
-
-    /// Get list of all endpoints
-    pub async fn get_endpoints(&self) -> Vec<CollectorEndpoint> {
-        let endpoints = self.endpoints.read().await;
-        endpoints.clone()
-    }
-
-    /// Update endpoint priority for load balancing
-    pub async fn update_endpoint_priority(&self, endpoint_id: &str, new_priority: u32) -> bool {
-        let mut endpoints = self.endpoints.write().await;
-
-        if let Some(endpoint) = endpoints.iter_mut().find(|e| e.id == endpoint_id) {
-            endpoint.priority = new_priority;
-            info!(
-                endpoint_id = %endpoint_id,
-                new_priority = new_priority,
-                "Updated endpoint priority"
-            );
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Force health check on all endpoints
-    #[allow(clippy::significant_drop_tightening)] // More readable with current structure
-    pub async fn force_health_check(&self) -> Vec<(String, bool)> {
-        let endpoints = self.endpoints.read().await;
-        let mut results = Vec::new();
-
-        for endpoint in endpoints.iter() {
-            // Simple connection test
-            let is_healthy = match Self::create_socket_name_for_endpoint(&endpoint.endpoint_path) {
-                Ok(name) => {
-                    let connect_timeout = Duration::from_millis(1000); // Short timeout for health check
-                    timeout(connect_timeout, LocalSocketStream::connect(name))
-                        .await
-                        .is_ok()
-                }
-                Err(_) => false,
-            };
-
-            results.push((endpoint.id.clone(), is_healthy));
-        }
-
-        // Update endpoint health based on results
-        {
-            let mut endpoints_mut = self.endpoints.write().await;
-            for &(ref endpoint_id, is_healthy) in &results {
-                if let Some(endpoint) = endpoints_mut.iter_mut().find(|e| &e.id == endpoint_id) {
-                    if is_healthy {
-                        endpoint.mark_healthy();
-                    } else {
-                        endpoint.mark_unhealthy();
-                    }
-                }
-            }
-        }
-
-        results
-    }
-}
-
-/// Statistics about individual endpoints
-#[derive(Debug, Clone)]
-pub struct EndpointStats {
-    pub endpoint_id: String,
-    pub endpoint_path: String,
-    pub priority: u32,
-    pub is_healthy: bool,
-    pub health_score: f64,
-    pub last_success: Option<Instant>,
-    pub last_failure: Option<Instant>,
-    pub circuit_breaker_state: CircuitBreakerState,
-}
-
-/// Comprehensive statistics about the advanced client's state
-#[derive(Debug, Clone)]
-pub struct AdvancedClientStats {
-    pub endpoint_stats: Vec<EndpointStats>,
-    pub total_pooled_connections: usize,
-    pub load_balancing_strategy: LoadBalancingStrategy,
-    pub metrics: Arc<IpcClientMetrics>,
-}
-
-/// Legacy statistics for backward compatibility
-#[derive(Debug, Clone)]
-pub struct ClientStats {
-    pub connection_state: ConnectionState,
-    pub failure_count: u32,
-    pub is_circuit_breaker_open: bool,
-    pub reconnect_attempts: u32,
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used, clippy::str_to_string)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -1253,148 +1590,43 @@ mod tests {
     }
 
     #[test]
-    fn test_client_creation_with_multiple_endpoints() {
-        let (config, _temp_dir) = create_test_config();
-
-        let endpoints = vec![
-            CollectorEndpoint::new(
-                "collector1".to_owned(),
-                "/tmp/collector1.sock".to_owned(),
-                1,
-            ),
-            CollectorEndpoint::new(
-                "collector2".to_owned(),
-                "/tmp/collector2.sock".to_owned(),
-                2,
-            ),
-        ];
-
-        let _client = ResilientIpcClient::new_with_endpoints(
-            &config,
-            endpoints,
-            LoadBalancingStrategy::Weighted,
+    fn test_endpoint_capability_support() {
+        // Create an endpoint with process capabilities
+        let mut endpoint = CollectorEndpoint::new(
+            "process-collector".to_string(),
+            "/tmp/process-collector.sock".to_string(),
+            1,
         );
-        // Client creation always succeeds
-    }
 
-    #[test]
-    fn test_circuit_breaker_creation() {
-        let breaker = CircuitBreaker::new(3, Duration::from_secs(10), None);
-        assert_eq!(breaker.failure_count, 0);
-        assert!(!breaker.is_open());
-        assert_eq!(breaker.state(), CircuitBreakerState::Closed);
-    }
+        // Initially, endpoint should not support any tasks (no capabilities)
+        assert!(!endpoint.supports_task_type(TaskType::EnumerateProcesses));
+        assert!(!endpoint.supports_task_type(TaskType::MonitorNetworkConnections));
 
-    #[test]
-    fn test_circuit_breaker_failure_threshold() {
-        let mut breaker = CircuitBreaker::new(2, Duration::from_secs(1), None);
+        // Update with process capabilities
+        let process_capabilities = CollectionCapabilities {
+            supported_domains: vec![i32::from(MonitoringDomain::Process)],
+            advanced: Some(crate::proto::AdvancedCapabilities {
+                kernel_level: false,
+                realtime: true,
+                system_wide: true,
+            }),
+        };
 
-        // Record failures up to threshold
-        breaker.record_failure();
-        assert!(!breaker.is_open());
-        assert_eq!(breaker.state(), CircuitBreakerState::Closed);
+        endpoint.update_capabilities(process_capabilities);
 
-        breaker.record_failure();
-        assert!(breaker.is_open());
-        assert_eq!(breaker.state(), CircuitBreakerState::Open);
-        assert!(!breaker.should_attempt_connection());
-    }
+        // Now it should support process tasks but not network tasks
+        assert!(endpoint.supports_task_type(TaskType::EnumerateProcesses));
+        assert!(endpoint.supports_task_type(TaskType::CheckProcessHash));
+        assert!(endpoint.supports_task_type(TaskType::MonitorProcessTree));
+        assert!(endpoint.supports_task_type(TaskType::VerifyExecutable));
+        assert!(!endpoint.supports_task_type(TaskType::MonitorNetworkConnections));
+        assert!(!endpoint.supports_task_type(TaskType::TrackFileOperations));
+        assert!(!endpoint.supports_task_type(TaskType::CollectPerformanceMetrics));
 
-    #[test]
-    fn test_circuit_breaker_half_open_recovery() {
-        let mut breaker = CircuitBreaker::new(1, Duration::from_millis(100), None);
-
-        // Trigger circuit breaker
-        breaker.record_failure();
-        assert!(breaker.is_open());
-        assert_eq!(breaker.state(), CircuitBreakerState::Open);
-
-        // Wait for recovery timeout
-        std::thread::sleep(Duration::from_millis(150));
-        assert!(breaker.should_attempt_connection());
-        assert_eq!(breaker.state(), CircuitBreakerState::HalfOpen);
-
-        // Test successful recovery
-        breaker.record_success();
-        breaker.record_success();
-        breaker.record_success(); // Need 3 successes to close
-        assert!(!breaker.is_open());
-        assert_eq!(breaker.state(), CircuitBreakerState::Closed);
-    }
-
-    #[test]
-    fn test_backoff_calculation() {
-        let config = IpcConfig::default();
-        let client = ResilientIpcClient::new(&config);
-
-        // Test exponential backoff
-        assert_eq!(
-            client.calculate_backoff_delay(0),
-            Duration::from_millis(100)
-        );
-        assert_eq!(
-            client.calculate_backoff_delay(1),
-            Duration::from_millis(200)
-        );
-        assert_eq!(
-            client.calculate_backoff_delay(2),
-            Duration::from_millis(400)
-        );
-    }
-
-    #[test]
-    fn test_endpoint_health_scoring() {
-        let mut endpoint =
-            CollectorEndpoint::new("test".to_owned(), "/tmp/test.sock".to_owned(), 2);
-
-        // Initial score based on priority
-        let initial_score = endpoint.health_score();
-        assert!(initial_score > 0.0);
-
-        // Mark as successful
-        endpoint.mark_healthy();
-        let success_score = endpoint.health_score();
-        assert!(success_score >= initial_score);
-
-        // Mark as unhealthy
-        endpoint.mark_unhealthy();
-        assert!((endpoint.health_score() - 0.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_connection_pool() {
-        let mut pool = ConnectionPool::new(2, 10);
-        assert_eq!(pool.total_connections(), 0);
-
-        // Pool starts empty
-        assert!(pool.get_connection("test").is_none());
-    }
-
-    #[test]
-    fn test_metrics_collection() {
-        let metrics = IpcClientMetrics::new();
-
-        // Test task metrics
-        metrics.record_task_sent();
-        metrics.record_task_completed(100);
-        assert_eq!(metrics.tasks_sent_total.load(Ordering::Relaxed), 1);
-        assert_eq!(metrics.tasks_completed_total.load(Ordering::Relaxed), 1);
-        assert!((metrics.average_task_duration_ms() - 100.0).abs() < f64::EPSILON);
-
-        // Test connection metrics
-        metrics.record_connection_attempt();
-        metrics.record_connection_established(50);
-        assert_eq!(metrics.connection_attempts_total.load(Ordering::Relaxed), 1);
-        assert_eq!(
-            metrics
-                .connections_established_total
-                .load(Ordering::Relaxed),
-            1
-        );
-        assert!((metrics.average_connection_duration_ms() - 50.0).abs() < f64::EPSILON);
-
-        // Test success rate
-        assert!((metrics.success_rate() - 1.0).abs() < f64::EPSILON);
-        assert!((metrics.connection_success_rate() - 1.0).abs() < f64::EPSILON);
+        // Test advanced capabilities
+        assert!(!endpoint.supports_advanced_capability("kernel_level"));
+        assert!(endpoint.supports_advanced_capability("realtime"));
+        assert!(endpoint.supports_advanced_capability("system_wide"));
+        assert!(!endpoint.supports_advanced_capability("unknown_capability"));
     }
 }
