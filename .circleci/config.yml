@@ -71,6 +71,8 @@ jobs:
     quality:
         docker:
             - image: cimg/rust:1.89
+        retention:
+            caches: 1d
         environment:
             <<: *common_env
         steps:
@@ -313,7 +315,7 @@ workflows:
             # Cross-platform tests require quality to pass (parallel to basic test)
             - test-cross-platform-linux-ubuntu-latest:
                   requires:
-                      - quality
+                      - test
                   filters:
                       branches:
                           only: /.*/
@@ -322,7 +324,7 @@ workflows:
 
             - test-cross-platform-linux-ubuntu-22:
                   requires:
-                      - quality
+                      - test
                   filters:
                       branches:
                           only: /.*/
@@ -331,7 +333,7 @@ workflows:
 
             - test-cross-platform-macos:
                   requires:
-                      - quality
+                      - test
                   filters:
                       branches:
                           only: /.*/
@@ -341,7 +343,9 @@ workflows:
             # Coverage requires all tests to pass
             - coverage:
                   requires:
-                      - quality
+                      - test-cross-platform-linux-ubuntu-latest
+                      - test-cross-platform-linux-ubuntu-22
+                      - test-cross-platform-macos
                   filters:
                       branches:
                           only: /.*/
