@@ -2,9 +2,9 @@
 
 ## Overview
 
-This design document outlines the architecture and implementation approach for SentinelD Enterprise tier features, which extend the collector-core framework with kernel-level visibility, federated fleet management, and enterprise-grade security features. The Enterprise tier builds upon the proven collector-core foundation established in the sentineld-core-monitoring specification to provide real-time security monitoring capabilities.
+This design document outlines the architecture and implementation approach for DaemonEye Enterprise tier features, which extend the collector-core framework with kernel-level visibility, federated fleet management, and enterprise-grade security features. The Enterprise tier builds upon the proven collector-core foundation established in the DaemonEye-core-monitoring specification to provide real-time security monitoring capabilities.
 
-The Enterprise tier maintains SentinelD's core security principles while leveraging the collector-core framework's extensible EventSource architecture to add advanced monitoring capabilities required for large-scale deployments, compliance environments, and sophisticated threat detection scenarios.
+The Enterprise tier maintains DaemonEye's core security principles while leveraging the collector-core framework's extensible EventSource architecture to add advanced monitoring capabilities required for large-scale deployments, compliance environments, and sophisticated threat detection scenarios.
 
 ## Architecture
 
@@ -38,8 +38,8 @@ graph TB
             PROC --> CR
         end
 
-        AGENT["sentinelagent<br/>(Enhanced Orchestrator)<br/>• Multi-domain correlation<br/>• Enterprise rule engine<br/>• Federation client<br/>• STIX/TAXII integration"]
-        CLI["sentinelcli<br/>(Management Interface)<br/>• Enterprise queries<br/>• Fleet management<br/>• Compliance reporting"]
+        AGENT["daemoneye-agent<br/>(Enhanced Orchestrator)<br/>• Multi-domain correlation<br/>• Enterprise rule engine<br/>• Federation client<br/>• STIX/TAXII integration"]
+        CLI["daemoneye-cli<br/>(Management Interface)<br/>• Enterprise queries<br/>• Fleet management<br/>• Compliance reporting"]
     end
 
     subgraph "Federated Security Centers"
@@ -224,7 +224,7 @@ impl EventSource for EndpointSecurityEventSource {
 
 ### Enterprise Collector-Core Integration
 
-The Enterprise tier leverages the existing collector-core framework from sentineld-core-monitoring, extending it with kernel-level EventSource implementations:
+The Enterprise tier leverages the existing collector-core framework from DaemonEye-core-monitoring, extending it with kernel-level EventSource implementations:
 
 ```rust
 // Enterprise EventSources implement the same EventSource trait as OSS components
@@ -292,7 +292,7 @@ bitflags! {
     }
 }
 
-// sentinelagent discovers capabilities and routes tasks appropriately
+// daemoneye-agent discovers capabilities and routes tasks appropriately
 impl EnterpriseOrchestrator {
     async fn discover_capabilities(&self) -> SourceCaps {
         // Query collector-core for available EventSource capabilities
@@ -312,9 +312,9 @@ impl EnterpriseOrchestrator {
 }
 ```
 
-### Enhanced sentinelagent (Enterprise Orchestrator)
+### Enhanced daemoneye-agent (Enterprise Orchestrator)
 
-The Enterprise tier extends sentinelagent with multi-domain event correlation and advanced detection capabilities:
+The Enterprise tier extends daemoneye-agent with multi-domain event correlation and advanced detection capabilities:
 
 ```rust
 pub struct EnterpriseOrchestrator {
@@ -527,7 +527,7 @@ impl TaxiiClient {
     }
 
     pub async fn convert_to_detection_rules(&self, indicators: Vec<StixIndicator>) -> Result<Vec<DetectionRule>, ConversionError> {
-        // Convert STIX indicators to SentinelD detection rules
+        // Convert STIX indicators to DaemonEye detection rules
     }
 }
 ```
@@ -763,7 +763,7 @@ impl EbpfEventSource {
             .set_global("CONFIG_ENABLE_PROCESS_MON", &(config.enable_process_monitoring as u32), true)
             .set_global("CONFIG_ENABLE_NETWORK_MON", &(config.enable_network_monitoring as u32), true)
             .load(include_bytes_aligned!(
-                "../../target/bpf/sentinel_monitor"
+                "../../target/bpf/daemoneye_monitor"
             ))?;
 
         // Initialize BPF logger for debugging
@@ -1449,4 +1449,4 @@ Based on current research (2025-09-15), the following crate selections were made
 - tracing (0.1+) provides unified structured logging across platforms
 - Version numbers reflect current stable releases as of 2024
 
-This design provides a comprehensive foundation for implementing Enterprise tier features while maintaining SentinelD's security-first architecture and performance requirements.
+This design provides a comprehensive foundation for implementing Enterprise tier features while maintaining DaemonEye's security-first architecture and performance requirements.

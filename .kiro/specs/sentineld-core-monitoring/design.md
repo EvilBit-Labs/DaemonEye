@@ -2,7 +2,7 @@
 
 ## Overview
 
-SentinelD implements a three-component security architecture with strict privilege separation to provide continuous process monitoring and threat detection. The system is designed around the principle of minimal attack surface while maintaining high performance and audit-grade integrity.
+DaemonEye implements a three-component security architecture with strict privilege separation to provide continuous process monitoring and threat detection. The system is designed around the principle of minimal attack surface while maintaining high performance and audit-grade integrity.
 
 The core design follows a pipeline architecture where process data flows from collection through detection to alerting, with each component having clearly defined responsibilities and security boundaries.
 
@@ -37,7 +37,7 @@ graph LR
         PerfS --> CR
     end
 
-    CC --> SA["sentinelagent<br/>(Orchestrator)<br/>• Task dispatch<br/>• Data aggregation<br/>• SQL detection<br/>• Alert management"]
+    CC --> SA["daemoneye-agent<br/>(Orchestrator)<br/>• Task dispatch<br/>• Data aggregation<br/>• SQL detection<br/>• Alert management"]
 
 
 ```
@@ -58,20 +58,20 @@ graph LR
 
 ### Component Architecture
 
-SentinelD consists of three main components that work together to provide comprehensive process monitoring, with procmond built on the collector-core framework:
+DaemonEye consists of three main components that work together to provide comprehensive process monitoring, with procmond built on the collector-core framework:
 
 ```mermaid
 graph LR
-    subgraph "SentinelD Architecture"
-        CLI["sentinelcli<br/>(Interface)<br/>• User space<br/>• Queries<br/>• Management<br/>• Diagnostics<br/>• Config mgmt"]
+    subgraph "DaemonEye Architecture"
+        CLI["daemoneye-cli<br/>(Interface)<br/>• User space<br/>• Queries<br/>• Management<br/>• Diagnostics<br/>• Config mgmt"]
 
-        AGENT["sentinelagent<br/>(Orchestrator)<br/>• User space<br/>• SQL engine<br/>• Rule mgmt<br/>• Detection<br/>• Alerting<br/>• Network comm<br/>• Task dispatch<br/>• Multi-domain correlation"]
+        AGENT["daemoneye-agent<br/>(Orchestrator)<br/>• User space<br/>• SQL engine<br/>• Rule mgmt<br/>• Detection<br/>• Alerting<br/>• Network comm<br/>• Task dispatch<br/>• Multi-domain correlation"]
 
         PROC["procmond<br/>(collector-core + process EventSource)<br/>• Privileged<br/>• Process enum<br/>• Hash compute<br/>• Audit logging<br/>• Protobuf IPC<br/>• Extensible architecture"]
 
         AUDIT["Audit Ledger<br/>(Merkle Tree)<br/>collector-core managed"]
 
-        STORE["Event Store<br/>(redb)<br/>sentinelagent managed"]
+        STORE["Event Store<br/>(redb)<br/>daemoneye-agent managed"]
     end
 
     CLI ---|IPC| AGENT
@@ -82,7 +82,7 @@ graph LR
 
 ```
 
-**IPC Protocol**: Protobuf + CRC32 framing over interprocess crate (existing implementation) **Communication Flow**: sentinelcli ↔ sentinelagent ↔ collector-core components Service Management: sentinelagent manages collector-core component lifecycle Extensibility: collector-core enables future business/enterprise tier functionality
+**IPC Protocol**: Protobuf + CRC32 framing over interprocess crate (existing implementation) **Communication Flow**: daemoneye-cli ↔ daemoneye-agent ↔ collector-core components Service Management: daemoneye-agent manages collector-core component lifecycle Extensibility: collector-core enables future business/enterprise tier functionality
 
 ### Data Flow Architecture
 
@@ -90,8 +90,8 @@ The system implements a pipeline processing model with clear phases and strict c
 
 ```mermaid
 sequenceDiagram
-    participant CLI as sentinelcli
-    participant AGENT as sentinelagent
+    participant CLI as daemoneye-cli
+    participant AGENT as daemoneye-agent
     participant CORE as collector-core
     participant PROC as ProcessEventSource
     participant AUDIT as Audit Ledger
@@ -127,21 +127,21 @@ sequenceDiagram
 **Pipeline Phases**:
 
 1. **Collection Phase**: procmond enumerates processes and computes hashes
-2. **SQL-to-IPC Translation**: sentinelagent uses sqlparser to extract collection requirements from SQL AST
+2. **SQL-to-IPC Translation**: daemoneye-agent uses sqlparser to extract collection requirements from SQL AST
 3. **Task Generation**: Complex SQL detection rules translated into simple protobuf collection tasks
 4. **IPC Communication**: procmond receives simple detection tasks via protobuf over IPC
 5. **Overcollection Strategy**: procmond may overcollect data due to granularity limitations
 6. **Audit Logging**: procmond writes to tamper-evident audit ledger (write-only; redb + rs-merkle Merkle tree)
-7. **Detection Phase**: sentinelagent executes original SQL rules against collected/stored data
+7. **Detection Phase**: daemoneye-agent executes original SQL rules against collected/stored data
 8. **Alert Generation**: Structured alerts with deduplication and context
 9. **Delivery Phase**: Multi-channel alert delivery with reliability guarantees
 
 **Key Architectural Principles**:
 
 - procmond has minimal complexity and attack surface
-- All complex logic (SQL, networking, redb) handled by sentinelagent
+- All complex logic (SQL, networking, redb) handled by daemoneye-agent
 - IPC protocol is simple and purpose-built for security
-- Clear separation between audit logging (procmond) and event processing (sentinelagent)
+- Clear separation between audit logging (procmond) and event processing (daemoneye-agent)
 - Pure Rust stack with redb for optimal performance and security
 - Zero unsafe code goal with any required unsafe code isolated to procmond only
 
@@ -157,7 +157,7 @@ The collector-core framework will wrap and extend existing proven components:
 
 - **IPC Infrastructure**: Complete interprocess crate integration (docs/src/technical/ipc-implementation.md)
 
-  - `InterprocessServer` and `InterprocessClient` from sentinel-lib/src/ipc/
+  - `InterprocessServer` and `InterprocessClient` from daemoneye-lib/src/ipc/
   - `IpcCodec` with CRC32 validation and frame protocol
   - `IpcConfig` with comprehensive timeout and security settings
   - Cross-platform transport layer (Unix sockets, Windows named pipes)
@@ -169,19 +169,19 @@ The collector-core framework will wrap and extend existing proven components:
   - `handle_detection_task()` with task routing and error handling
   - Support for process filtering and hash verification
 
-- **Database Integration**: Existing storage layer (sentinel-lib/src/storage.rs)
+- **Database Integration**: Existing storage layer (daemoneye-lib/src/storage.rs)
 
   - `DatabaseManager` with redb backend
   - Table definitions and transaction handling
   - Serialization and error handling
 
-- **Configuration Management**: Existing config system (sentinel-lib/src/config.rs)
+- **Configuration Management**: Existing config system (daemoneye-lib/src/config.rs)
 
   - `ConfigLoader` with hierarchical overrides
   - Environment variable and file-based configuration
   - Validation and error handling
 
-- **Telemetry and Logging**: Existing observability (sentinel-lib/src/telemetry.rs)
+- **Telemetry and Logging**: Existing observability (daemoneye-lib/src/telemetry.rs)
 
   - `TelemetryCollector` for performance monitoring
   - Structured logging with tracing crate
@@ -241,9 +241,9 @@ bitflags! {
 
 **Shared Infrastructure**:
 
-- **Configuration Management**: Hierarchical config loading with validation (sentinel-lib/src/config.rs)
-- **Logging Infrastructure**: Structured tracing with JSON output and metrics (sentinel-lib/src/telemetry.rs)
-- **IPC Server**: Protobuf-based communication with sentinelagent (sentinel-lib/src/ipc/)
+- **Configuration Management**: Hierarchical config loading with validation (daemoneye-lib/src/config.rs)
+- **Logging Infrastructure**: Structured tracing with JSON output and metrics (daemoneye-lib/src/telemetry.rs)
+- **IPC Server**: Protobuf-based communication with daemoneye-agent (daemoneye-lib/src/ipc/)
 - **Health Monitoring**: Component status tracking and graceful shutdown
 - **Event Batching**: Efficient event aggregation and backpressure handling
 - **Capability Negotiation**: Dynamic feature discovery and task routing
@@ -342,7 +342,7 @@ fn main() -> anyhow::Result<()> {
 - `ProcessEventSource` implementing the EventSource trait
 - **EXISTING**: `ProcessMessageHandler` for process enumeration and task handling (from procmond/src/lib.rs)
 - **EXISTING**: `IpcConfig` and IPC server creation (from procmond/src/ipc/mod.rs)
-- **EXISTING**: Database integration via `storage::DatabaseManager` (from sentinel-lib)
+- **EXISTING**: Database integration via `storage::DatabaseManager` (from daemoneye-lib)
 - Integration with collector-core runtime and existing IPC infrastructure
 
 **Core Implementation**:
@@ -399,7 +399,7 @@ fn main() -> anyhow::Result<()> {
 - Zero unsafe code goal; any required unsafe code isolated to highly structured, tested modules
 - Leverages collector-core framework for operational infrastructure
 
-### sentinelagent (Detection Orchestrator)
+### daemoneye-agent (Detection Orchestrator)
 
 **Purpose**: User-space detection rule execution, alert management, and collector-core component lifecycle management
 
@@ -452,7 +452,7 @@ pub trait DetectionEngine {
 - Manages service dependencies and startup ordering
 - Provides unified logging and health reporting for the entire system
 
-### sentinelcli (Operator Interface)
+### daemoneye-cli (Operator Interface)
 
 **Purpose**: Command-line interface for queries, management, and diagnostics
 
@@ -482,21 +482,21 @@ pub trait QueryExecutor {
 **Security Boundaries**:
 
 - No network access
-- No direct database access (communicates through sentinelagent)
+- No direct database access (communicates through daemoneye-agent)
 - Input validation for all user-provided data
-- Safe SQL execution via sentinelagent with prepared statements
-- Communicates only with sentinelagent for all operations
+- Safe SQL execution via daemoneye-agent with prepared statements
+- Communicates only with daemoneye-agent for all operations
 
 ### IPC Protocol Design
 
-**Purpose**: Secure, efficient communication between collector-core components and sentinelagent
+**Purpose**: Secure, efficient communication between collector-core components and daemoneye-agent
 
 **Protocol Specification** (extending existing protobuf definitions):
 
 ```protobuf
 syntax = "proto3";
 
-// NEW: Capability negotiation between collector-core and sentinelagent
+// NEW: Capability negotiation between collector-core and daemoneye-agent
 message CollectionCapabilities {
     bool supports_processes = 1;
     bool supports_network = 2;      // Future: netmond
@@ -594,7 +594,7 @@ message ProcessRecord {
 
 ```mermaid
 sequenceDiagram
-    participant SA as sentinelagent
+    participant SA as daemoneye-agent
     participant PM as procmond
     participant C as Codec
     participant UDS as Unix Socket
@@ -653,7 +653,7 @@ flowchart TD
 
 ### Core Data Structures
 
-**ProcessRecord**: Represents a single process snapshot (existing implementation in sentinel-lib/src/models/process.rs)
+**ProcessRecord**: Represents a single process snapshot (existing implementation in daemoneye-lib/src/models/process.rs)
 
 ```rust
 // Existing ProcessRecord structure (from protobuf and Rust models)
@@ -679,10 +679,10 @@ pub struct ProcessRecord {
 }
 ```
 
-**Alert**: Represents a detection result with full context (existing implementation in sentinel-lib/src/models/alert.rs)
+**Alert**: Represents a detection result with full context (existing implementation in daemoneye-lib/src/models/alert.rs)
 
 ```rust
-// Existing Alert structure (from sentinel-lib models)
+// Existing Alert structure (from daemoneye-lib models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
     pub id: AlertId, // Existing: Uuid wrapper
@@ -709,10 +709,10 @@ pub enum AlertSeverity {
 }
 ```
 
-**DetectionRule**: SQL-based detection rule with metadata (existing implementation in sentinel-lib/src/models/rule.rs)
+**DetectionRule**: SQL-based detection rule with metadata (existing implementation in daemoneye-lib/src/models/rule.rs)
 
 ```rust
-// Existing DetectionRule structure (from sentinel-lib models)
+// Existing DetectionRule structure (from daemoneye-lib models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionRule {
     pub id: RuleId, // Existing: String wrapper
@@ -1164,22 +1164,22 @@ Security Invariants:
 
 See also: `database-standards.mdc` for operational procedures (recovery, pruning, checkpoint export) and future enhancements roadmap.
 
-## SentinelCLI Command-Line Interface Design
+## daemoneye-cli Command-Line Interface Design
 
 ### Overview
 
-SentinelCLI provides a comprehensive command-line interface for operators to query data, manage detection rules, monitor system health, and perform administrative tasks. It communicates exclusively with sentinelagent via IPC, maintaining the security boundary where CLI never directly accesses the database.
+daemoneye-cli provides a comprehensive command-line interface for operators to query data, manage detection rules, monitor system health, and perform administrative tasks. It communicates exclusively with daemoneye-agent via IPC, maintaining the security boundary where CLI never directly accesses the database.
 
 ### Command Structure
 
 ```bash
-sentinelcli [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] [ARGS]
+daemoneye-cli [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] [ARGS]
 ```
 
 ### Global Options
 
 ```bash
---config <PATH>          Configuration file path (default: ~/.config/sentineld/cli.yaml)
+--config <PATH>          Configuration file path (default: ~/.config/DaemonEye/cli.yaml)
 --output <FORMAT>        Output format: json, table, csv (default: table)
 --no-color              Disable colored output
 --verbose               Enable verbose logging
@@ -1195,30 +1195,30 @@ Execute SQL queries against historical process data:
 
 ```bash
 # Interactive query mode
-sentinelcli query
+daemoneye-cli query
 
 # Execute single query
-sentinelcli query --sql "SELECT pid, name, executable_path FROM processes WHERE name LIKE '%suspicious%'"
+daemoneye-cli query --sql "SELECT pid, name, executable_path FROM processes WHERE name LIKE '%suspicious%'"
 
 # Query with parameters
-sentinelcli query --sql "SELECT * FROM processes WHERE start_time > ?" --param "2024-01-01T00:00:00Z"
+daemoneye-cli query --sql "SELECT * FROM processes WHERE start_time > ?" --param "2024-01-01T00:00:00Z"
 
 # Export query results
-sentinelcli query --sql "SELECT * FROM processes" --output csv --file processes.csv
+daemoneye-cli query --sql "SELECT * FROM processes" --output csv --file processes.csv
 
 # Streaming for large results
-sentinelcli query --sql "SELECT * FROM processes" --stream --limit 1000
+daemoneye-cli query --sql "SELECT * FROM processes" --stream --limit 1000
 
 # Query with pagination
-sentinelcli query --sql "SELECT * FROM processes ORDER BY start_time DESC" --page 1 --page-size 50
+daemoneye-cli query --sql "SELECT * FROM processes ORDER BY start_time DESC" --page 1 --page-size 50
 ```
 
 **Subcommands:**
 
-- `sentinelcli query interactive` - Start interactive SQL shell
-- `sentinelcli query history` - Show query history
-- `sentinelcli query explain <SQL>` - Show query execution plan
-- `sentinelcli query validate <SQL>` - Validate SQL syntax without execution
+- `daemoneye-cli query interactive` - Start interactive SQL shell
+- `daemoneye-cli query history` - Show query history
+- `daemoneye-cli query explain <SQL>` - Show query execution plan
+- `daemoneye-cli query validate <SQL>` - Validate SQL syntax without execution
 
 #### 2. Rule Management (`rules`)
 
@@ -1226,37 +1226,37 @@ Manage detection rules and rule packs:
 
 ```bash
 # List all rules
-sentinelcli rules list
+daemoneye-cli rules list
 
 # Show rule details
-sentinelcli rules show <rule-id>
+daemoneye-cli rules show <rule-id>
 
 # Validate rule syntax
-sentinelcli rules validate <rule-file>
+daemoneye-cli rules validate <rule-file>
 
 # Test rule against historical data
-sentinelcli rules test <rule-id> --since "1 hour ago"
+daemoneye-cli rules test <rule-id> --since "1 hour ago"
 
 # Enable/disable rules
-sentinelcli rules enable <rule-id>
-sentinelcli rules disable <rule-id>
+daemoneye-cli rules enable <rule-id>
+daemoneye-cli rules disable <rule-id>
 
 # Import/export rules
-sentinelcli rules import <rule-pack.yaml>
-sentinelcli rules export --output rules-backup.yaml
+daemoneye-cli rules import <rule-pack.yaml>
+daemoneye-cli rules export --output rules-backup.yaml
 
 # Rule statistics
-sentinelcli rules stats <rule-id>
-sentinelcli rules stats --all
+daemoneye-cli rules stats <rule-id>
+daemoneye-cli rules stats --all
 ```
 
 **Subcommands:**
 
-- `sentinelcli rules create` - Create new rule interactively
-- `sentinelcli rules edit <rule-id>` - Edit existing rule
-- `sentinelcli rules delete <rule-id>` - Delete rule
-- `sentinelcli rules pack list` - List available rule packs
-- `sentinelcli rules pack install <pack-name>` - Install rule pack
+- `daemoneye-cli rules create` - Create new rule interactively
+- `daemoneye-cli rules edit <rule-id>` - Edit existing rule
+- `daemoneye-cli rules delete <rule-id>` - Delete rule
+- `daemoneye-cli rules pack list` - List available rule packs
+- `daemoneye-cli rules pack install <pack-name>` - Install rule pack
 
 #### 3. Alert Management (`alerts`)
 
@@ -1264,28 +1264,28 @@ View and manage alerts:
 
 ```bash
 # List recent alerts
-sentinelcli alerts list
+daemoneye-cli alerts list
 
 # Show alert details
-sentinelcli alerts show <alert-id>
+daemoneye-cli alerts show <alert-id>
 
 # Filter alerts
-sentinelcli alerts list --severity high --since "24 hours ago"
-sentinelcli alerts list --rule-id suspicious-process --status open
+daemoneye-cli alerts list --severity high --since "24 hours ago"
+daemoneye-cli alerts list --rule-id suspicious-process --status open
 
 # Alert statistics
-sentinelcli alerts stats --by-severity
-sentinelcli alerts stats --by-rule --since "7 days ago"
+daemoneye-cli alerts stats --by-severity
+daemoneye-cli alerts stats --by-rule --since "7 days ago"
 
 # Export alerts
-sentinelcli alerts export --format json --since "1 week ago" --file alerts.json
+daemoneye-cli alerts export --format json --since "1 week ago" --file alerts.json
 ```
 
 **Subcommands:**
 
-- `sentinelcli alerts acknowledge <alert-id>` - Acknowledge alert
-- `sentinelcli alerts close <alert-id>` - Close alert
-- `sentinelcli alerts reopen <alert-id>` - Reopen closed alert
+- `daemoneye-cli alerts acknowledge <alert-id>` - Acknowledge alert
+- `daemoneye-cli alerts close <alert-id>` - Close alert
+- `daemoneye-cli alerts reopen <alert-id>` - Reopen closed alert
 
 #### 4. System Health (`health`)
 
@@ -1293,28 +1293,28 @@ Monitor system health and diagnostics:
 
 ```bash
 # Overall system status
-sentinelcli health
+daemoneye-cli health
 
 # Component-specific status
-sentinelcli health --component procmond
-sentinelcli health --component sentinelagent
-sentinelcli health --component database
+daemoneye-cli health --component procmond
+daemoneye-cli health --component daemoneye-agent
+daemoneye-cli health --component database
 
 # Performance metrics
-sentinelcli health metrics
+daemoneye-cli health metrics
 
 # Configuration validation
-sentinelcli health config
+daemoneye-cli health config
 
 # Connection testing
-sentinelcli health connectivity
+daemoneye-cli health connectivity
 ```
 
 **Subcommands:**
 
-- `sentinelcli health logs` - Show recent system logs
-- `sentinelcli health diagnostics` - Run comprehensive diagnostics
-- `sentinelcli health repair` - Attempt automatic issue resolution
+- `daemoneye-cli health logs` - Show recent system logs
+- `daemoneye-cli health diagnostics` - Run comprehensive diagnostics
+- `daemoneye-cli health repair` - Attempt automatic issue resolution
 
 #### 5. Data Management (`data`)
 
@@ -1322,20 +1322,20 @@ Data export, import, and maintenance:
 
 ```bash
 # Export process data
-sentinelcli data export processes --since "7 days ago" --format json
+daemoneye-cli data export processes --since "7 days ago" --format json
 
 # Export audit logs
-sentinelcli data export audit --format csv --file audit.csv
+daemoneye-cli data export audit --format csv --file audit.csv
 
 # Database statistics
-sentinelcli data stats
+daemoneye-cli data stats
 
 # Database maintenance
-sentinelcli data vacuum
-sentinelcli data integrity-check
+daemoneye-cli data vacuum
+daemoneye-cli data integrity-check
 
 # Data retention management
-sentinelcli data cleanup --older-than "30 days"
+daemoneye-cli data cleanup --older-than "30 days"
 ```
 
 #### 6. Configuration (`config`)
@@ -1344,17 +1344,17 @@ Configuration management:
 
 ```bash
 # Show current configuration
-sentinelcli config show
+daemoneye-cli config show
 
 # Validate configuration
-sentinelcli config validate
+daemoneye-cli config validate
 
 # Set configuration values
-sentinelcli config set alert.email.smtp_server smtp.example.com
-sentinelcli config set detection.scan_interval 30s
+daemoneye-cli config set alert.email.smtp_server smtp.example.com
+daemoneye-cli config set detection.scan_interval 30s
 
 # Reset configuration
-sentinelcli config reset
+daemoneye-cli config reset
 ```
 
 #### 7. Service Management (`service`)
@@ -1363,16 +1363,16 @@ Service lifecycle management:
 
 ```bash
 # Service status
-sentinelcli service status
+daemoneye-cli service status
 
 # Start/stop services
-sentinelcli service start
-sentinelcli service stop
-sentinelcli service restart
+daemoneye-cli service start
+daemoneye-cli service stop
+daemoneye-cli service restart
 
 # Service logs
-sentinelcli service logs --follow
-sentinelcli service logs --component procmond --lines 100
+daemoneye-cli service logs --follow
+daemoneye-cli service logs --component procmond --lines 100
 ```
 
 ### Output Formats
@@ -1425,11 +1425,11 @@ pid,name,executable_path,start_time
 #### Interactive Query Shell
 
 ```bash
-sentinelcli query interactive
-SentinelD Query Shell v1.0.0
+daemoneye-cli query interactive
+DaemonEye Query Shell v1.0.0
 Type 'help' for commands, 'exit' to quit.
 
-sentinel> SELECT COUNT(*) FROM processes WHERE name LIKE '%chrome%';
+daemoneye> SELECT COUNT(*) FROM processes WHERE name LIKE '%chrome%';
 ┌─────────┐
 │ count   │
 ├─────────┤
@@ -1437,7 +1437,7 @@ sentinel> SELECT COUNT(*) FROM processes WHERE name LIKE '%chrome%';
 └─────────┘
 Executed in 23ms
 
-sentinel> .schema processes
+daemoneye> .schema processes
 CREATE TABLE processes (
   id INTEGER PRIMARY KEY,
   pid INTEGER NOT NULL,
@@ -1451,7 +1451,7 @@ CREATE TABLE processes (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-sentinel> .help
+daemoneye> .help
 Available commands:
   .schema [table]     Show table schema
   .tables             List all tables
@@ -1466,13 +1466,13 @@ Available commands:
 #### Validation Errors
 
 ```bash
-$ sentinelcli query --sql "DROP TABLE processes;"
+$ daemoneye-cli query --sql "DROP TABLE processes;"
 Error: Invalid SQL query
   ├─ Reason: DROP statements are not allowed
   ├─ Allowed: SELECT statements only
   └─ Help: Use SELECT queries to retrieve data safely
 
-$ sentinelcli rules validate malformed-rule.yaml
+$ daemoneye-cli rules validate malformed-rule.yaml
 Error: Rule validation failed
   ├─ File: malformed-rule.yaml:15:3
   ├─ Issue: Invalid SQL syntax in detection query
@@ -1483,22 +1483,22 @@ Error: Rule validation failed
 #### Connection Errors
 
 ```bash
-$ sentinelcli health
-Error: Cannot connect to sentinelagent
-  ├─ IPC Socket: /var/run/sentineld/agent.sock
+$ daemoneye-cli health
+Error: Cannot connect to daemoneye-agent
+  ├─ IPC Socket: /var/run/DaemonEye/agent.sock
   ├─ Status: Connection refused
-  ├─ Suggestion: Check if sentinelagent service is running
-  └─ Command: sudo systemctl status sentinelagent
+  ├─ Suggestion: Check if daemoneye-agent service is running
+  └─ Command: sudo systemctl status daemoneye-agent
 ```
 
 ### Configuration File
 
-CLI configuration in `~/.config/sentineld/cli.yaml`:
+CLI configuration in `~/.config/DaemonEye/cli.yaml`:
 
 ```yaml
-# SentinelCLI Configuration
+# daemoneye-cli Configuration
 connection:
-  ipc_socket: /var/run/sentineld/agent.sock
+  ipc_socket: /var/run/DaemonEye/agent.sock
   timeout: 30s
   retry_attempts: 3
 
@@ -1526,30 +1526,30 @@ aliases:
 
 ```bash
 # Enable bash completion
-source <(sentinelcli completion bash)
+source <(daemoneye-cli completion bash)
 
 # Tab completion examples
-sentinelcli ru<TAB>     # completes to "rules"
-sentinelcli rules <TAB> # shows: list, show, validate, test, enable, disable, import, export, stats
+daemoneye-cli ru<TAB>     # completes to "rules"
+daemoneye-cli rules <TAB> # shows: list, show, validate, test, enable, disable, import, export, stats
 ```
 
 #### Shell Aliases
 
 ```bash
 # Common aliases for .bashrc
-alias sctl='sentinelcli'
-alias sq='sentinelcli query'
-alias sr='sentinelcli rules'
-alias sh='sentinelcli health'
+alias sctl='daemoneye-cli'
+alias sq='daemoneye-cli query'
+alias sr='daemoneye-cli rules'
+alias sh='daemoneye-cli health'
 ```
 
-This comprehensive CLI design provides operators with powerful, intuitive tools for managing SentinelD while maintaining security boundaries and following Unix CLI conventions.
+This comprehensive CLI design provides operators with powerful, intuitive tools for managing DaemonEye while maintaining security boundaries and following Unix CLI conventions.
 
 ## Testing Strategy and Platform Support
 
 ### OS Support Matrix
 
-SentinelD follows a tiered support model aligned with enterprise deployment requirements:
+DaemonEye follows a tiered support model aligned with enterprise deployment requirements:
 
 | OS          | Version              | Architecture  | Status    | CI Testing | Notes                      |
 | ----------- | -------------------- | ------------- | --------- | ---------- | -------------------------- |
@@ -1649,4 +1649,4 @@ graph TB
 
 **Container Testing**: Alpine and Amazon Linux are tested in containerized environments to validate deployment scenarios.
 
-This comprehensive testing strategy ensures SentinelD works reliably across enterprise environments while maintaining security and performance standards.
+This comprehensive testing strategy ensures DaemonEye works reliably across enterprise environments while maintaining security and performance standards.

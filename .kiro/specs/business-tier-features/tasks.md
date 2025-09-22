@@ -161,7 +161,7 @@
     - Add health check endpoint and signal handling
     - _Requirements: 3.1, 3.2_
 
-  - [ ] 8.2 Create Dockerfile for sentinelagent component
+  - [ ] 8.2 Create Dockerfile for daemoneye-agent component
 
     - Build containerized version with volume mount support
     - Add configuration file mounting and environment variable handling
@@ -330,14 +330,14 @@
 
 - [ ] 12. Integrate business tier features into existing agents
 
-  - [ ] 12.1 Add Security Center uplink communication to sentinelagent
+  - [ ] 12.1 Add Security Center uplink communication to daemoneye-agent
 
     - Implement mTLS client connection to Security Center
     - Add automatic reconnection and fallback to standalone mode
     - Create configuration synchronization and rule update handling
     - _Requirements: 6.1, 6.4, 6.6_
 
-  - [ ] 12.2 Enhance sentinelagent with business tier output formats
+  - [ ] 12.2 Enhance daemoneye-agent with business tier output formats
 
     - Integrate CEF, STIX, and enhanced JSON exporters
     - Add flexible output routing configuration

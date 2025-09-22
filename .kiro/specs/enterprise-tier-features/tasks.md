@@ -136,11 +136,11 @@
   - Integrate with collector-core event aggregation and IPC communication
   - _Requirements: 1.3, 1.4, 1.8, 10.3, 10.5_
 
-- [ ] 5. Enhance sentinelagent with Enterprise multi-domain correlation
+- [ ] 5. Enhance daemoneye-agent with Enterprise multi-domain correlation
 
 - [ ] 5.1 Create Enterprise orchestrator with multi-domain event correlation
 
-  - Extend sentinelagent with EnterpriseOrchestrator for multi-domain event correlation
+  - Extend daemoneye-agent with EnterpriseOrchestrator for multi-domain event correlation
   - Implement NetworkCorrelator, FilesystemCorrelator, and RegistryCorrelator components
   - Add event timeline reconstruction and causality tracking across domains
   - Create unified threat detection using correlated process, network, and filesystem events
@@ -497,7 +497,7 @@
 
 - [ ] 14.6 Implement security boundary validation
 
-  - Test procmond isolation from sentinelagent and sentinelcli
+  - Test procmond isolation from daemoneye-agent and daemoneye-cli
   - Validate that kernel monitoring cannot access network resources
   - Test that detection engine cannot modify kernel monitoring
   - _Requirements: 1.7, 2.1, 2.2_

@@ -2,7 +2,7 @@
 
 ## Introduction
 
-The Business Tier Features specification defines the enhanced capabilities that differentiate the Business tier ($199/site) from the Free tier of SentinelD. These features target small teams and consultancies who need professional-grade monitoring with enhanced integrations, curated rule packs, and deployment-ready packages. The business tier maintains the core offline-first philosophy while adding polish and enterprise integrations.
+The Business Tier Features specification defines the enhanced capabilities that differentiate the Business tier ($199/site) from the Free tier of DaemonEye. These features target small teams and consultancies who need professional-grade monitoring with enhanced integrations, curated rule packs, and deployment-ready packages. The business tier maintains the core offline-first philosophy while adding polish and enterprise integrations.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ The Business Tier Features specification defines the enhanced capabilities that 
 
 ### Requirement 3
 
-**User Story:** As a DevOps engineer, I want container and Kubernetes deployment options, so that I can deploy SentinelD in containerized environments with proper orchestration.
+**User Story:** As a DevOps engineer, I want container and Kubernetes deployment options, so that I can deploy DaemonEye in containerized environments with proper orchestration.
 
 #### Acceptance Criteria
 
@@ -52,7 +52,7 @@ The Business Tier Features specification defines the enhanced capabilities that 
 
 ### Requirement 5
 
-**User Story:** As an IT administrator, I want signed installers for Windows and macOS, so that I can deploy SentinelD in enterprise environments with code signing requirements.
+**User Story:** As an IT administrator, I want signed installers for Windows and macOS, so that I can deploy DaemonEye in enterprise environments with code signing requirements.
 
 #### Acceptance Criteria
 
@@ -63,11 +63,11 @@ The Business Tier Features specification defines the enhanced capabilities that 
 
 ### Requirement 6
 
-**User Story:** As a security operations manager, I want a central SentinelD Security Center server, so that I can aggregate data and configuration from multiple SentinelD agents across my infrastructure.
+**User Story:** As a security operations manager, I want a central DaemonEye Security Center server, so that I can aggregate data and configuration from multiple DaemonEye agents across my infrastructure.
 
 #### Acceptance Criteria
 
-1. WHEN the Security Center starts THEN it SHALL accept secure connections from multiple sentinelagent instances
+1. WHEN the Security Center starts THEN it SHALL accept secure connections from multiple daemoneye-agent instances
 2. WHEN agents connect to the Security Center THEN they SHALL authenticate using mutual TLS with certificate validation
 3. WHEN receiving data from agents THEN the Security Center SHALL aggregate alerts, process snapshots, and audit logs in a central database
 4. WHEN agents disconnect THEN the Security Center SHALL maintain historical data and track agent connectivity status

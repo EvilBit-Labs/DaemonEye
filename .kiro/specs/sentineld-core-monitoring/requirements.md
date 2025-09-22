@@ -2,9 +2,9 @@
 
 ## Introduction
 
-SentinelD is a security-focused, high-performance process monitoring system designed to detect suspicious activity on systems through continuous process monitoring, behavioral analysis, and pattern recognition. The system provides security operations teams with a reliable, high-performance threat detection solution that operates independently of external dependencies while maintaining audit-grade integrity.
+DaemonEye is a security-focused, high-performance process monitoring system designed to detect suspicious activity on systems through continuous process monitoring, behavioral analysis, and pattern recognition. The system provides security operations teams with a reliable, high-performance threat detection solution that operates independently of external dependencies while maintaining audit-grade integrity.
 
-This specification covers the core monitoring functionality including the collector-core framework, process enumeration, detection rule execution, and alert generation across the three-component architecture: procmond (privileged collector), sentinelagent (detection orchestrator), and sentinelcli (operator interface). The collector-core framework enables extensible monitoring capabilities across multiple domains (process, network, filesystem, performance) while maintaining shared infrastructure and operational consistency.
+This specification covers the core monitoring functionality including the collector-core framework, process enumeration, detection rule execution, and alert generation across the three-component architecture: procmond (privileged collector), daemoneye-agent (detection orchestrator), and daemoneye-cli (operator interface). The collector-core framework enables extensible monitoring capabilities across multiple domains (process, network, filesystem, performance) while maintaining shared infrastructure and operational consistency.
 
 ## Requirements
 
@@ -98,7 +98,7 @@ This specification covers the core monitoring functionality including the collec
 
 #### Acceptance Criteria
 
-1. WHEN querying data THEN sentinelcli SHALL execute user-provided SQL queries with parameterization and prepared statements
+1. WHEN querying data THEN daemoneye-cli SHALL execute user-provided SQL queries with parameterization and prepared statements
 2. WHEN displaying results THEN the system SHALL support JSON, human-readable table, and CSV output formats
 3. WHEN managing rules THEN the CLI SHALL provide capabilities to list, validate, test, and import/export detection rules
 4. WHEN checking system health THEN the CLI SHALL display component status with color-coded indicators
@@ -150,7 +150,7 @@ This specification covers the core monitoring functionality including the collec
 2. WHEN developing network monitoring THEN the system SHALL support NetworkEvent types with connection tracking, traffic analysis, and DNS monitoring capabilities
 3. WHEN implementing filesystem monitoring THEN the system SHALL support FilesystemEvent types with file operations, access patterns, and bulk operation detection
 4. WHEN adding performance monitoring THEN the system SHALL support PerformanceEvent types with resource utilization, system metrics, and anomaly detection
-5. WHEN correlating multi-domain events THEN sentinelagent SHALL receive unified event streams from multiple collection components for behavioral analysis
+5. WHEN correlating multi-domain events THEN daemoneye-agent SHALL receive unified event streams from multiple collection components for behavioral analysis
 
 ### Requirement 13
 
