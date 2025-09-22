@@ -6,9 +6,6 @@ on:
     pull_request:
         branches: [main]
     workflow_dispatch:
-    workflow_run:
-        workflows: ["autofix.ci"]
-        types: [completed]
 
 defaults:
     run:
