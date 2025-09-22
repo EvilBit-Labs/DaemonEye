@@ -1,14 +1,17 @@
 ---
 source: procmond/tests/cli.rs
-expression: stdout
+expression: stdout.as_ref()
 ---
 DaemonEye Process Monitoring Daemon
 
 Usage: procmond [OPTIONS]
 
 Options:
-  -d, --database <DATABASE>    Database path [default: /var/lib/daemoneye/processes.db]
-  -l, --log-level <LOG_LEVEL>  Log level [default: info]
-  -s, --socket <SOCKET>        IPC socket path [default: /tmp/daemoneye-procmond.sock]
-  -h, --help                   Print help
-  -V, --version                Print version
+  -d, --database <DATABASE>            Database path [default: /var/lib/daemoneye/processes.db]
+  -l, --log-level <LOG_LEVEL>          Log level [default: info]
+  -i, --interval <INTERVAL>            Collection interval in seconds [default: 30]
+      --max-processes <MAX_PROCESSES>  Maximum processes to collect per cycle (0 = unlimited) [default: 0]
+      --enhanced-metadata              Enable enhanced metadata collection
+      --compute-hashes                 Enable executable hashing
+  -h, --help                           Print help
+  -V, --version                        Print version

@@ -270,24 +270,28 @@ fn source_caps_to_proto_capabilities(caps: SourceCaps) -> CollectionCapabilities
 
 /// Get the default endpoint path based on the platform.
 fn default_endpoint_path() -> String {
+    let temp_dir = tempfile::Builder::new()
+        .prefix("daemoneye-")
+        .tempdir()
+        .expect("Failed to create temp directory")
+        .path()
+        .to_path_buf();
+
+    let unique_id = if cfg!(test) {
+        format!("test-{}", std::process::id())
+    } else {
+        temp_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("default")
+            .to_string()
+    };
+
     #[cfg(unix)]
-    {
-        if cfg!(test) {
-            // Use a temporary path for tests
-            format!("/tmp/daemoneye-test-{}.sock", std::process::id())
-        } else {
-            "/var/run/daemoneye/collector-core.sock".to_owned()
-        }
-    }
+    return format!("{}/collector-{}.sock", temp_dir.display(), unique_id);
+
     #[cfg(windows)]
-    {
-        if cfg!(test) {
-            // Use a temporary pipe name for tests
-            format!(r"\\.\pipe\daemoneye-test-{}", std::process::id())
-        } else {
-            r"\\.\pipe\daemoneye\collector-core".to_owned()
-        }
-    }
+    return format!(r"\\.\pipe\daemoneye\collector-{}", unique_id);
 }
 
 #[cfg(test)]
@@ -332,21 +336,27 @@ mod tests {
     #[test]
     fn test_default_endpoint_path() {
         let path = default_endpoint_path();
+
         #[cfg(unix)]
         {
             if cfg!(test) {
-                assert!(path.contains("daemoneye-test-"));
+                assert!(path.contains("/collector-test-"));
                 assert!(path.ends_with(".sock"));
+                assert!(path.contains(&format!("-{}.sock", std::process::id())));
             } else {
-                assert!(path.contains("collector-core.sock"));
+                assert!(path.contains("/collector-"));
+                assert!(path.ends_with(".sock"));
+                assert!(path.contains("daemoneye-"));
             }
         }
+
         #[cfg(windows)]
         {
+            assert!(path.starts_with(r"\\.\pipe\daemoneye\collector-"));
             if cfg!(test) {
-                assert!(path.contains(r"\\.\pipe\daemoneye-test-"));
+                assert!(path.contains(&format!("test-{}", std::process::id())));
             } else {
-                assert!(path.contains(r"\\.\pipe\"));
+                assert!(path.contains("daemoneye-"));
             }
         }
     }
