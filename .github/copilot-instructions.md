@@ -6,10 +6,10 @@ DaemonEye is a **three-component security architecture** with strict privilege s
 
 - **`procmond/`**: Privileged process collector (minimal attack surface, protobuf IPC)
 - **`daemoneye-agent/`**: User-space orchestrator (detection engine, alert delivery)
-- **`sentinelcli/`**: CLI interface (read-only database access, operator queries)
-- **`sentinel-lib/`**: Shared library (config, models, storage, detection, alerting, crypto, telemetry)
+- **`daemoneye-cli/`**: CLI interface (read-only database access, operator queries)
+- **`daemoneye-lib/`**: Shared library (config, models, storage, detection, alerting, crypto, telemetry)
 
-Security boundaries: Only `procmond` runs with elevated privileges; `daemoneye-agent` handles network/detection; `sentinelcli` is query-only.
+Security boundaries: Only `procmond` runs with elevated privileges; `daemoneye-agent` handles network/detection; `daemoneye-cli` is query-only.
 
 ## Essential Patterns
 
@@ -19,7 +19,7 @@ Security boundaries: Only `procmond` runs with elevated privileges; `daemoneye-a
 - **Zero warnings policy**: `cargo clippy --workspace -- -D warnings` must pass
 - **Forbidden unsafe code**: `unsafe_code = "forbid"` enforced at workspace level
 - **Linter restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission
-- **Workspace members**: `procmond`, `daemoneye-agent`, `sentinelcli`, `sentinel-lib`
+- **Workspace members**: `procmond`, `daemoneye-agent`, `daemoneye-cli`, `daemoneye-lib`
 - Use `just` for all development tasks (DRY composition with `@just <subrecipe>`)
 
 ### Error Handling
@@ -59,7 +59,7 @@ fn read_process_config(path: &Path) -> Result<ProcessConfig, CollectionError> {
 
 ```rust
 use interprocess::local_socket::LocalSocketStream;
-use sentinel_lib::proto::{DetectionTask, DetectionResult};
+use daemoneye_lib::proto::{DetectionTask, DetectionResult};
 
 // Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
 let stream = LocalSocketStream::connect("/tmp/daemoneye.sock")?;
@@ -131,13 +131,13 @@ just build               # Build all binaries with features
 # Component building and running
 just run-procmond        # Run procmond (with args)
 just run-daemoneye-agent   # Run daemoneye-agent (with args)
-just run-daemoneye-cli     # Run sentinelcli (with args)
+just run-daemoneye-cli     # Run daemoneye-cli (with args)
 
 # Workspace-specific builds
 cargo build -p procmond      # Build procmond crate
 cargo build -p daemoneye-agent # Build daemoneye-agent crate
-cargo build -p sentinelcli   # Build sentinelcli crate
-cargo build -p sentinel-lib  # Build sentinel-lib crate
+cargo build -p daemoneye-cli   # Build daemoneye-cli crate
+cargo build -p daemoneye-lib  # Build daemoneye-lib crate
 
 # CI aggregate (recommended for CI)
 just ci-check            # Run full CI pipeline (pre-commit + lint + test + build + audit + coverage + dist)
@@ -214,7 +214,7 @@ just ci-check            # Run full CI pipeline (pre-commit + lint + test + buil
 - Network: Outbound-only via iptables rules, no listening sockets
 - Filesystem ACLs: Read access to audit ledger, no write permissions
 
-**sentinelcli (Query Interface):**
+**daemoneye-cli (Query Interface):**
 
 - Dedicated Unix user/group: `daemoneye-cli:daemoneye-cli`
 - Database access: `open(path, O_RDONLY)` only

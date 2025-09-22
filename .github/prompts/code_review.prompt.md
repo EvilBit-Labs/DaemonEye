@@ -29,7 +29,7 @@ Analyze only the changed files (diff scope) and improve them while preserving pu
 
 ## REPO RULES (REINFORCED)
 
-Zero warnings (clippy -D warnings) | No unsafe | Precise typing | Async I/O only | Trait-based services | `thiserror` + `anyhow` | SQL AST validation | CLI-first (`sentinelcli`) | Memory efficient | redb-only storage abstraction | Path canonicalization + root safety | No binary blobs in DB | rustdoc for all public APIs
+Zero warnings (clippy -D warnings) | No unsafe | Precise typing | Async I/O only | Trait-based services | `thiserror` + `anyhow` | SQL AST validation | CLI-first (`daemoneye-cli`) | Memory efficient | redb-only storage abstraction | Path canonicalization + root safety | No binary blobs in DB | rustdoc for all public APIs
 
 ---
 

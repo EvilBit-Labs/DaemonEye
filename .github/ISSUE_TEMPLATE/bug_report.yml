@@ -18,8 +18,8 @@ body:
           options:
               - procmond (Process Collector)
               - daemoneye-agent (Orchestrator)
-              - sentinelcli (CLI Interface)
-              - sentinel-lib (Shared Library)
+              - daemoneye-cli (CLI Interface)
+              - daemoneye-lib (Shared Library)
               - Documentation
               - Build System
               - Other

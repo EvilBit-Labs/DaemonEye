@@ -17,8 +17,8 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 - **procmond**: Privileged process collector with minimal attack surface
 - **daemoneye-agent**: User-space orchestrator for detection and alerting
-- **sentinelcli**: Command-line interface for operators
-- **sentinel-lib**: Shared library providing core functionality
+- **daemoneye-cli**: Command-line interface for operators
+- **daemoneye-lib**: Shared library providing core functionality
 
 ### Security Principles
 
