@@ -8,6 +8,30 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
+/// Parse and validate the collection interval argument.
+///
+/// Ensures the interval is within acceptable bounds (5-3600 seconds).
+/// Returns a clear error message if validation fails.
+fn parse_interval(s: &str) -> Result<u64, String> {
+    let interval: u64 = s
+        .parse()
+        .map_err(|_| format!("Invalid interval '{}': must be a number", s))?;
+
+    if interval < 5 {
+        Err(format!(
+            "Interval too small: {} seconds. Minimum allowed is 5 seconds",
+            interval
+        ))
+    } else if interval > 3600 {
+        Err(format!(
+            "Interval too large: {} seconds. Maximum allowed is 3600 seconds (1 hour)",
+            interval
+        ))
+    } else {
+        Ok(interval)
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "procmond")]
 #[command(about = "DaemonEye Process Monitoring Daemon")]
@@ -21,8 +45,8 @@ struct Cli {
     #[arg(short, long, default_value = "info")]
     log_level: String,
 
-    /// Collection interval in seconds
-    #[arg(short, long, default_value = "30")]
+    /// Collection interval in seconds (minimum: 5, maximum: 3600)
+    #[arg(short, long, default_value = "30", value_parser = parse_interval)]
     interval: u64,
 
     /// Maximum processes to collect per cycle (0 = unlimited)

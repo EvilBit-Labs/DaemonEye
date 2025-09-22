@@ -9,7 +9,7 @@ Usage: procmond [OPTIONS]
 Options:
   -d, --database <DATABASE>            Database path [default: /var/lib/daemoneye/processes.db]
   -l, --log-level <LOG_LEVEL>          Log level [default: info]
-  -i, --interval <INTERVAL>            Collection interval in seconds [default: 30]
+  -i, --interval <INTERVAL>            Collection interval in seconds (minimum: 5, maximum: 3600) [default: 30]
       --max-processes <MAX_PROCESSES>  Maximum processes to collect per cycle (0 = unlimited) [default: 0]
       --enhanced-metadata              Enable enhanced metadata collection
       --compute-hashes                 Enable executable hashing

@@ -8,7 +8,10 @@
 use async_trait::async_trait;
 use collector_core::{CollectionEvent, EventSource, ProcessEvent, SourceCaps};
 use daemoneye_lib::storage;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, SystemTime};
 use sysinfo::System;
 use tokio::sync::{Mutex, mpsc};
@@ -239,17 +242,14 @@ impl ProcessEventSource {
 
         // Collect CPU and memory usage if enhanced metadata is enabled
         let (cpu_usage, memory_usage) = if self.config.collect_enhanced_metadata {
-            (
-                Some(process.cpu_usage() as f64),
-                Some(process.memory() * 1024),
-            )
+            (Some(process.cpu_usage() as f64), Some(process.memory()))
         } else {
             (None, None)
         };
 
         // Compute executable hash if requested
         let executable_hash = if self.config.compute_executable_hashes {
-            // TODO: Implement executable hashing
+            // TODO: Implement executable hashing issue #40
             // For now, we'll leave this as None until the hashing implementation is added
             None
         } else {
@@ -295,7 +295,11 @@ impl EventSource for ProcessEventSource {
         caps
     }
 
-    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        tx: mpsc::Sender<CollectionEvent>,
+        shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         info!(
             collection_interval_secs = self.config.collection_interval.as_secs(),
             enhanced_metadata = self.config.collect_enhanced_metadata,
@@ -320,7 +324,11 @@ impl EventSource for ProcessEventSource {
                         // Continue running even if individual collections fail
                     }
                 }
-                _ = tokio::signal::ctrl_c() => {
+                _ = async {
+                    while !shutdown_signal.load(Ordering::Relaxed) {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                } => {
                     info!("Shutdown signal received, stopping process collection");
                     break;
                 }

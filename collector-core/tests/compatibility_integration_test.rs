@@ -89,7 +89,11 @@ impl EventSource for LegacyCompatibleSource {
         self.capabilities
     }
 
-    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        tx: mpsc::Sender<CollectionEvent>,
+        _shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         info!(
             source = self.name,
             legacy_mode = self.legacy_mode,
@@ -319,12 +323,16 @@ async fn test_legacy_procmond_compatibility() {
 
     // Start legacy source
     let legacy_handle = tokio::spawn(async move {
-        let _ = legacy_source_test.start(tx1).await;
+        let _ = legacy_source_test
+            .start(tx1, Arc::new(AtomicBool::new(false)))
+            .await;
     });
 
     // Start modern source
     let modern_handle = tokio::spawn(async move {
-        let _ = modern_source_test.start(tx2).await;
+        let _ = modern_source_test
+            .start(tx2, Arc::new(AtomicBool::new(false)))
+            .await;
     });
 
     // Let sources run for a bit
@@ -363,7 +371,8 @@ async fn test_daemoneye_agent_ipc_compatibility() {
     let capabilities = Arc::new(RwLock::new(
         SourceCaps::PROCESS | SourceCaps::NETWORK | SourceCaps::REALTIME,
     ));
-    let ipc_server = CollectorIpcServer::new(config, Arc::clone(&capabilities));
+    let ipc_server = CollectorIpcServer::new(config, Arc::clone(&capabilities))
+        .expect("Failed to create IPC server");
 
     // Create mock daemoneye-agent client
     let mock_client = MockDaemonEyeAgentClient::new("mock-daemoneye-agent");
@@ -654,12 +663,16 @@ async fn test_operational_behavior_compatibility() {
 
     // Start procmond-like source
     let procmond_handle = tokio::spawn(async move {
-        let _ = procmond_like_test.start(tx1).await;
+        let _ = procmond_like_test
+            .start(tx1, Arc::new(AtomicBool::new(false)))
+            .await;
     });
 
     // Start daemoneye-agent-like source
     let daemoneye_agent_handle = tokio::spawn(async move {
-        let _ = daemoneye_agent_like_test.start(tx2).await;
+        let _ = daemoneye_agent_like_test
+            .start(tx2, Arc::new(AtomicBool::new(false)))
+            .await;
     });
 
     // Let sources run for a bit
@@ -785,12 +798,16 @@ async fn test_error_handling_compatibility() {
 
     // Start rapid source
     let rapid_handle = tokio::spawn(async move {
-        let _ = rapid_source_test.start(tx1).await;
+        let _ = rapid_source_test
+            .start(tx1, Arc::new(AtomicBool::new(false)))
+            .await;
     });
 
     // Start normal source
     let normal_handle = tokio::spawn(async move {
-        let _ = normal_source_test.start(tx2).await;
+        let _ = normal_source_test
+            .start(tx2, Arc::new(AtomicBool::new(false)))
+            .await;
     });
 
     // Let sources run for a bit

@@ -42,7 +42,7 @@
 //!         SourceCaps::PROCESS | SourceCaps::REALTIME
 //!     }
 //!
-//!     async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+//!     async fn start(&self, tx: mpsc::Sender<CollectionEvent>, _shutdown_signal: std::sync::Arc<std::sync::atomic::AtomicBool>) -> anyhow::Result<()> {
 //!         // Implementation here
 //!         Ok(())
 //!     }

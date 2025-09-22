@@ -34,6 +34,9 @@ daemoneye-lib = { path = "../daemoneye-lib" }
 # Temporary file handling
 tempfile = { workspace = true }
 
+# UUID generation
+uuid = { workspace = true }
+
 [dev-dependencies]
 tokio-test = "0.4.4"
 tempfile = { workspace = true }

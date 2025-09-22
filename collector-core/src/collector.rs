@@ -134,6 +134,7 @@ impl Collector {
     /// ```rust,no_run
     /// use collector_core::{Collector, CollectorConfig, EventSource, SourceCaps, CollectionEvent};
     /// use async_trait::async_trait;
+    /// use std::sync::{Arc, atomic::AtomicBool};
     /// use tokio::sync::mpsc;
     ///
     /// struct MySource;
@@ -142,7 +143,7 @@ impl Collector {
     /// impl EventSource for MySource {
     ///     fn name(&self) -> &'static str { "my-source" }
     ///     fn capabilities(&self) -> SourceCaps { SourceCaps::PROCESS }
-    ///     async fn start(&self, _tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> { Ok(()) }
+    ///     async fn start(&self, _tx: mpsc::Sender<CollectionEvent>, _shutdown_signal: Arc<AtomicBool>) -> anyhow::Result<()> { Ok(()) }
     ///     async fn stop(&self) -> anyhow::Result<()> { Ok(()) }
     /// }
     ///
@@ -326,44 +327,24 @@ impl CollectorRuntime {
             caps.insert(source_name.clone(), capabilities);
         }
 
-        // Start the source with configurable timeout and shutdown signal polling
+        // Start the source with configurable timeout and shutdown signal
         let source_name_clone = source_name.clone();
         let handle = tokio::spawn(async move {
-            // Create a future that polls both the source startup and shutdown signal
-            let source_future = source.start(event_tx);
-            let shutdown_future = async {
-                while !shutdown_signal.load(Ordering::Relaxed) {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                Err(anyhow::anyhow!("Shutdown signal received during startup"))
-            };
-
-            // Race between source startup and shutdown signal
-            let result = tokio::select! {
-                result = timeout(startup_timeout, source_future) => {
-                    match result {
-                        Ok(Ok(())) => Ok(()),
-                        Ok(Err(e)) => Err(e),
-                        Err(_) => Err(anyhow::anyhow!("Source startup timeout"))
-                    }
-                }
-                shutdown_result = shutdown_future => shutdown_result,
-            };
+            // Pass the shutdown signal directly to the event source
+            let result = timeout(startup_timeout, source.start(event_tx, shutdown_signal)).await;
 
             match result {
-                Ok(()) => {
+                Ok(Ok(())) => {
                     info!(source_name = %source_name_clone, "Event source started successfully");
                     Ok(())
                 }
-                Err(e) => {
-                    if e.to_string().contains("Shutdown signal received") {
-                        info!(source_name = %source_name_clone, "Event source startup cancelled due to shutdown signal");
-                    } else if e.to_string().contains("timeout") {
-                        error!(source_name = %source_name_clone, "Event source startup timed out");
-                    } else {
-                        error!(source_name = %source_name_clone, error = %e, "Event source failed to start");
-                    }
+                Ok(Err(e)) => {
+                    error!(source_name = %source_name_clone, error = %e, "Event source failed to start");
                     Err(e)
+                }
+                Err(_) => {
+                    error!(source_name = %source_name_clone, "Event source startup timed out");
+                    Err(anyhow::anyhow!("Source startup timeout"))
                 }
             }
         });
@@ -887,7 +868,8 @@ impl CollectorRuntime {
 
         // Create IPC server
         let mut ipc_server =
-            CollectorIpcServer::new(self.config.clone(), Arc::clone(&ipc_capabilities));
+            CollectorIpcServer::new(self.config.clone(), Arc::clone(&ipc_capabilities))
+                .context("Failed to create IPC server")?;
 
         // Set up task handler that processes detection tasks
         let event_tx = self.event_tx.clone();
@@ -1053,7 +1035,11 @@ mod tests {
             self.capabilities
         }
 
-        async fn start(&self, _tx: mpsc::Sender<CollectionEvent>) -> Result<()> {
+        async fn start(
+            &self,
+            _tx: mpsc::Sender<CollectionEvent>,
+            _shutdown_signal: Arc<AtomicBool>,
+        ) -> Result<()> {
             // Simulate some work
             tokio::time::sleep(Duration::from_millis(10)).await;
             self.event_count.store(1, Ordering::Relaxed);
