@@ -29,11 +29,13 @@ The comprehensive IPC client validation suite implements all requirements specif
 **Purpose**: Validate daemoneye-agent IPC client integration with collector-core servers
 
 **Tests Implemented**:
+
 - `test_client_collector_core_integration()` - Basic client-server integration with collector-core simulation
 - `test_multi_collector_integration()` - Multi-collector integration with load balancing
 - `test_capability_negotiation_integration()` - Capability negotiation with collector-core
 
 **Key Features**:
+
 - Simulates collector-core server behavior
 - Tests different task types (EnumerateProcesses, CheckProcessHash, MonitorProcessTree)
 - Validates client metrics and statistics collection
@@ -44,11 +46,13 @@ The comprehensive IPC client validation suite implements all requirements specif
 **Purpose**: Ensure consistent functionality across Linux, macOS, and Windows
 
 **Tests Implemented**:
+
 - `test_cross_platform_socket_creation()` - Platform-specific socket creation and binding
 - `test_cross_platform_error_handling()` - Platform-appropriate error messages
 - `test_cross_platform_concurrent_connections()` - Concurrent connection handling
 
 **Platform-Specific Validations**:
+
 - **Unix**: Socket file permissions (0600), cleanup verification
 - **Windows**: Named pipe format validation, proper error messages
 - **All Platforms**: Consistent API behavior, error handling patterns
@@ -58,10 +62,12 @@ The comprehensive IPC client validation suite implements all requirements specif
 **Purpose**: Validate task distribution from daemoneye-agent to collector components
 
 **Tests Implemented**:
+
 - `test_task_distribution_integration()` - Task distribution with different task types
 - `test_task_distribution_failover()` - Failover behavior with primary/secondary collectors
 
 **Key Features**:
+
 - Tests all supported task types with appropriate responses
 - Validates task processing times and resource usage simulation
 - Tests failover scenarios with circuit breaker activation
@@ -72,11 +78,13 @@ The comprehensive IPC client validation suite implements all requirements specif
 **Purpose**: Validate codec robustness with malformed and edge-case inputs
 
 **Tests Implemented**:
+
 - `test_codec_robustness_valid_messages()` - Roundtrip validation with generated valid messages
 - `test_codec_robustness_malformed_data()` - Malformed data rejection testing
 - `test_codec_robustness_corrupted_frames()` - Corrupted frame detection
 
 **Property Testing Strategies**:
+
 - Uses `proptest` crate for generative testing
 - Generates valid DetectionTask messages with random content
 - Creates malformed byte sequences to test error handling
@@ -87,13 +95,15 @@ The comprehensive IPC client validation suite implements all requirements specif
 **Purpose**: Ensure no regression in message throughput or latency
 
 **Benchmarks Implemented**:
+
 - `test_message_throughput_performance()` - Message throughput validation (≥50 msg/sec)
-- `test_message_latency_performance()` - Latency characteristics (median <100ms, P95 <500ms)
+- `test_message_latency_performance()` - Latency characteristics (median \<100ms, P95 \<500ms)
 - `test_concurrent_performance()` - Concurrent request handling performance
 
 **Performance Thresholds**:
+
 - **Throughput**: Minimum 50 messages/second for small messages
-- **Latency**: Median <100ms, P95 <500ms for typical requests
+- **Latency**: Median \<100ms, P95 \<500ms for typical requests
 - **Concurrency**: Successful handling of 8+ concurrent connections
 - **Regression Detection**: Automated alerts for performance degradation
 
@@ -102,12 +112,14 @@ The comprehensive IPC client validation suite implements all requirements specif
 **Purpose**: Validate connection authentication and message integrity
 
 **Tests Implemented**:
+
 - `test_connection_authentication_and_integrity()` - Message integrity with CRC32 validation
 - `test_malicious_input_resistance()` - Resistance to malicious inputs
 - `test_resource_exhaustion_resistance()` - Resource exhaustion attack resistance
 - `test_circuit_breaker_security()` - Circuit breaker security validation
 
 **Security Features Tested**:
+
 - CRC32 message integrity validation
 - Oversized message rejection
 - Connection limit enforcement
@@ -121,16 +133,19 @@ The comprehensive IPC client validation suite implements all requirements specif
 The `ipc_client_validation_benchmarks.rs` file provides comprehensive performance validation:
 
 #### Client Creation and Management
+
 - `bench_resilient_client_creation()` - Client instantiation performance
 - `bench_client_statistics()` - Statistics collection overhead
 - `bench_resource_management()` - Memory usage and endpoint management
 
 #### Communication Performance
+
 - `bench_client_server_throughput()` - End-to-end throughput measurement
 - `bench_concurrent_client_operations()` - Concurrent request performance
 - `bench_load_balancing_performance()` - Load balancing strategy performance
 
 #### Error Handling Performance
+
 - `bench_error_handling_performance()` - Circuit breaker and retry performance
 - `bench_cross_platform_performance()` - Platform-specific performance characteristics
 
@@ -250,7 +265,7 @@ The validation suite provides detailed reporting:
 
 ### Example Report Output
 
-```
+```text
 === IPC Client Validation Summary Report ===
 Total tests: 24
 Successful: 23
@@ -326,24 +341,24 @@ The validation suite is designed for CI/CD integration:
 
 ```yaml
 # Example GitHub Actions integration
-- name: Run IPC Client Validation
-  run: |
-    cargo test ipc_client_comprehensive_validation --verbose
-    cargo bench --bench ipc_client_validation_benchmarks -- --output-format json
+  - name: Run IPC Client Validation
+    run: |
+      cargo test ipc_client_comprehensive_validation --verbose
+      cargo bench --bench ipc_client_validation_benchmarks -- --output-format json
 
-- name: Check Performance Regression
-  run: |
-    cargo bench --bench ipc_client_validation_benchmarks -- --save-baseline current
-    # Compare with previous baseline and fail if regression detected
+  - name: Check Performance Regression
+    run: |
+      cargo bench --bench ipc_client_validation_benchmarks -- --save-baseline current
+      # Compare with previous baseline and fail if regression detected
 ```
 
 ### Automated Regression Detection
 
 The benchmarks include automated regression detection that can fail CI builds:
 
-- Throughput regression: <50 msg/sec fails the build
+- Throughput regression: \<50 msg/sec fails the build
 - Latency regression: >100ms median latency fails the build
-- Success rate regression: <95% success rate fails the build
+- Success rate regression: \<95% success rate fails the build
 
 ## Future Enhancements
 
