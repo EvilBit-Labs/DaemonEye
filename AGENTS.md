@@ -103,6 +103,7 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 5. **Documentation Standards**: Use Mermaid for all diagrams. Prettier ignores Markdown files. Use relative links and maintain link hygiene.
 6. **Testing Required**: All code changes must include appropriate tests to ensure quality and correctness.
 7. **Linter Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission. All `-D warnings` and `deny` attributes must be preserved.
+8. **Focused and Managable Files**: Source files should be focused and manageable. Large files should be split into smaller, more focused files; no larger than 500-600 lines, when if possible.
 
 ### Rule Precedence Hierarchy
 
