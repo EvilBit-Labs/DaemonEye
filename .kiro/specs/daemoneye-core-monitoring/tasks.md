@@ -54,12 +54,12 @@
   - Write integration tests for capability negotiation workflows
   - _Requirements: 3.1, 3.2, 11.1, 11.2_
 
-- [ ] 3.5 Add comprehensive IPC client testing and validation - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+- [x] 3.5 Add comprehensive IPC client testing and validation - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create integration tests for daemoneye-agent IPC client connecting to collector-core servers
   - Add cross-platform tests (Linux, macOS, Windows) for local socket functionality
   - Implement integration tests for task distribution from daemoneye-agent to collector components
-  - Add property-based tests for codec robustness with malformed inputs
+  - Add property-based tests for codec robu stness with malformed inputs
   - Create performance benchmarks ensuring no regression in message throughput or latency
   - Write security validation tests for connection authentication and message integrity
   - _Requirements: 3.1, 3.2_
