@@ -2,6 +2,9 @@
     "config": {
         "default": true,
         "heading-increment": true,
+        "heading-style": {
+            "style": "atx"
+        },
         "line-length": false,
         "ul-style": {
             "style": "consistent"
@@ -47,6 +50,7 @@
         "**/node_modules/**",
         "**/__pycache__/**",
         "**/*.tpl.md",
-        "**/*.mdc"
+        "**/*.mdc",
+        ".kiro/steering/*.md"
     ]
 }
