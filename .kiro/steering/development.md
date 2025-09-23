@@ -112,7 +112,7 @@ All public APIs must include comprehensive rustdoc comments with:
 ### Continuous Integration
 
 - **Platform**: GitHub Actions with matrix testing (Linux, macOS, Windows)
-- **Rust Versions**: stable, beta, MSRV (1.70+)
+- **Rust Versions**: stable, beta, MSRV (1.85+)
 - **Quality Checks**: fmt-check, clippy strict, comprehensive test suite
 - **Performance**: Benchmark regression detection with criterion
 - **Security**: Dependency scanning, SLSA provenance (Enterprise)

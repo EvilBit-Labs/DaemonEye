@@ -64,7 +64,7 @@
   - Write security validation tests for connection authentication and message integrity
   - _Requirements: 3.1, 3.2_
 
-- [ ] 4. Implement collector-core framework for extensible monitoring architecture
+- [x] 4. Implement collector-core framework for extensible monitoring architecture
 
 - [x] 4.1 Create collector-core library foundation - [#76](https://github.com/EvilBit-Labs/DaemonEye/issues/76)
 
@@ -107,7 +107,7 @@
   - Write unit tests for protobuf serialization and backward compatibility
   - _Requirements: 12.1, 12.2, 12.3_
 
-- [ ] 4.5 Complete collector-core testing suite - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
+- [x] 4.5 Complete collector-core testing suite - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
 
   - Write integration tests for multiple concurrent EventSource registration and lifecycle management
   - Add stress tests for event batching, backpressure handling, and graceful shutdown coordination

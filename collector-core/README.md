@@ -137,6 +137,27 @@ The collector-core framework enables multiple monitoring components:
 
 ## Testing
 
+The collector-core framework includes a comprehensive test suite covering all aspects of the framework:
+
+### Test Categories
+
+- **Unit Tests (6 tests)**: Basic functionality, configuration validation, and EventSource registration
+- **Integration Tests (3 tests)**: Multi-source coordination, event batching, and IPC server functionality
+- **Performance Tests (3 tests)**: Runtime overhead, event throughput, and memory usage under load
+- **Security Tests (3 tests)**: EventSource isolation, capability enforcement, and resource limits
+- **Property-Based Tests (3 tests)**: Serialization roundtrips, capability combinations, and config validation
+- **Chaos Tests (4 tests)**: Failure recovery, graceful shutdown, resource exhaustion, and concurrent operations
+- **Compatibility Tests (4 tests)**: Integration with existing procmond and daemoneye-agent components
+
+### Performance Characteristics
+
+- **Event Throughput**: >1000 events/second under normal load
+- **Runtime Overhead**: \<5% CPU usage during continuous monitoring
+- **Memory Usage**: Bounded memory usage under high load
+- **Shutdown Time**: \<500ms graceful shutdown coordination
+
+### Running Tests
+
 Run the test suite:
 
 ```bash
@@ -147,6 +168,12 @@ Run integration tests:
 
 ```bash
 cargo test -p collector-core --test integration_test
+```
+
+Run performance benchmarks:
+
+```bash
+cargo bench -p collector-core
 ```
 
 ## License
