@@ -120,13 +120,25 @@
 
 - [ ] 5. Implement cross-platform process enumeration in procmond
 
-- [x] 5.1 Create basic ProcessMessageHandler with sysinfo - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+- [x] 5.1a Create ProcessMessageHandler with sysinfo-based process enumeration - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Implement ProcessMessageHandler with basic sysinfo-based process enumeration
   - Add process metadata extraction (PID, PPID, name, executable path, command line, CPU, memory)
   - Create convert_process_to_record method for ProtoProcessRecord conversion
   - Add basic unit tests for ProcessMessageHandler functionality
   - _Requirements: 1.1, 1.5_
+
+- [ ] 5.1b Complete ProcessEventSource integration to collector-core standards - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+
+  - Refactor ProcessEventSource to fully comply with collector-core framework standards
+  - Implement proper async_trait EventSource with start/stop lifecycle and capability reporting
+  - Add proper shutdown signal handling with cooperative cancellation and timeout enforcement
+  - Implement event batching and backpressure handling for multiple event sources
+  - Add comprehensive error handling with graceful degradation and structured logging
+  - Create proper health check implementation with detailed diagnostics
+  - Write comprehensive unit tests for EventSource trait implementation and lifecycle management
+  - Add integration tests for ProcessEventSource with collector-core runtime
+  - _Requirements: 1.1, 1.5, 11.1, 11.2, 11.5_
 
 - [ ] 5.2 Create ProcessCollector trait and refactor for extensibility - [#80](https://github.com/EvilBit-Labs/DaemonEye/issues/80)
 
