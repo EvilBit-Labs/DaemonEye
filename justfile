@@ -229,7 +229,7 @@ test-security:
 
 # Run all benchmarks
 bench:
-    @cargo bench --workspace
+    @cargo bench -p daemoneye-lib
 
 # Run specific benchmark suites
 bench-process:
@@ -252,11 +252,16 @@ bench-crypto:
 
 # Run benchmarks with HTML output
 bench-html:
-    @cargo bench --workspace -- --html
+    @cargo bench -p daemoneye-lib --bench process_collection -- --html
 
-# Run benchmarks and save results
+# Run benchmarks and save results to benchmark.json
 bench-save:
-    @cargo bench --workspace -- --save-baseline main
+    @cargo bench -p daemoneye-lib --bench process_collection -- --save-baseline baseline
+    @cargo bench -p daemoneye-lib --bench database_operations -- --save-baseline baseline
+    @cargo bench -p daemoneye-lib --bench detection_engine -- --save-baseline baseline
+    @cargo bench -p daemoneye-lib --bench ipc_communication -- --save-baseline baseline
+    @cargo bench -p daemoneye-lib --bench alert_processing -- --save-baseline baseline
+    @cargo bench -p daemoneye-lib --bench cryptographic_operations -- --save-baseline baseline
 
 # =============================================================================
 # SECURITY AND AUDITING

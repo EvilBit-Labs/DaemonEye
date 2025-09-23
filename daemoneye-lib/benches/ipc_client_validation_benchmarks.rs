@@ -44,7 +44,7 @@ fn create_benchmark_endpoint(temp_dir: &TempDir, test_name: &str) -> String {
     {
         temp_dir
             .path()
-            .join(format!("bench_validation_{}.sock", test_name))
+            .join(format!("bench_validation_{test_name}.sock"))
             .to_string_lossy()
             .to_string()
     }
