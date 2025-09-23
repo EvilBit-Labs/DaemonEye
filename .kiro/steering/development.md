@@ -12,6 +12,7 @@
 - **Linter Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission. All `-D warnings` and `deny` attributes must be preserved.
 - **No Unsafe Code**: Never commit code with `unsafe` blocks or `unsafe` functions. Any unsafe code should be in well-maintained external crates, and avoided whenever possible.
 - **Focused and Managable Files**: Source files should be focused and manageable. Large files should be split into smaller, more focused files; no larger than 500-600 lines, when if possible.
+- **Strictness**: `warnings = "deny"` enforced at workspace level; any use of `allow` **MUST** be accompanied by a justification in the code and cannot be applied to entire files or modules.
 
 ### Rule Precedence Hierarchy
 
