@@ -110,7 +110,7 @@
 - [x] 4.5 Complete collector-core testing suite - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
 
   - Write integration tests for multiple concurrent EventSource registration and lifecycle management
-  - Add stress tests for event batching, backpressure handling, and graceful shutdown coordination
+  - Add criterion benchmarks for event batching, backpressure handling, and graceful shutdown coordination
   - Create property-based tests for CollectionEvent serialization and capability negotiation
   - Implement chaos testing for EventSource failure scenarios and recovery behavior
   - Add performance benchmarks for collector-core runtime overhead and event throughput
@@ -184,7 +184,7 @@
   - Create cross-platform integration tests for all ProcessCollector implementations
   - Add performance benchmarks comparing platform-specific vs sysinfo implementations
   - Implement privilege escalation/dropping tests for all platforms
-  - Add stress tests with high process counts (10,000+ processes)
+  - Add criterion benchmarks with high process counts (10,000+ processes)
   - Create compatibility tests for different OS versions and configurations
   - Write property-based tests for process enumeration edge cases
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
@@ -195,7 +195,7 @@
   - Implement SHA-256 hash computation for accessible executable files in ProcessMessageHandler
   - Handle missing or inaccessible executable files without failing enumeration
   - Store hash_algorithm field ('sha256') with computed hash values in ProtoProcessRecord
-  - Write performance tests to ensure hashing doesn't impact enumeration speed
+  - Write criterion benchmarks to ensure hashing doesn't impact enumeration speed
   - _Requirements: 2.1, 2.2, 2.4_
 
 - [ ] 7. Create ProcessEventSource and refactor procmond to use collector-core
@@ -476,23 +476,107 @@
 
   - Add performance tests with criterion for regression detection on critical paths (process enumeration, SQL execution, IPC throughput)
   - Implement property-based tests with proptest for edge case discovery in data models, SQL parsing, and collector-core event handling
-  - Create load testing scenarios for high-volume process monitoring (10,000+ processes, sustained monitoring)
+  - Create criterion benchmarks for high-volume process monitoring (10,000+ processes, sustained monitoring)
   - Write benchmark tests for collector-core framework overhead and event source registration/deregistration
   - Add memory usage benchmarks for long-running monitoring scenarios and database growth patterns
-  - Create stress tests for alert delivery under high-volume detection scenarios
+  - Create criterion benchmarks for alert delivery under high-volume detection scenarios
   - _Requirements: All requirements verification_
 
 - [ ] 20.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
+  - Set up GitHub Actions CI matrix for Linux, macOS, Windows with multiple Rust versions (stable, beta, MSRV)
+  - Add automated quality gates: fmt-check, clippy strict, comprehensive test suite
+  - Implement performance regression detection with criterion benchmarks
+  - Add dependency scanning, SLSA provenance (Enterprise), and security validation
+  - Create automated release pipeline with platform-specific packages and code signing
+  - _Requirements: All requirements verification_
+
+- [ ] 21. Comprehensive stress testing and load validation
+
+- [ ] 21.1 Implement collector-core stress testing suite
+
+  - Create stress tests for event batching under extreme load (100,000+ events/second)
+  - Add stress tests for backpressure handling with multiple blocked event sources
+  - Implement stress tests for graceful shutdown coordination under heavy load
+  - Create memory pressure tests for event source registration/deregistration cycles
+  - Add concurrent stress tests for multiple EventSource instances with resource contention
+  - Write endurance tests for 24+ hour continuous operation under load
+  - _Requirements: 11.1, 11.2, 12.1, 12.2, 13.1, 13.2, 13.5_
+
+- [ ] 21.2 Process enumeration stress testing
+
+  - Create stress tests with extremely high process counts (50,000+ processes)
+  - Add stress tests for rapid process creation/termination scenarios
+  - Implement memory pressure tests for process enumeration with limited resources
+  - Create concurrent enumeration stress tests with multiple collectors
+  - Add privilege boundary stress tests under resource exhaustion
+  - Write platform-specific stress tests for OS-level resource limits
+  - _Requirements: 1.1, 1.5, 6.1, 6.2_
+
+- [ ] 21.3 Database and storage stress testing
+
+  - Create stress tests for redb database under extreme write loads (10,000+ records/second)
+  - Add stress tests for concurrent read/write operations with resource contention
+  - Implement stress tests for database growth and retention policy enforcement
+  - Create memory pressure tests for large dataset queries and aggregations
+  - Add stress tests for database corruption recovery and integrity validation
+  - Write endurance tests for long-term database stability under continuous load
+  - _Requirements: 1.3, 4.4, 7.4_
+
+- [ ] 21.4 Alert delivery stress testing
+
+  - Create stress tests for alert delivery under high-volume detection scenarios (1,000+ alerts/minute)
+  - Add stress tests for multiple alert sink failures and recovery scenarios
+  - Implement stress tests for network partition and connectivity issues
+  - Create memory pressure tests for alert queuing and dead letter queue management
+  - Add stress tests for circuit breaker behavior under sustained failures
+  - Write endurance tests for alert delivery reliability over extended periods
+  - _Requirements: 5.2, 5.3, 5.4, 5.5_
+
+- [ ] 21.5 IPC communication stress testing
+
+  - Create stress tests for IPC communication under extreme message loads
+  - Add stress tests for connection failures and automatic reconnection scenarios
+  - Implement stress tests for message serialization/deserialization under load
+  - Create memory pressure tests for IPC buffer management and backpressure
+  - Add stress tests for capability negotiation under rapid collector restarts
+  - Write endurance tests for IPC stability over extended operation periods
+  - _Requirements: 3.1, 3.2, 11.1, 11.2_
+
+- [ ] 21.6 System-wide integration stress testing
+
+  - Create end-to-end stress tests for complete monitoring workflows under extreme load
+
+  - Add stress tests for system resource exhaustion and graceful degradation
+
+  - Implement stress tests for configuration changes and hot-reloading under load
+
+  - Create chaos engineering tests for random component failures and recovery
+
+  - Add stress tests for security boundary enforcement under resource pressure
+
+  - Write comprehensive load tests simulating real-world deployment scenarios
+
+  - \_Requirements: All requirements verification_aemonEye/issues/61)
+
   - Configure comprehensive CI matrix testing aligned with AGENTS.md OS Support Matrix
+
   - Add primary platform testing: Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Debian 11+ LTS, macOS 14.0+ (Sonoma), Windows 10+/11/Server 2019+/Server 2022
+
   - Include architecture matrix: x86_64 and ARM64 for all primary platforms
+
   - Add secondary platform testing: Alpine 3.16+, Amazon Linux 2+, Ubuntu 18.04, RHEL 7, macOS 12.0+ (Monterey), FreeBSD 13.0+
+
   - Configure multiple Rust version testing (stable, beta, MSRV 1.70+) across primary platforms
+
   - Set up quality gates with clippy, rustfmt, security auditing (cargo audit, cargo deny), and overflow-checks validation
+
   - Create automated test reporting and coverage tracking with llvm-cov
+
   - Add container-based testing for Alpine and Amazon Linux deployments
+
   - Configure cross-compilation testing for ARM64 targets
+
   - _Requirements: All requirements verification_
 
 - [ ] 21. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/DaemonEye/issues/62)
