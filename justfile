@@ -56,12 +56,16 @@ setup:
     Set-Location "{{ root }}"
     rustup component add rustfmt clippy llvm-tools-preview
     cargo install cargo-binstall --locked
+    @just mdformat-install
+    Write-Host "Note: You may need to restart your shell for pipx PATH changes to take effect"
 
 [unix]
 setup:
     cd "{{ root }}"
     rustup component add rustfmt clippy llvm-tools-preview
     cargo install cargo-binstall --locked
+    @just mdformat-install
+    echo "Note: You may need to restart your shell for pipx PATH changes to take effect"
 
 # Install development tools (extended setup)
 [windows]
@@ -81,14 +85,43 @@ docs-install:
 docs-install:
     cargo binstall mdbook mdbook-admonish mdbook-mermaid mdbook-linkcheck mdbook-toc mdbook-open-on-gh mdbook-tabs mdbook-i18n-helpers
 
+# Install pipx for Python tool management
+[windows]
+pipx-install:
+    python -m pip install --user pipx
+    python -m pipx ensurepath
+
+[unix]
+pipx-install:
+    python3 -m pip install --user pipx
+    python3 -m pipx ensurepath
+
+# Install mdformat and extensions for markdown formatting
+[windows]
+mdformat-install:
+    @just pipx-install
+    pipx install mdformat
+    pipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-simple-breaks mdformat-gfm-alerts mdformat-toc mdformat-wikilink mdformat-tables
+
+[unix]
+mdformat-install:
+    @just pipx-install
+    pipx install mdformat
+    pipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-simple-breaks mdformat-gfm-alerts mdformat-toc mdformat-wikilink mdformat-tables
+
 # =============================================================================
 # FORMATTING AND LINTING
 # =============================================================================
 
 format: fmt format-docs
 
+[windows]
 format-docs:
-    mdformat **/*.md
+    @if (Get-Command mdformat -ErrorAction SilentlyContinue) { Get-ChildItem -Recurse -Filter "*.md" | ForEach-Object { mdformat $_.FullName } } else { Write-Host "mdformat not found. Run 'just mdformat-install' first." }
+
+[unix]
+format-docs:
+    @if command -v mdformat >/dev/null 2>&1; then find . -name "*.md" -not -path "./target/*" -not -path "./node_modules/*" -exec mdformat {} \; ; else echo "mdformat not found. Run 'just mdformat-install' first."; fi
 
 fmt:
     @cargo fmt --all
