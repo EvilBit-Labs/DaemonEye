@@ -17,7 +17,7 @@
   - Write unit tests for data model validation and serialization
   - _Requirements: 1.3, 4.1, 4.3_
 
-- [-] 3. Implement IPC client infrastructure for daemoneye-agent
+- [x] 3. Implement IPC client infrastructure for daemoneye-agent
 
 - [x] 3.1 Define protobuf schema for IPC messages - [#35](https://github.com/EvilBit-Labs/DaemonEye/issues/35)
 
