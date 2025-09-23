@@ -107,7 +107,7 @@
   - Write unit tests for protobuf serialization and backward compatibility
   - _Requirements: 12.1, 12.2, 12.3_
 
-- [x] 4.5 Complete collector-core testing suite - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
+- [ ] 4.5 Complete collector-core testing suite - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
 
   - Write integration tests for multiple concurrent EventSource registration and lifecycle management
   - Add criterion benchmarks for event batching, backpressure handling, and graceful shutdown coordination
