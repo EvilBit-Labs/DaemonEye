@@ -8,45 +8,51 @@ DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agen
 - [AGENTS](AGENTS.md): AI assistant rules of engagement and precedence hierarchy
 - [README](README.md): Project overview, goals, quick start
 - [SECURITY](SECURITY.md): Security policy, reporting process, vulnerability disclosure
-- [WARP](.kiro/steering/development.md): Operational commands and development workflows
-- [docs/src/architecture](docs/src/architecture.md): Architecture index linking to detailed subsystem docs
-- [docs/src/contributing](docs/src/contributing.md): Contribution guidelines and processes
-- [docs/src/getting-started](docs/src/getting-started.md): Initial setup and quick start workflow
-- [docs/src/introduction](docs/src/introduction.md): High-level product introduction and context
-- [docs/src/pricing](docs/src/pricing.md): Pricing model and tier summary
-- [docs/src/project-overview](docs/src/project-overview.md): Component overview and value proposition
-- [docs/src/security](docs/src/security.md): Security model, threat considerations, controls summary
-- [docs/src/testing](docs/src/testing.md): Testing strategy, tiers, tooling, quality gates
+- [Contributing](docs/src/contributing.md): Contribution guidelines and processes
+- [Getting Started](docs/src/getting-started.md): Initial setup and quick start workflow
+- [Introduction](docs/src/introduction.md): High-level product introduction and context
+- [Pricing](docs/src/pricing.md): Pricing model and tier summary
+- [Project Overview](docs/src/project-overview.md): Component overview and value proposition
+- [Security](docs/src/security.md): Security model, threat considerations, controls summary
+- [Testing](docs/src/testing.md): Testing strategy, tiers, tooling, quality gates
 
 ## Specifications
-- [spec/adr-ipc-interprocess](spec/adr-ipc-interprocess.md): ADR for migrating IPC transport to interprocess crate
-- [spec/daemon_eye_spec_sql_to_ipc_detection_architecture](spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md): SQL-to-IPC detection architecture specification
-- [spec/product](spec/product.md): Product feature specifications and tier definitions
-- [spec/structure](spec/structure.md): Workspace/component structure and architectural boundaries
-- [spec/tech](spec/tech.md): Technology stack decisions and enforced requirements
-- [docs/src/api-reference](docs/src/api-reference.md): API reference index
-- [docs/src/architecture/feature-tiers](docs/src/architecture/feature-tiers.md): Feature differentiation across Free/Business/Enterprise tiers
-- [docs/src/architecture/system-architecture](docs/src/architecture/system-architecture.md): Core system architecture and data flows
-- [docs/src/technical](docs/src/technical.md): Technical topics index for deeper implementation areas
-- [docs/src/technical/business-tier](docs/src/technical/business-tier.md): Business tier technical extensions
-- [docs/src/technical/core-monitoring](docs/src/technical/core-monitoring.md): Core monitoring capabilities requirements context
-- [docs/src/technical/enterprise-tier](docs/src/technical/enterprise-tier.md): Enterprise tier advanced capabilities
-- [docs/src/technical/ipc-implementation](docs/src/technical/ipc-implementation.md): IPC implementation details and patterns
-- [docs/src/technical/query-pipeline](docs/src/technical/query-pipeline.md): Query pipeline architecture and execution
-- [docs/src/technical/security_design_overview](docs/src/technical/security_design_overview.md): Security design overview and threat model
-- [docs/src/technical/sql-dialect-reference](docs/src/technical/sql-dialect-reference.md): SQL dialect reference and supported features
+- [ADR IPC Interprocess](spec/adr-ipc-interprocess.md): ADR for migrating IPC transport to interprocess crate
+- [API Reference](docs/src/api-reference.md): API reference index
+- [Architecture](docs/src/architecture.md): Architecture index linking to detailed subsystem docs
+- [Business Tier](docs/src/technical/business-tier.md): Business tier technical extensions
+- [Collector-Core Standards](.kiro/steering/collector-core.md): Collector-core framework patterns and requirements
+- [Core Monitoring](docs/src/technical/core-monitoring.md): Core monitoring capabilities requirements context
+- [Development Guidelines](.kiro/steering/development.md): Operational commands and development workflows
+- [Enterprise Tier](docs/src/technical/enterprise-tier.md): Enterprise tier advanced capabilities
+- [Feature Tiers](docs/src/architecture/feature-tiers.md): Feature differentiation across Free/Business/Enterprise tiers
+- [IPC Implementation](docs/src/technical/ipc-implementation.md): IPC implementation details and patterns
+- [Performance Standards](.kiro/steering/performance.md): Performance targets and resource management requirements
+- [Product](spec/product.md): Product feature specifications and tier definitions
+- [Query Pipeline](docs/src/technical/query-pipeline.md): Query pipeline architecture and execution
+- [Security Design Overview](docs/src/technical/security_design_overview.md): Security design overview and threat model
+- [Security Standards](.kiro/steering/security.md): Security guidelines and cryptographic standards
+- [SQL Dialect Reference](docs/src/technical/sql-dialect-reference.md): SQL dialect reference and supported features
+- [SQL to IPC Detection Architecture](spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md): SQL-to-IPC detection architecture specification
+- [Structure](spec/structure.md): Workspace/component structure and architectural boundaries
+- [System Architecture](docs/src/architecture/system-architecture.md): Core system architecture and data flows
+- [Tech](spec/tech.md): Technology stack decisions and enforced requirements
+- [Technical](docs/src/technical.md): Technical topics index for deeper implementation areas
+- [Testing Standards](.kiro/steering/testing.md): Testing strategy and quality assurance requirements
 
 ## Configuration
-- [docs/src/deployment](docs/src/deployment.md): Deployment index for environment targets
-- [docs/src/deployment/configuration](docs/src/deployment/configuration.md): Configuration parameters and hierarchy
-- [docs/src/deployment/docker](docs/src/deployment/docker.md): Containerization and Docker deployment guidance
-- [docs/src/deployment/installation](docs/src/deployment/installation.md): Installation procedures
-- [docs/src/deployment/kubernetes](docs/src/deployment/kubernetes.md): Kubernetes deployment patterns
-- [docs/src/user-guides](docs/src/user-guides.md): User guides index
-- [docs/src/user-guides/configuration](docs/src/user-guides/configuration.md): User-focused configuration walkthrough
-- [docs/src/user-guides/operator-guide](docs/src/user-guides/operator-guide.md): Operator workflow and usage guidance
+- [Configuration](docs/src/deployment/configuration.md): Configuration parameters and hierarchy
+- [Deployment](docs/src/deployment.md): Deployment index for environment targets
+- [Docker](docs/src/deployment/docker.md): Containerization and Docker deployment guidance
+- [Installation](docs/src/deployment/installation.md): Installation procedures
+- [Kubernetes](docs/src/deployment/kubernetes.md): Kubernetes deployment patterns
+- [Operator Guide](docs/src/user-guides/operator-guide.md): Operator workflow and usage guidance
+- [User Configuration](docs/src/user-guides/configuration.md): User-focused configuration walkthrough
+- [User Guides](docs/src/user-guides.md): User guides index
 
 ## Optional
+- [Core API](docs/src/api-reference/core-api.md): Core API concepts and interface reference
+- [Cursor Rules README](.cursor/rules/README.md): Overview of cursor rules and standards
 - [LICENSE](LICENSE): Project license (permissive usage terms)
-- [docs/src/api-reference/core-api](docs/src/api-reference/core-api.md): Core API concepts and interface reference
-- [docs/src/SUMMARY](docs/src/SUMMARY.md): mdBook summary table of contents (structural index)
+- [Rust Standards](.cursor/rules/rust/rust-standards.mdc): Rust coding standards and patterns
+- [SUMMARY](docs/src/SUMMARY.md): mdBook summary table of contents (structural index)
