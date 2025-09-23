@@ -24,10 +24,12 @@ use chrono::{DateTime, Utc};
 
 // Event Store schema
 const PROCESSES_TABLE: TableDefinition<u64, ProcessInfo> = TableDefinition::new("processes");
+const PID_INDEX_TABLE: TableDefinition<u32, u64> = TableDefinition::new("pid_index");
 const SCANS_TABLE: TableDefinition<u64, ScanMetadata> = TableDefinition::new("scans");
 const DETECTION_RULES_TABLE: TableDefinition<String, DetectionRule> = TableDefinition::new("detection_rules");
 const ALERTS_TABLE: TableDefinition<u64, Alert> = TableDefinition::new("alerts");
 const ALERT_DELIVERIES_TABLE: TableDefinition<u64, AlertDelivery> = TableDefinition::new("alert_deliveries");
+const VERSION_TABLE: TableDefinition<u32, u32> = TableDefinition::new("version");
 
 // Audit Ledger schema (separate database)
 const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::new("audit_ledger");
@@ -59,6 +61,7 @@ impl DatabaseManager {
         
         {
             let mut processes_table = write_txn.open_table(PROCESSES_TABLE)?;
+            let mut pid_index_table = write_txn.open_table(PID_INDEX_TABLE)?;
             let mut scans_table = write_txn.open_table(SCANS_TABLE)?;
             let mut rules_table = write_txn.open_table(DETECTION_RULES_TABLE)?;
             let mut alerts_table = write_txn.open_table(ALERTS_TABLE)?;
@@ -78,9 +81,18 @@ impl DatabaseManager {
             .context("Failed to begin write transaction")?;
         
         {
-            let mut table = write_txn.open_table(PROCESSES_TABLE)?;
+            let mut processes_table = write_txn.open_table(PROCESSES_TABLE)?;
+            let mut pid_index_table = write_txn.open_table(PID_INDEX_TABLE)?;
+            
             let key = process.collection_time.timestamp() as u64;
-            table.insert(key, process)?;
+            
+            // Insert into main processes table
+            processes_table.insert(key, process)
+                .context("Failed to insert process into processes table")?;
+            
+            // Insert PID -> primary key mapping for O(1) lookups
+            pid_index_table.insert(process.pid, key)
+                .context("Failed to insert PID index entry")?;
         }
         
         write_txn.commit()
@@ -93,17 +105,24 @@ impl DatabaseManager {
         let read_txn = self.db.begin_read()
             .context("Failed to begin read transaction")?;
         
-        let table = read_txn.open_table(PROCESSES_TABLE)?;
+        // Use PID index for O(1) lookup
+        let pid_index_table = read_txn.open_table(PID_INDEX_TABLE)
+            .context("Failed to open PID index table")?;
         
-        // Search for process by PID (requires iteration)
-        for result in table.iter()? {
-            let (_, process) = result?;
-            if process.pid == pid {
-                return Ok(Some(process));
-            }
+        // Look up primary key by PID
+        let primary_key = match pid_index_table.get(pid)? {
+            Some(key) => key.value(),
+            None => return Ok(None), // PID not found
+        };
+        
+        // Fetch ProcessInfo using the primary key
+        let processes_table = read_txn.open_table(PROCESSES_TABLE)
+            .context("Failed to open processes table")?;
+        
+        match processes_table.get(primary_key)? {
+            Some(process) => Ok(Some(process.value())),
+            None => Ok(None), // Process record missing (data inconsistency)
         }
-        
-        Ok(None)
     }
 
     pub async fn query_processes(&self, query: &str) -> Result<Vec<ProcessInfo>> {
@@ -339,16 +358,37 @@ impl MigrationManager {
         }
     }
 
-    pub async fn run_migrations(&self, db: &Database) -> Result<()> {
-        let current_version = self.get_current_version(db).await.unwrap_or(0);
+    pub fn run_migrations(&self, db: &Database) -> Result<()> {
+        let current_version = self.get_current_version(db).unwrap_or(0);
         
         for migration in &self.migrations {
             if migration.version > current_version {
                 migration.run(db)?;
-                self.set_version(db, migration.version).await?;
+                self.set_version(db, migration.version)?;
             }
         }
         
+        Ok(())
+    }
+
+    fn get_current_version(&self, db: &Database) -> Result<u32> {
+        let read_txn = db.begin_read()?;
+        let version_table = read_txn.open_table(VERSION_TABLE)?;
+        
+        if let Some((_, version)) = version_table.get(0)? {
+            Ok(version)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn set_version(&self, db: &Database, version: u32) -> Result<()> {
+        let write_txn = db.begin_write()?;
+        {
+            let mut version_table = write_txn.open_table(VERSION_TABLE)?;
+            version_table.insert(0, version)?;
+        }
+        write_txn.commit()?;
         Ok(())
     }
 }

@@ -52,6 +52,33 @@ pub struct AlertSinkConfig {
     pub facility: Option<String>,
 }
 
+impl AlertSinkConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        match self.sink_type.as_str() {
+            "webhook" => {
+                if self.endpoint.is_none() {
+                    return Err(ConfigError::InvalidAlertSink(
+                        "webhook sink requires endpoint".to_string()
+                    ));
+                }
+            }
+            "syslog" => {
+                if self.facility.is_none() {
+                    return Err(ConfigError::InvalidAlertSink(
+                        "syslog sink requires facility".to_string()
+                    ));
+                }
+            }
+            _ => {
+                return Err(ConfigError::InvalidAlertSink(
+                    format!("Unknown sink type: {}", self.sink_type)
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub app: AppConfig,
@@ -67,16 +94,24 @@ Implement hierarchical configuration loading:
 ```rust
 use figment::{Figment, providers::{Format, Yaml, Toml, Env}};
 use std::path::Path;
+use dirs::home_dir;
 
 impl Config {
     pub fn load() -> Result<Self, ConfigError> {
+        // Expand tilde in user config path
+        let user_config_path = home_dir()
+            .ok_or(ConfigError::HomeDirectoryNotFound)?
+            .join(".config")
+            .join("daemoneye")
+            .join("config.yaml");
+
         let config = Figment::new()
             // Embedded defaults
             .merge(Config::default())
             // System configuration
             .merge(Yaml::file("/etc/daemoneye/config.yaml"))
             // User configuration
-            .merge(Yaml::file("~/.config/daemoneye/config.yaml"))
+            .merge(Yaml::file(user_config_path))
             // Environment variables
             .merge(Env::prefixed("DAEMONEYE_"))
             // Command line arguments (if provided)
@@ -160,6 +195,12 @@ pub enum ConfigError {
 
     #[error("No alert sinks configured")]
     NoAlertSinksConfigured,
+
+    #[error("Invalid alert sink configuration: {0}")]
+    InvalidAlertSink(String),
+
+    #[error("Home directory not found")]
+    HomeDirectoryNotFound,
 }
 ```
 
@@ -251,16 +292,49 @@ alerting:
 
     #[test]
     fn test_environment_variable_override() {
-        std::env::set_var("DAEMONEYE_APP_SCAN_INTERVAL_MS", "15000");
-        std::env::set_var("DAEMONEYE_APP_LOG_LEVEL", "debug");
+        // RAII guard to ensure environment variables are cleaned up even on panic
+        let _guard = EnvVarGuard::new(vec![
+            ("DAEMONEYE_APP_SCAN_INTERVAL_MS", "15000"),
+            ("DAEMONEYE_APP_LOG_LEVEL", "debug"),
+        ]);
         
         let config = Config::load().unwrap();
         assert_eq!(config.app.scan_interval_ms, 15000);
         assert_eq!(config.app.log_level, "debug");
-        
-        // Cleanup
-        std::env::remove_var("DAEMONEYE_APP_SCAN_INTERVAL_MS");
-        std::env::remove_var("DAEMONEYE_APP_LOG_LEVEL");
+    }
+
+    /// RAII guard for environment variables that restores previous values on drop
+    struct EnvVarGuard {
+        vars: Vec<String>,
+    }
+
+    impl EnvVarGuard {
+        fn new(vars: Vec<(&str, &str)>) -> Self {
+            let mut saved_vars = Vec::new();
+            
+            for (key, value) in vars {
+                // Save previous value if it exists
+                let previous = std::env::var(key).ok();
+                saved_vars.push((key.to_string(), previous));
+                
+                // Set the new value
+                std::env::set_var(key, value);
+            }
+            
+            Self {
+                vars: saved_vars.into_iter()
+                    .map(|(key, _)| key)
+                    .collect(),
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            for key in &self.vars {
+                std::env::remove_var(key);
+            }
+        }
     }
 }
 ```

@@ -298,10 +298,12 @@ impl IpcClientValidationSuite {
         println!("Total tests: {}", total_tests);
         println!("Successful: {}", successful_tests);
         println!("Failed: {}", failed_tests);
-        println!(
-            "Success rate: {:.2}%",
+        let success_rate = if total_tests == 0 {
+            0.0
+        } else {
             (successful_tests as f64 / total_tests as f64) * 100.0
-        );
+        };
+        println!("Success rate: {:.2}%", success_rate);
 
         // Group by category
         let mut categories: HashMap<String, Vec<&ValidationTestResult>> = HashMap::new();
@@ -457,8 +459,11 @@ impl IpcClientValidationSuite {
             println!("  {} {}", status, requirement);
         }
 
-        let overall_success_rate =
-            self.results.iter().filter(|r| r.success).count() as f64 / self.results.len() as f64;
+        let overall_success_rate = if self.results.is_empty() {
+            0.0
+        } else {
+            self.results.iter().filter(|r| r.success).count() as f64 / self.results.len() as f64
+        };
 
         if overall_success_rate >= 0.9 {
             println!("\n\u{1f389} Task 3.5 requirements successfully implemented!");

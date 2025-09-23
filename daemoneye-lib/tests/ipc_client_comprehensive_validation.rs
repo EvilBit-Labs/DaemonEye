@@ -33,6 +33,8 @@ use proptest::prelude::*;
 use std::io::Cursor;
 use std::sync::Arc;
 #[cfg(not(target_os = "windows"))]
+use std::sync::Barrier;
+#[cfg(not(target_os = "windows"))]
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -464,10 +466,16 @@ async fn test_cross_platform_socket_creation() {
 
         use std::os::unix::fs::PermissionsExt;
         let mode = permissions.mode();
-        assert_eq!(
-            mode & 0o777,
-            0o600,
-            "Unix socket should have 0600 permissions"
+        // Check that owner has read/write permissions and no group/other permissions
+        assert!(
+            (mode & 0o600) == 0o600,
+            "Unix socket should have owner read/write permissions (mode: {:#o})",
+            mode
+        );
+        assert!(
+            (mode & 0o077) == 0,
+            "Unix socket should not have group/other permissions (mode: {:#o})",
+            mode
         );
     }
 

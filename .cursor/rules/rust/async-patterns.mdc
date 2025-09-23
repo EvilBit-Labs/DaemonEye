@@ -195,16 +195,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_graceful_shutdown() {
-        let mut manager = ServiceManager::new();
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+        
+        let manager = Arc::new(Mutex::new(ServiceManager::new()));
         
         // Start service in background
+        let manager_clone = Arc::clone(&manager);
         let handle = tokio::spawn(async move {
+            let mut manager = manager_clone.lock().await;
             manager.run().await
         });
 
         // Wait a bit then shutdown
         tokio::time::sleep(Duration::from_millis(100)).await;
-        manager.shutdown();
+        {
+            let mut manager = manager.lock().await;
+            manager.shutdown();
+        }
 
         // Should complete without error
         handle.await.unwrap().unwrap();

@@ -5,17 +5,7 @@
 //! - Comprehensive client performance validation
 //! - Cross-platform performance characteristics
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::str_to_string,
-    clippy::uninlined_format_args,
-    clippy::shadow_reuse,
-    clippy::as_conversions,
-    clippy::shadow_unrelated,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects
-)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use daemoneye_lib::ipc::client::{CollectorEndpoint, LoadBalancingStrategy, ResilientIpcClient};
@@ -65,10 +55,7 @@ fn create_benchmark_endpoint(temp_dir: &TempDir, test_name: &str) -> String {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("bench_validation");
-        format!(
-            r"\\.\pipe\daemoneye\bench-validation-{}-{}",
-            test_name, dir_name
-        )
+        format!(r"\\.\pipe\daemoneye\bench-validation-{test_name}-{dir_name}")
     }
 }
 
@@ -91,17 +78,17 @@ fn create_benchmark_process_record(pid: u32) -> ProcessRecord {
     ProcessRecord {
         pid,
         ppid: Some(pid.saturating_sub(1)),
-        name: format!("benchmark_process_{}", pid),
-        executable_path: Some(format!("/usr/bin/benchmark_{}", pid)),
+        name: format!("benchmark_process_{pid}"),
+        executable_path: Some(format!("/usr/bin/benchmark_{pid}")),
         command_line: vec![
-            format!("benchmark_{}", pid),
+            format!("benchmark_{pid}"),
             "--benchmark".to_owned(),
-            format!("--pid={}", pid),
+            format!("--pid={pid}"),
         ],
         start_time: Some(chrono::Utc::now().timestamp()),
         cpu_usage: Some(25.5),
-        memory_usage: Some(1024 * 1024 * u64::from(pid)),
-        executable_hash: Some(format!("benchmark_hash_{:08x}", pid)),
+        memory_usage: Some(1024_u64.saturating_mul(1024).saturating_mul(u64::from(pid))),
+        executable_hash: Some(format!("benchmark_hash_{pid:08x}")),
         hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("1000".to_owned()),
         accessible: true,
@@ -114,7 +101,7 @@ fn create_benchmark_process_record(pid: u32) -> ProcessRecord {
 fn create_benchmark_result(task_id: &str, num_processes: usize) -> DetectionResult {
     let mut processes = Vec::with_capacity(num_processes);
     for i in 0..num_processes {
-        processes.push(create_benchmark_process_record(i as u32));
+        processes.push(create_benchmark_process_record(i.try_into().unwrap_or(0)));
     }
 
     DetectionResult {
@@ -228,20 +215,20 @@ fn bench_client_server_throughput(c: &mut Criterion) {
     ];
 
     for (size_name, metadata_size, num_processes) in message_sizes {
-        group.throughput(Throughput::Elements(num_processes as u64));
+        group.throughput(Throughput::Elements(num_processes.try_into().unwrap_or(0)));
 
         group.bench_with_input(
             BenchmarkId::new("resilient_client_throughput", size_name),
             &(metadata_size, num_processes),
-            |b, &(metadata_size, num_processes)| {
+            |b, &(_bench_metadata_size, bench_num_processes)| {
                 b.iter(|| {
                     rt.block_on(async {
                         let (config, _temp_dir) =
-                            create_benchmark_config(&format!("throughput_{}", size_name));
+                            create_benchmark_config(&format!("throughput_{size_name}"));
 
                         // Start server
                         let mut server = InterprocessServer::new(config.clone());
-                        let response_size = num_processes;
+                        let response_size = bench_num_processes;
 
                         server.set_handler(move |task: DetectionTask| async move {
                             Ok(create_benchmark_result(&task.task_id, response_size))
@@ -291,11 +278,11 @@ fn bench_concurrent_client_operations(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("concurrent_requests", concurrency),
             &concurrency,
-            |b, &concurrency| {
+            |b, &bench_concurrency| {
                 b.iter(|| {
                     rt.block_on(async {
                         let (config, _temp_dir) =
-                            create_benchmark_config(&format!("concurrent_{}", concurrency));
+                            create_benchmark_config(&format!("concurrent_{bench_concurrency}"));
                         let request_counter = Arc::new(AtomicU32::new(0));
                         let handler_counter = Arc::clone(&request_counter);
 
@@ -326,20 +313,20 @@ fn bench_concurrent_client_operations(c: &mut Criterion) {
                         let mut handles = vec![];
                         let start_time = Instant::now();
 
-                        for i in 0..concurrency {
+                        for i in 0..bench_concurrency {
                             let client_clone = Arc::clone(&client);
                             let handle = tokio::spawn(async move {
-                                let task = create_benchmark_task(&format!("concurrent_{}", i), 0);
+                                let task = create_benchmark_task(&format!("concurrent_{i}"), 0);
                                 client_clone.send_task(task).await
                             });
                             handles.push(handle);
                         }
 
                         // Wait for all requests to complete
-                        let mut successful_requests = 0;
+                        let mut successful_requests: u32 = 0;
                         for handle in handles {
                             if let Ok(Ok(_)) = handle.await {
-                                successful_requests += 1;
+                                successful_requests = successful_requests.saturating_add(1);
                             }
                         }
 
@@ -374,13 +361,13 @@ fn bench_load_balancing_performance(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("load_balancing_strategy", strategy_name),
             &strategy,
-            |b, strategy| {
+            |b, bench_strategy| {
                 b.iter(|| {
                     rt.block_on(async {
                         let (config1, _temp_dir1) =
-                            create_benchmark_config(&format!("lb1_{}", strategy_name));
+                            create_benchmark_config(&format!("lb1_{strategy_name}"));
                         let (config2, _temp_dir2) =
-                            create_benchmark_config(&format!("lb2_{}", strategy_name));
+                            create_benchmark_config(&format!("lb2_{strategy_name}"));
 
                         // Start two servers
                         let mut server1 = InterprocessServer::new(config1.clone());
@@ -414,7 +401,7 @@ fn bench_load_balancing_performance(c: &mut Criterion) {
                         let client = ResilientIpcClient::new_with_endpoints(
                             &config1,
                             endpoints,
-                            strategy.clone(),
+                            bench_strategy.clone(),
                         );
 
                         // Send multiple requests to test load balancing
@@ -422,7 +409,7 @@ fn bench_load_balancing_performance(c: &mut Criterion) {
                         let start_time = Instant::now();
 
                         for i in 0..num_requests {
-                            let task = create_benchmark_task(&format!("lb_test_{}", i), 0);
+                            let task = create_benchmark_task(&format!("lb_test_{i}"), 0);
                             let _result = client.send_task(task).await.expect("Request failed");
                         }
 
@@ -458,9 +445,9 @@ fn bench_error_handling_performance(c: &mut Criterion) {
                 let mut server = InterprocessServer::new(config.clone());
                 let counter = Arc::clone(&failure_counter);
                 server.set_handler(move |task: DetectionTask| {
-                    let counter = Arc::clone(&counter);
+                    let handler_counter = Arc::clone(&counter);
                     async move {
-                        let failure_count = counter.fetch_add(1, Ordering::SeqCst);
+                        let failure_count = handler_counter.fetch_add(1, Ordering::SeqCst);
 
                         // Fail first 3 requests, then succeed
                         if failure_count < 3 {
@@ -489,7 +476,7 @@ fn bench_error_handling_performance(c: &mut Criterion) {
 
                 // Send requests to trigger and recover from circuit breaker
                 for i in 0..10 {
-                    let task = create_benchmark_task(&format!("circuit_{}", i), 0);
+                    let task = create_benchmark_task(&format!("circuit_{i}"), 0);
                     let _result = client.send_task(task).await; // May succeed or fail
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
@@ -548,8 +535,8 @@ fn bench_resource_management(c: &mut Criterion) {
 
                 for i in 0..100 {
                     let endpoint = CollectorEndpoint::new(
-                        format!("endpoint_{}", i),
-                        format!("/tmp/endpoint_{}.sock", i),
+                        format!("endpoint_{i}"),
+                        format!("/tmp/endpoint_{i}.sock"),
                         i,
                     );
                     client.add_endpoint(endpoint).await;
@@ -575,14 +562,12 @@ fn bench_resource_management(c: &mut Criterion) {
                 // Add and remove endpoints rapidly
                 for i in 0..50 {
                     let endpoint = CollectorEndpoint::new(
-                        format!("temp_endpoint_{}", i),
-                        format!("/tmp/temp_{}.sock", i),
+                        format!("temp_endpoint_{i}"),
+                        format!("/tmp/temp_{i}.sock"),
                         1,
                     );
                     client.add_endpoint(endpoint).await;
-                    client
-                        .remove_endpoint(&format!("temp_endpoint_{}", i))
-                        .await;
+                    client.remove_endpoint(&format!("temp_endpoint_{i}")).await;
                 }
 
                 let duration = start_time.elapsed();
@@ -628,7 +613,7 @@ fn bench_cross_platform_performance(c: &mut Criterion) {
 
                 // Send requests to measure platform performance
                 for i in 0..20 {
-                    let task = create_benchmark_task(&format!("platform_{}", i), 0);
+                    let task = create_benchmark_task(&format!("platform_{i}"), 0);
                     let _result = client.send_task(task).await.expect("Request failed");
                 }
 
