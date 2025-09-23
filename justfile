@@ -121,7 +121,8 @@ format-docs:
 
 [unix]
 format-docs:
-    @if command -v mdformat >/dev/null 2>&1; then find . -name "*.md" -not -path "./target/*" -not -path "./node_modules/*" -exec mdformat {} \; ; else echo "mdformat not found. Run 'just mdformat-install' first."; fi
+    cd "{{ root }}"
+    @if command -v mdformat >/dev/null 2>&1; then find . -type f -name "*.md" -not -path "./target/*" -not -path "./node_modules/*" -exec mdformat {} + ; else echo "mdformat not found. Run 'just mdformat-install' first."; fi
 
 fmt:
     @cargo fmt --all

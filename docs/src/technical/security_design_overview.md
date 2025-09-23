@@ -1103,7 +1103,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 - **Vendor Implementation**: Comprehensive system documentation
 - **Product Requirements**: Provide complete documentation, security guides, and operational procedures
-- **Implementation Notes**: Include technical documentation, security guides, and compliance documentation. Already planned: comprehensive documentation including AGENTS.md, WARP.md, and technical specifications. Additional work needed: formal system documentation and compliance documentation.
+- **Implementation Notes**: Include technical documentation, security guides, and compliance documentation. Already planned: comprehensive documentation including AGENTS.md, .kiro/steering/development.md, and technical specifications. Additional work needed: formal system documentation and compliance documentation.
 
 **SA-8 (Security Engineering Principles)**:
 
@@ -1133,7 +1133,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 - **Vendor Implementation**: Security training for developers
 - **Product Requirements**: Provide security training, documentation, and best practices
-- **Implementation Notes**: Include training materials, security guidelines, and best practices. Already planned: comprehensive documentation including AGENTS.md, WARP.md, and technical specifications. Additional work needed: formal security training materials and developer guidelines.
+- **Implementation Notes**: Include training materials, security guidelines, and best practices. Already planned: comprehensive documentation including AGENTS.md, .kiro/steering/development.md, and technical specifications. Additional work needed: formal security training materials and developer guidelines.
 
 **SA-17 (Developer Security Architecture and Design)**:
 
@@ -1357,7 +1357,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-38 (Operations Security)**:
 
-- **Vendor Implementation**: Implement operations security controls for DaemonEye. **Already Planned**: Operational security procedures are documented in AGENTS.md and WARP.md. **Additional Required**: Enhanced operations security and formal operations security documentation.
+- **Vendor Implementation**: Implement operations security controls for DaemonEye. **Already Planned**: Operational security procedures are documented in AGENTS.md and .kiro/steering/development.md. **Additional Required**: Enhanced operations security and formal operations security documentation.
 
 - **Product Requirements**: Protect operational information and prevent information leakage
 
@@ -1475,7 +1475,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-58 (Secure Operations)**:
 
-- **Vendor Implementation**: Ensure secure operations for DaemonEye. **Already Planned**: Secure configuration and operational security procedures are documented in AGENTS.md and WARP.md. **Additional Required**: Enhanced secure operations and formal secure operations documentation.
+- **Vendor Implementation**: Ensure secure operations for DaemonEye. **Already Planned**: Secure configuration and operational security procedures are documented in AGENTS.md and .kiro/steering/development.md. **Additional Required**: Enhanced secure operations and formal secure operations documentation.
 - **Product Requirements**: Implement secure operational procedures and controls
 - **Implementation Notes**: Include secure configuration, operational security procedures, and security monitoring
 

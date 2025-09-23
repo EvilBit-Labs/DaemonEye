@@ -8,7 +8,7 @@ DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agen
 - [AGENTS](AGENTS.md): AI assistant rules of engagement and precedence hierarchy
 - [README](README.md): Project overview, goals, quick start
 - [SECURITY](SECURITY.md): Security policy, reporting process, vulnerability disclosure
-- [WARP](WARP.md): Operational commands and development workflows
+- [WARP](.kiro/steering/development.md): Operational commands and development workflows
 - [docs/src/architecture](docs/src/architecture.md): Architecture index linking to detailed subsystem docs
 - [docs/src/contributing](docs/src/contributing.md): Contribution guidelines and processes
 - [docs/src/getting-started](docs/src/getting-started.md): Initial setup and quick start workflow

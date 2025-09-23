@@ -63,10 +63,10 @@ use thiserror::Error;
 pub enum IpcError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
-    
+
     #[error("Message serialization failed: {0}")]
     SerializationFailed(String),
-    
+
     #[error("Capability mismatch: required {required}, available {available}")]
     CapabilityMismatch { required: SourceCaps, available: SourceCaps },
 }

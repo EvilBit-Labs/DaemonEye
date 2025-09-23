@@ -589,7 +589,7 @@ git = "https://github.com/example/custom-lib"
 rev = "a1b2c3d4"                              # Specific commit SHA
 ```
 
-- **Security Scanning**: Integrate security tools in development workflow (see [WARP.md](./WARP.md) for proposed recipes):
+- **Security Scanning**: Integrate security tools in development workflow (see [.kiro/steering/development.md](./.kiro/steering/development.md) for proposed recipes):
   - `audit-deps`: `cargo audit`
   - `deny-deps`: `cargo deny check`
   - `security-scan`: Composed recipe combining lint, audit, and deny checks
@@ -1466,7 +1466,7 @@ pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionErro
 ### Project Documentation Structure
 
 - **AGENTS.md**: AI assistant rules of engagement (this file)
-- **WARP.md**: Operational commands and development workflows
+- **.kiro/steering/development.md**: Operational commands and development workflows
 - **README.md**: Project overview and quick start
 - **.kiro/steering/**: Architectural decisions and product direction
 - **.kiro/specs/**: Detailed technical specifications
@@ -1484,11 +1484,11 @@ pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionErro
 | **Core Requirements**    | [.kiro/specs/DaemonEye-core-monitoring/requirements.md](./.kiro/specs/DaemonEye-core-monitoring/requirements.md) | Functional requirements                     |
 | **Business Features**    | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md)       | Business tier specifications                |
 | **Enterprise Features**  | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md)   | Enterprise tier specifications              |
-| **Development Workflow** | [WARP.md](./WARP.md)                                                                                             | Commands, justfile recipes, testing         |
+| **Development Workflow** | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                 | Commands, justfile recipes, testing         |
 
 ### Cross-References
 
-- **Operational Commands**: See [WARP.md](./WARP.md) for complete development command reference
+- **Operational Commands**: See [.kiro/steering/development.md](./.kiro/steering/development.md) for complete development command reference
 - **Cursor IDE Rules**: See [.cursor/rules/](./.cursor/rules/) for IDE-specific guidance
 - **Security Standards**: Reference [.cursor/rules/security-standards.mdc](./.cursor/rules/security-standards.mdc)
 - **Rust Standards**: Reference [.cursor/rules/rust-standards.mdc](./.cursor/rules/rust-standards.mdc)
