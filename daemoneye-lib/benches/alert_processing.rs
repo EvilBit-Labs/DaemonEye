@@ -204,11 +204,11 @@ fn bench_alert_manager_operations(c: &mut Criterion) {
         MockAlertSink::new("sink2".to_string(), 0.8, 15),
         MockAlertSink::new("sink3".to_string(), 0.95, 5),
     ];
-    let mut manager = AlertManager::new();
-    for sink in &sinks {
-        manager.add_sink(Box::new(sink.clone()));
+    let mut multi_manager = AlertManager::new();
+    for alert_sink in &sinks {
+        multi_manager.add_sink(Box::new(alert_sink.clone()));
     }
-    let alert = Alert::new(
+    let multi_alert = Alert::new(
         AlertSeverity::High,
         "Test alert",
         "Test alert message",
@@ -224,7 +224,7 @@ fn bench_alert_manager_operations(c: &mut Criterion) {
     group.bench_function("send_alert_multiple_sinks", |b| {
         b.iter(|| {
             let start = std::time::Instant::now();
-            let result = rt.block_on(manager.send_alert(&alert));
+            let result = rt.block_on(multi_manager.send_alert(&multi_alert));
             let duration = start.elapsed();
             black_box((result, duration))
         });

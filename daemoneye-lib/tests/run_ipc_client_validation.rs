@@ -3,16 +3,6 @@
 //! This module provides utilities to run all IPC client validation tests
 //! and collect comprehensive results for task 3.5 validation.
 
-#![allow(
-    clippy::expect_used,
-    clippy::str_to_string,
-    clippy::as_conversions,
-    clippy::uninlined_format_args,
-    clippy::use_debug,
-    clippy::shadow_reuse,
-    clippy::shadow_unrelated
-)]
-
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -241,14 +231,14 @@ impl IpcClientValidationSuite {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Simulate test execution
         // In a real implementation, this would call the actual test functions
-        println!("  Running test: {}", test_name);
+        println!("  Running test: {test_name}");
 
         // Simulate some processing time
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Simulate success for most tests
         if test_name.contains("error") && rand::random::<f64>() < 0.1 {
-            return Err(format!("Simulated test failure for {}", test_name).into());
+            return Err(format!("Simulated test failure for {test_name}").into());
         }
 
         Ok(())
@@ -258,7 +248,7 @@ impl IpcClientValidationSuite {
         &self,
         benchmark_name: &str,
     ) -> Result<HashMap<String, f64>, Box<dyn std::error::Error>> {
-        println!("  Running benchmark: {}", benchmark_name);
+        println!("  Running benchmark: {benchmark_name}");
 
         // Simulate benchmark execution
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -292,18 +282,20 @@ impl IpcClientValidationSuite {
 
         let total_tests = self.results.len();
         let successful_tests = self.results.iter().filter(|r| r.success).count();
-        #[allow(clippy::arithmetic_side_effects)]
-        let failed_tests = total_tests - successful_tests;
+        let failed_tests = total_tests.saturating_sub(successful_tests);
 
-        println!("Total tests: {}", total_tests);
-        println!("Successful: {}", successful_tests);
-        println!("Failed: {}", failed_tests);
+        println!("Total tests: {total_tests}");
+        println!("Successful: {successful_tests}");
+        println!("Failed: {failed_tests}");
         let success_rate = if total_tests == 0 {
             0.0
         } else {
-            (successful_tests as f64 / total_tests as f64) * 100.0
+            // Safe conversion: usize to f64 for percentage calculation
+            #[allow(clippy::as_conversions)]
+            let success_rate = (successful_tests as f64 / total_tests as f64) * 100.0;
+            success_rate
         };
-        println!("Success rate: {:.2}%", success_rate);
+        println!("Success rate: {success_rate:.2}%");
 
         // Group by category
         let mut categories: HashMap<String, Vec<&ValidationTestResult>> = HashMap::new();
@@ -319,26 +311,24 @@ impl IpcClientValidationSuite {
             let category_success = results.iter().filter(|r| r.success).count();
             let category_total = results.len();
 
-            println!(
-                "\n{}: {}/{} passed",
-                category, category_success, category_total
-            );
+            println!("\n{category}: {category_success}/{category_total} passed");
 
             for result in results {
                 let status = if result.success { "PASS" } else { "FAIL" };
                 println!(
-                    "  {} - {} ({:?})",
-                    status, result.test_name, result.duration
+                    "  {status} - {} ({:.2}ms)",
+                    result.test_name,
+                    result.duration.as_secs_f64() * 1000.0
                 );
 
                 if let Some(ref error) = result.error_message {
-                    println!("    Error: {}", error);
+                    println!("    Error: {error}");
                 }
 
                 if !result.metrics.is_empty() {
                     println!("    Metrics:");
                     for (metric, value) in &result.metrics {
-                        println!("      {}: {:.2}", metric, value);
+                        println!("      {metric}: {value:.2}");
                     }
                 }
             }
@@ -406,10 +396,7 @@ impl IpcClientValidationSuite {
                 };
 
                 let status = if passed { "\u{2705}" } else { "\u{274c}" };
-                println!(
-                    "  {} {}: {:.2} ({} {:.2})",
-                    status, metric, value, comparison, threshold
-                );
+                println!("  {status} {metric}: {value:.2} ({comparison} {threshold:.2})");
             }
         }
     }
@@ -456,13 +443,17 @@ impl IpcClientValidationSuite {
                 "\u{274c} INCOMPLETE"
             };
 
-            println!("  {} {}", status, requirement);
+            println!("  {status} {requirement}");
         }
 
         let overall_success_rate = if self.results.is_empty() {
             0.0
         } else {
-            self.results.iter().filter(|r| r.success).count() as f64 / self.results.len() as f64
+            let successful_count = self.results.iter().filter(|r| r.success).count();
+            // Safe conversion: usize to f64 for percentage calculation
+            #[allow(clippy::as_conversions)]
+            let rate = successful_count as f64 / self.results.len() as f64;
+            rate
         };
 
         if overall_success_rate >= 0.9 {
@@ -509,7 +500,7 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
-        let metrics = result.expect("Failed to get performance metrics");
+        let metrics = result.unwrap_or_else(|_| HashMap::new());
         assert!(metrics.contains_key("throughput_msg_per_sec"));
         assert!(metrics.contains_key("avg_latency_ms"));
     }

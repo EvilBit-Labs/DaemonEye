@@ -19,6 +19,46 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
+/// Sanitize a directory name for use in Windows named pipe paths
+///
+/// Windows named pipes have restrictions on valid characters. This function:
+/// - Replaces any character not in [A-Za-z0-9._-] with '_'
+/// - Trims leading/trailing dots and slashes
+/// - Enforces a maximum length of 200 characters
+/// - Falls back to "bench_validation" if the result is empty
+#[cfg(windows)]
+fn sanitize_pipe_name(dir_name: &str) -> String {
+    let mut sanitized = String::with_capacity(dir_name.len());
+
+    for ch in dir_name.chars() {
+        match ch {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '.' | '_' | '-' => {
+                sanitized.push(ch);
+            }
+            _ => {
+                sanitized.push('_');
+            }
+        }
+    }
+
+    // Trim leading/trailing dots and slashes
+    let sanitized = sanitized.trim_matches(|c| c == '.' || c == '/' || c == '\\');
+
+    // Enforce maximum length
+    let sanitized = if sanitized.len() > 200 {
+        &sanitized[..200]
+    } else {
+        sanitized
+    };
+
+    // Fallback if empty
+    if sanitized.is_empty() {
+        "bench_validation".to_string()
+    } else {
+        sanitized.to_string()
+    }
+}
+
 /// Create a benchmark configuration
 fn create_benchmark_config(test_name: &str) -> (IpcConfig, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -55,7 +95,8 @@ fn create_benchmark_endpoint(temp_dir: &TempDir, test_name: &str) -> String {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("bench_validation");
-        format!(r"\\.\pipe\daemoneye\bench-validation-{test_name}-{dir_name}")
+        let sanitized_dir_name = sanitize_pipe_name(dir_name);
+        format!(r"\\.\pipe\daemoneye\bench-validation-{test_name}-{sanitized_dir_name}")
     }
 }
 
@@ -99,9 +140,12 @@ fn create_benchmark_process_record(pid: u32) -> ProcessRecord {
 
 /// Create a benchmark detection result
 fn create_benchmark_result(task_id: &str, num_processes: usize) -> DetectionResult {
-    let mut processes = Vec::with_capacity(num_processes);
-    for i in 0..num_processes {
-        processes.push(create_benchmark_process_record(i.try_into().unwrap_or(0)));
+    let max = num_processes.min(usize::try_from(u32::MAX).unwrap_or(usize::MAX));
+    let mut processes = Vec::with_capacity(max);
+    for i in 0..max {
+        processes.push(create_benchmark_process_record(
+            u32::try_from(i).unwrap_or(u32::MAX),
+        ));
     }
 
     DetectionResult {
@@ -179,16 +223,14 @@ fn bench_client_statistics(c: &mut Criterion) {
     });
 
     group.bench_function("endpoint_management", |b| {
-        let (config, _temp_dir) = create_benchmark_config("endpoint_mgmt");
+        let (config, temp_dir) = create_benchmark_config("endpoint_mgmt");
         let client = ResilientIpcClient::new(&config);
+        let endpoint_path = create_benchmark_endpoint(&temp_dir, "benchmark");
 
         b.iter(|| {
             rt.block_on(async {
-                let endpoint = CollectorEndpoint::new(
-                    "benchmark".to_owned(),
-                    "/tmp/benchmark.sock".to_owned(),
-                    1,
-                );
+                let endpoint =
+                    CollectorEndpoint::new("benchmark".to_owned(), endpoint_path.clone(), 1);
                 client.add_endpoint(endpoint).await;
                 let removed = client.remove_endpoint("benchmark").await;
                 black_box(removed)
@@ -220,7 +262,7 @@ fn bench_client_server_throughput(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("resilient_client_throughput", size_name),
             &(metadata_size, num_processes),
-            |b, &(_bench_metadata_size, bench_num_processes)| {
+            |b, &(bench_metadata_size, bench_num_processes)| {
                 b.iter(|| {
                     rt.block_on(async {
                         let (config, _temp_dir) =
@@ -247,7 +289,7 @@ fn bench_client_server_throughput(c: &mut Criterion) {
                         client.add_endpoint(endpoint).await;
 
                         // Send request
-                        let task = create_benchmark_task("throughput_test", metadata_size);
+                        let task = create_benchmark_task("throughput_test", bench_metadata_size);
                         let start_time = Instant::now();
                         let result = client.send_task(task).await.expect("Request failed");
                         let duration = start_time.elapsed();
