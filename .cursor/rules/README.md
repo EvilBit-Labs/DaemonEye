@@ -22,6 +22,13 @@ Rust-specific coding standards and practices:
 - `cargo-toml.mdc` - Cargo.toml configuration and dependency management
 - `error-handling.mdc` - Error handling patterns and best practices
 - `rust-standards.mdc` - General Rust coding standards and conventions
+- `ipc-communication.mdc` - Interprocess communication patterns and standards
+- `collector-core.mdc` - Collector-core framework implementation guidelines
+- `performance-optimization.mdc` - Performance optimization and benchmarking
+- `error-handling-patterns.mdc` - Comprehensive error handling patterns
+- `configuration-management.mdc` - Configuration loading and validation
+- `async-patterns.mdc` - Async/await patterns and best practices
+- `database-operations.mdc` - Database operations with redb
 
 ### `project/`
 

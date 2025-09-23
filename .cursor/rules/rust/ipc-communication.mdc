@@ -1,0 +1,87 @@
+---
+globs: **/ipc/**/*.rs,**/proto/**/*.rs,**/*ipc*.rs
+alwaysApply: false
+---
+
+# IPC Communication Standards for DaemonEye
+
+## IPC Architecture
+
+DaemonEye uses **interprocess communication** with strict security boundaries:
+
+- **Transport**: `interprocess` crate for cross-platform IPC (Unix domain sockets/named pipes)
+- **Serialization**: Protobuf with CRC32 checksums for integrity validation
+- **Framing**: Length-delimited protobuf messages with sequence numbers
+- **Backpressure**: Credit-based flow control (default: 1000 pending records, max 10 concurrent tasks)
+
+## Message Framing
+
+All IPC messages use length-delimited protobuf with CRC32 checksums:
+
+```rust
+use interprocess::local_socket::LocalSocketStream;
+use daemoneye_lib::proto::{DetectionTask, DetectionResult};
+
+// Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
+let stream = LocalSocketStream::connect("/tmp/DaemonEye.sock")?;
+
+// Protobuf message serialization with CRC32 checksums
+let task = DetectionTask::new()
+    .with_rule_id("suspicious_process")
+    .with_query("SELECT * FROM processes WHERE name = 'malware.exe'")
+    .build();
+
+// Serialize and send with framing
+let serialized = prost::Message::encode_to_vec(&task)?;
+// Send with CRC32 and length prefixing for integrity
+```
+
+## Capability Negotiation
+
+Implement capability-based task routing:
+
+```rust
+use daemoneye_lib::models::SourceCaps;
+
+// Capability advertisement
+let caps = SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE;
+
+// Task validation against capabilities
+if !caps.contains(required_capability) {
+    return Err(IpcError::InsufficientCapabilities);
+}
+```
+
+## Error Handling
+
+Use structured error types for IPC operations:
+
+```rust
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum IpcError {
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+    
+    #[error("Message serialization failed: {0}")]
+    SerializationFailed(String),
+    
+    #[error("Capability mismatch: required {required}, available {available}")]
+    CapabilityMismatch { required: SourceCaps, available: SourceCaps },
+}
+```
+
+## Security Requirements
+
+- **No Inbound Network**: System is outbound-only for alert delivery
+- **Input Validation**: All IPC messages validated with serde and typed models
+- **Capability Enforcement**: Tasks validated against advertised capabilities
+- **Connection Management**: Automatic reconnection with exponential backoff
+
+## Testing
+
+- Test IPC communication with temporary sockets
+- Validate message serialization roundtrips
+- Test capability negotiation scenarios
+- Test connection failure and recovery

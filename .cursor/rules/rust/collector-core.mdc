@@ -1,0 +1,126 @@
+---
+globs: collector-core/**/*.rs,**/collector*.rs
+alwaysApply: false
+---
+
+# Collector-Core Framework Standards
+
+## Framework Architecture
+
+The `collector-core` framework provides unified collection infrastructure:
+
+- **Universal EventSource Trait**: Abstracts collection methodology from operational infrastructure
+- **Collector Runtime**: Manages event sources, handles event aggregation, and provides shared services
+- **Extensible Event Model**: Supports multiple collection domains through unified event types
+- **Capability Negotiation**: Dynamic feature discovery and task routing through `SourceCaps` bitflags
+
+## EventSource Implementation
+
+Implement the EventSource trait for collection components:
+
+```rust
+use async_trait::async_trait;
+use collector_core::{EventSource, CollectionEvent, SourceCaps};
+use tokio::sync::mpsc;
+
+struct MyEventSource {
+    name: &'static str,
+    capabilities: SourceCaps,
+}
+
+#[async_trait]
+impl EventSource for MyEventSource {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn capabilities(&self) -> SourceCaps {
+        self.capabilities
+    }
+
+    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+        // Start collection and send events via tx
+        Ok(())
+    }
+
+    async fn stop(&self) -> anyhow::Result<()> {
+        // Clean shutdown
+        Ok(())
+    }
+}
+```
+
+## Event Types
+
+Use strongly-typed event structures:
+
+```rust
+use collector_core::{CollectionEvent, ProcessEvent, NetworkEvent};
+use std::time::SystemTime;
+
+// Process events
+let process_event = CollectionEvent::Process(ProcessEvent {
+    pid: 1234,
+    name: "example".to_string(),
+    timestamp: SystemTime::now(),
+    // ... other fields
+});
+
+// Network events (future extension)
+let network_event = CollectionEvent::Network(NetworkEvent {
+    connection_id: "conn_123".to_string(),
+    protocol: "TCP".to_string(),
+    timestamp: SystemTime::now(),
+    // ... other fields
+});
+```
+
+## Capability Management
+
+Use bitflags for capability declaration:
+
+```rust
+use collector_core::SourceCaps;
+
+// Process monitoring with real-time capabilities
+let process_caps = SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE;
+
+// Network monitoring with kernel-level access
+let network_caps = SourceCaps::NETWORK | SourceCaps::KERNEL_LEVEL | SourceCaps::REALTIME;
+
+// Check capabilities
+assert!(process_caps.contains(SourceCaps::PROCESS));
+assert!(!process_caps.contains(SourceCaps::NETWORK));
+```
+
+## Configuration
+
+Use the builder pattern for collector configuration:
+
+```rust
+use collector_core::CollectorConfig;
+use std::time::Duration;
+
+let config = CollectorConfig::new()
+    .with_max_event_sources(32)
+    .with_event_buffer_size(2000)
+    .with_shutdown_timeout(Duration::from_secs(60))
+    .with_health_check_interval(Duration::from_secs(120))
+    .with_debug_logging(true);
+```
+
+## Testing Requirements
+
+- **Unit Tests**: Basic functionality, configuration validation, EventSource registration
+- **Integration Tests**: Multi-source coordination, event batching, IPC server functionality
+- **Performance Tests**: Runtime overhead, event throughput, memory usage under load
+- **Security Tests**: EventSource isolation, capability enforcement, resource limits
+- **Property-Based Tests**: Serialization roundtrips, capability combinations, config validation
+- **Chaos Tests**: Failure recovery, graceful shutdown, resource exhaustion, concurrent operations
+
+## Performance Targets
+
+- **Event Throughput**: >1000 events/second under normal load
+- **Runtime Overhead**: <5% CPU usage during continuous monitoring
+- **Memory Usage**: Bounded memory usage under high load
+- **Shutdown Time**: <500ms graceful shutdown coordination
