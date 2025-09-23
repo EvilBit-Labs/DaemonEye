@@ -5,43 +5,48 @@
 DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agent`, `daemoneye-cli`) with strict privilege separation and a shared core library. Use this index to locate normative specifications, core conceptual docs, and operational guidance. Prefer Documentation first for orientation; Specifications define authoritative requirements and limits; Configuration covers install/deploy/hardening guidance.
 
 ## Documentation
-- [README](README.md): Project overview, goals, quick start
 - [AGENTS](AGENTS.md): AI assistant rules of engagement and precedence hierarchy
+- [README](README.md): Project overview, goals, quick start
 - [SECURITY](SECURITY.md): Security policy, reporting process, vulnerability disclosure
 - [WARP](WARP.md): Operational commands and development workflows
-- [docs/src/introduction](docs/src/introduction.md): High-level product introduction and context
-- [docs/src/project-overview](docs/src/project-overview.md): Component overview and value proposition
 - [docs/src/architecture](docs/src/architecture.md): Architecture index linking to detailed subsystem docs
-- [docs/src/architecture/system-architecture](docs/src/architecture/system-architecture.md): Core system architecture and data flows
-- [docs/src/architecture/feature-tiers](docs/src/architecture/feature-tiers.md): Feature differentiation across Free/Business/Enterprise tiers
-- [docs/src/technical](docs/src/technical.md): Technical topics index for deeper implementation areas
-- [docs/src/technical/core-monitoring](docs/src/technical/core-monitoring.md): Core monitoring capabilities requirements context
-- [docs/src/technical/business-tier](docs/src/technical/business-tier.md): Business tier technical extensions
-- [docs/src/technical/enterprise-tier](docs/src/technical/enterprise-tier.md): Enterprise tier advanced capabilities
-- [docs/src/testing](docs/src/testing.md): Testing strategy, tiers, tooling, quality gates
 - [docs/src/contributing](docs/src/contributing.md): Contribution guidelines and processes
+- [docs/src/getting-started](docs/src/getting-started.md): Initial setup and quick start workflow
+- [docs/src/introduction](docs/src/introduction.md): High-level product introduction and context
 - [docs/src/pricing](docs/src/pricing.md): Pricing model and tier summary
-- [docs/src/user-guides](docs/src/user-guides.md): User guides index
-- [docs/src/user-guides/operator-guide](docs/src/user-guides/operator-guide.md): Operator workflow and usage guidance
+- [docs/src/project-overview](docs/src/project-overview.md): Component overview and value proposition
+- [docs/src/security](docs/src/security.md): Security model, threat considerations, controls summary
+- [docs/src/testing](docs/src/testing.md): Testing strategy, tiers, tooling, quality gates
 
 ## Specifications
+- [spec/adr-ipc-interprocess](spec/adr-ipc-interprocess.md): ADR for migrating IPC transport to interprocess crate
+- [spec/daemon_eye_spec_sql_to_ipc_detection_architecture](spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md): SQL-to-IPC detection architecture specification
+- [spec/product](spec/product.md): Product feature specifications and tier definitions
 - [spec/structure](spec/structure.md): Workspace/component structure and architectural boundaries
 - [spec/tech](spec/tech.md): Technology stack decisions and enforced requirements
-- [spec/product](spec/product.md): Product feature specifications and tier definitions
 - [docs/src/api-reference](docs/src/api-reference.md): API reference index
-- [docs/src/api-reference/core-api](docs/src/api-reference/core-api.md): Core API concepts and interface reference
-- [docs/src/security](docs/src/security.md): Security model, threat considerations, controls summary
+- [docs/src/architecture/feature-tiers](docs/src/architecture/feature-tiers.md): Feature differentiation across Free/Business/Enterprise tiers
+- [docs/src/architecture/system-architecture](docs/src/architecture/system-architecture.md): Core system architecture and data flows
+- [docs/src/technical](docs/src/technical.md): Technical topics index for deeper implementation areas
+- [docs/src/technical/business-tier](docs/src/technical/business-tier.md): Business tier technical extensions
+- [docs/src/technical/core-monitoring](docs/src/technical/core-monitoring.md): Core monitoring capabilities requirements context
+- [docs/src/technical/enterprise-tier](docs/src/technical/enterprise-tier.md): Enterprise tier advanced capabilities
+- [docs/src/technical/ipc-implementation](docs/src/technical/ipc-implementation.md): IPC implementation details and patterns
+- [docs/src/technical/query-pipeline](docs/src/technical/query-pipeline.md): Query pipeline architecture and execution
+- [docs/src/technical/security_design_overview](docs/src/technical/security_design_overview.md): Security design overview and threat model
+- [docs/src/technical/sql-dialect-reference](docs/src/technical/sql-dialect-reference.md): SQL dialect reference and supported features
 
 ## Configuration
-- [docs/src/getting-started](docs/src/getting-started.md): Initial setup and quick start workflow
 - [docs/src/deployment](docs/src/deployment.md): Deployment index for environment targets
-- [docs/src/deployment/installation](docs/src/deployment/installation.md): Installation procedures
 - [docs/src/deployment/configuration](docs/src/deployment/configuration.md): Configuration parameters and hierarchy
 - [docs/src/deployment/docker](docs/src/deployment/docker.md): Containerization and Docker deployment guidance
+- [docs/src/deployment/installation](docs/src/deployment/installation.md): Installation procedures
 - [docs/src/deployment/kubernetes](docs/src/deployment/kubernetes.md): Kubernetes deployment patterns
+- [docs/src/user-guides](docs/src/user-guides.md): User guides index
 - [docs/src/user-guides/configuration](docs/src/user-guides/configuration.md): User-focused configuration walkthrough
+- [docs/src/user-guides/operator-guide](docs/src/user-guides/operator-guide.md): Operator workflow and usage guidance
 
 ## Optional
 - [LICENSE](LICENSE): Project license (permissive usage terms)
+- [docs/src/api-reference/core-api](docs/src/api-reference/core-api.md): Core API concepts and interface reference
 - [docs/src/SUMMARY](docs/src/SUMMARY.md): mdBook summary table of contents (structural index)
-- [docs/src/technical/README placeholder](docs/src/technical.md): Duplicate index reference retained for orientation
