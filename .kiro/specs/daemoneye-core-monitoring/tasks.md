@@ -557,7 +557,7 @@
 
   - Write comprehensive load tests simulating real-world deployment scenarios
 
-  - \_Requirements: All requirements verification_aemonEye/issues/61)
+  - Requirements: All requirements (verification_daemoneye/issues/61)
 
   - Configure comprehensive CI matrix testing aligned with AGENTS.md OS Support Matrix
 

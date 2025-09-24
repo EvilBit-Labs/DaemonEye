@@ -42,7 +42,7 @@ impl EventSource for MySource {
     }
 
     async fn stop(&self) -> anyhow::Result<()> {
-        // MUST complete within shutdown timeout (default 60s)
+        // MUST complete within graceful shutdown timeout (default 60s) for resource cleanup
         // MUST clean up resources deterministically
         Ok(())
     }
@@ -122,7 +122,7 @@ All collector-core components MUST include:
 - **Event Throughput**: Minimum 1000 events/second
 - **CPU Overhead**: Maximum 5% sustained usage
 - **Memory**: Bounded growth under continuous load
-- **Shutdown**: Complete within 500ms timeout
+- **Shutdown**: Complete within forced/emergency shutdown timeout (500ms) for termination
 
 ## Code Style Enforcement
 
