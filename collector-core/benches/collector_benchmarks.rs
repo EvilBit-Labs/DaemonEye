@@ -225,10 +225,29 @@ fn bench_graceful_shutdown(c: &mut Criterion) {
 
                         let mut collector = Collector::new(config);
 
+                        // Store source names in a Vec to avoid memory leaks
+                        let mut source_names = Vec::with_capacity(source_count);
+
                         // Register multiple sources
                         for i in 0..source_count {
+                            let name = format!("shutdown-bench-{}", i);
+                            source_names.push(name);
+
+                            // Use a static string pattern similar to chaos testing
+                            let static_name = match source_names.last().unwrap().as_str() {
+                                "shutdown-bench-0" => "shutdown-bench-0",
+                                "shutdown-bench-1" => "shutdown-bench-1",
+                                "shutdown-bench-2" => "shutdown-bench-2",
+                                "shutdown-bench-3" => "shutdown-bench-3",
+                                "shutdown-bench-4" => "shutdown-bench-4",
+                                "shutdown-bench-5" => "shutdown-bench-5",
+                                "shutdown-bench-6" => "shutdown-bench-6",
+                                "shutdown-bench-7" => "shutdown-bench-7",
+                                _ => "shutdown-bench-unknown",
+                            };
+
                             let source = BenchmarkEventSource::new(
-                                Box::leak(format!("shutdown-bench-{}", i).into_boxed_str()),
+                                static_name,
                                 SourceCaps::PROCESS,
                                 1000, // Long-running sources
                             )
@@ -319,8 +338,14 @@ fn bench_event_throughput(c: &mut Criterion) {
             |b, &events_per_second| {
                 b.iter(|| {
                     rt.block_on(async {
-                        let delay_between_events =
-                            Duration::from_nanos(1_000_000_000 / events_per_second as u64);
+                        // Validate events_per_second to prevent division by zero and overflow
+                        let delay_between_events = if events_per_second > 0 {
+                            // Use f64 for precise calculation to avoid overflow
+                            Duration::from_secs_f64(1.0 / events_per_second as f64)
+                        } else {
+                            Duration::ZERO // Handle zero case explicitly
+                        };
+
                         let test_duration = Duration::from_millis(100);
                         let expected_events =
                             (events_per_second * test_duration.as_millis() as usize) / 1000;
