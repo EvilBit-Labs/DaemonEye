@@ -21,7 +21,7 @@ use tracing::{error, info, warn};
 /// Test event source that attempts to exceed its declared capabilities.
 #[derive(Clone)]
 struct SecurityTestSource {
-    name: &'static str,
+    name: String,
     declared_capabilities: SourceCaps,
     attempted_capabilities: SourceCaps,
     events_sent: Arc<AtomicUsize>,
@@ -33,12 +33,12 @@ struct SecurityTestSource {
 
 impl SecurityTestSource {
     fn new(
-        name: &'static str,
+        name: impl Into<String>,
         declared_capabilities: SourceCaps,
         attempted_capabilities: SourceCaps,
     ) -> Self {
         Self {
-            name,
+            name: name.into(),
             declared_capabilities,
             attempted_capabilities,
             events_sent: Arc::new(AtomicUsize::new(0)),
@@ -92,7 +92,7 @@ impl SecurityTestSource {
 #[async_trait]
 impl EventSource for SecurityTestSource {
     fn name(&self) -> &'static str {
-        self.name
+        Box::leak(self.name.clone().into_boxed_str())
     }
 
     fn capabilities(&self) -> SourceCaps {
@@ -451,17 +451,7 @@ async fn test_capability_boundary_enforcement() {
     ];
 
     for (name, declared, attempted) in test_cases {
-        // Use static string literals instead of Box::leak
-        let static_name = match name {
-            "process-only" => "process-only",
-            "network-only" => "network-only",
-            "filesystem-only" => "filesystem-only",
-            "performance-only" => "performance-only",
-            _ => "unknown-test-case",
-        };
-
-        let source =
-            SecurityTestSource::new(static_name, declared, attempted).with_isolation_violation();
+        let source = SecurityTestSource::new(name, declared, attempted).with_isolation_violation();
 
         // Test the violation detection logic directly
         let violation_detected = source.attempt_capability_violation();
