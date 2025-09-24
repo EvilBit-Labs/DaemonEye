@@ -14,7 +14,6 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{sleep, timeout};
-// Removed tracing_test dependency - using regular tests
 
 /// Creates a test database manager for integration tests.
 fn create_test_database() -> Arc<Mutex<DatabaseManager>> {

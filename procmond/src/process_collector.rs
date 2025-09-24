@@ -640,7 +640,6 @@ impl ProcessCollector for SysinfoProcessCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Duration import removed - not needed in tests
 
     #[tokio::test]
     async fn test_sysinfo_collector_creation() {
