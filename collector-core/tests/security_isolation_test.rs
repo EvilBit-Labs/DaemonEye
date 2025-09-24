@@ -10,7 +10,7 @@ use collector_core::{
 };
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime},
@@ -27,6 +27,8 @@ struct SecurityTestSource {
     events_sent: Arc<AtomicUsize>,
     security_violations: Arc<AtomicUsize>,
     should_violate_isolation: bool,
+    // Mutex to protect the check-and-increment critical section
+    violation_lock: Arc<Mutex<()>>,
 }
 
 impl SecurityTestSource {
@@ -42,6 +44,7 @@ impl SecurityTestSource {
             events_sent: Arc::new(AtomicUsize::new(0)),
             security_violations: Arc::new(AtomicUsize::new(0)),
             should_violate_isolation: false,
+            violation_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -64,15 +67,22 @@ impl SecurityTestSource {
         let undeclared_caps = self.attempted_capabilities & !self.declared_capabilities;
 
         if !undeclared_caps.is_empty() {
-            warn!(
-                source = self.name,
-                declared = ?self.declared_capabilities,
-                attempted = ?self.attempted_capabilities,
-                violation = ?undeclared_caps,
-                "Capability violation detected"
-            );
-            self.security_violations.fetch_add(1, Ordering::Relaxed);
-            return true;
+            // Protect the check-and-increment critical section with a mutex
+            let _lock = self.violation_lock.lock().unwrap();
+
+            // Re-check the condition under lock to ensure consistency
+            let current_undeclared = self.attempted_capabilities & !self.declared_capabilities;
+            if !current_undeclared.is_empty() {
+                warn!(
+                    source = self.name,
+                    declared = ?self.declared_capabilities,
+                    attempted = ?self.attempted_capabilities,
+                    violation = ?current_undeclared,
+                    "Capability violation detected"
+                );
+                self.security_violations.fetch_add(1, Ordering::Relaxed);
+                return true;
+            }
         }
 
         false
@@ -441,12 +451,17 @@ async fn test_capability_boundary_enforcement() {
     ];
 
     for (name, declared, attempted) in test_cases {
-        let source = SecurityTestSource::new(
-            Box::leak(name.to_string().into_boxed_str()),
-            declared,
-            attempted,
-        )
-        .with_isolation_violation();
+        // Use static string literals instead of Box::leak
+        let static_name = match name {
+            "process-only" => "process-only",
+            "network-only" => "network-only",
+            "filesystem-only" => "filesystem-only",
+            "performance-only" => "performance-only",
+            _ => "unknown-test-case",
+        };
+
+        let source =
+            SecurityTestSource::new(static_name, declared, attempted).with_isolation_violation();
 
         // Test the violation detection logic directly
         let violation_detected = source.attempt_capability_violation();
