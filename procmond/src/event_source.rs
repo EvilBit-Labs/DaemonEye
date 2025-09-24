@@ -503,17 +503,27 @@ impl ProcessEventSource {
             // Update in-flight counter
             self.stats.events_in_flight.fetch_add(1, Ordering::Relaxed);
 
-            // Send the event
-            let send_result = tx.send(event).await;
+            // Send the event with timeout to prevent indefinite blocking
+            let send_result = timeout(self.config.max_backpressure_wait, tx.send(event)).await;
 
             // Update in-flight counter and release permit
             self.stats.events_in_flight.fetch_sub(1, Ordering::Relaxed);
             drop(permit);
 
             // Check send result
-            if send_result.is_err() {
-                warn!("Event channel closed during batch send");
-                return Err(anyhow::anyhow!("Event channel closed"));
+            match send_result {
+                Ok(Ok(())) => {
+                    // Event sent successfully
+                }
+                Ok(Err(_)) => {
+                    warn!("Event channel closed during batch send");
+                    return Err(anyhow::anyhow!("Event channel closed"));
+                }
+                Err(_) => {
+                    // Timeout occurred during send
+                    debug!("Event send timed out due to backpressure, continuing");
+                    // Don't return error, just continue - this is expected under backpressure
+                }
             }
         }
 

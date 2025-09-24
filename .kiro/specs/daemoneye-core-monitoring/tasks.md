@@ -140,7 +140,7 @@
   - Add integration tests for ProcessEventSource with collector-core runtime
   - _Requirements: 1.1, 1.5, 11.1, 11.2, 11.5_
 
-- [ ] 5.2 Create ProcessCollector trait and refactor for extensibility - [#80](https://github.com/EvilBit-Labs/DaemonEye/issues/80)
+- [x] 5.2 Create ProcessCollector trait and refactor for extensibility - [#80](https://github.com/EvilBit-Labs/DaemonEye/issues/80)
 
   - Define ProcessCollector trait with platform-agnostic interface for process enumeration
   - Refactor ProcessMessageHandler to use ProcessCollector trait
