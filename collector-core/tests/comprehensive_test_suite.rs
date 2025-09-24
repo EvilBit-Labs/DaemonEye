@@ -225,14 +225,12 @@ impl EventSource for ComprehensiveTestSource {
         let metrics = self.get_performance_metrics();
 
         // Validate performance characteristics
-        if let Some(avg_interval) = metrics.avg_event_interval.checked_mul(1) {
-            if avg_interval > Duration::from_millis(100) {
-                warn!(
-                    source = self.name,
-                    avg_interval_ms = avg_interval.as_millis(),
-                    "Event generation rate is slower than expected"
-                );
-            }
+        if metrics.avg_event_interval > Duration::from_millis(100) {
+            warn!(
+                source = self.name,
+                avg_interval_ms = metrics.avg_event_interval.as_millis(),
+                "Event generation rate is slower than expected"
+            );
         }
 
         info!(
@@ -418,15 +416,12 @@ async fn test_collector_runtime_overhead() {
         .with_health_check_interval(Duration::from_millis(50));
 
     let mut full_collector = Collector::new(full_config);
-    let full_sources: Vec<_> = (0..4)
-        .map(|i| {
-            ComprehensiveTestSource::new(
-                Box::leak(format!("full-overhead-{}", i).into_boxed_str()),
-                SourceCaps::PROCESS,
-                TestMode::Standard,
-            )
-        })
-        .collect();
+    let full_sources: Vec<_> = vec![
+        ComprehensiveTestSource::new("full-overhead-0", SourceCaps::PROCESS, TestMode::Standard),
+        ComprehensiveTestSource::new("full-overhead-1", SourceCaps::PROCESS, TestMode::Standard),
+        ComprehensiveTestSource::new("full-overhead-2", SourceCaps::PROCESS, TestMode::Standard),
+        ComprehensiveTestSource::new("full-overhead-3", SourceCaps::PROCESS, TestMode::Standard),
+    ];
 
     for source in full_sources.iter() {
         full_collector.register(Box::new(source.clone())).unwrap();
@@ -482,7 +477,7 @@ async fn test_event_throughput_scaling() {
 
         let mut collector = Collector::new(config);
         let source = ComprehensiveTestSource::new(
-            Box::leak(format!("throughput-{}", test_name).into_boxed_str()),
+            "throughput-test",
             SourceCaps::PROCESS,
             TestMode::HighThroughput,
         );
