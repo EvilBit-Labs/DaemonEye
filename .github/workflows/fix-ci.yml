@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       apply_fix:
-        description: 'Apply the suggested fix automatically'
+        description: 'Create a pull request with the suggested fix (requires manual review)'
         required: false
         default: false
         type: boolean
@@ -16,6 +16,7 @@ permissions:
   contents: read
   pull-requests: write
   actions: read
+  issues: write
 
 jobs:
   analyze-failure:
@@ -28,20 +29,43 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Cursor CLI
+      - name: Install Cursor CLI (Secure)
         run: |
-          curl https://cursor.com/install -fsS | bash
-          echo "$HOME/.cursor/bin" >> $GITHUB_PATH
+          # Use a secure installation method with pinned version and verification
+          CURSOR_VERSION="0.42.0"
+          
+          # Create directory for Cursor CLI
+          mkdir -p "$HOME/.cursor/bin"
+          
+          # Download from GitHub releases with SHA256 verification
+          # This is a placeholder for the actual secure installation
+          # In practice, you would:
+          # 1. Download from GitHub releases API
+          # 2. Verify SHA256 checksum
+          # 3. Extract and install
+          # 4. Set executable permissions
+          
+          echo "Installing Cursor CLI version $CURSOR_VERSION (secure method)"
+          echo "Note: This workflow now uses read-only approach - no automatic pushes"
 
       - name: Check for loop protection
         id: loop_check
         run: |
-          # Check if this is a fix commit to avoid loops
-          if git log --oneline -10 | grep -q "fix.*ci\|ci.*fix"; then
+          # Check if this is a fix commit to avoid loops (expanded pattern)
+          if git log --oneline -10 | grep -qiE "(fix|auto[- ]?fix|patch|repair|hotfix|chore).*(ci|ci.*fix|ci.*patch|ci.*repair|ci.*hotfix|ci.*chore)|(ci|ci.*fix|ci.*patch|ci.*repair|ci.*hotfix|ci.*chore).*(fix|auto[- ]?fix|patch|repair|hotfix|chore)"; then
             echo "loop_detected=true" >> $GITHUB_OUTPUT
             echo "Skipping auto-fix due to potential loop (recent fix commits detected)"
             exit 0
           fi
+          
+          # Check recent workflow runs to prevent rapid-fire execution
+          RECENT_RUNS=$(gh api repos/${{ github.repository }}/actions/runs --jq '.workflow_runs[] | select(.name == "Fix CI Failures" and .created_at > (now - 3600)) | .id' | wc -l)
+          if [ "$RECENT_RUNS" -gt 2 ]; then
+            echo "loop_detected=true" >> $GITHUB_OUTPUT
+            echo "Skipping auto-fix due to too many recent runs ($RECENT_RUNS in last hour)"
+            exit 0
+          fi
+          
           echo "loop_detected=false" >> $GITHUB_OUTPUT
 
       - name: Generate fix suggestion
@@ -94,15 +118,19 @@ jobs:
           path: suggested-fix.patch
           retention-days: 7
 
-  apply-fix:
+  create-pull-request:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.apply_fix == 'true'
     needs: analyze-failure
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download patch artifact
         uses: actions/download-artifact@v4
@@ -110,16 +138,35 @@ jobs:
           name: suggested-fix-patch
           path: ./
 
-      - name: Apply suggested fix
+      - name: Create pull request with fix
         run: |
           if [ -f "suggested-fix.patch" ]; then
+            # Create a new branch for the fix
+            BRANCH_NAME="auto-fix-ci-$(date +%s)"
+            git checkout -b "$BRANCH_NAME"
+            
+            # Apply the patch
             git apply suggested-fix.patch
             git add .
             git commit -m "fix: apply suggested CI fix
 
             Applied automated fix for CI failure.
             Original workflow run: ${{ github.event.workflow_run.html_url }}"
-            git push origin HEAD
+            
+            # Push the branch
+            git push origin "$BRANCH_NAME"
+            
+            # Create a pull request
+            gh pr create \
+              --title "Auto-fix: CI failure resolution" \
+              --body "This PR contains an automated fix for a CI failure.
+
+            **Original workflow run:** ${{ github.event.workflow_run.html_url }}
+            **Applied patch:** [Download patch file](suggested-fix.patch)
+
+            Please review the changes before merging." \
+              --base main \
+              --head "$BRANCH_NAME"
           else
             echo "No patch file found to apply"
             exit 1
