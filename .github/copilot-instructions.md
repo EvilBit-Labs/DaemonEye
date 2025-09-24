@@ -539,4 +539,4 @@ fn validate_query_complexity(statement: &Statement) -> Result<(), ValidationErro
 - **Comprehensive rustdoc** for all public APIs with examples
 - **Mermaid diagrams** for architecture (Prettier ignores Markdown)
 - **Relative links** for cross-references, maintain link hygiene
-- See `AGENTS.md` for complete project rules and `WARP.md` for operational commands
+- See `AGENTS.md` for complete project rules and `.kiro/steering/development.md` for operational commands

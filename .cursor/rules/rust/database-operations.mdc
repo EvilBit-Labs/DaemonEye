@@ -1,0 +1,430 @@
+---
+globs: **/storage*.rs,**/database*.rs,**/models/**/*.rs
+alwaysApply: false
+---
+
+# Database Operations Standards for DaemonEye
+
+## Database Technology
+
+DaemonEye uses **redb** pure Rust embedded database:
+
+- **Event Store**: Read/write access for daemoneye-agent, read-only for daemoneye-cli
+- **Audit Ledger**: Write-only access for procmond, read-only for others
+- **Features**: Concurrent access, ACID transactions, zero-copy deserialization
+- **Performance**: Optimized for time-series queries and high-throughput writes
+
+## Database Schema Design
+
+Define tables using redb table definitions:
+
+```rust
+use redb::TableDefinition;
+use chrono::{DateTime, Utc};
+
+// Event Store schema
+const PROCESSES_TABLE: TableDefinition<u64, ProcessInfo> = TableDefinition::new("processes");
+const PID_INDEX_TABLE: TableDefinition<u32, u64> = TableDefinition::new("pid_index");
+const SCANS_TABLE: TableDefinition<u64, ScanMetadata> = TableDefinition::new("scans");
+const DETECTION_RULES_TABLE: TableDefinition<String, DetectionRule> = TableDefinition::new("detection_rules");
+const ALERTS_TABLE: TableDefinition<u64, Alert> = TableDefinition::new("alerts");
+const ALERT_DELIVERIES_TABLE: TableDefinition<u64, AlertDelivery> = TableDefinition::new("alert_deliveries");
+const VERSION_TABLE: TableDefinition<u32, u32> = TableDefinition::new("version");
+
+// Audit Ledger schema (separate database)
+const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::new("audit_ledger");
+```
+
+## Database Operations
+
+Implement database operations with proper error handling:
+
+```rust
+use redb::{Database, ReadableTable, WriteableTable};
+use anyhow::{Context, Result};
+
+pub struct DatabaseManager {
+    db: Database,
+}
+
+impl DatabaseManager {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let db = Database::create(path)
+            .context("Failed to create database")?;
+        
+        Ok(Self { db })
+    }
+
+    pub async fn create_schema(&self) -> Result<()> {
+        let write_txn = self.db.begin_write()
+            .context("Failed to begin write transaction")?;
+        
+        {
+            let mut processes_table = write_txn.open_table(PROCESSES_TABLE)?;
+            let mut pid_index_table = write_txn.open_table(PID_INDEX_TABLE)?;
+            let mut scans_table = write_txn.open_table(SCANS_TABLE)?;
+            let mut rules_table = write_txn.open_table(DETECTION_RULES_TABLE)?;
+            let mut alerts_table = write_txn.open_table(ALERTS_TABLE)?;
+            let mut deliveries_table = write_txn.open_table(ALERT_DELIVERIES_TABLE)?;
+            
+            // Tables are created automatically on first use
+        }
+        
+        write_txn.commit()
+            .context("Failed to commit schema creation")?;
+        
+        Ok(())
+    }
+
+    pub async fn insert_process(&self, process: &ProcessInfo) -> Result<()> {
+        let write_txn = self.db.begin_write()
+            .context("Failed to begin write transaction")?;
+        
+        {
+            let mut processes_table = write_txn.open_table(PROCESSES_TABLE)?;
+            let mut pid_index_table = write_txn.open_table(PID_INDEX_TABLE)?;
+            
+            let key = process.collection_time.timestamp() as u64;
+            
+            // Insert into main processes table
+            processes_table.insert(key, process)
+                .context("Failed to insert process into processes table")?;
+            
+            // Insert PID -> primary key mapping for O(1) lookups
+            pid_index_table.insert(process.pid, key)
+                .context("Failed to insert PID index entry")?;
+        }
+        
+        write_txn.commit()
+            .context("Failed to commit process insertion")?;
+        
+        Ok(())
+    }
+
+    pub async fn get_process(&self, pid: u32) -> Result<Option<ProcessInfo>> {
+        let read_txn = self.db.begin_read()
+            .context("Failed to begin read transaction")?;
+        
+        // Use PID index for O(1) lookup
+        let pid_index_table = read_txn.open_table(PID_INDEX_TABLE)
+            .context("Failed to open PID index table")?;
+        
+        // Look up primary key by PID
+        let primary_key = match pid_index_table.get(pid)? {
+            Some(key) => key.value(),
+            None => return Ok(None), // PID not found
+        };
+        
+        // Fetch ProcessInfo using the primary key
+        let processes_table = read_txn.open_table(PROCESSES_TABLE)
+            .context("Failed to open processes table")?;
+        
+        match processes_table.get(primary_key)? {
+            Some(process) => Ok(Some(process.value())),
+            None => Ok(None), // Process record missing (data inconsistency)
+        }
+    }
+
+    pub async fn get_all_processes(&self) -> Result<Vec<ProcessInfo>> {
+        // Note: redb doesn't support SQL queries directly
+        // This function returns all processes in the database
+        // For filtering, use specific getter methods or implement custom logic
+        
+        let read_txn = self.db.begin_read()
+            .context("Failed to begin read transaction")?;
+        
+        let table = read_txn.open_table(PROCESSES_TABLE)?;
+        let mut processes = Vec::new();
+        
+        for result in table.iter()? {
+            let (_, process) = result?;
+            processes.push(process);
+        }
+        
+        Ok(processes)
+    }
+}
+```
+
+## Batch Operations
+
+Implement efficient batch operations:
+
+```rust
+impl DatabaseManager {
+    pub async fn insert_processes_batch(&self, processes: &[ProcessInfo]) -> Result<()> {
+        let write_txn = self.db.begin_write()
+            .context("Failed to begin write transaction")?;
+        
+        {
+            let mut table = write_txn.open_table(PROCESSES_TABLE)?;
+            
+            for process in processes {
+                let key = process.collection_time.timestamp() as u64;
+                table.insert(key, process)?;
+            }
+        }
+        
+        write_txn.commit()
+            .context("Failed to commit batch insertion")?;
+        
+        Ok(())
+    }
+
+    pub async fn cleanup_old_data(&self, retention_days: u32) -> Result<usize> {
+        let cutoff_time = Utc::now() - chrono::Duration::days(retention_days as i64);
+        let cutoff_timestamp = cutoff_time.timestamp() as u64;
+        
+        let write_txn = self.db.begin_write()
+            .context("Failed to begin write transaction")?;
+        
+        let mut deleted_count = 0;
+        {
+            let mut table = write_txn.open_table(PROCESSES_TABLE)?;
+            
+            // Note: redb doesn't support range deletes directly
+            // This would need to be implemented with iteration and individual deletes
+            for result in table.iter()? {
+                let (key, _) = result?;
+                if key < cutoff_timestamp {
+                    table.remove(key)?;
+                    deleted_count += 1;
+                }
+            }
+        }
+        
+        write_txn.commit()
+            .context("Failed to commit cleanup")?;
+        
+        Ok(deleted_count)
+    }
+}
+```
+
+## Database Testing
+
+Test database operations thoroughly:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use chrono::Utc;
+
+    #[tokio::test]
+    async fn test_database_operations() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        
+        let db = DatabaseManager::new(&db_path).unwrap();
+        db.create_schema().await.unwrap();
+        
+        // Test process insertion
+        let process = ProcessInfo {
+            pid: 1234,
+            name: "test_process".to_string(),
+            executable_path: Some("/usr/bin/test".to_string()),
+            command_line: Some("test --arg value".to_string()),
+            start_time: Some(Utc::now()),
+            cpu_usage: Some(0.5),
+            memory_usage: Some(1024),
+            status: ProcessStatus::Running,
+            executable_hash: Some("abc123".to_string()),
+            collection_time: Utc::now(),
+        };
+        
+        db.insert_process(&process).await.unwrap();
+        
+        // Test process retrieval
+        let retrieved = db.get_process(1234).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().pid, 1234);
+    }
+
+    #[tokio::test]
+    async fn test_batch_operations() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_batch.db");
+        
+        let db = DatabaseManager::new(&db_path).unwrap();
+        db.create_schema().await.unwrap();
+        
+        // Create test processes
+        let processes = (1..=100)
+            .map(|i| ProcessInfo {
+                pid: i,
+                name: format!("process_{}", i),
+                executable_path: Some(format!("/usr/bin/process_{}", i)),
+                command_line: Some(format!("process_{} --id {}", i, i)),
+                start_time: Some(Utc::now()),
+                cpu_usage: Some(0.1),
+                memory_usage: Some(1024),
+                status: ProcessStatus::Running,
+                executable_hash: Some(format!("hash_{}", i)),
+                collection_time: Utc::now(),
+            })
+            .collect::<Vec<_>>();
+        
+        // Test batch insertion
+        db.insert_processes_batch(&processes).await.unwrap();
+        
+        // Verify all processes were inserted
+        let all_processes = db.get_all_processes().await.unwrap();
+        assert_eq!(all_processes.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_access() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_concurrent.db");
+        
+        let db = Arc::new(DatabaseManager::new(&db_path).unwrap());
+        db.create_schema().await.unwrap();
+        
+        // Test concurrent writes
+        let handles = (0..10)
+            .map(|i| {
+                let db = db.clone();
+                tokio::spawn(async move {
+                    let process = ProcessInfo {
+                        pid: i,
+                        name: format!("concurrent_process_{}", i),
+                        executable_path: Some(format!("/usr/bin/concurrent_{}", i)),
+                        command_line: Some(format!("concurrent_{}", i)),
+                        start_time: Some(Utc::now()),
+                        cpu_usage: Some(0.1),
+                        memory_usage: Some(1024),
+                        status: ProcessStatus::Running,
+                        executable_hash: Some(format!("concurrent_hash_{}", i)),
+                        collection_time: Utc::now(),
+                    };
+                    
+                    db.insert_process(&process).await
+                })
+            })
+            .collect::<Vec<_>>();
+        
+        // Wait for all writes to complete
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
+        
+        // Verify all processes were written
+        let all_processes = db.get_all_processes().await.unwrap();
+        assert_eq!(all_processes.len(), 10);
+    }
+}
+```
+
+## Database Migration
+
+Implement database schema migrations:
+
+```rust
+pub struct DatabaseMigration {
+    version: u32,
+    description: String,
+    migration_fn: fn(&Database) -> Result<()>,
+}
+
+impl DatabaseMigration {
+    pub fn new(version: u32, description: String, migration_fn: fn(&Database) -> Result<()>) -> Self {
+        Self {
+            version,
+            description,
+            migration_fn,
+        }
+    }
+
+    pub fn run(&self, db: &Database) -> Result<()> {
+        tracing::info!("Running migration {}: {}", self.version, self.description);
+        (self.migration_fn)(db)
+    }
+}
+
+pub struct MigrationManager {
+    migrations: Vec<DatabaseMigration>,
+}
+
+impl MigrationManager {
+    pub fn new() -> Self {
+        Self {
+            migrations: vec![
+                DatabaseMigration::new(1, "Create initial schema".to_string(), create_initial_schema),
+                DatabaseMigration::new(2, "Add alert deliveries table".to_string(), add_alert_deliveries_table),
+                DatabaseMigration::new(3, "Add indexes for performance".to_string(), add_performance_indexes),
+            ],
+        }
+    }
+
+    pub fn run_migrations(&self, db: &Database) -> Result<()> {
+        let current_version = self.get_current_version(db).unwrap_or(0);
+        
+        for migration in &self.migrations {
+            if migration.version > current_version {
+                migration.run(db)?;
+                self.set_version(db, migration.version)?;
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn get_current_version(&self, db: &Database) -> Result<u32> {
+        let read_txn = db.begin_read()?;
+        let version_table = read_txn.open_table(VERSION_TABLE)?;
+        
+        if let Some((_, version)) = version_table.get(0)? {
+            Ok(version)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn set_version(&self, db: &Database, version: u32) -> Result<()> {
+        let write_txn = db.begin_write()?;
+        {
+            let mut version_table = write_txn.open_table(VERSION_TABLE)?;
+            version_table.insert(0, version)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+}
+```
+
+## Performance Optimization
+
+Optimize database performance:
+
+```rust
+impl DatabaseManager {
+    pub async fn optimize_database(&self) -> Result<()> {
+        // redb doesn't have explicit optimization commands like SQLite
+        // Performance is optimized through:
+        // 1. Proper key design (timestamp-based keys for time-series data)
+        // 2. Batch operations for bulk inserts
+        // 3. Appropriate transaction boundaries
+        // 4. Regular cleanup of old data
+        
+        tracing::info!("Database optimization completed");
+        Ok(())
+    }
+
+    pub async fn get_database_stats(&self) -> Result<DatabaseStats> {
+        let read_txn = self.db.begin_read()?;
+        let processes_table = read_txn.open_table(PROCESSES_TABLE)?;
+        
+        let mut count = 0;
+        for _ in processes_table.iter()? {
+            count += 1;
+        }
+        
+        Ok(DatabaseStats {
+            process_count: count,
+            database_size: self.get_database_size().await?,
+        })
+    }
+}
+```

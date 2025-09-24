@@ -10,6 +10,9 @@
 - **Operator-Centric Design**: Built for operators, by operators. Prioritize workflows efficient in contested/airgapped environments.
 - **Testing Required**: All code changes must include appropriate tests to ensure quality and correctness.
 - **Linter Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission. All `-D warnings` and `deny` attributes must be preserved.
+- **No Unsafe Code**: Never commit code with `unsafe` blocks or `unsafe` functions. Any unsafe code should be in well-maintained external crates, and avoided whenever possible.
+- **Focused and Managable Files**: Source files should be focused and manageable. Large files should be split into smaller, more focused files; no larger than 500-600 lines, when if possible.
+- **Strictness**: `warnings = "deny"` enforced at workspace level; any use of `allow` **MUST** be accompanied by a justification in the code and cannot be applied to entire files or modules.
 
 ### Rule Precedence Hierarchy
 
@@ -112,7 +115,7 @@ All public APIs must include comprehensive rustdoc comments with:
 ### Continuous Integration
 
 - **Platform**: GitHub Actions with matrix testing (Linux, macOS, Windows)
-- **Rust Versions**: stable, beta, MSRV (1.70+)
+- **Rust Versions**: stable, beta, MSRV (1.85+)
 - **Quality Checks**: fmt-check, clippy strict, comprehensive test suite
 - **Performance**: Benchmark regression detection with criterion
 - **Security**: Dependency scanning, SLSA provenance (Enterprise)

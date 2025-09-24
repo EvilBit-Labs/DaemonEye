@@ -103,6 +103,7 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 5. **Documentation Standards**: Use Mermaid for all diagrams. Prettier ignores Markdown files. Use relative links and maintain link hygiene.
 6. **Testing Required**: All code changes must include appropriate tests to ensure quality and correctness.
 7. **Linter Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission. All `-D warnings` and `deny` attributes must be preserved.
+8. **Focused and Manageable Files**: Source files should be focused and manageable. Large files should be split into smaller, more focused files; no larger than 500-600 lines, when possible.
 
 ### Rule Precedence Hierarchy
 
@@ -350,6 +351,7 @@ let serialized = prost::Message::encode_to_vec(&task)?;
 - **Logging**: Structured logging with `tracing` ecosystem (JSON or human-readable)
 - **Testing**: Comprehensive unit and integration tests with insta for snapshot testing
 - **Documentation**: Rustdoc comments for all public interfaces
+- **Strictness**: `warnings = "deny"` enforced at workspace level; any use of `allow` **MUST** be accompanied by a justification in the code and cannot be applied to entire files or modules.
 
 ## Security Model and Policies
 
@@ -589,7 +591,7 @@ git = "https://github.com/example/custom-lib"
 rev = "a1b2c3d4"                              # Specific commit SHA
 ```
 
-- **Security Scanning**: Integrate security tools in development workflow (see [WARP.md](./WARP.md) for proposed recipes):
+- **Security Scanning**: Integrate security tools in development workflow (see [.kiro/steering/development.md](./.kiro/steering/development.md) for proposed recipes):
   - `audit-deps`: `cargo audit`
   - `deny-deps`: `cargo deny check`
   - `security-scan`: Composed recipe combining lint, audit, and deny checks
@@ -1466,7 +1468,7 @@ pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionErro
 ### Project Documentation Structure
 
 - **AGENTS.md**: AI assistant rules of engagement (this file)
-- **WARP.md**: Operational commands and development workflows
+- **.kiro/steering/development.md**: Operational commands and development workflows
 - **README.md**: Project overview and quick start
 - **.kiro/steering/**: Architectural decisions and product direction
 - **.kiro/specs/**: Detailed technical specifications
@@ -1484,11 +1486,11 @@ pub async fn collect_processes(&self) -> Result<CollectionResult, CollectionErro
 | **Core Requirements**    | [.kiro/specs/DaemonEye-core-monitoring/requirements.md](./.kiro/specs/DaemonEye-core-monitoring/requirements.md) | Functional requirements                     |
 | **Business Features**    | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md)       | Business tier specifications                |
 | **Enterprise Features**  | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md)   | Enterprise tier specifications              |
-| **Development Workflow** | [WARP.md](./WARP.md)                                                                                             | Commands, justfile recipes, testing         |
+| **Development Workflow** | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                 | Commands, justfile recipes, testing         |
 
 ### Cross-References
 
-- **Operational Commands**: See [WARP.md](./WARP.md) for complete development command reference
+- **Operational Commands**: See [.kiro/steering/development.md](./.kiro/steering/development.md) for complete development command reference
 - **Cursor IDE Rules**: See [.cursor/rules/](./.cursor/rules/) for IDE-specific guidance
 - **Security Standards**: Reference [.cursor/rules/security-standards.mdc](./.cursor/rules/security-standards.mdc)
 - **Rust Standards**: Reference [.cursor/rules/rust-standards.mdc](./.cursor/rules/rust-standards.mdc)

@@ -44,3 +44,8 @@ serde_json = { workspace = true }
 prost = { workspace = true }
 proptest = "1.8.0"
 rand = "0.9.2"
+criterion = { workspace = true, features = ["html_reports"] }
+
+[[bench]]
+name = "collector_benchmarks"
+harness = false

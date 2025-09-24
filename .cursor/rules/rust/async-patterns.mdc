@@ -1,0 +1,315 @@
+---
+globs: **/*.rs
+alwaysApply: false
+---
+
+# Async Patterns for DaemonEye
+
+## Async Architecture
+
+DaemonEye is built with async-first design using Tokio runtime:
+
+- **Async Runtime**: Use Tokio for all I/O and task management
+- **Concurrency**: Prefer channels and ownership transfer over shared mutable state
+- **Error Handling**: Use `?` operator and proper error propagation in async contexts
+- **Resource Management**: Implement proper cleanup and graceful shutdown
+
+## Async Function Patterns
+
+Implement async functions with proper error handling:
+
+```rust
+use tokio::time::{timeout, Duration};
+use anyhow::{Context, Result};
+
+async fn collect_processes() -> Result<Vec<ProcessInfo>> {
+    let processes = sysinfo::System::new_all()
+        .processes()
+        .values()
+        .map(|process| ProcessInfo::from_sysinfo(process))
+        .collect::<Result<Vec<_>, _>>()
+        .context("Failed to collect process information")?;
+
+    Ok(processes)
+}
+
+async fn collect_processes_with_timeout() -> Result<Vec<ProcessInfo>> {
+    timeout(Duration::from_secs(5), collect_processes())
+        .await
+        .context("Process collection timed out")?
+}
+```
+
+## Channel Patterns
+
+Use channels for communication between async tasks:
+
+```rust
+use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc::{Sender, Receiver};
+
+// Bounded channels for backpressure
+async fn start_collection_pipeline() -> Result<()> {
+    let (tx, mut rx) = mpsc::channel::<CollectionEvent>(1000);
+    
+    // Spawn collection task
+    let collection_handle = tokio::spawn(async move {
+        collect_and_send_events(tx).await
+    });
+    
+    // Spawn processing task
+    let processing_handle = tokio::spawn(async move {
+        process_events(rx).await
+    });
+    
+    // Wait for both tasks
+    tokio::try_join!(collection_handle, processing_handle)?;
+    Ok(())
+}
+```
+
+## Graceful Shutdown
+
+Implement graceful shutdown patterns:
+
+```rust
+use tokio::sync::Notify;
+use std::sync::Arc;
+
+pub struct ServiceManager {
+    shutdown_notify: Arc<Notify>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+}
+
+impl ServiceManager {
+    pub fn new() -> Self {
+        Self {
+            shutdown_notify: Arc::new(Notify::new()),
+            shutdown_tx: None,
+        }
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        self.shutdown_tx = Some(shutdown_tx);
+
+        // Start all services
+        let collection_handle = self.start_collection_service().await?;
+        let processing_handle = self.start_processing_service().await?;
+        let alerting_handle = self.start_alerting_service().await?;
+
+        // Wait for shutdown signal
+        tokio::select! {
+            _ = shutdown_rx => {
+                tracing::info!("Shutdown signal received");
+            }
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Ctrl+C received, initiating shutdown");
+            }
+        }
+
+        // Graceful shutdown
+        self.shutdown_notify.notify_waiters();
+        
+        tokio::try_join!(
+            collection_handle,
+            processing_handle,
+            alerting_handle
+        )?;
+
+        Ok(())
+    }
+
+    pub fn shutdown(&self) {
+        if let Some(tx) = &self.shutdown_tx {
+            let _ = tx.send(());
+        }
+    }
+}
+```
+
+## Concurrent Processing
+
+Use bounded concurrency for resource management:
+
+```rust
+use tokio::sync::Semaphore;
+use std::sync::Arc;
+
+async fn process_events_concurrently(events: Vec<Event>) -> Result<Vec<ProcessedEvent>> {
+    let semaphore = Arc::new(Semaphore::new(10)); // Max 10 concurrent tasks
+    let mut handles = Vec::new();
+
+    for event in events {
+        let semaphore = semaphore.clone();
+        let handle = tokio::spawn(async move {
+            let _permit = semaphore.acquire().await?;
+            process_single_event(event).await
+        });
+        handles.push(handle);
+    }
+
+    let mut results = Vec::new();
+    for handle in handles {
+        let result = handle.await??;
+        results.push(result);
+    }
+
+    Ok(results)
+}
+```
+
+## Async Testing
+
+Write comprehensive async tests:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_test;
+
+    #[tokio::test]
+    async fn test_process_collection() {
+        let processes = collect_processes().await.unwrap();
+        assert!(!processes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_collection_timeout() {
+        let result = timeout(Duration::from_millis(100), collect_processes()).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_processing() {
+        let events = vec![
+            Event::new("event1"),
+            Event::new("event2"),
+            Event::new("event3"),
+        ];
+
+        let results = process_events_concurrently(events).await.unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_graceful_shutdown() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+        
+        let manager = Arc::new(Mutex::new(ServiceManager::new()));
+        
+        // Start service in background
+        let manager_clone = Arc::clone(&manager);
+        let handle = tokio::spawn(async move {
+            let mut manager = manager_clone.lock().await;
+            manager.run().await
+        });
+
+        // Wait a bit then shutdown
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        {
+            let mut manager = manager.lock().await;
+            manager.shutdown();
+        }
+
+        // Should complete without error
+        handle.await.unwrap().unwrap();
+    }
+}
+```
+
+## Error Handling in Async Contexts
+
+Handle errors properly in async code:
+
+```rust
+use anyhow::{Context, Result};
+use tokio::time::{timeout, Duration};
+
+async fn resilient_operation() -> Result<()> {
+    let mut retries = 3;
+    let mut delay = Duration::from_millis(100);
+
+    loop {
+        match timeout(Duration::from_secs(5), perform_operation()).await {
+            Ok(Ok(result)) => return Ok(result),
+            Ok(Err(e)) => {
+                if retries == 0 {
+                    return Err(e).context("Operation failed after all retries");
+                }
+                
+                tracing::warn!("Operation failed, retrying in {:?}: {}", delay, e);
+                tokio::time::sleep(delay).await;
+                delay *= 2; // Exponential backoff
+                retries -= 1;
+            }
+            Err(_) => {
+                return Err(anyhow::anyhow!("Operation timed out"));
+            }
+        }
+    }
+}
+```
+
+## Resource Cleanup
+
+Implement proper resource cleanup:
+
+```rust
+use tokio::sync::Mutex;
+use std::sync::Arc;
+
+struct ResourceManager {
+    resources: Arc<Mutex<Vec<Resource>>>,
+}
+
+impl ResourceManager {
+    async fn add_resource(&self, resource: Resource) {
+        let mut resources = self.resources.lock().await;
+        resources.push(resource);
+    }
+
+    async fn cleanup_all(&self) {
+        let mut resources = self.resources.lock().await;
+        for resource in resources.drain(..) {
+            resource.cleanup().await;
+        }
+    }
+}
+
+impl Drop for ResourceManager {
+    fn drop(&mut self) {
+        // Note: Cannot use async in Drop, so cleanup must be done elsewhere
+        // Use shutdown signals or explicit cleanup methods
+    }
+}
+```
+
+## Async Streams
+
+Use async streams for continuous data processing:
+
+```rust
+use tokio_stream::{StreamExt, Stream};
+use futures::stream;
+
+async fn process_event_stream(mut stream: impl Stream<Item = Event> + Unpin) -> Result<()> {
+    while let Some(event) = stream.next().await {
+        match process_event(event).await {
+            Ok(_) => tracing::debug!("Event processed successfully"),
+            Err(e) => tracing::error!("Failed to process event: {}", e),
+        }
+    }
+    Ok(())
+}
+
+async fn create_event_stream() -> impl Stream<Item = Event> {
+    stream::iter(vec![
+        Event::new("event1"),
+        Event::new("event2"),
+        Event::new("event3"),
+    ])
+}
+```

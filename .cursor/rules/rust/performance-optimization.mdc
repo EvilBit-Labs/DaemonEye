@@ -1,0 +1,209 @@
+---
+globs: **/benches/**/*.rs,**/*bench*.rs,**/*performance*.rs
+alwaysApply: false
+---
+
+# Performance Optimization Standards for DaemonEye
+
+## Performance Targets
+
+DaemonEye must meet strict performance requirements:
+
+- **CPU Usage**: < 5% sustained during continuous monitoring
+- **Memory Usage**: < 100 MB resident under normal operation
+- **Process Enumeration**: < 5s for 10,000+ processes
+- **Database Operations**: > 1,000 records/second write rate
+- **Alert Latency**: < 100ms per detection rule execution
+- **Query Response**: Sub-second response times for 100,000+ events/minute (Enterprise)
+
+## Benchmarking with Criterion
+
+Use Criterion for performance benchmarking:
+
+```rust
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+fn benchmark_process_collection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("process_collection");
+
+    group.bench_function("collect_processes", |b| {
+        b.iter(|| {
+            let collector = ProcessCollector::new();
+            black_box(collector.collect_processes())
+        })
+    });
+
+    group.bench_function("collect_processes_parallel", |b| {
+        b.iter(|| {
+            let collector = ProcessCollector::new();
+            black_box(collector.collect_processes_parallel())
+        })
+    });
+
+    group.finish();
+}
+
+fn benchmark_database_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("database_operations");
+
+    group.bench_function("insert_process", |b| {
+        let db = Database::new(":memory:").unwrap();
+        let process = ProcessInfo::default();
+
+        b.iter(|| black_box(db.insert_process(&process)))
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    benchmark_process_collection,
+    benchmark_database_operations
+);
+criterion_main!(benches);
+```
+
+## Memory Management
+
+Implement bounded memory usage patterns:
+
+```rust
+use tokio::sync::Semaphore;
+
+// Bounded concurrency pattern
+let semaphore = Arc::new(Semaphore::new(64));
+let permit = semaphore.acquire().await?;
+
+// Critical: no .await calls while holding locks
+{
+    let _guard = shared_state.lock().await;
+    // Synchronous work only inside lock scope
+    process_data_synchronously(&data);
+    // Lock dropped here
+}
+// Async work after lock is released
+perform_async_operation().await?;
+drop(permit);
+```
+
+## Database Optimization
+
+Optimize redb database operations:
+
+```rust
+// Use batch operations for high throughput
+let mut batch = db.batch_write();
+for process in processes {
+    batch.insert_process(&process)?;
+}
+batch.commit()?;
+
+// Use redb TableDefinition and transactions for efficient queries
+use redb::{Database, ReadableTable, TableDefinition};
+
+const PROCESSES_TABLE: TableDefinition<u32, ProcessInfo> = TableDefinition::new("processes");
+
+// Read transaction for queries
+let read_txn = db.begin_read()?;
+let table = read_txn.open_table(PROCESSES_TABLE)?;
+let result = table.get(pid)?.map(|guard| guard.value().clone());
+
+// Write transaction for inserts/updates
+let write_txn = db.begin_write()?;
+{
+    let mut table = write_txn.open_table(PROCESSES_TABLE)?;
+    table.insert(pid, &process_info)?;
+}
+write_txn.commit()?;
+
+// Note: If SQL/prepared-statement semantics are required, use an SQL database
+// (SQLite/Postgres) or a Rust SQL wrapper like sqlx or diesel
+```
+
+## Async Performance
+
+Use Tokio runtime efficiently:
+
+```rust
+// Prefer tokio::sync primitives for async code
+use tokio::sync::{Semaphore, mpsc, oneshot, watch, Notify};
+
+// Bounded channels for backpressure
+let (tx, rx) = mpsc::channel::<Event>(1000);
+
+// Use Semaphore for bounded concurrency
+let semaphore = Arc::new(Semaphore::new(10));
+```
+
+## Resource Management
+
+Implement proper resource cleanup:
+
+```rust
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+struct ResourceManager {
+    resources: Arc<Mutex<Vec<Resource>>>,
+}
+
+impl Drop for ResourceManager {
+    fn drop(&mut self) {
+        // Ensure resources are properly cleaned up
+        if let Ok(mut resources) = self.resources.try_lock() {
+            for resource in resources.drain(..) {
+                resource.cleanup();
+            }
+        }
+    }
+}
+```
+
+## Performance Testing
+
+Include performance regression tests:
+
+```rust
+#[tokio::test]
+async fn test_performance_requirements() {
+    let start = Instant::now();
+    
+    // Test process collection performance
+    let collector = ProcessCollector::new();
+    let processes = collector.collect_processes().await.unwrap();
+    
+    let duration = start.elapsed();
+    
+    // Must complete within 5 seconds for 10k+ processes
+    assert!(duration < Duration::from_secs(5));
+    assert!(processes.len() > 1000);
+}
+```
+
+## Memory Leak Detection
+
+Test for memory leaks:
+
+```rust
+#[tokio::test]
+async fn test_memory_usage() {
+    let initial_memory = get_memory_usage();
+
+    // Run operations that should not leak memory
+    for _ in 0..1000 {
+        let collector = ProcessCollector::new();
+        let _processes = collector.collect_processes().await.unwrap();
+        drop(collector);
+    }
+
+    // Force garbage collection
+    tokio::task::yield_now().await;
+
+    let final_memory = get_memory_usage();
+    let memory_increase = final_memory - initial_memory;
+
+    // Memory increase should be minimal
+    assert!(memory_increase < 10 * 1024 * 1024); // 10MB
+}
+```

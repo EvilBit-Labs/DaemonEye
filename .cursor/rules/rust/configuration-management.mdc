@@ -1,0 +1,438 @@
+---
+globs: **/config*.rs,**/*config*.rs
+alwaysApply: false
+---
+
+# Configuration Management Standards for DaemonEye
+
+## Configuration Architecture
+
+DaemonEye uses hierarchical configuration with multiple sources:
+
+1. **Command-line flags** (highest precedence)
+2. **Environment variables** (`PROCMOND_*`, `DAEMONEYE_*`)
+3. **User configuration file** (`~/.config/daemoneye/config.yaml`)
+4. **System configuration file** (`/etc/daemoneye/config.yaml`)
+5. **Embedded defaults** (lowest precedence)
+
+## Configuration Structure
+
+Define configuration using serde with validation:
+
+```rust
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub scan_interval_ms: u64,
+    pub batch_size: usize,
+    pub log_level: String,
+    pub debug_logging: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseConfig {
+    pub path: PathBuf,
+    pub max_connections: u32,
+    pub retention_days: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertingConfig {
+    pub enabled: bool,
+    pub sinks: Vec<AlertSinkConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertSinkConfig {
+    pub sink_type: String,
+    pub endpoint: Option<String>,
+    pub facility: Option<String>,
+}
+
+impl AlertSinkConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        match self.sink_type.as_str() {
+            "webhook" => {
+                if self.endpoint.is_none() {
+                    return Err(ConfigError::InvalidAlertSink(
+                        "webhook sink requires endpoint".to_string()
+                    ));
+                }
+            }
+            "syslog" => {
+                if self.facility.is_none() {
+                    return Err(ConfigError::InvalidAlertSink(
+                        "syslog sink requires facility".to_string()
+                    ));
+                }
+            }
+            _ => {
+                return Err(ConfigError::InvalidAlertSink(
+                    format!("Unknown sink type: {}", self.sink_type)
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub app: AppConfig,
+    pub database: DatabaseConfig,
+    pub alerting: AlertingConfig,
+}
+```
+
+## Configuration Loading
+
+Implement hierarchical configuration loading:
+
+```rust
+use figment::{Figment, providers::{Format, Yaml, Toml, Env}};
+use std::path::{Path, PathBuf};
+use dirs::home_dir;
+
+impl Config {
+    pub fn load() -> Result<Self, ConfigError> {
+        let mut figment = Figment::new()
+            // Embedded defaults
+            .merge(Config::default())
+            // System configuration
+            .merge(Yaml::file("/etc/daemoneye/config.yaml"));
+
+        // Safely load user configuration with security validation
+        if let Some(user_config) = Self::load_user_config()? {
+            figment = figment.merge(user_config);
+        }
+
+        let config = figment
+            // Environment variables
+            .merge(Env::prefixed("DAEMONEYE_"))
+            // Command line arguments (if provided)
+            .extract()?;
+
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Safely load user configuration with path traversal protection
+    fn load_user_config() -> Result<Option<Yaml<PathBuf>>, ConfigError> {
+        let home_dir = home_dir().ok_or(ConfigError::HomeDirectoryNotFound)?;
+        
+        // Build the expected config directory path
+        let config_dir = home_dir
+            .join(".config")
+            .join("daemoneye");
+        
+        // Canonicalize the config directory to resolve symlinks
+        let canonical_config_dir = config_dir
+            .canonicalize()
+            .map_err(|_| ConfigError::ConfigDirectoryNotFound)?;
+        
+        // Build the user config file path
+        let user_config_path = canonical_config_dir
+            .join("config.yaml");
+        
+        // Verify the config file exists and is a regular file
+        if !user_config_path.exists() {
+            tracing::debug!("User config file not found: {}", user_config_path.display());
+            return Ok(None);
+        }
+        
+        if !user_config_path.is_file() {
+            tracing::warn!("User config path is not a regular file: {}", user_config_path.display());
+            return Ok(None);
+        }
+        
+        // Final security check: ensure the resolved path is within the expected config directory
+        let canonical_user_config = user_config_path
+            .canonicalize()
+            .map_err(|_| ConfigError::ConfigPathInvalid)?;
+        
+        if !canonical_user_config.starts_with(&canonical_config_dir) {
+            tracing::warn!(
+                "User config path traversal detected: {} is not within {}",
+                canonical_user_config.display(),
+                canonical_config_dir.display()
+            );
+            return Ok(None);
+        }
+        
+        tracing::debug!("Loading user config from: {}", canonical_user_config.display());
+        Ok(Some(Yaml::file(canonical_user_config)))
+    }
+
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+        let config = Figment::new()
+            .merge(Config::default())
+            .merge(Yaml::file(path))
+            .merge(Env::prefixed("DAEMONEYE_"))
+            .extract()?;
+
+        config.validate()?;
+        Ok(config)
+    }
+}
+```
+
+## Configuration Validation
+
+Implement comprehensive validation:
+
+```rust
+impl Config {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        // Validate scan interval
+        if self.app.scan_interval_ms < 1000 {
+            return Err(ConfigError::InvalidScanInterval(self.app.scan_interval_ms));
+        }
+
+        // Validate batch size
+        if self.app.batch_size == 0 || self.app.batch_size > 10000 {
+            return Err(ConfigError::InvalidBatchSize(self.app.batch_size));
+        }
+
+        // Validate log level
+        let valid_levels = ["trace", "debug", "info", "warn", "error"];
+        if !valid_levels.contains(&self.app.log_level.as_str()) {
+            return Err(ConfigError::InvalidLogLevel(self.app.log_level.clone()));
+        }
+
+        // Validate database path
+        if let Some(parent) = self.database.path.parent() {
+            if !parent.exists() {
+                return Err(ConfigError::DatabasePathNotFound(self.database.path.clone()));
+            }
+        }
+
+        // Validate alerting configuration
+        if self.alerting.enabled {
+            if self.alerting.sinks.is_empty() {
+                return Err(ConfigError::NoAlertSinksConfigured);
+            }
+
+            for sink in &self.alerting.sinks {
+                sink.validate()?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("Invalid scan interval: {0}ms (minimum 1000ms)")]
+    InvalidScanInterval(u64),
+
+    #[error("Invalid batch size: {0} (must be 1-10000)")]
+    InvalidBatchSize(usize),
+
+    #[error("Invalid log level: {0} (must be trace, debug, info, warn, or error)")]
+    InvalidLogLevel(String),
+
+    #[error("Database path not found: {0}")]
+    DatabasePathNotFound(PathBuf),
+
+    #[error("No alert sinks configured")]
+    NoAlertSinksConfigured,
+
+    #[error("Invalid alert sink configuration: {0}")]
+    InvalidAlertSink(String),
+
+    #[error("Home directory not found")]
+    HomeDirectoryNotFound,
+
+    #[error("Config directory not found or inaccessible")]
+    ConfigDirectoryNotFound,
+
+    #[error("Config path is invalid or inaccessible")]
+    ConfigPathInvalid,
+
+    #[error("Configuration extraction failed: {0}")]
+    ExtractionError(#[from] figment::Error),
+}
+```
+
+## Environment Variable Mapping
+
+Map environment variables to configuration:
+
+```rust
+// Environment variables map to nested config:
+// DAEMONEYE_APP_SCAN_INTERVAL_MS=5000
+// DAEMONEYE_DATABASE_PATH=/var/lib/daemoneye/data.db
+// DAEMONEYE_ALERTING_ENABLED=true
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            app: AppConfig {
+                scan_interval_ms: 30000,
+                batch_size: 1000,
+                log_level: "info".to_string(),
+                debug_logging: false,
+            },
+            database: DatabaseConfig {
+                path: PathBuf::from("/var/lib/daemoneye/processes.db"),
+                max_connections: 10,
+                retention_days: 30,
+            },
+            alerting: AlertingConfig {
+                enabled: false,
+                sinks: vec![],
+            },
+        }
+    }
+}
+```
+
+## Configuration Testing
+
+Test configuration loading and validation:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+        assert_eq!(config.app.scan_interval_ms, 30000);
+        assert_eq!(config.app.batch_size, 1000);
+        assert_eq!(config.app.log_level, "info");
+    }
+
+    #[test]
+    fn test_config_validation() {
+        let mut config = Config::default();
+        config.app.scan_interval_ms = 500; // Invalid: too low
+        
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_loading_from_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+        
+        let yaml = r#"
+app:
+  scan_interval_ms: 10000
+  batch_size: 500
+  log_level: debug
+database:
+  path: /tmp/test.db
+  max_connections: 5
+  retention_days: 7
+alerting:
+  enabled: false
+  sinks: []
+"#;
+        
+        std::fs::write(&config_path, yaml).unwrap();
+        
+        let config = Config::load_from_file(&config_path).unwrap();
+        assert_eq!(config.app.scan_interval_ms, 10000);
+        assert_eq!(config.app.batch_size, 500);
+        assert_eq!(config.app.log_level, "debug");
+    }
+
+    #[test]
+    fn test_environment_variable_override() {
+        // RAII guard to ensure environment variables are cleaned up even on panic
+        let _guard = EnvVarGuard::new(vec![
+            ("DAEMONEYE_APP_SCAN_INTERVAL_MS", "15000"),
+            ("DAEMONEYE_APP_LOG_LEVEL", "debug"),
+        ]);
+        
+        let config = Config::load().unwrap();
+        assert_eq!(config.app.scan_interval_ms, 15000);
+        assert_eq!(config.app.log_level, "debug");
+    }
+
+    /// RAII guard for environment variables that restores previous values on drop
+    struct EnvVarGuard {
+        vars: Vec<(String, Option<String>)>,
+    }
+
+    impl EnvVarGuard {
+        fn new(vars: Vec<(&str, &str)>) -> Self {
+            let mut saved_vars = Vec::new();
+            
+            for (key, value) in vars {
+                // Save previous value if it exists
+                let previous = std::env::var(key).ok();
+                saved_vars.push((key.to_string(), previous));
+                
+                // Set the new value
+                std::env::set_var(key, value);
+            }
+            
+            Self {
+                vars: saved_vars,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            for (key, previous_value) in &self.vars {
+                if let Some(previous) = previous_value {
+                    std::env::set_var(key, previous);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+}
+```
+
+## Configuration Documentation
+
+Document configuration options:
+
+```rust
+/// DaemonEye configuration structure.
+///
+/// Configuration is loaded from multiple sources in order of precedence:
+/// 1. Command-line arguments (highest)
+/// 2. Environment variables (`DAEMONEYE_*`)
+/// 3. User config file (`~/.config/daemoneye/config.yaml`)
+/// 4. System config file (`/etc/daemoneye/config.yaml`)
+/// 5. Embedded defaults (lowest)
+///
+/// # Example Configuration
+///
+/// ```yaml
+/// app:
+///   scan_interval_ms: 30000
+///   batch_size: 1000
+///   log_level: info
+///   debug_logging: false
+///
+/// database:
+///   path: /var/lib/daemoneye/processes.db
+///   max_connections: 10
+///   retention_days: 30
+///
+/// alerting:
+///   enabled: true
+///   sinks:
+///     - sink_type: syslog
+///       facility: daemon
+///     - sink_type: webhook
+///       endpoint: https://alerts.example.com/api
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    // ... fields
+}
+```

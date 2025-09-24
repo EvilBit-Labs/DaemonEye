@@ -1,0 +1,242 @@
+---
+globs: **/*.rs
+alwaysApply: false
+---
+
+# Error Handling Patterns for DaemonEye
+
+## Error Handling Philosophy
+
+DaemonEye uses structured error handling with clear error boundaries:
+
+- **Structured Errors**: Use `thiserror` for all error types with derive macros
+- **Error Context**: Use `anyhow` for error context and chaining
+- **Error Boundaries**: Implement proper error boundaries for different components
+- **Recovery Strategies**: Implement graceful degradation and recovery patterns
+
+## Error Type Definition
+
+Define structured error types using thiserror:
+
+```rust
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum CollectionError {
+    #[error("Permission denied accessing process {pid}")]
+    PermissionDenied { pid: u32 },
+
+    #[error("Process {pid} no longer exists")]
+    ProcessNotFound { pid: u32 },
+
+    #[error("Database operation failed: {0}")]
+    DatabaseError(String),
+
+    #[error("IPC communication failed: {0}")]
+    IpcError(String),
+
+    #[error("Configuration validation failed: {0}")]
+    ConfigError(String),
+
+    #[error("Resource limit exceeded: {resource}")]
+    ResourceLimitExceeded { resource: String },
+}
+```
+
+## Error Context and Chaining
+
+Use anyhow for error context:
+
+```rust
+use anyhow::{Context, Result};
+
+async fn collect_processes() -> Result<Vec<ProcessInfo>> {
+    let processes = sysinfo::System::new_all()
+        .processes()
+        .values()
+        .map(|process| {
+            ProcessInfo::from_sysinfo(process)
+                .context("Failed to convert process info")
+        })
+        .collect::<Result<Vec<_>>>()
+        .context("Failed to collect process information")?;
+
+    Ok(processes)
+}
+```
+
+## Component-Specific Error Handling
+
+Implement error boundaries for different components:
+
+```rust
+// procmond errors
+#[derive(Debug, Error)]
+pub enum ProcMonDError {
+    #[error("Failed to initialize privileged collector: {0}")]
+    InitializationFailed(String),
+    
+    #[error("Failed to drop privileges: {0}")]
+    PrivilegeDropFailed(String),
+    
+    #[error("Process collection failed: {0}")]
+    CollectionFailed(#[from] CollectionError),
+}
+
+// daemoneye-agent errors
+#[derive(Debug, Error)]
+pub enum AgentError {
+    #[error("Detection rule execution failed: {0}")]
+    DetectionFailed(String),
+    
+    #[error("Alert delivery failed: {0}")]
+    AlertDeliveryFailed(String),
+    
+    #[error("IPC client connection failed: {0}")]
+    IpcConnectionFailed(String),
+}
+
+// daemoneye-cli errors
+#[derive(Debug, Error)]
+pub enum CliError {
+    #[error("Query execution failed: {0}")]
+    QueryFailed(String),
+    
+    #[error("Configuration file not found: {path}")]
+    ConfigNotFound { path: String },
+    
+    #[error("Database connection failed: {0}")]
+    DatabaseConnectionFailed(String),
+}
+```
+
+## Error Recovery Patterns
+
+Implement graceful degradation:
+
+```rust
+use tokio::time::{timeout, Duration};
+
+async fn resilient_process_collection() -> Result<Vec<ProcessInfo>> {
+    // Try primary collection method
+    match timeout(Duration::from_secs(5), collect_processes_privileged()).await {
+        Ok(Ok(processes)) => Ok(processes),
+        Ok(Err(e)) => {
+            tracing::warn!("Privileged collection failed, falling back: {}", e);
+            // Fallback to unprivileged collection
+            collect_processes_unprivileged().await
+        }
+        Err(_) => {
+            tracing::warn!("Collection timed out, using cached data");
+            // Use cached data if available
+            get_cached_processes().await
+        }
+    }
+}
+```
+
+## Error Logging and Monitoring
+
+Implement structured error logging:
+
+```rust
+use tracing::{error, warn, info};
+
+async fn handle_collection_error(error: CollectionError) {
+    match error {
+        CollectionError::PermissionDenied { pid } => {
+            warn!("Permission denied for process {}: {}", pid, error);
+            // Continue with reduced capabilities
+        }
+        CollectionError::ProcessNotFound { pid } => {
+            info!("Process {} no longer exists: {}", pid, error);
+            // This is normal, continue
+        }
+        CollectionError::DatabaseError(msg) => {
+            error!("Database error: {}", msg);
+            // Attempt recovery or fail gracefully
+        }
+        _ => {
+            error!("Unexpected collection error: {}", error);
+            // Log and potentially restart component
+        }
+    }
+}
+```
+
+## Error Propagation
+
+Use proper error propagation patterns:
+
+```rust
+// Use ? operator for early returns
+async fn process_detection_task(task: DetectionTask) -> Result<DetectionResult> {
+    let processes = collect_processes()
+        .await
+        .context("Failed to collect processes for detection")?;
+    
+    let alerts = execute_detection_rules(&processes, &task)
+        .await
+        .context("Failed to execute detection rules")?;
+    
+    Ok(DetectionResult::new(alerts))
+}
+
+// Use map_err for error transformation
+async fn send_alert(alert: Alert) -> Result<()> {
+    alert_sink.send(alert)
+        .await
+        .map_err(|e| AlertDeliveryError::NetworkError(e.to_string()))?;
+    
+    Ok(())
+}
+```
+
+## Error Testing
+
+Test error conditions thoroughly:
+
+```rust
+#[tokio::test]
+async fn test_permission_denied_error() {
+    // Mock a permission denied scenario
+    let result = collect_process_with_insufficient_privileges().await;
+    
+    assert!(matches!(result, Err(CollectionError::PermissionDenied { .. })));
+}
+
+#[tokio::test]
+async fn test_error_recovery() {
+    // Test that errors are handled gracefully
+    let result = resilient_process_collection().await;
+    
+    // Should not panic and should return some result
+    assert!(result.is_ok());
+    assert!(!result.unwrap().is_empty());
+}
+```
+
+## Error Documentation
+
+Document error conditions in rustdoc:
+
+```rust
+/// Collects process information with optional elevated privileges.
+///
+/// # Errors
+///
+/// Returns [`CollectionError`] for:
+/// - System-level permission issues
+/// - Resource exhaustion scenarios  
+/// - Database connectivity problems
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let processes = collect_processes().await?;
+/// assert!(processes.len() > 0);
+/// ```
+pub async fn collect_processes() -> Result<Vec<ProcessInfo>, CollectionError> {
+    // Implementation
+}
+```

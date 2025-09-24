@@ -21,7 +21,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
 /// Mock alert sink for benchmarking
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct MockAlertSink {
     name: String,
     success_rate: f64,
@@ -47,21 +47,15 @@ impl AlertSink for MockAlertSink {
         // Simulate network latency
         tokio::time::sleep(tokio::time::Duration::from_millis(self.latency_ms)).await;
 
-        // Simulate success/failure based on success rate
-        if rand::random::<f64>() < self.success_rate {
-            Ok(DeliveryResult {
-                sink_name: self.name.clone(),
-                success: true,
-                delivered_at: chrono::Utc::now(),
-                error_message: None,
-                duration_ms: self.latency_ms,
-            })
-        } else {
-            Err(daemoneye_lib::alerting::AlertingError::SinkError(format!(
-                "Mock sink {} failed to deliver alert",
-                self.name
-            )))
-        }
+        // For benchmarks, simulate success/failure by returning the result directly
+        // without error messages
+        Ok(DeliveryResult {
+            sink_name: self.name.clone(),
+            success: rand::random::<f64>() < self.success_rate,
+            delivered_at: chrono::Utc::now(),
+            error_message: None,
+            duration_ms: self.latency_ms,
+        })
     }
 
     async fn health_check(&self) -> Result<(), daemoneye_lib::alerting::AlertingError> {
@@ -178,61 +172,61 @@ fn bench_alert_manager_operations(c: &mut Criterion) {
         });
     });
 
+    // Create sink and register with manager
+    let sink = MockAlertSink::new("sink1".to_string(), 1.0, 10);
+    let mut manager = AlertManager::new();
+    manager.add_sink(Box::new(sink));
+    let alert = Alert::new(
+        AlertSeverity::High,
+        "Test alert",
+        "Test alert message",
+        "test_rule",
+        ProcessRecord::builder()
+            .pid_raw(1234)
+            .name("test_process".to_string())
+            .status(ProcessStatus::Running)
+            .build()
+            .unwrap(),
+    );
+
     group.bench_function("send_alert_single_sink", |b| {
-        rt.block_on(async {
-            let _sinks = [Arc::new(MockAlertSink::new("sink1".to_string(), 1.0, 10))];
-            let mut manager = AlertManager::new();
-            let alert = Alert::new(
-                AlertSeverity::High,
-                "Test alert",
-                "Test alert message",
-                "test_rule",
-                ProcessRecord::builder()
-                    .pid_raw(1234)
-                    .name("test_process".to_string())
-                    .status(ProcessStatus::Running)
-                    .build()
-                    .unwrap(),
-            );
-
-            b.iter(|| {
-                let start = std::time::Instant::now();
-                let result = rt.block_on(manager.send_alert(&alert));
-                let duration = start.elapsed();
-
-                black_box((result, duration))
-            });
+        b.iter(|| {
+            let start = std::time::Instant::now();
+            let result = rt.block_on(manager.send_alert(&alert));
+            let duration = start.elapsed();
+            black_box((result, duration))
         });
     });
 
+    // Create sinks and register with manager
+    let sinks = [
+        MockAlertSink::new("sink1".to_string(), 0.9, 10),
+        MockAlertSink::new("sink2".to_string(), 0.8, 15),
+        MockAlertSink::new("sink3".to_string(), 0.95, 5),
+    ];
+    let mut multi_manager = AlertManager::new();
+    for alert_sink in &sinks {
+        multi_manager.add_sink(Box::new(alert_sink.clone()));
+    }
+    let multi_alert = Alert::new(
+        AlertSeverity::High,
+        "Test alert",
+        "Test alert message",
+        "test_rule",
+        ProcessRecord::builder()
+            .pid_raw(1234)
+            .name("test_process".to_string())
+            .status(ProcessStatus::Running)
+            .build()
+            .unwrap(),
+    );
+
     group.bench_function("send_alert_multiple_sinks", |b| {
-        rt.block_on(async {
-            let _sinks = [
-                Arc::new(MockAlertSink::new("sink1".to_string(), 0.9, 10)),
-                Arc::new(MockAlertSink::new("sink2".to_string(), 0.8, 15)),
-                Arc::new(MockAlertSink::new("sink3".to_string(), 0.95, 5)),
-            ];
-            let mut manager = AlertManager::new();
-            let alert = Alert::new(
-                AlertSeverity::High,
-                "Test alert",
-                "Test alert message",
-                "test_rule",
-                ProcessRecord::builder()
-                    .pid_raw(1234)
-                    .name("test_process".to_string())
-                    .status(ProcessStatus::Running)
-                    .build()
-                    .unwrap(),
-            );
-
-            b.iter(|| {
-                let start = std::time::Instant::now();
-                let result = rt.block_on(manager.send_alert(&alert));
-                let duration = start.elapsed();
-
-                black_box((result, duration))
-            });
+        b.iter(|| {
+            let start = std::time::Instant::now();
+            let result = rt.block_on(multi_manager.send_alert(&multi_alert));
+            let duration = start.elapsed();
+            black_box((result, duration))
         });
     });
 
@@ -265,26 +259,26 @@ fn bench_alert_delivery_configurations(c: &mut Criterion) {
             BenchmarkId::new("delivery_sinks", sink_count),
             &sink_count,
             |b, &sink_count| {
-                b.iter(|| {
-                    rt.block_on(async {
-                        let _sinks: Vec<_> = (0..sink_count)
-                            .map(|i| {
-                                Arc::new(MockAlertSink::new(
-                                    format!("sink_{}", i),
-                                    0.9,
-                                    10 + (i as u64 * 5), // Varying latency
-                                ))
-                            })
-                            .collect();
-
-                        let mut manager = AlertManager::new();
-
-                        let start = std::time::Instant::now();
-                        let result = manager.send_alert(&alert).await;
-                        let duration = start.elapsed();
-
-                        black_box((result, duration))
+                // Create sinks and register with manager
+                let sinks: Vec<_> = (0..sink_count)
+                    .map(|i| {
+                        MockAlertSink::new(
+                            format!("sink_{}", i),
+                            0.9,
+                            10 + (i as u64 * 5), // Varying latency
+                        )
                     })
+                    .collect();
+                let mut manager = AlertManager::new();
+                for sink in &sinks {
+                    manager.add_sink(Box::new(sink.clone()));
+                }
+
+                b.iter(|| {
+                    let start = std::time::Instant::now();
+                    let result = rt.block_on(manager.send_alert(&alert));
+                    let duration = start.elapsed();
+                    black_box((result, duration))
                 });
             },
         );
@@ -319,22 +313,22 @@ fn bench_alert_delivery_success_rates(c: &mut Criterion) {
             BenchmarkId::new("delivery_success_rate", (success_rate * 100.0) as u64),
             &success_rate,
             |b, &success_rate| {
+                // Create sinks and register with manager
+                let sinks = [
+                    MockAlertSink::new("sink1".to_string(), success_rate, 10),
+                    MockAlertSink::new("sink2".to_string(), success_rate, 15),
+                    MockAlertSink::new("sink3".to_string(), success_rate, 5),
+                ];
+                let mut manager = AlertManager::new();
+                for sink in &sinks {
+                    manager.add_sink(Box::new(sink.clone()));
+                }
+
                 b.iter(|| {
-                    rt.block_on(async {
-                        let _sinks = [
-                            Arc::new(MockAlertSink::new("sink1".to_string(), success_rate, 10)),
-                            Arc::new(MockAlertSink::new("sink2".to_string(), success_rate, 15)),
-                            Arc::new(MockAlertSink::new("sink3".to_string(), success_rate, 5)),
-                        ];
-
-                        let mut manager = AlertManager::new();
-
-                        let start = std::time::Instant::now();
-                        let result = manager.send_alert(&alert).await;
-                        let duration = start.elapsed();
-
-                        black_box((result, duration))
-                    })
+                    let start = std::time::Instant::now();
+                    let result = rt.block_on(manager.send_alert(&alert));
+                    let duration = start.elapsed();
+                    black_box((result, duration))
                 });
             },
         );
@@ -349,33 +343,33 @@ fn bench_concurrent_alert_processing(c: &mut Criterion) {
 
     let rt = Runtime::new().unwrap();
 
+    // Create a single shared AlertManager instance
+    let manager = Arc::new(Mutex::new(AlertManager::new()));
+
+    // Create multiple alerts
+    let alerts: Vec<Alert> = (0..100)
+        .map(|i| {
+            Alert::new(
+                AlertSeverity::Medium,
+                format!("Alert {}", i),
+                format!("Alert message {}", i),
+                format!("rule_{}", i),
+                ProcessRecord::builder()
+                    .pid_raw(i as u32)
+                    .name(format!("process_{}", i))
+                    .status(ProcessStatus::Running)
+                    .build()
+                    .unwrap(),
+            )
+        })
+        .collect();
+
     group.bench_function("concurrent_alert_sending", |b| {
         b.iter(|| {
-            rt.block_on(async {
-                // Create a single shared AlertManager instance
-                let manager = Arc::new(Mutex::new(AlertManager::new()));
+            let start = std::time::Instant::now();
 
-                // Create multiple alerts
-                let alerts: Vec<Alert> = (0..100)
-                    .map(|i| {
-                        Alert::new(
-                            AlertSeverity::Medium,
-                            format!("Alert {}", i),
-                            format!("Alert message {}", i),
-                            format!("rule_{}", i),
-                            ProcessRecord::builder()
-                                .pid_raw(i as u32)
-                                .name(format!("process_{}", i))
-                                .status(ProcessStatus::Running)
-                                .build()
-                                .unwrap(),
-                        )
-                    })
-                    .collect();
-
-                let start = std::time::Instant::now();
-
-                // Send alerts concurrently using the shared AlertManager
+            // Send alerts concurrently using the shared AlertManager
+            let results = rt.block_on(async {
                 let handles: Vec<_> = alerts
                     .iter()
                     .map(|alert| {
@@ -388,14 +382,13 @@ fn bench_concurrent_alert_processing(c: &mut Criterion) {
                     })
                     .collect();
 
-                let results = futures::future::join_all(handles).await;
-                let duration = start.elapsed();
+                futures::future::join_all(handles).await
+            });
+            let duration = start.elapsed();
 
-                black_box((results.len(), duration))
-            })
+            black_box((results.len(), duration))
         });
     });
-
     group.finish();
 }
 
@@ -413,40 +406,40 @@ fn bench_alert_throughput(c: &mut Criterion) {
             BenchmarkId::new("throughput", alert_count),
             &alert_count,
             |b, &alert_count| {
+                // Create sinks and register with manager
+                let sinks = [
+                    MockAlertSink::new("sink1".to_string(), 0.9, 5),
+                    MockAlertSink::new("sink2".to_string(), 0.8, 8),
+                ];
+                let mut manager = AlertManager::new();
+                for sink in &sinks {
+                    manager.add_sink(Box::new(sink.clone()));
+                }
+
                 b.iter(|| {
-                    rt.block_on(async {
-                        let _sinks = [
-                            Arc::new(MockAlertSink::new("sink1".to_string(), 0.9, 5)),
-                            Arc::new(MockAlertSink::new("sink2".to_string(), 0.8, 8)),
-                        ];
+                    let start = std::time::Instant::now();
 
-                        let mut manager = AlertManager::new();
+                    // Send alerts sequentially
+                    for i in 0..alert_count {
+                        let alert = Alert::new(
+                            AlertSeverity::Low,
+                            format!("Alert {}", i),
+                            format!("Alert message {}", i),
+                            format!("rule_{}", i),
+                            ProcessRecord::builder()
+                                .pid_raw(i as u32)
+                                .name(format!("process_{}", i))
+                                .status(ProcessStatus::Running)
+                                .build()
+                                .unwrap(),
+                        );
 
-                        let start = std::time::Instant::now();
+                        let _ = rt.block_on(manager.send_alert(&alert));
+                    }
 
-                        // Send alerts sequentially
-                        for i in 0..alert_count {
-                            let alert = Alert::new(
-                                AlertSeverity::Low,
-                                format!("Alert {}", i),
-                                format!("Alert message {}", i),
-                                format!("rule_{}", i),
-                                ProcessRecord::builder()
-                                    .pid_raw(i as u32)
-                                    .name(format!("process_{}", i))
-                                    .status(ProcessStatus::Running)
-                                    .build()
-                                    .unwrap(),
-                            );
-
-                            let _ = manager.send_alert(&alert).await;
-                        }
-
-                        let duration = start.elapsed();
-                        let throughput = alert_count as f64 / duration.as_secs_f64();
-
-                        black_box((throughput, duration))
-                    })
+                    let duration = start.elapsed();
+                    let throughput = alert_count as f64 / duration.as_secs_f64();
+                    black_box((throughput, duration))
                 });
             },
         );

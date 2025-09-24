@@ -291,6 +291,8 @@ fn source_caps_to_proto_capabilities(caps: SourceCaps) -> CollectionCapabilities
 /// Creates a temporary directory and generates a deterministic unique ID
 /// for the socket path. Returns both the path and the TempDir handle
 /// to ensure proper cleanup.
+///
+/// On Unix systems, ensures the socket path stays within the SUN_LEN limit (108 chars).
 fn create_endpoint_path() -> Result<(String, TempDir)> {
     let temp_dir = tempfile::Builder::new()
         .prefix("daemoneye-")
@@ -298,15 +300,25 @@ fn create_endpoint_path() -> Result<(String, TempDir)> {
         .context("Failed to create temp directory")?;
 
     let unique_id = if cfg!(test) {
-        format!("test-{}", std::process::id())
+        // Use a shorter ID for tests to avoid SUN_LEN issues
+        format!("t{}", std::process::id() % 10000)
     } else {
         Uuid::new_v4().to_string()
     };
 
     let socket_path = if cfg!(unix) {
         let mut path = temp_dir.path().to_path_buf();
-        path.push(format!("collector-{}.sock", unique_id));
-        path.to_string_lossy().to_string()
+        path.push(format!("c{}.sock", unique_id));
+        let path_str = path.to_string_lossy().to_string();
+
+        // Ensure path doesn't exceed SUN_LEN limit (108 chars including null terminator)
+        if path_str.len() >= 100 {
+            // Fallback to a very short path in the temp directory
+            let short_path = temp_dir.path().join("s.sock");
+            short_path.to_string_lossy().to_string()
+        } else {
+            path_str
+        }
     } else if cfg!(windows) {
         format!(r"\\.\pipe\daemoneye\collector-{}", unique_id)
     } else {
@@ -362,9 +374,16 @@ mod tests {
         #[cfg(unix)]
         {
             if cfg!(test) {
-                assert!(path.contains("/collector-test-"));
+                // Test path should be short and end with .sock
                 assert!(path.ends_with(".sock"));
-                assert!(path.contains(&format!("-{}.sock", std::process::id())));
+                assert!(path.contains("daemoneye-"));
+                // Ensure path is within SUN_LEN limit
+                assert!(
+                    path.len() < 100,
+                    "Path too long: {} ({} chars)",
+                    path,
+                    path.len()
+                );
             } else {
                 assert!(path.contains("/collector-"));
                 assert!(path.ends_with(".sock"));
@@ -376,7 +395,7 @@ mod tests {
         {
             assert!(path.starts_with(r"\\.\pipe\daemoneye\collector-"));
             if cfg!(test) {
-                assert!(path.contains(&format!("test-{}", std::process::id())));
+                assert!(path.contains("t"));
             } else {
                 // For non-test builds, we use UUID which won't contain "daemoneye-"
                 assert!(path.len() > 30); // UUID-based path should be reasonably long

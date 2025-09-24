@@ -11,6 +11,7 @@
 //! - Cryptographic utilities for audit trails
 //! - Performance telemetry and health monitoring
 //! - Network correlation and kernel monitoring (Enterprise)
+//! - Cross-platform IPC communication
 
 // Core modules (always available)
 pub mod config;

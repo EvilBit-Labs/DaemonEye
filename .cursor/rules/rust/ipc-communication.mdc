@@ -1,0 +1,135 @@
+---
+globs: **/ipc/**/*.rs,**/proto/**/*.rs,**/*ipc*.rs
+alwaysApply: false
+---
+
+# IPC Communication Standards for DaemonEye
+
+## IPC Architecture
+
+DaemonEye uses **interprocess communication** with strict security boundaries:
+
+- **Transport**: `interprocess` crate for cross-platform IPC (Unix domain sockets/named pipes)
+- **Serialization**: Protobuf with CRC32 checksums for integrity validation
+- **Framing**: Length-delimited protobuf messages with sequence numbers
+- **Backpressure**: Credit-based flow control (default: 1000 pending records, max 10 concurrent tasks)
+
+## Message Framing
+
+All IPC messages use length-delimited protobuf with CRC32 checksums:
+
+```rust
+use interprocess::local_socket::LocalSocketStream;
+use daemoneye_lib::proto::{DetectionTask, DetectionResult};
+use std::path::PathBuf;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+
+// Secure socket path resolution with proper permissions
+fn get_socket_path() -> Result<PathBuf, std::io::Error> {
+    // Prefer XDG_RUNTIME_DIR for user sessions
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        let socket_dir = PathBuf::from(runtime_dir).join("daemoneye");
+        fs::create_dir_all(&socket_dir)?;
+        // Set restrictive permissions (owner-only rwx)
+        let mut perms = fs::metadata(&socket_dir)?.permissions();
+        perms.set_mode(0o700);
+        fs::set_permissions(&socket_dir, perms)?;
+        return Ok(socket_dir.join("DaemonEye.sock"));
+    }
+    
+    // Fall back to system runtime directories
+    for fallback_dir in ["/run/daemoneye", "/var/run/daemoneye"] {
+        let socket_dir = PathBuf::from(fallback_dir);
+        if let Ok(()) = fs::create_dir_all(&socket_dir) {
+            // Set restrictive permissions (owner-only rwx)
+            let mut perms = fs::metadata(&socket_dir)?.permissions();
+            perms.set_mode(0o700);
+            fs::set_permissions(&socket_dir, perms)?;
+            return Ok(socket_dir.join("DaemonEye.sock"));
+        }
+    }
+    
+    Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "Unable to create secure socket directory"
+    ))
+}
+
+// Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
+let socket_path = get_socket_path()?;
+let stream = LocalSocketStream::connect(&socket_path)?;
+
+// Set socket file permissions after creation (owner-only rwx)
+#[cfg(unix)]
+{
+    if let Ok(metadata) = std::fs::metadata(&socket_path) {
+        let mut perms = metadata.permissions();
+        perms.set_mode(0o600); // Owner read/write only
+        let _ = std::fs::set_permissions(&socket_path, perms);
+    }
+}
+
+// Protobuf message serialization with CRC32 checksums
+let task = DetectionTask::new()
+    .with_rule_id("suspicious_process")
+    .with_query("SELECT * FROM processes WHERE name = 'malware.exe'")
+    .build();
+
+// Serialize and send with framing
+let serialized = prost::Message::encode_to_vec(&task)?;
+// Send with CRC32 and length prefixing for integrity
+```
+
+## Capability Negotiation
+
+Implement capability-based task routing:
+
+```rust
+use daemoneye_lib::models::SourceCaps;
+
+// Capability advertisement
+let caps = SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE;
+
+// Task validation against capabilities
+if !caps.contains(required_capability) {
+    return Err(IpcError::InsufficientCapabilities);
+}
+```
+
+## Error Handling
+
+Use structured error types for IPC operations:
+
+```rust
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum IpcError {
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+
+    #[error("Message serialization failed: {0}")]
+    SerializationFailed(String),
+
+    #[error("Capability mismatch: required {required}, available {available}")]
+    CapabilityMismatch { required: SourceCaps, available: SourceCaps },
+}
+```
+
+## Security Requirements
+
+- **No Inbound Network**: System is outbound-only for alert delivery
+- **Input Validation**: All IPC messages validated with serde and typed models
+- **Capability Enforcement**: Tasks validated against advertised capabilities
+- **Connection Management**: Automatic reconnection with exponential backoff
+- **Secure Socket Paths**: Use XDG_RUNTIME_DIR/daemoneye/ when available, fall back to /run/daemoneye/ or /var/run/daemoneye/ (never /tmp)
+- **Restrictive Permissions**: Socket directories created with 0o700 (owner-only rwx), socket files with 0o600 (owner-only rw)
+- **World Access Prevention**: Ensure socket files are not accessible to other users
+
+## Testing
+
+- Test IPC communication with temporary sockets
+- Validate message serialization roundtrips
+- Test capability negotiation scenarios
+- Test connection failure and recovery

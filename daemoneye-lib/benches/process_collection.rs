@@ -5,7 +5,7 @@
     clippy::shadow_reuse
 )]
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use daemoneye_lib::collection::{ProcessCollectionService, SysinfoProcessCollector};
 use daemoneye_lib::models::{ProcessRecord, ProcessStatus};
 use futures_util::StreamExt;
@@ -22,6 +22,7 @@ fn bench_process_collection(c: &mut Criterion) {
     let process_counts = vec![100, 1000, 5000, 10000];
 
     for count in process_counts {
+        group.throughput(Throughput::Elements(count.try_into().unwrap_or(0)));
         group.bench_with_input(
             BenchmarkId::new("sysinfo_collector", count),
             &count,
@@ -60,8 +61,6 @@ fn bench_process_collection_streaming(c: &mut Criterion) {
     let mut group = c.benchmark_group("process_collection_streaming");
 
     group.bench_function("stream_small_batch", |b| {
-        // Allow arithmetic_side_effects: saturating_add is safe and intentional for counting
-        #[allow(clippy::arithmetic_side_effects)]
         b.iter(|| {
             let collector = SysinfoProcessCollector::default();
             let deadline = Some(
@@ -75,7 +74,6 @@ fn bench_process_collection_streaming(c: &mut Criterion) {
                 let mut stream = collector.stream_processes(deadline);
                 let mut count: u32 = 0;
                 while (stream.next().await).is_some() {
-                    // Allow arithmetic_side_effects: saturating_add is safe and intentional for counting
                     count = count.saturating_add(1);
                     if count >= 1000 {
                         break;
@@ -103,8 +101,6 @@ fn bench_process_record_operations(c: &mut Criterion) {
                 .command_line("test --arg value".to_owned())
                 .cpu_usage(25.5);
 
-            // Allow arithmetic_side_effects: multiplication for memory calculation is safe in this context
-            #[allow(clippy::arithmetic_side_effects)]
             let memory_bytes = 1024 * 1024;
 
             let record = record_builder
@@ -143,8 +139,6 @@ fn bench_process_record_operations(c: &mut Criterion) {
             .command_line("test --arg value".to_owned())
             .cpu_usage(25.5);
 
-        // Allow arithmetic_side_effects: multiplication for memory calculation is safe in this context
-        #[allow(clippy::arithmetic_side_effects)]
         let memory_bytes = 1024 * 1024;
 
         let record = record_builder
@@ -194,4 +188,5 @@ criterion_group!(
     bench_process_record_operations,
     bench_system_info_collection
 );
+
 criterion_main!(benches);

@@ -10,9 +10,45 @@ repository = "https://github.com/EvilBit-Labs/DaemonEye"
 homepage = "https://evilbitlabs.io/daemoneye"
 publish = false
 
+[lib]
+bench = true
+
 # Inherit workspace lint configuration
 [lints]
 workspace = true
+
+# Benchmark configurations
+[[bench]]
+name = "process_collection"
+harness = false
+
+[[bench]]
+name = "database_operations"
+harness = false
+
+[[bench]]
+name = "detection_engine"
+harness = false
+
+[[bench]]
+name = "ipc_communication"
+harness = false
+
+[[bench]]
+name = "alert_processing"
+harness = false
+
+[[bench]]
+name = "cryptographic_operations"
+harness = false
+
+[[bench]]
+name = "ipc_performance_comprehensive"
+harness = false
+
+[[bench]]
+name = "ipc_client_validation_benchmarks"
+harness = false
 
 [package.metadata.cargo-machete]
 ignored = ["anyhow", "tracing"]
