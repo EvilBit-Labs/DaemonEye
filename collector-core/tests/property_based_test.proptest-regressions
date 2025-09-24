@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 490245f58ff0a66d596e0bfd52ea24bc4f30f81fdcbaf4a328c07d72d8b95e80 # shrinks to event = ProcessEvent { pid: 1, ppid: None, name: "_", executable_path: None, command_line: [], start_time: None, cpu_usage: Some(30.642635112887426), memory_usage: None, executable_hash: None, user_id: None, accessible: false, file_exists: false, timestamp: SystemTime { intervals: 116444736000000000 } }

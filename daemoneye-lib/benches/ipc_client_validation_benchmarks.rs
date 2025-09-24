@@ -25,7 +25,7 @@ use tokio::runtime::Runtime;
 /// - Replaces any character not in [A-Za-z0-9._-] with '_'
 /// - Trims leading/trailing dots and slashes
 /// - Enforces a maximum length of 200 characters
-/// - Falls back to "bench_validation" if the result is empty
+/// - Falls back to "`bench_validation`" if the result is empty
 #[cfg(windows)]
 fn sanitize_pipe_name(dir_name: &str) -> String {
     let mut sanitized = String::with_capacity(dir_name.len());
@@ -42,20 +42,20 @@ fn sanitize_pipe_name(dir_name: &str) -> String {
     }
 
     // Trim leading/trailing dots and slashes
-    let sanitized = sanitized.trim_matches(|c| c == '.' || c == '/' || c == '\\');
+    let trimmed = sanitized.trim_matches(|c| c == '.' || c == '/' || c == '\\');
 
     // Enforce maximum length
-    let sanitized = if sanitized.len() > 200 {
-        &sanitized[..200]
+    let truncated = if trimmed.len() > 200 {
+        trimmed.chars().take(200).collect::<String>()
     } else {
-        sanitized
+        trimmed.to_owned()
     };
 
     // Fallback if empty
-    if sanitized.is_empty() {
-        "bench_validation".to_string()
+    if truncated.is_empty() {
+        "bench_validation".to_owned()
     } else {
-        sanitized.to_string()
+        truncated
     }
 }
 
