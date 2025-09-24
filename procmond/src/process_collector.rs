@@ -6,7 +6,6 @@
 
 use async_trait::async_trait;
 use collector_core::ProcessEvent;
-// HashMap import removed - not needed
 use std::time::SystemTime;
 use sysinfo::{Pid, Process, System};
 use thiserror::Error;
