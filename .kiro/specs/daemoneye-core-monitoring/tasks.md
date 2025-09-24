@@ -626,3 +626,92 @@
   - Create unified logging and health reporting
   - Write integration tests for service startup, shutdown, and configuration changes
   - _Requirements: All requirements integration_
+
+- [ ] 21. Implement daemon/service functionality for daemoneye-agent with process lifecycle management
+
+- [ ] 21.1 Add daemon/service dependencies and cross-platform service infrastructure
+
+  - Add `daemonize` crate dependency for Unix-like systems (Linux, macOS) daemon functionality
+  - Add `windows-service` crate dependency for Windows service integration
+  - Create `ServiceManager` trait for cross-platform service lifecycle management
+  - Implement platform-specific service managers: `UnixServiceManager` and `WindowsServiceManager`
+  - Add service configuration structure with startup options, working directory, and user context
+  - Write unit tests for service manager trait implementations and configuration validation
+  - _Requirements: 6.1, 6.2, 6.4, 6.5_
+
+- [ ] 21.2 Implement Unix daemon functionality with proper privilege management
+
+  - Create `UnixDaemon` implementation using daemonize crate for Linux and macOS
+  - Add proper daemon initialization: fork, setsid, chdir, umask, file descriptor management
+  - Implement PID file management with lock file creation and cleanup
+  - Add signal handling for SIGTERM, SIGINT, SIGHUP (config reload), and SIGUSR1 (status)
+  - Create privilege dropping after daemon initialization with audit logging
+  - Implement proper daemon shutdown with graceful collector process termination
+  - Write integration tests for daemon lifecycle and signal handling
+  - _Requirements: 6.1, 6.2, 6.4, 6.5_
+
+- [ ] 21.3 Implement Windows service functionality with SCM integration
+
+  - Create `WindowsService` implementation using windows-service crate
+  - Add Windows Service Control Manager (SCM) integration with proper service registration
+  - Implement service control handlers for start, stop, pause, continue, and shutdown
+  - Add Windows event log integration for service status and error reporting
+  - Create service installer/uninstaller functionality with proper registry entries
+  - Implement service recovery options and failure handling policies
+  - Write integration tests for Windows service lifecycle and SCM interaction
+  - _Requirements: 6.1, 6.2, 6.4, 6.5_
+
+- [ ] 21.4 Add collector process lifecycle management and supervision
+
+  - Create `ProcessSupervisor` for managing collector process lifecycles (procmond, specialty collectors)
+  - Implement collector process spawning with proper environment setup and privilege management
+  - Add collector process health monitoring with heartbeat checks and restart policies
+  - Create collector process graceful shutdown coordination with timeout enforcement
+  - Implement collector process crash detection and automatic restart with backoff policies
+  - Add collector process resource monitoring and limit enforcement
+  - Write integration tests for process supervision scenarios and failure recovery
+  - _Requirements: 11.1, 11.2, 12.1, 12.2_
+
+- [ ] 21.5 Integrate service functionality with existing daemoneye-agent architecture
+
+  - Modify daemoneye-agent main.rs to support both interactive and service/daemon modes
+  - Add CLI flags for service operations: --install, --uninstall, --start, --stop, --status
+  - Integrate service manager with existing configuration system and database initialization
+  - Preserve existing IPC client functionality and detection engine integration
+  - Add service-specific logging configuration with file rotation and retention policies
+  - Create service configuration templates for systemd, launchd, and Windows services
+  - Write integration tests ensuring service mode maintains identical functionality to interactive mode
+  - _Requirements: 6.1, 6.2, 6.4, 6.5, 11.1, 11.2_
+
+- [ ] 21.6 Add service monitoring and health reporting capabilities
+
+  - Implement service health endpoints for external monitoring systems
+  - Add service status reporting with component health aggregation
+  - Create service metrics export for monitoring collector process status and performance
+  - Implement service configuration validation and startup diagnostics
+  - Add service log aggregation from all managed collector processes
+  - Create service recovery actions for common failure scenarios
+  - Write monitoring integration tests with simulated component failures and recovery validation
+  - _Requirements: 10.1, 10.2, 10.3, 10.4_
+
+- [ ] 21.7 Create service deployment and configuration management
+
+  - Create systemd service unit files for Linux with proper dependencies and security settings
+  - Add launchd plist files for macOS with appropriate permissions and startup configuration
+  - Create Windows service installer with proper registry entries and security descriptors
+  - Implement service configuration validation and deployment verification
+  - Add service update and migration procedures for configuration changes
+  - Create service deployment documentation with platform-specific installation guides
+  - Write deployment automation scripts for common service management scenarios
+  - _Requirements: 6.1, 6.2, 6.4, 6.5_
+
+- [ ] 21.8 Add comprehensive service testing and validation
+
+  - Create integration tests for service installation, startup, and shutdown on all platforms
+  - Add service failure scenario testing with collector process crashes and recovery
+  - Implement service upgrade testing with configuration migration and data preservation
+  - Create service security testing for privilege boundaries and access controls
+  - Add service performance testing under high load with multiple collector processes
+  - Write service compatibility tests across different OS versions and configurations
+  - Create service chaos testing for various failure modes and recovery validation
+  - _Requirements: All requirements verification_
