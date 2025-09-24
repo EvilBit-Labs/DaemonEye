@@ -21,7 +21,7 @@ use tracing::{info, warn};
 /// Lifecycle-aware event source for testing concurrent operations.
 #[derive(Clone)]
 struct LifecycleTestSource {
-    name: String,
+    name: &'static str,
     capabilities: SourceCaps,
     events_to_send: usize,
     events_sent: Arc<AtomicUsize>,
@@ -33,9 +33,9 @@ struct LifecycleTestSource {
 }
 
 impl LifecycleTestSource {
-    fn new(name: &str, capabilities: SourceCaps, events_to_send: usize) -> Self {
+    fn new(name: &'static str, capabilities: SourceCaps, events_to_send: usize) -> Self {
         Self {
-            name: name.to_string(),
+            name,
             capabilities,
             events_to_send,
             events_sent: Arc::new(AtomicUsize::new(0)),
@@ -81,8 +81,7 @@ impl LifecycleTestSource {
 #[async_trait]
 impl EventSource for LifecycleTestSource {
     fn name(&self) -> &'static str {
-        // Convert to static str for the trait requirement
-        Box::leak(self.name.clone().into_boxed_str())
+        self.name
     }
 
     fn capabilities(&self) -> SourceCaps {
