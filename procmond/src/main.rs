@@ -109,6 +109,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         collect_enhanced_metadata: cli.enhanced_metadata,
         max_processes_per_cycle: cli.max_processes,
         compute_executable_hashes: cli.compute_hashes,
+        ..Default::default()
     };
 
     // Create process event source

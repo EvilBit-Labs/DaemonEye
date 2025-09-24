@@ -1,7 +1,13 @@
 //! Library module for procmond to enable unit testing
 
 pub mod event_source;
+pub mod process_collector;
+
 pub use event_source::{ProcessEventSource, ProcessSourceConfig};
+pub use process_collector::{
+    CollectionStats, ProcessCollectionConfig, ProcessCollectionError, ProcessCollectionResult,
+    ProcessCollector, ProcessCollectorCapabilities, SysinfoProcessCollector,
+};
 
 // Re-export main functionality for testing
 pub use daemoneye_lib::proto::{

@@ -128,7 +128,7 @@
   - Add basic unit tests for ProcessMessageHandler functionality
   - _Requirements: 1.1, 1.5_
 
-- [ ] 5.1b Complete ProcessEventSource integration to collector-core standards - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+- [x] 5.1b Complete ProcessEventSource integration to collector-core standards - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Refactor ProcessEventSource to fully comply with collector-core framework standards
   - Implement proper async_trait EventSource with start/stop lifecycle and capability reporting
