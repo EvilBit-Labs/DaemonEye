@@ -294,7 +294,10 @@ fn bench_client_server_throughput(c: &mut Criterion) {
                         let result = client.send_task(task).await.expect("Request failed");
                         let duration = start_time.elapsed();
 
-                        server.stop();
+                        server
+                            .graceful_shutdown()
+                            .await
+                            .expect("Failed to stop server");
 
                         black_box((result.success, duration))
                     })
@@ -373,7 +376,10 @@ fn bench_concurrent_client_operations(c: &mut Criterion) {
                         }
 
                         let total_duration = start_time.elapsed();
-                        server.stop();
+                        server
+                            .graceful_shutdown()
+                            .await
+                            .expect("Failed to stop server");
 
                         black_box((successful_requests, total_duration))
                     })
@@ -457,8 +463,14 @@ fn bench_load_balancing_performance(c: &mut Criterion) {
 
                         let duration = start_time.elapsed();
 
-                        server1.stop();
-                        server2.stop();
+                        server1
+                            .graceful_shutdown()
+                            .await
+                            .expect("Failed to stop server1");
+                        server2
+                            .graceful_shutdown()
+                            .await
+                            .expect("Failed to stop server2");
 
                         black_box(duration)
                     })
@@ -524,7 +536,10 @@ fn bench_error_handling_performance(c: &mut Criterion) {
                 }
 
                 let duration = start_time.elapsed();
-                server.stop();
+                server
+                    .graceful_shutdown()
+                    .await
+                    .expect("Failed to stop server");
 
                 black_box(duration)
             })
@@ -660,7 +675,10 @@ fn bench_cross_platform_performance(c: &mut Criterion) {
                 }
 
                 let duration = start_time.elapsed();
-                server.stop();
+                server
+                    .graceful_shutdown()
+                    .await
+                    .expect("Failed to stop server");
 
                 black_box(duration)
             })
