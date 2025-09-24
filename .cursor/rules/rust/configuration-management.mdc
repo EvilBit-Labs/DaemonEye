@@ -252,6 +252,9 @@ pub enum ConfigError {
 
     #[error("Config path is invalid or inaccessible")]
     ConfigPathInvalid,
+
+    #[error("Configuration extraction failed: {0}")]
+    ExtractionError(#[from] figment::Error),
 }
 ```
 
@@ -356,7 +359,7 @@ alerting:
 
     /// RAII guard for environment variables that restores previous values on drop
     struct EnvVarGuard {
-        vars: Vec<String>,
+        vars: Vec<(String, Option<String>)>,
     }
 
     impl EnvVarGuard {
@@ -373,17 +376,19 @@ alerting:
             }
             
             Self {
-                vars: saved_vars.into_iter()
-                    .map(|(key, _)| key)
-                    .collect(),
+                vars: saved_vars,
             }
         }
     }
 
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
-            for key in &self.vars {
-                std::env::remove_var(key);
+            for (key, previous_value) in &self.vars {
+                if let Some(previous) = previous_value {
+                    std::env::set_var(key, previous);
+                } else {
+                    std::env::remove_var(key);
+                }
             }
         }
     }

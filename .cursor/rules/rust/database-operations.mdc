@@ -125,10 +125,10 @@ impl DatabaseManager {
         }
     }
 
-    pub async fn query_processes(&self, query: &str) -> Result<Vec<ProcessInfo>> {
+    pub async fn get_all_processes(&self) -> Result<Vec<ProcessInfo>> {
         // Note: redb doesn't support SQL queries directly
-        // This would need to be implemented with custom query logic
-        // or by using a different database for complex queries
+        // This function returns all processes in the database
+        // For filtering, use specific getter methods or implement custom logic
         
         let read_txn = self.db.begin_read()
             .context("Failed to begin read transaction")?;
@@ -270,7 +270,7 @@ mod tests {
         db.insert_processes_batch(&processes).await.unwrap();
         
         // Verify all processes were inserted
-        let all_processes = db.query_processes("SELECT * FROM processes").await.unwrap();
+        let all_processes = db.get_all_processes().await.unwrap();
         assert_eq!(all_processes.len(), 100);
     }
 
@@ -311,7 +311,7 @@ mod tests {
         }
         
         // Verify all processes were written
-        let all_processes = db.query_processes("SELECT * FROM processes").await.unwrap();
+        let all_processes = db.get_all_processes().await.unwrap();
         assert_eq!(all_processes.len(), 10);
     }
 }

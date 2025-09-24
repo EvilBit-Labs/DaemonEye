@@ -99,11 +99,26 @@ for process in processes {
 }
 batch.commit()?;
 
-// Use prepared statements for repeated queries
-let stmt = db.prepare("SELECT * FROM processes WHERE pid = ?")?;
-let result = stmt.query_row(&[pid], |row| {
-    Ok(ProcessInfo::from_row(row)?)
-})?;
+// Use redb TableDefinition and transactions for efficient queries
+use redb::{Database, ReadableTable, TableDefinition};
+
+const PROCESSES_TABLE: TableDefinition<u32, ProcessInfo> = TableDefinition::new("processes");
+
+// Read transaction for queries
+let read_txn = db.begin_read()?;
+let table = read_txn.open_table(PROCESSES_TABLE)?;
+let result = table.get(pid)?.map(|guard| guard.value().clone());
+
+// Write transaction for inserts/updates
+let write_txn = db.begin_write()?;
+{
+    let mut table = write_txn.open_table(PROCESSES_TABLE)?;
+    table.insert(pid, &process_info)?;
+}
+write_txn.commit()?;
+
+// Note: If SQL/prepared-statement semantics are required, use an SQL database
+// (SQLite/Postgres) or a Rust SQL wrapper like sqlx or diesel
 ```
 
 ## Async Performance
