@@ -484,12 +484,19 @@ impl ProcessEventSource {
         let batch_size = event_batch.len();
         debug!(batch_size = batch_size, "Sending event batch");
 
-        for event in event_batch.drain(..) {
-            // Check for shutdown before each event
+        let mut processed_count = 0;
+        let max_retries = 3;
+        let retry_delay = Duration::from_millis(10);
+
+        while !event_batch.is_empty() {
+            // Check for shutdown before processing
             if shutdown_signal.load(Ordering::Relaxed) {
                 debug!("Shutdown signal detected, stopping event batch send");
                 return Ok(());
             }
+
+            // Peek at the first event without removing it
+            let event = event_batch[0].clone();
 
             // Acquire backpressure permit with timeout
             let permit = timeout(
@@ -503,31 +510,85 @@ impl ProcessEventSource {
             // Update in-flight counter
             self.stats.events_in_flight.fetch_add(1, Ordering::Relaxed);
 
-            // Send the event with timeout to prevent indefinite blocking
-            let send_result = timeout(self.config.max_backpressure_wait, tx.send(event)).await;
+            // Attempt to send the event with retry logic
+            let mut retry_count = 0;
+            let mut send_successful = false;
+
+            while retry_count < max_retries && !send_successful {
+                // Send the event with timeout to prevent indefinite blocking
+                let send_result =
+                    timeout(self.config.max_backpressure_wait, tx.send(event.clone())).await;
+
+                match send_result {
+                    Ok(Ok(())) => {
+                        // Event sent successfully
+                        send_successful = true;
+                        processed_count += 1;
+                    }
+                    Ok(Err(_)) => {
+                        warn!("Event channel closed during batch send");
+                        // Update in-flight counter and release permit
+                        self.stats.events_in_flight.fetch_sub(1, Ordering::Relaxed);
+                        drop(permit);
+                        return Err(anyhow::anyhow!("Event channel closed"));
+                    }
+                    Err(_) => {
+                        // Timeout occurred during send
+                        retry_count += 1;
+                        if retry_count < max_retries {
+                            debug!(
+                                retry_count = retry_count,
+                                max_retries = max_retries,
+                                "Event send timed out, retrying with backoff"
+                            );
+                            // Small backoff before retry
+                            tokio::time::sleep(retry_delay * retry_count).await;
+                        } else {
+                            debug!(
+                                retry_count = retry_count,
+                                "Event send failed after max retries, requeuing to front"
+                            );
+                            // Requeue the event to the front of the batch for later processing
+                            // Remove the current event and add it back to the front
+                            event_batch.remove(0);
+                            event_batch.insert(0, event);
+                            break;
+                        }
+                    }
+                }
+            }
 
             // Update in-flight counter and release permit
             self.stats.events_in_flight.fetch_sub(1, Ordering::Relaxed);
             drop(permit);
 
-            // Check send result
-            match send_result {
-                Ok(Ok(())) => {
-                    // Event sent successfully
+            // Only remove the event from the batch if it was successfully sent
+            if send_successful {
+                event_batch.remove(0);
+            } else {
+                // If we couldn't send after retries, apply backpressure by waiting
+                // and then continuing with the next event (don't remove the failed event)
+                debug!(
+                    "Event send failed after {} retries, applying backpressure delay",
+                    max_retries
+                );
+                // Check for shutdown before applying backpressure delay
+                if shutdown_signal.load(Ordering::Relaxed) {
+                    debug!("Shutdown signal detected during backpressure, stopping batch send");
+                    return Ok(());
                 }
-                Ok(Err(_)) => {
-                    warn!("Event channel closed during batch send");
-                    return Err(anyhow::anyhow!("Event channel closed"));
-                }
-                Err(_) => {
-                    // Timeout occurred during send
-                    debug!("Event send timed out due to backpressure, continuing");
-                    // Don't return error, just continue - this is expected under backpressure
-                }
+                // Wait a shorter time before trying the next event
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                // Don't remove the event - it will be retried in the next iteration
+                // This prevents silent event dropping while applying backpressure
             }
         }
 
-        debug!(batch_size = batch_size, "Event batch sent successfully");
+        debug!(
+            batch_size = batch_size,
+            processed_count = processed_count,
+            "Event batch sent successfully"
+        );
         Ok(())
     }
 }
