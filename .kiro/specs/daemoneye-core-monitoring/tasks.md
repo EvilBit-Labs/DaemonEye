@@ -159,7 +159,7 @@
   - Write Linux-specific integration tests
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 5.4 Implement macOS-specific optimizations - [#82](https://github.com/EvilBit-Labs/DaemonEye/issues/82)
+- [x] 5.4 Implement macOS-specific optimizations - [#82](https://github.com/EvilBit-Labs/DaemonEye/issues/82)
 
   - Create macOSProcessCollector using libproc and sysctl APIs
   - Add macOS entitlements detection and privilege management
