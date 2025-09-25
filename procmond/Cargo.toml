@@ -59,7 +59,7 @@ tracing-subscriber = { workspace = true }
 # Platform-specific dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
 # macOS Security Framework and Core Foundation
-security-framework = "3.0.1"
+security-framework = "3.5.0"
 core-foundation = "0.10.1"
 # macOS system information
 mac-sys-info = "0.1.13"
