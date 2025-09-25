@@ -229,7 +229,96 @@
   - Write security tests to verify privilege boundaries and proper dropping
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 9. Create tamper-evident audit logging system - [#42](https://github.com/EvilBit-Labs/DaemonEye/issues/42)
+- [ ] 9. Implement daemon/service functionality for daemoneye-agent with process lifecycle management
+
+- [ ] 9.1 Add daemon/service dependencies and cross-platform service infrastructure
+
+  - Add `daemonize` crate dependency for Unix-like systems (Linux, macOS) daemon functionality
+  - Add `windows-service` crate dependency for Windows service integration
+  - Create `ServiceManager` trait for cross-platform service lifecycle management
+  - Implement platform-specific service managers: `UnixServiceManager` and `WindowsServiceManager`
+  - Add service configuration structure with startup options, working directory, and user context
+  - Write unit tests for service manager trait implementations and configuration validation
+  - _Requirements: 6.1, 6.2, 6.4, 6.5_
+
+- [ ] 9.2 Implement Unix daemon functionality with proper privilege management
+
+  - Create `UnixDaemon` implementation using daemonize crate for Linux and macOS
+  - Add proper daemon initialization: fork, setsid, chdir, umask, file descriptor management
+  - Implement PID file management with lock file creation and cleanup
+  - Add signal handling for SIGTERM, SIGINT, SIGHUP (config reload), and SIGUSR1 (status)
+  - Create privilege dropping after daemon initialization with audit logging
+  - Implement proper daemon shutdown with graceful collector process termination
+  - Write integration tests for daemon lifecycle and signal handling
+  - _Requirements: 6.1, 6.2, 6.4, 6.5_
+
+- [ ] 9.3 Implement Windows service functionality with SCM integration
+
+  - Create `WindowsService` implementation using windows-service crate
+  - Add Windows Service Control Manager (SCM) integration with proper service registration
+  - Implement service control handlers for start, stop, pause, continue, and shutdown
+  - Add Windows event log integration for service status and error reporting
+  - Create service installer/uninstaller functionality with proper registry entries
+  - Implement service recovery options and failure handling policies
+  - Write integration tests for Windows service lifecycle and SCM interaction
+  - _Requirements: 6.1, 6.2, 6.4, 6.5_
+
+- [ ] 9.4 Add collector process lifecycle management and supervision
+
+  - Create `ProcessSupervisor` for managing collector process lifecycles (procmond, specialty collectors)
+  - Implement collector process spawning with proper environment setup and privilege management
+  - Add collector process health monitoring with heartbeat checks and restart policies
+  - Create collector process graceful shutdown coordination with timeout enforcement
+  - Implement collector process crash detection and automatic restart with backoff policies
+  - Add collector process resource monitoring and limit enforcement
+  - Write integration tests for process supervision scenarios and failure recovery
+  - _Requirements: 11.1, 11.2, 12.1, 12.2_
+
+- [ ] 9.5 Integrate service functionality with existing daemoneye-agent architecture
+
+  - Modify daemoneye-agent main.rs to support both interactive and service/daemon modes
+  - Add CLI flags for service operations: --install, --uninstall, --start, --stop, --status
+  - Integrate service manager with existing configuration system and database initialization
+  - Preserve existing IPC client functionality and detection engine integration
+  - Add service-specific logging configuration with file rotation and retention policies
+  - Create service configuration templates for systemd, launchd, and Windows services
+  - Write integration tests ensuring service mode maintains identical functionality to interactive mode
+  - _Requirements: 6.1, 6.2, 6.4, 6.5, 11.1, 11.2_
+
+- [ ] 9.6 Add service monitoring and health reporting capabilities
+
+  - Implement service health endpoints for external monitoring systems
+  - Add service status reporting with component health aggregation
+  - Create service metrics export for monitoring collector process status and performance
+  - Implement service configuration validation and startup diagnostics
+  - Add service log aggregation from all managed collector processes
+  - Create service recovery actions for common failure scenarios
+  - Write monitoring integration tests with simulated component failures and recovery validation
+  - _Requirements: 10.1, 10.2, 10.3, 10.4_
+
+- [ ] 9.7 Create service deployment and configuration management
+
+  - Create systemd service unit files for Linux with proper dependencies and security settings
+  - Add launchd plist files for macOS with appropriate permissions and startup configuration
+  - Create Windows service installer with proper registry entries and security descriptors
+  - Implement service configuration validation and deployment verification
+  - Add service update and migration procedures for configuration changes
+  - Create service deployment documentation with platform-specific installation guides
+  - Write deployment automation scripts for common service management scenarios
+  - _Requirements: 6.1, 6.2, 6.4, 6.5_
+
+- [ ] 9.8 Add comprehensive service testing and validation
+
+  - Create integration tests for service installation, startup, and shutdown on all platforms
+  - Add service failure scenario testing with collector process crashes and recovery
+  - Implement service upgrade testing with configuration migration and data preservation
+  - Create service security testing for privilege boundaries and access controls
+  - Add service performance testing under high load with multiple collector processes
+  - Write service compatibility tests across different OS versions and configurations
+  - Create service chaos testing for various failure modes and recovery validation
+  - _Requirements: All requirements verification_
+
+- [ ] 10. Create tamper-evident audit logging system - [#42](https://github.com/EvilBit-Labs/DaemonEye/issues/42)
 
   - Implement AuditChain with BLAKE3 hashing for cryptographic integrity using rs_merkle crate
   - Create append-only audit ledger with monotonic sequence numbers in separate redb database
@@ -239,9 +328,9 @@
   - Write cryptographic tests for hash chain integrity and inclusion proofs
   - _Requirements: 7.1, 7.2, 7.4, 7.5_
 
-- [ ] 10. Implement redb database layer for daemoneye-agent
+- [ ] 11. Implement redb database layer for daemoneye-agent
 
-- [x] 10.1 Create basic DatabaseManager structure and error handling - [#43](https://github.com/EvilBit-Labs/DaemonEye/issues/43)
+- [x] 11.1 Create basic DatabaseManager structure and error handling - [#43](https://github.com/EvilBit-Labs/DaemonEye/issues/43)
 
   - Add redb dependency and create basic DatabaseManager structure
   - Create database initialization with table definitions using `Vec<u8>` placeholders
@@ -249,7 +338,7 @@
   - Write basic unit tests for database creation and error scenarios
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 10.2 Implement actual redb database operations - [#44](https://github.com/EvilBit-Labs/DaemonEye/issues/44)
+- [ ] 11.2 Implement actual redb database operations - [#44](https://github.com/EvilBit-Labs/DaemonEye/issues/44)
 
   - Configure optimal redb settings for concurrent access and performance
   - Replace all placeholder TODO implementations with actual redb operations
@@ -259,7 +348,7 @@
   - Write comprehensive integration tests for all database operations
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 10.3 Add database migration system and advanced features - [#45](https://github.com/EvilBit-Labs/DaemonEye/issues/45)
+- [ ] 11.3 Add database migration system and advanced features - [#45](https://github.com/EvilBit-Labs/DaemonEye/issues/45)
 
   - Add database migration system with schema versioning
   - Implement connection pooling and lifecycle management
@@ -268,9 +357,9 @@
   - Write integration tests for migration scenarios and version compatibility
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 11. Integrate SQL-to-IPC detection engine (see dedicated spec: sql-to-ipc-detection-engine)
+- [ ] 12. Integrate SQL-to-IPC detection engine (see dedicated spec: sql-to-ipc-detection-engine)
 
-- [x] 11.1 Create basic DetectionEngine structure and rule management - [#47](https://github.com/EvilBit-Labs/DaemonEye/issues/47)
+- [x] 12.1 Create basic DetectionEngine structure and rule management - [#47](https://github.com/EvilBit-Labs/DaemonEye/issues/47)
 
   - Create DetectionEngine struct with rule loading and execution capabilities
   - Implement basic SQL validation using sqlparser-rs for AST parsing
@@ -278,7 +367,7 @@
   - Write basic unit tests for detection engine structure and rule management
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.2 Replace existing detection engine with SQL-to-IPC implementation
+- [ ] 12.2 Replace existing detection engine with SQL-to-IPC implementation
 
   - **Note**: This task is now covered by the dedicated sql-to-ipc-detection-engine spec
   - Integrate SQL-to-IPC engine as replacement for placeholder detection logic
@@ -289,7 +378,7 @@
   - **Reference**: See #[[file:.kiro/specs/sql-to-ipc-detection-engine/tasks.md]] for complete implementation plan
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.3 Integrate SQL-to-IPC engine with existing daemoneye-agent infrastructure
+- [ ] 12.3 Integrate SQL-to-IPC engine with existing daemoneye-agent infrastructure
 
   - Create integration wrapper that implements existing DetectionEngine trait
   - Replace placeholder rule execution with SQL-to-IPC query planning and execution
@@ -299,7 +388,7 @@
   - Write integration tests comparing old vs new detection engine behavior
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.4 Extend collector-core framework for SQL-to-IPC task handling
+- [ ] 12.4 Extend collector-core framework for SQL-to-IPC task handling
 
   - Modify EventSource trait to accept DetectionTask with supplemental rule data
   - Add capability advertisement methods for schema registry integration
@@ -309,7 +398,7 @@
   - Write integration tests for schema registry with existing procmond and collector-core
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [ ] 11.5 Validate SQL-to-IPC integration with comprehensive testing
+- [ ] 12.5 Validate SQL-to-IPC integration with comprehensive testing
 
   - Create end-to-end integration tests for SQL rules with multi-collector queries
   - Add performance validation comparing SQL-to-IPC vs placeholder detection
@@ -319,7 +408,7 @@
   - Add performance benchmarks for SQL parsing, planning, and execution phases
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
-- [x] 12. Create alert generation and management system - [#51](https://github.com/EvilBit-Labs/DaemonEye/issues/51)
+- [x] 13. Create alert generation and management system - [#51](https://github.com/EvilBit-Labs/DaemonEye/issues/51)
 
   - Implement AlertManager for generating structured alerts from detection results
   - Add alert deduplication using configurable keys and time windows
@@ -328,9 +417,9 @@
   - Write unit tests for alert generation logic and deduplication behavior
   - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
-- [ ] 13. Implement multi-channel alert delivery system
+- [ ] 14. Implement multi-channel alert delivery system
 
-- [x] 13.1 Create AlertSink trait and basic sinks - [#52](https://github.com/EvilBit-Labs/DaemonEye/issues/52)
+- [x] 14.1 Create AlertSink trait and basic sinks - [#52](https://github.com/EvilBit-Labs/DaemonEye/issues/52)
 
   - Define AlertSink trait with async delivery methods
   - Implement StdoutSink and FileSink for basic alert output
@@ -339,7 +428,7 @@
   - Write comprehensive unit tests for basic sink implementations and formatting
   - _Requirements: 5.1, 5.2_
 
-- [ ] 13.2 Implement network-based alert sinks - [#53](https://github.com/EvilBit-Labs/DaemonEye/issues/53)
+- [ ] 14.2 Implement network-based alert sinks - [#53](https://github.com/EvilBit-Labs/DaemonEye/issues/53)
 
   - Create WebhookSink with HTTP POST delivery and authentication
   - Add SyslogSink for Unix syslog integration
@@ -347,7 +436,7 @@
   - Write integration tests for network sinks with mock endpoints
   - _Requirements: 5.1, 5.2_
 
-- [x] 13.3 Add parallel delivery and tracking - [#54](https://github.com/EvilBit-Labs/DaemonEye/issues/54)
+- [x] 14.3 Add parallel delivery and tracking - [#54](https://github.com/EvilBit-Labs/DaemonEye/issues/54)
 
   - Implement parallel alert delivery to multiple sinks without blocking
   - Add delivery tracking with success/failure status recording
@@ -356,7 +445,7 @@
   - Write integration tests for concurrent delivery scenarios
   - _Requirements: 5.1, 5.2_
 
-- [ ] 14. Add alert delivery reliability with circuit breakers and retries - [#55](https://github.com/EvilBit-Labs/DaemonEye/issues/55)
+- [ ] 15. Add alert delivery reliability with circuit breakers and retries - [#55](https://github.com/EvilBit-Labs/DaemonEye/issues/55)
 
   - Implement circuit breaker pattern for each alert sink with configurable failure thresholds
   - Add exponential backoff retry logic with jitter and maximum retry limits
@@ -365,7 +454,7 @@
   - Write chaos testing scenarios for network failures and endpoint unavailability
   - _Requirements: 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 14.5. Complete collector-core IPC server integration - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
+- [ ] 15.1 Complete collector-core IPC server integration - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
 
   - Implement CollectorIpcServer in collector-core/src/ipc.rs with full functionality
   - Add capability negotiation and task routing between collector-core and daemoneye-agent
@@ -374,7 +463,7 @@
   - Write integration tests for IPC server functionality
   - _Requirements: 11.1, 11.2, 12.1, 12.2_
 
-- [ ] 14.6. Complete IPC client implementation in daemoneye-agent - [#77](https://github.com/EvilBit-Labs/DaemonEye/issues/77)
+- [ ] 15.2 Complete IPC client implementation in daemoneye-agent - [#77](https://github.com/EvilBit-Labs/DaemonEye/issues/77)
 
   - Complete IpcClientManager implementation with proper error handling and reconnection logic
   - Add capability negotiation between daemoneye-agent and collector-core components
@@ -383,9 +472,9 @@
   - Ensure compatibility with existing procmond ProcessMessageHandler
   - _Requirements: 3.1, 3.2, 11.1, 11.2_
 
-- [ ] 15. Implement daemoneye-cli basic infrastructure - [#56](https://github.com/EvilBit-Labs/DaemonEye/issues/56)
+- [ ] 16. Implement daemoneye-cli basic infrastructure - [#56](https://github.com/EvilBit-Labs/DaemonEye/issues/56)
 
-- [x] 15.1 Create basic CLI structure and database stats - [#56](https://github.com/EvilBit-Labs/DaemonEye/issues/56)
+- [x] 16.1 Create basic CLI structure and database stats - [#56](https://github.com/EvilBit-Labs/DaemonEye/issues/56)
 
   - Implement clap-based CLI with basic options (--database, --format, --help, --version)
   - Add basic database statistics display functionality
@@ -393,7 +482,7 @@
   - Add basic telemetry integration and health checking
   - _Requirements: 8.1, 8.2, 10.5_
 
-- [ ] 15.2 Add comprehensive CLI testing and error handling - [#79](https://github.com/EvilBit-Labs/DaemonEye/issues/79)
+- [ ] 16.2 Add comprehensive CLI testing and error handling - [#79](https://github.com/EvilBit-Labs/DaemonEye/issues/79)
 
   - Write comprehensive CLI tests using insta for snapshot testing
   - Add proper error handling with helpful error messages
@@ -401,7 +490,7 @@
   - Add shell completion support for bash, zsh, fish, and PowerShell
   - _Requirements: 8.1, 8.2, 10.5_
 
-- [ ] 15.3 Extend daemoneye-cli with advanced query capabilities - [#80](https://github.com/EvilBit-Labs/DaemonEye/issues/80)
+- [ ] 16.3 Extend daemoneye-cli with advanced query capabilities - [#80](https://github.com/EvilBit-Labs/DaemonEye/issues/80)
 
   - Create IPC client to communicate with daemoneye-agent using existing interprocess crate infrastructure
   - Add query command with subcommands: interactive shell, single query execution, history, explain, validate
@@ -413,7 +502,7 @@
   - Write CLI integration tests using insta for snapshot testing of all output formats
   - _Requirements: 8.1, 8.2, 10.5_
 
-- [ ] 16. Implement daemoneye-cli management commands (rules, alerts, health, data, config, service) - [#57](https://github.com/EvilBit-Labs/DaemonEye/issues/57)
+- [ ] 17. Implement daemoneye-cli management commands (rules, alerts, health, data, config, service) - [#57](https://github.com/EvilBit-Labs/DaemonEye/issues/57)
 
   - Add rules command with subcommands: list, show, validate, test, enable/disable, create, edit, delete, import/export, stats, pack management
   - Implement alerts command with subcommands: list, show, acknowledge, close, reopen, stats, export with filtering by severity/rule/status
@@ -427,7 +516,7 @@
   - Write integration tests for all command workflows and error scenarios using insta snapshots
   - _Requirements: 8.2, 8.3, 8.4, 8.5_
 
-- [ ] 17. Implement system health monitoring and diagnostics - [#58](https://github.com/EvilBit-Labs/DaemonEye/issues/58)
+- [ ] 18. Implement system health monitoring and diagnostics - [#58](https://github.com/EvilBit-Labs/DaemonEye/issues/58)
 
   - Create HealthChecker for component status verification (database, alert sinks, collector-core components via interprocess crate)
   - Add system health overview with color-coded status indicators
@@ -436,7 +525,7 @@
   - Write health check tests with simulated component failures
   - _Requirements: 8.4, 8.5, 10.2, 10.3_
 
-- [ ] 18. Add offline-first operation and bundle support - [#59](https://github.com/EvilBit-Labs/DaemonEye/issues/59)
+- [ ] 19. Add offline-first operation and bundle support - [#59](https://github.com/EvilBit-Labs/DaemonEye/issues/59)
 
   - Ensure all core functionality operates without network connectivity
   - Implement graceful degradation for alert delivery when network is unavailable
@@ -445,7 +534,7 @@
   - Write integration tests for airgapped environment operation
   - _Requirements: 9.1, 9.2, 9.4, 9.5_
 
-- [ ] 19. Implement comprehensive observability and metrics - [#60](https://github.com/EvilBit-Labs/DaemonEye/issues/60)
+- [ ] 20. Implement comprehensive observability and metrics - [#60](https://github.com/EvilBit-Labs/DaemonEye/issues/60)
 
   - Add Prometheus-compatible metrics export for collection rate, detection latency, alert delivery
   - Create structured logging with correlation IDs and performance metrics
@@ -454,9 +543,9 @@
   - Write metrics accuracy tests and Prometheus scraping compatibility verification
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
-- [ ] 20. Create comprehensive test suite and quality assurance
+- [ ] 21. Create comprehensive test suite and quality assurance
 
-- [ ] 20.1 Implement unit test coverage - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
+- [ ] 21.1 Implement unit test coverage - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
   - Add unit tests for all core functionality targeting >85% code coverage
   - Set up llvm-cov for code coverage measurement and reporting
@@ -464,7 +553,7 @@
   - Write unit tests for error handling and edge cases
   - _Requirements: All requirements verification_
 
-- [ ] 20.2 Add integration and CLI testing - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
+- [ ] 21.2 Add integration and CLI testing - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
   - Implement integration tests with insta for CLI snapshot testing
   - Add cross-component interaction tests for interprocess-based IPC communication
@@ -472,7 +561,7 @@
   - Write snapshot tests with insta for CLI output validation
   - _Requirements: All requirements verification_
 
-- [ ] 20.3 Create performance and property-based testing - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
+- [ ] 21.3 Create performance and property-based testing - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
   - Add performance tests with criterion for regression detection on critical paths (process enumeration, SQL execution, IPC throughput)
   - Implement property-based tests with proptest for edge case discovery in data models, SQL parsing, and collector-core event handling
@@ -482,7 +571,7 @@
   - Create criterion benchmarks for alert delivery under high-volume detection scenarios
   - _Requirements: All requirements verification_
 
-- [ ] 20.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
+- [ ] 21.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
   - Set up GitHub Actions CI matrix for Linux, macOS, Windows with multiple Rust versions (stable, beta, MSRV)
   - Add automated quality gates: fmt-check, clippy strict, comprehensive test suite
@@ -579,7 +668,7 @@
 
   - _Requirements: All requirements verification_
 
-- [ ] 21. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/DaemonEye/issues/62)
+- [ ] 22. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/DaemonEye/issues/62)
 
   - Implement comprehensive SQL injection prevention testing with OWASP test vectors and malicious input fuzzing
   - Add privilege boundary verification tests for all components with capability dropping validation
@@ -591,9 +680,9 @@
   - Implement chaos engineering tests for component failure scenarios and recovery behavior
   - _Requirements: 3.5, 6.4, 6.5_
 
-- [ ] 22. Integrate components and implement end-to-end workflows
+- [ ] 23. Integrate components and implement end-to-end workflows
 
-- [ ] 22.1 Wire IPC communication between components via collector-core - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
+- [ ] 23.1 Wire IPC communication between components via collector-core - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
 
   - Integrate daemoneye-agent IPC client with collector-core framework from Task 4
   - Verify task distribution and result collection workflows work through collector-core runtime
@@ -602,7 +691,7 @@
   - Write integration tests for complete collector-core mediated IPC communication
   - _Requirements: All requirements integration_
 
-- [ ] 22.2 Implement rule translation and execution pipeline - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
+- [ ] 23.2 Implement rule translation and execution pipeline - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
 
   - Integrate SQL-to-IPC translation pipeline from Task 11 with collector-core framework from Task 4
   - Verify detection rule execution works with collector-core event sources and IPC distribution
@@ -611,7 +700,7 @@
   - Write integration tests for end-to-end rule execution through collector-core architecture
   - _Requirements: All requirements integration_
 
-- [ ] 22.3 Connect alert generation to delivery pipeline - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
+- [ ] 23.3 Connect alert generation to delivery pipeline - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
 
   - Wire alert generation from detection results to multi-channel delivery
   - Implement alert deduplication and priority handling
@@ -619,99 +708,10 @@
   - Write end-to-end tests for alert generation and delivery
   - _Requirements: All requirements integration_
 
-- [ ] 22.4 Add unified configuration and service management - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
+- [ ] 23.4 Add unified configuration and service management - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
 
   - Implement configuration management across all three components
   - Add daemoneye-agent process lifecycle management for collector-core components
   - Create unified logging and health reporting
   - Write integration tests for service startup, shutdown, and configuration changes
   - _Requirements: All requirements integration_
-
-- [ ] 21. Implement daemon/service functionality for daemoneye-agent with process lifecycle management
-
-- [ ] 21.1 Add daemon/service dependencies and cross-platform service infrastructure
-
-  - Add `daemonize` crate dependency for Unix-like systems (Linux, macOS) daemon functionality
-  - Add `windows-service` crate dependency for Windows service integration
-  - Create `ServiceManager` trait for cross-platform service lifecycle management
-  - Implement platform-specific service managers: `UnixServiceManager` and `WindowsServiceManager`
-  - Add service configuration structure with startup options, working directory, and user context
-  - Write unit tests for service manager trait implementations and configuration validation
-  - _Requirements: 6.1, 6.2, 6.4, 6.5_
-
-- [ ] 21.2 Implement Unix daemon functionality with proper privilege management
-
-  - Create `UnixDaemon` implementation using daemonize crate for Linux and macOS
-  - Add proper daemon initialization: fork, setsid, chdir, umask, file descriptor management
-  - Implement PID file management with lock file creation and cleanup
-  - Add signal handling for SIGTERM, SIGINT, SIGHUP (config reload), and SIGUSR1 (status)
-  - Create privilege dropping after daemon initialization with audit logging
-  - Implement proper daemon shutdown with graceful collector process termination
-  - Write integration tests for daemon lifecycle and signal handling
-  - _Requirements: 6.1, 6.2, 6.4, 6.5_
-
-- [ ] 21.3 Implement Windows service functionality with SCM integration
-
-  - Create `WindowsService` implementation using windows-service crate
-  - Add Windows Service Control Manager (SCM) integration with proper service registration
-  - Implement service control handlers for start, stop, pause, continue, and shutdown
-  - Add Windows event log integration for service status and error reporting
-  - Create service installer/uninstaller functionality with proper registry entries
-  - Implement service recovery options and failure handling policies
-  - Write integration tests for Windows service lifecycle and SCM interaction
-  - _Requirements: 6.1, 6.2, 6.4, 6.5_
-
-- [ ] 21.4 Add collector process lifecycle management and supervision
-
-  - Create `ProcessSupervisor` for managing collector process lifecycles (procmond, specialty collectors)
-  - Implement collector process spawning with proper environment setup and privilege management
-  - Add collector process health monitoring with heartbeat checks and restart policies
-  - Create collector process graceful shutdown coordination with timeout enforcement
-  - Implement collector process crash detection and automatic restart with backoff policies
-  - Add collector process resource monitoring and limit enforcement
-  - Write integration tests for process supervision scenarios and failure recovery
-  - _Requirements: 11.1, 11.2, 12.1, 12.2_
-
-- [ ] 21.5 Integrate service functionality with existing daemoneye-agent architecture
-
-  - Modify daemoneye-agent main.rs to support both interactive and service/daemon modes
-  - Add CLI flags for service operations: --install, --uninstall, --start, --stop, --status
-  - Integrate service manager with existing configuration system and database initialization
-  - Preserve existing IPC client functionality and detection engine integration
-  - Add service-specific logging configuration with file rotation and retention policies
-  - Create service configuration templates for systemd, launchd, and Windows services
-  - Write integration tests ensuring service mode maintains identical functionality to interactive mode
-  - _Requirements: 6.1, 6.2, 6.4, 6.5, 11.1, 11.2_
-
-- [ ] 21.6 Add service monitoring and health reporting capabilities
-
-  - Implement service health endpoints for external monitoring systems
-  - Add service status reporting with component health aggregation
-  - Create service metrics export for monitoring collector process status and performance
-  - Implement service configuration validation and startup diagnostics
-  - Add service log aggregation from all managed collector processes
-  - Create service recovery actions for common failure scenarios
-  - Write monitoring integration tests with simulated component failures and recovery validation
-  - _Requirements: 10.1, 10.2, 10.3, 10.4_
-
-- [ ] 21.7 Create service deployment and configuration management
-
-  - Create systemd service unit files for Linux with proper dependencies and security settings
-  - Add launchd plist files for macOS with appropriate permissions and startup configuration
-  - Create Windows service installer with proper registry entries and security descriptors
-  - Implement service configuration validation and deployment verification
-  - Add service update and migration procedures for configuration changes
-  - Create service deployment documentation with platform-specific installation guides
-  - Write deployment automation scripts for common service management scenarios
-  - _Requirements: 6.1, 6.2, 6.4, 6.5_
-
-- [ ] 21.8 Add comprehensive service testing and validation
-
-  - Create integration tests for service installation, startup, and shutdown on all platforms
-  - Add service failure scenario testing with collector process crashes and recovery
-  - Implement service upgrade testing with configuration migration and data preservation
-  - Create service security testing for privilege boundaries and access controls
-  - Add service performance testing under high load with multiple collector processes
-  - Write service compatibility tests across different OS versions and configurations
-  - Create service chaos testing for various failure modes and recovery validation
-  - _Requirements: All requirements verification_
