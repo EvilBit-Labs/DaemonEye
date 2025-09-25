@@ -28,6 +28,16 @@ Enterprise tier features provide advanced monitoring capabilities including kern
 
 [Read Enterprise Tier Documentation →](./technical/enterprise-tier.md)
 
+## Platform-Specific Process Collectors
+
+DaemonEye provides platform-specific process collectors that leverage native operating system capabilities for enhanced monitoring and security analysis.
+
+### Windows Process Collector
+
+The Windows process collector provides comprehensive Windows-specific capabilities including SeDebugPrivilege detection, process tokens, UAC elevation status, and Windows service monitoring.
+
+[Read Windows Process Collector Documentation →](./technical/windows-process-collector.md)
+
 ## Technical Architecture
 
 ### Component Overview

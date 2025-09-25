@@ -170,14 +170,19 @@
   - Write comprehensive integration tests for third-party crate approach
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 5.5 Implement Windows-specific optimizations - [#83](https://github.com/EvilBit-Labs/DaemonEye/issues/83)
+- [ ] 5.5 Implement Windows-specific optimizations using third-party crates - [#83](https://github.com/EvilBit-Labs/DaemonEye/issues/83)
 
-  - Create WindowsProcessCollector using Windows API (`windows-rs` crate) (Process32First/Next, NtQuerySystemInformation)
-  - Add SeDebugPrivilege detection and privilege management
-  - Implement enhanced metadata collection with Windows-specific process attributes
-  - Add support for Windows process tokens and security contexts
-  - Handle protected processes and system processes gracefully
-  - Write Windows-specific integration tests
+  - Create WindowsProcessCollector using well-maintained third-party crates instead of direct Windows API calls
+  - Use enhanced sysinfo + windows-rs + winapi-safe + psutil-rs for comprehensive Windows process monitoring
+  - Implement Windows-specific security features: SeDebugPrivilege detection, process tokens, security contexts
+  - Add support for Windows process attributes: protected processes, system processes, UAC elevation status
+  - Implement Windows service detection and management using windows-service crate
+  - Add Windows-specific metadata: process integrity levels, session isolation, virtualization status
+  - Handle Windows Defender and antivirus process restrictions gracefully
+  - Add support for Windows containers (Hyper-V containers, Windows Server containers)
+  - Implement Windows-specific performance counters using perfmon-rs or similar
+  - Write comprehensive Windows-specific integration tests covering all Windows versions
+  - Maintain all existing capabilities while improving safety and accuracy with third-party crates
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
 - [ ] 5.6 Add comprehensive cross-platform testing - [#84](https://github.com/EvilBit-Labs/DaemonEye/issues/84)
