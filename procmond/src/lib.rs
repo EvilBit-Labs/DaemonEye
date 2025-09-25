@@ -3,11 +3,17 @@
 pub mod event_source;
 pub mod process_collector;
 
+#[cfg(target_os = "linux")]
+pub mod linux_collector;
+
 pub use event_source::{ProcessEventSource, ProcessSourceConfig};
 pub use process_collector::{
     CollectionStats, ProcessCollectionConfig, ProcessCollectionError, ProcessCollectionResult,
     ProcessCollector, ProcessCollectorCapabilities, SysinfoProcessCollector,
 };
+
+#[cfg(target_os = "linux")]
+pub use linux_collector::{LinuxCollectorConfig, LinuxProcessCollector};
 
 // Re-export main functionality for testing
 pub use daemoneye_lib::proto::{

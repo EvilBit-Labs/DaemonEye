@@ -149,7 +149,7 @@
   - Write comprehensive unit tests with mock process data
   - _Requirements: 1.1, 1.5_
 
-- [ ] 5.3 Implement Linux-specific optimizations - [#81](https://github.com/EvilBit-Labs/DaemonEye/issues/81)
+- [x] 5.3 Implement Linux-specific optimizations - [#81](https://github.com/EvilBit-Labs/DaemonEye/issues/81)
 
   - Create LinuxProcessCollector with direct /proc filesystem access for enhanced performance
   - Add CAP_SYS_PTRACE capability detection and privilege management
