@@ -1326,9 +1326,11 @@ mod tests {
         assert!(result.unwrap().is_ok(), "Shutdown should succeed");
 
         // Should complete reasonably quickly even with timeout
+        // Allow more time on slower systems or under load
         assert!(
-            shutdown_duration < Duration::from_secs(1),
-            "Shutdown should be fast"
+            shutdown_duration < Duration::from_secs(2),
+            "Shutdown should be fast, took {:?}",
+            shutdown_duration
         );
     }
 

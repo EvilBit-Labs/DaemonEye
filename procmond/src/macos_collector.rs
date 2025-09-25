@@ -10,7 +10,6 @@
 //! - `sysinfo`: Enhanced cross-platform process enumeration
 //! - `security-framework`: Code signing and entitlements detection
 //! - `core-foundation`: Core Foundation integration for macOS APIs
-//! - `mac-sys-info`: System information and SIP awareness
 //!
 //! # Safety and Accuracy Improvements
 //!
@@ -18,7 +17,7 @@
 //! - No unsafe code required
 //! - Better error handling and safety
 //! - Accurate entitlements detection via Security framework
-//! - Proper SIP awareness via mac-sys-info
+//! - Proper SIP awareness via system command execution
 //! - Enhanced process metadata via sysinfo
 
 use async_trait::async_trait;
@@ -147,7 +146,7 @@ pub struct MacOSProcessMetadata {
 ///
 /// - Enhanced sysinfo integration for process enumeration
 /// - Security framework integration for entitlements and code signing
-/// - System information via mac-sys-info for SIP status and system details
+/// - System information via system commands for SIP status and system details
 /// - Enhanced process metadata via sysinfo for cross-platform compatibility
 /// - No unsafe code required
 /// - Better error handling and safety

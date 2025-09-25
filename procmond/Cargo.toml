@@ -61,8 +61,6 @@ tracing-subscriber = { workspace = true }
 # macOS Security Framework and Core Foundation
 security-framework = "3.5.0"
 core-foundation = "0.10.1"
-# macOS system information
-mac-sys-info = "0.1.13"
 # Note: procfs removed as it's Linux-specific and not compatible with macOS
 # Using sysinfo for cross-platform process information instead
 
