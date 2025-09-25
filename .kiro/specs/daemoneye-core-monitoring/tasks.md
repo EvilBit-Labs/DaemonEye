@@ -159,14 +159,15 @@
   - Write Linux-specific integration tests
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [x] 5.4 Implement macOS-specific optimizations - [#82](https://github.com/EvilBit-Labs/DaemonEye/issues/82)
+- [ ] 5.4 Implement macOS-specific optimizations using third-party crates - [#82](https://github.com/EvilBit-Labs/DaemonEye/issues/82)
 
-  - Create macOSProcessCollector using libproc and sysctl APIs
-  - Add macOS entitlements detection and privilege management
-  - Implement enhanced metadata collection with macOS-specific process attributes
-  - Add support for System Integrity Protection (SIP) awareness
-  - Handle sandboxed process restrictions gracefully
-  - Write macOS-specific integration tests
+  - Refactor macOSProcessCollector to use well-maintained third-party crates instead of direct libc
+  - Replace libproc/sysctl with enhanced sysinfo + security-framework + core-foundation + mac-sys-info
+  - Implement proper entitlements detection using security-framework crate for accurate code signing and bundle info
+  - Add System Integrity Protection (SIP) awareness using mac-sys-info for system information
+  - Handle sandboxed process restrictions gracefully with security-framework entitlements parsing
+  - Maintain all existing capabilities while improving safety and accuracy
+  - Write comprehensive integration tests for third-party crate approach
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
 - [ ] 5.5 Implement Windows-specific optimizations - [#83](https://github.com/EvilBit-Labs/DaemonEye/issues/83)

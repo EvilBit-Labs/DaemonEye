@@ -19,7 +19,7 @@ pub use process_collector::{
 pub use linux_collector::{LinuxCollectorConfig, LinuxProcessCollector};
 
 #[cfg(target_os = "macos")]
-pub use macos_collector::{MacOSCollectorConfig, MacOSProcessCollector};
+pub use macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
 
 // Re-export main functionality for testing
 pub use daemoneye_lib::proto::{

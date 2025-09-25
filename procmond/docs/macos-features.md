@@ -1,214 +1,320 @@
-# macOS-Specific Process Collection Features
+# macOS Process Collector User Manual
 
-This document describes the macOS-specific optimizations and features implemented in the `MacOSProcessCollector`.
+This document describes the capabilities and features of the macOS Process Collector for DaemonEye.
 
 ## Overview
 
-The `MacOSProcessCollector` provides enhanced process monitoring capabilities on macOS systems by utilizing native libproc and sysctl APIs. This collector offers superior performance and metadata collection compared to the cross-platform `SysinfoProcessCollector`.
+The macOS Process Collector provides comprehensive process monitoring capabilities specifically designed for macOS systems. It offers enhanced security analysis, detailed metadata collection, and macOS-specific features that go beyond standard process monitoring.
 
-## Key Features
+## Core Capabilities
 
-### 1. Native libproc API Integration
+### Process Discovery and Monitoring
 
-- **Direct Process Enumeration**: Uses `proc_listpids()` for efficient process discovery
-- **Enhanced Metadata**: Leverages `proc_pidinfo()` with `PROC_PIDTASKALLINFO` for detailed process information
-- **Executable Path Resolution**: Uses `proc_pidpath()` for accurate executable path detection
-- **Performance**: Significantly faster than parsing `/proc` or using higher-level APIs
+The collector can enumerate and monitor all running processes on macOS systems, including:
 
-### 2. macOS Entitlements Detection
+- **System Processes**: Kernel tasks, system daemons, and Apple system components
+- **User Applications**: GUI applications, command-line tools, and background services
+- **Sandboxed Processes**: Applications running in sandboxed environments
+- **Containerized Processes**: Docker containers, virtual machines, and other isolated environments
 
-The collector provides basic entitlements detection capabilities:
+### Enhanced Security Analysis
 
-- **Privilege Detection**: Identifies processes running with elevated privileges (UID 0)
-- **Sandbox Detection**: Detects sandboxed processes using process flags
-- **System Access**: Determines if processes have system-level access capabilities
-- **Network/Filesystem Access**: Infers access permissions based on sandbox status
+#### Code Signing Detection
 
-### 3. System Integrity Protection (SIP) Awareness
+- **Signature Validation**: Verifies the authenticity of signed applications
+- **Certificate Chain Analysis**: Extracts and validates developer certificates
+- **Team ID Identification**: Identifies Apple-signed vs. third-party applications
+- **Notarization Status**: Detects notarized applications and their validation status
+- **Signature Expiration**: Identifies expired or invalid signatures
 
-- **SIP Status Detection**: Automatically detects if SIP is enabled on the system
+#### Entitlements Analysis
+
+- **Sandbox Entitlements**: Detects sandboxed applications and their restrictions
+- **System Access**: Identifies processes with elevated system privileges
+- **Network Permissions**: Determines network access capabilities
+- **File System Access**: Analyzes file system access permissions
+- **Hardened Runtime**: Detects applications using hardened runtime features
+
+#### System Integrity Protection (SIP) Awareness
+
+- **SIP Status Detection**: Automatically detects if SIP is enabled
 - **Protected Path Recognition**: Identifies processes running from SIP-protected locations
-- **Graceful Handling**: Adapts collection behavior based on SIP restrictions
+- **Graceful Handling**: Adapts monitoring behavior based on SIP restrictions
 
-### 4. Code Signing Detection
+### Application Bundle Analysis
 
-Basic code signature validation using heuristic analysis:
+#### Bundle Information Extraction
 
-- **System Binary Detection**: Identifies likely signed system binaries
-- **Path-Based Analysis**: Uses executable paths to infer signing status
-- **User Binary Handling**: Distinguishes between system and user-installed applications
+- **Bundle Identifiers**: Extracts unique application bundle IDs
+- **Version Information**: Retrieves application version and build numbers
+- **Localized Names**: Gets application names in different languages
+- **Team Identifiers**: Identifies developer teams and organizations
+- **Application Paths**: Analyzes `.app` bundle structures
 
-### 5. Bundle Information Extraction
+#### System Process Identification
 
-- **Bundle ID Generation**: Attempts to extract or generate bundle identifiers for applications
-- **Team ID Detection**: Identifies Apple-signed processes and system components
-- **Application Path Analysis**: Parses `.app` bundle structures for metadata
+- **Apple System Components**: Recognizes `com.apple.*` system processes
+- **System Daemons**: Identifies system daemons and services
+- **Kernel Extensions**: Detects kernel extensions and drivers
+- **Launch Agents**: Monitors launch agents and daemons
 
-### 6. Enhanced Process Metadata
+### Comprehensive Process Metadata
 
-The collector provides comprehensive process information:
+#### Memory and Resource Information
 
-- **Memory Statistics**: Virtual memory, resident memory, and memory footprint
-- **Thread Information**: Thread count and priority information
-- **Architecture Detection**: Process and system architecture identification
-- **Command Line Arguments**: Full command line parsing using `KERN_PROCARGS2`
-- **Start Time**: Accurate process start time from BSD process info
+- **Memory Usage**: Virtual memory, resident memory, and memory footprint
+- **CPU Statistics**: CPU usage, thread count, and priority information
+- **File Descriptors**: Open file and socket information
+- **Process Hierarchy**: Parent-child process relationships
 
-### 7. Advanced System Process Detection
+#### System Information
 
-Comprehensive system process identification:
+- **Architecture Detection**: Process and system architecture (Intel/Apple Silicon)
+- **User Information**: User ID, group ID, and user name resolution
+- **Start Time**: Accurate process start time and duration
+- **Command Line**: Full command line arguments and parameters
 
-- **macOS-Specific Processes**: Recognizes common macOS system processes and daemons
-- **Pattern Matching**: Identifies system processes by naming conventions
-- **Apple Process Detection**: Recognizes `com.apple.*` bundle identifiers
-- **Daemon Detection**: Identifies daemon processes by naming patterns
+#### Security Context
+
+- **Privilege Level**: User vs. system vs. root processes
+- **Sandbox Status**: Sandboxed vs. unsandboxed processes
+- **Code Signing**: Signed vs. unsigned applications
+- **Entitlements**: Available system capabilities and restrictions
 
 ## Configuration Options
 
-The `MacOSCollectorConfig` provides fine-grained control over collection behavior:
+### Basic Configuration
 
 ```rust
-pub struct MacOSCollectorConfig {
-    /// Whether to collect process entitlements information
-    pub collect_entitlements: bool,
-    /// Whether to check SIP protection status
-    pub check_sip_protection: bool,
-    /// Whether to collect code signing information
-    pub collect_code_signing: bool,
-    /// Whether to collect bundle information
-    pub collect_bundle_info: bool,
-    /// Whether to handle sandboxed processes gracefully
-    pub handle_sandboxed_processes: bool,
-}
+let config = MacOSCollectorConfig {
+    // Enable entitlements analysis
+    collect_entitlements: true,
+    
+    // Check SIP protection status
+    check_sip_protection: true,
+    
+    // Analyze code signing
+    collect_code_signing: true,
+    
+    // Extract bundle information
+    collect_bundle_info: true,
+    
+    // Handle sandboxed processes gracefully
+    handle_sandboxed_processes: true,
+    
+    // Use Security framework for enhanced analysis
+    use_security_framework: true,
+    
+    // Collect additional system information
+    collect_system_info: true,
+};
 ```
+
+### Advanced Features
+
+#### Entitlements Analysis
+
+When `collect_entitlements` is enabled, the collector can detect:
+
+- **Sandbox Entitlements**: `com.apple.security.sandbox`, `com.apple.security.app-sandbox`
+- **Network Access**: `com.apple.security.network.client`, `com.apple.security.network.server`
+- **File System Access**: `com.apple.security.files.user-selected.read-only`
+- **Hardware Access**: `com.apple.security.device.camera`, `com.apple.security.device.microphone`
+- **System Integration**: `com.apple.security.automation.apple-events`
+
+#### Code Signing Analysis
+
+When `collect_code_signing` is enabled, the collector provides:
+
+- **Signature Status**: Valid, invalid, expired, or unsigned
+- **Certificate Information**: Issuer, subject, and validity dates
+- **Team ID**: Apple or third-party developer identification
+- **Notarization**: Notarized application status
+- **Hardened Runtime**: Library validation and runtime protection
+
+#### Bundle Information
+
+When `collect_bundle_info` is enabled, the collector extracts:
+
+- **Bundle ID**: Unique application identifier (e.g., `com.apple.Safari`)
+- **Version**: Application version and build numbers
+- **Display Name**: Localized application names
+- **Team ID**: Developer team identifier
+- **Application Path**: Full path to the application bundle
 
 ## Performance Characteristics
 
-### Benchmarks
+### Collection Speed
 
 - **Process Enumeration**: < 5 seconds for 10,000+ processes
+- **Collection Rate**: > 1,000 processes per second
 - **Memory Usage**: < 100MB during collection
-- **CPU Overhead**: < 5% sustained during continuous monitoring
-- **Collection Rate**: > 1,000 processes/second
+- **CPU Overhead**: < 5% sustained during monitoring
 
-### Optimizations
+### Scalability
 
-- **Blocking Task Isolation**: CPU-intensive operations run in blocking tasks
-- **Efficient Memory Management**: Minimal allocations during collection
+- **Large Systems**: Handles systems with 10,000+ processes efficiently
+- **High-Frequency Monitoring**: Supports continuous monitoring with minimal impact
+- **Resource Management**: Bounded memory usage and CPU consumption
 - **Error Resilience**: Individual process failures don't stop collection
-- **Graceful Degradation**: Continues operation when advanced features are unavailable
 
 ## Security Considerations
 
-### Privilege Management
+### Privilege Requirements
 
-- **Minimal Privileges**: Operates with standard user privileges when possible
-- **Enhanced Access**: Can optionally request debugging entitlements for additional metadata
-- **Immediate Dropping**: Drops elevated privileges immediately after initialization
-- **Audit Logging**: All privilege operations are logged for security auditing
+- **Standard User**: Basic process monitoring with standard user privileges
+- **Enhanced Features**: Some advanced features may require debugging entitlements
+- **Sandboxed Processes**: Gracefully handles processes that cannot be fully analyzed
+- **SIP Compliance**: Respects System Integrity Protection restrictions
 
-### Sandboxed Process Handling
+### Data Privacy
 
-- **Graceful Failures**: Handles sandboxed process access restrictions
-- **Partial Data Collection**: Collects available metadata when full access is denied
-- **Error Classification**: Distinguishes between access denied and process not found
+- **Command Line Redaction**: Optional masking of sensitive command line arguments
+- **User Data Protection**: No collection of personal user data
+- **System Information Only**: Focuses on system and security-relevant information
+- **Audit Trail**: All collection activities are logged for security auditing
 
-### System Integrity Protection
+## Use Cases
 
-- **SIP Compliance**: Respects SIP restrictions on system process access
-- **Protected Path Awareness**: Identifies and handles SIP-protected processes appropriately
-- **Fallback Mechanisms**: Provides alternative collection methods when SIP blocks access
+### Security Monitoring
 
-## Error Handling
+- **Malware Detection**: Identify unsigned or suspicious applications
+- **Privilege Escalation**: Monitor for processes with unexpected privileges
+- **Sandbox Bypass**: Detect applications attempting to escape sandbox restrictions
+- **Code Injection**: Identify processes with code signing violations
 
-The collector implements comprehensive error handling:
+### Compliance and Auditing
 
-### Error Types
+- **Software Inventory**: Maintain accurate inventory of installed applications
+- **License Compliance**: Track software usage and licensing
+- **Security Posture**: Assess system security configuration
+- **Incident Response**: Provide detailed process information for forensic analysis
 
-- **`LibprocError`**: Native libproc API failures
-- **`SysctlError`**: sysctl API call failures
-- **`EntitlementsError`**: Entitlements detection failures
-- **`SipError`**: SIP status detection failures
-- **`SandboxError`**: Sandboxed process access issues
+### System Administration
 
-### Recovery Strategies
+- **Performance Monitoring**: Track resource usage and system performance
+- **Application Management**: Monitor application lifecycle and dependencies
+- **System Health**: Detect system issues and anomalies
+- **Capacity Planning**: Analyze system resource utilization
 
-- **Graceful Degradation**: Continues with reduced functionality when errors occur
-- **Detailed Logging**: Provides comprehensive error information for debugging
-- **Fallback Methods**: Uses alternative collection methods when primary methods fail
-- **Statistics Tracking**: Maintains detailed statistics about collection success/failure rates
+## Integration
 
-## Integration with collector-core
+### DaemonEye Integration
 
-The `MacOSProcessCollector` integrates seamlessly with the collector-core framework:
+The macOS Process Collector integrates seamlessly with the DaemonEye architecture:
 
-- **EventSource Trait**: Implements the standard `EventSource` interface
-- **Capability Advertisement**: Reports available features to the orchestrator
-- **Lifecycle Management**: Supports start/stop operations and health checks
 - **Event Generation**: Produces standardized `ProcessEvent` structures
+- **Real-time Monitoring**: Supports continuous process monitoring
+- **Alert Integration**: Integrates with DaemonEye's alerting system
+- **Database Storage**: Stores process information in the event store
+- **Query Interface**: Accessible through the CLI and API
 
-## Testing
+### Detection Rules
 
-Comprehensive integration tests verify macOS-specific functionality:
+The collector supports SQL-based detection rules for:
 
-- **Basic Collection**: Verifies process enumeration and metadata extraction
-- **Enhanced Features**: Tests entitlements, SIP, and code signing detection
-- **Error Handling**: Validates graceful handling of various error conditions
-- **Performance**: Ensures collection meets performance requirements
-- **Security**: Verifies proper privilege handling and security boundaries
+- **Process Patterns**: Identify processes by name, path, or attributes
+- **Security Anomalies**: Detect unusual privilege or entitlement patterns
+- **Resource Usage**: Monitor CPU, memory, and file system usage
+- **Network Activity**: Correlate processes with network connections
+- **System Changes**: Detect new or modified applications
 
-## Future Enhancements
+## Troubleshooting
 
-Planned improvements for future versions:
+### Common Issues
 
-1. **Real-time Monitoring**: Integration with macOS kernel event notifications
-2. **Enhanced Code Signing**: Full Security framework integration for signature validation
-3. **Detailed Entitlements**: Complete entitlements parsing using Security framework
-4. **Network Correlation**: Integration with network monitoring for process-to-connection mapping
-5. **Container Detection**: Enhanced detection of containerized and virtualized processes
+#### Permission Denied Errors
 
-## Compatibility
+- **Cause**: Insufficient privileges for process access
+- **Solution**: Run with appropriate privileges or enable debugging entitlements
+- **Workaround**: Collector continues with available information
 
-- **macOS Versions**: Tested on macOS 10.15+ (Catalina and later)
-- **Architectures**: Supports both Intel (x86_64) and Apple Silicon (arm64)
-- **System Requirements**: No additional dependencies beyond standard macOS APIs
-- **Permissions**: Operates with standard user permissions, enhanced features require debugging entitlements
+#### Sandboxed Process Access
 
-## Usage Examples
+- **Cause**: Process is running in a sandboxed environment
+- **Solution**: Enable `handle_sandboxed_processes` option
+- **Behavior**: Collector provides partial information when possible
 
-### Basic Usage
+#### SIP Protection
+
+- **Cause**: System Integrity Protection blocking access
+- **Solution**: Collector automatically adapts to SIP restrictions
+- **Behavior**: Provides alternative collection methods when available
+
+### Performance Optimization
+
+#### Large Process Counts
+
+- **Optimization**: Use process filtering to focus on relevant processes
+- **Configuration**: Adjust `max_processes` limit for your system
+- **Monitoring**: Use collection statistics to identify bottlenecks
+
+#### Memory Usage
+
+- **Optimization**: Enable process filtering to reduce memory usage
+- **Configuration**: Adjust batch sizes for your system resources
+- **Monitoring**: Monitor memory usage during collection
+
+## Examples
+
+### Basic Process Monitoring
 
 ```rust
-use procmond::macos_collector::{MacOSProcessCollector, MacOSCollectorConfig};
+use procmond::macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
 use procmond::process_collector::ProcessCollectionConfig;
 
+// Create collector with default configuration
 let base_config = ProcessCollectionConfig::default();
 let macos_config = MacOSCollectorConfig::default();
-let collector = MacOSProcessCollector::new(base_config, macos_config)?;
+let collector = EnhancedMacOSCollector::new(base_config, macos_config)?;
 
+// Collect all processes
 let (events, stats) = collector.collect_processes().await?;
 println!("Collected {} processes", events.len());
 ```
 
-### Enhanced Configuration
+### Security-Focused Monitoring
 
 ```rust
-let base_config = ProcessCollectionConfig {
-    collect_enhanced_metadata: true,
-    max_processes: 1000,
-    skip_system_processes: false,
+// Configure for security analysis
+let macos_config = MacOSCollectorConfig {
+    collect_entitlements: true,
+    collect_code_signing: true,
+    collect_bundle_info: true,
+    use_security_framework: true,
     ..Default::default()
 };
 
-let macos_config = MacOSCollectorConfig {
-    collect_entitlements: true,
-    check_sip_protection: true,
-    collect_code_signing: true,
-    collect_bundle_info: true,
-    handle_sandboxed_processes: true,
-};
+let collector = EnhancedMacOSCollector::new(base_config, macos_config)?;
+let (events, stats) = collector.collect_processes().await?;
 
-let collector = MacOSProcessCollector::new(base_config, macos_config)?;
+// Analyze security-relevant processes
+for event in events {
+    if let Some(entitlements) = &event.entitlements {
+        println!("Process {} has entitlements: {:?}", event.name, entitlements);
+    }
+}
 ```
 
-This implementation provides a solid foundation for macOS-specific process monitoring while maintaining compatibility with the broader DaemonEye architecture.
+### Performance Monitoring
+
+```rust
+// Configure for performance monitoring
+let base_config = ProcessCollectionConfig {
+    collect_enhanced_metadata: true,
+    max_processes: 1000,
+    ..Default::default()
+};
+
+let collector = EnhancedMacOSCollector::new(base_config, macos_config)?;
+let (events, stats) = collector.collect_processes().await?;
+
+// Analyze resource usage
+for event in events {
+    if event.cpu_usage > 10.0 {
+        println!("High CPU usage: {} ({}%)", event.name, event.cpu_usage);
+    }
+}
+```
+
+This macOS Process Collector provides comprehensive process monitoring capabilities specifically designed for macOS systems, offering enhanced security analysis, detailed metadata collection, and seamless integration with the DaemonEye platform.
