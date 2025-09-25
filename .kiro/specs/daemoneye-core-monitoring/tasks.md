@@ -162,7 +162,7 @@
 - [ ] 5.4 Implement macOS-specific optimizations using third-party crates - [#82](https://github.com/EvilBit-Labs/DaemonEye/issues/82)
 
   - Refactor macOSProcessCollector to use well-maintained third-party crates instead of direct libc
-  - Replace libproc/sysctl with enhanced sysinfo + security-framework + core-foundation + mac-sys-info
+  - Replace libproc/sysctl with enhanced sysinfo + security-framework + core-foundation + mac-sys-info (libproc is Linux-only)
   - Implement proper entitlements detection using security-framework crate for accurate code signing and bundle info
   - Add System Integrity Protection (SIP) awareness using mac-sys-info for system information
   - Handle sandboxed process restrictions gracefully with security-framework entitlements parsing
