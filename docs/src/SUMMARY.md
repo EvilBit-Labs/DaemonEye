@@ -11,6 +11,7 @@
   - [Core Monitoring](./technical/core-monitoring.md)
   - [Business Tier Features](./technical/business-tier.md)
   - [Enterprise Tier Features](./technical/enterprise-tier.md)
+  - [macOS Process Collector](./technical/macos-process-collector.md)
   - [Windows Process Collector](./technical/windows-process-collector.md)
   - [Query Pipeline and SQL Dialect](./technical/query-pipeline.md)
   - [SQL Dialect Quick Reference](./technical/sql-dialect-reference.md)
