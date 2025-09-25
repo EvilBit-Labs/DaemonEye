@@ -271,15 +271,27 @@ impl EnhancedMacOSCollector {
     /// Detects if enhanced entitlements capability is available.
     ///
     /// This method checks if the Security framework is available and can be used
-    /// for entitlements detection.
+    /// for entitlements detection by making a lightweight runtime API call.
     fn detect_entitlements_capability() -> ProcessCollectionResult<bool> {
-        // Try to create a Security framework context as a capability test
-        match std::process::id() {
-            pid => {
-                // Test if we can access Security framework APIs
+        // First try a lightweight runtime API call to verify Security framework availability
+        match Self::test_security_framework_api() {
+            Ok(available) => {
+                if available {
+                    debug!("Security framework capability detected via runtime API");
+                } else {
+                    debug!("Security framework capability not available via runtime API");
+                }
+                Ok(available)
+            }
+            Err(e) => {
+                warn!(
+                    "Security framework API test failed, falling back to path check: {}",
+                    e
+                );
+                // Fallback to path check if API binding is unavailable
                 let test_path = "/System/Library/Frameworks/Security.framework";
                 if Path::new(test_path).exists() {
-                    debug!("Security framework capability detected");
+                    debug!("Security framework capability detected via path check");
                     Ok(true)
                 } else {
                     debug!("Security framework capability not available");
@@ -289,26 +301,72 @@ impl EnhancedMacOSCollector {
         }
     }
 
+    /// Tests Security framework API availability with a lightweight runtime call.
+    ///
+    /// This method attempts to call a minimal Security framework API to verify
+    /// that the framework is not only present but also functional.
+    fn test_security_framework_api() -> ProcessCollectionResult<bool> {
+        // Use a lightweight Security framework API call to test availability
+        // We'll try to get the current process's code signature as a capability test
+        match std::process::id() {
+            pid => {
+                // Attempt to create a SecCode for the current process
+                // This is a lightweight operation that tests Security framework availability
+                match SecCode::from_self() {
+                    Ok(_) => {
+                        debug!("Security framework API test successful");
+                        Ok(true)
+                    }
+                    Err(e) => {
+                        debug!("Security framework API test failed: {}", e);
+                        Ok(false)
+                    }
+                }
+            }
+        }
+    }
+
     /// Detects System Integrity Protection (SIP) status.
     ///
-    /// This method checks if SIP is enabled on the system using mac-sys-info.
+    /// This method checks if SIP is enabled on the system using proper detection methods.
     fn detect_sip_status(system_info: &Option<SystemInfo>) -> ProcessCollectionResult<bool> {
         if let Some(ref info) = system_info {
-            // Use mac-sys-info to get SIP status
-            let kernel_version = info.kernel_version();
-            let sip_enabled = kernel_version.contains("SIP")
-                || kernel_version.contains("System Integrity Protection");
+            // Try to use SystemInfo API if available
+            if let Some(sip_status) = info.sip_status() {
+                debug!(
+                    sip_enabled = sip_status,
+                    "Detected SIP status using SystemInfo API"
+                );
+                return Ok(sip_status);
+            }
+        }
 
-            debug!(
-                kernel_version = %kernel_version,
-                sip_enabled = sip_enabled,
-                "Detected SIP status using mac-sys-info"
-            );
+        // Fallback to csrutil command
+        match std::process::Command::new("/usr/bin/csrutil")
+            .arg("status")
+            .output()
+        {
+            Ok(output) => {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                let sip_enabled = output_str
+                    .contains("System Integrity Protection status: enabled")
+                    || output_str.contains("enabled.");
 
-            Ok(sip_enabled)
-        } else {
-            debug!("Could not detect SIP status, assuming enabled");
-            Ok(true) // Default to enabled for safety
+                debug!(
+                    command_output = %output_str,
+                    sip_enabled = sip_enabled,
+                    "Detected SIP status using csrutil command"
+                );
+
+                Ok(sip_enabled)
+            }
+            Err(e) => {
+                debug!(
+                    error = %e,
+                    "Failed to execute csrutil command, assuming SIP enabled for safety"
+                );
+                Ok(true) // Default to enabled for safety
+            }
         }
     }
 
@@ -440,30 +498,66 @@ impl EnhancedMacOSCollector {
         // Try to get process executable path
         if let Ok(procfs_process) = Process::new(pid as i32) {
             if let Ok(exe_path) = procfs_process.exe() {
-                // Use Security framework to get entitlements
+                // Use Security framework to get signing information
                 if let Ok(code) = SecCode::from_path(&exe_path) {
-                    if let Ok(entitlements_dict) = code.copy_entitlements() {
-                        entitlements.can_debug = entitlements_dict
-                            .get("com.apple.security.get-task-allow")
-                            .is_some();
-                        entitlements.system_access = entitlements_dict
-                            .get("com.apple.security.system-extension")
-                            .is_some();
-                        entitlements.sandboxed = entitlements_dict
-                            .get("com.apple.security.app-sandbox")
-                            .is_some();
-                        entitlements.network_access = entitlements_dict
-                            .get("com.apple.security.network.client")
-                            .is_some();
-                        entitlements.filesystem_access = !entitlements_dict
-                            .get("com.apple.security.files.user-selected.read-only")
-                            .is_some();
-                        entitlements.hardened_runtime = entitlements_dict
-                            .get("com.apple.security.cs.allow-jit")
-                            .is_some();
-                        entitlements.disable_library_validation = entitlements_dict
-                            .get("com.apple.security.cs.disable-library-validation")
-                            .is_some();
+                    // Get signing information using SecCodeCopySigningInformation
+                    match code.copy_signing_information() {
+                        Ok(signing_info) => {
+                            // Extract entitlements dictionary
+                            if let Some(entitlements_dict) = signing_info.get(
+                                &security_framework::code_signing::kSecCodeInfoEntitlementsDict,
+                            ) {
+                                // Parse entitlements from CFDictionary
+                                entitlements.can_debug = self.get_boolean_from_dict(
+                                    entitlements_dict,
+                                    "com.apple.security.get-task-allow",
+                                );
+                                entitlements.system_access = self.get_boolean_from_dict(
+                                    entitlements_dict,
+                                    "com.apple.security.system-extension",
+                                );
+                                entitlements.sandboxed = self.get_boolean_from_dict(
+                                    entitlements_dict,
+                                    "com.apple.security.app-sandbox",
+                                );
+                                entitlements.network_access = self.get_boolean_from_dict(
+                                    entitlements_dict,
+                                    "com.apple.security.network.client",
+                                );
+                                entitlements.filesystem_access = !self.get_boolean_from_dict(
+                                    entitlements_dict,
+                                    "com.apple.security.files.user-selected.read-only",
+                                );
+                                entitlements.hardened_runtime = self.get_boolean_from_dict(
+                                    entitlements_dict,
+                                    "com.apple.security.cs.allow-jit",
+                                );
+                                entitlements.disable_library_validation = self
+                                    .get_boolean_from_dict(
+                                        entitlements_dict,
+                                        "com.apple.security.cs.disable-library-validation",
+                                    );
+                            }
+
+                            // Extract team identifier and bundle identifier if needed
+                            if let Some(team_id) = signing_info
+                                .get(&security_framework::code_signing::kSecCodeInfoTeamIdentifier)
+                            {
+                                debug!(pid = pid, team_id = ?team_id, "Extracted team identifier");
+                            }
+                            if let Some(bundle_id) = signing_info
+                                .get(&security_framework::code_signing::kSecCodeInfoIdentifier)
+                            {
+                                debug!(pid = pid, bundle_id = ?bundle_id, "Extracted bundle identifier");
+                            }
+                        }
+                        Err(e) => {
+                            debug!(
+                                pid = pid,
+                                error = %e,
+                                "Failed to get signing information"
+                            );
+                        }
                     }
                 }
             }
@@ -478,6 +572,28 @@ impl EnhancedMacOSCollector {
         );
 
         Ok(entitlements)
+    }
+
+    /// Helper method to extract boolean values from CFDictionary.
+    fn get_boolean_from_dict(
+        &self,
+        dict: &core_foundation::dictionary::CFDictionary,
+        key: &str,
+    ) -> bool {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+
+        let cf_key = CFString::new(key);
+        if let Some(value) = dict.find(&cf_key) {
+            // Try to convert to boolean
+            if let Some(bool_value) = value.downcast::<core_foundation::boolean::CFBoolean>() {
+                bool_value.to_bool()
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 
     /// Checks if a process is protected by SIP.

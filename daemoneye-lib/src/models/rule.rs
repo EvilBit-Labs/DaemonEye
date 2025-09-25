@@ -520,7 +520,12 @@ impl DetectionRule {
             | Statement::Remove(_)
             | Statement::RaisError { .. }
             | Statement::Print(_)
-            | Statement::Return(_) => {
+            | Statement::Return(_)
+            | Statement::AlterSchema(_)
+            | Statement::ShowCharset(_)
+            | Statement::ExportData(_)
+            | Statement::CreateUser(_)
+            | Statement::Vacuum(_) => {
                 return Err(RuleError::InvalidSql(
                     "Only SELECT statements are allowed".to_owned(),
                 ));
@@ -567,7 +572,8 @@ impl DetectionRule {
             | SetExpr::Insert(_)
             | SetExpr::Update(_)
             | SetExpr::Delete(_)
-            | SetExpr::Table(_) => {
+            | SetExpr::Table(_)
+            | SetExpr::Merge(_) => {
                 return Err(RuleError::InvalidSql(
                     "Only SELECT statements are allowed".to_owned(),
                 ));

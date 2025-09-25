@@ -1,12 +1,16 @@
-//! Configuration management with hierarchical overrides.
+//! Configuration management with hierarchical overrides using figment.
 //!
 //! Supports multiple configuration sources with precedence:
 //! 1. Command-line flags (highest precedence)
 //! 2. Environment variables (`PROCMOND`_*, `DAEMONEYE_AGENT`_*, `DAEMONEYE_CLI`_*)
-//! 3. User configuration file (~/.config/daemoneye/config.yaml)
-//! 4. System configuration file (/etc/daemoneye/config.yaml)
+//! 3. User configuration file (~/.config/daemoneye/config.toml)
+//! 4. System configuration file (/etc/daemoneye/config.toml)
 //! 5. Embedded defaults (lowest precedence)
 
+use figment::{
+    Figment,
+    providers::{Env, Format, Serialized, Toml},
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use thiserror::Error;
@@ -19,7 +23,7 @@ pub enum ConfigError {
     FileNotFound { path: PathBuf },
 
     #[error("Invalid configuration format: {0}")]
-    InvalidFormat(#[from] serde_yaml::Error),
+    InvalidFormat(#[from] figment::Error),
 
     #[error("IO error reading configuration: {0}")]
     IoError(#[from] std::io::Error),
@@ -86,7 +90,7 @@ pub struct AlertSinkConfig {
     /// Sink type identifier
     pub sink_type: String,
     /// Sink-specific configuration
-    pub config: serde_yaml::Value,
+    pub config: std::collections::HashMap<String, String>,
     /// Enable/disable this sink
     pub enabled: bool,
 }
@@ -181,22 +185,21 @@ impl ConfigLoader {
         }
     }
 
-    /// Load configuration with hierarchical overrides.
+    /// Load configuration with hierarchical overrides using figment.
     pub fn load(&self) -> Result<Config, ConfigError> {
-        let mut config = Config::default();
-
-        // Load from system configuration file
-        if let Ok(system_config) = Self::load_system_config() {
-            config = Self::merge_configs(config, system_config);
-        }
-
-        // Load from user configuration file
-        if let Ok(user_config) = Self::load_user_config() {
-            config = Self::merge_configs(config, user_config);
-        }
-
-        // Apply environment variable overrides
-        config = self.apply_env_overrides(config);
+        let config = Figment::new()
+            // Start with embedded defaults
+            .merge(Serialized::defaults(Config::default()))
+            // System configuration file
+            .merge(Toml::file("/etc/daemoneye/config.toml"))
+            // User configuration file
+            .merge(Toml::file(Self::user_config_path()))
+            // Environment variables with component prefix
+            .merge(Env::prefixed(&format!(
+                "{}_",
+                self.component.to_uppercase()
+            )))
+            .extract()?;
 
         // Validate final configuration
         Self::validate_config(&config)?;
@@ -206,148 +209,14 @@ impl ConfigLoader {
 
     /// Load configuration synchronously (for CLI usage).
     pub fn load_blocking(&self) -> Result<Config, ConfigError> {
-        let mut config = Config::default();
-
-        // Apply environment variable overrides
-        config = self.apply_env_overrides(config);
-
-        // Validate final configuration
-        Self::validate_config(&config)?;
-
-        Ok(config)
+        // Use the same figment-based loading for consistency
+        self.load()
     }
 
-    /// Load system-wide configuration file.
-    fn load_system_config() -> Result<Config, ConfigError> {
-        let path = PathBuf::from("/etc/daemoneye/config.yaml");
-        if !path.exists() {
-            return Err(ConfigError::FileNotFound { path });
-        }
-
-        let content = std::fs::read_to_string(&path)?;
-        let config: Config = serde_yaml::from_str(&content)?;
-        Ok(config)
-    }
-
-    /// Load user-specific configuration file.
-    fn load_user_config() -> Result<Config, ConfigError> {
+    /// Get the user configuration file path.
+    fn user_config_path() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_owned());
-        let path = PathBuf::from(home).join(".config/daemoneye/config.yaml");
-        if !path.exists() {
-            return Err(ConfigError::FileNotFound { path });
-        }
-
-        let content = std::fs::read_to_string(&path)?;
-        let config: Config = serde_yaml::from_str(&content)?;
-        Ok(config)
-    }
-
-    /// Apply environment variable overrides to a Config using the loader's component name as a prefix.
-    ///
-    /// Environment variables are read with the prefix derived from `self.component` converted to
-    /// uppercase (e.g. component "procmond" => "`PROCMOND`_`SCAN_INTERVAL_MS`"). When present, the
-    /// following variables override their corresponding config fields:
-    ///
-    /// - ``{PREFIX}_SCAN_INTERVAL_MS`` -> `config.app.scan_interval_ms` (parsed as integer)
-    /// - ``{PREFIX}_BATCH_SIZE`` -> `config.app.batch_size` (parsed as integer)
-    /// - ``{PREFIX}_LOG_LEVEL`` -> `config.logging.level` (string)
-    /// - ``{PREFIX}_LOG_FORMAT`` -> `config.logging.format` (string)
-    /// - ``{PREFIX}_DATABASE_PATH`` -> `config.database.path` (string -> `PathBuf`)
-    /// - ``{PREFIX}_RECENT_THRESHOLD_SECONDS`` -> `config.alerting.recent_threshold_seconds` (parsed as integer)
-    ///
-    /// Parsing failures for numeric values are ignored and leave the existing config value unchanged.
-    /// The function returns a new `Config` with any applied overrides; it does not modify external state.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use std::env;
-    /// use daemoneye_lib::config::{ConfigLoader, Config};
-    /// // create a loader for component "procmond"
-    /// let loader = ConfigLoader::new("procmond");
-    /// let mut cfg = Config::default();
-    ///
-    /// // override scan interval via environment
-    /// env::set_var("PROCMOND_SCAN_INTERVAL_MS", "45000");
-    ///
-    /// let cfg = loader.apply_env_overrides(cfg);
-    /// assert_eq!(cfg.app.scan_interval_ms, 45000);
-    /// ```
-    fn apply_env_overrides(&self, mut config: Config) -> Config {
-        // Apply component-specific environment variables
-        let prefix = self.component.to_uppercase();
-
-        if let Ok(val) = std::env::var(format!("{prefix}_SCAN_INTERVAL_MS")) {
-            if let Ok(interval) = val.parse() {
-                config.app.scan_interval_ms = interval;
-            }
-        }
-
-        if let Ok(val) = std::env::var(format!("{prefix}_BATCH_SIZE")) {
-            if let Ok(size) = val.parse() {
-                config.app.batch_size = size;
-            }
-        }
-
-        if let Ok(val) = std::env::var(format!("{prefix}_LOG_LEVEL")) {
-            config.logging.level = val;
-        }
-
-        if let Ok(val) = std::env::var(format!("{prefix}_LOG_FORMAT")) {
-            config.logging.format = val;
-        }
-
-        if let Ok(val) = std::env::var(format!("{prefix}_DATABASE_PATH")) {
-            config.database.path = val.into();
-        }
-
-        if let Ok(val) = std::env::var(format!("{prefix}_RECENT_THRESHOLD_SECONDS")) {
-            if let Ok(threshold) = val.parse() {
-                config.alerting.recent_threshold_seconds = threshold;
-            }
-        }
-
-        config
-    }
-
-    /// Merge two configurations, with the second taking precedence.
-    fn merge_configs(base: Config, override_config: Config) -> Config {
-        Config {
-            app: AppConfig {
-                scan_interval_ms: override_config.app.scan_interval_ms,
-                batch_size: override_config.app.batch_size,
-                max_processes: override_config.app.max_processes.or(base.app.max_processes),
-                enhanced_metadata: override_config.app.enhanced_metadata,
-            },
-            database: DatabaseConfig {
-                path: override_config.database.path,
-                retention_days: override_config.database.retention_days,
-                max_size_mb: override_config
-                    .database
-                    .max_size_mb
-                    .or(base.database.max_size_mb),
-                encryption_enabled: override_config.database.encryption_enabled,
-            },
-            alerting: AlertingConfig {
-                sinks: if override_config.alerting.sinks.is_empty() {
-                    base.alerting.sinks
-                } else {
-                    override_config.alerting.sinks
-                },
-                dedup_window_seconds: override_config.alerting.dedup_window_seconds,
-                max_alerts_per_minute: override_config
-                    .alerting
-                    .max_alerts_per_minute
-                    .or(base.alerting.max_alerts_per_minute),
-                recent_threshold_seconds: override_config.alerting.recent_threshold_seconds,
-            },
-            logging: LoggingConfig {
-                level: override_config.logging.level,
-                format: override_config.logging.format,
-                file: override_config.logging.file.or(base.logging.file),
-                structured: override_config.logging.structured,
-            },
-        }
+        PathBuf::from(home).join(".config/daemoneye/config.toml")
     }
 
     /// Validate the final configuration.
@@ -391,14 +260,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_config_loader_env_overrides() {
-        // Note: This test is disabled due to unsafe_code = "forbid"
-        // Environment variable testing will be implemented in Task 8
-        // when we have proper test infrastructure
+    async fn test_config_loader_figment_defaults() {
         let loader = ConfigLoader::new("procmond");
         let config = loader.load().expect("Failed to load config in test");
 
-        // Test with default values for now
+        // Test with figment-loaded defaults
         assert_eq!(config.app.scan_interval_ms, 30000);
         assert_eq!(config.logging.level, "info");
     }
@@ -437,14 +303,11 @@ mod tests {
     }
 
     #[test]
-    fn test_config_merge() {
-        let base = Config::default();
-        let mut override_config = Config::default();
-        override_config.app.scan_interval_ms = 60000;
-
-        let _loader = ConfigLoader::new("test");
-        let merged = ConfigLoader::merge_configs(base, override_config);
-        assert_eq!(merged.app.scan_interval_ms, 60000);
+    fn test_config_figment_serialization() {
+        let config = Config::default();
+        let figment = Figment::new().merge(Serialized::defaults(config.clone()));
+        let extracted: Config = figment.extract().expect("Failed to extract config in test");
+        assert_eq!(config.app.scan_interval_ms, extracted.app.scan_interval_ms);
     }
 
     #[test]
@@ -494,11 +357,11 @@ mod tests {
     }
 
     #[test]
-    fn test_config_serialization() {
+    fn test_config_toml_serialization() {
         let config = Config::default();
-        let yaml = serde_yaml::to_string(&config).expect("Failed to serialize config in test");
+        let toml = toml::to_string(&config).expect("Failed to serialize config to TOML in test");
         let deserialized: Config =
-            serde_yaml::from_str(&yaml).expect("Failed to deserialize config in test");
+            toml::from_str(&toml).expect("Failed to deserialize config from TOML in test");
         assert_eq!(
             config.app.scan_interval_ms,
             deserialized.app.scan_interval_ms

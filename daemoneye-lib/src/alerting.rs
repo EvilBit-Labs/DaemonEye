@@ -33,9 +33,6 @@ pub enum AlertingError {
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
-    #[error("YAML serialization error: {0}")]
-    YamlSerializationError(String),
-
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
@@ -105,7 +102,6 @@ impl AlertSink for StdoutSink {
     ///
     /// The alert is formatted according to `self.format`:
     /// - `Json`: pretty-prints the alert as JSON (may produce `AlertingError::SerializationError`).
-    /// - `Yaml`: serializes to YAML (maps YAML errors to `AlertingError::YamlSerializationError`).
     /// - `Human`: a concise human-readable single-line string using `severity`, `detection_rule_id`, `title`, and `description`.
     /// - `Csv`: a single-line CSV with `id,severity,detection_rule_id,title,description`.
     ///
@@ -138,8 +134,6 @@ impl AlertSink for StdoutSink {
                 "[{}] {} - {}: {}",
                 alert.severity, alert.detection_rule_id, alert.title, alert.description
             ),
-            OutputFormat::Yaml => serde_yaml::to_string(alert)
-                .map_err(|e| AlertingError::YamlSerializationError(e.to_string()))?,
             OutputFormat::Csv => format!(
                 "{},{},{},{},{}",
                 alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
@@ -219,8 +213,6 @@ impl AlertSink for FileSink {
                 "[{}] {} - {}: {}",
                 alert.severity, alert.detection_rule_id, alert.title, alert.description
             ),
-            OutputFormat::Yaml => serde_yaml::to_string(alert)
-                .map_err(|e| AlertingError::YamlSerializationError(e.to_string()))?,
             OutputFormat::Csv => format!(
                 "{},{},{},{},{}",
                 alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
@@ -263,7 +255,6 @@ impl AlertSink for FileSink {
 pub enum OutputFormat {
     Json,
     Human,
-    Yaml,
     Csv,
 }
 
@@ -274,7 +265,6 @@ impl std::str::FromStr for OutputFormat {
         match s.to_lowercase().as_str() {
             "json" => Ok(Self::Json),
             "human" => Ok(Self::Human),
-            "yaml" => Ok(Self::Yaml),
             "csv" => Ok(Self::Csv),
             _ => Err(AlertingError::ConfigurationError(format!(
                 "Unknown output format: {s}"
@@ -288,7 +278,6 @@ impl std::fmt::Display for OutputFormat {
         match *self {
             Self::Json => write!(f, "json"),
             Self::Human => write!(f, "human"),
-            Self::Yaml => write!(f, "yaml"),
             Self::Csv => write!(f, "csv"),
         }
     }
@@ -759,12 +748,7 @@ mod tests {
                 .expect("Failed to parse human"),
             OutputFormat::Human
         );
-        assert_eq!(
-            "yaml"
-                .parse::<OutputFormat>()
-                .expect("Failed to parse yaml"),
-            OutputFormat::Yaml
-        );
+
         assert_eq!(
             "csv".parse::<OutputFormat>().expect("Failed to parse csv"),
             OutputFormat::Csv
