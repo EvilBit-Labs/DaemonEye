@@ -279,13 +279,15 @@ fn main() -> anyhow::Result<()> {
 
 // ProcessEventSource wraps existing ProcessMessageHandler
 pub struct ProcessEventSource {
-    handler: ProcessMessageHandler,  // EXISTING: Complete process logic
-    config: AppConfig,               // EXISTING: Configuration structure
+    handler: ProcessMessageHandler, // EXISTING: Complete process logic
+    config: AppConfig,              // EXISTING: Configuration structure
 }
 
 #[async_trait]
 impl EventSource for ProcessEventSource {
-    fn name(&self) -> &'static str { "process-monitor" }
+    fn name(&self) -> &'static str {
+        "process-monitor"
+    }
 
     fn capabilities(&self) -> SourceCaps {
         SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE
@@ -356,7 +358,9 @@ pub struct ProcessEventSource {
 
 #[async_trait]
 impl EventSource for ProcessEventSource {
-    fn name(&self) -> &'static str { "process-monitor" }
+    fn name(&self) -> &'static str {
+        "process-monitor"
+    }
 
     fn capabilities(&self) -> SourceCaps {
         SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE

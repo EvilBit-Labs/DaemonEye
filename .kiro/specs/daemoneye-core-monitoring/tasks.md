@@ -41,7 +41,7 @@
 
   - Add connection pooling for multiple collector-core components
   - Implement load balancing and failover between multiple collectors
-  - Add metrics collection for IPC client performance monitoring
+  - Add metrics collection for IPC client performance baseline establishment (monitoring thresholds will be set after optimization)
   - Enhance error recovery with circuit breaker patterns
   - _Requirements: 3.1, 3.2_
 
@@ -60,7 +60,7 @@
   - Add cross-platform tests (Linux, macOS, Windows) for local socket functionality
   - Implement integration tests for task distribution from daemoneye-agent to collector components
   - Add property-based tests for codec robustness with malformed inputs
-  - Create performance benchmarks ensuring no regression in message throughput or latency
+  - Create criterion benchmarks to establish baseline performance metrics for message throughput and latency (no performance targets set, collecting baselines for future optimization)
   - Write security validation tests for connection authentication and message integrity
   - _Requirements: 3.1, 3.2_
 
@@ -110,10 +110,10 @@
 - [x] 4.5 Complete collector-core testing suite - [#78](https://github.com/EvilBit-Labs/DaemonEye/issues/78)
 
   - Write integration tests for multiple concurrent EventSource registration and lifecycle management
-  - Add criterion benchmarks for event batching, backpressure handling, and graceful shutdown coordination
+  - Add criterion benchmarks for event batching, backpressure handling, and graceful shutdown coordination (collecting baseline performance data for future optimization)
   - Create property-based tests for CollectionEvent serialization and capability negotiation
   - Implement chaos testing for EventSource failure scenarios and recovery behavior
-  - Add performance benchmarks for collector-core runtime overhead and event throughput
+  - Add criterion benchmarks for collector-core runtime overhead and event throughput (establishing baseline metrics for future performance tuning)
   - Write security tests for EventSource isolation and capability enforcement
   - Create compatibility tests ensuring collector-core works with existing procmond and daemoneye-agent
   - _Requirements: 11.1, 11.2, 12.1, 12.2, 13.1, 13.2, 13.5_
@@ -199,9 +199,8 @@
 - [ ] 5.7 Add comprehensive cross-platform testing - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create cross-platform integration tests for all ProcessCollector implementations
-  - Add performance benchmarks comparing platform-specific vs sysinfo implementations
   - Implement privilege escalation/dropping tests for all platforms
-  - Add criterion benchmarks with high process counts (10,000+ processes)
+  - Add criterion benchmarks with high process counts (10,000+ processes) (do not set an expected minimum performance, just collect the values)
   - Create compatibility tests for different OS versions and configurations
   - Write property-based tests for process enumeration edge cases
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
@@ -218,7 +217,7 @@
   - Add support for triggering Binary Hasher collector for suspicious executables
   - Create event correlation and analysis chain coordination capabilities
   - **Collector-Core Compliance**: Ensure EventSource trait implementation with async_trait and SourceCaps
-  - **Performance Requirements**: Validate >1000 events/second throughput and \<5% CPU usage per collector-core standards
+  - **Performance Requirements**: Establish baseline metrics for events/second throughput and CPU usage (targets will be set after baseline collection and optimization)
   - Implement graceful shutdown with cooperative cancellation and timeout enforcement
   - Write unit tests for Monitor Collector behavior and trigger event generation
   - Add integration tests for collector coordination and trigger workflows
@@ -226,12 +225,12 @@
 
 - [ ] 5.9 Validate GitHub issue #89 performance and acceptance criteria - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
-  - Implement and validate performance targets: \<5% CPU usage during continuous monitoring
-  - Ensure memory usage stays under 50MB during normal operation as specified in GitHub issue
-  - Validate process enumeration completes within 100ms for systems with \<1000 processes
-  - Implement trigger event latency under 10ms for critical events as required
-  - Add resource usage tracking and performance optimization for minimal system impact
-  - Create performance benchmarks validating all GitHub issue #89 acceptance criteria
+  - Establish baseline performance metrics for CPU usage during continuous monitoring (GitHub issue targets will be validated after optimization)
+  - Collect baseline memory usage metrics during normal operation (GitHub issue targets will be validated after optimization)
+  - Establish baseline metrics for process enumeration timing with varying system loads (GitHub issue targets will be validated after optimization)
+  - Collect baseline metrics for trigger event latency (GitHub issue targets will be validated after optimization)
+  - Add resource usage tracking to establish baseline metrics for system impact (optimization will be performed after baseline collection)
+  - Create criterion benchmarks to establish baseline performance metrics for GitHub issue #89 acceptance criteria (collecting data for future validation and optimization)
   - Implement scalability testing for high process churn environments (10,000+ processes)
   - Add comprehensive testing coverage (>90% unit tests, integration tests, cross-platform compatibility)
   - Validate event generation and triggering functionality meets GitHub issue specifications
@@ -244,7 +243,7 @@
   - Implement SHA-256 hash computation for accessible executable files in ProcessMessageHandler
   - Handle missing or inaccessible executable files without failing enumeration
   - Store hash_algorithm field ('sha256') with computed hash values in ProtoProcessRecord
-  - Write criterion benchmarks to ensure hashing doesn't impact enumeration speed
+  - Write criterion benchmarks to establish baseline performance metrics for hashing impact on enumeration speed (collecting data for future optimization)
   - _Requirements: 2.1, 2.2, 2.4_
 
 - [ ] 7. Create ProcessEventSource and refactor procmond to use collector-core
@@ -348,7 +347,7 @@
 
   - Implement service health endpoints for external monitoring systems
   - Add service status reporting with component health aggregation
-  - Create service metrics export for monitoring collector process status and performance
+  - Create service metrics export for monitoring collector process status and establishing performance baselines
   - Implement service configuration validation and startup diagnostics
   - Add service log aggregation from all managed collector processes
   - Create service recovery actions for common failure scenarios and collector crashes
@@ -372,7 +371,7 @@
   - Add service failure scenario testing with collector process crashes and recovery
   - Implement service upgrade testing with configuration migration and data preservation
   - Create service security testing for privilege boundaries and access controls
-  - Add service performance testing under high load with multiple collector processes
+  - Add service performance baseline collection under high load with multiple collector processes (establishing metrics for future optimization)
   - Write service compatibility tests across different OS versions and configurations
   - Create chaos testing for various failure modes and recovery validation
   - Add end-to-end tests for procmond Monitor Collector triggering analysis collectors
@@ -380,7 +379,7 @@
   - Test continuous operation, event generation, and collector coordination as specified
   - Validate daemoneye-agent integration, health check endpoints, and graceful shutdown
   - Test cross-platform compatibility (Linux, Windows, macOS) per GitHub issue requirements
-  - Validate performance requirements and functional requirements from GitHub issue #89
+  - Collect baseline performance metrics for GitHub issue #89 requirements (validation will occur after optimization phase)
   - _Requirements: All requirements verification_
 
 - [ ] 10. Create tamper-evident audit logging system - [#42](https://github.com/EvilBit-Labs/DaemonEye/issues/42)
@@ -466,11 +465,11 @@
 - [ ] 12.5 Validate SQL-to-IPC integration with comprehensive testing
 
   - Create end-to-end integration tests for SQL rules with multi-collector queries
-  - Add performance validation comparing SQL-to-IPC vs placeholder detection
+  - Add criterion benchmarks comparing SQL-to-IPC vs placeholder detection performance (establishing baseline metrics for future optimization)
   - Implement security testing for SQL parsing and pushdown optimization
   - Create integration tests for reactive pipeline orchestration and auto-correlation
   - Write compatibility tests ensuring existing detection workflows continue to function
-  - Add performance benchmarks for SQL parsing, planning, and execution phases
+  - Add criterion benchmarks for SQL parsing, planning, and execution phases (establishing baseline performance metrics for future optimization)
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
 - [x] 13. Create alert generation and management system - [#51](https://github.com/EvilBit-Labs/DaemonEye/issues/51)
@@ -585,7 +584,7 @@
 
   - Create HealthChecker for component status verification (database, alert sinks, collector-core components via interprocess crate)
   - Add system health overview with color-coded status indicators
-  - Implement performance metrics reporting and resource usage tracking
+  - Implement performance baseline metrics reporting and resource usage tracking (thresholds will be set after optimization)
   - Create configuration validation with detailed error messages and troubleshooting guidance
   - Write health check tests with simulated component failures
   - _Requirements: 8.4, 8.5, 10.2, 10.3_
@@ -599,18 +598,100 @@
   - Write integration tests for airgapped environment operation
   - _Requirements: 9.1, 9.2, 9.4, 9.5_
 
-- [ ] 20. Implement comprehensive observability and metrics - [#60](https://github.com/EvilBit-Labs/DaemonEye/issues/60)
+- [ ] 20. Add criterion benchmarks for performance-sensitive functions
+
+- [ ] 20.1 Benchmark process enumeration and collection functions
+
+  - Create criterion benchmarks for ProcessCollector trait implementations (sysinfo, Linux, macOS, Windows)
+  - Add benchmarks for process enumeration with varying process counts (100, 1000, 10000+ processes)
+  - Benchmark cross-platform process metadata extraction and conversion functions
+  - Create benchmarks for ProcessEventSource event generation and batching
+  - Add memory usage benchmarks for process data structures and serialization
+  - Benchmark process filtering and predicate evaluation performance
+  - _Requirements: 1.1, 1.5, 6.1, 6.2_
+
+- [ ] 20.2 Benchmark SHA-256 hashing and integrity verification functions
+
+  - Create criterion benchmarks for HashComputer trait implementations
+  - Add benchmarks for SHA-256 computation with varying file sizes (1KB, 1MB, 100MB+)
+  - Benchmark executable file access and hash computation under different privilege levels
+  - Create benchmarks for hash verification and comparison operations
+  - Add memory usage benchmarks for hash computation and storage
+  - Benchmark concurrent hashing operations and resource contention
+  - _Requirements: 2.1, 2.2, 2.4_
+
+- [ ] 20.3 Benchmark IPC communication and serialization functions
+
+  - Create criterion benchmarks for IpcCodec protobuf serialization and deserialization
+  - Add benchmarks for IPC message framing, CRC32 validation, and transport overhead
+  - Benchmark IpcClientManager connection establishment and reconnection logic
+  - Create benchmarks for concurrent IPC communication with multiple collectors
+  - Add memory usage benchmarks for IPC message buffers and connection pooling
+  - Benchmark capability negotiation and schema registry operations
+  - _Requirements: 3.1, 3.2, 11.1, 11.2_
+
+- [ ] 20.4 Benchmark database operations and storage functions
+
+  - Create criterion benchmarks for redb database initialization and table creation
+  - Add benchmarks for ProcessRecord, Alert, and DetectionRule serialization/deserialization
+  - Benchmark database write operations with varying batch sizes and commit strategies
+  - Create benchmarks for database query operations and index performance
+  - Add memory usage benchmarks for database connections and transaction handling
+  - Benchmark concurrent database access and lock contention scenarios
+  - _Requirements: 1.3, 4.4, 7.4_
+
+- [ ] 20.5 Benchmark alert delivery and notification functions
+
+  - Create criterion benchmarks for alert generation and formatting operations
+  - Add benchmarks for multi-channel alert delivery (stdout, syslog, webhook, email)
+  - Benchmark alert deduplication and rate limiting algorithms
+  - Create benchmarks for alert delivery retry logic and circuit breaker operations
+  - Add memory usage benchmarks for alert queuing and batching mechanisms
+  - Benchmark concurrent alert delivery and sink performance under load
+  - _Requirements: 5.2, 5.3, 5.4, 5.5_
+
+- [ ] 20.6 Benchmark SQL parsing and detection engine functions
+
+  - Create criterion benchmarks for SQL parsing and AST generation using sqlparser-rs
+  - Add benchmarks for SQL validation and security checking operations
+  - Benchmark detection rule compilation and optimization phases
+  - Create benchmarks for rule execution and pattern matching performance
+  - Add memory usage benchmarks for compiled rules and execution contexts
+  - Benchmark concurrent rule execution and resource sharing scenarios
+  - _Requirements: 3.1, 3.2, 3.3, 3.5_
+
+- [ ] 20.7 Benchmark collector-core framework functions
+
+  - Create criterion benchmarks for EventSource trait registration and lifecycle management
+  - Add benchmarks for CollectionEvent generation, batching, and routing performance
+  - Benchmark capability negotiation and schema registry lookup operations
+  - Create benchmarks for event bus communication and inter-collector coordination
+  - Add memory usage benchmarks for collector runtime overhead and event buffering
+  - Benchmark graceful shutdown coordination and resource cleanup operations
+  - _Requirements: 11.1, 11.2, 11.5_
+
+- [ ] 20.8 Create performance regression detection and CI integration
+
+  - Set up criterion benchmark baseline storage and comparison infrastructure
+  - Add automated performance regression detection in CI pipeline
+  - Create performance alert thresholds and notification mechanisms
+  - Implement benchmark result visualization and trend analysis
+  - Add performance budget framework for critical code paths (budgets will be set after baseline collection)
+  - Create benchmark documentation and performance baseline collection guidelines
+  - _Requirements: All performance requirements verification_
+
+- [ ] 21. Implement comprehensive observability and metrics - [#60](https://github.com/EvilBit-Labs/DaemonEye/issues/60)
 
   - Add Prometheus-compatible metrics export for collection rate, detection latency, alert delivery
-  - Create structured logging with correlation IDs and performance metrics
+  - Create structured logging with correlation IDs and performance baseline metrics collection
   - Implement HTTP health endpoints (localhost-only) for external monitoring
   - Add resource utilization metrics (CPU, memory, disk usage) and error rate tracking
   - Write metrics accuracy tests and Prometheus scraping compatibility verification
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
-- [ ] 21. Create comprehensive test suite and quality assurance
+- [x] 22. Create comprehensive test suite and quality assurance
 
-- [ ] 21.1 Implement unit test coverage - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
+- [ ] 22.1 Implement unit test coverage - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
   - Add unit tests for all core functionality targeting >85% code coverage
   - Set up llvm-cov for code coverage measurement and reporting
@@ -618,7 +699,7 @@
   - Write unit tests for error handling and edge cases
   - _Requirements: All requirements verification_
 
-- [ ] 21.2 Add integration and CLI testing - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
+- [ ] 22.2 Add integration and CLI testing - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
   - Implement integration tests with insta for CLI snapshot testing
   - Add cross-component interaction tests for interprocess-based IPC communication
@@ -626,17 +707,17 @@
   - Write snapshot tests with insta for CLI output validation
   - _Requirements: All requirements verification_
 
-- [ ] 21.3 Create performance and property-based testing - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
+- [ ] 22.3 Create performance and property-based testing - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
-  - Add performance tests with criterion for regression detection on critical paths (process enumeration, SQL execution, IPC throughput)
+  - Add criterion benchmarks for baseline collection on critical paths (process enumeration, SQL execution, IPC throughput) - regression detection will be enabled after optimization
   - Implement property-based tests with proptest for edge case discovery in data models, SQL parsing, and collector-core event handling
-  - Create criterion benchmarks for high-volume process monitoring (10,000+ processes, sustained monitoring)
+  - Create criterion benchmarks for high-volume process monitoring baseline collection (10,000+ processes, sustained monitoring) - performance targets will be set after optimization
   - Write benchmark tests for collector-core framework overhead and event source registration/deregistration
   - Add memory usage benchmarks for long-running monitoring scenarios and database growth patterns
   - Create criterion benchmarks for alert delivery under high-volume detection scenarios
   - _Requirements: All requirements verification_
 
-- [ ] 21.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
+- [ ] 22.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
   - Set up GitHub Actions CI matrix for Linux, macOS, Windows with multiple Rust versions (stable, beta, MSRV)
   - Add automated quality gates: fmt-check, clippy strict, comprehensive test suite
@@ -645,9 +726,9 @@
   - Create automated release pipeline with platform-specific packages and code signing
   - _Requirements: All requirements verification_
 
-- [ ] 21. Comprehensive stress testing and load validation
+- [ ] 23. Comprehensive stress testing and load validation
 
-- [ ] 21.1 Implement collector-core stress testing suite
+- [ ] 23.1 Implement collector-core stress testing suite
 
   - Create stress tests for event batching under extreme load (100,000+ events/second)
   - Add stress tests for backpressure handling with multiple blocked event sources
@@ -657,7 +738,7 @@
   - Write endurance tests for 24+ hour continuous operation under load
   - _Requirements: 11.1, 11.2, 12.1, 12.2, 13.1, 13.2, 13.5_
 
-- [ ] 21.2 Process enumeration stress testing
+- [ ] 23.2 Process enumeration stress testing
 
   - Create stress tests with extremely high process counts (50,000+ processes)
   - Add stress tests for rapid process creation/termination scenarios
@@ -667,7 +748,7 @@
   - Write platform-specific stress tests for OS-level resource limits
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 21.3 Database and storage stress testing
+- [ ] 23.3 Database and storage stress testing
 
   - Create stress tests for redb database under extreme write loads (10,000+ records/second)
   - Add stress tests for concurrent read/write operations with resource contention
@@ -677,7 +758,7 @@
   - Write endurance tests for long-term database stability under continuous load
   - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 21.4 Alert delivery stress testing
+- [ ] 23.4 Alert delivery stress testing
 
   - Create stress tests for alert delivery under high-volume detection scenarios (1,000+ alerts/minute)
   - Add stress tests for multiple alert sink failures and recovery scenarios
@@ -687,7 +768,7 @@
   - Write endurance tests for alert delivery reliability over extended periods
   - _Requirements: 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 21.5 IPC communication stress testing
+- [ ] 23.5 IPC communication stress testing
 
   - Create stress tests for IPC communication under extreme message loads
   - Add stress tests for connection failures and automatic reconnection scenarios
@@ -697,7 +778,7 @@
   - Write endurance tests for IPC stability over extended operation periods
   - _Requirements: 3.1, 3.2, 11.1, 11.2_
 
-- [ ] 21.6 System-wide integration stress testing
+- [ ] 23.6 System-wide integration stress testing
 
   - Create end-to-end stress tests for complete monitoring workflows under extreme load
 
@@ -733,7 +814,7 @@
 
   - _Requirements: All requirements verification_
 
-- [ ] 22. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/DaemonEye/issues/62)
+- [ ] 24. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/DaemonEye/issues/62)
 
   - Implement comprehensive SQL injection prevention testing with OWASP test vectors and malicious input fuzzing
   - Add privilege boundary verification tests for all components with capability dropping validation
