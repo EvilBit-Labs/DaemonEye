@@ -793,7 +793,18 @@ impl FallbackProcessCollector {
 
             (
                 if cpu > 0.0 { Some(cpu as f64) } else { None },
-                if memory > 0 { Some(memory) } else { None },
+                if memory > 0 {
+                    // Convert from KiB to bytes, handling potential overflow
+                    memory.checked_mul(1024).or_else(|| {
+                        tracing::warn!(
+                            memory_kib = memory,
+                            "Memory value too large, using saturated value"
+                        );
+                        Some(u64::MAX)
+                    })
+                } else {
+                    None
+                },
                 if start > 0 {
                     Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(start))
                 } else {

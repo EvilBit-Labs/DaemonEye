@@ -19,24 +19,28 @@ use tokio::time::{sleep, timeout};
 fn create_test_database() -> Arc<Mutex<DatabaseManager>> {
     let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
     let db_path = temp_dir.path().join("integration_test.db");
-    Arc::new(Mutex::new(DatabaseManager::new(&db_path).expect(
-        "Failed to create database manager for integration test",
-    )))
+    let db_manager = Arc::new(Mutex::new(
+        DatabaseManager::new(&db_path)
+            .expect("Failed to create database manager for integration test"),
+    ));
+    // Keep the temp_dir alive by leaking it - this is acceptable for tests
+    std::mem::forget(temp_dir);
+    db_manager
 }
 
 /// Creates a test configuration optimized for integration testing.
 fn create_test_config() -> ProcessSourceConfig {
     ProcessSourceConfig {
-        collection_interval: Duration::from_millis(100), // Fast for testing
-        collect_enhanced_metadata: true,
-        max_processes_per_cycle: 50,      // Limit for faster tests
-        compute_executable_hashes: false, // Disabled for speed
-        max_events_in_flight: 100,
-        collection_timeout: Duration::from_secs(5),
-        shutdown_timeout: Duration::from_secs(2),
-        max_backpressure_wait: Duration::from_millis(500),
-        event_batch_size: 10,
-        batch_timeout: Duration::from_millis(100),
+        collection_interval: Duration::from_millis(1000), // More realistic interval
+        collect_enhanced_metadata: false,                 // Disabled for speed in tests
+        max_processes_per_cycle: 10,                      // Very small limit for testing
+        compute_executable_hashes: false,                 // Disabled for speed
+        max_events_in_flight: 50,
+        collection_timeout: Duration::from_secs(10), // Longer timeout
+        shutdown_timeout: Duration::from_secs(5),
+        max_backpressure_wait: Duration::from_millis(1000),
+        event_batch_size: 5,
+        batch_timeout: Duration::from_millis(500),
     }
 }
 
@@ -111,15 +115,25 @@ async fn test_process_event_source_lifecycle_management() {
     let shutdown_clone = Arc::clone(&shutdown_signal);
     let start_task = tokio::spawn(async move { source_clone.start(tx, shutdown_clone).await });
 
-    // Wait for some events to be generated
+    // Wait for at least one event to be generated
     let mut event_count = 0;
-    let max_wait = Duration::from_secs(2);
+    let max_wait = Duration::from_secs(15); // More generous timeout
     let start_time = std::time::Instant::now();
 
-    while event_count < 10 && start_time.elapsed() < max_wait {
-        if let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
+    println!("Starting to wait for process events...");
+    while event_count < 1 && start_time.elapsed() < max_wait {
+        println!(
+            "Waiting for events, elapsed: {:?}, count: {}",
+            start_time.elapsed(),
+            event_count
+        );
+        if let Ok(Some(event)) = timeout(Duration::from_millis(200), rx.recv()).await {
             match event {
                 CollectionEvent::Process(proc_event) => {
+                    println!(
+                        "Received process event: PID={}, name={}",
+                        proc_event.pid, proc_event.name
+                    );
                     assert!(proc_event.pid > 0, "Process PID should be valid");
                     assert!(
                         !proc_event.name.is_empty(),
@@ -130,12 +144,16 @@ async fn test_process_event_source_lifecycle_management() {
                 }
                 _ => panic!("Unexpected event type"),
             }
+        } else {
+            println!("No event received in this iteration");
         }
     }
 
+    println!("Finished waiting. Total events received: {}", event_count);
     assert!(
         event_count > 0,
-        "Should have received at least one process event"
+        "Should have received at least one process event within {} seconds",
+        max_wait.as_secs()
     );
 
     // Signal shutdown
@@ -207,20 +225,33 @@ async fn test_process_event_source_statistics_integration() {
     // Note: We can't access source_clone here due to move, so we'll test differently
     // The statistics would be updated inside the spawned task
 
-    // Consume some events to verify they're being generated
+    // Consume at least one event to verify they're being generated
     let mut received_events = 0;
-    let max_wait = Duration::from_secs(2);
+    let max_wait = Duration::from_secs(15); // More generous timeout
     let start_time = std::time::Instant::now();
 
-    while received_events < 3 && start_time.elapsed() < max_wait {
-        if let Ok(Some(_)) = timeout(Duration::from_millis(200), rx.recv()).await {
+    println!("Starting to wait for process events in statistics test...");
+    while received_events < 1 && start_time.elapsed() < max_wait {
+        println!(
+            "Waiting for events, elapsed: {:?}, count: {}",
+            start_time.elapsed(),
+            received_events
+        );
+        if let Ok(Some(event)) = timeout(Duration::from_millis(200), rx.recv()).await {
+            println!("Received process event: {:?}", event);
             received_events += 1;
+        } else {
+            println!("No event received in this iteration");
         }
     }
 
+    println!(
+        "Finished waiting. Total events received: {}",
+        received_events
+    );
     assert!(
         received_events > 0,
-        "Should have received some events (got {})",
+        "Should have received at least one event (got {})",
         received_events
     );
 

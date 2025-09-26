@@ -187,19 +187,29 @@ impl ConfigLoader {
 
     /// Load configuration with hierarchical overrides using figment.
     pub fn load(&self) -> Result<Config, ConfigError> {
-        let config = Figment::new()
+        let mut figment = Figment::new()
             // Start with embedded defaults
-            .merge(Serialized::defaults(Config::default()))
-            // System configuration file
-            .merge(Toml::file("/etc/daemoneye/config.toml"))
-            // User configuration file
-            .merge(Toml::file(Self::user_config_path()))
-            // Environment variables with component prefix
-            .merge(Env::prefixed(&format!(
-                "{}_",
-                self.component.replace('-', "_").to_uppercase()
-            )))
-            .extract()?;
+            .merge(Serialized::defaults(Config::default()));
+
+        // System configuration file (optional)
+        let system_config_path = "/etc/daemoneye/config.toml";
+        if std::path::Path::new(system_config_path).exists() {
+            figment = figment.merge(Toml::file(system_config_path));
+        }
+
+        // User configuration file (optional)
+        let user_config_path = Self::user_config_path();
+        if user_config_path.exists() {
+            figment = figment.merge(Toml::file(&user_config_path));
+        }
+
+        // Environment variables with component prefix
+        figment = figment.merge(Env::prefixed(&format!(
+            "{}_",
+            self.component.replace('-', "_").to_uppercase()
+        )));
+
+        let config = figment.extract()?;
 
         // Validate final configuration
         Self::validate_config(&config)?;
@@ -300,6 +310,20 @@ mod tests {
             .load_blocking()
             .expect("Failed to load config in test");
         assert_eq!(config.app.scan_interval_ms, 30000);
+    }
+
+    #[test]
+    fn test_config_loader_handles_missing_files() {
+        // This test verifies that configuration loading works even when
+        // system and user config files don't exist (should fall back to defaults)
+        let loader = ConfigLoader::new("test-component");
+        let config = loader
+            .load()
+            .expect("Failed to load config with missing files");
+
+        // Should get default values when no config files exist
+        assert_eq!(config.app.scan_interval_ms, 30000);
+        assert_eq!(config.app.batch_size, 1000);
     }
 
     #[test]

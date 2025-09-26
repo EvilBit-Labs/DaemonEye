@@ -64,7 +64,7 @@ impl From<MacOSCollectionError> for ProcessCollectionError {
 }
 
 /// Enhanced macOS process entitlements information.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ProcessEntitlements {
     /// Process has debugging entitlements
     pub can_debug: bool,
@@ -83,7 +83,7 @@ pub struct ProcessEntitlements {
 }
 
 /// Code signing information for a process.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct CodeSigningInfo {
     /// Process is code signed
     pub signed: bool,
@@ -98,7 +98,7 @@ pub struct CodeSigningInfo {
 }
 
 /// Bundle information for a process.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct BundleInfo {
     /// Bundle identifier
     pub bundle_id: Option<String>,
@@ -111,7 +111,7 @@ pub struct BundleInfo {
 }
 
 /// Enhanced macOS process metadata.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct MacOSProcessMetadata {
     /// Process entitlements
     pub entitlements: ProcessEntitlements,
@@ -490,6 +490,20 @@ impl EnhancedMacOSCollector {
         let accessible = true; // If we can read process info, it's accessible
         let file_exists = executable_path.is_some();
 
+        // Collect macOS-specific enhanced metadata if configured
+        let platform_metadata = if self.base_config.collect_enhanced_metadata {
+            let metadata = self.read_enhanced_metadata(pid_u32);
+            match serde_json::to_value(metadata) {
+                Ok(value) => Some(value),
+                Err(e) => {
+                    tracing::warn!(pid = pid_u32, error = %e, "Failed to serialize macOS metadata");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(ProcessEvent {
             pid: pid_u32,
             ppid,
@@ -504,7 +518,7 @@ impl EnhancedMacOSCollector {
             accessible,
             file_exists,
             timestamp: SystemTime::now(),
-            platform_metadata: None, // macOS metadata not implemented yet
+            platform_metadata,
         })
     }
 
