@@ -193,7 +193,8 @@ pub trait ProcessCollectionService: Send + Sync {
 ```rust
 #[async_trait]
 pub trait DetectionService: Send + Sync {
-    async fn execute_rules(&self, scan_context: &ScanContext) -> Result<Vec<Alert>, DetectionError>;
+    async fn execute_rules(&self, scan_context: &ScanContext)
+    -> Result<Vec<Alert>, DetectionError>;
     async fn load_rules(&self) -> Result<Vec<DetectionRule>, DetectionError>;
     async fn add_rule(&self, rule: DetectionRule) -> Result<(), DetectionError>;
     async fn remove_rule(&self, rule_name: &str) -> Result<(), DetectionError>;
@@ -226,8 +227,12 @@ pub struct Config {
 impl Config {
     pub async fn load_from_file(path: &str) -> Result<Self, ConfigError>;
     pub async fn load_from_env() -> Result<Self, ConfigError>;
-    pub fn get<T>(&self, key: &str) -> Result<T, ConfigError> where T: DeserializeOwned;
-    pub fn set<T>(&mut self, key: &str, value: T) -> Result<(), ConfigError> where T: Serialize;
+    pub fn get<T>(&self, key: &str) -> Result<T, ConfigError>
+    where
+        T: DeserializeOwned;
+    pub fn set<T>(&mut self, key: &str, value: T) -> Result<(), ConfigError>
+    where
+        T: Serialize;
     pub fn validate(&self) -> Result<(), ConfigError>;
 }
 ```
@@ -264,7 +269,11 @@ impl Database {
     pub async fn create_schema(&self) -> Result<(), DatabaseError>;
     pub async fn insert_process(&self, process: &ProcessInfo) -> Result<(), DatabaseError>;
     pub async fn get_process(&self, pid: u32) -> Result<Option<ProcessInfo>, DatabaseError>;
-    pub async fn query_processes(&self, query: &str, params: &[&dyn ToSql]) -> Result<Vec<ProcessInfo>, DatabaseError>;
+    pub async fn query_processes(
+        &self,
+        query: &str,
+        params: &[&dyn ToSql],
+    ) -> Result<Vec<ProcessInfo>, DatabaseError>;
     pub async fn insert_alert(&self, alert: &Alert) -> Result<(), DatabaseError>;
     pub async fn get_alerts(&self, limit: Option<usize>) -> Result<Vec<Alert>, DatabaseError>;
     pub async fn cleanup_old_data(&self, retention_days: u32) -> Result<(), DatabaseError>;
@@ -564,8 +573,7 @@ pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
         .map(|p| ProcessInfo::from(p))
         .collect::<Vec<_>>();
 
-    Ok(processes)
-        .context("Failed to collect process information")
+    Ok(processes).context("Failed to collect process information")
 }
 ```
 
@@ -574,9 +582,9 @@ pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
 ### Basic Process Monitoring
 
 ```rust
+use daemoneye_lib::alerting::AlertManager;
 use daemoneye_lib::collector::ProcessCollector;
 use daemoneye_lib::storage::Database;
-use daemoneye_lib::alerting::AlertManager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -597,10 +605,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check for suspicious processes
-    let suspicious = db.query_processes(
-        "SELECT * FROM processes WHERE name LIKE '%suspicious%'",
-        &[]
-    ).await?;
+    let suspicious = db
+        .query_processes(
+            "SELECT * FROM processes WHERE name LIKE '%suspicious%'",
+            &[],
+        )
+        .await?;
 
     // Send alerts
     for process in suspicious {
@@ -615,8 +625,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Custom Alert Sink
 
 ```rust
-use daemoneye_lib::alerting::{AlertSink, Alert, DeliveryResult, DeliveryError};
 use async_trait::async_trait;
+use daemoneye_lib::alerting::{Alert, AlertSink, DeliveryError, DeliveryResult};
 
 pub struct CustomSink {
     endpoint: String,
@@ -635,7 +645,8 @@ impl CustomSink {
 #[async_trait]
 impl AlertSink for CustomSink {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, DeliveryError> {
-        let response = self.client
+        let response = self
+            .client
             .post(&self.endpoint)
             .json(alert)
             .send()

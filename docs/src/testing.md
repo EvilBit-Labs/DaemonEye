@@ -111,7 +111,7 @@ async fn test_agent_with_mock_collector() {
         .times(1)
         .returning(|| Ok(CollectionResult::default()));
 
-    let agent = daemoneye-agent::new(Box::new(mock_collector));
+    let agent = daemoneye - agent::new(Box::new(mock_collector));
     let result = agent.run_collection_cycle().await;
 
     assert!(result.is_ok());
@@ -180,7 +180,10 @@ async fn test_database_integration() {
     assert_eq!(process.pid, retrieved.pid);
 
     // Test query execution
-    let results = db.query_processes("SELECT * FROM processes WHERE pid = ?", &[1234]).await.unwrap();
+    let results = db
+        .query_processes("SELECT * FROM processes WHERE pid = ?", &[1234])
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 }
 ```
@@ -197,9 +200,7 @@ async fn test_ipc_communication() {
 
     // Start server
     let server = IpcServer::new(&socket_path).await.unwrap();
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     // Wait for server to start
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -309,7 +310,7 @@ async fn test_full_system_workflow() {
 
     // Start daemoneye-agent
     let agent_handle = tokio::spawn(async move {
-        let agent = daemoneye-agent::new(&config_path).await.unwrap();
+        let agent = daemoneye - agent::new(&config_path).await.unwrap();
         agent.run().await
     });
 
@@ -318,9 +319,14 @@ async fn test_full_system_workflow() {
 
     // Test CLI operations
     let mut cmd = Command::cargo_bin("daemoneye-cli").unwrap();
-    cmd.args(&["--config", config_path.to_str().unwrap(), "query", "SELECT COUNT(*) FROM processes"])
-        .assert()
-        .success();
+    cmd.args(&[
+        "--config",
+        config_path.to_str().unwrap(),
+        "query",
+        "SELECT COUNT(*) FROM processes",
+    ])
+    .assert()
+    .success();
 
     // Cleanup
     procmond_handle.abort();
@@ -335,7 +341,7 @@ async fn test_full_system_workflow() {
 Test system performance under load:
 
 ```rust
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn benchmark_process_collection(c: &mut Criterion) {
     let mut group = c.benchmark_group("process_collection");

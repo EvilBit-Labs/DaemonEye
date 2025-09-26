@@ -83,7 +83,7 @@ graph LR
 The process collection system uses the `sysinfo` crate for cross-platform process enumeration:
 
 ```rust
-use sysinfo::{System, SystemExt, ProcessExt};
+use sysinfo::{ProcessExt, System, SystemExt};
 
 pub struct ProcessCollector {
     system: System,
@@ -99,7 +99,8 @@ impl ProcessCollector {
     pub async fn collect_processes(&mut self) -> Result<Vec<ProcessInfo>, CollectionError> {
         self.system.refresh_all();
 
-        let processes = self.system
+        let processes = self
+            .system
             .processes()
             .values()
             .map(|p| ProcessInfo::from(p))
@@ -298,7 +299,7 @@ mod tests {
             .times(1)
             .returning(|| Ok(CollectionResult::default()));
 
-        let agent = daemoneye-agent::new(Box::new(mock_collector));
+        let agent = daemoneye - agent::new(Box::new(mock_collector));
         let result = agent.run_collection_cycle().await;
 
         assert!(result.is_ok());
@@ -332,7 +333,7 @@ async fn test_database_integration() {
 Benchmark critical operations:
 
 ```rust
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn benchmark_process_collection(c: &mut Criterion) {
     let mut group = c.benchmark_group("process_collection");
