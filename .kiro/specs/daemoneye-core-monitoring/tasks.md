@@ -206,6 +206,38 @@
   - Write property-based tests for process enumeration edge cases
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
+- [ ] 5.8 Implement Monitor Collector behavior and event-driven architecture - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
+
+  - **Prerequisites**: Complete Task 7.1 (ProcessEventSource implementation) before starting this task
+  - Refactor procmond to implement Monitor Collector behavior (continuous process monitoring)
+  - Add real-time process lifecycle event detection (start, stop, modifications)
+  - Implement suspicious behavior pattern recognition and event generation
+  - Create CollectionEvent::TriggerRequest emission for analysis collectors (binary hasher, etc.)
+  - Add configurable trigger conditions and priority-based event emission (Critical, High, Normal, Low)
+  - Implement event bus communication with other collectors for coordination
+  - Add support for triggering Binary Hasher collector for suspicious executables
+  - Create event correlation and analysis chain coordination capabilities
+  - **Collector-Core Compliance**: Ensure EventSource trait implementation with async_trait and SourceCaps
+  - **Performance Requirements**: Validate >1000 events/second throughput and \<5% CPU usage per collector-core standards
+  - Implement graceful shutdown with cooperative cancellation and timeout enforcement
+  - Write unit tests for Monitor Collector behavior and trigger event generation
+  - Add integration tests for collector coordination and trigger workflows
+  - _Requirements: 11.1, 11.2, 11.5_
+
+- [ ] 5.9 Validate GitHub issue #89 performance and acceptance criteria - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
+
+  - Implement and validate performance targets: \<5% CPU usage during continuous monitoring
+  - Ensure memory usage stays under 50MB during normal operation as specified in GitHub issue
+  - Validate process enumeration completes within 100ms for systems with \<1000 processes
+  - Implement trigger event latency under 10ms for critical events as required
+  - Add resource usage tracking and performance optimization for minimal system impact
+  - Create performance benchmarks validating all GitHub issue #89 acceptance criteria
+  - Implement scalability testing for high process churn environments (10,000+ processes)
+  - Add comprehensive testing coverage (>90% unit tests, integration tests, cross-platform compatibility)
+  - Validate event generation and triggering functionality meets GitHub issue specifications
+  - Ensure data integration with collector-core pipeline and structured logging requirements
+  - _Requirements: 10.1, 10.2, 10.3, 10.4_
+
 - [ ] 6. Implement executable integrity verification with SHA-256 hashing - [#40](https://github.com/EvilBit-Labs/DaemonEye/issues/40)
 
   - Create HashComputer trait for cryptographic hashing of executable files
@@ -229,9 +261,11 @@
 
 - [ ] 7.2 Refactor procmond to use collector-core framework - [#76](https://github.com/EvilBit-Labs/DaemonEye/issues/76)
 
+  - **Prerequisites**: Complete Task 5.8 (Monitor Collector behavior) before integrating with collector-core
   - Refactor procmond main.rs to use collector-core Collector instead of direct IPC server
   - Preserve existing CLI parsing, configuration loading, and database initialization
   - Register ProcessEventSource with collector-core runtime
+  - Integrate Monitor Collector behavior from Task 5.8 with collector-core framework
   - Maintain identical behavior and IPC protocol compatibility
   - Ensure existing telemetry and logging integration continues to work
   - Write integration tests to verify identical behavior with existing daemoneye-agent
@@ -246,7 +280,7 @@
   - Write security tests to verify privilege boundaries and proper dropping
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 9. Implement procmond as Monitor Collector with daemoneye-agent lifecycle management - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
+- [x] 9. Implement procmond as Monitor Collector with daemoneye-agent lifecycle management - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
 - [ ] 9.1 Add proc-daemon crate dependency and cross-platform service infrastructure
 
@@ -258,14 +292,14 @@
   - Write unit tests for service manager trait implementations and configuration validation
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 9.2 Implement procmond as Monitor Collector with continuous operation
+- [ ] 9.2 Integrate Monitor Collector behavior with service lifecycle management
 
-  - Refactor procmond to implement Monitor Collector behavior (continuous process monitoring)
-  - Add real-time process lifecycle event detection (start, stop, modifications)
-  - Implement suspicious behavior pattern recognition and event generation
-  - Create CollectionEvent::TriggerRequest emission for analysis collectors (binary hasher, etc.)
-  - Add configurable trigger conditions and priority-based event emission
-  - Write unit tests for Monitor Collector behavior and trigger event generation
+  - Integrate Task 5.8 Monitor Collector implementation with daemoneye-agent service management
+  - Add service-specific configuration for Monitor Collector behavior and trigger conditions
+  - Implement service restart and recovery handling for Monitor Collector processes
+  - Add service health monitoring integration for Monitor Collector status reporting
+  - Create service-level coordination between Monitor Collector and analysis collectors
+  - Write integration tests for service lifecycle with Monitor Collector behavior
   - _Requirements: 11.1, 11.2, 11.5_
 
 - [ ] 9.3 Add collector orchestration and trigger system integration
@@ -290,11 +324,13 @@
 
 - [ ] 9.5 Add event-driven architecture and collector coordination
 
-  - Implement event bus system for inter-collector communication
+  - Implement event bus system for inter-collector communication as specified in GitHub issue #89
   - Create event routing and filtering based on collector capabilities
   - Add event correlation tracking across multiple analysis stages
   - Implement backpressure handling for high-volume event scenarios
   - Create event persistence and replay capabilities for reliability
+  - Add support for "Two-Tier Collector Framework" and "Event Bus System" dependencies from GitHub issue #89
+  - Implement efficient triggering of analysis collectors only when needed (event-driven requirement)
   - Write integration tests for event-driven workflows and collector coordination
   - _Requirements: 11.1, 11.2, 12.1, 12.2_
 
@@ -340,6 +376,11 @@
   - Write service compatibility tests across different OS versions and configurations
   - Create chaos testing for various failure modes and recovery validation
   - Add end-to-end tests for procmond Monitor Collector triggering analysis collectors
+  - Validate all GitHub issue #89 acceptance criteria including Monitor Collector requirements
+  - Test continuous operation, event generation, and collector coordination as specified
+  - Validate daemoneye-agent integration, health check endpoints, and graceful shutdown
+  - Test cross-platform compatibility (Linux, Windows, macOS) per GitHub issue requirements
+  - Validate performance requirements and functional requirements from GitHub issue #89
   - _Requirements: All requirements verification_
 
 - [ ] 10. Create tamper-evident audit logging system - [#42](https://github.com/EvilBit-Labs/DaemonEye/issues/42)
