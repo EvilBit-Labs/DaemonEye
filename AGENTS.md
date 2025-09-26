@@ -254,21 +254,24 @@ sequenceDiagram
 **Transport Layer**: Use `interprocess` crate for cross-platform IPC communication:
 
 ```rust
+use daemoneye_lib::proto::{DetectionResult, DetectionTask};
 use interprocess::local_socket::LocalSocketStream;
-use daemoneye_libb::proto::{DetectionTask, DetectionResult};
 
-// Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
-let stream = LocalSocketStream::connect("/tmp/DaemonEye.sock")?;
+fn example_ipc_communication() -> Result<(), Box<dyn std::error::Error>> {
+    // Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
+    let stream = LocalSocketStream::connect("/tmp/DaemonEye.sock")?;
 
-// Protobuf message serialization with CRC32 checksums
-let task = DetectionTask::new()
-    .with_rule_id("suspicious_process")
-    .with_query("SELECT * FROM processes WHERE name = 'malware.exe'")
-    .build();
+    // Protobuf message serialization with CRC32 checksums
+    let task = DetectionTask::new()
+        .with_rule_id("suspicious_process")
+        .with_query("SELECT * FROM processes WHERE name = 'malware.exe'")
+        .build();
 
-// Serialize and send with framing
-let serialized = prost::Message::encode_to_vec(&task)?;
-// Send with CRC32 and length prefixing for integrity
+    // Serialize and send with framing
+    let serialized = prost::Message::encode_to_vec(&task)?;
+    // Send with CRC32 and length prefixing for integrity
+    Ok(())
+}
 ```
 
 **Message Framing**: All IPC messages use length-delimited protobuf with CRC32 checksums for corruption detection and sequence numbers for ordering.
@@ -397,15 +400,18 @@ codegen-units = 1
 
 - **Example Implementation**:
 
-```rust path=null start=null
-// Prefer checked/saturating math at trust boundaries
-let buffer_size = user_provided_len
-    .checked_mul(ENTRY_SIZE)
-    .ok_or(SecurityError::ArithmeticOverflow)?;
+```rust
+fn example_safe_arithmetic() -> Result<(), SecurityError> {
+    // Prefer checked/saturating math at trust boundaries
+    let buffer_size = user_provided_len
+        .checked_mul(ENTRY_SIZE)
+        .ok_or(SecurityError::ArithmeticOverflow)?;
 
-// Explicit bounds checking for array access
-if index >= data.len() {
-    return Err(SecurityError::IndexOutOfBounds);
+    // Explicit bounds checking for array access
+    if index >= data.len() {
+        return Err(SecurityError::IndexOutOfBounds);
+    }
+    Ok(())
 }
 ```
 
@@ -420,20 +426,38 @@ if index >= data.len() {
 - **Bounded Concurrency**: Use `Semaphore` to bound concurrency; define capacities consistent with resource budgets and backpressure policies
 - **Linting**: Enable `clippy::await_holding_lock = "deny"` in CI to catch lock-holding across await points
 
-```rust path=null start=null
-// Bounded concurrency pattern
-let semaphore = Arc::new(Semaphore::new(64));
-let permit = semaphore.acquire().await?;
-// Critical: no .await calls while holding locks
-{
-    let _guard = shared_state.lock().await;
-    // Synchronous work only inside lock scope
-    process_data_synchronously(&data);
-    // Lock dropped here
+```rust
+async fn example_bounded_concurrency() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+    use tokio::sync::{Mutex, Semaphore};
+
+    let shared_state = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let data = vec![1, 2, 3];
+
+    // Bounded concurrency pattern
+    let semaphore = Arc::new(Semaphore::new(64));
+    let permit = semaphore.acquire().await?;
+    // Critical: no .await calls while holding locks
+    {
+        let _guard = shared_state.lock().await;
+        // Synchronous work only inside lock scope
+        process_data_synchronously(&data);
+        // Lock dropped here
+    }
+    // Async work after lock is released
+    perform_async_operation().await?;
+    drop(permit);
+    Ok(())
 }
-// Async work after lock is released
-perform_async_operation().await?;
-drop(permit);
+
+fn process_data_synchronously(_data: &[u8]) {
+    // Synchronous processing
+}
+
+async fn perform_async_operation() -> Result<(), Box<dyn std::error::Error>> {
+    // Async operation
+    Ok(())
+}
 ```
 
 - **Concurrency Testing**: Use `loom` for model checking of core synchronization primitives; add `cfg(loom)` test configurations
