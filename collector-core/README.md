@@ -31,8 +31,8 @@ flowchart TB
 ### Basic Example
 
 ```rust
-use collector_core::{Collector, CollectorConfig, EventSource, CollectionEvent, SourceCaps};
 use async_trait::async_trait;
+use collector_core::{CollectionEvent, Collector, CollectorConfig, EventSource, SourceCaps};
 use tokio::sync::mpsc;
 
 struct MyEventSource;
