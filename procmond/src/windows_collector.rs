@@ -218,11 +218,21 @@ pub struct WindowsProcessMetadata {
 /// enhanced metadata collection including process tokens, security contexts, UAC
 /// elevation status, Windows service detection, and container support.
 ///
+/// # Security and Privilege Management
+///
+/// This collector follows the principle of least privilege:
+/// - Runs with minimal required privileges for process enumeration
+/// - Uses safe Windows API bindings through the `windows` crate
+/// - Gracefully degrades functionality when elevated privileges are unavailable
+/// - Registry access is read-only and limited to security-relevant keys
+/// - No network access or external command execution (replaced PowerShell with native APIs)
+///
 /// # Features
 ///
 /// - Enhanced sysinfo integration for process enumeration
 /// - windows-service integration for service detection and management
 /// - Windows container support (Hyper-V containers, Windows Server containers)
+/// - Native Windows API integration for security detection
 /// - No unsafe code required (adheres to workspace safety requirements)
 /// - Better error handling and safety
 /// - Enhanced heuristics for Windows-specific security features
@@ -318,28 +328,40 @@ impl WindowsProcessCollector {
     ) -> ProcessCollectionResult<Self> {
         // Detect service management capability
         let service_detection_available = if windows_config.detect_services {
-            Self::detect_service_capability().unwrap_or(false)
+            Self::detect_service_capability().unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to detect service management capability, disabling service detection");
+                false
+            })
         } else {
             false
         };
 
         // Detect performance counter capability
         let performance_counters_available = if windows_config.collect_performance_counters {
-            Self::detect_performance_counter_capability().unwrap_or(false)
+            Self::detect_performance_counter_capability().unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to detect performance counter capability, disabling performance counters");
+                false
+            })
         } else {
             false
         };
 
         // Detect container capability
         let container_detection_available = if windows_config.detect_containers {
-            Self::detect_container_capability().unwrap_or(false)
+            Self::detect_container_capability().unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to detect container capability, disabling container detection");
+                false
+            })
         } else {
             false
         };
 
-        // Check Windows Defender status
+        // Check Windows Defender status using native Windows API
         let defender_active = if windows_config.handle_defender_restrictions {
-            Self::detect_defender_status().unwrap_or(false)
+            Self::detect_defender_status().unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to detect Windows Defender status, defaulting to inactive");
+                false
+            })
         } else {
             false
         };
@@ -429,7 +451,13 @@ impl WindowsProcessCollector {
             "C:\\Program Files\\Docker\\Docker\\dockerd.exe", // Docker Desktop
         ];
 
-        let container_available = container_paths.iter().any(|&path| Path::new(path).exists());
+        let container_available = container_paths.iter().any(|&path| {
+            // Canonicalize paths to prevent directory traversal
+            match std::fs::canonicalize(Path::new(path)) {
+                Ok(canonical_path) => canonical_path.exists(),
+                Err(_) => false, // Path doesn't exist or can't be canonicalized
+            }
+        });
 
         debug!(
             container_available = container_available,
@@ -439,38 +467,81 @@ impl WindowsProcessCollector {
         Ok(container_available)
     }
 
-    /// Detects Windows Defender status.
+    /// Detects Windows Defender status by querying the registry.
     ///
-    /// This method checks if Windows Defender is active and may be restricting
-    /// process access through real-time protection.
+    /// This method checks if Windows Defender real-time protection is active by
+    /// reading the `DisableRealtimeMonitoring` registry value using the safe
+    /// `winreg` crate. Returns `true` if real-time protection is enabled
+    /// (may restrict process access), `false` otherwise.
+    ///
+    /// # Registry Key
+    ///
+    /// Queries: `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection\DisableRealtimeMonitoring`
+    /// - Value 0: Real-time protection enabled (returns `true`)
+    /// - Value 1: Real-time protection disabled (returns `false`)
+    /// - Key missing: Assumes inactive (returns `false`)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(true)` if Windows Defender real-time protection is active,
+    /// `Ok(false)` if inactive or unavailable, or an error if registry access fails unexpectedly.
+    ///
+    /// # Safety
+    ///
+    /// This function uses the safe `winreg` crate and does not require any unsafe code.
     fn detect_defender_status() -> ProcessCollectionResult<bool> {
-        // Check Windows Defender status using PowerShell command
-        match std::process::Command::new("powershell")
-            .args([
-                "-Command",
-                "Get-MpComputerStatus | Select-Object -ExpandProperty RealTimeProtectionEnabled",
-            ])
-            .output()
+        #[cfg(target_os = "windows")]
         {
-            Ok(output) => {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                let defender_active = output_str.trim().eq_ignore_ascii_case("true");
+            use winreg::RegKey;
+            use winreg::enums::*;
 
-                debug!(
-                    command_output = %output_str,
-                    defender_active = defender_active,
-                    "Detected Windows Defender status using PowerShell"
-                );
+            // Registry path for Windows Defender real-time protection status
+            const DEFENDER_SUBKEY: &str =
+                r"SOFTWARE\Microsoft\Windows Defender\Real-Time Protection";
+            const DISABLE_RT_MONITORING: &str = "DisableRealtimeMonitoring";
 
-                Ok(defender_active)
+            let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+
+            match hklm.open_subkey(DEFENDER_SUBKEY) {
+                Ok(defender_key) => {
+                    match defender_key.get_value::<u32, _>(DISABLE_RT_MONITORING) {
+                        Ok(value) => {
+                            // DisableRealtimeMonitoring = 0 means real-time protection is enabled
+                            // DisableRealtimeMonitoring = 1 means real-time protection is disabled
+                            let defender_active = value == 0;
+                            debug!(
+                                registry_key = DEFENDER_SUBKEY,
+                                registry_value = value,
+                                defender_active = defender_active,
+                                "Detected Windows Defender status using winreg crate"
+                            );
+                            Ok(defender_active)
+                        }
+                        Err(e) => {
+                            debug!(
+                                error = %e,
+                                registry_key = DEFENDER_SUBKEY,
+                                value_name = DISABLE_RT_MONITORING,
+                                "Failed to read Windows Defender registry value, assuming inactive"
+                            );
+                            Ok(false) // Default to inactive if we can't read the value
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!(
+                        error = %e,
+                        registry_key = DEFENDER_SUBKEY,
+                        "Windows Defender registry key not accessible, assuming inactive"
+                    );
+                    Ok(false) // Default to inactive if key doesn't exist
+                }
             }
-            Err(e) => {
-                debug!(
-                    error = %e,
-                    "Failed to execute PowerShell command, assuming Defender inactive"
-                );
-                Ok(false) // Default to inactive if we can't detect
-            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(false)
         }
     }
 
@@ -520,13 +591,20 @@ impl WindowsProcessCollector {
     ///
     /// This method uses process name, executable path, and PID to determine
     /// security characteristics through pattern matching and known Windows behaviors.
+    /// All inputs are validated to prevent security issues.
     ///
     /// # Arguments
     ///
     /// * `security_info` - Mutable reference to security info structure to populate
-    /// * `name` - Process name
-    /// * `exe_path` - Optional executable path
-    /// * `pid` - Process ID
+    /// * `name` - Process name (validated for length and content)
+    /// * `exe_path` - Optional executable path (canonicalized for security)
+    /// * `pid` - Process ID (validated for reasonable bounds)
+    ///
+    /// # Security
+    ///
+    /// - Process names are limited to reasonable lengths to prevent buffer issues
+    /// - Executable paths are canonicalized to prevent directory traversal
+    /// - PIDs are validated to be within reasonable system bounds
     fn apply_enhanced_security_heuristics(
         &self,
         security_info: &mut ProcessSecurityInfo,
@@ -534,6 +612,23 @@ impl WindowsProcessCollector {
         exe_path: Option<&std::path::Path>,
         pid: u32,
     ) {
+        // Validate inputs for security
+        if name.len() > 260 {
+            warn!(
+                pid = pid,
+                name_len = name.len(),
+                "Process name exceeds reasonable length, applying default security settings"
+            );
+            return;
+        }
+
+        if pid == 0 || pid > 1_000_000 {
+            warn!(
+                pid = pid,
+                "Process ID outside reasonable bounds, applying default security settings"
+            );
+            return;
+        }
         // Check if it's a system process
         if self.is_system_process(name, pid) {
             security_info.system_process = true;
@@ -545,11 +640,14 @@ impl WindowsProcessCollector {
             security_info.session_id = Some(0);
             security_info.virtualized = false;
         } else if let Some(exe_path) = exe_path {
-            let path_str = exe_path.to_string_lossy();
-
             // Enhanced heuristics based on Windows process patterns
-            if path_str.starts_with("C:\\Windows\\System32\\")
-                || path_str.starts_with("C:\\Windows\\SysWOW64\\")
+            // Canonicalize path to prevent directory traversal attacks
+            let canonical_path =
+                std::fs::canonicalize(exe_path).unwrap_or_else(|_| exe_path.to_path_buf());
+            let canonical_str = canonical_path.to_string_lossy();
+
+            if canonical_str.starts_with("C:\\Windows\\System32\\")
+                || canonical_str.starts_with("C:\\Windows\\SysWOW64\\")
             {
                 // System directory processes
                 security_info.integrity_level = IntegrityLevel::High;
@@ -564,8 +662,8 @@ impl WindowsProcessCollector {
                 );
                 security_info.system_process = false;
                 security_info.session_id = Some(0);
-            } else if path_str.contains("\\Program Files\\")
-                || path_str.contains("\\Program Files (x86)\\")
+            } else if canonical_str.contains("\\Program Files\\")
+                || canonical_str.contains("\\Program Files (x86)\\")
             {
                 // Installed applications
                 security_info.integrity_level = IntegrityLevel::Medium;
@@ -574,7 +672,7 @@ impl WindowsProcessCollector {
                 security_info.protected = false;
                 security_info.system_process = false;
                 security_info.session_id = Some(1);
-            } else if path_str.starts_with("C:\\Users\\") {
+            } else if canonical_str.starts_with("C:\\Users\\") {
                 // User applications
                 security_info.integrity_level = IntegrityLevel::Medium;
                 security_info.elevated = false;
@@ -584,7 +682,7 @@ impl WindowsProcessCollector {
                 security_info.session_id = Some(1);
 
                 // Check for sandboxed applications
-                if path_str.contains("\\AppData\\Local\\Packages\\") {
+                if canonical_str.contains("\\AppData\\Local\\Packages\\") {
                     security_info.integrity_level = IntegrityLevel::Low;
                     security_info.virtualized = true;
                 }
@@ -742,17 +840,26 @@ impl WindowsProcessCollector {
 
     /// Gets Windows-specific performance counters for a process using sysinfo.
     fn get_performance_counters(&self, pid: u32) -> Option<(u64, u64, u64, u32, u32)> {
+        // Validate PID to prevent overflow and invalid values
+        if pid == 0 || pid > u32::MAX / 2 {
+            debug!(
+                pid = pid,
+                "Invalid PID provided for performance counter collection"
+            );
+            return None;
+        }
+
         // Get process information using sysinfo
         if let Some((_, _, memory_kb, virtual_memory_kb)) = self.get_process_info(pid) {
-            // Convert to bytes and provide estimated values for other counters
-            let working_set_size = memory_kb * 1024;
-            let private_bytes = memory_kb * 1024;
-            let virtual_bytes = virtual_memory_kb * 1024;
+            // Convert to bytes with overflow protection
+            let working_set_size = memory_kb.saturating_mul(1024);
+            let private_bytes = memory_kb.saturating_mul(1024);
+            let virtual_bytes = virtual_memory_kb.saturating_mul(1024);
 
-            // Provide estimated handle and thread counts
+            // Provide estimated handle and thread counts with reasonable bounds
             // In a real implementation, these would come from Windows performance counters
-            let handle_count = 100; // Estimated
-            let thread_count = 4; // Estimated
+            let handle_count = 100u32; // Reasonable default value
+            let thread_count = 4u32; // Reasonable default value
 
             Some((
                 working_set_size,

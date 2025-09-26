@@ -81,6 +81,8 @@ windows = { version = "0.58.0", features = [
 ] }
 # windows-service for Windows service detection and management
 windows-service = "0.7.0"
+# winreg for safe Windows registry access
+winreg = "0.52.0"
 # Additional process utilities for Windows
 # Note: psutil-rs and perfmon-rs would be added here when available
 # For now, we use sysinfo + windows-rs for comprehensive Windows process monitoring

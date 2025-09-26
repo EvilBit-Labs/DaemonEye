@@ -636,7 +636,9 @@ impl ProcessEventSource {
 
             // Only remove the event from the batch if it was successfully sent
             if send_successful {
-                event_batch.remove(0);
+                if !event_batch.is_empty() {
+                    event_batch.remove(0);
+                }
             } else {
                 // If we couldn't send after retries, apply backpressure by waiting
                 // and then continuing with the next event (don't remove the failed event)
