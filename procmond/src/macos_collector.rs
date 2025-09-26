@@ -556,48 +556,46 @@ impl EnhancedMacOSCollector {
         let mut entitlements = ProcessEntitlements::default();
 
         // Get process executable path using sysinfo (not procfs)
-        if let Some((_, exe_path, _, _)) = self.get_process_info(pid) {
-            if let Some(exe_path) = exe_path {
-                // Use heuristics to determine entitlements based on path and process characteristics
-                let path_str = exe_path.to_string_lossy();
+        if let Some((_, Some(exe_path), _, _)) = self.get_process_info(pid) {
+            // Use heuristics to determine entitlements based on path and process characteristics
+            let path_str = exe_path.to_string_lossy();
 
-                // Check if it's a system process (likely has system access)
-                if path_str.starts_with("/System/") || path_str.starts_with("/usr/") {
-                    entitlements.can_debug = false; // System processes typically can't be debugged
-                    entitlements.system_access = true; // System processes have system access
-                    entitlements.sandboxed = false; // System processes are typically not sandboxed
-                    entitlements.network_access = true;
-                    entitlements.filesystem_access = true;
-                    entitlements.hardened_runtime = true;
-                    entitlements.disable_library_validation = false;
-                } else if path_str.contains(".app/") {
-                    // App bundle - likely sandboxed
-                    entitlements.can_debug = false;
-                    entitlements.system_access = false;
-                    entitlements.sandboxed = true; // Apps are typically sandboxed
-                    entitlements.network_access = true; // Most apps have network access
-                    entitlements.filesystem_access = false; // Sandboxed apps have limited filesystem access
-                    entitlements.hardened_runtime = true; // Modern apps use hardened runtime
-                    entitlements.disable_library_validation = false;
-                } else {
-                    // Other executables - assume minimal entitlements
-                    entitlements.can_debug = false;
-                    entitlements.system_access = false;
-                    entitlements.sandboxed = false;
-                    entitlements.network_access = true;
-                    entitlements.filesystem_access = true;
-                    entitlements.hardened_runtime = false;
-                    entitlements.disable_library_validation = true;
-                }
-
-                debug!(
-                    pid = pid,
-                    path = %path_str,
-                    sandboxed = entitlements.sandboxed,
-                    system_access = entitlements.system_access,
-                    "Determined entitlements using path heuristics"
-                );
+            // Check if it's a system process (likely has system access)
+            if path_str.starts_with("/System/") || path_str.starts_with("/usr/") {
+                entitlements.can_debug = false; // System processes typically can't be debugged
+                entitlements.system_access = true; // System processes have system access
+                entitlements.sandboxed = false; // System processes are typically not sandboxed
+                entitlements.network_access = true;
+                entitlements.filesystem_access = true;
+                entitlements.hardened_runtime = true;
+                entitlements.disable_library_validation = false;
+            } else if path_str.contains(".app/") {
+                // App bundle - likely sandboxed
+                entitlements.can_debug = false;
+                entitlements.system_access = false;
+                entitlements.sandboxed = true; // Apps are typically sandboxed
+                entitlements.network_access = true; // Most apps have network access
+                entitlements.filesystem_access = false; // Sandboxed apps have limited filesystem access
+                entitlements.hardened_runtime = true; // Modern apps use hardened runtime
+                entitlements.disable_library_validation = false;
+            } else {
+                // Other executables - assume minimal entitlements
+                entitlements.can_debug = false;
+                entitlements.system_access = false;
+                entitlements.sandboxed = false;
+                entitlements.network_access = true;
+                entitlements.filesystem_access = true;
+                entitlements.hardened_runtime = false;
+                entitlements.disable_library_validation = true;
             }
+
+            debug!(
+                pid = pid,
+                path = %path_str,
+                sandboxed = entitlements.sandboxed,
+                system_access = entitlements.system_access,
+                "Determined entitlements using path heuristics"
+            );
         }
 
         debug!(
@@ -613,35 +611,31 @@ impl EnhancedMacOSCollector {
 
     /// Checks if a process is protected by SIP.
     fn is_sip_protected(&self, pid: u32) -> ProcessCollectionResult<bool> {
-        if let Some((_, exe_path, _, _)) = self.get_process_info(pid) {
-            if let Some(exe_path) = exe_path {
-                let path_str = exe_path.to_string_lossy();
+        if let Some((_, Some(exe_path), _, _)) = self.get_process_info(pid) {
+            let path_str = exe_path.to_string_lossy();
 
-                // Common SIP-protected paths on macOS
-                let sip_protected_paths = [
-                    "/System/",
-                    "/usr/bin/",
-                    "/usr/sbin/",
-                    "/usr/libexec/",
-                    "/bin/",
-                    "/sbin/",
-                ];
+            // Common SIP-protected paths on macOS
+            let sip_protected_paths = [
+                "/System/",
+                "/usr/bin/",
+                "/usr/sbin/",
+                "/usr/libexec/",
+                "/bin/",
+                "/sbin/",
+            ];
 
-                let is_protected = sip_protected_paths
-                    .iter()
-                    .any(|&protected_path| path_str.starts_with(protected_path));
+            let is_protected = sip_protected_paths
+                .iter()
+                .any(|&protected_path| path_str.starts_with(protected_path));
 
-                debug!(
-                    pid = pid,
-                    path = %path_str,
-                    sip_protected = is_protected,
-                    "Checked SIP protection status"
-                );
+            debug!(
+                pid = pid,
+                path = %path_str,
+                sip_protected = is_protected,
+                "Checked SIP protection status"
+            );
 
-                Ok(is_protected)
-            } else {
-                Ok(false)
-            }
+            Ok(is_protected)
         } else {
             Ok(false)
         }
@@ -651,33 +645,31 @@ impl EnhancedMacOSCollector {
     fn check_code_signature(&self, pid: u32) -> ProcessCollectionResult<CodeSigningInfo> {
         let mut code_signing = CodeSigningInfo::default();
 
-        if let Some((_, exe_path, _, _)) = self.get_process_info(pid) {
-            if let Some(exe_path) = exe_path {
-                let path_str = exe_path.to_string_lossy();
+        if let Some((_, Some(exe_path), _, _)) = self.get_process_info(pid) {
+            let path_str = exe_path.to_string_lossy();
 
-                // Use heuristics to determine code signing status
-                // System processes and app bundles are typically signed
-                if path_str.starts_with("/System/")
-                    || path_str.starts_with("/usr/")
-                    || path_str.contains(".app/")
-                {
-                    code_signing.signed = true;
-                    code_signing.certificate_valid = true;
-                    code_signing.team_id = None; // Would need Security framework API calls
-                    code_signing.bundle_id = None;
-                    code_signing.authority = Some("Apple".to_string()); // Assume Apple for system processes
+            // Use heuristics to determine code signing status
+            // System processes and app bundles are typically signed
+            if path_str.starts_with("/System/")
+                || path_str.starts_with("/usr/")
+                || path_str.contains(".app/")
+            {
+                code_signing.signed = true;
+                code_signing.certificate_valid = true;
+                code_signing.team_id = None; // Would need Security framework API calls
+                code_signing.bundle_id = None;
+                code_signing.authority = Some("Apple".to_string()); // Assume Apple for system processes
 
-                    debug!(pid = pid, path = %path_str, "Process likely has valid code signature (system/app)");
-                } else {
-                    // Other executables may or may not be signed
-                    code_signing.signed = false;
-                    code_signing.certificate_valid = false;
-                    code_signing.team_id = None;
-                    code_signing.bundle_id = None;
-                    code_signing.authority = None;
+                debug!(pid = pid, path = %path_str, "Process likely has valid code signature (system/app)");
+            } else {
+                // Other executables may or may not be signed
+                code_signing.signed = false;
+                code_signing.certificate_valid = false;
+                code_signing.team_id = None;
+                code_signing.bundle_id = None;
+                code_signing.authority = None;
 
-                    debug!(pid = pid, path = %path_str, "Process likely unsigned (non-system executable)");
-                }
+                debug!(pid = pid, path = %path_str, "Process likely unsigned (non-system executable)");
             }
         }
 
@@ -696,35 +688,32 @@ impl EnhancedMacOSCollector {
     fn read_bundle_info(&self, pid: u32) -> ProcessCollectionResult<BundleInfo> {
         let mut bundle_info = BundleInfo::default();
 
-        if let Some((_, exe_path, _, _)) = self.get_process_info(pid) {
-            if let Some(exe_path) = exe_path {
-                let path_str = exe_path.to_string_lossy();
+        if let Some((_, Some(exe_path), _, _)) = self.get_process_info(pid) {
+            let path_str = exe_path.to_string_lossy();
 
-                // Check if it's an app bundle
-                if path_str.contains(".app/") {
-                    // Extract bundle name from path
-                    if let Some(app_start) = path_str.rfind('/') {
-                        if let Some(app_end) = path_str[..app_start].rfind(".app") {
-                            if let Some(name_start) = path_str[..app_end].rfind('/') {
-                                bundle_info.name =
-                                    Some(path_str[name_start + 1..app_end].to_string());
-                            }
+            // Check if it's an app bundle
+            if path_str.contains(".app/") {
+                // Extract bundle name from path
+                if let Some(app_start) = path_str.rfind('/') {
+                    if let Some(app_end) = path_str[..app_start].rfind(".app") {
+                        if let Some(name_start) = path_str[..app_end].rfind('/') {
+                            bundle_info.name = Some(path_str[name_start + 1..app_end].to_string());
                         }
                     }
-
-                    debug!(
-                        pid = pid,
-                        bundle_name = ?bundle_info.name,
-                        "Extracted bundle information from path"
-                    );
                 }
 
-                // Note: For complete bundle information (bundle ID, team ID, version),
-                // we would need to parse Info.plist files or use more comprehensive APIs
-                bundle_info.bundle_id = None;
-                bundle_info.team_id = None;
-                bundle_info.version = None;
+                debug!(
+                    pid = pid,
+                    bundle_name = ?bundle_info.name,
+                    "Extracted bundle information from path"
+                );
             }
+
+            // Note: For complete bundle information (bundle ID, team ID, version),
+            // we would need to parse Info.plist files or use more comprehensive APIs
+            bundle_info.bundle_id = None;
+            bundle_info.team_id = None;
+            bundle_info.version = None;
         }
 
         debug!(
@@ -976,10 +965,10 @@ impl ProcessCollector for EnhancedMacOSCollector {
         }
 
         // Check Security framework availability if configured
-        if self.macos_config.collect_entitlements || self.macos_config.collect_code_signing {
-            if !self.has_entitlements {
-                warn!("Security framework not available, entitlements/code signing disabled");
-            }
+        if (self.macos_config.collect_entitlements || self.macos_config.collect_code_signing)
+            && !self.has_entitlements
+        {
+            warn!("Security framework not available, entitlements/code signing disabled");
         }
 
         // Check SIP status if configured

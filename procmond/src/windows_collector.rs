@@ -563,10 +563,14 @@ impl WindowsProcessCollector {
     /// # Note
     ///
     /// This is an internal method used by the collector implementation.
-    fn read_process_security_info(&self, pid: u32) -> ProcessCollectionResult<ProcessSecurityInfo> {
+    fn read_process_security_info(
+        &self,
+        pid: u32,
+        system: &System,
+    ) -> ProcessCollectionResult<ProcessSecurityInfo> {
         let mut security_info = ProcessSecurityInfo::default();
 
-        if let Some((name, exe_path, _, _)) = self.get_process_info(pid) {
+        if let Some((name, exe_path, _, _)) = self.get_process_info(pid, system) {
             self.apply_enhanced_security_heuristics(
                 &mut security_info,
                 &name,
@@ -720,11 +724,15 @@ impl WindowsProcessCollector {
     /// # Returns
     ///
     /// Returns `WindowsServiceInfo` with service detection results.
-    fn detect_windows_service(&self, pid: u32) -> ProcessCollectionResult<WindowsServiceInfo> {
+    fn detect_windows_service(
+        &self,
+        pid: u32,
+        system: &System,
+    ) -> ProcessCollectionResult<WindowsServiceInfo> {
         let mut service_info = WindowsServiceInfo::default();
 
         // Use heuristic-based service detection
-        if let Some((name, exe_path, _, _)) = self.get_process_info(pid) {
+        if let Some((name, exe_path, _, _)) = self.get_process_info(pid, system) {
             if self.is_likely_service(&name, exe_path.as_deref()) {
                 self.populate_service_info(&mut service_info, &name, pid, "heuristics");
             }
@@ -792,10 +800,14 @@ impl WindowsProcessCollector {
     }
 
     /// Detects Windows container information for a process.
-    fn detect_container_info(&self, pid: u32) -> ProcessCollectionResult<WindowsContainerInfo> {
+    fn detect_container_info(
+        &self,
+        pid: u32,
+        system: &System,
+    ) -> ProcessCollectionResult<WindowsContainerInfo> {
         let mut container_info = WindowsContainerInfo::default();
 
-        if let Some((name, exe_path, _, _)) = self.get_process_info(pid) {
+        if let Some((name, exe_path, _, _)) = self.get_process_info(pid, system) {
             // Use heuristics to detect container processes
             let in_container = if let Some(exe_path) = exe_path {
                 let path_str = exe_path.to_string_lossy();
@@ -823,9 +835,9 @@ impl WindowsProcessCollector {
                     container_info.container_type = Some("Unknown".to_string());
                 }
 
-                // Generate a mock container ID for demonstration
-                container_info.container_id = Some(format!("container-{}", pid));
-                container_info.image_name = Some("windows/servercore".to_string());
+                // Container detection is heuristic-based only
+                // Real container ID and image name would require container runtime APIs
+                // Leave these fields as None until genuine values can be obtained
 
                 debug!(
                     pid = pid,
@@ -839,7 +851,7 @@ impl WindowsProcessCollector {
     }
 
     /// Gets Windows-specific performance counters for a process using sysinfo.
-    fn get_performance_counters(&self, pid: u32) -> Option<(u64, u64, u64, u32, u32)> {
+    fn get_performance_counters(&self, pid: u32, system: &System) -> Option<(u64, u64, u64)> {
         // Validate PID to prevent overflow and invalid values
         if pid == 0 || pid > u32::MAX / 2 {
             debug!(
@@ -850,24 +862,15 @@ impl WindowsProcessCollector {
         }
 
         // Get process information using sysinfo
-        if let Some((_, _, memory_kb, virtual_memory_kb)) = self.get_process_info(pid) {
+        if let Some((_, _, memory_kb, virtual_memory_kb)) = self.get_process_info(pid, system) {
             // Convert to bytes with overflow protection
             let working_set_size = memory_kb.saturating_mul(1024);
             let private_bytes = memory_kb.saturating_mul(1024);
             let virtual_bytes = virtual_memory_kb.saturating_mul(1024);
 
-            // Provide estimated handle and thread counts with reasonable bounds
-            // In a real implementation, these would come from Windows performance counters
-            let handle_count = 100u32; // Reasonable default value
-            let thread_count = 4u32; // Reasonable default value
-
-            Some((
-                working_set_size,
-                private_bytes,
-                virtual_bytes,
-                handle_count,
-                thread_count,
-            ))
+            // Only return real values from sysinfo, omit handle_count and thread_count
+            // until real Windows performance counter APIs are implemented
+            Some((working_set_size, private_bytes, virtual_bytes))
         } else {
             None
         }
@@ -896,8 +899,8 @@ impl WindowsProcessCollector {
     }
 
     /// Checks if a process is protected by Windows Defender.
-    fn is_defender_protected(&self, pid: u32) -> ProcessCollectionResult<bool> {
-        if let Some((name, exe_path, _, _)) = self.get_process_info(pid) {
+    fn is_defender_protected(&self, pid: u32, system: &System) -> ProcessCollectionResult<bool> {
+        if let Some((name, exe_path, _, _)) = self.get_process_info(pid, system) {
             // Use heuristics to determine if a process might be protected by Defender
             let is_protected = if let Some(exe_path) = exe_path {
                 let path_str = exe_path.to_string_lossy();
@@ -977,6 +980,7 @@ impl WindowsProcessCollector {
         &self,
         pid: Pid,
         process: &sysinfo::Process,
+        system: &System,
     ) -> ProcessCollectionResult<ProcessEvent> {
         let pid_u32 = pid.as_u32();
 
@@ -1050,7 +1054,7 @@ impl WindowsProcessCollector {
 
         // Collect Windows-specific enhanced metadata if configured
         let platform_metadata = if self.base_config.collect_enhanced_metadata {
-            let windows_metadata = self.read_enhanced_metadata(pid_u32);
+            let windows_metadata = self.read_enhanced_metadata(pid_u32, system);
             Some(serde_json::to_value(windows_metadata).unwrap_or_default())
         } else {
             None
@@ -1075,34 +1079,35 @@ impl WindowsProcessCollector {
     }
 
     /// Reads enhanced Windows-specific metadata for a process.
-    fn read_enhanced_metadata(&self, pid: u32) -> WindowsProcessMetadata {
+    fn read_enhanced_metadata(&self, pid: u32, system: &System) -> WindowsProcessMetadata {
         let mut metadata = WindowsProcessMetadata::default();
 
         // Collect security information if configured
         if self.windows_config.collect_security_info {
-            metadata.security_info = self.read_process_security_info(pid).unwrap_or_default();
+            metadata.security_info = self
+                .read_process_security_info(pid, system)
+                .unwrap_or_default();
         }
 
         // Detect Windows service if configured
         if self.windows_config.detect_services && self.service_detection_available {
-            metadata.service_info = self.detect_windows_service(pid).unwrap_or_default();
+            metadata.service_info = self.detect_windows_service(pid, system).unwrap_or_default();
         }
 
         // Detect container information if configured
         if self.windows_config.detect_containers && self.container_detection_available {
-            metadata.container_info = self.detect_container_info(pid).unwrap_or_default();
+            metadata.container_info = self.detect_container_info(pid, system).unwrap_or_default();
         }
 
         // Collect performance counters if configured
         if self.windows_config.collect_performance_counters && self.performance_counters_available {
-            if let Some((working_set, private_bytes, virtual_bytes, handles, threads)) =
-                self.get_performance_counters(pid)
+            if let Some((working_set, private_bytes, virtual_bytes)) =
+                self.get_performance_counters(pid, system)
             {
                 metadata.working_set_size = Some(working_set);
                 metadata.private_bytes = Some(private_bytes);
                 metadata.virtual_bytes = Some(virtual_bytes);
-                metadata.handle_count = Some(handles);
-                metadata.thread_count = Some(threads);
+                // handle_count and thread_count omitted until real Windows performance counter APIs are implemented
             }
         }
 
@@ -1111,7 +1116,7 @@ impl WindowsProcessCollector {
 
         // Check Windows Defender protection
         if self.windows_config.handle_defender_restrictions && self.defender_active {
-            metadata.defender_protected = self.is_defender_protected(pid).unwrap_or(false);
+            metadata.defender_protected = self.is_defender_protected(pid, system).unwrap_or(false);
         }
 
         metadata
@@ -1127,9 +1132,11 @@ impl WindowsProcessCollector {
     ///
     /// Returns a tuple containing (name, executable_path, memory_kb, virtual_memory_kb)
     /// or None if the process is not found.
-    fn get_process_info(&self, pid: u32) -> Option<(String, Option<std::path::PathBuf>, u64, u64)> {
-        let mut system = System::new();
-        system.refresh_processes(ProcessesToUpdate::All, true);
+    fn get_process_info(
+        &self,
+        pid: u32,
+        system: &System,
+    ) -> Option<(String, Option<std::path::PathBuf>, u64, u64)> {
         let sysinfo_pid = Pid::from_u32(pid);
 
         system.process(sysinfo_pid).map(|process| {
@@ -1224,7 +1231,7 @@ impl ProcessCollector for WindowsProcessCollector {
                 break;
             }
 
-            match self.enhance_process(*pid, process) {
+            match self.enhance_process(*pid, process, &system) {
                 Ok(event) => {
                     events.push(event);
                     stats.successful_collections += 1;
