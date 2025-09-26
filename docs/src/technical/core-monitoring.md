@@ -15,7 +15,7 @@ DaemonEye uses a layered approach to process enumeration, providing a unified in
 **Primary Interface**: The `sysinfo` crate provides cross-platform process enumeration with consistent data structures.
 
 ```rust
-use sysinfo::{System, SystemExt, ProcessExt, Pid};
+use sysinfo::{Pid, ProcessExt, System, SystemExt};
 
 pub struct ProcessCollector {
     system: System,
@@ -28,9 +28,7 @@ impl ProcessCollector {
         self.system.refresh_processes();
 
         let mut processes = Vec::new();
-        let collection_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_millis() as i64;
+        let collection_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
 
         for (pid, process) in self.system.processes() {
             let process_record = ProcessRecord {
@@ -185,18 +183,16 @@ impl ProcessCollector {
         let hash_computer = self.hash_computer.clone();
         let path = path.to_path_buf();
 
-        tokio::task::spawn_blocking(move || {
-            hash_computer.compute_hash(&path)
-        }).await?
+        tokio::task::spawn_blocking(move || hash_computer.compute_hash(&path)).await?
     }
 
     fn should_skip_hashing(&self, path: &Path) -> bool {
         // Skip hashing for system processes or temporary files
         let path_str = path.to_string_lossy();
-        path_str.contains("/proc/") ||
-        path_str.contains("/sys/") ||
-        path_str.contains("/tmp/") ||
-        path_str.contains("\\System32\\")
+        path_str.contains("/proc/")
+            || path_str.contains("/sys/")
+            || path_str.contains("/tmp/")
+            || path_str.contains("\\System32\\")
     }
 }
 ```
@@ -391,17 +387,17 @@ impl DetectionEngine {
         // Execute with timeout and resource limits
         let execution_result = tokio::time::timeout(
             Duration::from_secs(30),
-            self.execute_sql_query(&rule.sql_query, scan_id)
-        ).await??;
+            self.execute_sql_query(&rule.sql_query, scan_id),
+        )
+        .await??;
 
         // Generate alerts from query results
         let mut alerts = Vec::new();
         for row in execution_result.rows {
-            let alert = self.alert_manager.generate_alert(
-                &rule,
-                &row,
-                scan_id
-            ).await?;
+            let alert = self
+                .alert_manager
+                .generate_alert(&rule, &row, scan_id)
+                .await?;
 
             if let Some(alert) = alert {
                 alerts.push(alert);
@@ -578,13 +574,13 @@ impl AlertDeliveryManager {
         let mut results = Vec::new();
 
         // Deliver to all sinks in parallel
-        let sink_tasks: Vec<_> = self.sinks.iter()
+        let sink_tasks: Vec<_> = self
+            .sinks
+            .iter()
             .map(|sink| {
                 let alert = alert.clone();
                 let sink = sink.as_ref();
-                tokio::spawn(async move {
-                    self.deliver_to_sink(sink, &alert).await
-                })
+                tokio::spawn(async move { self.deliver_to_sink(sink, &alert).await })
             })
             .collect();
 
@@ -681,11 +677,7 @@ impl AlertSink for SyslogSink {
         let timestamp = self.format_timestamp(alert.alert_time);
         let message = format!(
             "<{}>{} {} {}: {}",
-            priority,
-            timestamp,
-            self.tag,
-            alert.title,
-            alert.description
+            priority, timestamp, self.tag, alert.title, alert.description
         );
 
         self.socket.send(message.as_bytes()).await?;
@@ -718,7 +710,8 @@ impl AlertSink for WebhookSink {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult> {
         let payload = serde_json::to_value(alert)?;
 
-        let response = self.client
+        let response = self
+            .client
             .post(self.url.clone())
             .headers(self.headers.clone())
             .json(&payload)
@@ -735,7 +728,8 @@ impl AlertSink for WebhookSink {
 
     async fn health_check(&self) -> HealthStatus {
         // Perform health check by sending a test request
-        match self.client
+        match self
+            .client
             .get(self.url.clone())
             .timeout(Duration::from_secs(5))
             .send()
@@ -771,14 +765,15 @@ impl ProcessCollector {
         let start_time = Instant::now();
 
         // Use parallel processing for hash computation
-        let (processes, hash_tasks): (Vec<_>, Vec<_>) = self.collect_basic_process_data()
+        let (processes, hash_tasks): (Vec<_>, Vec<_>) = self
+            .collect_basic_process_data()
             .into_iter()
             .partition(|p| p.executable_path.is_none());
 
         // Compute hashes in parallel
-        let hash_results = futures::future::join_all(
-            hash_tasks.into_iter().map(|p| self.compute_hash_async(p))
-        ).await;
+        let hash_results =
+            futures::future::join_all(hash_tasks.into_iter().map(|p| self.compute_hash_async(p)))
+                .await;
 
         let mut all_processes = processes;
         all_processes.extend(hash_results.into_iter().flatten());
@@ -816,8 +811,11 @@ impl DetectionEngine {
 
         // Execute simple rules in parallel
         let simple_alerts = futures::future::join_all(
-            simple_rules.into_iter().map(|rule| self.execute_rule(rule, scan_id))
-        ).await;
+            simple_rules
+                .into_iter()
+                .map(|rule| self.execute_rule(rule, scan_id)),
+        )
+        .await;
 
         // Execute complex rules sequentially to avoid resource contention
         let mut complex_alerts = Vec::new();
@@ -862,7 +860,11 @@ impl ProcessCollector {
 
 ```rust
 impl DetectionEngine {
-    async fn execute_rule_with_recovery(&self, rule: &DetectionRule, scan_id: i64) -> Result<Vec<Alert>> {
+    async fn execute_rule_with_recovery(
+        &self,
+        rule: &DetectionRule,
+        scan_id: i64,
+    ) -> Result<Vec<Alert>> {
         match self.execute_rule(rule, scan_id).await {
             Ok(alerts) => Ok(alerts),
             Err(e) => {
@@ -894,9 +896,8 @@ impl ProcessCollector {
             tracing::warn!("Memory pressure detected, reducing batch size");
 
             // Reduce batch size for hash computation
-            self.hash_computer.set_buffer_size(
-                self.hash_computer.buffer_size() / 2
-            );
+            self.hash_computer
+                .set_buffer_size(self.hash_computer.buffer_size() / 2);
 
             // Trigger garbage collection
             tokio::task::yield_now().await;

@@ -199,7 +199,10 @@ impl AgentRegistry {
         };
 
         self.db.insert_agent(&agent).await?;
-        self.agent_certs.lock().await.insert(fingerprint, cert.clone());
+        self.agent_certs
+            .lock()
+            .await
+            .insert(fingerprint, cert.clone());
 
         Ok(agent)
     }
@@ -225,15 +228,15 @@ impl AgentRegistry {
 **Uplink Communication**: Secure connection to Security Center with fallback to standalone operation.
 
 ```rust
-pub struct Enhanceddaemoneye-agent {
-    base_agent: daemoneye-agent,
+pub struct EnhancedDaemoneyeAgent {
+    base_agent: DaemoneyeAgent,
     security_center_client: Option<SecurityCenterClient>,
     uplink_config: UplinkConfig,
 }
 
-impl Enhanceddaemoneye-agent {
+impl EnhancedDaemoneyeAgent {
     pub async fn new(config: AgentConfig) -> Result<Self> {
-        let base_agent = daemoneye-agent::new(config.clone()).await?;
+        let base_agent = DaemoneyeAgent::new(config.clone()).await?;
 
         let security_center_client = if config.uplink.enabled {
             Some(SecurityCenterClient::new(&config.uplink).await?)
@@ -369,7 +372,9 @@ impl RuleDistributor {
         let pack_id = self.rule_pack_storage.store(&pack).await?;
 
         // Schedule distribution to agents
-        self.distribution_scheduler.schedule_distribution(pack_id).await?;
+        self.distribution_scheduler
+            .schedule_distribution(pack_id)
+            .await?;
 
         Ok(DeploymentResult::Success)
     }
@@ -418,9 +423,13 @@ impl SplunkHecConnector {
             event: serde_json::to_value(event)?,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.endpoint)
-            .header("Authorization", format!("Splunk {}", self.token.expose_secret()))
+            .header(
+                "Authorization",
+                format!("Splunk {}", self.token.expose_secret()),
+            )
             .json(&hec_event)
             .send()
             .await?;
@@ -430,13 +439,18 @@ impl SplunkHecConnector {
     }
 
     pub async fn send_batch(&self, events: &[ProcessAlert]) -> Result<(), ConnectorError> {
-        let hec_events: Vec<HecEvent> = events.iter()
+        let hec_events: Vec<HecEvent> = events
+            .iter()
             .map(|event| self.convert_to_hec_event(event))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.endpoint)
-            .header("Authorization", format!("Splunk {}", self.token.expose_secret()))
+            .header(
+                "Authorization",
+                format!("Splunk {}", self.token.expose_secret()),
+            )
             .json(&hec_events)
             .send()
             .await?;
@@ -475,11 +489,7 @@ impl ElasticsearchConnector {
             body.push(serde_json::to_value(event)?);
         }
 
-        let response = self.client
-            .bulk(BulkParts::None)
-            .body(body)
-            .send()
-            .await?;
+        let response = self.client.bulk(BulkParts::None).body(body).send().await?;
 
         self.handle_bulk_response(response).await
     }

@@ -32,17 +32,20 @@ The collector provides comprehensive process enumeration with macOS-specific enh
 use procmond::macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
 use procmond::process_collector::ProcessCollectionConfig;
 
-let base_config = ProcessCollectionConfig::default();
-let macos_config = MacOSCollectorConfig {
-    collect_entitlements: true,
-    check_sip_protection: true,
-    collect_code_signing: true,
-    collect_bundle_info: true,
-    handle_sandboxed_processes: true,
-};
+async fn example_macos_collection() -> Result<(), Box<dyn std::error::Error>> {
+    let base_config = ProcessCollectionConfig::default();
+    let macos_config = MacOSCollectorConfig {
+        collect_entitlements: true,
+        check_sip_protection: true,
+        collect_code_signing: true,
+        collect_bundle_info: true,
+        handle_sandboxed_processes: true,
+    };
 
-let collector = EnhancedMacOSCollector::new(base_config, macos_config)?;
-let (events, stats) = collector.collect_processes().await?;
+    let collector = EnhancedMacOSCollector::new(base_config, macos_config)?;
+    let (events, stats) = collector.collect_processes().await?;
+    Ok(())
+}
 ```
 
 ### Security Analysis
@@ -235,7 +238,9 @@ impl ProcessCollector for EnhancedMacOSCollector {
         }
     }
 
-    async fn collect_processes(&self) -> ProcessCollectionResult<(Vec<ProcessEvent>, CollectionStats)>;
+    async fn collect_processes(
+        &self,
+    ) -> ProcessCollectionResult<(Vec<ProcessEvent>, CollectionStats)>;
     async fn collect_process(&self, pid: u32) -> ProcessCollectionResult<ProcessEvent>;
     async fn health_check(&self) -> ProcessCollectionResult<()>;
 }
@@ -246,20 +251,24 @@ impl ProcessCollector for EnhancedMacOSCollector {
 ProcessEvent objects include comprehensive macOS-specific information:
 
 ```rust
-ProcessEvent {
-    pid: 1234,
-    ppid: Some(1),
-    name: "Safari".to_string(),
-    executable_path: Some("/Applications/Safari.app/Contents/MacOS/Safari".to_string()),
-    command_line: vec!["Safari".to_string()],
-    start_time: Some(SystemTime::now()),
-    cpu_usage: Some(5.0),
-    memory_usage: Some(1024 * 1024),
-    executable_hash: None, // Future enhancement
-    user_id: Some("501".to_string()),
-    accessible: true,
-    file_exists: true,
-    timestamp: SystemTime::now(),
+use std::time::SystemTime;
+
+fn example_process_event() -> ProcessEvent {
+    ProcessEvent {
+        pid: 1234,
+        ppid: Some(1),
+        name: "Safari".to_string(),
+        executable_path: Some("/Applications/Safari.app/Contents/MacOS/Safari".to_string()),
+        command_line: vec!["Safari".to_string()],
+        start_time: Some(SystemTime::now()),
+        cpu_usage: Some(5.0),
+        memory_usage: Some(1024 * 1024),
+        executable_hash: None, // Future enhancement
+        user_id: Some("501".to_string()),
+        accessible: true,
+        file_exists: true,
+        timestamp: SystemTime::now(),
+    }
 }
 ```
 
@@ -308,7 +317,10 @@ async fn test_enhanced_macos_collector_collect_processes() {
     assert!(result.is_ok(), "Process collection should succeed");
     let (events, stats) = result.unwrap();
     assert!(!events.is_empty(), "Should collect at least one process");
-    assert!(stats.successful_collections > 0, "Should successfully collect some processes");
+    assert!(
+        stats.successful_collections > 0,
+        "Should successfully collect some processes"
+    );
 }
 ```
 
@@ -387,11 +399,16 @@ Error: Access denied for process 1234
 Enable detailed logging for troubleshooting:
 
 ```rust
-let collector = EnhancedMacOSCollector::new(base_config, macos_config)?;
-// Enable debug logging
-tracing::subscriber::set_global_default(
-    tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).finish()
-)?;
+fn setup_debug_logging() -> Result<(), Box<dyn std::error::Error>> {
+    let collector = EnhancedMacOSCollector::new(base_config, macos_config)?;
+    // Enable debug logging
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .finish(),
+    )?;
+    Ok(())
+}
 ```
 
 ## Conclusion
