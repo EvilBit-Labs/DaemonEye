@@ -461,7 +461,7 @@ mod macos_enhanced_tests {
     #[tokio::test]
     #[traced_test]
     async fn test_enhanced_vs_original_macos_collector() {
-        use procmond::macos_collector::MacOSProcessCollector;
+        use procmond::macos_collector::EnhancedMacOSCollector;
 
         let base_config = ProcessCollectionConfig {
             max_processes: 20,
@@ -476,7 +476,7 @@ mod macos_enhanced_tests {
             enhanced_collector.collect_processes().await.unwrap();
 
         // Test original collector
-        let original_collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let original_collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
         let (original_events, original_stats) =
             original_collector.collect_processes().await.unwrap();
 

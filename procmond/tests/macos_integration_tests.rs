@@ -6,7 +6,7 @@
 
 #[cfg(target_os = "macos")]
 mod macos_tests {
-    use procmond::macos_collector::{MacOSCollectorConfig, MacOSProcessCollector};
+    use procmond::macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
     use procmond::process_collector::{ProcessCollectionConfig, ProcessCollector};
     use std::time::Duration;
     use tokio::time::timeout;
@@ -19,7 +19,7 @@ mod macos_tests {
         let base_config = ProcessCollectionConfig::default();
         let macos_config = MacOSCollectorConfig::default();
 
-        let collector = MacOSProcessCollector::new(base_config, macos_config);
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config);
         assert!(
             collector.is_ok(),
             "macOS collector creation should succeed: {:?}",
@@ -27,7 +27,7 @@ mod macos_tests {
         );
 
         let collector = collector.unwrap();
-        assert_eq!(collector.name(), "macos-libproc-collector");
+        assert_eq!(collector.name(), "enhanced-macos-collector");
 
         let capabilities = collector.capabilities();
         assert!(capabilities.basic_info);
@@ -56,7 +56,7 @@ mod macos_tests {
             handle_sandboxed_processes: false,
         };
 
-        let collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
 
         let capabilities = collector.capabilities();
         assert!(capabilities.basic_info);
@@ -73,7 +73,7 @@ mod macos_tests {
     async fn test_macos_collector_health_check() {
         let base_config = ProcessCollectionConfig::default();
         let macos_config = MacOSCollectorConfig::default();
-        let collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
 
         // Health check should complete within reasonable time
         let health_result = timeout(Duration::from_secs(5), collector.health_check()).await;
@@ -100,7 +100,7 @@ mod macos_tests {
             ..Default::default()
         };
         let macos_config = MacOSCollectorConfig::default();
-        let collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
 
         // Process collection should complete within reasonable time
         let collection_result =
@@ -160,7 +160,7 @@ mod macos_tests {
     async fn test_macos_single_process_collection() {
         let base_config = ProcessCollectionConfig::default();
         let macos_config = MacOSCollectorConfig::default();
-        let collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
 
         // Try to collect information for the current process
         let current_pid = std::process::id();
@@ -199,7 +199,7 @@ mod macos_tests {
             collect_bundle_info: true,
             handle_sandboxed_processes: true,
         };
-        let collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
 
         let (events, _stats) = collector.collect_processes().await.unwrap();
 
@@ -227,7 +227,7 @@ mod macos_tests {
     async fn test_macos_nonexistent_process() {
         let base_config = ProcessCollectionConfig::default();
         let macos_config = MacOSCollectorConfig::default();
-        let collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
 
         // Try to collect information for a non-existent process
         let nonexistent_pid = 999999u32;
@@ -240,13 +240,10 @@ mod macos_tests {
         );
 
         match result.unwrap_err() {
-            procmond::process_collector::ProcessCollectionError::ProcessAccessDenied {
-                pid,
-                message: _,
-            } => {
+            procmond::process_collector::ProcessCollectionError::ProcessNotFound { pid } => {
                 assert_eq!(pid, nonexistent_pid);
             }
-            other => panic!("Expected ProcessAccessDenied error, got: {:?}", other),
+            other => panic!("Expected ProcessNotFound error, got: {:?}", other),
         }
     }
 
@@ -260,7 +257,7 @@ mod macos_tests {
             ..Default::default()
         };
         let macos_config = MacOSCollectorConfig::default();
-        let collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
 
         let (events, stats) = collector.collect_processes().await.unwrap();
 
@@ -290,7 +287,7 @@ mod macos_tests {
             ..Default::default()
         };
         let macos_config = MacOSCollectorConfig::default();
-        let collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
 
         let start_time = std::time::Instant::now();
         let (events, stats) = collector.collect_processes().await.unwrap();
@@ -333,7 +330,7 @@ mod macos_tests {
         };
 
         // This should succeed regardless of SIP status
-        let collector = MacOSProcessCollector::new(base_config, macos_config);
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config);
         assert!(
             collector.is_ok(),
             "Collector creation should succeed even with SIP detection enabled"
@@ -358,7 +355,7 @@ mod macos_tests {
         };
 
         // This should succeed regardless of entitlements availability
-        let collector = MacOSProcessCollector::new(base_config, macos_config);
+        let collector = EnhancedMacOSCollector::new(base_config, macos_config);
         assert!(
             collector.is_ok(),
             "Collector creation should succeed even with entitlements detection enabled"
@@ -391,7 +388,7 @@ mod macos_tests {
             handle_sandboxed_processes: false,
         };
 
-        let collector = MacOSProcessCollector::new(base_config, macos_config).unwrap();
+        let collector = EnhancedMacOSCollector::new(base_config.clone(), macos_config).unwrap();
         let (events, stats) = collector.collect_processes().await.unwrap();
 
         // Should still collect basic process information

@@ -437,8 +437,9 @@ impl LinuxProcessCollector {
         // Parse stat file (space-separated values)
         let fields: Vec<&str> = content.split_whitespace().collect();
         if fields.len() >= 20 {
-            // Field 3 is state, field 20 is num_threads
+            // Field 3 is state, field 4 is ppid, field 20 is num_threads
             data.insert("state".to_string(), fields[2].to_string());
+            data.insert("ppid".to_string(), fields[3].to_string());
             data.insert("num_threads".to_string(), fields[19].to_string());
         }
 

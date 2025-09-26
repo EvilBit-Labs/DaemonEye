@@ -273,7 +273,7 @@ async fn test_process_event_source_graceful_shutdown() {
 
     let process_source = ProcessEventSource::with_config(db_manager, config);
 
-    let (tx, mut rx) = mpsc::channel(1000);
+    let (tx, _rx) = mpsc::channel(1000);
     let shutdown_signal = Arc::new(AtomicBool::new(false));
 
     // Start collection
