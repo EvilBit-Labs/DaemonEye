@@ -270,8 +270,16 @@ pub trait HealthChecker: Send + Sync {
 
 #[async_trait]
 pub trait DataManager: Send + Sync {
-    async fn export_alerts(&self, format: ExportFormat, filter: &AlertFilter) -> Result<ExportResult>;
-    async fn export_processes(&self, format: ExportFormat, filter: &ProcessFilter) -> Result<ExportResult>;
+    async fn export_alerts(
+        &self,
+        format: ExportFormat,
+        filter: &AlertFilter,
+    ) -> Result<ExportResult>;
+    async fn export_processes(
+        &self,
+        format: ExportFormat,
+        filter: &ProcessFilter,
+    ) -> Result<ExportResult>;
 }
 ```
 
