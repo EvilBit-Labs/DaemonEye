@@ -770,13 +770,17 @@ impl OperatorPipeline {
         for operation in &plan.pipeline_operations {
             result_stream = match operation {
                 PipelineOperation::Filter(filter) => {
-                    self.filter_executor.apply_filter(result_stream, filter).await?
+                    self.filter_executor
+                        .apply_filter(result_stream, filter)
+                        .await?
                 }
                 PipelineOperation::Join(join) => {
                     self.join_executor.execute_join(result_stream, join).await?
                 }
                 PipelineOperation::Aggregate(agg) => {
-                    self.aggregation_executor.execute_aggregation(result_stream, agg).await?
+                    self.aggregation_executor
+                        .execute_aggregation(result_stream, agg)
+                        .await?
                 }
                 PipelineOperation::Project(proj) => {
                     self.apply_projection(result_stream, proj).await?
@@ -797,25 +801,21 @@ impl JoinExecutor {
     pub async fn execute_join(
         &self,
         left_stream: RecordStream,
-        join: &JoinOperation
+        join: &JoinOperation,
     ) -> Result<RecordStream, JoinError> {
         match self.select_join_strategy(join) {
             JoinStrategy::MaterializedRelationCache => {
                 self.execute_mrc_join(left_stream, join).await
             }
-            JoinStrategy::IndexNestedLoop => {
-                self.execute_inlj(left_stream, join).await
-            }
-            JoinStrategy::BoundedSymmetricHash => {
-                self.execute_bounded_shj(left_stream, join).await
-            }
+            JoinStrategy::IndexNestedLoop => self.execute_inlj(left_stream, join).await,
+            JoinStrategy::BoundedSymmetricHash => self.execute_bounded_shj(left_stream, join).await,
         }
     }
 
     async fn execute_bounded_shj(
         &self,
         left_stream: RecordStream,
-        join: &JoinOperation
+        join: &JoinOperation,
     ) -> Result<RecordStream, JoinError> {
         let mut left_hash_table = BoundedHashMap::new(self.config.cardinality_cap);
         let mut right_hash_table = BoundedHashMap::new(self.config.cardinality_cap);
@@ -920,23 +920,27 @@ impl ReactiveOrchestrator {
         while let Some(task) = queue.pop_front() {
             match task.analysis_type {
                 AnalysisType::YaraScanning { file_path, rules } => {
-                    let yara_collector = self.collectors.get("yara-engine")
-                        .ok_or(OrchestrationError::CollectorNotFound("yara-engine".to_string()))?;
+                    let yara_collector = self.collectors.get("yara-engine").ok_or(
+                        OrchestrationError::CollectorNotFound("yara-engine".to_string()),
+                    )?;
 
                     let yara_task = DetectionTask {
                         task_id: task.task_id.clone(),
                         table: "yara.scan_results".to_string(),
                         supplemental_rules: Some(SupplementalRuleData::YaraRules {
                             version: "4.3.0".to_string(),
-                            rules: rules.into_iter().map(|rule_name| YaraRule {
-                                rule_name: rule_name.clone(),
-                                rule_content: self.get_yara_rule_content(&rule_name)?,
-                                scan_targets: vec!["file_content".to_string()],
-                                scan_options: YaraScanOptions {
-                                    fast_scan: true,
-                                    timeout_ms: 1000,
-                                },
-                            }).collect(),
+                            rules: rules
+                                .into_iter()
+                                .map(|rule_name| YaraRule {
+                                    rule_name: rule_name.clone(),
+                                    rule_content: self.get_yara_rule_content(&rule_name)?,
+                                    scan_targets: vec!["file_content".to_string()],
+                                    scan_options: YaraScanOptions {
+                                        fast_scan: true,
+                                        timeout_ms: 1000,
+                                    },
+                                })
+                                .collect(),
                         }),
                         ..Default::default()
                     };
@@ -944,8 +948,9 @@ impl ReactiveOrchestrator {
                     yara_collector.send_task(yara_task).await?;
                 }
                 AnalysisType::PeAnalysis { file_path } => {
-                    let pe_collector = self.collectors.get("pe-analyzer")
-                        .ok_or(OrchestrationError::CollectorNotFound("pe-analyzer".to_string()))?;
+                    let pe_collector = self.collectors.get("pe-analyzer").ok_or(
+                        OrchestrationError::CollectorNotFound("pe-analyzer".to_string()),
+                    )?;
 
                     let pe_task = DetectionTask {
                         task_id: task.task_id.clone(),
@@ -956,9 +961,10 @@ impl ReactiveOrchestrator {
                             "sections".to_string(),
                             "entry_point".to_string(),
                         ],
-                        predicates: vec![
-                            Predicate::Equals("file_path".to_string(), Value::String(file_path)),
-                        ],
+                        predicates: vec![Predicate::Equals(
+                            "file_path".to_string(),
+                            Value::String(file_path),
+                        )],
                         ..Default::default()
                     };
 
@@ -996,7 +1002,10 @@ pub struct AutoJoinRule {
 }
 
 impl AutoJoinManager {
-    pub async fn process_sql_with_auto_joins(&self, sql: &str) -> Result<EnhancedDetectionPlan, AutoJoinError> {
+    pub async fn process_sql_with_auto_joins(
+        &self,
+        sql: &str,
+    ) -> Result<EnhancedDetectionPlan, AutoJoinError> {
         let base_plan = self.parse_base_sql(sql)?;
         let mut enhanced_plan = EnhancedDetectionPlan::from(base_plan);
 
@@ -1042,7 +1051,10 @@ impl AutoJoinManager {
         }
     }
 
-    fn detect_implicit_correlations(&self, sql: &str) -> Result<Vec<ImplicitCorrelation>, AutoJoinError> {
+    fn detect_implicit_correlations(
+        &self,
+        sql: &str,
+    ) -> Result<Vec<ImplicitCorrelation>, AutoJoinError> {
         let ast = self.parse_sql(sql)?;
         let mut correlations = Vec::new();
 
@@ -1071,7 +1083,7 @@ pub enum ExtendedJoinType {
     Left,
     Right,
     Full,
-    Auto,  // New: AUTO JOIN syntax
+    Auto, // New: AUTO JOIN syntax
 }
 
 // Example SQL with AUTO JOIN:
@@ -1244,15 +1256,19 @@ impl ErrorRecoveryManager {
     pub async fn handle_collector_failure(
         &mut self,
         collector_id: &str,
-        error: &CollectorError
+        error: &CollectorError,
     ) -> Result<RecoveryAction, RecoveryError> {
-        let circuit_breaker = self.circuit_breakers.get_mut(collector_id)
+        let circuit_breaker = self
+            .circuit_breakers
+            .get_mut(collector_id)
             .ok_or(RecoveryError::NoCircuitBreaker(collector_id.to_string()))?;
 
         match circuit_breaker.record_failure() {
             CircuitState::Closed => {
                 // Retry with exponential backoff
-                let retry_policy = self.retry_policies.get(collector_id)
+                let retry_policy = self
+                    .retry_policies
+                    .get(collector_id)
                     .ok_or(RecoveryError::NoRetryPolicy(collector_id.to_string()))?;
 
                 Ok(RecoveryAction::Retry {
@@ -1262,7 +1278,9 @@ impl ErrorRecoveryManager {
             }
             CircuitState::Open => {
                 // Use fallback strategy
-                let fallback = self.fallback_strategies.get(collector_id)
+                let fallback = self
+                    .fallback_strategies
+                    .get(collector_id)
                     .ok_or(RecoveryError::NoFallbackStrategy(collector_id.to_string()))?;
 
                 Ok(RecoveryAction::Fallback {
@@ -1314,8 +1332,12 @@ mod tests {
         let yara_collector = test_harness.start_mock_collector("yara-engine").await;
 
         // Register schemas
-        test_harness.register_collector_schema(process_collector.schema()).await;
-        test_harness.register_collector_schema(yara_collector.schema()).await;
+        test_harness
+            .register_collector_schema(process_collector.schema())
+            .await;
+        test_harness
+            .register_collector_schema(yara_collector.schema())
+            .await;
 
         // Execute test rule
         let sql = r#"
@@ -1343,9 +1365,7 @@ mod tests {
         let left_stream = create_test_stream(10_000);
         let right_stream = create_test_stream(1_000);
 
-        b.iter(|| {
-            executor.execute_bounded_shj(left_stream.clone(), &test_join_op())
-        });
+        b.iter(|| executor.execute_bounded_shj(left_stream.clone(), &test_join_op()));
     }
 
     // Chaos testing for error scenarios
@@ -1354,9 +1374,13 @@ mod tests {
         let mut chaos_harness = ChaosTestHarness::new().await;
 
         // Inject various failure modes
-        chaos_harness.inject_network_partition("procmond", Duration::from_secs(30)).await;
+        chaos_harness
+            .inject_network_partition("procmond", Duration::from_secs(30))
+            .await;
         chaos_harness.inject_memory_pressure(0.9).await; // 90% memory usage
-        chaos_harness.inject_cpu_spike(0.95, Duration::from_secs(10)).await;
+        chaos_harness
+            .inject_cpu_spike(0.95, Duration::from_secs(10))
+            .await;
 
         // Execute rules during chaos
         let results = chaos_harness.execute_rules_during_chaos().await;
