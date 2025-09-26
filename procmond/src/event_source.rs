@@ -1137,6 +1137,7 @@ mod tests {
                 accessible: true,
                 file_exists: false,
                 timestamp: SystemTime::now(),
+                platform_metadata: None,
             }),
             CollectionEvent::Process(ProcessEvent {
                 pid: 5678,
@@ -1152,6 +1153,7 @@ mod tests {
                 accessible: true,
                 file_exists: false,
                 timestamp: SystemTime::now(),
+                platform_metadata: None,
             }),
         ];
 
@@ -1260,6 +1262,7 @@ mod tests {
             accessible: true,
             file_exists: false,
             timestamp: SystemTime::now(),
+            platform_metadata: None,
         })];
 
         // This should eventually timeout due to backpressure

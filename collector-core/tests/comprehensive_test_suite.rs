@@ -167,6 +167,7 @@ impl EventSource for ComprehensiveTestSource {
                 accessible: true,
                 file_exists: true,
                 timestamp: SystemTime::now(),
+                platform_metadata: None,
             });
 
             if tx.send(event).await.is_err() {

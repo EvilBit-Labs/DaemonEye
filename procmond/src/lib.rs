@@ -333,6 +333,7 @@ impl ProcessMessageHandler {
     ///     accessible: true,
     ///     file_exists: true,
     ///     timestamp: SystemTime::now(),
+    ///     platform_metadata: None,
     /// };
     /// let record = handler.convert_process_event_to_record(event);
     /// # }
@@ -481,6 +482,7 @@ mod tests {
                     accessible: true,
                     file_exists: true,
                     timestamp: now,
+                    platform_metadata: None,
                 },
                 ProcessEvent {
                     pid: 1234,
@@ -496,6 +498,7 @@ mod tests {
                     accessible: true,
                     file_exists: true,
                     timestamp: now,
+                    platform_metadata: None,
                 },
                 ProcessEvent {
                     pid: 5678,
@@ -511,6 +514,7 @@ mod tests {
                     accessible: false,
                     file_exists: false,
                     timestamp: now,
+                    platform_metadata: None,
                 },
             ];
 
@@ -753,6 +757,7 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp: now,
+            platform_metadata: None,
         };
 
         let record = handler.convert_process_event_to_record(event);
@@ -919,6 +924,7 @@ mod tests {
                 accessible: true,
                 file_exists: true,
                 timestamp: now,
+                platform_metadata: None,
             },
             ProcessEvent {
                 pid: 2,
@@ -934,6 +940,7 @@ mod tests {
                 accessible: false,
                 file_exists: false,
                 timestamp: now,
+                platform_metadata: None,
             },
         ];
 
@@ -1052,6 +1059,7 @@ mod tests {
             accessible: false,
             file_exists: false,
             timestamp: SystemTime::now(),
+            platform_metadata: None,
         };
 
         let record = handler.convert_process_event_to_record(minimal_event);
@@ -1085,6 +1093,7 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
+            platform_metadata: None,
         };
 
         let record_with_hash = handler.convert_process_event_to_record(event_with_hash);

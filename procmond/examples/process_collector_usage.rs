@@ -67,6 +67,7 @@ impl ProcessCollector for ExampleProcessCollector {
             accessible: true,
             file_exists: true,
             timestamp: now,
+            platform_metadata: None,
         }];
 
         let stats = CollectionStats {
@@ -97,6 +98,7 @@ impl ProcessCollector for ExampleProcessCollector {
                 accessible: true,
                 file_exists: true,
                 timestamp: now,
+                platform_metadata: None,
             })
         } else {
             Err(procmond::ProcessCollectionError::ProcessNotFound { pid })

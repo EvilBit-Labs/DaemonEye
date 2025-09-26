@@ -377,6 +377,7 @@ impl SysinfoProcessCollector {
             accessible,
             file_exists,
             timestamp: SystemTime::now(),
+            platform_metadata: None, // Generic collector doesn't collect platform metadata
         })
     }
 

@@ -377,20 +377,43 @@ impl EnhancedMacOSCollector {
     /// Returns a vector of `ProcessEvent` objects representing all accessible processes,
     /// or an error if the collection fails.
     async fn collect_processes_enhanced(&self) -> ProcessCollectionResult<Vec<ProcessEvent>> {
-        let mut system = System::new_all();
-        system.refresh_all();
+        let base_config = self.base_config.clone();
+        let collector = self.clone();
 
-        let mut events = Vec::with_capacity(system.processes().len());
+        // Move the synchronous sysinfo operations to a blocking task
+        let events = tokio::task::spawn_blocking(move || {
+            let mut system = System::new_all();
+            system.refresh_all();
 
-        for (pid, process) in system.processes() {
-            match self.enhance_process(*pid, process) {
-                Ok(event) => events.push(event),
-                Err(e) => {
-                    debug!(pid = pid.as_u32(), error = %e, "Error enhancing process");
-                    // Continue with other processes
+            let mut events = Vec::with_capacity(system.processes().len());
+            let max_processes = base_config.max_processes;
+
+            for (pid, process) in system.processes() {
+                // Enforce max_processes cap
+                if max_processes > 0 && events.len() >= max_processes {
+                    debug!(
+                        max_processes = max_processes,
+                        collected = events.len(),
+                        "Reached max_processes limit, stopping collection"
+                    );
+                    break;
+                }
+
+                match collector.enhance_process(*pid, process) {
+                    Ok(event) => events.push(event),
+                    Err(e) => {
+                        debug!(pid = pid.as_u32(), error = %e, "Error enhancing process");
+                        // Continue with other processes
+                    }
                 }
             }
-        }
+
+            events
+        })
+        .await
+        .map_err(|e| ProcessCollectionError::PlatformError {
+            message: format!("Blocking task failed: {}", e),
+        })?;
 
         Ok(events)
     }
@@ -414,15 +437,31 @@ impl EnhancedMacOSCollector {
         process: &sysinfo::Process,
     ) -> ProcessCollectionResult<ProcessEvent> {
         let pid_u32 = pid.as_u32();
-        let ppid = process.parent().map(|p| p.as_u32());
         let name = process.name().to_string_lossy().to_string();
-        let executable_path = process.exe().map(|p| p.to_string_lossy().to_string());
-
         let command_line = process
             .cmd()
             .iter()
             .map(|s| s.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
+
+        // Check if this is a system process that should be skipped
+        if self.base_config.skip_system_processes && self.is_system_process(&name, pid_u32) {
+            return Err(ProcessCollectionError::ProcessAccessDenied {
+                pid: pid_u32,
+                message: "System process skipped by configuration".to_string(),
+            });
+        }
+
+        // Check if this is a kernel thread that should be skipped
+        if self.base_config.skip_kernel_threads && self.is_kernel_thread(&name, &command_line) {
+            return Err(ProcessCollectionError::ProcessAccessDenied {
+                pid: pid_u32,
+                message: "Kernel thread skipped by configuration".to_string(),
+            });
+        }
+
+        let ppid = process.parent().map(|p| p.as_u32());
+        let executable_path = process.exe().map(|p| p.to_string_lossy().to_string());
 
         let start_time =
             Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(process.start_time()));
@@ -465,6 +504,7 @@ impl EnhancedMacOSCollector {
             accessible,
             file_exists,
             timestamp: SystemTime::now(),
+            platform_metadata: None, // macOS metadata not implemented yet
         })
     }
 
@@ -720,6 +760,7 @@ impl EnhancedMacOSCollector {
 
     /// Determines if a process is a system process based on name and PID.
     fn is_system_process(&self, name: &str, pid: u32) -> bool {
+        // TODO: Find more reliable way to detect system processes, since hackers would obviously name their processes to look like system processes
         // Common macOS system process patterns
         const SYSTEM_PROCESSES: &[&str] = &[
             "kernel_task",

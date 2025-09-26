@@ -568,6 +568,7 @@ impl LinuxProcessCollector {
             accessible,
             file_exists,
             timestamp: SystemTime::now(),
+            platform_metadata: None, // Linux metadata not implemented yet
         })
     }
 

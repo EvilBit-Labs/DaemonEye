@@ -223,6 +223,7 @@ impl EventSource for ChaosEventSource {
                         accessible: true,
                         file_exists: true,
                         timestamp: SystemTime::now(),
+                        platform_metadata: None,
                     })
                 }
                 _ => {
@@ -241,6 +242,7 @@ impl EventSource for ChaosEventSource {
                         accessible: true,
                         file_exists: true,
                         timestamp: SystemTime::now(),
+                        platform_metadata: None,
                     })
                 }
             };

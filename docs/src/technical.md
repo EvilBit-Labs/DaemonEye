@@ -38,6 +38,12 @@ The Windows process collector provides comprehensive Windows-specific capabiliti
 
 [Read Windows Process Collector Documentation →](./technical/windows-process-collector.md)
 
+### macOS Process Collector
+
+The macOS process collector provides comprehensive macOS-specific capabilities including kernel extension integration, process code signing verification, system integrity protection monitoring, and EndpointSecurity framework integration.
+
+[Read macOS Process Collector Documentation →](./technical/macos-process-collector.md)
+
 ## Technical Architecture
 
 ### Component Overview

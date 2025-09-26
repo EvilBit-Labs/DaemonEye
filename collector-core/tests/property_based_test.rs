@@ -109,6 +109,7 @@ fn process_event_strategy() -> impl Strategy<Value = ProcessEvent> {
             accessible,
             file_exists,
             timestamp,
+            platform_metadata: None,
         },
     )
 }
@@ -514,6 +515,7 @@ mod deterministic_tests {
             accessible: true,
             file_exists: true,
             timestamp,
+            platform_metadata: None,
         });
 
         assert_eq!(process_event.event_type(), "process");

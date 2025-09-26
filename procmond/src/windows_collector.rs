@@ -73,7 +73,7 @@ impl From<WindowsCollectionError> for ProcessCollectionError {
 }
 
 /// Windows process security information.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProcessSecurityInfo {
     /// Process has SeDebugPrivilege
     pub has_debug_privilege: bool,
@@ -94,7 +94,7 @@ pub struct ProcessSecurityInfo {
 }
 
 /// Windows process integrity levels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum IntegrityLevel {
     /// Untrusted integrity level
     Untrusted,
@@ -125,7 +125,7 @@ impl std::fmt::Display for IntegrityLevel {
 }
 
 /// Windows process token types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum TokenType {
     /// Primary token
     #[default]
@@ -147,7 +147,7 @@ impl std::fmt::Display for TokenType {
 }
 
 /// Windows service information.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct WindowsServiceInfo {
     /// Process is a Windows service
     pub is_service: bool,
@@ -164,7 +164,7 @@ pub struct WindowsServiceInfo {
 }
 
 /// Windows container information.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct WindowsContainerInfo {
     /// Process is running in a container
     pub in_container: bool,
@@ -177,7 +177,7 @@ pub struct WindowsContainerInfo {
 }
 
 /// Enhanced Windows process metadata.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct WindowsProcessMetadata {
     /// Process security information
     pub security_info: ProcessSecurityInfo,
@@ -1048,6 +1048,14 @@ impl WindowsProcessCollector {
         let accessible = true; // If we can read process info, it's accessible
         let file_exists = executable_path.is_some();
 
+        // Collect Windows-specific enhanced metadata if configured
+        let platform_metadata = if self.base_config.collect_enhanced_metadata {
+            let windows_metadata = self.read_enhanced_metadata(pid_u32);
+            Some(serde_json::to_value(windows_metadata).unwrap_or_default())
+        } else {
+            None
+        };
+
         Ok(ProcessEvent {
             pid: pid_u32,
             ppid,
@@ -1062,6 +1070,7 @@ impl WindowsProcessCollector {
             accessible,
             file_exists,
             timestamp: SystemTime::now(),
+            platform_metadata,
         })
     }
 
@@ -1377,6 +1386,53 @@ mod tests {
         assert!(!capabilities.system_processes);
         assert!(!capabilities.kernel_threads);
         assert!(capabilities.realtime_collection);
+    }
+
+    #[test]
+    fn test_windows_metadata_serialization() {
+        // Test that WindowsProcessMetadata can be serialized to JSON
+        let mut metadata = WindowsProcessMetadata::default();
+
+        // Set some test values
+        metadata.security_info.elevated = true;
+        metadata.security_info.integrity_level = IntegrityLevel::High;
+        metadata.service_info.is_service = true;
+        metadata.service_info.service_name = Some("TestService".to_string());
+        metadata.container_info.in_container = false;
+        metadata.architecture = Some("x64".to_string());
+        metadata.defender_protected = true;
+        metadata.working_set_size = Some(1024 * 1024);
+        metadata.private_bytes = Some(2048 * 1024);
+        metadata.virtual_bytes = Some(4096 * 1024);
+        metadata.handle_count = Some(50);
+        metadata.thread_count = Some(5);
+
+        // Test serialization
+        let json = serde_json::to_string(&metadata).unwrap();
+        assert!(!json.is_empty(), "Serialized JSON should not be empty");
+
+        // Test deserialization
+        let deserialized: WindowsProcessMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.security_info.elevated, true);
+        assert_eq!(
+            deserialized.security_info.integrity_level,
+            IntegrityLevel::High
+        );
+        assert_eq!(deserialized.service_info.is_service, true);
+        assert_eq!(
+            deserialized.service_info.service_name,
+            Some("TestService".to_string())
+        );
+        assert_eq!(deserialized.container_info.in_container, false);
+        assert_eq!(deserialized.architecture, Some("x64".to_string()));
+        assert_eq!(deserialized.defender_protected, true);
+        assert_eq!(deserialized.working_set_size, Some(1024 * 1024));
+        assert_eq!(deserialized.private_bytes, Some(2048 * 1024));
+        assert_eq!(deserialized.virtual_bytes, Some(4096 * 1024));
+        assert_eq!(deserialized.handle_count, Some(50));
+        assert_eq!(deserialized.thread_count, Some(5));
+
+        println!("Windows metadata serialization test passed");
     }
 
     #[tokio::test]

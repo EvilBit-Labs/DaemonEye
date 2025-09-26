@@ -1179,6 +1179,7 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
+            platform_metadata: None,
         })];
 
         let result = CollectorRuntime::process_event_batch(&mut batch, &telemetry_collector).await;

@@ -75,6 +75,7 @@ impl LegacyCompatibleSource {
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
+            platform_metadata: None,
         })
     }
 }
@@ -123,6 +124,7 @@ impl EventSource for LegacyCompatibleSource {
                     accessible: true,
                     file_exists: true,
                     timestamp: SystemTime::now(),
+                    platform_metadata: None,
                 })
             };
 

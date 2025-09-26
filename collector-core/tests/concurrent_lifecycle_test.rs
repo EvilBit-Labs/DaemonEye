@@ -126,6 +126,7 @@ impl EventSource for LifecycleTestSource {
                 accessible: true,
                 file_exists: true,
                 timestamp: SystemTime::now(),
+                platform_metadata: None,
             });
 
             if tx.send(event).await.is_err() {

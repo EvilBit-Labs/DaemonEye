@@ -39,6 +39,7 @@ use std::time::SystemTime;
 ///     accessible: true,
 ///     file_exists: true,
 ///     timestamp: SystemTime::now(),
+///     platform_metadata: None,
 /// });
 ///
 /// match event {
@@ -107,6 +108,9 @@ pub struct ProcessEvent {
 
     /// Event collection timestamp
     pub timestamp: SystemTime,
+
+    /// Platform-specific metadata (Windows, macOS, Linux)
+    pub platform_metadata: Option<serde_json::Value>,
 }
 
 /// Network monitoring event data (future extension).
@@ -248,6 +252,7 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp,
+            platform_metadata: None,
         };
 
         assert_eq!(event.pid, 1234);
@@ -274,6 +279,7 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp,
+            platform_metadata: None,
         };
 
         let collection_event = CollectionEvent::Process(process_event);
@@ -319,6 +325,7 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp,
+            platform_metadata: None,
         };
 
         let collection_event = CollectionEvent::Process(process_event);

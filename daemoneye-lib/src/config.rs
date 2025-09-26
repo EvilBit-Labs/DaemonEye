@@ -197,7 +197,7 @@ impl ConfigLoader {
             // Environment variables with component prefix
             .merge(Env::prefixed(&format!(
                 "{}_",
-                self.component.to_uppercase()
+                self.component.replace('-', "_").to_uppercase()
             )))
             .extract()?;
 
