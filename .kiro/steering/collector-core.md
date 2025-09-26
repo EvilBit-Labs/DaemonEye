@@ -19,7 +19,7 @@ When implementing EventSource, follow this exact pattern:
 
 ```rust
 use async_trait::async_trait;
-use collector_core::{EventSource, CollectionEvent, SourceCaps};
+use collector_core::{CollectionEvent, EventSource, SourceCaps};
 use tokio::sync::mpsc;
 
 #[async_trait]
