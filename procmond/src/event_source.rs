@@ -193,14 +193,8 @@ impl ProcessEventSource {
         let config = ProcessSourceConfig::default();
         let backpressure_semaphore = Arc::new(Semaphore::new(config.max_events_in_flight));
 
-        // Create default sysinfo collector
-        let collector_config = ProcessCollectionConfig {
-            collect_enhanced_metadata: config.collect_enhanced_metadata,
-            compute_executable_hashes: config.compute_executable_hashes,
-            max_processes: config.max_processes_per_cycle,
-            ..Default::default()
-        };
-        let collector = Box::new(SysinfoProcessCollector::new(collector_config));
+        // Create platform-specific collector with fallback to sysinfo
+        let collector = Self::create_platform_collector(&config);
 
         Self {
             database,
@@ -246,14 +240,8 @@ impl ProcessEventSource {
     ) -> Self {
         let backpressure_semaphore = Arc::new(Semaphore::new(config.max_events_in_flight));
 
-        // Create sysinfo collector with the provided configuration
-        let collector_config = ProcessCollectionConfig {
-            collect_enhanced_metadata: config.collect_enhanced_metadata,
-            compute_executable_hashes: config.compute_executable_hashes,
-            max_processes: config.max_processes_per_cycle,
-            ..Default::default()
-        };
-        let collector = Box::new(SysinfoProcessCollector::new(collector_config));
+        // Create platform-specific collector with fallback to sysinfo
+        let collector = Self::create_platform_collector(&config);
 
         Self {
             database,
@@ -320,6 +308,90 @@ impl ProcessEventSource {
                 .avg_collection_duration_ms
                 .load(Ordering::Relaxed),
         }
+    }
+
+    /// Creates a platform-specific process collector with fallback to sysinfo.
+    ///
+    /// This method attempts to create the most appropriate collector for the current
+    /// platform, falling back to the cross-platform sysinfo collector if platform-specific
+    /// collectors are not available or fail to initialize.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration for the process source
+    ///
+    /// # Returns
+    ///
+    /// A boxed ProcessCollector implementation suitable for the current platform.
+    fn create_platform_collector(config: &ProcessSourceConfig) -> Box<dyn ProcessCollector> {
+        let base_collector_config = ProcessCollectionConfig {
+            collect_enhanced_metadata: config.collect_enhanced_metadata,
+            compute_executable_hashes: config.compute_executable_hashes,
+            max_processes: config.max_processes_per_cycle,
+            ..Default::default()
+        };
+
+        // Try to create platform-specific collector first
+        #[cfg(target_os = "windows")]
+        {
+            use crate::windows_collector::{WindowsCollectorConfig, WindowsProcessCollector};
+
+            let windows_config = WindowsCollectorConfig::default();
+            match WindowsProcessCollector::new(base_collector_config.clone(), windows_config) {
+                Ok(collector) => {
+                    debug!("Created Windows-specific process collector");
+                    return Box::new(collector);
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Failed to create Windows-specific collector, falling back to sysinfo"
+                    );
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            use crate::macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
+
+            let macos_config = MacOSCollectorConfig::default();
+            match EnhancedMacOSCollector::new(base_collector_config.clone(), macos_config) {
+                Ok(collector) => {
+                    debug!("Created macOS-specific process collector");
+                    return Box::new(collector);
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Failed to create macOS-specific collector, falling back to sysinfo"
+                    );
+                }
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            use crate::linux_collector::{LinuxCollectorConfig, LinuxProcessCollector};
+
+            let linux_config = LinuxCollectorConfig::default();
+            match LinuxProcessCollector::new(base_collector_config.clone(), linux_config) {
+                Ok(collector) => {
+                    debug!("Created Linux-specific process collector");
+                    return Box::new(collector);
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Failed to create Linux-specific collector, falling back to sysinfo"
+                    );
+                }
+            }
+        }
+
+        // Fallback to cross-platform sysinfo collector
+        debug!("Using cross-platform sysinfo process collector");
+        Box::new(SysinfoProcessCollector::new(base_collector_config))
     }
 
     /// Collects process information and converts it to collection events with batching and backpressure handling.

@@ -9,6 +9,9 @@ pub mod linux_collector;
 #[cfg(target_os = "macos")]
 pub mod macos_collector;
 
+#[cfg(target_os = "windows")]
+pub mod windows_collector;
+
 pub use event_source::{ProcessEventSource, ProcessSourceConfig};
 pub use process_collector::{
     CollectionStats, ProcessCollectionConfig, ProcessCollectionError, ProcessCollectionResult,
@@ -20,6 +23,9 @@ pub use linux_collector::{LinuxCollectorConfig, LinuxProcessCollector};
 
 #[cfg(target_os = "macos")]
 pub use macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
+
+#[cfg(target_os = "windows")]
+pub use windows_collector::{WindowsCollectorConfig, WindowsProcessCollector};
 
 // Re-export main functionality for testing
 pub use daemoneye_lib::proto::{

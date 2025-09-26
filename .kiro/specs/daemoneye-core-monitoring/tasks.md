@@ -159,7 +159,7 @@
   - Write Linux-specific integration tests
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [x] 5.4 Implement macOS-specific optimizations using third-party crates - [#82](https://github.com/EvilBit-Labs/DaemonEye/issues/82)
+- [x] 5.4 Implement macOS-specific optimizations using third-party crates - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Refactor macOSProcessCollector to use well-maintained third-party crates instead of direct libc
   - Replace libproc/sysctl with enhanced sysinfo + security-framework + core-foundation + mac-sys-info (procfs is Linux-only)
@@ -170,7 +170,7 @@
   - Write comprehensive integration tests for third-party crate approach
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 5.5 Implement Windows-specific optimizations using third-party crates - [#83](https://github.com/EvilBit-Labs/DaemonEye/issues/83)
+- [x] 5.5 Implement Windows-specific optimizations using third-party crates - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create WindowsProcessCollector using well-maintained third-party crates instead of direct Windows API calls
   - Use enhanced sysinfo + windows-rs + winapi-safe + psutil-rs for comprehensive Windows process monitoring
@@ -185,7 +185,7 @@
   - Maintain all existing capabilities while improving safety and accuracy with third-party crates
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 5.6 Add comprehensive cross-platform testing - [#84](https://github.com/EvilBit-Labs/DaemonEye/issues/84)
+- [ ] 5.6 Add comprehensive cross-platform testing - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create cross-platform integration tests for all ProcessCollector implementations
   - Add performance benchmarks comparing platform-specific vs sysinfo implementations

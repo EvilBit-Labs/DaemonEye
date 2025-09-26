@@ -64,6 +64,27 @@ core-foundation = "0.10.1"
 # Note: procfs removed as it's Linux-specific and not compatible with macOS
 # Using sysinfo for cross-platform process information instead
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows-specific dependencies using third-party crates
+# Enhanced sysinfo is already included in main dependencies
+# windows-rs for safe Windows API bindings
+windows = { version = "0.58.0", features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Security",
+    "Win32_System_Services",
+    "Win32_System_SystemInformation",
+    "Win32_System_Memory",
+    "Win32_System_Performance",
+] }
+# windows-service for Windows service detection and management
+windows-service = "0.7.0"
+# Additional process utilities for Windows
+# Note: psutil-rs and perfmon-rs would be added here when available
+# For now, we use sysinfo + windows-rs for comprehensive Windows process monitoring
+
 [build-dependencies]
 prost-build = { workspace = true }
 
