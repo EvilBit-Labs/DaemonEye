@@ -1143,7 +1143,10 @@ impl AutoJoinOrchestrator {
 
 ```rust
 impl AutoJoinOrchestrator {
-    async fn integrate_auto_join_results(&mut self, base_event: &StreamRecord) -> Result<(), OrchestrationError> {
+    async fn integrate_auto_join_results(
+        &mut self,
+        base_event: &StreamRecord,
+    ) -> Result<(), OrchestrationError> {
         // Find all auto-JOIN results for this base event
         let auto_join_results = self.get_auto_join_results(base_event).await?;
 
