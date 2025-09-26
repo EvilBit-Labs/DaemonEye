@@ -54,5 +54,7 @@ DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agen
 - [Core API](docs/src/api-reference/core-api.md): Core API concepts and interface reference
 - [Cursor Rules README](.cursor/rules/README.md): Overview of cursor rules and standards
 - [LICENSE](LICENSE): Project license (permissive usage terms)
+- [macOS Process Collector](docs/src/technical/macos-process-collector.md): macOS-specific process collection implementation
 - [Rust Standards](.cursor/rules/rust/rust-standards.mdc): Rust coding standards and patterns
 - [SUMMARY](docs/src/SUMMARY.md): mdBook summary table of contents (structural index)
+- [Windows Process Collector](docs/src/technical/windows-process-collector.md): Windows-specific process collection capabilities
