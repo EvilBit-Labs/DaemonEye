@@ -1413,19 +1413,19 @@ mod tests {
 
         // Test deserialization
         let deserialized: WindowsProcessMetadata = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.security_info.elevated, true);
+        assert!(deserialized.security_info.elevated);
         assert_eq!(
             deserialized.security_info.integrity_level,
             IntegrityLevel::High
         );
-        assert_eq!(deserialized.service_info.is_service, true);
+        assert!(deserialized.service_info.is_service);
         assert_eq!(
             deserialized.service_info.service_name,
             Some("TestService".to_string())
         );
-        assert_eq!(deserialized.container_info.in_container, false);
+        assert!(!deserialized.container_info.in_container);
         assert_eq!(deserialized.architecture, Some("x64".to_string()));
-        assert_eq!(deserialized.defender_protected, true);
+        assert!(deserialized.defender_protected);
         assert_eq!(deserialized.working_set_size, Some(1024 * 1024));
         assert_eq!(deserialized.private_bytes, Some(2048 * 1024));
         assert_eq!(deserialized.virtual_bytes, Some(4096 * 1024));

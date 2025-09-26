@@ -14,8 +14,9 @@ pub mod windows_collector;
 
 pub use event_source::{ProcessEventSource, ProcessSourceConfig};
 pub use process_collector::{
-    CollectionStats, ProcessCollectionConfig, ProcessCollectionError, ProcessCollectionResult,
-    ProcessCollector, ProcessCollectorCapabilities, SysinfoProcessCollector,
+    CollectionStats, FallbackProcessCollector, ProcessCollectionConfig, ProcessCollectionError,
+    ProcessCollectionResult, ProcessCollector, ProcessCollectorCapabilities,
+    SysinfoProcessCollector,
 };
 
 #[cfg(target_os = "linux")]

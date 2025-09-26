@@ -118,7 +118,7 @@
   - Create compatibility tests ensuring collector-core works with existing procmond and daemoneye-agent
   - _Requirements: 11.1, 11.2, 12.1, 12.2, 13.1, 13.2, 13.5_
 
-- [ ] 5. Implement cross-platform process enumeration in procmond
+- [-] 5. Implement cross-platform process enumeration in procmond
 
 - [x] 5.1a Create ProcessMessageHandler with sysinfo-based process enumeration - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
@@ -170,7 +170,7 @@
   - Write comprehensive integration tests for third-party crate approach
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 5.5 Add basic process collection for secondary and minimally supported platforms
+- [x] 5.5 Add basic process collection for secondary and minimally supported platforms
 
   - Create FallbackProcessCollector for secondary platforms (FreeBSD, OpenBSD, NetBSD, etc.)
   - Use sysinfo crate as the primary collection mechanism for maximum compatibility
