@@ -170,7 +170,18 @@
   - Write comprehensive integration tests for third-party crate approach
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [x] 5.5 Implement Windows-specific optimizations using third-party crates - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+- [ ] 5.5 Add basic process collection for secondary and minimally supported platforms
+
+  - Create FallbackProcessCollector for secondary platforms (FreeBSD, OpenBSD, NetBSD, etc.)
+  - Use sysinfo crate as the primary collection mechanism for maximum compatibility
+  - Implement graceful capability detection and feature availability reporting
+  - Add platform detection logic to select appropriate collector implementation
+  - Handle platform-specific limitations with clear error messages and fallback behavior
+  - Write unit tests for fallback collector with mock platform detection
+  - Add integration tests for FreeBSD and other secondary platforms where possible
+  - _Requirements: 1.1, 1.5_
+
+- [x] 5.6 Implement Windows-specific optimizations using third-party crates - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create WindowsProcessCollector using well-maintained third-party crates instead of direct Windows API calls
   - Use enhanced sysinfo + windows-rs + winapi-safe + psutil-rs for comprehensive Windows process monitoring
@@ -185,7 +196,7 @@
   - Maintain all existing capabilities while improving safety and accuracy with third-party crates
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 5.6 Add comprehensive cross-platform testing - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+- [ ] 5.7 Add comprehensive cross-platform testing - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create cross-platform integration tests for all ProcessCollector implementations
   - Add performance benchmarks comparing platform-specific vs sysinfo implementations
