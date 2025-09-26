@@ -196,16 +196,7 @@
   - Maintain all existing capabilities while improving safety and accuracy with third-party crates
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 5.7 Add comprehensive cross-platform testing - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
-
-  - Create cross-platform integration tests for all ProcessCollector implementations
-  - Implement privilege escalation/dropping tests for all platforms
-  - Add criterion benchmarks with high process counts (10,000+ processes) (do not set an expected minimum performance, just collect the values)
-  - Create compatibility tests for different OS versions and configurations
-  - Write property-based tests for process enumeration edge cases
-  - _Requirements: 1.1, 1.5, 6.1, 6.2_
-
-- [ ] 5.8 Implement Monitor Collector behavior and event-driven architecture - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
+- [ ] 5.7 Implement Monitor Collector behavior and event-driven architecture - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
   - **Prerequisites**: Complete Task 7.1 (ProcessEventSource implementation) before starting this task
   - Refactor procmond to implement Monitor Collector behavior (continuous process monitoring)
@@ -222,6 +213,16 @@
   - Write unit tests for Monitor Collector behavior and trigger event generation
   - Add integration tests for collector coordination and trigger workflows
   - _Requirements: 11.1, 11.2, 11.5_
+
+- [ ] 5.8 Add comprehensive cross-platform testing - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+
+  - Create cross-platform integration tests for all ProcessCollector implementations
+  - Implement privilege escalation/dropping tests for all platforms
+  - Add criterion benchmarks with high process counts (10,000+ processes) (do not set an expected minimum performance, just collect the values)
+  - Create compatibility tests for different OS versions and configurations
+  - Write property-based tests for process enumeration edge cases
+  - _Requirements: 1.1, 1.5, 6.1, 6.2_
+  -
 
 - [ ] 5.9 Validate GitHub issue #89 performance and acceptance criteria - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
