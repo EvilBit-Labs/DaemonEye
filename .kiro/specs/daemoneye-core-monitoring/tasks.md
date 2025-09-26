@@ -76,7 +76,7 @@
   - Write unit tests for EventSource trait and Collector registration
   - _Requirements: 11.1, 11.2, 11.5_
 
-- [x] 4.2 Implement IPC server integration in collector-core - [#77](https://github.com/EvilBit-Labs/DaemonEye/issues/77)
+- [x] 4.2 Implement IPC server integration in collector-core - [#86](https://github.com/EvilBit-Labs/DaemonEye/issues/86)
 
   - Implement CollectorIpcServer with full functionality
   - Integrate InterprocessServer and IpcCodec with collector-core event handling
@@ -118,7 +118,7 @@
   - Create compatibility tests ensuring collector-core works with existing procmond and daemoneye-agent
   - _Requirements: 11.1, 11.2, 12.1, 12.2, 13.1, 13.2, 13.5_
 
-- [-] 5. Implement cross-platform process enumeration in procmond
+- [-] 5. Implement cross-platform process enumeration in procmond - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
 - [x] 5.1a Create ProcessMessageHandler with sysinfo-based process enumeration - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
@@ -149,7 +149,7 @@
   - Write comprehensive unit tests with mock process data
   - _Requirements: 1.1, 1.5_
 
-- [x] 5.3 Implement Linux-specific optimizations - [#81](https://github.com/EvilBit-Labs/DaemonEye/issues/81)
+- [x] 5.3 Implement Linux-specific optimizations - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create LinuxProcessCollector with direct /proc filesystem access for enhanced performance
   - Add CAP_SYS_PTRACE capability detection and privilege management
@@ -170,7 +170,7 @@
   - Write comprehensive integration tests for third-party crate approach
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [x] 5.5 Add basic process collection for secondary and minimally supported platforms
+- [x] 5.5 Add basic process collection for secondary and minimally supported platforms - [#104](https://github.com/EvilBit-Labs/DaemonEye/issues/104)
 
   - Create FallbackProcessCollector for secondary platforms (FreeBSD, OpenBSD, NetBSD, etc.)
   - Use sysinfo crate as the primary collection mechanism for maximum compatibility
@@ -246,74 +246,80 @@
   - Write security tests to verify privilege boundaries and proper dropping
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 9. Implement daemon/service functionality for daemoneye-agent with process lifecycle management
+- [ ] 9. Implement procmond as Monitor Collector with daemoneye-agent lifecycle management - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
-- [ ] 9.1 Add daemon/service dependencies and cross-platform service infrastructure
+- [ ] 9.1 Add proc-daemon crate dependency and cross-platform service infrastructure
 
-  - Add `daemonize` crate dependency for Unix-like systems (Linux, macOS) daemon functionality
-  - Add `windows-service` crate dependency for Windows service integration
+  - Add `proc-daemon` crate dependency for cross-platform daemon/service functionality
   - Create `ServiceManager` trait for cross-platform service lifecycle management
   - Implement platform-specific service managers: `UnixServiceManager` and `WindowsServiceManager`
   - Add service configuration structure with startup options, working directory, and user context
+  - Create daemoneye-agent service wrapper that manages procmond collector lifecycle
   - Write unit tests for service manager trait implementations and configuration validation
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 9.2 Implement Unix daemon functionality with proper privilege management
+- [ ] 9.2 Implement procmond as Monitor Collector with continuous operation
 
-  - Create `UnixDaemon` implementation using daemonize crate for Linux and macOS
-  - Add proper daemon initialization: fork, setsid, chdir, umask, file descriptor management
-  - Implement PID file management with lock file creation and cleanup
-  - Add signal handling for SIGTERM, SIGINT, SIGHUP (config reload), and SIGUSR1 (status)
-  - Create privilege dropping after daemon initialization with audit logging
-  - Implement proper daemon shutdown with graceful collector process termination
-  - Write integration tests for daemon lifecycle and signal handling
-  - _Requirements: 6.1, 6.2, 6.4, 6.5_
+  - Refactor procmond to implement Monitor Collector behavior (continuous process monitoring)
+  - Add real-time process lifecycle event detection (start, stop, modifications)
+  - Implement suspicious behavior pattern recognition and event generation
+  - Create CollectionEvent::TriggerRequest emission for analysis collectors (binary hasher, etc.)
+  - Add configurable trigger conditions and priority-based event emission
+  - Write unit tests for Monitor Collector behavior and trigger event generation
+  - _Requirements: 11.1, 11.2, 11.5_
 
-- [ ] 9.3 Implement Windows service functionality with SCM integration
+- [ ] 9.3 Add collector orchestration and trigger system integration
 
-  - Create `WindowsService` implementation using windows-service crate
-  - Add Windows Service Control Manager (SCM) integration with proper service registration
-  - Implement service control handlers for start, stop, pause, continue, and shutdown
-  - Add Windows event log integration for service status and error reporting
-  - Create service installer/uninstaller functionality with proper registry entries
-  - Implement service recovery options and failure handling policies
-  - Write integration tests for Windows service lifecycle and SCM interaction
-  - _Requirements: 6.1, 6.2, 6.4, 6.5_
-
-- [ ] 9.4 Add collector process lifecycle management and supervision
-
-  - Create `ProcessSupervisor` for managing collector process lifecycles (procmond, specialty collectors)
-  - Implement collector process spawning with proper environment setup and privilege management
-  - Add collector process health monitoring with heartbeat checks and restart policies
-  - Create collector process graceful shutdown coordination with timeout enforcement
-  - Implement collector process crash detection and automatic restart with backoff policies
-  - Add collector process resource monitoring and limit enforcement
-  - Write integration tests for process supervision scenarios and failure recovery
+  - Implement trigger system for coordinating with analysis collectors (binary hasher, memory analyzer)
+  - Create event bus communication between procmond and other collectors
+  - Add support for triggering Binary Hasher collector for suspicious executables
+  - Implement event correlation and analysis chain coordination
+  - Create priority-based triggering (Critical, High, Normal, Low) based on threat assessment
+  - Write integration tests for collector coordination and trigger workflows
   - _Requirements: 11.1, 11.2, 12.1, 12.2_
 
-- [ ] 9.5 Integrate service functionality with existing daemoneye-agent architecture
+- [ ] 9.4 Implement daemoneye-agent as system service with collector supervision
+
+  - Create Unix daemon functionality using proc-daemon crate for Linux and macOS
+  - Add Windows service functionality with Service Control Manager (SCM) integration
+  - Implement collector process lifecycle management and supervision within daemoneye-agent
+  - Add collector process health monitoring with heartbeat checks and restart policies
+  - Create graceful shutdown coordination for all managed collector processes
+  - Write integration tests for service lifecycle and collector supervision
+  - _Requirements: 6.1, 6.2, 6.4, 6.5, 11.1, 11.2_
+
+- [ ] 9.5 Add event-driven architecture and collector coordination
+
+  - Implement event bus system for inter-collector communication
+  - Create event routing and filtering based on collector capabilities
+  - Add event correlation tracking across multiple analysis stages
+  - Implement backpressure handling for high-volume event scenarios
+  - Create event persistence and replay capabilities for reliability
+  - Write integration tests for event-driven workflows and collector coordination
+  - _Requirements: 11.1, 11.2, 12.1, 12.2_
+
+- [ ] 9.6 Integrate with existing daemoneye-agent architecture
 
   - Modify daemoneye-agent main.rs to support both interactive and service/daemon modes
   - Add CLI flags for service operations: --install, --uninstall, --start, --stop, --status
-  - Integrate service manager with existing configuration system and database initialization
+  - Integrate collector supervision with existing configuration system and database initialization
   - Preserve existing IPC client functionality and detection engine integration
   - Add service-specific logging configuration with file rotation and retention policies
-  - Create service configuration templates for systemd, launchd, and Windows services
   - Write integration tests ensuring service mode maintains identical functionality to interactive mode
   - _Requirements: 6.1, 6.2, 6.4, 6.5, 11.1, 11.2_
 
-- [ ] 9.6 Add service monitoring and health reporting capabilities
+- [ ] 9.7 Add service monitoring and health reporting capabilities
 
   - Implement service health endpoints for external monitoring systems
   - Add service status reporting with component health aggregation
   - Create service metrics export for monitoring collector process status and performance
   - Implement service configuration validation and startup diagnostics
   - Add service log aggregation from all managed collector processes
-  - Create service recovery actions for common failure scenarios
+  - Create service recovery actions for common failure scenarios and collector crashes
   - Write monitoring integration tests with simulated component failures and recovery validation
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
-- [ ] 9.7 Create service deployment and configuration management
+- [ ] 9.8 Create service deployment and configuration management
 
   - Create systemd service unit files for Linux with proper dependencies and security settings
   - Add launchd plist files for macOS with appropriate permissions and startup configuration
@@ -324,7 +330,7 @@
   - Write deployment automation scripts for common service management scenarios
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 9.8 Add comprehensive service testing and validation
+- [ ] 9.9 Add comprehensive service testing and validation
 
   - Create integration tests for service installation, startup, and shutdown on all platforms
   - Add service failure scenario testing with collector process crashes and recovery
@@ -332,7 +338,8 @@
   - Create service security testing for privilege boundaries and access controls
   - Add service performance testing under high load with multiple collector processes
   - Write service compatibility tests across different OS versions and configurations
-  - Create service chaos testing for various failure modes and recovery validation
+  - Create chaos testing for various failure modes and recovery validation
+  - Add end-to-end tests for procmond Monitor Collector triggering analysis collectors
   - _Requirements: All requirements verification_
 
 - [ ] 10. Create tamper-evident audit logging system - [#42](https://github.com/EvilBit-Labs/DaemonEye/issues/42)
