@@ -80,19 +80,16 @@ just run-daemoneye-agent --once
 
 ```bash
 # Start the orchestrator (manages procmond automatically)
-daemoneye-agent --config /etc/daemoneye/config.yaml
+daemoneye-agent --database /var/lib/daemoneye/processes.db --log-level info
 
-# Query historical process data through orchestrator
-daemoneye-cli query --sql "SELECT * FROM processes WHERE name = 'suspicious_proc'"
+# Query database statistics and health
+daemoneye-cli --database /var/lib/daemoneye/processes.db --format json
 
-# Test alert delivery
-daemoneye-cli alerts send-test
+# Run single-shot process collection for testing
+procmond --database /var/lib/daemoneye/processes.db --interval 30 --enhanced-metadata --compute-hashes
 
-# Check system health
-daemoneye-cli health-check --verbose
-
-# Export data for analysis
-daemoneye-cli export --format json --output /tmp/process_data.json
+# Check component health
+daemoneye-cli --database /var/lib/daemoneye/processes.db --format human
 ```
 
 ## :brain: Detection Capabilities
@@ -123,12 +120,14 @@ daemoneye-cli export --format json --output /tmp/process_data.json
 
 ## :gear: Technology Stack
 
-- **Language:** Rust 2024 Edition (MSRV: 1.70+)
-- **Async Runtime:** Tokio for I/O and task management
+- **Language:** Rust 2024 Edition (MSRV: 1.85+)
+- **Async Runtime:** Tokio with full feature set for I/O and task management
 - **Database:** redb pure Rust embedded database for optimal performance and security
-- **CLI Framework:** clap v4 with derive macros and shell completions
-- **Process Enumeration:** sysinfo crate with platform-specific optimizations
-- **Logging:** tracing ecosystem with structured JSON output
+- **CLI Framework:** clap v4 with derive macros and shell completions (bash, zsh, fish, PowerShell)
+- **Process Enumeration:** sysinfo crate with platform-specific collectors (Linux, macOS, Windows)
+- **IPC Communication:** Custom protobuf over Unix sockets/named pipes with interprocess crate
+- **Logging:** tracing ecosystem with structured JSON output and configurable levels
+- **Collection Framework:** collector-core for extensible event source management
 
 ## :wrench: Development
 
@@ -144,15 +143,20 @@ This project follows strict Rust coding standards:
 
 ```bash
 # Development workflow
-just fmt          # Format code
-just lint         # Run clippy with strict warnings
-just test         # Run all tests
-just build        # Build workspace
+just fmt          # Format code with rustfmt
+just lint         # Run clippy with strict warnings (-D warnings)
+just test         # Run all tests with cargo-nextest
+just build        # Build entire workspace
 
 # Component execution
-just run-procmond --once --verbose      # Run process monitor with flags
-just run-daemoneye-cli --help             # Run CLI interface
-just run-daemoneye-agent --config /path   # Run orchestrator agent
+just run-procmond --interval 30 --enhanced-metadata    # Run process monitor
+just run-daemoneye-cli --format json                   # Run CLI interface
+just run-daemoneye-agent --log-level debug             # Run orchestrator agent
+
+# Testing and benchmarking
+just test-ci      # Run tests with nextest
+just bench        # Run all benchmarks
+just coverage     # Generate coverage report
 ```
 
 ## :busts_in_silhouette: Target Users
