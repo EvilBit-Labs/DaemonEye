@@ -234,7 +234,7 @@
 
   - _Requirements: 11.1, 11.2, 11.5_
 
-  - [ ] 5.7.4 Add collector-advertised trigger conditions and SQL-to-IPC integration
+  - [x] 5.7.4 Add collector-advertised trigger conditions and SQL-to-IPC integration
 
   - Create TriggerCapabilities structure for collectors to advertise their trigger conditions (not user configurable)
 
