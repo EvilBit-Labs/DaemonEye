@@ -508,7 +508,7 @@ impl EnhancedMacOSCollector {
 
         // Collect macOS-specific enhanced metadata if configured
         let platform_metadata = if self.base_config.collect_enhanced_metadata {
-            let metadata = self.read_enhanced_metadata(pid_u32);
+            let metadata = self.read_enhanced_metadata(pid_u32, process);
             match serde_json::to_value(metadata) {
                 Ok(value) => Some(value),
                 Err(e) => {
@@ -539,33 +539,40 @@ impl EnhancedMacOSCollector {
     }
 
     /// Reads enhanced macOS-specific metadata for a process.
-    fn read_enhanced_metadata(&self, pid: u32) -> MacOSProcessMetadata {
+    ///
+    /// This method takes a sysinfo Process reference to avoid repeated system refreshes
+    /// which can cause performance issues during bulk collection.
+    fn read_enhanced_metadata(&self, pid: u32, process: &sysinfo::Process) -> MacOSProcessMetadata {
         let mut metadata = MacOSProcessMetadata::default();
 
         // Collect entitlements if configured
         if self.macos_config.collect_entitlements && self.has_entitlements {
-            metadata.entitlements = self.read_process_entitlements(pid).unwrap_or_default();
+            metadata.entitlements = self
+                .read_process_entitlements(pid, process)
+                .unwrap_or_default();
         }
 
         // Check SIP protection if configured
         if self.macos_config.check_sip_protection && self.sip_enabled {
-            metadata.sip_protected = self.is_sip_protected(pid).unwrap_or(false);
+            metadata.sip_protected = self.is_sip_protected(pid, process).unwrap_or(false);
         }
 
         // Collect code signing information if configured
         if self.macos_config.collect_code_signing {
-            metadata.code_signing = self.check_code_signature(pid).unwrap_or_default();
+            metadata.code_signing = self.check_code_signature(pid, process).unwrap_or_default();
         }
 
         // Collect bundle information if configured
         if self.macos_config.collect_bundle_info {
-            metadata.bundle_info = self.read_bundle_info(pid).unwrap_or_default();
+            metadata.bundle_info = self.read_bundle_info(pid, process).unwrap_or_default();
         }
 
-        // Get additional process information using sysinfo (no procfs on macOS)
-        // Note: procfs is Linux-specific and not available on macOS
-        // We use sysinfo for cross-platform process information instead
-        if let Some((_, _, memory, virtual_memory)) = self.get_process_info(pid) {
+        // Get additional process information from the provided sysinfo Process
+        // This avoids the expensive system refresh in get_process_info
+        let memory = process.memory();
+        let virtual_memory = process.virtual_memory();
+
+        if memory > 0 || virtual_memory > 0 {
             metadata.memory_footprint = Some(memory * 1024); // Convert KB to bytes
             metadata.resident_memory = Some(memory * 1024);
             metadata.virtual_memory = Some(virtual_memory * 1024);
@@ -582,11 +589,15 @@ impl EnhancedMacOSCollector {
     }
 
     /// Reads process entitlements information using Security framework.
-    fn read_process_entitlements(&self, pid: u32) -> ProcessCollectionResult<ProcessEntitlements> {
+    fn read_process_entitlements(
+        &self,
+        pid: u32,
+        process: &sysinfo::Process,
+    ) -> ProcessCollectionResult<ProcessEntitlements> {
         let mut entitlements = ProcessEntitlements::default();
 
-        // Get process executable path using sysinfo (not procfs)
-        if let Some((_, Some(exe_path), _, _)) = self.get_process_info(pid) {
+        // Get process executable path from the provided sysinfo Process
+        if let Some(exe_path) = process.exe() {
             // Use heuristics to determine entitlements based on path and process characteristics
             let path_str = exe_path.to_string_lossy();
 
@@ -640,8 +651,12 @@ impl EnhancedMacOSCollector {
     }
 
     /// Checks if a process is protected by SIP.
-    fn is_sip_protected(&self, pid: u32) -> ProcessCollectionResult<bool> {
-        if let Some((_, Some(exe_path), _, _)) = self.get_process_info(pid) {
+    fn is_sip_protected(
+        &self,
+        pid: u32,
+        process: &sysinfo::Process,
+    ) -> ProcessCollectionResult<bool> {
+        if let Some(exe_path) = process.exe() {
             let path_str = exe_path.to_string_lossy();
 
             // Common SIP-protected paths on macOS
@@ -672,10 +687,14 @@ impl EnhancedMacOSCollector {
     }
 
     /// Checks if a process has a valid code signature using Security framework.
-    fn check_code_signature(&self, pid: u32) -> ProcessCollectionResult<CodeSigningInfo> {
+    fn check_code_signature(
+        &self,
+        pid: u32,
+        process: &sysinfo::Process,
+    ) -> ProcessCollectionResult<CodeSigningInfo> {
         let mut code_signing = CodeSigningInfo::default();
 
-        if let Some((_, Some(exe_path), _, _)) = self.get_process_info(pid) {
+        if let Some(exe_path) = process.exe() {
             let path_str = exe_path.to_string_lossy();
 
             // Use heuristics to determine code signing status
@@ -715,10 +734,14 @@ impl EnhancedMacOSCollector {
     }
 
     /// Reads bundle information using Security framework.
-    fn read_bundle_info(&self, pid: u32) -> ProcessCollectionResult<BundleInfo> {
+    fn read_bundle_info(
+        &self,
+        pid: u32,
+        process: &sysinfo::Process,
+    ) -> ProcessCollectionResult<BundleInfo> {
         let mut bundle_info = BundleInfo::default();
 
-        if let Some((_, Some(exe_path), _, _)) = self.get_process_info(pid) {
+        if let Some(exe_path) = process.exe() {
             let path_str = exe_path.to_string_lossy();
 
             // Check if it's an app bundle

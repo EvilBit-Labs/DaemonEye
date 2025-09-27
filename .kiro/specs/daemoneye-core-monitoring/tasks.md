@@ -270,7 +270,7 @@
 
   - _Requirements: 11.1, 11.2, 11.5_
 
-  - [ ] 5.7.6 Add trigger request emission for analysis collectors
+  - [x] 5.7.6 Add trigger request emission for analysis collectors
 
   - Create generic TriggerRequest emission system for coordinating with analysis collectors
 

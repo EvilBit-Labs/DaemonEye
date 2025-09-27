@@ -85,6 +85,6 @@ pub use ipc::CollectorIpcServer;
 pub use source::{EventSource, SourceCaps};
 pub use trigger::{
     PriorityTriggerQueue, ProcessTriggerData, QueueStatistics, SqlTriggerEvaluator,
-    TriggerCapabilities, TriggerCondition, TriggerConfig, TriggerManager, TriggerResourceLimits,
-    TriggerStatistics,
+    TriggerCapabilities, TriggerCondition, TriggerConfig, TriggerEmissionStats, TriggerManager,
+    TriggerResourceLimits, TriggerStatistics,
 };
