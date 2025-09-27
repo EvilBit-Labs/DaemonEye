@@ -429,7 +429,22 @@ impl TriggerManager {
         // Validate condition against collector capabilities
         self.validate_trigger_condition(&condition)?;
 
+        let collector_id = condition.target_collector.clone();
         self.conditions.push(condition);
+
+        let mut evaluator = self
+            .sql_evaluator
+            .lock()
+            .map_err(|_| TriggerError::LockError("sql_evaluator".to_string()))?;
+
+        let collector_conditions: Vec<_> = self
+            .conditions
+            .iter()
+            .filter(|c| c.target_collector == collector_id)
+            .cloned()
+            .collect();
+        evaluator.register_collector_conditions(collector_id, collector_conditions)?;
+
         Ok(())
     }
 
@@ -877,9 +892,12 @@ impl TriggerManager {
             }
         }
 
-        // For now, we'll implement a simpler approach that doesn't require mutable access
-        // This is a limitation of the current EventBus trait design
-        self.emit_trigger_request_internal(trigger, _start_time)
+        let mut bus_guard = self.event_bus.write().await;
+        let bus = bus_guard
+            .as_mut()
+            .ok_or_else(|| TriggerError::EventBusError("Event bus not configured".to_string()))?;
+
+        self.emit_trigger_request_internal(bus.as_mut(), trigger, _start_time)
             .await
     }
 
@@ -889,8 +907,9 @@ impl TriggerManager {
     /// access to the event bus, working around trait limitations.
     async fn emit_trigger_request_internal(
         &self,
+        event_bus: &mut (dyn EventBus + Send + Sync),
         trigger: TriggerRequest,
-        _start_time: SystemTime,
+        start_time: SystemTime,
     ) -> Result<(), TriggerError> {
         let trigger_id = trigger.trigger_id.clone();
         let correlation_id = trigger.correlation_id.clone();
@@ -906,7 +925,18 @@ impl TriggerManager {
         );
 
         // Create collection event for the trigger request
-        let _collection_event = CollectionEvent::TriggerRequest(trigger.clone());
+        let collection_event = CollectionEvent::TriggerRequest(trigger.clone());
+        if let Err(err) = event_bus
+            .publish(collection_event, correlation_id.clone())
+            .await
+        {
+            let mut stats = self
+                .emission_stats
+                .lock()
+                .map_err(|_| TriggerError::LockError("emission_stats".to_string()))?;
+            stats.event_bus_failures += 1;
+            return Err(TriggerError::EventBusError(err.to_string()));
+        }
 
         // Track timeout for this trigger request
         self.track_trigger_timeout(&trigger).await?;
@@ -922,7 +952,7 @@ impl TriggerManager {
             stats.pending_responses += 1;
 
             // Calculate emission latency
-            if let Ok(duration) = _start_time.elapsed() {
+            if let Ok(duration) = start_time.elapsed() {
                 let latency_ms = duration.as_millis() as f64;
 
                 // Update running average
@@ -932,9 +962,6 @@ impl TriggerManager {
                         / total_emissions;
             }
         }
-
-        // For now, we'll simulate successful emission since we can't access the event bus mutably
-        // In a real implementation, this would call event_bus.publish(collection_event, correlation_id)
 
         // Simulate emission success
         {

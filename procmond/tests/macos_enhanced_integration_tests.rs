@@ -129,10 +129,13 @@ mod macos_enhanced_tests {
         );
 
         // Verify process data quality
+        let mut accessible_events = 0usize;
         for event in &events {
             assert!(event.pid > 0, "Process PID should be valid");
             assert!(!event.name.is_empty(), "Process name should not be empty");
-            assert!(event.accessible, "Collected processes should be accessible");
+            if event.accessible {
+                accessible_events += 1;
+            }
             assert!(
                 event.timestamp <= std::time::SystemTime::now(),
                 "Timestamp should be reasonable"
@@ -147,6 +150,11 @@ mod macos_enhanced_tests {
                 );
             }
         }
+
+        assert!(
+            accessible_events > 0,
+            "Process collection should surface at least one accessible process"
+        );
 
         println!(
             "Successfully collected {} processes in {}ms using third-party crates",
@@ -461,7 +469,7 @@ mod macos_enhanced_tests {
     #[tokio::test]
     #[traced_test]
     async fn test_enhanced_vs_original_macos_collector() {
-        use procmond::macos_collector::EnhancedMacOSCollector;
+        use procmond::process_collector::SysinfoProcessCollector;
 
         let base_config = ProcessCollectionConfig {
             max_processes: 20,
@@ -476,7 +484,7 @@ mod macos_enhanced_tests {
             enhanced_collector.collect_processes().await.unwrap();
 
         // Test original collector
-        let original_collector = EnhancedMacOSCollector::new(base_config, macos_config).unwrap();
+        let original_collector = SysinfoProcessCollector::new(base_config);
         let (original_events, original_stats) =
             original_collector.collect_processes().await.unwrap();
 

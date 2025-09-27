@@ -669,13 +669,13 @@ impl AnalysisChainCoordinator {
 
     /// Subscribes to analysis results from the event bus.
     async fn subscribe_to_results(&self) -> Result<()> {
-        let event_bus_guard = self.event_bus.read().await;
-        let _event_bus = event_bus_guard
-            .as_ref()
+        let mut event_bus_guard = self.event_bus.write().await;
+        let bus = event_bus_guard
+            .as_mut()
             .with_context(|| "Event bus not configured for analysis chain coordination")?;
 
         // Create subscription for analysis results
-        let _subscription = EventSubscription {
+        let subscription = EventSubscription {
             subscriber_id: "analysis-chain-coordinator".to_string(),
             capabilities: SourceCaps::all(), // Subscribe to all collector types
             event_filter: Some(EventFilter {
@@ -687,11 +687,10 @@ impl AnalysisChainCoordinator {
             correlation_filter: None,
         };
 
-        // This is a conceptual implementation - in practice, we'd need to modify
-        // the event bus to support mutable references or use a different pattern
-        // For now, we'll store a placeholder
+        let receiver = bus.subscribe(subscription).await?;
+
         let mut subscription_guard = self.result_subscription.lock().await;
-        *subscription_guard = None; // Placeholder - would be the actual receiver
+        *subscription_guard = Some(receiver);
 
         Ok(())
     }
@@ -1189,16 +1188,15 @@ impl AnalysisChainCoordinator {
 
     /// Sends a trigger request to an analysis collector via the event bus.
     async fn send_trigger_request(&self, trigger: TriggerRequest) -> Result<()> {
-        let event_bus_guard = self.event_bus.read().await;
-        let _event_bus = event_bus_guard
-            .as_ref()
+        let mut event_bus_guard = self.event_bus.write().await;
+        let bus = event_bus_guard
+            .as_mut()
             .with_context(|| "Event bus not configured for trigger request emission")?;
 
-        let _event = CollectionEvent::TriggerRequest(trigger.clone());
-
-        // This is a conceptual implementation - the actual event bus interface
-        // would need to support mutable access or use a different pattern
-        // event_bus.publish(event, trigger.correlation_id).await?;
+        let event = CollectionEvent::TriggerRequest(trigger.clone());
+        bus.publish(event, trigger.correlation_id.clone())
+            .await
+            .context("Failed to publish trigger request")?;
 
         debug!(
             trigger_id = %trigger.trigger_id,

@@ -129,10 +129,15 @@ async fn test_standard_user_privileges() {
             collection.is_ok(),
             "Process collection should succeed with standard privileges for {}: {:?}",
             name,
-            collection.err()
+            collection.as_ref().err()
         );
 
-        let (events, stats) = collection.unwrap();
+        let (events, stats) = collection.unwrap_or_else(|err| {
+            panic!(
+                "Process collection should succeed with standard privileges for {}: {:?}",
+                name, err
+            )
+        });
 
         // Should collect at least some processes even with standard privileges
         assert!(
@@ -204,10 +209,15 @@ async fn test_elevated_privileges_handling() {
             collection.is_ok(),
             "Process collection should succeed regardless of privilege level for {}: {:?}",
             name,
-            collection.err()
+            collection.as_ref().err()
         );
 
-        let (events, stats) = collection.unwrap();
+        let (events, stats) = collection.unwrap_or_else(|err| {
+            panic!(
+                "Process collection should succeed regardless of privilege level for {}: {:?}",
+                name, err
+            )
+        });
 
         // Should collect processes regardless of privilege level
         assert!(
@@ -285,10 +295,15 @@ async fn test_system_process_privilege_boundaries() {
             collection.is_ok(),
             "System process collection should succeed for {}: {:?}",
             name,
-            collection.err()
+            collection.as_ref().err()
         );
 
-        let (events, stats) = collection.unwrap();
+        let (events, stats) = collection.unwrap_or_else(|err| {
+            panic!(
+                "System process collection should succeed for {}: {:?}",
+                name, err
+            )
+        });
 
         // Analyze system process access patterns
         let mut system_processes = 0;
@@ -532,10 +547,15 @@ async fn test_graceful_privilege_degradation() {
             collection.is_ok(),
             "Collection should succeed with graceful degradation for {}: {:?}",
             name,
-            collection.err()
+            collection.as_ref().err()
         );
 
-        let (events, stats) = collection.unwrap();
+        let (events, stats) = collection.unwrap_or_else(|err| {
+            panic!(
+                "Collection should succeed with graceful degradation for {}: {:?}",
+                name, err
+            )
+        });
 
         // Should collect at least some processes
         assert!(

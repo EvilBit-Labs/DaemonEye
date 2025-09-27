@@ -243,10 +243,15 @@ async fn test_basic_system_compatibility() {
             system_info.os_name,
             system_info.architecture,
             name,
-            collection.err()
+            collection.as_ref().err()
         );
 
-        let (events, _stats) = collection.unwrap();
+        let (events, _stats) = collection.unwrap_or_else(|err| {
+            panic!(
+                "Process collection should succeed on {} {} for {}: {:?}",
+                system_info.os_name, system_info.architecture, name, err
+            )
+        });
         assert!(
             !events.is_empty(),
             "Should collect processes on {} {} for {}",
@@ -339,10 +344,15 @@ async fn test_configuration_compatibility() {
                 system_info.os_name,
                 system_info.architecture,
                 name,
-                collection.err()
+                collection.as_ref().err()
             );
 
-            let (events, _stats) = collection.unwrap();
+            let (events, _stats) = collection.unwrap_or_else(|err| {
+                panic!(
+                    "{} configuration should succeed on {} {} for {}: {:?}",
+                    config_name, system_info.os_name, system_info.architecture, name, err
+                )
+            });
 
             // Verify configuration limits are respected
             assert!(
@@ -406,10 +416,15 @@ async fn test_container_environment_compatibility() {
             collection.is_ok(),
             "Container compatibility test should succeed for {}: {:?}",
             name,
-            collection.err()
+            collection.as_ref().err()
         );
 
-        let (events, stats) = collection.unwrap();
+        let (events, stats) = collection.unwrap_or_else(|err| {
+            panic!(
+                "Container compatibility test should succeed for {}: {:?}",
+                name, err
+            )
+        });
 
         if is_container {
             println!(
@@ -481,10 +496,15 @@ async fn test_architecture_compatibility() {
             "Architecture compatibility test should succeed for {} on {}: {:?}",
             name,
             system_info.architecture,
-            collection.err()
+            collection.as_ref().err()
         );
 
-        let (events, _stats) = collection.unwrap();
+        let (events, _stats) = collection.unwrap_or_else(|err| {
+            panic!(
+                "Architecture compatibility test should succeed for {} on {}: {:?}",
+                name, system_info.architecture, err
+            )
+        });
 
         // Verify process data is valid for this architecture
         for event in &events {
@@ -684,10 +704,15 @@ async fn test_graceful_degradation_compatibility() {
             name,
             system_info.os_name,
             system_info.architecture,
-            collection.err()
+            collection.as_ref().err()
         );
 
-        let (events, _stats) = collection.unwrap();
+        let (events, _stats) = collection.unwrap_or_else(|err| {
+            panic!(
+                "Graceful degradation should succeed for {} on {} {}: {:?}",
+                name, system_info.os_name, system_info.architecture, err
+            )
+        });
 
         // Should still collect some processes even with restrictions
         assert!(

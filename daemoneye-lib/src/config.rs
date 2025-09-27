@@ -204,10 +204,13 @@ impl ConfigLoader {
         }
 
         // Environment variables with component prefix
-        figment = figment.merge(Env::prefixed(&format!(
-            "{}_",
-            self.component.replace('-', "_").to_uppercase()
-        )));
+        figment = figment.merge(
+            Env::prefixed(&format!(
+                "{}_",
+                self.component.replace('-', "_").to_uppercase()
+            ))
+            .split("__"),
+        );
 
         let config = figment.extract()?;
 

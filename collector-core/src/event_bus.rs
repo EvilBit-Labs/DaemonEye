@@ -741,27 +741,10 @@ impl LocalEventBus {
         };
 
         // Add to events queue
-        if persistence.events.len() >= persistence.max_events {
-            // Remove oldest event
-            if let Some(old_event) = persistence.events.pop_front() {
-                // Remove from correlation index
-                if let Some(indices) = persistence
-                    .correlation_index
-                    .get_mut(&old_event.event.correlation_id)
-                {
-                    indices.retain(|&i| i != 0);
-                    if indices.is_empty() {
-                        persistence
-                            .correlation_index
-                            .remove(&old_event.event.correlation_id);
-                    } else {
-                        // Adjust indices after removal
-                        for index in indices.iter_mut() {
-                            *index -= 1;
-                        }
-                    }
-                }
-            }
+        if persistence.events.len() >= persistence.max_events
+            && persistence.events.pop_front().is_some()
+        {
+            Self::shift_correlation_indices(&mut persistence.correlation_index);
         }
 
         let event_index = persistence.events.len();
@@ -815,24 +798,8 @@ impl LocalEventBus {
         while let Some(event) = persistence.events.front() {
             if let Ok(age) = now.duration_since(event.persisted_at) {
                 if age > max_event_age {
-                    if let Some(old_event) = persistence.events.pop_front() {
-                        // Remove from correlation index
-                        if let Some(indices) = persistence
-                            .correlation_index
-                            .get_mut(&old_event.event.correlation_id)
-                        {
-                            indices.retain(|&i| i != 0);
-                            if indices.is_empty() {
-                                persistence
-                                    .correlation_index
-                                    .remove(&old_event.event.correlation_id);
-                            } else {
-                                // Adjust indices after removal
-                                for index in indices.iter_mut() {
-                                    *index -= 1;
-                                }
-                            }
-                        }
+                    if persistence.events.pop_front().is_some() {
+                        Self::shift_correlation_indices(&mut persistence.correlation_index);
                         removed_count += 1;
                     }
                 } else {
@@ -851,6 +818,19 @@ impl LocalEventBus {
         }
 
         Ok(())
+    }
+
+    fn shift_correlation_indices(index: &mut HashMap<String, Vec<usize>>) {
+        index.retain(|_, indices| {
+            indices.retain(|&i| i != 0);
+            if indices.is_empty() {
+                return false;
+            }
+            for idx in indices.iter_mut() {
+                *idx -= 1;
+            }
+            true
+        });
     }
 }
 

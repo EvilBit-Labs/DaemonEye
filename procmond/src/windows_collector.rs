@@ -34,7 +34,7 @@ use crate::process_collector::{
 };
 
 #[cfg(target_os = "windows")]
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use sysinfo::{Pid, PidExt, ProcessesToUpdate, System};
 
 /// Windows-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
@@ -1035,7 +1035,12 @@ impl WindowsProcessCollector {
         };
 
         let memory_usage = if self.base_config.collect_enhanced_metadata {
-            Some(process.memory())
+            let memory_kib = process.memory();
+            if memory_kib > 0 {
+                Some(memory_kib.saturating_mul(1024))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -1307,7 +1312,7 @@ impl ProcessCollector for WindowsProcessCollector {
         let system = lookup_result?;
         let sysinfo_pid = Pid::from_u32(pid);
         if let Some(process) = system.process(sysinfo_pid) {
-            self.enhance_process(sysinfo_pid, process)
+            self.enhance_process(sysinfo_pid, process, &system)
         } else {
             Err(ProcessCollectionError::ProcessNotFound { pid })
         }

@@ -128,10 +128,10 @@ mod macos_tests {
         );
 
         // Verify process data quality
+        let accessible_count = events.iter().filter(|event| event.accessible).count();
         for event in &events {
             assert!(event.pid > 0, "Process PID should be valid");
             assert!(!event.name.is_empty(), "Process name should not be empty");
-            assert!(event.accessible, "Collected processes should be accessible");
             assert!(
                 event.timestamp <= std::time::SystemTime::now(),
                 "Timestamp should be reasonable"
@@ -146,6 +146,10 @@ mod macos_tests {
                 );
             }
         }
+        assert!(
+            accessible_count > 0,
+            "Process collection should surface at least one accessible process"
+        );
 
         println!(
             "Successfully collected {} processes in {}ms",

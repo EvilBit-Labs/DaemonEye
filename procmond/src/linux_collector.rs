@@ -676,7 +676,6 @@ impl ProcessCollector for LinuxProcessCollector {
 
                     if should_skip {
                         debug!(pid = pid, name = %event.name, "Skipping process due to configuration");
-                        stats.inaccessible_processes += 1;
                     } else {
                         events.push(event);
                         stats.successful_collections += 1;

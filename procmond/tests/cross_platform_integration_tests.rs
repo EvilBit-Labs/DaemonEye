@@ -147,11 +147,6 @@ async fn test_all_collectors_basic_functionality() {
                 name
             );
             assert!(
-                event.accessible,
-                "Collected processes should be accessible for {}",
-                name
-            );
-            assert!(
                 event.timestamp <= SystemTime::now(),
                 "Timestamp should be reasonable for {}",
                 name

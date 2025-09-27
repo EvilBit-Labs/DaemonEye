@@ -376,6 +376,7 @@ impl ProcessLifecycleTracker {
             self.current_snapshots = new_snapshots;
             self.last_update = Some(update_time);
             self.stats.total_updates += 1;
+            self.stats.avg_processes_tracked = self.current_snapshots.len() as f64;
             return Ok(events);
         }
 
