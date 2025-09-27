@@ -111,7 +111,7 @@ async fn test_agent_with_mock_collector() {
         .times(1)
         .returning(|| Ok(CollectionResult::default()));
 
-    let agent = daemoneye - agent::new(Box::new(mock_collector));
+    let agent = daemoneye_agent::new(Box::new(mock_collector));
     let result = agent.run_collection_cycle().await;
 
     assert!(result.is_ok());
@@ -310,7 +310,7 @@ async fn test_full_system_workflow() {
 
     // Start daemoneye-agent
     let agent_handle = tokio::spawn(async move {
-        let agent = daemoneye - agent::new(&config_path).await.unwrap();
+        let agent = daemoneye_agent::new(&config_path).await.unwrap();
         agent.run().await
     });
 

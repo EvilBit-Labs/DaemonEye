@@ -188,13 +188,13 @@ mkdir C:\ProgramData\DaemonEye\data
 
 ```bash
 # Terminal 1: Start daemoneye-agent (manages procmond automatically)
-daemoneye-agent --database /var/lib/daemoneye/processes.db --log-level info
+daemoneye-agent --database /var/lib/daemoneye/events.redb --log-level info
 
 # Terminal 2: Use CLI for database queries and health checks
-daemoneye-cli --database /var/lib/daemoneye/processes.db --format json
+daemoneye-cli --database /var/lib/daemoneye/events.redb --format json
 
 # Terminal 3: Run procmond directly for testing (optional)
-procmond --database /var/lib/daemoneye/processes.db --interval 30 --enhanced-metadata
+procmond --database /var/lib/daemoneye/events.redb --interval 30 --enhanced-metadata
 ```
 
 #### Option B: System Service (Production)
@@ -220,13 +220,13 @@ sc start "DaemonEye Agent"
 
 ```bash
 # Check database statistics and health
-daemoneye-cli --database /var/lib/daemoneye/processes.db --format human
+daemoneye-cli --database /var/lib/daemoneye/events.redb --format human
 
 # View database statistics in JSON format
-daemoneye-cli --database /var/lib/daemoneye/processes.db --format json
+daemoneye-cli --database /var/lib/daemoneye/events.redb --format json
 
 # Test procmond collection with enhanced metadata
-procmond --database /var/lib/daemoneye/processes.db --interval 30 --enhanced-metadata --compute-hashes
+procmond --database /var/lib/daemoneye/events.redb --interval 30 --enhanced-metadata --compute-hashes
 
 # Check component help
 daemoneye-agent --help
