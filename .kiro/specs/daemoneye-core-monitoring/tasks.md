@@ -234,21 +234,21 @@
 
   - _Requirements: 11.1, 11.2, 11.5_
 
-  - [ ] 5.7.4 Add configurable trigger conditions and priority management
+  - [ ] 5.7.4 Add collector-advertised trigger conditions and SQL-to-IPC integration
 
-  - Create TriggerConfiguration structure with condition thresholds and priority mappings
+  - Create TriggerCapabilities structure for collectors to advertise their trigger conditions (not user configurable)
 
-  - Implement hierarchical configuration loading for trigger conditions (defaults, files, env, CLI)
+  - Implement trigger condition advertisement in collector capability negotiation with daemoneye-agent
 
-  - Add runtime configuration updates for trigger thresholds without restart
+  - Add SQL-to-IPC detection engine integration for evaluating when triggers should fire based on user-written SQL rules
 
   - Create priority-based trigger queuing with backpressure handling for high-volume scenarios
 
-  - Implement trigger condition validation and error handling with clear diagnostics
+  - Implement trigger condition validation against collector-advertised capabilities
 
-  - Add trigger statistics collection for monitoring and tuning purposes
+  - Add trigger statistics collection for monitoring SQL rule evaluation and trigger firing
 
-  - Write unit tests for configuration loading, validation, and priority management
+  - Write unit tests for capability advertisement, SQL rule evaluation, and trigger firing logic
 
   - _Requirements: 11.1, 11.2, 11.5_
 
@@ -270,21 +270,21 @@
 
   - _Requirements: 11.1, 11.2, 11.5_
 
-  - [ ] 5.7.6 Add Binary Hasher collector triggering support
+  - [ ] 5.7.6 Add trigger request emission for analysis collectors
 
-  - Create BinaryHasherTrigger for coordinating with Binary Hasher collector
+  - Create generic TriggerRequest emission system for coordinating with analysis collectors
 
-  - Implement executable file analysis request generation for suspicious processes
+  - Implement trigger request generation based on collector-advertised capabilities
 
-  - Add hash verification and integrity checking coordination with Binary Hasher results
+  - Add trigger request validation against available collector capabilities from schema registry
 
-  - Create trigger request validation against Binary Hasher collector capabilities
+  - Create trigger request routing to appropriate analysis collectors via event bus
 
-  - Implement result correlation between process monitoring and binary analysis
+  - Implement trigger request correlation tracking for forensic analysis
 
-  - Add timeout and error handling for Binary Hasher collector communication
+  - Add trigger request timeout and error handling for collector communication
 
-  - Write integration tests for Binary Hasher triggering workflows and result correlation
+  - Write integration tests for trigger request workflows with mock analysis collectors
 
   - _Requirements: 11.1, 11.2, 11.5_
 
