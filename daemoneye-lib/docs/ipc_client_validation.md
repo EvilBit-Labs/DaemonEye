@@ -323,14 +323,25 @@ Common utilities are shared across test files:
 
 ```rust
 // Shared configuration creation
-fn create_validation_config(test_name: &str) -> (IpcConfig, TempDir)
+fn create_validation_config(test_name: &str) -> (IpcConfig, TempDir) {
+    let temp_dir = TempDir::new().unwrap();
+    let config = IpcConfig::default();
+    (config, temp_dir)
+}
 
 // Shared endpoint creation (platform-specific)
-fn create_validation_endpoint(temp_dir: &TempDir, test_name: &str) -> String
+fn create_validation_endpoint(temp_dir: &TempDir, test_name: &str) -> String {
+    format!("{}/{}", temp_dir.path().display(), test_name)
+}
 
 // Shared test data creation
-fn create_validation_task(task_id: &str, task_type: TaskType) -> DetectionTask
-fn create_validation_process_record(pid: u32) -> ProcessRecord
+fn create_validation_task(task_id: &str, task_type: TaskType) -> DetectionTask {
+    DetectionTask::new(task_id, task_type)
+}
+
+fn create_validation_process_record(pid: u32) -> ProcessRecord {
+    ProcessRecord::new(pid, "test_process".to_string())
+}
 ```
 
 ## Continuous Integration Integration
