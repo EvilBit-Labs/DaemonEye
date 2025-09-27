@@ -75,12 +75,14 @@ The collector can be configured using the builder pattern:
 use collector_core::CollectorConfig;
 use std::time::Duration;
 
-let config = CollectorConfig::new()
-    .with_max_event_sources(32)
-    .with_event_buffer_size(2000)
-    .with_shutdown_timeout(Duration::from_secs(60))
-    .with_health_check_interval(Duration::from_secs(120))
-    .with_debug_logging(true);
+fn create_config() -> CollectorConfig {
+    CollectorConfig::new()
+        .with_max_event_sources(32)
+        .with_event_buffer_size(2000)
+        .with_shutdown_timeout(Duration::from_secs(60))
+        .with_health_check_interval(Duration::from_secs(120))
+        .with_debug_logging(true)
+}
 ```
 
 ### Event Types
@@ -88,24 +90,26 @@ let config = CollectorConfig::new()
 The framework supports multiple event domains:
 
 ```rust
-use collector_core::{CollectionEvent, ProcessEvent, NetworkEvent};
+use collector_core::{CollectionEvent, NetworkEvent, ProcessEvent};
 use std::time::SystemTime;
 
-// Process events
-let process_event = CollectionEvent::Process(ProcessEvent {
-    pid: 1234,
-    name: "example".to_string(),
-    timestamp: SystemTime::now(),
-    // ... other fields
-});
+fn create_events() {
+    // Process events
+    let process_event = CollectionEvent::Process(ProcessEvent {
+        pid: 1234,
+        name: "example".to_string(),
+        timestamp: SystemTime::now(),
+        // ... other fields
+    });
 
-// Network events (future extension)
-let network_event = CollectionEvent::Network(NetworkEvent {
-    connection_id: "conn_123".to_string(),
-    protocol: "TCP".to_string(),
-    timestamp: SystemTime::now(),
-    // ... other fields
-});
+    // Network events (future extension)
+    let network_event = CollectionEvent::Network(NetworkEvent {
+        connection_id: "conn_123".to_string(),
+        protocol: "TCP".to_string(),
+        timestamp: SystemTime::now(),
+        // ... other fields
+    });
+}
 ```
 
 ### Capabilities
@@ -115,15 +119,17 @@ Event sources declare their capabilities using bitflags:
 ```rust
 use collector_core::SourceCaps;
 
-// Process monitoring with real-time capabilities
-let process_caps = SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE;
+fn demonstrate_capabilities() {
+    // Process monitoring with real-time capabilities
+    let process_caps = SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE;
 
-// Network monitoring with kernel-level access
-let network_caps = SourceCaps::NETWORK | SourceCaps::KERNEL_LEVEL | SourceCaps::REALTIME;
+    // Network monitoring with kernel-level access
+    let network_caps = SourceCaps::NETWORK | SourceCaps::KERNEL_LEVEL | SourceCaps::REALTIME;
 
-// Check capabilities
-assert!(process_caps.contains(SourceCaps::PROCESS));
-assert!(!process_caps.contains(SourceCaps::NETWORK));
+    // Check capabilities
+    assert!(process_caps.contains(SourceCaps::PROCESS));
+    assert!(!process_caps.contains(SourceCaps::NETWORK));
+}
 ```
 
 ## Multi-Component Vision

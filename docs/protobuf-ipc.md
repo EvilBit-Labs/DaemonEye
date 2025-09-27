@@ -132,12 +132,14 @@ Automatic conversions between native and protobuf types:
 use daemoneye_lib::models::process::ProcessRecord;
 use daemoneye_lib::proto::ProtoProcessRecord;
 
-// Convert native to protobuf
-let native_process = ProcessRecord::new(1234, "firefox".to_string());
-let proto_process: ProtoProcessRecord = native_process.into();
+fn convert_process_record() {
+    // Convert native to protobuf
+    let native_process = ProcessRecord::new(1234, "firefox".to_string());
+    let proto_process: ProtoProcessRecord = native_process.into();
 
-// Convert protobuf to native
-let converted_back: ProcessRecord = proto_process.into();
+    // Convert protobuf to native
+    let converted_back: ProcessRecord = proto_process.into();
+}
 ```
 
 ### Helper Methods
@@ -145,20 +147,22 @@ let converted_back: ProcessRecord = proto_process.into();
 Convenient constructors for common operations:
 
 ```rust
-// Create enumeration task
-let task = DetectionTask::new_enumerate_processes("task-123", None);
+fn create_tasks_and_results() {
+    // Create enumeration task
+    let task = DetectionTask::new_enumerate_processes("task-123", None);
 
-// Create hash check task
-let hash_check = ProtoHashCheck {
-    expected_hash: "abc123...".to_string(),
-    hash_algorithm: "sha256".to_string(),
-    executable_path: "/usr/bin/firefox".to_string(),
-};
-let task = DetectionTask::new_hash_check("task-456", hash_check);
+    // Create hash check task
+    let hash_check = ProtoHashCheck {
+        expected_hash: "abc123...".to_string(),
+        hash_algorithm: "sha256".to_string(),
+        executable_path: "/usr/bin/firefox".to_string(),
+    };
+    let task = DetectionTask::new_hash_check("task-456", hash_check);
 
-// Create results
-let success = DetectionResult::success("task-123", processes);
-let failure = DetectionResult::failure("task-123", "Permission denied");
+    // Create results
+    let success = DetectionResult::success("task-123", processes);
+    let failure = DetectionResult::failure("task-123", "Permission denied");
+}
 ```
 
 ## Build System Integration
@@ -225,21 +229,23 @@ The build system generates type-safe Rust structs with:
 ### Basic Process Enumeration
 
 ```rust
-// Create enumeration request
-let task = DetectionTask::new_enumerate_processes("enum-001", None);
+fn basic_process_enumeration() {
+    // Create enumeration request
+    let task = DetectionTask::new_enumerate_processes("enum-001", None);
 
-// Serialize for transport
-let bytes = prost::Message::encode_to_vec(&task);
+    // Serialize for transport
+    let bytes = prost::Message::encode_to_vec(&task);
 
-// Send via IPC transport...
+    // Send via IPC transport...
 
-// Deserialize response
-let result: DetectionResult = prost::Message::decode(&response_bytes)?;
+    // Deserialize response
+    let result: DetectionResult = prost::Message::decode(&response_bytes)?;
 
-// Process results
-if result.success {
-    for process in result.processes {
-        println!("Process: {} (PID: {})", process.name, process.pid);
+    // Process results
+    if result.success {
+        for process in result.processes {
+            println!("Process: {} (PID: {})", process.name, process.pid);
+        }
     }
 }
 ```
@@ -249,14 +255,16 @@ if result.success {
 ```rust
 use daemoneye_lib::proto::ProtoProcessFilter;
 
-// Create filter for specific processes
-let filter = ProtoProcessFilter {
-    process_names: vec!["firefox".to_string(), "chrome".to_string()],
-    pids: vec![],
-    executable_pattern: Some("/usr/bin/*".to_string()),
-};
+fn filtered_process_collection() {
+    // Create filter for specific processes
+    let filter = ProtoProcessFilter {
+        process_names: vec!["firefox".to_string(), "chrome".to_string()],
+        pids: vec![],
+        executable_pattern: Some("/usr/bin/*".to_string()),
+    };
 
-let task = DetectionTask::new_enumerate_processes("filtered-001", Some(filter));
+    let task = DetectionTask::new_enumerate_processes("filtered-001", Some(filter));
+}
 ```
 
 ### Hash Verification
@@ -264,13 +272,15 @@ let task = DetectionTask::new_enumerate_processes("filtered-001", Some(filter));
 ```rust
 use daemoneye_lib::proto::ProtoHashCheck;
 
-let hash_check = ProtoHashCheck {
-    expected_hash: "a1b2c3d4...".to_string(),
-    hash_algorithm: "sha256".to_string(),
-    executable_path: "/usr/bin/suspicious".to_string(),
-};
+fn hash_verification() {
+    let hash_check = ProtoHashCheck {
+        expected_hash: "a1b2c3d4...".to_string(),
+        hash_algorithm: "sha256".to_string(),
+        executable_path: "/usr/bin/suspicious".to_string(),
+    };
 
-let task = DetectionTask::new_hash_check("verify-001", hash_check);
+    let task = DetectionTask::new_hash_check("verify-001", hash_check);
+}
 ```
 
 ## Error Handling
@@ -280,7 +290,9 @@ let task = DetectionTask::new_hash_check("verify-001", hash_check);
 Error responses include specific error codes and messages:
 
 ```rust
-let result = DetectionResult::failure("task-123", "Permission denied accessing PID 1234");
+fn handle_error() {
+    let result = DetectionResult::failure("task-123", "Permission denied accessing PID 1234");
+}
 ```
 
 ### Validation
@@ -288,11 +300,13 @@ let result = DetectionResult::failure("task-123", "Permission denied accessing P
 All messages are validated during deserialization:
 
 ```rust
-match prost::Message::decode(&bytes) {
-    Ok(task) => process_task(task),
-    Err(e) => {
-        eprintln!("Invalid message format: {}", e);
-        return Err(e.into());
+fn validate_message() -> Result<(), Box<dyn std::error::Error>> {
+    match prost::Message::decode(&bytes) {
+        Ok(task) => process_task(task),
+        Err(e) => {
+            eprintln!("Invalid message format: {}", e);
+            return Err(e.into());
+        }
     }
 }
 ```

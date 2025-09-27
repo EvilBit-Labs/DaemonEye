@@ -81,28 +81,30 @@ pub struct ProcessRecord {
 use daemoneye_lib::models::ProcessRecord;
 use uuid::Uuid;
 
-let process = ProcessRecord {
-    id: Uuid::new_v4(),
-    scan_id: 12345,
-    collection_time: 1640995200000, // 2022-01-01 00:00:00 UTC
-    pid: 1234,
-    ppid: Some(1),
-    name: "chrome".to_string(),
-    executable_path: Some("/usr/bin/chrome".into()),
-    command_line: vec!["chrome".to_string(), "--no-sandbox".to_string()],
-    start_time: Some(1640995100000),
-    cpu_usage: Some(15.5),
-    memory_usage: Some(1073741824), // 1GB
-    executable_hash: Some("a1b2c3d4e5f6...".to_string()),
-    hash_algorithm: Some("sha256".to_string()),
-    user_id: Some("1000".to_string()),
-    accessible: true,
-    file_exists: true,
-    platform_data: Some(serde_json::json!({
-        "thread_count": 25,
-        "priority": "normal"
-    })),
-};
+fn create_process_record() -> ProcessRecord {
+    ProcessRecord {
+        id: Uuid::new_v4(),
+        scan_id: 12345,
+        collection_time: 1640995200000, // 2022-01-01 00:00:00 UTC
+        pid: 1234,
+        ppid: Some(1),
+        name: "chrome".to_string(),
+        executable_path: Some("/usr/bin/chrome".into()),
+        command_line: vec!["chrome".to_string(), "--no-sandbox".to_string()],
+        start_time: Some(1640995100000),
+        cpu_usage: Some(15.5),
+        memory_usage: Some(1073741824), // 1GB
+        executable_hash: Some("a1b2c3d4e5f6...".to_string()),
+        hash_algorithm: Some("sha256".to_string()),
+        user_id: Some("1000".to_string()),
+        accessible: true,
+        file_exists: true,
+        platform_data: Some(serde_json::json!({
+            "thread_count": 25,
+            "priority": "normal"
+        })),
+    }
+}
 ```
 
 ### Alert

@@ -1008,38 +1008,29 @@ sudo chmod 644 /etc/daemoneye/config.yaml
 **High CPU Usage**:
 
 ```yaml
-# Reduce scan frequency
+# Reduce scan frequency and batch size
 app:
   scan_interval_ms: 120000          # 2 minutes
-
-# Reduce batch size
-app:
   batch_size: 250
 
 # Exclude more processes
 collection:
   process_collection:
     exclude_patterns:
-      - "systemd*"
-      - "kthreadd*"
-      - "ksoftirqd*"
-      - "migration*"
-      - "rcu_*"
+      - systemd*
+      - kthreadd*
+      - ksoftirqd*
+      - migration*
+      - rcu_*
 ```
 
 **High Memory Usage**:
 
 ```yaml
-# Limit memory usage
+# Limit memory usage and enable garbage collection
 app:
   max_memory_mb: 256
-
-# Reduce batch size
-app:
   batch_size: 250
-
-# Enable garbage collection
-app:
   gc_interval_ms: 300000
   gc_threshold_mb: 100
 ```

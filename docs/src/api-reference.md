@@ -34,8 +34,11 @@ DaemonEye provides APIs for each component:
 ```rust
 use daemoneye_lib::collector::ProcessCollector;
 
-let collector = ProcessCollector::new();
-let processes = collector.collect_processes().await?;
+async fn collect_processes() -> Result<(), Box<dyn std::error::Error>> {
+    let collector = ProcessCollector::new();
+    let processes = collector.collect_processes().await?;
+    Ok(())
+}
 ```
 
 ### Database Operations
@@ -43,8 +46,13 @@ let processes = collector.collect_processes().await?;
 ```rust
 use daemoneye_lib::storage::Database;
 
-let db = Database::new("processes.db").await?;
-let processes = db.query_processes("SELECT * FROM processes WHERE pid = ?", &[1234]).await?;
+async fn database_operations() -> Result<(), Box<dyn std::error::Error>> {
+    let db = Database::new("processes.db").await?;
+    let processes = db
+        .query_processes("SELECT * FROM processes WHERE pid = ?", &[1234])
+        .await?;
+    Ok(())
+}
 ```
 
 ### Alert Management
@@ -52,9 +60,12 @@ let processes = db.query_processes("SELECT * FROM processes WHERE pid = ?", &[12
 ```rust
 use daemoneye_lib::alerting::AlertManager;
 
-let mut alert_manager = AlertManager::new();
-alert_manager.add_sink(Box::new(SyslogSink::new("daemon")?));
-alert_manager.send_alert(alert).await?;
+async fn alert_management() -> Result<(), Box<dyn std::error::Error>> {
+    let mut alert_manager = AlertManager::new();
+    alert_manager.add_sink(Box::new(SyslogSink::new("daemon")?));
+    alert_manager.send_alert(alert).await?;
+    Ok(())
+}
 ```
 
 ### Configuration Management
@@ -62,8 +73,11 @@ alert_manager.send_alert(alert).await?;
 ```rust
 use daemoneye_lib::config::Config;
 
-let config = Config::load_from_file("config.yaml").await?;
-let scan_interval = config.get::<u64>("app.scan_interval_ms")?;
+async fn configuration_management() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config::load_from_file("config.yaml").await?;
+    let scan_interval = config.get::<u64>("app.scan_interval_ms")?;
+    Ok(())
+}
 ```
 
 ## Data Structures
