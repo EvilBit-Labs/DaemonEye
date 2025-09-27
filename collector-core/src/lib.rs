@@ -67,10 +67,17 @@ pub mod config;
 pub mod event;
 pub mod ipc;
 pub mod source;
+pub mod trigger;
 
 // Re-export main types for convenience
 pub use collector::{Collector, CollectorRuntime, RuntimeStats};
 pub use config::CollectorConfig;
-pub use event::{CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent};
+pub use event::{
+    AnalysisType, CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent,
+    TriggerPriority, TriggerRequest,
+};
 pub use ipc::CollectorIpcServer;
 pub use source::{EventSource, SourceCaps};
+pub use trigger::{
+    ProcessTriggerData, TriggerCondition, TriggerConfig, TriggerManager, TriggerStatistics,
+};

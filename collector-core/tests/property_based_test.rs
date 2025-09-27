@@ -6,8 +6,10 @@
 
 use collector_core::{
     CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent, SourceCaps,
+    TriggerRequest,
 };
 use proptest::prelude::*;
+use proptest::strategy::Just;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // Property test strategies for generating test data
@@ -200,6 +202,64 @@ fn performance_event_strategy() -> impl Strategy<Value = PerformanceEvent> {
         )
 }
 
+/// Strategy for generating TriggerRequest instances
+fn trigger_request_strategy() -> impl Strategy<Value = TriggerRequest> {
+    use collector_core::{AnalysisType, TriggerPriority, TriggerRequest};
+    use std::collections::HashMap;
+
+    (
+        prop::string::string_regex(r"[a-zA-Z0-9_-]{1,32}").unwrap(), // trigger_id
+        prop::string::string_regex(r"[a-zA-Z0-9_-]{1,32}").unwrap(), // target_collector
+        prop_oneof![
+            Just(AnalysisType::BinaryHash),
+            Just(AnalysisType::MemoryAnalysis),
+            Just(AnalysisType::YaraScan),
+            Just(AnalysisType::NetworkAnalysis),
+            Just(AnalysisType::BehavioralAnalysis),
+            prop::string::string_regex(r"[a-zA-Z0-9_]{1,16}")
+                .unwrap()
+                .prop_map(AnalysisType::Custom),
+        ], // analysis_type
+        prop_oneof![
+            Just(TriggerPriority::Low),
+            Just(TriggerPriority::Normal),
+            Just(TriggerPriority::High),
+            Just(TriggerPriority::Critical),
+        ], // priority
+        prop::option::of(pid_strategy()),                            // target_pid
+        prop::option::of(prop::string::string_regex(r"/[a-zA-Z0-9/_.-]{1,255}").unwrap()), // target_path
+        prop::string::string_regex(r"[a-zA-Z0-9_-]{1,32}").unwrap(), // correlation_id
+        timestamp_strategy(),                                        // timestamp
+    )
+        .prop_map(
+            |(
+                trigger_id,
+                target_collector,
+                analysis_type,
+                priority,
+                target_pid,
+                target_path,
+                correlation_id,
+                timestamp,
+            )| {
+                let mut metadata = HashMap::new();
+                metadata.insert("test_key".to_string(), "test_value".to_string());
+
+                TriggerRequest {
+                    trigger_id,
+                    target_collector,
+                    analysis_type,
+                    priority,
+                    target_pid,
+                    target_path,
+                    correlation_id,
+                    metadata,
+                    timestamp,
+                }
+            },
+        )
+}
+
 /// Strategy for generating CollectionEvent instances
 fn collection_event_strategy() -> impl Strategy<Value = CollectionEvent> {
     prop_oneof![
@@ -207,6 +267,7 @@ fn collection_event_strategy() -> impl Strategy<Value = CollectionEvent> {
         network_event_strategy().prop_map(CollectionEvent::Network),
         filesystem_event_strategy().prop_map(CollectionEvent::Filesystem),
         performance_event_strategy().prop_map(CollectionEvent::Performance),
+        trigger_request_strategy().prop_map(CollectionEvent::TriggerRequest),
     ]
 }
 
@@ -461,6 +522,10 @@ proptest! {
             CollectionEvent::Performance(_) => {
                 prop_assert!(json.contains("\"Performance\""));
                 prop_assert!(json.contains("\"metric_name\""));
+            }
+            CollectionEvent::TriggerRequest(_) => {
+                prop_assert!(json.contains("\"TriggerRequest\""));
+                prop_assert!(json.contains("\"trigger_id\""));
             }
         }
     }

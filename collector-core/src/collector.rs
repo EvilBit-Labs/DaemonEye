@@ -675,6 +675,9 @@ impl CollectorRuntime {
                 CollectionEvent::Performance(_) => {
                     // Process performance events
                 }
+                CollectionEvent::TriggerRequest(_) => {
+                    // Process trigger requests for analysis collector coordination
+                }
             }
         }
 

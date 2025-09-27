@@ -216,25 +216,7 @@
 
   - _Requirements: 11.1, 11.2, 11.5_
 
-  - [ ] 5.7.2 Implement suspicious behavior pattern recognition engine
-
-  - Create SuspiciousBehaviorDetector with configurable pattern matching rules
-
-  - Add detection patterns for process hollowing, executable integrity violations, and suspicious parent-child relationships
-
-  - Implement anomaly detection for unusual resource consumption patterns and process name duplications
-
-  - Create ThreatLevel enum (Critical, High, Normal, Low) for threat assessment scoring
-
-  - Add pattern configuration loading from external rule files with hot-reload capability
-
-  - Implement pattern matching performance optimization with early exit conditions
-
-  - Write comprehensive unit tests for behavior pattern detection with known threat scenarios
-
-  - _Requirements: 11.1, 11.2, 11.5_
-
-  - [ ] 5.7.3 Create CollectionEvent::TriggerRequest emission system
+  - [x] 5.7.3 Create CollectionEvent::TriggerRequest emission system
 
   - Extend CollectionEvent enum with TriggerRequest variant for analysis collector coordination
 
