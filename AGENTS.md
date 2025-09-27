@@ -120,10 +120,14 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 ### Core Architecture
 
-- **procmond**: Privileged process collector with minimal attack surface
-- **daemoneye-agent**: User-space orchestrator for detection and alerting
-- **daemoneye-cli**: Command-line interface for operators
-- **daemoneye-lib**: Shared library providing core functionality
+- Core components:
+  - **procmond**: Privileged process collector with minimal attack surface (additional collectors are possible, but `procmond` is always included as a core component)
+  - **daemoneye-agent**: User-space orchestrator for detection and alerting
+  - **daemoneye-cli**: Command-line interface for operators
+
+- Shared frameworks:
+  - **daemoneye-lib**: Shared library providing core functionality
+  - **collector-core**: Shared framework for defining a collector capability, either a Monitor collector that watches processes, or a Trigger collector that is triggered by the event bus to enrich an event detected by a Monitor collector
 
 ### Deployment Tiers
 
