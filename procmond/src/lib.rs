@@ -1,6 +1,7 @@
 //! Library module for procmond to enable unit testing
 
 pub mod event_source;
+pub mod lifecycle;
 pub mod process_collector;
 
 #[cfg(target_os = "linux")]
@@ -13,6 +14,11 @@ pub mod macos_collector;
 pub mod windows_collector;
 
 pub use event_source::{ProcessEventSource, ProcessSourceConfig};
+pub use lifecycle::{
+    LifecycleTrackingConfig, LifecycleTrackingError, LifecycleTrackingResult,
+    LifecycleTrackingStats, ProcessLifecycleEvent, ProcessLifecycleTracker, ProcessSnapshot,
+    SuspiciousEventSeverity,
+};
 pub use process_collector::{
     CollectionStats, FallbackProcessCollector, ProcessCollectionConfig, ProcessCollectionError,
     ProcessCollectionResult, ProcessCollector, ProcessCollectorCapabilities,

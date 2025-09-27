@@ -154,8 +154,8 @@ pub struct MacOSProcessMetadata {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use procmond::macos_collector_v2::{EnhancedMacOSCollector, MacOSCollectorConfig};
-/// use procmond::process_collector::ProcessCollectionConfig;
+/// use procmond::macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
+/// use procmond::process_collector::{ProcessCollectionConfig, ProcessCollector};
 ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {

@@ -198,20 +198,184 @@
 
 - [ ] 5.7 Implement Monitor Collector behavior and event-driven architecture - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
+  - [x] 5.7.1 Create process lifecycle event detection infrastructure
+
   - **Prerequisites**: Complete Task 7.1 (ProcessEventSource implementation) before starting this task
-  - Refactor procmond to implement Monitor Collector behavior (continuous process monitoring)
-  - Add real-time process lifecycle event detection (start, stop, modifications)
-  - Implement suspicious behavior pattern recognition and event generation
-  - Create CollectionEvent::TriggerRequest emission for analysis collectors (binary hasher, etc.)
-  - Add configurable trigger conditions and priority-based event emission (Critical, High, Normal, Low)
-  - Implement event bus communication with other collectors for coordination
-  - Add support for triggering Binary Hasher collector for suspicious executables
-  - Create event correlation and analysis chain coordination capabilities
-  - **Collector-Core Compliance**: Ensure EventSource trait implementation with async_trait and SourceCaps
-  - **Performance Requirements**: Establish baseline metrics for events/second throughput and CPU usage (targets will be set after baseline collection and optimization)
-  - Implement graceful shutdown with cooperative cancellation and timeout enforcement
-  - Write unit tests for Monitor Collector behavior and trigger event generation
+
+  - Implement ProcessLifecycleTracker for detecting process start, stop, and modification events
+
+  - Create ProcessSnapshot structure for maintaining process state between enumeration cycles
+
+  - Add process state comparison logic to identify lifecycle changes (new, terminated, modified)
+
+  - Implement efficient process tracking with PID reuse detection and timestamp validation
+
+  - Create ProcessLifecycleEvent enum with Start, Stop, Modified, and Suspicious variants
+
+  - Write unit tests for process lifecycle detection with mock process data
+
+  - _Requirements: 11.1, 11.2, 11.5_
+
+  - [ ] 5.7.2 Implement suspicious behavior pattern recognition engine
+
+  - Create SuspiciousBehaviorDetector with configurable pattern matching rules
+
+  - Add detection patterns for process hollowing, executable integrity violations, and suspicious parent-child relationships
+
+  - Implement anomaly detection for unusual resource consumption patterns and process name duplications
+
+  - Create ThreatLevel enum (Critical, High, Normal, Low) for threat assessment scoring
+
+  - Add pattern configuration loading from external rule files with hot-reload capability
+
+  - Implement pattern matching performance optimization with early exit conditions
+
+  - Write comprehensive unit tests for behavior pattern detection with known threat scenarios
+
+  - _Requirements: 11.1, 11.2, 11.5_
+
+  - [ ] 5.7.3 Create CollectionEvent::TriggerRequest emission system
+
+  - Extend CollectionEvent enum with TriggerRequest variant for analysis collector coordination
+
+  - Create TriggerRequest structure with target collector, analysis type, and priority fields
+
+  - Implement trigger condition evaluation based on suspicious behavior detection results
+
+  - Add trigger deduplication to prevent redundant analysis requests for the same process
+
+  - Create trigger metadata tracking for correlation and debugging purposes
+
+  - Implement trigger rate limiting to prevent analysis collector overload
+
+  - Write unit tests for trigger request generation and deduplication logic
+
+  - _Requirements: 11.1, 11.2, 11.5_
+
+  - [ ] 5.7.4 Add configurable trigger conditions and priority management
+
+  - Create TriggerConfiguration structure with condition thresholds and priority mappings
+
+  - Implement hierarchical configuration loading for trigger conditions (defaults, files, env, CLI)
+
+  - Add runtime configuration updates for trigger thresholds without restart
+
+  - Create priority-based trigger queuing with backpressure handling for high-volume scenarios
+
+  - Implement trigger condition validation and error handling with clear diagnostics
+
+  - Add trigger statistics collection for monitoring and tuning purposes
+
+  - Write unit tests for configuration loading, validation, and priority management
+
+  - _Requirements: 11.1, 11.2, 11.5_
+
+  - [ ] 5.7.5 Implement event bus communication infrastructure
+
+  - Create EventBus trait for inter-collector communication and coordination
+
+  - Implement LocalEventBus for single-node collector coordination using tokio channels
+
+  - Add event routing and filtering based on collector capabilities and subscriptions
+
+  - Create event correlation tracking across multiple analysis stages with correlation IDs
+
+  - Implement event persistence and replay capabilities for reliability and debugging
+
+  - Add backpressure handling for high-volume event scenarios with bounded channels
+
+  - Write unit tests for event bus functionality and message routing
+
+  - _Requirements: 11.1, 11.2, 11.5_
+
+  - [ ] 5.7.6 Add Binary Hasher collector triggering support
+
+  - Create BinaryHasherTrigger for coordinating with Binary Hasher collector
+
+  - Implement executable file analysis request generation for suspicious processes
+
+  - Add hash verification and integrity checking coordination with Binary Hasher results
+
+  - Create trigger request validation against Binary Hasher collector capabilities
+
+  - Implement result correlation between process monitoring and binary analysis
+
+  - Add timeout and error handling for Binary Hasher collector communication
+
+  - Write integration tests for Binary Hasher triggering workflows and result correlation
+
+  - _Requirements: 11.1, 11.2, 11.5_
+
+  - [ ] 5.7.7 Create analysis chain coordination capabilities
+
+  - Implement AnalysisChainCoordinator for managing multi-stage analysis workflows
+
+  - Create analysis workflow definitions with stage dependencies and execution order
+
+  - Add analysis result aggregation and correlation across multiple collector types
+
+  - Implement workflow timeout and cancellation support for long-running analysis
+
+  - Create analysis chain status tracking and progress reporting
+
+  - Add workflow recovery and retry logic for failed analysis stages
+
+  - Write integration tests for complex analysis workflows with multiple collectors
+
+  - _Requirements: 11.1, 11.2, 11.5_
+
+  - [ ] 5.7.8 Ensure collector-core framework compliance
+
+  - Refactor Monitor Collector implementation to fully comply with collector-core EventSource trait
+
+  - Implement proper async_trait EventSource with start/stop lifecycle and capability reporting
+
+  - Add SourceCaps declaration with PROCESS, REALTIME, and SYSTEM_WIDE capabilities
+
+  - Ensure proper shutdown signal handling with cooperative cancellation and timeout enforcement
+
+  - Implement event batching and backpressure handling for collector-core integration
+
+  - Add comprehensive error handling with graceful degradation and structured logging
+
+  - Write unit tests for EventSource trait compliance and collector-core integration
+
+  - _Requirements: 11.1, 11.2, 11.5_
+
+  - [ ] 5.7.9 Add performance monitoring and baseline establishment
+
+  - Implement performance metrics collection for events/second throughput monitoring
+
+  - Add CPU usage tracking during continuous monitoring operations
+
+  - Create memory usage monitoring for process tracking and event generation
+
+  - Implement trigger event latency measurement and statistics collection
+
+  - Add resource usage tracking for system impact assessment
+
+  - Create criterion benchmarks for establishing baseline performance metrics
+
+  - Write performance monitoring tests with high process churn scenarios (10,000+ processes)
+
+  - _Requirements: 11.1, 11.2, 11.5_
+
+  - [ ] 5.7.10 Create comprehensive testing suite for Monitor Collector behavior
+
+  - Write unit tests for all Monitor Collector components and behavior patterns
+
   - Add integration tests for collector coordination and trigger workflows
+
+  - Create property-based tests for process lifecycle detection edge cases
+
+  - Implement chaos testing for event bus communication and collector failures
+
+  - Add performance regression tests with baseline validation
+
+  - Create end-to-end tests for complete Monitor Collector workflows
+
+  - Write security tests for trigger validation and access control
+
   - _Requirements: 11.1, 11.2, 11.5_
 
 - [ ] 5.8 Add comprehensive cross-platform testing - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
@@ -261,11 +425,11 @@
 
 - [ ] 7.2 Refactor procmond to use collector-core framework - [#76](https://github.com/EvilBit-Labs/DaemonEye/issues/76)
 
-  - **Prerequisites**: Complete Task 5.8 (Monitor Collector behavior) before integrating with collector-core
+  - **Prerequisites**: Complete Task 5.7 (Monitor Collector behavior) before integrating with collector-core
   - Refactor procmond main.rs to use collector-core Collector instead of direct IPC server
   - Preserve existing CLI parsing, configuration loading, and database initialization
   - Register ProcessEventSource with collector-core runtime
-  - Integrate Monitor Collector behavior from Task 5.8 with collector-core framework
+  - Integrate Monitor Collector behavior from Task 5.7 with collector-core framework
   - Maintain identical behavior and IPC protocol compatibility
   - Ensure existing telemetry and logging integration continues to work
   - Write integration tests to verify identical behavior with existing daemoneye-agent
