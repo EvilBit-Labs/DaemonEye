@@ -3,9 +3,10 @@
 ## Language & Runtime
 
 - **Language**: Rust 2024 Edition (MSRV: 1.85+)
-- **Safety**: `unsafe_code = "forbid"` at workspace level
-- **Quality**: `warnings = "deny"` with zero-warnings policy
+- **Safety**: `unsafe_code = "forbid"` at workspace level with comprehensive linting
+- **Quality**: `warnings = "deny"` with zero-warnings policy enforced by CI
 - **Async Runtime**: Tokio with full feature set for I/O and task management
+- **Collection Framework**: collector-core for extensible event source management
 
 ## Core Dependencies
 
@@ -56,15 +57,19 @@ just test         # Run all tests with cargo-nextest (unit + integration)
 just build        # Build entire workspace
 
 # Testing variants
-just test-unit    # Run unit tests only
-just test-integration  # Run integration tests only
-just test-fuzz    # Run fuzz testing suite
-just coverage     # Generate coverage report with tarpaulin
+just test-ci      # Run tests with nextest for CI
+just test-fast    # Run only fast unit tests
+just coverage     # Generate coverage report with llvm-cov
+
+# Benchmarking
+just bench        # Run all benchmarks
+just bench-process # Run process collection benchmarks
+just bench-database # Run database operation benchmarks
 
 # Component execution
-just run-procmond --once --verbose      # Run process monitor
-just run-daemoneye-cli --help             # Run CLI interface
-just run-daemoneye-agent --config /path   # Run orchestrator agent
+just run-procmond --interval 30 --enhanced-metadata    # Run process monitor
+just run-daemoneye-cli --format json                   # Run CLI interface
+just run-daemoneye-agent --log-level debug             # Run orchestrator agent
 ```
 
 ### Build Configuration
