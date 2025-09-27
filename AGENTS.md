@@ -271,7 +271,7 @@ fn example_ipc_communication() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     // Serialize and send with framing
-    let serialized = prost::Message::encode_to_vec(&task)?;
+    let serialized = prost::Message::encode_to_vec(&task);
     // Send with CRC32 and length prefixing for integrity
     Ok(())
 }
