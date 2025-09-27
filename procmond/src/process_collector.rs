@@ -482,10 +482,8 @@ impl ProcessCollector for SysinfoProcessCollector {
         let system = enumeration_result?;
 
         let mut events = Vec::new();
-        let mut stats = CollectionStats {
-            total_processes: system.processes().len(),
-            ..Default::default()
-        };
+        let mut stats = CollectionStats::default();
+        let mut processed_count = 0;
 
         // Process each process with individual error handling
         for (pid, process) in system.processes().iter() {
@@ -498,6 +496,8 @@ impl ProcessCollector for SysinfoProcessCollector {
                 );
                 break;
             }
+
+            processed_count += 1;
 
             match self.convert_process_to_event(pid, process) {
                 Ok(event) => {
@@ -523,6 +523,7 @@ impl ProcessCollector for SysinfoProcessCollector {
             }
         }
 
+        stats.total_processes = processed_count;
         stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
 
         debug!(
@@ -985,10 +986,8 @@ impl ProcessCollector for FallbackProcessCollector {
         let system = enumeration_result?;
 
         let mut events = Vec::new();
-        let mut stats = CollectionStats {
-            total_processes: system.processes().len(),
-            ..Default::default()
-        };
+        let mut stats = CollectionStats::default();
+        let mut processed_count = 0;
 
         // Process each process with individual error handling
         for (pid, process) in system.processes().iter() {
@@ -1003,6 +1002,7 @@ impl ProcessCollector for FallbackProcessCollector {
                 break;
             }
 
+            processed_count += 1;
             match self.convert_process_to_event(pid, process) {
                 Ok(event) => {
                     events.push(event);
@@ -1038,6 +1038,7 @@ impl ProcessCollector for FallbackProcessCollector {
             }
         }
 
+        stats.total_processes = processed_count;
         stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
 
         debug!(

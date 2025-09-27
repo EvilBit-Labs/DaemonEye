@@ -247,7 +247,7 @@
   - Write criterion benchmarks to establish baseline performance metrics for hashing impact on enumeration speed (collecting data for future optimization)
   - _Requirements: 2.1, 2.2, 2.4_
 
-- [ ] 7. Create ProcessEventSource and refactor procmond to use collector-core
+- [-] 7. Create ProcessEventSource and refactor procmond to use collector-core
 
 - [x] 7.1 Create ProcessEventSource wrapping existing ProcessMessageHandler - [#76](https://github.com/EvilBit-Labs/DaemonEye/issues/76)
 

@@ -96,10 +96,18 @@ prost-build = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+criterion = { workspace = true, features = ["html_reports"] }
 insta = { workspace = true }
 predicates = { workspace = true }
+proptest = { workspace = true }
 tempfile = { workspace = true }
-tracing-test = "0.2"
+tracing-test = "0.2.5"
+
+
+
+[[bench]]
+name = "process_collector_benchmarks"
+harness = false
 
 [lints.rust]
 unsafe_code = "forbid"

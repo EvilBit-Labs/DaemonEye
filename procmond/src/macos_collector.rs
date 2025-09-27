@@ -376,16 +376,20 @@ impl EnhancedMacOSCollector {
     ///
     /// Returns a vector of `ProcessEvent` objects representing all accessible processes,
     /// or an error if the collection fails.
-    async fn collect_processes_enhanced(&self) -> ProcessCollectionResult<Vec<ProcessEvent>> {
+    async fn collect_processes_enhanced(
+        &self,
+    ) -> ProcessCollectionResult<(Vec<ProcessEvent>, CollectionStats)> {
         let base_config = self.base_config.clone();
         let collector = self.clone();
 
         // Move the synchronous sysinfo operations to a blocking task
-        let events = tokio::task::spawn_blocking(move || {
+        let (events, stats) = tokio::task::spawn_blocking(move || {
             let mut system = System::new_all();
             system.refresh_all();
 
-            let mut events = Vec::with_capacity(system.processes().len());
+            let mut events = Vec::new();
+            let mut inaccessible_count = 0;
+            let mut processed_count = 0;
             let max_processes = base_config.max_processes;
 
             for (pid, process) in system.processes() {
@@ -399,23 +403,34 @@ impl EnhancedMacOSCollector {
                     break;
                 }
 
+                processed_count += 1;
+
                 match collector.enhance_process(*pid, process) {
                     Ok(event) => events.push(event),
                     Err(e) => {
                         debug!(pid = pid.as_u32(), error = %e, "Error enhancing process");
+                        inaccessible_count += 1;
                         // Continue with other processes
                     }
                 }
             }
 
-            events
+            let stats = CollectionStats {
+                total_processes: processed_count,
+                successful_collections: events.len(),
+                inaccessible_processes: inaccessible_count,
+                invalid_processes: 0,
+                collection_duration_ms: 0, // Will be set by caller
+            };
+
+            (events, stats)
         })
         .await
         .map_err(|e| ProcessCollectionError::PlatformError {
             message: format!("Blocking task failed: {}", e),
         })?;
 
-        Ok(events)
+        Ok((events, stats))
     }
 
     /// Enhances a process with macOS-specific metadata.
@@ -473,7 +488,8 @@ impl EnhancedMacOSCollector {
         };
 
         let memory_usage = if self.base_config.collect_enhanced_metadata {
-            Some(process.memory())
+            let memory = process.memory();
+            if memory > 0 { Some(memory) } else { None }
         } else {
             None
         };
@@ -922,15 +938,10 @@ impl ProcessCollector for EnhancedMacOSCollector {
         );
 
         // Use the enhanced collection method
-        let events = self.collect_processes_enhanced().await?;
+        let (events, mut stats) = self.collect_processes_enhanced().await?;
 
-        let stats = CollectionStats {
-            total_processes: events.len(),
-            successful_collections: events.len(),
-            inaccessible_processes: 0,
-            invalid_processes: 0,
-            collection_duration_ms: start_time.elapsed().as_millis() as u64,
-        };
+        // Set the collection duration
+        stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
 
         debug!(
             collector = self.name(),
