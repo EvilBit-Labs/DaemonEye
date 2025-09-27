@@ -127,10 +127,12 @@ The framework includes sophisticated event processing with:
 
 ```rust
 // Batch configuration
-let config = CollectorConfig::new()
-    .with_max_batch_size(1000)
-    .with_batch_timeout(Duration::from_secs(5))
-    .with_backpressure_threshold(800);
+fn create_batch_config() -> CollectorConfig {
+    CollectorConfig::new()
+        .with_max_batch_size(1000)
+        .with_batch_timeout(Duration::from_secs(5))
+        .with_backpressure_threshold(800)
+}
 ```
 
 ## Configuration System
