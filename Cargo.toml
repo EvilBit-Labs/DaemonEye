@@ -33,7 +33,7 @@ async-trait = "0.1"
 
 # Serialization and data formats
 bincode = "2.0.1"
-bitflags = "2.9.4"
+bitflags = { version = "2.9.4", features = ["serde"] }
 
 # Cryptographic operations
 blake3 = "1.8.2"

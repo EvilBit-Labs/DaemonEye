@@ -65,6 +65,7 @@
 pub mod collector;
 pub mod config;
 pub mod event;
+pub mod event_bus;
 pub mod ipc;
 pub mod source;
 pub mod trigger;
@@ -75,6 +76,10 @@ pub use config::CollectorConfig;
 pub use event::{
     AnalysisType, CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent,
     TriggerPriority, TriggerRequest,
+};
+pub use event_bus::{
+    BusEvent, CorrelationFilter, EventBus, EventBusConfig, EventBusStatistics, EventFilter,
+    EventSubscription, LocalEventBus,
 };
 pub use ipc::CollectorIpcServer;
 pub use source::{EventSource, SourceCaps};
