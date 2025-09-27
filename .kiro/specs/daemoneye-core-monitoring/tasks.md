@@ -368,7 +368,6 @@
   - Create compatibility tests for different OS versions and configurations
   - Write property-based tests for process enumeration edge cases
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
-  -
 
 - [ ] 5.9 Validate GitHub issue #89 performance and acceptance criteria - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
