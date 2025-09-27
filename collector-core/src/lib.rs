@@ -62,6 +62,7 @@
 //! }
 //! ```
 
+pub mod analysis_chain;
 pub mod collector;
 pub mod config;
 pub mod event;
@@ -71,6 +72,11 @@ pub mod source;
 pub mod trigger;
 
 // Re-export main types for convenience
+pub use analysis_chain::{
+    AnalysisChainConfig, AnalysisChainCoordinator, AnalysisResult, AnalysisStage,
+    AnalysisWorkflowDefinition, StageStatus, WorkflowError, WorkflowErrorType, WorkflowExecution,
+    WorkflowProgress, WorkflowStatistics, WorkflowStatus,
+};
 pub use collector::{Collector, CollectorRuntime, RuntimeStats};
 pub use config::CollectorConfig;
 pub use event::{
