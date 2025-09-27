@@ -233,7 +233,7 @@ impl ProcessCollector for EnhancedMacOSCollector {
             enhanced_metadata: true,
             executable_hashing: false, // Future enhancement
             system_processes: true,
-            kernel_threads: false, // macOS doesn't have kernel threads like Linux
+            kernel_threads: false, // Darwin kernel threads aren't surfaced by sysinfo, so we omit them
             realtime_collection: true,
         }
     }

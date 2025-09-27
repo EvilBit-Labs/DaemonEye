@@ -36,7 +36,9 @@ DaemonEye requires elevated privileges for process monitoring. The system is des
 2. **Drop privileges immediately** after initialization
 3. **Continue operating** with standard user privileges
 
-**Linux**: Requires `CAP_SYS_PTRACE` capability (or root) **Windows**: Requires `SeDebugPrivilege` (or Administrator) **macOS**: Requires appropriate entitlements (or root)
+- **Linux**: Requires `CAP_SYS_PTRACE` capability (or root)
+- **Windows**: Requires `SeDebugPrivilege` (or Administrator)
+- **macOS**: Requires appropriate entitlements (or root)
 
 ## Installation
 
@@ -182,17 +184,20 @@ mkdir C:\ProgramData\DaemonEye\data
 
 ### 4. Start the Services
 
-**Option A: Manual Start (Testing)**
+#### Option A: Manual Start (Testing)
 
 ```bash
-# Terminal 1: Start daemoneye-agent (manages procmond)
-daemoneye-agent --config /etc/daemoneye/config.yaml
+# Terminal 1: Start daemoneye-agent (manages procmond automatically)
+daemoneye-agent --database /var/lib/daemoneye/processes.db --log-level info
 
-# Terminal 2: Use CLI for queries
-daemoneye-cli --config /etc/daemoneye/config.yaml query "SELECT * FROM processes LIMIT 10"
+# Terminal 2: Use CLI for database queries and health checks
+daemoneye-cli --database /var/lib/daemoneye/processes.db --format json
+
+# Terminal 3: Run procmond directly for testing (optional)
+procmond --database /var/lib/daemoneye/processes.db --interval 30 --enhanced-metadata
 ```
 
-**Option B: System Service (Production)**
+#### Option B: System Service (Production)
 
 ```bash
 # Linux (systemd)
@@ -214,17 +219,19 @@ sc start "DaemonEye Agent"
 ### 5. Verify Installation
 
 ```bash
-# Check service status
-daemoneye-cli health
+# Check database statistics and health
+daemoneye-cli --database /var/lib/daemoneye/processes.db --format human
 
-# View recent processes
-daemoneye-cli query "SELECT pid, name, executable_path FROM processes ORDER BY collection_time DESC LIMIT 10"
+# View database statistics in JSON format
+daemoneye-cli --database /var/lib/daemoneye/processes.db --format json
 
-# Check alerts
-daemoneye-cli alerts list
+# Test procmond collection with enhanced metadata
+procmond --database /var/lib/daemoneye/processes.db --interval 30 --enhanced-metadata --compute-hashes
 
-# View system metrics
-daemoneye-cli metrics
+# Check component help
+daemoneye-agent --help
+daemoneye-cli --help
+procmond --help
 ```
 
 ## Basic Configuration

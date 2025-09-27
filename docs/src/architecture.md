@@ -2,7 +2,9 @@
 
 ## Three-Component Security Architecture
 
-DaemonEye implements a **single crate with multiple binaries architecture** using feature flags for precise dependency control. The system follows a three-component security design with strict privilege separation to provide continuous process monitoring and threat detection. The system is designed around the principle of minimal attack surface while maintaining high performance and audit-grade integrity.
+DaemonEye implements a **workspace-based architecture** with multiple crates and binaries using feature flags for precise dependency control. The system follows a three-component security design with strict privilege separation to provide continuous process monitoring and threat detection. The system is designed around the principle of minimal attack surface while maintaining high performance and audit-grade integrity.
+
+The architecture is built on the **collector-core framework**, which provides extensible collection infrastructure for multiple monitoring components while maintaining shared operational foundation. See the [Collector-Core Framework](./architecture/collector-core-framework.md) documentation for detailed information about the underlying collection infrastructure.
 
 ```mermaid
 graph TB
