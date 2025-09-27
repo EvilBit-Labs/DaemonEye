@@ -259,7 +259,10 @@ use interprocess::local_socket::LocalSocketStream;
 
 fn example_ipc_communication() -> Result<(), Box<dyn std::error::Error>> {
     // Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
+    #[cfg(unix)]
     let stream = LocalSocketStream::connect("/tmp/DaemonEye.sock")?;
+    #[cfg(windows)]
+    let stream = LocalSocketStream::connect(r"\\.\pipe\DaemonEye")?;
 
     // Protobuf message serialization with CRC32 checksums
     let task = DetectionTask::new()
