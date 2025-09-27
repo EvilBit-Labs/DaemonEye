@@ -1062,47 +1062,56 @@ pub struct AutoJoinRule {
 }
 
 // Example: Always collect network data for processes
-let process_network_rule = AutoJoinRule {
-    source_table: "processes.snapshots".to_string(),
-    target_table: "network.connections".to_string(),
-    join_condition: JoinCondition::EquiJoin("pid".to_string(), "pid".to_string()),
-    trigger_conditions: vec![
-        Condition::Always, // Always trigger for processes
-    ],
-    priority: 1,
-};
+fn create_process_network_rule() -> AutoJoinRule {
+    AutoJoinRule {
+        source_table: "processes.snapshots".to_string(),
+        target_table: "network.connections".to_string(),
+        join_condition: JoinCondition::EquiJoin("pid".to_string(), "pid".to_string()),
+        trigger_conditions: vec![
+            Condition::Always, // Always trigger for processes
+        ],
+        priority: 1,
+    }
+}
 ```
 
 #### 2. Network → Process Auto-JOIN
 
 ```rust
 // Example: Always collect process data for network connections
-let network_process_rule = AutoJoinRule {
-    source_table: "network.connections".to_string(),
-    target_table: "processes.snapshots".to_string(),
-    join_condition: JoinCondition::EquiJoin("pid".to_string(), "pid".to_string()),
-    trigger_conditions: vec![
-        Condition::Always, // Always trigger for network connections
-    ],
-    priority: 1,
-};
+fn create_network_process_rule() -> AutoJoinRule {
+    AutoJoinRule {
+        source_table: "network.connections".to_string(),
+        target_table: "processes.snapshots".to_string(),
+        join_condition: JoinCondition::EquiJoin("pid".to_string(), "pid".to_string()),
+        trigger_conditions: vec![
+            Condition::Always, // Always trigger for network connections
+        ],
+        priority: 1,
+    }
+}
 ```
 
 #### 3. Conditional Auto-JOIN Rules
 
 ```rust
 // Example: Only collect PE analysis for suspicious processes
-let pe_analysis_rule = AutoJoinRule {
-    source_table: "processes.snapshots".to_string(),
-    target_table: "pe.analysis_results".to_string(),
-    join_condition: JoinCondition::EquiJoin("executable_path".to_string(), "file_path".to_string()),
-    trigger_conditions: vec![
-        Condition::ColumnLike("name".to_string(), "%suspicious%".to_string()),
-        Condition::ColumnGt("cpu_usage".to_string(), 80.0),
-        Condition::ColumnLike("executable_path".to_string(), "%.exe".to_string()),
-    ],
-    priority: 2,
-};
+fn create_pe_analysis_rule() -> AutoJoinRule {
+    AutoJoinRule {
+        source_table: "processes.snapshots".to_string(),
+        target_table: "pe.analysis_results".to_string(),
+        join_condition: JoinCondition::EquiJoin(
+            "executable_path".to_string(),
+            "file_path".to_string(),
+        ),
+        trigger_conditions: vec![
+            Condition::ColumnLike("name".to_string(), "%suspicious%".to_string()),
+            Condition::ColumnGt("cpu_usage".to_string(), 80.0),
+            Condition::ColumnLike("executable_path".to_string(), "%.exe".to_string()),
+        ],
+        priority: 2,
+    }
+}
 ```
 
 ### Agent Auto-JOIN Orchestration
