@@ -924,23 +924,27 @@ impl ReactiveOrchestrator {
                         OrchestrationError::CollectorNotFound("yara-engine".to_string()),
                     )?;
 
+                    let compiled_rules: Vec<YaraRule> = rules
+                        .into_iter()
+                        .map(|rule_name| {
+                            Ok(YaraRule {
+                                rule_name: rule_name.clone(),
+                                rule_content: self.get_yara_rule_content(&rule_name)?,
+                                scan_targets: vec!["file_content".to_string()],
+                                scan_options: YaraScanOptions {
+                                    fast_scan: true,
+                                    timeout_ms: 1000,
+                                },
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+
                     let yara_task = DetectionTask {
                         task_id: task.task_id.clone(),
                         table: "yara.scan_results".to_string(),
                         supplemental_rules: Some(SupplementalRuleData::YaraRules {
                             version: "4.3.0".to_string(),
-                            rules: rules
-                                .into_iter()
-                                .map(|rule_name| YaraRule {
-                                    rule_name: rule_name.clone(),
-                                    rule_content: self.get_yara_rule_content(&rule_name)?,
-                                    scan_targets: vec!["file_content".to_string()],
-                                    scan_options: YaraScanOptions {
-                                        fast_scan: true,
-                                        timeout_ms: 1000,
-                                    },
-                                })
-                                .collect(),
+                            rules: compiled_rules,
                         }),
                         ..Default::default()
                     };
