@@ -13,6 +13,7 @@ use std::fs;
 use std::io::{self};
 use std::path::Path;
 use std::time::SystemTime;
+use sysinfo::{Pid, Process, System};
 use thiserror::Error;
 use tracing::{debug, error, warn};
 
@@ -475,6 +476,18 @@ impl LinuxProcessCollector {
     fn read_process_info(&self, pid: u32) -> ProcessCollectionResult<ProcessEvent> {
         let proc_dir = format!("/proc/{}", pid);
 
+        // Check if the process directory exists and is actually a directory
+        let proc_path = Path::new(&proc_dir);
+        if !proc_path.exists() || !proc_path.is_dir() {
+            return Err(ProcessCollectionError::ProcessNotFound { pid });
+        }
+
+        // Additional check: try to read /proc/[pid]/stat to verify the process exists
+        let stat_path = format!("{}/stat", proc_dir);
+        if !Path::new(&stat_path).exists() {
+            return Err(ProcessCollectionError::ProcessNotFound { pid });
+        }
+
         // Read command line
         let cmdline_path = format!("{}/cmdline", proc_dir);
         let command_line = match fs::read(&cmdline_path) {
@@ -647,24 +660,38 @@ impl ProcessCollector for LinuxProcessCollector {
             "Starting Linux process collection"
         );
 
-        // Enumerate PIDs from /proc in a blocking task
-        let pids = tokio::task::spawn_blocking({
-            let collector = self.clone();
-            move || collector.enumerate_proc_pids()
+        // Use sysinfo for reliable process enumeration
+        let system = tokio::task::spawn_blocking({
+            let config = self.base_config.clone();
+            move || {
+                let mut system = System::new();
+                if config.collect_enhanced_metadata {
+                    system.refresh_all();
+                } else {
+                    system.refresh_processes_specifics(
+                        sysinfo::ProcessesToUpdate::All,
+                        true,
+                        sysinfo::ProcessRefreshKind::everything(),
+                    );
+                }
+                system
+            }
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
-            message: format!("PID enumeration task failed: {}", e),
-        })??;
+            message: format!("Process enumeration task failed: {}", e),
+        })?;
 
         let mut events = Vec::new();
         let mut stats = CollectionStats {
-            total_processes: pids.len(),
+            total_processes: system.processes().len(),
             ..Default::default()
         };
 
-        // Process each PID with individual error handling
-        for pid in pids {
+        // Process each process with individual error handling
+        for (sysinfo_pid, process) in system.processes().iter() {
+            let pid = sysinfo_pid.as_u32();
+
             // Check if we've hit the maximum process limit
             if self.base_config.max_processes > 0 && events.len() >= self.base_config.max_processes
             {
@@ -676,7 +703,7 @@ impl ProcessCollector for LinuxProcessCollector {
                 break;
             }
 
-            match self.read_process_info(pid) {
+            match self.convert_sysinfo_to_event(pid, process).await {
                 Ok(event) => {
                     // Apply filtering based on configuration
                     let should_skip = if self.base_config.skip_system_processes
@@ -732,7 +759,37 @@ impl ProcessCollector for LinuxProcessCollector {
             "Collecting single Linux process"
         );
 
-        self.read_process_info(pid)
+        // Use sysinfo for reliable process existence checking
+        let sysinfo_result = tokio::task::spawn_blocking({
+            let config = self.base_config.clone();
+            move || {
+                let mut system = System::new();
+                if config.collect_enhanced_metadata {
+                    system.refresh_all();
+                } else {
+                    system.refresh_processes_specifics(
+                        sysinfo::ProcessesToUpdate::All,
+                        true,
+                        sysinfo::ProcessRefreshKind::everything(),
+                    );
+                }
+                system
+            }
+        })
+        .await
+        .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
+            message: format!("Process lookup task failed: {}", e),
+        })?;
+
+        let system = sysinfo_result;
+        let sysinfo_pid = sysinfo::Pid::from_u32(pid);
+
+        if let Some(process) = system.process(sysinfo_pid) {
+            // Convert sysinfo process to ProcessEvent and add Linux-specific enhancements
+            self.convert_sysinfo_to_event(pid, process).await
+        } else {
+            Err(ProcessCollectionError::ProcessNotFound { pid })
+        }
     }
 
     async fn health_check(&self) -> ProcessCollectionResult<()> {
@@ -776,6 +833,106 @@ impl ProcessCollector for LinuxProcessCollector {
         );
 
         Ok(())
+    }
+
+    /// Converts a sysinfo process to a ProcessEvent with Linux-specific enhancements.
+    async fn convert_sysinfo_to_event(
+        &self,
+        pid: u32,
+        process: &Process,
+    ) -> ProcessCollectionResult<ProcessEvent> {
+        // Get basic information from sysinfo
+        let ppid = process.parent().map(|p| p.as_u32());
+
+        let name = if process.name().is_empty() {
+            format!("<unknown-{}>", pid)
+        } else {
+            process.name().to_string_lossy().to_string()
+        };
+
+        let executable_path = process.exe().map(|path| path.to_string_lossy().to_string());
+
+        let command_line = process
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        // Get enhanced metadata from sysinfo
+        let (cpu_usage, memory_usage, start_time) = if self.base_config.collect_enhanced_metadata {
+            let cpu = process.cpu_usage();
+            let memory = process.memory();
+            let start = process.start_time();
+
+            (
+                if cpu.is_finite() && cpu >= 0.0 {
+                    Some(cpu as f64)
+                } else {
+                    None
+                },
+                if memory > 0 {
+                    Some(memory * 1024)
+                } else {
+                    None
+                },
+                if start > 0 {
+                    Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(start))
+                } else {
+                    None
+                },
+            )
+        } else {
+            (None, None, None)
+        };
+
+        // Compute executable hash if requested
+        let executable_hash = if self.base_config.compute_executable_hashes {
+            // TODO: Implement executable hashing (issue #40)
+            None
+        } else {
+            None
+        };
+
+        let user_id = process.user_id().map(|uid| uid.to_string());
+        let accessible = true;
+        let file_exists = executable_path.is_some();
+
+        // Add Linux-specific enhancements
+        let enhanced_metadata = if self.base_config.collect_enhanced_metadata {
+            Some(self.read_enhanced_metadata(pid))
+        } else {
+            None
+        };
+
+        // Serialize enhanced metadata for platform_metadata field
+        let platform_metadata = if self.base_config.collect_enhanced_metadata {
+            enhanced_metadata.and_then(|metadata| {
+                serde_json::to_value(metadata)
+                    .map_err(|e| {
+                        warn!("Failed to serialize Linux process metadata: {}", e);
+                    })
+                    .ok()
+            })
+        } else {
+            None
+        };
+
+        Ok(ProcessEvent {
+            pid,
+            ppid,
+            name,
+            executable_path,
+            command_line,
+            start_time,
+            cpu_usage,
+            memory_usage,
+            executable_hash,
+            user_id,
+            accessible,
+            file_exists,
+            timestamp: SystemTime::now(),
+            platform_metadata,
+        })
     }
 }
 
