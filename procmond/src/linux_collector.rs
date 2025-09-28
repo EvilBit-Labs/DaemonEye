@@ -7,6 +7,7 @@
 
 use async_trait::async_trait;
 use collector_core::ProcessEvent;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self};
@@ -45,7 +46,7 @@ pub enum LinuxCollectionError {
 }
 
 /// Linux process namespace information.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ProcessNamespaces {
     /// Process ID namespace
     pub pid_ns: Option<u64>,
@@ -64,7 +65,7 @@ pub struct ProcessNamespaces {
 }
 
 /// Enhanced Linux process metadata.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct LinuxProcessMetadata {
     /// Process namespaces
     pub namespaces: ProcessNamespaces,
@@ -552,6 +553,19 @@ impl LinuxProcessCollector {
             None
         };
 
+        // Serialize enhanced metadata for platform_metadata field
+        let platform_metadata = if self.base_config.collect_enhanced_metadata {
+            enhanced_metadata.and_then(|metadata| {
+                serde_json::to_value(metadata)
+                    .map_err(|e| {
+                        warn!("Failed to serialize Linux process metadata: {}", e);
+                    })
+                    .ok()
+            })
+        } else {
+            None
+        };
+
         let accessible = true; // If we can read /proc/[pid], it's accessible
         let file_exists = executable_path.is_some();
 
@@ -569,7 +583,7 @@ impl LinuxProcessCollector {
             accessible,
             file_exists,
             timestamp: SystemTime::now(),
-            platform_metadata: None, // Linux metadata not implemented yet
+            platform_metadata,
         })
     }
 
