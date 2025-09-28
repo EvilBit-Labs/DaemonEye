@@ -597,6 +597,10 @@ impl ProcessEventSource {
             // Peek at the first event without removing it
             let event = event_batch[0].clone();
 
+            // Capture event details for potential error reporting
+            let event_type = event.event_type();
+            let event_pid = event.pid();
+
             // Acquire backpressure permit with timeout
             let permit = timeout(
                 self.config.max_backpressure_wait,
@@ -679,22 +683,38 @@ impl ProcessEventSource {
                     event_batch.remove(0);
                 }
             } else {
-                // If we couldn't send after retries, remove the event to prevent infinite loop
-                // This can happen when the channel is closed or under extreme backpressure
+                // If we couldn't send after retries, propagate the failure to the caller
+                // This allows the outer loop to enter degraded mode or abort gracefully
                 warn!(
-                    "Event send failed after {} retries, dropping event to prevent hang",
+                    "Event send failed after {} retries, propagating failure to caller",
                     max_retries
                 );
-                if !event_batch.is_empty() {
-                    event_batch.remove(0);
-                }
+
+                // Use the captured event details for error context
+                let batch_size = event_batch.len();
+
                 // Check for shutdown before applying backpressure delay
                 if shutdown_signal.load(Ordering::Relaxed) {
                     debug!("Shutdown signal detected during backpressure, stopping batch send");
-                    return Ok(());
+                    return Err(anyhow::anyhow!(
+                        "Event send failed after {} retries (shutdown detected), event_type: {}, pid: {:?}",
+                        max_retries,
+                        event_type,
+                        event_pid
+                    ));
                 }
-                // Wait a shorter time before trying the next event
+
+                // Wait a shorter time before returning the error
                 tokio::time::sleep(Duration::from_millis(10)).await;
+
+                // Return error with context, keeping the event in the batch for caller decision
+                return Err(anyhow::anyhow!(
+                    "Event send failed after {} retries, event_type: {}, pid: {:?}, batch_size: {}",
+                    max_retries,
+                    event_type,
+                    event_pid,
+                    batch_size
+                ));
             }
         }
 
