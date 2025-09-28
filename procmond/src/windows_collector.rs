@@ -33,9 +33,7 @@ use crate::process_collector::{
     ProcessCollector, ProcessCollectorCapabilities,
 };
 
-#[cfg(target_os = "windows")]
 use sysinfo::{Pid, PidExt, ProcessesToUpdate, System};
-
 /// Windows-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
 pub enum WindowsCollectionError {
