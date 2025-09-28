@@ -571,6 +571,7 @@ async fn test_platform_feature_compatibility() {
             collect_namespaces: true,
             collect_memory_maps: true,
             collect_file_descriptors: true,
+            collect_network_connections: false, // Can be expensive
             detect_containers: true,
             use_cap_sys_ptrace: None, // Auto-detect
         };
