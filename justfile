@@ -175,7 +175,7 @@ build-release:
     @cargo build --workspace --release
 
 test:
-    @cargo test --workspace -- --nocapture
+    @cargo nextest run --workspace --no-capture
 
 # Test justfile cross-platform functionality
 [windows]
@@ -205,23 +205,31 @@ test-fs:
     @just rmrf tmp/xfstest
 
 test-ci:
-    cargo nextest run --workspace --nocapture
+    cargo nextest run --workspace --no-capture
 
 # Run comprehensive tests (includes performance and security)
 test-comprehensive:
-    cargo nextest run --workspace --nocapture --package collector-core
+    cargo nextest run --workspace --no-capture --package collector-core
+
+# Run comprehensive tests including ignored/slow tests
+test-comprehensive-full:
+    cargo nextest run --workspace --no-capture --package collector-core -- --ignored
+
+# Run all tests including ignored/slow tests across workspace
+test-all:
+    cargo nextest run --workspace --no-capture -- --ignored
 
 # Run only fast unit tests
 test-fast:
-    cargo test --workspace --lib --bins
+    cargo nextest run --workspace --no-capture --lib --bins
 
 # Run performance-critical tests
 test-performance:
-    cargo test --package collector-core --test performance_critical_test
+    cargo nextest run --package collector-core --no-capture --test performance_critical_test
 
 # Run security-critical tests
 test-security:
-    cargo test --package collector-core --test security_critical_test
+    cargo nextest run --package collector-core --no-capture --test security_critical_test
 
 # =============================================================================
 # BENCHMARKING
