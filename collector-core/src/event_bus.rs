@@ -1120,7 +1120,9 @@ mod tests {
         event_bus.shutdown().await.unwrap();
     }
 
+    // TODO: Find a way to make this test faster
     #[tokio::test]
+    #[ignore = "Slow test - run with comprehensive tests"] // Slow test - run with comprehensive tests
     async fn test_event_filtering() {
         let config = EventBusConfig::default();
         let mut event_bus = LocalEventBus::new(config).await.unwrap();
@@ -1274,7 +1276,9 @@ mod tests {
         event_bus.shutdown().await.unwrap();
     }
 
+    // TODO: Find a way to make this test faster
     #[tokio::test]
+    #[ignore = "Slow test - run with comprehensive tests"] // Slow test - run with comprehensive tests
     async fn test_backpressure_handling() {
         let config = EventBusConfig {
             max_buffer_size: 5,

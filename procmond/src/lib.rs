@@ -2,6 +2,7 @@
 
 pub mod event_source;
 pub mod lifecycle;
+pub mod monitor_collector;
 pub mod process_collector;
 
 #[cfg(target_os = "linux")]
@@ -19,6 +20,7 @@ pub use lifecycle::{
     LifecycleTrackingStats, ProcessLifecycleEvent, ProcessLifecycleTracker, ProcessSnapshot,
     SuspiciousEventSeverity,
 };
+pub use monitor_collector::{ProcmondMonitorCollector, ProcmondMonitorConfig};
 pub use process_collector::{
     CollectionStats, FallbackProcessCollector, ProcessCollectionConfig, ProcessCollectionError,
     ProcessCollectionResult, ProcessCollector, ProcessCollectorCapabilities,

@@ -202,10 +202,18 @@ fn performance_event_strategy() -> impl Strategy<Value = PerformanceEvent> {
         )
 }
 
+/// Strategy for generating metadata maps with varied content
+fn metadata_strategy() -> impl Strategy<Value = std::collections::HashMap<String, String>> {
+    prop::collection::hash_map(
+        prop::string::string_regex(r"[a-zA-Z0-9_-]{1,16}").unwrap(), // keys
+        prop::string::string_regex(r"[a-zA-Z0-9_\\s.-]{0,64}").unwrap(), // values
+        0..=8, // 0 to 8 entries (including empty maps)
+    )
+}
+
 /// Strategy for generating TriggerRequest instances
 fn trigger_request_strategy() -> impl Strategy<Value = TriggerRequest> {
     use collector_core::{AnalysisType, TriggerPriority, TriggerRequest};
-    use std::collections::HashMap;
 
     (
         prop::string::string_regex(r"[a-zA-Z0-9_-]{1,32}").unwrap(), // trigger_id
@@ -229,6 +237,7 @@ fn trigger_request_strategy() -> impl Strategy<Value = TriggerRequest> {
         prop::option::of(pid_strategy()),                            // target_pid
         prop::option::of(prop::string::string_regex(r"/[a-zA-Z0-9/_.-]{1,255}").unwrap()), // target_path
         prop::string::string_regex(r"[a-zA-Z0-9_-]{1,32}").unwrap(), // correlation_id
+        metadata_strategy(),                                         // metadata
         timestamp_strategy(),                                        // timestamp
     )
         .prop_map(
@@ -240,11 +249,9 @@ fn trigger_request_strategy() -> impl Strategy<Value = TriggerRequest> {
                 target_pid,
                 target_path,
                 correlation_id,
+                metadata,
                 timestamp,
             )| {
-                let mut metadata = HashMap::new();
-                metadata.insert("test_key".to_string(), "test_value".to_string());
-
                 TriggerRequest {
                     trigger_id,
                     target_collector,

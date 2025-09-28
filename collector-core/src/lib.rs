@@ -68,6 +68,7 @@ pub mod config;
 pub mod event;
 pub mod event_bus;
 pub mod ipc;
+pub mod monitor_collector;
 pub mod source;
 pub mod trigger;
 
@@ -88,6 +89,9 @@ pub use event_bus::{
     EventSubscription, LocalEventBus,
 };
 pub use ipc::CollectorIpcServer;
+pub use monitor_collector::{
+    MonitorCollector, MonitorCollectorConfig, MonitorCollectorStats, MonitorCollectorStatsSnapshot,
+};
 pub use source::{EventSource, SourceCaps};
 pub use trigger::{
     PriorityTriggerQueue, ProcessTriggerData, QueueStatistics, SqlTriggerEvaluator,
