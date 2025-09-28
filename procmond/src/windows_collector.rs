@@ -33,7 +33,7 @@ use crate::process_collector::{
     ProcessCollector, ProcessCollectorCapabilities,
 };
 
-use sysinfo::{Pid, PidExt, ProcessesToUpdate, System};
+use sysinfo::{Pid, System};
 /// Windows-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
 pub enum WindowsCollectionError {
@@ -1217,22 +1217,22 @@ impl ProcessCollector for WindowsProcessCollector {
         let (system, base_config) = enumeration_result?;
 
         let mut events = Vec::new();
-        let mut stats = CollectionStats {
-            total_processes: system.processes().len(),
-            ..Default::default()
-        };
+        let mut stats = CollectionStats::default();
+        let mut processed_count = 0;
 
         // Process each process with individual error handling
         for (pid, process) in system.processes().iter() {
             // Check if we've hit the maximum process limit
-            if base_config.max_processes > 0 && events.len() >= base_config.max_processes {
+            if base_config.max_processes > 0 && processed_count >= base_config.max_processes {
                 debug!(
                     max_processes = base_config.max_processes,
-                    collected = events.len(),
+                    processed = processed_count,
                     "Reached maximum process collection limit"
                 );
                 break;
             }
+
+            processed_count += 1;
 
             match self.enhance_process(*pid, process, &system) {
                 Ok(event) => {
@@ -1258,6 +1258,7 @@ impl ProcessCollector for WindowsProcessCollector {
             }
         }
 
+        stats.total_processes = processed_count;
         stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
 
         debug!(

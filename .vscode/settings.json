@@ -3,5 +3,8 @@
         {
             "file": ".github/commit-instructions.md"
         }
-    ]
+    ],
+    "files.exclude": {
+        "**/target/**": true
+    }
 }
