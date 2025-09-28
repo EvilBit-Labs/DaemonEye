@@ -443,6 +443,39 @@ struct StageExecution {
 }
 
 impl AnalysisChainCoordinator {
+    /// Calculates workflow progress based on stage statuses.
+    fn calculate_progress(
+        stage_statuses: &std::collections::HashMap<String, StageStatus>,
+        total_stages: usize,
+    ) -> WorkflowProgress {
+        let completed_stages = stage_statuses
+            .values()
+            .filter(|status| matches!(status, StageStatus::Completed))
+            .count();
+        let failed_stages = stage_statuses
+            .values()
+            .filter(|status| matches!(status, StageStatus::Failed))
+            .count();
+        let skipped_stages = stage_statuses
+            .values()
+            .filter(|status| matches!(status, StageStatus::Cancelled))
+            .count();
+
+        let percentage = if total_stages > 0 {
+            (completed_stages * 100) / total_stages
+        } else {
+            0
+        };
+
+        WorkflowProgress {
+            completed_stages,
+            total_stages,
+            failed_stages,
+            skipped_stages,
+            percentage: percentage as f64 / 100.0,
+        }
+    }
+
     /// Creates a new analysis chain coordinator with the specified configuration.
     ///
     /// Initializes all internal state including workflow definitions, execution tracking,
@@ -759,6 +792,7 @@ impl AnalysisChainCoordinator {
         let active_executions = Arc::clone(&self.active_executions);
         let completed_executions = Arc::clone(&self.completed_executions);
         let statistics = Arc::clone(&self.statistics);
+        let stage_tracker = Arc::clone(&self.stage_tracker);
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
         let max_completed = self.config.max_completed_workflows;
         let result_subscription = Arc::clone(&self.result_subscription);
@@ -776,6 +810,7 @@ impl AnalysisChainCoordinator {
                                 &active_executions,
                                 &completed_executions,
                                 &statistics,
+                                &stage_tracker,
                                 &bus_event,
                                 max_completed,
                             )
@@ -883,21 +918,45 @@ impl AnalysisChainCoordinator {
 
                     for stage_key in timed_out_stages {
                         if let Some(stage_exec) = tracker.remove(&stage_key) {
-                            warn!(
-                                execution_id = %stage_exec.execution_id,
-                                stage_id = %stage_exec.stage_id,
-                                elapsed_seconds = stage_exec.started_at.elapsed().as_secs(),
-                                timeout_seconds = stage_exec.timeout.as_secs(),
-                                "Stage execution timed out"
-                            );
+                            // Defensive check: verify the stage is still in-progress before marking as TimedOut
+                            let executions = active_executions.read().await;
+                            let should_timeout =
+                                if let Some(execution) = executions.get(&stage_exec.execution_id) {
+                                    execution
+                                        .stage_statuses
+                                        .get(&stage_exec.stage_id)
+                                        .is_none_or(|status| matches!(status, StageStatus::Running))
+                                } else {
+                                    false
+                                };
+                            drop(executions);
 
-                            // Update execution status
-                            let mut executions = active_executions.write().await;
-                            if let Some(execution) = executions.get_mut(&stage_exec.execution_id) {
-                                execution
-                                    .stage_statuses
-                                    .insert(stage_exec.stage_id.clone(), StageStatus::TimedOut);
-                                execution.last_updated = now;
+                            if should_timeout {
+                                warn!(
+                                    execution_id = %stage_exec.execution_id,
+                                    stage_id = %stage_exec.stage_id,
+                                    elapsed_seconds = stage_exec.started_at.elapsed().as_secs(),
+                                    timeout_seconds = stage_exec.timeout.as_secs(),
+                                    "Stage execution timed out"
+                                );
+
+                                // Update execution status
+                                let mut executions = active_executions.write().await;
+                                if let Some(execution) =
+                                    executions.get_mut(&stage_exec.execution_id)
+                                {
+                                    execution
+                                        .stage_statuses
+                                        .insert(stage_exec.stage_id.clone(), StageStatus::TimedOut);
+                                    execution.last_updated = now;
+                                }
+                            } else {
+                                // Stage was already completed/failed, don't override with timeout
+                                debug!(
+                                    execution_id = %stage_exec.execution_id,
+                                    stage_id = %stage_exec.stage_id,
+                                    "Skipping timeout for already completed stage"
+                                );
                             }
                         }
                     }
@@ -1262,6 +1321,7 @@ impl AnalysisChainCoordinator {
         active_executions: &Arc<RwLock<HashMap<String, WorkflowExecution>>>,
         completed_executions: &Arc<RwLock<VecDeque<WorkflowExecution>>>,
         statistics: &Arc<RwLock<WorkflowStatistics>>,
+        stage_tracker: &Arc<RwLock<HashMap<String, StageExecution>>>,
         bus_event: &BusEvent,
         max_completed: usize,
     ) -> Result<()> {
@@ -1307,6 +1367,24 @@ impl AnalysisChainCoordinator {
                     .insert(stage_id.clone(), new_stage_status.clone());
                 execution.last_updated = SystemTime::now();
 
+                // Remove finished stages from stage_tracker to prevent timeout sweep issues
+                if matches!(
+                    new_stage_status,
+                    StageStatus::Completed
+                        | StageStatus::Failed
+                        | StageStatus::Cancelled
+                        | StageStatus::TimedOut
+                ) {
+                    let stage_key = format!("{}:{}", execution_id, stage_id);
+                    let mut tracker = stage_tracker.write().await;
+                    tracker.remove(&stage_key);
+                }
+
+                // Recalculate progress when stage status changes
+                let total_stages = execution.workflow_definition.stages.len();
+                execution.progress =
+                    Self::calculate_progress(&execution.stage_statuses, total_stages);
+
                 // Check if all stages are now complete
                 let all_stages_complete =
                     execution.workflow_definition.stages.iter().all(|stage| {
@@ -1345,6 +1423,11 @@ impl AnalysisChainCoordinator {
                     };
 
                     execution.completed_at = Some(SystemTime::now());
+
+                    // Final progress calculation when all stages complete
+                    let total_stages = execution.workflow_definition.stages.len();
+                    execution.progress =
+                        Self::calculate_progress(&execution.stage_statuses, total_stages);
 
                     // Move to completed executions
                     let completed_execution = executions.remove(execution_id).unwrap();

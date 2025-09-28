@@ -197,6 +197,7 @@ impl ProcmondMonitorCollector {
                 Ok(events) => events,
                 Err(e) => {
                     error!(error = %e, "Lifecycle tracking failed");
+                    self.stats.analysis_errors.fetch_add(1, Ordering::Relaxed);
                     Vec::new()
                 }
             }
@@ -224,7 +225,8 @@ impl ProcmondMonitorCollector {
                 .await
             {
                 error!(error = %e, "Failed to send process event");
-                break;
+                self.stats.collection_errors.fetch_add(1, Ordering::Relaxed);
+                return Err(e).with_context(|| "Failed to send process event with backpressure");
             }
         }
 
@@ -299,14 +301,11 @@ impl EventSource for ProcmondMonitorCollector {
         caps
     }
 
-    #[instrument(
-        skip(self, tx, shutdown_signal),
-        fields(source = "procmond-monitor-collector")
-    )]
+    #[instrument(skip(self, tx), fields(source = "procmond-monitor-collector"))]
     async fn start(
         &self,
         tx: mpsc::Sender<CollectionEvent>,
-        shutdown_signal: Arc<AtomicBool>,
+        _shutdown_signal: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         info!(
             collection_interval_secs = self.config.base_config.collection_interval.as_secs(),
@@ -327,13 +326,13 @@ impl EventSource for ProcmondMonitorCollector {
             tokio::select! {
                 _ = collection_interval.tick() => {
                     // Check for shutdown
-                    if shutdown_signal.load(Ordering::Relaxed) {
+                    if self.shutdown_signal.load(Ordering::Relaxed) {
                         info!("Shutdown signal received, stopping Procmond Monitor Collector");
                         break;
                     }
 
                     // Perform collection and analysis
-                    match self.collect_and_analyze(&tx, &shutdown_signal).await {
+                    match self.collect_and_analyze(&tx, &self.shutdown_signal).await {
                         Ok(()) => {
                             consecutive_failures = 0;
                         }
@@ -364,7 +363,7 @@ impl EventSource for ProcmondMonitorCollector {
                 }
 
                 _ = async {
-                    while !shutdown_signal.load(Ordering::Relaxed) {
+                    while !self.shutdown_signal.load(Ordering::Relaxed) {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 } => {
