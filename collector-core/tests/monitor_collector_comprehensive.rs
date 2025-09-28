@@ -119,7 +119,7 @@ impl MockMonitorCollector {
         }
     }
 
-    fn with_failure_injection(mut self, config: FailureInjectionConfig) -> Self {
+    fn with_failure_injection(self, config: FailureInjectionConfig) -> Self {
         *self.failure_injection.lock().unwrap() = config;
         self
     }
@@ -460,42 +460,9 @@ impl EventSource for MockMonitorCollector {
     }
 }
 
-#[async_trait]
 impl MonitorCollector for MockMonitorCollector {
     fn stats(&self) -> collector_core::MonitorCollectorStatsSnapshot {
         self.stats.snapshot()
-    }
-
-    async fn monitor_health_check(&self) -> anyhow::Result<()> {
-        let stats = self.stats();
-
-        // Check error rates
-        let total_operations =
-            stats.collection_cycles + stats.trigger_requests + stats.analysis_workflows;
-        let total_errors = stats.collection_errors + stats.trigger_errors + stats.analysis_errors;
-
-        if total_operations > 0 {
-            let error_rate = total_errors as f64 / total_operations as f64;
-            if error_rate > 0.5 {
-                anyhow::bail!(
-                    "High error rate detected: {:.2}% ({} errors out of {} operations)",
-                    error_rate * 100.0,
-                    total_errors,
-                    total_operations
-                );
-            }
-        }
-
-        // Check events in flight
-        if stats.events_in_flight > self.config.max_events_in_flight {
-            anyhow::bail!(
-                "Too many events in flight: {} > {}",
-                stats.events_in_flight,
-                self.config.max_events_in_flight
-            );
-        }
-
-        Ok(())
     }
 }
 
@@ -1208,6 +1175,7 @@ async fn test_trigger_validation_security() {
 
     // Generate triggers with security-focused analysis
     let triggers = monitor.generate_trigger_requests(20).await;
+    let trigger_count = triggers.len();
 
     for trigger in triggers {
         // Validate trigger security properties
@@ -1273,7 +1241,7 @@ async fn test_trigger_validation_security() {
     }
 
     let stats = monitor.stats();
-    assert_eq!(stats.trigger_requests, triggers.len() as u64);
+    assert_eq!(stats.trigger_requests, trigger_count as u64);
 }
 
 #[tokio::test]
