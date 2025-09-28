@@ -299,7 +299,7 @@ mod tests {
             .times(1)
             .returning(|| Ok(CollectionResult::default()));
 
-        let agent = daemoneye - agent::new(Box::new(mock_collector));
+        let agent = daemoneye_agent::new(Box::new(mock_collector));
         let result = agent.run_collection_cycle().await;
 
         assert!(result.is_ok());

@@ -48,8 +48,9 @@ use daemoneye_lib::storage::Database;
 
 async fn database_operations() -> Result<(), Box<dyn std::error::Error>> {
     let db = Database::new("processes.db").await?;
+    let pid = 1234;
     let processes = db
-        .query_processes("SELECT * FROM processes WHERE pid = ?", &[1234])
+        .query_processes("SELECT * FROM processes WHERE pid = ?", &[&pid])
         .await?;
     Ok(())
 }

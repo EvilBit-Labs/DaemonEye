@@ -105,6 +105,11 @@ fn create_process_record() -> ProcessRecord {
         })),
     }
 }
+
+// Usage example
+let record = create_process_record();
+println!("Process {} (PID: {}) is using {:.1}% CPU",
+         record.name, record.pid, record.cpu_usage.unwrap_or(0.0));
 ```
 
 ### Alert

@@ -85,7 +85,7 @@ DaemonEye is built in Rust with memory safety guarantees:
 // Safe memory management
 fn create_process_info(process: &Process) -> ProcessInfo {
     ProcessInfo {
-        pid: process.pid(),
+        pid: process.pid().as_u32(),
         name: process.name().to_string(),
         executable_path: process.exe().map(|p| p.to_string_lossy().to_string()),
         // ... other fields

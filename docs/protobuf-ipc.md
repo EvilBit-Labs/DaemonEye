@@ -160,6 +160,7 @@ fn create_tasks_and_results() {
     let task = DetectionTask::new_hash_check("task-456", hash_check);
 
     // Create results
+    let processes = vec![]; // Empty vector for example
     let success = DetectionResult::success("task-123", processes);
     let failure = DetectionResult::failure("task-123", "Permission denied");
 }
@@ -239,7 +240,8 @@ fn basic_process_enumeration() {
     // Send via IPC transport...
 
     // Deserialize response
-    let result: DetectionResult = prost::Message::decode(&response_bytes)?;
+    let response_bytes = &[]; // Sample response data
+    let result: DetectionResult = prost::Message::decode(response_bytes)?;
 
     // Process results
     if result.success {
@@ -300,12 +302,12 @@ fn handle_error() {
 All messages are validated during deserialization:
 
 ```rust
-fn validate_message() -> Result<(), Box<dyn std::error::Error>> {
-    match prost::Message::decode(&bytes) {
+fn validate_message(bytes: &[u8]) -> Result<(), prost::DecodeError> {
+    match prost::Message::decode(bytes) {
         Ok(task) => process_task(task),
         Err(e) => {
             eprintln!("Invalid message format: {}", e);
-            return Err(e.into());
+            return Err(e);
         }
     }
 }
