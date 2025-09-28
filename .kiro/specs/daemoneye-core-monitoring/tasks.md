@@ -120,267 +120,332 @@
 
 - [-] 5. Implement cross-platform process enumeration in procmond - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
-- [x] 5.1a Create ProcessMessageHandler with sysinfo-based process enumeration - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+  - [x] 5.1 Create ProcessMessageHandler with sysinfo-based process enumeration - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
-  - Implement ProcessMessageHandler with basic sysinfo-based process enumeration
-  - Add process metadata extraction (PID, PPID, name, executable path, command line, CPU, memory)
-  - Create convert_process_to_record method for ProtoProcessRecord conversion
-  - Add basic unit tests for ProcessMessageHandler functionality
-  - _Requirements: 1.1, 1.5_
+    - [x] 5.1a Create ProcessMessageHandler with sysinfo-based process enumeration - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
-- [x] 5.1b Complete ProcessEventSource integration to collector-core standards - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+    - Implement ProcessMessageHandler with basic sysinfo-based process enumeration
 
-  - Refactor ProcessEventSource to fully comply with collector-core framework standards
-  - Implement proper async_trait EventSource with start/stop lifecycle and capability reporting
-  - Add proper shutdown signal handling with cooperative cancellation and timeout enforcement
-  - Implement event batching and backpressure handling for multiple event sources
-  - Add comprehensive error handling with graceful degradation and structured logging
-  - Create proper health check implementation with detailed diagnostics
-  - Write comprehensive unit tests for EventSource trait implementation and lifecycle management
-  - Add integration tests for ProcessEventSource with collector-core runtime
-  - _Requirements: 1.1, 1.5, 11.1, 11.2, 11.5_
+    - Add process metadata extraction (PID, PPID, name, executable path, command line, CPU, memory)
 
-- [x] 5.2 Create ProcessCollector trait and refactor for extensibility - [#80](https://github.com/EvilBit-Labs/DaemonEye/issues/80)
+    - Create convert_process_to_record method for ProtoProcessRecord conversion
+
+    - Add basic unit tests for ProcessMessageHandler functionality
+
+    - _Requirements: 1.1, 1.5_
+
+    - [x] 5.1b Complete ProcessEventSource integration to collector-core standards - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+
+    - Refactor ProcessEventSource to fully comply with collector-core framework standards
+
+    - Implement proper async_trait EventSource with start/stop lifecycle and capability reporting
+
+    - Add proper shutdown signal handling with cooperative cancellation and timeout enforcement
+
+    - Implement event batching and backpressure handling for multiple event sources
+
+    - Add comprehensive error handling with graceful degradation and structured logging
+
+    - Create proper health check implementation with detailed diagnostics
+
+    - Write comprehensive unit tests for EventSource trait implementation and lifecycle management
+
+    - Add integration tests for ProcessEventSource with collector-core runtime
+
+    - _Requirements: 1.1, 1.5, 11.1, 11.2, 11.5_
+
+  - [x] 5.2 Create ProcessCollector trait and refactor for extensibility - [#80](https://github.com/EvilBit-Labs/DaemonEye/issues/80)
 
   - Define ProcessCollector trait with platform-agnostic interface for process enumeration
+
   - Refactor ProcessMessageHandler to use ProcessCollector trait
+
   - Create SysinfoProcessCollector as default cross-platform implementation
+
   - Add proper error handling for inaccessible processes with structured logging
+
   - Write comprehensive unit tests with mock process data
+
   - _Requirements: 1.1, 1.5_
 
-- [x] 5.3 Implement Linux-specific optimizations - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+  - [x] 5.3 Implement Linux-specific optimizations - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create LinuxProcessCollector with direct /proc filesystem access for enhanced performance
+
   - Add CAP_SYS_PTRACE capability detection and privilege management
+
   - Implement enhanced metadata collection (memory maps, file descriptors, network connections)
+
   - Add support for process namespaces and container detection
+
   - Handle permission denied gracefully for restricted processes
+
   - Write Linux-specific integration tests
+
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [x] 5.4 Implement macOS-specific optimizations using third-party crates - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+  - [x] 5.4 Implement macOS-specific optimizations using third-party crates - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Refactor macOSProcessCollector to use well-maintained third-party crates instead of direct libc
+
   - Replace libproc/sysctl with enhanced sysinfo + security-framework + core-foundation + mac-sys-info (procfs is Linux-only)
+
   - Implement proper entitlements detection using security-framework crate for accurate code signing and bundle info
+
   - Add System Integrity Protection (SIP) awareness using mac-sys-info for system information
+
   - Handle sandboxed process restrictions gracefully with security-framework entitlements parsing
+
   - Maintain all existing capabilities while improving safety and accuracy
+
   - Write comprehensive integration tests for third-party crate approach
+
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [x] 5.5 Add basic process collection for secondary and minimally supported platforms - [#104](https://github.com/EvilBit-Labs/DaemonEye/issues/104)
+  - [x] 5.5 Add basic process collection for secondary and minimally supported platforms - [#104](https://github.com/EvilBit-Labs/DaemonEye/issues/104)
 
   - Create FallbackProcessCollector for secondary platforms (FreeBSD, OpenBSD, NetBSD, etc.)
+
   - Use sysinfo crate as the primary collection mechanism for maximum compatibility
+
   - Implement graceful capability detection and feature availability reporting
+
   - Add platform detection logic to select appropriate collector implementation
+
   - Handle platform-specific limitations with clear error messages and fallback behavior
+
   - Write unit tests for fallback collector with mock platform detection
+
   - Add integration tests for FreeBSD and other secondary platforms where possible
+
   - _Requirements: 1.1, 1.5_
 
-- [x] 5.6 Implement Windows-specific optimizations using third-party crates - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+  - [x] 5.6 Implement Windows-specific optimizations using third-party crates - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create WindowsProcessCollector using well-maintained third-party crates instead of direct Windows API calls
+
   - Use enhanced sysinfo + windows-rs + winapi-safe + psutil-rs for comprehensive Windows process monitoring
+
   - Implement Windows-specific security features: SeDebugPrivilege detection, process tokens, security contexts
+
   - Add support for Windows process attributes: protected processes, system processes, UAC elevation status
+
   - Implement Windows service detection and management using windows-service crate
+
   - Add Windows-specific metadata: process integrity levels, session isolation, virtualization status
+
   - Handle Windows Defender and antivirus process restrictions gracefully
+
   - Add support for Windows containers (Hyper-V containers, Windows Server containers)
+
   - Implement Windows-specific performance counters using perfmon-rs or similar
+
   - Write comprehensive Windows-specific integration tests covering all Windows versions
+
   - Maintain all existing capabilities while improving safety and accuracy with third-party crates
+
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 5.7 Implement Monitor Collector behavior and event-driven architecture - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
+  - [ ] 5.7 Implement Monitor Collector behavior and event-driven architecture - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
-  - [x] 5.7.1 Create process lifecycle event detection infrastructure
+    - [x] 5.7.1 Create process lifecycle event detection infrastructure
 
-  - **Prerequisites**: Complete Task 7.1 (ProcessEventSource implementation) before starting this task
+    - **Prerequisites**: Complete Task 7.1 (ProcessEventSource implementation) before starting this task
 
-  - Implement ProcessLifecycleTracker for detecting process start, stop, and modification events
+    - Implement ProcessLifecycleTracker for detecting process start, stop, and modification events
 
-  - Create ProcessSnapshot structure for maintaining process state between enumeration cycles
+    - Create ProcessSnapshot structure for maintaining process state between enumeration cycles
 
-  - Add process state comparison logic to identify lifecycle changes (new, terminated, modified)
+    - Add process state comparison logic to identify lifecycle changes (new, terminated, modified)
 
-  - Implement efficient process tracking with PID reuse detection and timestamp validation
+    - Implement efficient process tracking with PID reuse detection and timestamp validation
 
-  - Create ProcessLifecycleEvent enum with Start, Stop, Modified, and Suspicious variants
+    - Create ProcessLifecycleEvent enum with Start, Stop, Modified, and Suspicious variants
 
-  - Write unit tests for process lifecycle detection with mock process data
+    - Write unit tests for process lifecycle detection with mock process data
 
-  - _Requirements: 11.1, 11.2, 11.5_
+    - _Requirements: 11.1, 11.2, 11.5_
 
-  - [x] 5.7.3 Create CollectionEvent::TriggerRequest emission system
+    - [x] 5.7.3 Create CollectionEvent::TriggerRequest emission system
 
-  - Extend CollectionEvent enum with TriggerRequest variant for analysis collector coordination
+    - Extend CollectionEvent enum with TriggerRequest variant for analysis collector coordination
 
-  - Create TriggerRequest structure with target collector, analysis type, and priority fields
+    - Create TriggerRequest structure with target collector, analysis type, and priority fields
 
-  - Implement trigger condition evaluation based on suspicious behavior detection results
+    - Implement trigger condition evaluation based on suspicious behavior detection results
 
-  - Add trigger deduplication to prevent redundant analysis requests for the same process
+    - Add trigger deduplication to prevent redundant analysis requests for the same process
 
-  - Create trigger metadata tracking for correlation and debugging purposes
+    - Create trigger metadata tracking for correlation and debugging purposes
 
-  - Implement trigger rate limiting to prevent analysis collector overload
+    - Implement trigger rate limiting to prevent analysis collector overload
 
-  - Write unit tests for trigger request generation and deduplication logic
+    - Write unit tests for trigger request generation and deduplication logic
 
-  - _Requirements: 11.1, 11.2, 11.5_
+    - _Requirements: 11.1, 11.2, 11.5_
 
-  - [x] 5.7.4 Add collector-advertised trigger conditions and SQL-to-IPC integration
+    - [x] 5.7.4 Add collector-advertised trigger conditions and SQL-to-IPC integration
 
-  - Create TriggerCapabilities structure for collectors to advertise their trigger conditions (not user configurable)
+    - Create TriggerCapabilities structure for collectors to advertise their trigger conditions (not user configurable)
 
-  - Implement trigger condition advertisement in collector capability negotiation with daemoneye-agent
+    - Implement trigger condition advertisement in collector capability negotiation with daemoneye-agent
 
-  - Add SQL-to-IPC detection engine integration for evaluating when triggers should fire based on user-written SQL rules
+    - Add SQL-to-IPC detection engine integration for evaluating when triggers should fire based on user-written SQL rules
 
-  - Create priority-based trigger queuing with backpressure handling for high-volume scenarios
+    - Create priority-based trigger queuing with backpressure handling for high-volume scenarios
 
-  - Implement trigger condition validation against collector-advertised capabilities
+    - Implement trigger condition validation against collector-advertised capabilities
 
-  - Add trigger statistics collection for monitoring SQL rule evaluation and trigger firing
+    - Add trigger statistics collection for monitoring SQL rule evaluation and trigger firing
 
-  - Write unit tests for capability advertisement, SQL rule evaluation, and trigger firing logic
+    - Write unit tests for capability advertisement, SQL rule evaluation, and trigger firing logic
 
-  - _Requirements: 11.1, 11.2, 11.5_
+    - _Requirements: 11.1, 11.2, 11.5_
 
-  - [x] 5.7.5 Implement event bus communication infrastructure
+    - [x] 5.7.5 Implement event bus communication infrastructure
 
-  - Create EventBus trait for inter-collector communication and coordination
+    - Create EventBus trait for inter-collector communication and coordination
 
-  - Implement LocalEventBus for single-node collector coordination using tokio channels
+    - Implement LocalEventBus for single-node collector coordination using tokio channels
 
-  - Add event routing and filtering based on collector capabilities and subscriptions
+    - Add event routing and filtering based on collector capabilities and subscriptions
 
-  - Create event correlation tracking across multiple analysis stages with correlation IDs
+    - Create event correlation tracking across multiple analysis stages with correlation IDs
 
-  - Implement event persistence and replay capabilities for reliability and debugging
+    - Implement event persistence and replay capabilities for reliability and debugging
 
-  - Add backpressure handling for high-volume event scenarios with bounded channels
+    - Add backpressure handling for high-volume event scenarios with bounded channels
 
-  - Write unit tests for event bus functionality and message routing
+    - Write unit tests for event bus functionality and message routing
 
-  - _Requirements: 11.1, 11.2, 11.5_
+    - _Requirements: 11.1, 11.2, 11.5_
 
-  - [x] 5.7.6 Add trigger request emission for analysis collectors
+    - [x] 5.7.6 Add trigger request emission for analysis collectors
 
-  - Create generic TriggerRequest emission system for coordinating with analysis collectors
+    - Create generic TriggerRequest emission system for coordinating with analysis collectors
 
-  - Implement trigger request generation based on collector-advertised capabilities
+    - Implement trigger request generation based on collector-advertised capabilities
 
-  - Add trigger request validation against available collector capabilities from schema registry
+    - Add trigger request validation against available collector capabilities from schema registry
 
-  - Create trigger request routing to appropriate analysis collectors via event bus
+    - Create trigger request routing to appropriate analysis collectors via event bus
 
-  - Implement trigger request correlation tracking for forensic analysis
+    - Implement trigger request correlation tracking for forensic analysis
 
-  - Add trigger request timeout and error handling for collector communication
+    - Add trigger request timeout and error handling for collector communication
 
-  - Write integration tests for trigger request workflows with mock analysis collectors
+    - Write integration tests for trigger request workflows with mock analysis collectors
 
-  - _Requirements: 11.1, 11.2, 11.5_
+    - _Requirements: 11.1, 11.2, 11.5_
 
-  - [x] 5.7.7 Create analysis chain coordination capabilities
+    - [x] 5.7.7 Create analysis chain coordination capabilities
 
-  - Implement AnalysisChainCoordinator for managing multi-stage analysis workflows
+    - Implement AnalysisChainCoordinator for managing multi-stage analysis workflows
 
-  - Create analysis workflow definitions with stage dependencies and execution order
+    - Create analysis workflow definitions with stage dependencies and execution order
 
-  - Add analysis result aggregation and correlation across multiple collector types
+    - Add analysis result aggregation and correlation across multiple collector types
 
-  - Implement workflow timeout and cancellation support for long-running analysis
+    - Implement workflow timeout and cancellation support for long-running analysis
 
-  - Create analysis chain status tracking and progress reporting
+    - Create analysis chain status tracking and progress reporting
 
-  - Add workflow recovery and retry logic for failed analysis stages
+    - Add workflow recovery and retry logic for failed analysis stages
 
-  - Write integration tests for complex analysis workflows with multiple collectors
+    - Write integration tests for complex analysis workflows with multiple collectors
 
-  - _Requirements: 11.1, 11.2, 11.5_
+    - _Requirements: 11.1, 11.2, 11.5_
 
-  - [x] 5.7.8 Ensure collector-core framework compliance
+    - [x] 5.7.8 Ensure collector-core framework compliance
 
-  - Refactor Monitor Collector implementation to fully comply with collector-core EventSource trait
+    - Refactor Monitor Collector implementation to fully comply with collector-core EventSource trait
 
-  - Implement proper async_trait EventSource with start/stop lifecycle and capability reporting
+    - Implement proper async_trait EventSource with start/stop lifecycle and capability reporting
 
-  - Add SourceCaps declaration with PROCESS, REALTIME, and SYSTEM_WIDE capabilities
+    - Add SourceCaps declaration with PROCESS, REALTIME, and SYSTEM_WIDE capabilities
 
-  - Ensure proper shutdown signal handling with cooperative cancellation and timeout enforcement
+    - Ensure proper shutdown signal handling with cooperative cancellation and timeout enforcement
 
-  - Implement event batching and backpressure handling for collector-core integration
+    - Implement event batching and backpressure handling for collector-core integration
 
-  - Add comprehensive error handling with graceful degradation and structured logging
+    - Add comprehensive error handling with graceful degradation and structured logging
 
-  - Write unit tests for EventSource trait compliance and collector-core integration
+    - Write unit tests for EventSource trait compliance and collector-core integration
 
-  - _Requirements: 11.1, 11.2, 11.5_
+    - _Requirements: 11.1, 11.2, 11.5_
 
-  - [ ] 5.7.9 Add performance monitoring and baseline establishment
+    - [ ] 5.7.9 Add performance monitoring and baseline establishment
 
-  - Implement performance metrics collection for events/second throughput monitoring
+    - Implement performance metrics collection for events/second throughput monitoring
 
-  - Add CPU usage tracking during continuous monitoring operations
+    - Add CPU usage tracking during continuous monitoring operations
 
-  - Create memory usage monitoring for process tracking and event generation
+    - Create memory usage monitoring for process tracking and event generation
 
-  - Implement trigger event latency measurement and statistics collection
+    - Implement trigger event latency measurement and statistics collection
 
-  - Add resource usage tracking for system impact assessment
+    - Add resource usage tracking for system impact assessment
 
-  - Create criterion benchmarks for establishing baseline performance metrics
+    - Create criterion benchmarks for establishing baseline performance metrics
 
-  - Write performance monitoring tests with high process churn scenarios (10,000+ processes)
+    - Write performance monitoring tests with high process churn scenarios (10,000+ processes)
 
-  - _Requirements: 11.1, 11.2, 11.5_
+    - _Requirements: 11.1, 11.2, 11.5_
 
-  - [ ] 5.7.10 Create comprehensive testing suite for Monitor Collector behavior
+    - [ ] 5.7.10 Create comprehensive testing suite for Monitor Collector behavior
 
-  - Write unit tests for all Monitor Collector components and behavior patterns
+    - Write unit tests for all Monitor Collector components and behavior patterns
 
-  - Add integration tests for collector coordination and trigger workflows
+    - Add integration tests for collector coordination and trigger workflows
 
-  - Create property-based tests for process lifecycle detection edge cases
+    - Create property-based tests for process lifecycle detection edge cases
 
-  - Implement chaos testing for event bus communication and collector failures
+    - Implement chaos testing for event bus communication and collector failures
 
-  - Add performance regression tests with baseline validation
+    - Add performance regression tests with baseline validation
 
-  - Create end-to-end tests for complete Monitor Collector workflows
+    - Create end-to-end tests for complete Monitor Collector workflows
 
-  - Write security tests for trigger validation and access control
+    - Write security tests for trigger validation and access control
 
-  - _Requirements: 11.1, 11.2, 11.5_
+    - _Requirements: 11.1, 11.2, 11.5_
 
-- [ ] 5.8 Add comprehensive cross-platform testing - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
+  - [ ] 5.8 Add comprehensive cross-platform testing - [#39](https://github.com/EvilBit-Labs/DaemonEye/issues/39)
 
   - Create cross-platform integration tests for all ProcessCollector implementations
+
   - Implement privilege escalation/dropping tests for all platforms
+
   - Add criterion benchmarks with high process counts (10,000+ processes) (do not set an expected minimum performance, just collect the values)
+
   - Create compatibility tests for different OS versions and configurations
+
   - Write property-based tests for process enumeration edge cases
+
   - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 5.9 Validate GitHub issue #89 performance and acceptance criteria - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
+  - [ ] 5.9 Validate GitHub issue #89 performance and acceptance criteria - [#89](https://github.com/EvilBit-Labs/DaemonEye/issues/89)
 
   - Establish baseline performance metrics for CPU usage during continuous monitoring (GitHub issue targets will be validated after optimization)
+
   - Collect baseline memory usage metrics during normal operation (GitHub issue targets will be validated after optimization)
+
   - Establish baseline metrics for process enumeration timing with varying system loads (GitHub issue targets will be validated after optimization)
+
   - Collect baseline metrics for trigger event latency (GitHub issue targets will be validated after optimization)
+
   - Add resource usage tracking to establish baseline metrics for system impact (optimization will be performed after baseline collection)
+
   - Create criterion benchmarks to establish baseline performance metrics for GitHub issue #89 acceptance criteria (collecting data for future validation and optimization)
+
   - Implement scalability testing for high process churn environments (10,000+ processes)
+
   - Add comprehensive testing coverage (>90% unit tests, integration tests, cross-platform compatibility)
+
   - Validate event generation and triggering functionality meets GitHub issue specifications
+
   - Ensure data integration with collector-core pipeline and structured logging requirements
+
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
 - [ ] 6. Implement executable integrity verification with SHA-256 hashing - [#40](https://github.com/EvilBit-Labs/DaemonEye/issues/40)
