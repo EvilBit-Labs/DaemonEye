@@ -652,68 +652,7 @@ rev = "a1b2c3d4"                              # Specific commit SHA
 
 ## Development Workflow
 
-### Task Runner (justfile)
-
-All development tasks use the `just` command runner with DRY principles:
-
-```bash
-# Formatting
-just fmt          # Format all code
-just fmt-check    # Check formatting (CI-friendly)
-
-# Linting (composed recipe)
-just lint         # Runs fmt-check + clippy + lint-just
-just lint-rust    # Clippy with strict warnings
-just lint-just    # Lint justfile syntax
-
-# Building and Testing
-just build        # Build all binaries with features
-just check        # Quick check without build
-just test         # Run all tests
-
-# Component Execution
-just run-procmond [args]      # Run procmond with optional args
-just run-daemoneye-cli [args]   # Run daemoneye-cli with optional args
-just run-daemoneye-agent [args] # Run daemoneye-agent with optional args
-```
-
-### Core Development Commands
-
-```bash
-# Workspace Operations
-cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace -- -D warnings
-cargo fmt --all
-cargo check --workspace
-
-# Testing with stable output
-NO_COLOR=1 TERM=dumb cargo test --workspace
-
-# Component-specific building
-cargo build -p procmond
-cargo build -p daemoneye-agent
-cargo build -p daemoneye-cli
-cargo build -p daemoneye-lib
-
-# Performance testing
-cargo bench  # Run criterion benchmarks
-```
-
-### Justfile Conventions
-
-- Compose complex tasks by calling `@just <subrecipe>`
-- Keep paths relative to project directory
-- Use consistent argument patterns with defaults
-- Include `lint-just` recipe to validate justfile syntax with `just --fmt --check --unstable`
-- No hardcoded paths outside project directory for portability
-
-### Git Workflow
-
-- Use conventional commits format
-- Create feature branches for new work
-- Ensure all tests pass before merging
-- No commits without explicit permission
+See [Development Commands](#development-commands) above for task runner and core development commands.
 
 ## Code Organization and Architecture
 
