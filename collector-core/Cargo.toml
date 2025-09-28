@@ -12,7 +12,7 @@ edition.workspace = true
 description = "Extensible collection framework for DaemonEye monitoring components"
 publish = true
 exclude.workspace = true
-readme = "collector-core/README.md"
+readme = "README.md"
 
 
 [dependencies]
