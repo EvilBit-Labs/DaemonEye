@@ -661,18 +661,44 @@ Status: Planned
 
 **Virtual Table: `binary_analysis`**
 
-Core fields available across all platforms (provided by `goblin`)
+Core fields available across all platforms (provided by `goblin` crate):
 
+- `pid` (integer): Process ID (effective PK)
 - `file_path` (string): Path to the analyzed binary
 - `file_name` (string): Binary file name
 - `file_size` (integer): File size in bytes
 - `file_format` (string): Binary format (PE, ELF, Mach-O, etc.)
 - `architecture` (string): Target architecture (x86, x64, ARM, etc.)
 - `platform` (string): Target platform (Windows, Linux, macOS)
-- `compiler` (string): Compiler used to build the binary
-- `build_tool` (string): Build tool identification
+- `entry_point` (string): Entry point address
+- `base_address` (string): Base address of binary
+- `image_size` (integer): Size of loaded image
+- `subsystem` (string): Subsystem type (console, gui, etc.)
+- `machine_type` (string): Machine type identifier
+- `characteristics` (json): Binary characteristics flags
+- `sections` (json): Section headers and information
+- `imports_count` (integer): Number of imported functions
+- `exports_count` (integer): Number of exported functions
+- `libraries_count` (integer): Number of linked libraries
+- `compiler` (string): Compiler used to build the binary (via debug symbols)
+- `compiler_version` (string): Compiler version (via debug symbols)
+- `build_tool` (string): Build tool identification (via debug symbols)
+- `build_date` (timestamp): Build date and time (via debug symbols)
+- `debug_info` (json): Debug information sections
+- `source_files` (json): Source file paths (via debug symbols)
+- `panic_messages` (json): Embedded panic messages (Rust)
+- `file_paths` (json): Embedded file paths (Rust/Go)
+- `build_info` (json): Build information (Go binaries)
+- `go_version` (string): Go runtime version (Go binaries)
+- `go_modules` (json): Go module information (Go binaries)
+- `rust_panic_info` (json): Rust panic metadata (Rust binaries)
+- `packed` (boolean): Whether binary is packed/compressed
+- `packer_type` (string): Type of packer used (UPX, PECompact, etc.)
+- `upx_packed` (boolean): Whether binary is UPX-packed
+- `upx_version` (string): UPX version used (if UPX-packed)
+- `section_entropy` (json): Entropy values for each section
+- `suspicious_sections` (json): Sections with high entropy or unusual names
 - `entropy` (float): File entropy score
-- `complexity` (string): Complexity assessment (low, medium, high)
 - `created_time` (timestamp): File creation time
 - `modified_time` (timestamp): File modification time
 - `sha256_hash` (string): SHA-256 hash of file contents
@@ -681,35 +707,57 @@ Core fields available across all platforms (provided by `goblin`)
 
 **Virtual Table: `code_signing`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `goblin`, `x509-parser`, and platform-specific crates):
 
+- `pid` (integer): Process ID (effective PK)
 - `file_path` (string): Path to the signed binary
 - `signed` (boolean): Whether the binary is signed
 - `signature_valid` (boolean): Whether the signature is valid
-- `certificate_chain` (json): Certificate chain information
+- `signature_type` (string): Signature type (authenticode, adhoc, etc.)
+- `certificate_chain` (json): Certificate chain information (via `x509-parser` crate)
 - `signing_authority` (string): Certificate authority
 - `publisher` (string): Code publisher
+- `subject_name` (string): Certificate subject name
+- `issuer_name` (string): Certificate issuer name
+- `serial_number` (string): Certificate serial number
 - `timestamp` (timestamp): Code signing timestamp
+- `timestamp_valid` (boolean): Whether timestamp is valid
 - `revocation_status` (string): Certificate revocation status
 - `trust_level` (string): Trust level assessment
+- `signature_algorithm` (string): Signature algorithm used
+- `hash_algorithm` (string): Hash algorithm used
+- `certificate_valid_from` (timestamp): Certificate valid from date
+- `certificate_valid_to` (timestamp): Certificate valid to date
 
 **Virtual Table: `imports_exports`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `goblin` crate):
 
+- `pid` (integer): Process ID (effective PK)
 - `file_path` (string): Path to the binary
 - `import_type` (string): Import or export
 - `library_name` (string): Library name
 - `function_name` (string): Function name
 - `ordinal` (integer): Function ordinal
 - `address` (string): Function address
+- `rva` (string): Relative virtual address
 - `api_category` (string): API category classification
 - `suspicious` (boolean): Suspicious API usage flag
+- `forwarded` (boolean): Whether function is forwarded
+- `delayed_import` (boolean): Whether import is delayed
+- `bound_import` (boolean): Whether import is bound
+- `api_set` (string): API set name (Windows)
+- `module_name` (string): Module name containing function
+- `function_type` (string): Function type (stdcall, cdecl, etc.)
+- `calling_convention` (string): Calling convention used
+- `parameter_count` (integer): Number of parameters
+- `return_type` (string): Return type of function
 
 **Virtual Table: `yara_matches`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `yara` crate):
 
+- `pid` (integer): Process ID (effective PK)
 - `file_path` (string): Path to the scanned file
 - `rule_name` (string): YARA rule name
 - `rule_namespace` (string): YARA rule namespace
@@ -718,7 +766,99 @@ Core fields available across all platforms:
 - `match_count` (integer): Number of matches
 - `match_strings` (json): Matched strings
 - `rule_metadata` (json): Rule metadata
+- `match_offset` (integer): Offset of match in file
+- `match_length` (integer): Length of matched content
+- `rule_tags` (json): Rule tags
+- `rule_author` (string): Rule author
+- `rule_version` (string): Rule version
+- `rule_description` (string): Rule description
 - `scan_time` (timestamp): When scan was performed
+
+**Virtual Table: `debug_info`**
+
+Core fields available across all platforms (provided by `goblin` crate and debug symbol parsing):
+
+- `pid` (integer): Process ID (effective PK)
+- `file_path` (string): Path to the binary
+- `debug_format` (string): Debug format (DWARF, PDB, etc.)
+- `compiler` (string): Compiler used (gcc, clang, msvc, rustc, etc.)
+- `compiler_version` (string): Compiler version string
+- `build_tool` (string): Build tool (make, cmake, cargo, etc.)
+- `build_date` (timestamp): Build date and time
+- `build_host` (string): Build host information
+- `build_user` (string): Build user information
+- `source_files` (json): Source file paths and line numbers
+- `function_names` (json): Function names and addresses
+- `variable_names` (json): Variable names and types
+- `line_numbers` (json): Line number information
+- `optimization_level` (string): Compiler optimization level
+- `debug_level` (string): Debug information level
+- `target_triple` (string): Target architecture triple
+- `linker` (string): Linker used
+- `linker_version` (string): Linker version
+- `analysis_time` (timestamp): When analysis was performed
+
+**Virtual Table: `language_metadata`**
+
+Core fields available across all platforms (provided by `goblin` crate and language-specific parsing):
+
+- `pid` (integer): Process ID (effective PK)
+- `file_path` (string): Path to the binary
+- `language` (string): Programming language (Rust, Go, C, C++, etc.)
+- `language_version` (string): Language version used
+- `runtime_version` (string): Runtime version (Go, .NET, etc.)
+- `framework` (string): Framework used (Rust std, Go std, etc.)
+- `panic_messages` (json): Embedded panic messages (Rust)
+- `file_paths` (json): Embedded file paths (Rust/Go)
+- `build_info` (json): Build information (Go binaries)
+- `go_version` (string): Go runtime version (Go binaries)
+- `go_modules` (json): Go module information (Go binaries)
+- `rust_panic_info` (json): Rust panic metadata (Rust binaries)
+- `rust_std_version` (string): Rust standard library version
+- `cargo_version` (string): Cargo version used (Rust)
+- `go_build_tags` (json): Go build tags used
+- `go_ldflags` (json): Go linker flags used
+- `rust_features` (json): Rust features enabled
+- `rust_target` (string): Rust target triple
+- `analysis_time` (timestamp): When analysis was performed
+
+**Detection Methods:**
+
+- **Go Metadata**: Parse `.note.go.buildid` section for build info, extract version strings from `.rodata` section, analyze Go runtime symbols and string tables using `goblin` crate
+- **Rust Metadata**: Scan binary strings for panic messages with file paths, extract Cargo metadata from debug sections, identify Rust std library symbols and panic handlers using `goblin` crate
+- **Language Detection**: Analyze import table for language-specific APIs (Go runtime, Rust std), scan string sections for language signatures, examine symbol tables for framework-specific functions using `goblin` crate
+- **Metadata Extraction**: Parse section headers for embedded build info, extract version strings from string tables, analyze symbol tables for runtime metadata using `goblin` crate
+
+**Virtual Table: `packer_analysis`**
+
+Core fields available across all platforms (provided by `goblin` crate and entropy analysis):
+
+- `pid` (integer): Process ID (effective PK)
+- `file_path` (string): Path to the binary
+- `packed` (boolean): Whether binary is packed/compressed
+- `packer_type` (string): Type of packer used (UPX, PECompact, ASPack, etc.)
+- `packer_version` (string): Version of the packer used
+- `upx_packed` (boolean): Whether binary is UPX-packed
+- `upx_version` (string): UPX version used (if UPX-packed)
+- `upx_compression_ratio` (float): Compression ratio achieved by UPX
+- `section_entropy` (json): Entropy values for each section
+- `suspicious_sections` (json): Sections with high entropy or unusual names
+- `upx_sections` (json): UPX-specific sections (UPX0, UPX1, etc.)
+- `import_table_size` (integer): Size of import table (often minimal in packed binaries)
+- `entry_point_entropy` (float): Entropy of entry point region
+- `overlay_present` (boolean): Whether binary has overlay data
+- `overlay_size` (integer): Size of overlay data
+- `stub_size` (integer): Size of unpacking stub
+- `compression_method` (string): Compression method used
+- `compression_level` (integer): Compression level used
+- `analysis_time` (timestamp): When analysis was performed
+
+**Detection Methods:**
+
+- **UPX Detection**: Analyze section names (`UPX0`, `UPX1`), section entropy, import table size, and UPX signatures in headers
+- **Generic Packer Detection**: High section entropy (>7.0), minimal import table, unusual section names, entry point entropy analysis
+- **Entropy Analysis**: Calculate Shannon entropy for each section to identify compressed/encrypted content
+- **Section Analysis**: Inspect section headers for packer-specific characteristics using `goblin` crate
 
 ##### Memory Analysis Collector (memmond)
 
@@ -726,7 +866,7 @@ Status: Planned
 
 **Virtual Table: `memory_regions`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `sysinfo` crate and platform-specific extensions):
 
 - `pid` (integer): Process ID
 - `process_name` (string): Process name
@@ -740,39 +880,49 @@ Core fields available across all platforms:
 - `access_count` (integer): Number of accesses to region
 - `dirty_pages` (integer): Number of dirty pages
 - `shared` (boolean): Whether region is shared
+- `commit_charge` (integer): Committed memory in region
+- `working_set` (integer): Working set size for region
 - `analysis_time` (timestamp): When analysis was performed
 
 **Virtual Table: `memory_artifacts`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `regex` crate and memory scanning utilities):
 
 - `pid` (integer): Process ID
 - `process_name` (string): Process name
-- `artifact_type` (string): Artifact type (string, key, connection, file, etc.)
+- `artifact_type` (string): Artifact type (credential, key, connection, file, malware_signature, etc.)
 - `artifact_value` (string): Artifact value
-- `artifact_category` (string): Artifact category
+- `artifact_category` (string): Artifact category (suspicious, malicious, credential, network, file)
 - `memory_address` (string): Memory address where artifact was found
 - `confidence` (float): Detection confidence score
 - `context` (json): Additional context information
+- `pattern_used` (string): Regex pattern used for detection
+- `match_length` (integer): Length of matched artifact
+- `encoding` (string): Text encoding detected (UTF-8, ASCII, etc.)
 - `extraction_time` (timestamp): When artifact was extracted
 
 **Virtual Table: `memory_patterns`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `regex` crate and pattern matching utilities):
 
 - `pid` (integer): Process ID
 - `process_name` (string): Process name
-- `pattern_type` (string): Pattern type (crypto_key, url, email, ip, etc.)
+- `pattern_type` (string): Pattern type (crypto_key, url, email, ip, malware_signature, shellcode, etc.)
 - `pattern_value` (string): Pattern value
 - `pattern_regex` (string): Regular expression used
 - `match_count` (integer): Number of matches found
 - `memory_addresses` (json): Memory addresses where pattern was found
 - `confidence` (float): Pattern matching confidence
+- `entropy_score` (float): Entropy of matched content
+- `false_positive_rate` (float): Estimated false positive rate
+- `rop_chain_detected` (boolean): Whether ROP chain was detected
+- `buffer_overflow_detected` (boolean): Whether buffer overflow was detected
+- `stack_corruption_detected` (boolean): Whether stack corruption was detected
 - `scan_time` (timestamp): When pattern scan was performed
 
 **Virtual Table: `heap_analysis`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `sysinfo` crate and platform-specific memory analysis):
 
 - `pid` (integer): Process ID
 - `process_name` (string): Process name
@@ -780,11 +930,50 @@ Core fields available across all platforms:
 - `heap_size` (integer): Heap size in bytes
 - `allocation_count` (integer): Number of allocations
 - `free_count` (integer): Number of frees
-- `leak_count` (integer): Number of memory leaks
-- `fragmentation` (float): Heap fragmentation percentage
+- `leak_count` (integer): Number of potential memory-based persistence techniques
+- `fragmentation` (float): Heap fragmentation percentage (indicator of suspicious allocation patterns)
 - `largest_allocation` (integer): Size of largest allocation
 - `average_allocation` (float): Average allocation size
+- `peak_memory_usage` (integer): Peak memory usage
+- `current_memory_usage` (integer): Current memory usage
+- `memory_growth_rate` (float): Memory growth rate over time
 - `analysis_time` (timestamp): When heap analysis was performed
+
+**Virtual Table: `exploit_detection`**
+
+Core fields available across all platforms (provided by `regex` crate, `sysinfo` crate, and custom exploit analysis logic):
+
+- `pid` (integer): Process ID
+- `process_name` (string): Process name
+- `exploit_type` (string): Type of exploit detected (ROP, buffer_overflow, stack_overflow, heap_overflow, format_string, etc.)
+- `exploit_confidence` (float): Confidence score for exploit detection
+- `rop_chain_length` (integer): Length of detected ROP chain
+- `rop_gadgets` (json): ROP gadgets found in the chain
+- `buffer_size` (integer): Size of overflowed buffer
+- `overflow_offset` (integer): Offset where overflow occurred
+- `stack_pointer` (string): Stack pointer value at time of detection
+- `return_address` (string): Return address value
+- `canary_detected` (boolean): Whether stack canary was present
+- `canary_value` (string): Stack canary value
+- `aslr_enabled` (boolean): Whether ASLR was enabled
+- `dep_enabled` (boolean): Whether DEP/NX was enabled
+- `exploit_technique` (string): Specific technique used (ret2libc, ret2syscall, etc.)
+- `shellcode_detected` (boolean): Whether shellcode was detected
+- `shellcode_size` (integer): Size of detected shellcode
+- `analysis_time` (timestamp): When exploit analysis was performed
+
+**Detection Methods:**
+
+- **Memory Region Analysis**: Use `sysinfo` crate for process memory information, `procfs` crate for parsing `/proc/[pid]/maps` (Linux), `mach2` crate for macOS memory regions, and `windows` crate for `VirtualQueryEx` (Windows) region details
+- **Pattern Matching**: Use `regex` crate for pattern matching in memory dumps, scan for URLs, emails, IPs, crypto keys, and other artifacts using compiled regex patterns
+- **Artifact Extraction**: Scan memory regions for strings, extract text using encoding detection, identify structured data patterns using entropy analysis
+- **Heap Analysis**: Use `sysinfo` crate for process memory statistics, analyze allocation patterns, detect memory leaks through allocation/free tracking, calculate fragmentation metrics
+- **Security Analysis**: Use `dhat` crate for heap profiling to detect unusual allocation patterns, `leaktracer` for identifying potential memory-based persistence techniques, `memscope-rs` for tracking suspicious memory allocation patterns
+- **Threat Detection**: Use `re_memory` crate for runtime memory tracking to identify malicious code execution patterns, detect code injection techniques, and analyze memory-based evasion methods
+- **Exploit Detection**: Use `regex` crate for pattern matching to detect ROP gadgets, shellcode signatures, and exploit patterns in memory dumps
+- **ROP Analysis**: Scan memory for ROP gadget patterns using regex, analyze return address chains for suspicious patterns, detect gadget sequences
+- **Buffer Overflow Detection**: Use `sysinfo` and platform-specific crates to analyze stack frames, detect canary violations, identify return address corruption patterns
+- **Shellcode Detection**: Use `regex` crate to scan for shellcode signatures, detect encoded payloads, identify suspicious code patterns
 
 ##### Network Analysis Collector (netanalymond)
 
@@ -792,7 +981,7 @@ Status: Planned
 
 **Virtual Table: `network_traffic`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `sysinfo` crate, `netstat` crate, and `huginn-net` crate):
 
 - `connection_id` (string): Unique connection identifier
 - `protocol` (string): Protocol (tcp, udp, http, https, dns, etc.)
@@ -806,11 +995,19 @@ Core fields available across all platforms:
 - `end_time` (timestamp): Connection end time
 - `duration` (integer): Connection duration in seconds
 - `direction` (string): Traffic direction (inbound, outbound)
+- `pid` (integer): Process ID associated with connection
+- `process_name` (string): Process name associated with connection
+- `connection_state` (string): Connection state (established, listening, etc.)
+- `bytes_sent` (integer): Bytes sent by process
+- `bytes_received` (integer): Bytes received by process
+- `tcp_ttl` (integer): TCP TTL value (via huginn-net)
+- `tcp_window_size` (integer): TCP window size (via huginn-net)
+- `tcp_mtu` (integer): TCP MTU value (via huginn-net)
 - `analysis_time` (timestamp): When analysis was performed
 
 **Virtual Table: `protocol_analysis`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `huginn-net` crate for protocol fingerprinting and analysis):
 
 - `connection_id` (string): Connection identifier
 - `protocol` (string): Protocol name
@@ -827,39 +1024,49 @@ Core fields available across all platforms:
 - `ssl_version` (string): SSL/TLS version
 - `cipher_suite` (string): Cipher suite used
 - `certificate_issuer` (string): Certificate issuer
-
-**Virtual Table: `threat_indicators`**
-
-Core fields available across all platforms:
-
-- `indicator_id` (string): Unique indicator identifier
-- `indicator_type` (string): Indicator type (ip, domain, url, hash, etc.)
-- `indicator_value` (string): Indicator value
-- `threat_category` (string): Threat category (malware, phishing, botnet, etc.)
-- `severity` (string): Threat severity (low, medium, high, critical)
-- `confidence` (float): Detection confidence score
-- `source` (string): Threat intelligence source
-- `first_seen` (timestamp): When indicator was first seen
-- `last_seen` (timestamp): When indicator was last seen
-- `description` (string): Threat description
-- `tags` (json): Additional tags and metadata
+- `http_headers` (json): HTTP headers as key-value pairs
+- `dns_record_type` (string): DNS record type (A, AAAA, CNAME, etc.)
+- `dns_response_code` (integer): DNS response code
+- `pid` (integer): Process ID associated with connection
+- `process_name` (string): Process name associated with connection
+- `tls_handshake_complete` (boolean): Whether TLS handshake completed
+- `tls_certificate_valid` (boolean): Whether TLS certificate is valid
+- `ja4_fingerprint` (string): JA4 TLS client fingerprint (via huginn-net)
+- `http_user_agent` (string): HTTP User-Agent string (via huginn-net)
+- `http_accept_language` (string): HTTP Accept-Language header (via huginn-net)
+- `tcp_signature` (string): TCP signature fingerprint (via huginn-net)
+- `analysis_time` (timestamp): When analysis was performed
 
 **Virtual Table: `traffic_patterns`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `sysinfo` crate for basic network statistics and `pnet` crate for detailed traffic analysis):
 
 - `pattern_id` (string): Unique pattern identifier
-- `pattern_type` (string): Pattern type (bandwidth, frequency, geographic, etc.)
-- `source_ip` (string): Source IP address
-- `destination_ip` (string): Destination IP address
-- `protocol` (string): Protocol
-- `pattern_value` (float): Pattern value
-- `baseline_value` (float): Baseline value for comparison
-- `anomaly_score` (float): Anomaly score
-- `time_window` (integer): Time window in seconds
-- `occurrence_count` (integer): Number of occurrences
-- `first_occurrence` (timestamp): First occurrence time
-- `last_occurrence` (timestamp): Last occurrence time
+- `interface_name` (string): Network interface name (via sysinfo)
+- `packets_received` (integer): Packets received since last refresh (via sysinfo)
+- `packets_transmitted` (integer): Packets transmitted since last refresh (via sysinfo)
+- `total_packets_received` (integer): Total packets received (via sysinfo)
+- `total_packets_transmitted` (integer): Total packets transmitted (via sysinfo)
+- `errors_received` (integer): Errors on received packets (via sysinfo)
+- `errors_transmitted` (integer): Errors on transmitted packets (via sysinfo)
+- `mac_address` (string): MAC address of interface (via sysinfo)
+- `source_ip` (string): Source IP address (via pnet packet analysis)
+- `destination_ip` (string): Destination IP address (via pnet packet analysis)
+- `source_port` (integer): Source port (via pnet packet analysis)
+- `destination_port` (integer): Destination port (via pnet packet analysis)
+- `protocol` (string): Protocol (tcp, udp, icmp, etc.) (via pnet packet analysis)
+- `packet_size` (integer): Packet size in bytes (via pnet packet analysis)
+- `timestamp` (timestamp): Packet timestamp (via pnet packet analysis)
+- `pid` (integer): Process ID associated with connection (via sysinfo + netstat)
+- `process_name` (string): Process name associated with connection (via sysinfo + netstat)
+- `analysis_time` (timestamp): When analysis was performed
+
+**Detection Methods:**
+
+- **Network Interface Monitoring**: Use `sysinfo` crate to collect basic network interface statistics (packets received/transmitted, errors, MAC addresses) and track process network connections
+- **Packet Analysis**: Use `pnet` crate for detailed packet inspection, protocol identification, and traffic analysis at the packet level
+- **Process Association**: Use `netstat` crate to associate network connections with specific processes and track connection states
+- **Protocol Fingerprinting**: Use `huginn-net` crate for multi-protocol passive fingerprinting, JA4 TLS client fingerprinting, TCP signature analysis, and HTTP fingerprinting
 
 ##### Registry/Configuration Collector (regmond)
 
@@ -867,74 +1074,74 @@ Status: Planned
 
 **Virtual Table: `system_configuration`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by `sysinfo` crate and configuration parsing crates):
 
+- `pid` (integer): Process ID associated with configuration (effective PK)
 - `config_path` (string): Configuration file or registry path
-- `config_type` (string): Configuration type (file, registry, plist, etc.)
+- `config_type` (string): Configuration type (file, registry, plist, ini, toml, yaml)
 - `setting_name` (string): Configuration setting name
 - `setting_value` (string): Configuration setting value
 - `setting_type` (string): Value type (string, integer, boolean, json)
 - `category` (string): Configuration category (security, network, system, etc.)
 - `modified_time` (timestamp): When setting was last modified
-- `modified_by` (string): User or process that modified setting
-- `backup_available` (boolean): Whether backup is available
-- `compliance_status` (string): Compliance status (compliant, non-compliant, unknown)
+- `file_size` (integer): Configuration file size in bytes
+- `file_permissions` (string): File permissions (Unix) or security descriptor (Windows)
+- `relevance_reason` (string): Why this config is relevant to the process (process_uses, system_security, recent_change)
 - `analysis_time` (timestamp): When analysis was performed
 
 **Virtual Table: `configuration_changes`**
 
-Core fields available across all platforms:
+Core fields available across all platforms (provided by file system monitoring and configuration parsing):
 
 - `change_id` (string): Unique change identifier
+- `pid` (integer): Process ID that triggered the change
 - `config_path` (string): Configuration path
 - `setting_name` (string): Setting name
 - `old_value` (string): Previous value
 - `new_value` (string): New value
 - `change_type` (string): Change type (create, modify, delete)
 - `change_time` (timestamp): When change occurred
-- `changed_by` (string): User or process that made change
-- `change_reason` (string): Reason for change
-- `impact_level` (string): Impact level (low, medium, high, critical)
-- `rollback_available` (boolean): Whether rollback is available
-
-**Virtual Table: `security_policies`**
-
-Core fields available across all platforms:
-
-- `policy_id` (string): Unique policy identifier
-- `policy_name` (string): Policy name
-- `policy_category` (string): Policy category (authentication, network, file, etc.)
-- `policy_value` (string): Policy value
-- `enforcement_level` (string): Enforcement level (advisory, mandatory, etc.)
-- `compliance_status` (string): Compliance status
-- `last_checked` (timestamp): When policy was last checked
-- `violation_count` (integer): Number of violations
-- `recommendation` (string): Security recommendation
-- `platform_specific` (boolean): Whether policy is platform-specific
+- `file_event_type` (string): File system event type (via `notify` crate)
+- `process_name` (string): Process name that made the change
+- `user_id` (integer): User ID that made the change
 
 **Platform-Specific Extensions:**
 
-Windows extensions:
+Windows extensions (provided by `winreg` crate and `windows` crate):
 
-- `registry_hive` (string): Registry hive (HKEY_LOCAL_MACHINE, etc.)
+- `registry_hive` (string): Registry hive (HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER, etc.)
 - `registry_key` (string): Registry key path
 - `registry_value` (string): Registry value name
-- `registry_type` (string): Registry value type
+- `registry_type` (string): Registry value type (REG_SZ, REG_DWORD, etc.)
 - `group_policy` (boolean): Whether setting is from Group Policy
-- `security_descriptor` (json): Security descriptor
+- `security_descriptor` (json): Security descriptor information
+- `registry_timestamp` (timestamp): Registry modification timestamp
 
-macOS extensions:
+macOS extensions (provided by `plist` crate and `xattr` crate):
 
-- `plist_domain` (string): Property list domain
+- `plist_domain` (string): Property list domain (user, system, etc.)
 - `launchd_service` (boolean): Whether setting is for launchd service
 - `sandbox_entitlement` (boolean): Whether setting is sandbox entitlement
 - `privacy_setting` (boolean): Whether setting is privacy-related
 - `system_integrity` (boolean): Whether setting affects system integrity
+- `extended_attributes` (json): Extended attributes (via `xattr` crate)
+- `quarantine_flags` (json): Quarantine flags (via `xattr` crate)
 
-Linux extensions:
+Linux extensions (provided by `procfs` crate and configuration parsing):
 
 - `config_file` (string): Configuration file path
 - `systemd_unit` (string): systemd unit name
 - `selinux_context` (string): SELinux security context
 - `apparmor_profile` (string): AppArmor profile name
 - `kernel_parameter` (boolean): Whether setting is kernel parameter
+- `file_owner` (string): Configuration file owner
+- `file_group` (string): Configuration file group
+- `inode` (integer): File inode number
+
+**Detection Methods:**
+
+- **Process-Specific Config Discovery**: Use `sysinfo` crate to get process working directory, environment variables, and executable path to identify relevant configuration files (e.g., config files in working directory, environment-specified config paths)
+- **Process-Specific System Configs**: Examine system configurations that directly affect the process (user permissions, resource limits, security contexts, firewall rules for process's network connections) using platform-specific crates
+- **Recent Configuration Changes**: Use `notify` crate to identify configuration files that have been modified recently and associate them with the suspicious process
+- **Configuration File Parsing**: Use `ini` crate for INI files, `toml` crate for TOML files, `serde_yaml` crate for YAML files, `plist` crate for macOS property lists, `winreg` crate for Windows registry access
+- **Process Association**: Use `sysinfo` crate to associate configuration changes with specific processes and track modification sources
