@@ -132,22 +132,31 @@ impl EndpointSecurityProcessCollector {
 **Hash Computation**: SHA-256 hashing of executable files for integrity verification.
 
 ```rust
+use sha2::{Digest, Sha256};
+use std::io::Read;
+use std::path::Path;
+
+pub trait HashComputer {
+    fn compute_hash(&self, path: &Path) -> Result<Option<String>>;
+    fn get_algorithm(&self) -> &'static str;
+}
+
 pub struct Sha256HashComputer {
     buffer_size: usize,
 }
 
 impl HashComputer for Sha256HashComputer {
-    async fn compute_hash(&self, path: &Path) -> Result<Option<String>> {
+    fn compute_hash(&self, path: &Path) -> Result<Option<String>> {
         if !path.exists() {
             return Ok(None);
         }
 
-        let mut file = File::open(path).await?;
+        let mut file = std::fs::File::open(path)?;
         let mut hasher = Sha256::new();
         let mut buffer = vec![0u8; self.buffer_size];
 
         loop {
-            let bytes_read = file.read(&mut buffer).await?;
+            let bytes_read = file.read(&mut buffer)?;
             if bytes_read == 0 {
                 break;
             }

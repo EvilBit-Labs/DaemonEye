@@ -230,7 +230,7 @@ The build system generates type-safe Rust structs with:
 ### Basic Process Enumeration
 
 ```rust
-fn basic_process_enumeration() {
+fn basic_process_enumeration() -> Result<(), Box<dyn std::error::Error>> {
     // Create enumeration request
     let task = DetectionTask::new_enumerate_processes("enum-001", None);
 
@@ -249,6 +249,8 @@ fn basic_process_enumeration() {
             println!("Process: {} (PID: {})", process.name, process.pid);
         }
     }
+
+    Ok(())
 }
 ```
 
