@@ -6,4 +6,10 @@ jobs:
             - image: cimg/rust:1.90
         steps:
             - checkout
-            - run: cargo test
+            - run: cargo fmt --all -- --check
+            - run: cargo nextest run --all-features
+
+workflows:
+    build-and-test:
+        jobs:
+            - build
