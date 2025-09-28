@@ -22,11 +22,11 @@ use tokio::sync::Mutex;
 /// This demonstrates how to create a custom collector that could be used
 /// for platform-specific optimizations or testing scenarios.
 pub struct ExampleProcessCollector {
-    name: String,
+    name: &'static str,
 }
 
 impl ExampleProcessCollector {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: &'static str) -> Self {
         Self { name }
     }
 }
@@ -34,7 +34,7 @@ impl ExampleProcessCollector {
 #[async_trait]
 impl ProcessCollector for ExampleProcessCollector {
     fn name(&self) -> &'static str {
-        "example-collector"
+        self.name
     }
 
     fn capabilities(&self) -> procmond::ProcessCollectorCapabilities {
@@ -173,9 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 3: Using a completely custom ProcessCollector
     println!("\n3. Using custom ExampleProcessCollector:");
-    let example_collector = Box::new(ExampleProcessCollector::new(
-        "my-custom-collector".to_string(),
-    ));
+    let example_collector = Box::new(ExampleProcessCollector::new("my-custom-collector"));
     let handler_example =
         ProcessMessageHandler::with_collector(Arc::clone(&db_manager), example_collector);
 
