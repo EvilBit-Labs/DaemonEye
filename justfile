@@ -93,13 +93,22 @@ pipx-install:
 
 [unix]
 pipx-install:
-    python3 -m pip install --user pipx
-    python3 -m pipx ensurepath
+    #!/bin/bash
+    set -e
+    set -u
+    set -o pipefail
+
+    if command -v pipx >/dev/null 2>&1; then
+        echo "pipx already installed"
+    else
+        echo "Installing pipx..."
+        python3 -m pip install --user pipx
+        python3 -m pipx ensurepath
+    fi
 
 # Install mdformat and extensions for markdown formatting
 [windows]
-mdformat-install:
-    @just pipx-install
+mdformat-install: pipx-install
     pipx install mdformat
     pipx inject mdformat mdformat-gfm mdformat-frontmatter mdformat-footnote mdformat-simple-breaks mdformat-gfm-alerts mdformat-toc mdformat-wikilink mdformat-tables
 
