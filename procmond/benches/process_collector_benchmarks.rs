@@ -43,7 +43,7 @@ impl BenchmarkProcessCollector {
         Self {
             name,
             process_count,
-            delay_per_process: Duration::from_nanos(100), // Minimal delay for benchmarking
+            delay_per_process: Duration::ZERO, // No artificial delay for accurate benchmarks
             capabilities: ProcessCollectorCapabilities {
                 basic_info: true,
                 enhanced_metadata: true,
@@ -177,9 +177,9 @@ fn bench_process_enumeration_with_load(c: &mut Criterion) {
     // Simulate different system loads with delays
     let load_scenarios = [
         ("no_load", Duration::ZERO),
-        ("light_load", Duration::from_nanos(10)),
-        ("medium_load", Duration::from_nanos(100)),
-        ("heavy_load", Duration::from_micros(1)),
+        ("light_load", Duration::from_millis(1)),
+        ("medium_load", Duration::from_millis(5)),
+        ("heavy_load", Duration::from_millis(10)),
     ];
 
     for (load_name, delay) in load_scenarios.iter() {

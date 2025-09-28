@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let binary_hasher_caps = TriggerCapabilities {
         collector_id: "binary-hasher".to_string(),
         supported_conditions: vec![
-            ConditionType::ProcessNamePattern("suspicious".to_string()),
+            ConditionType::ProcessNamePattern("malware".to_string()),
             ConditionType::MissingExecutable,
             ConditionType::HashMismatch,
         ],
