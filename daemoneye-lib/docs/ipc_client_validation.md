@@ -331,7 +331,13 @@ fn create_validation_config(test_name: &str) -> (IpcConfig, TempDir) {
 
 // Shared endpoint creation (platform-specific)
 fn create_validation_endpoint(temp_dir: &TempDir, test_name: &str) -> String {
-    format!("{}/{}", temp_dir.path().display(), test_name)
+    if cfg!(windows) {
+        // Windows named pipe format
+        format!("\\\\.\\pipe\\{}", test_name)
+    } else {
+        // Unix domain socket path
+        format!("{}/{}", temp_dir.path().display(), test_name)
+    }
 }
 
 // Shared test data creation
