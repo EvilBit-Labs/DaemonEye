@@ -206,7 +206,7 @@ fn performance_event_strategy() -> impl Strategy<Value = PerformanceEvent> {
 fn metadata_strategy() -> impl Strategy<Value = std::collections::HashMap<String, String>> {
     prop::collection::hash_map(
         prop::string::string_regex(r"[a-zA-Z0-9_-]{1,16}").unwrap(), // keys
-        prop::string::string_regex(r"[a-zA-Z0-9_\\s.-]{0,64}").unwrap(), // values
+        prop::string::string_regex(r"[a-zA-Z0-9_\s.-]{0,64}").unwrap(), // values
         0..=8, // 0 to 8 entries (including empty maps)
     )
 }
