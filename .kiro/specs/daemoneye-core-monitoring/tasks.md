@@ -16,7 +16,7 @@ The following foundational components have been successfully implemented:
 
 - [ ] 1. Complete remaining Monitor Collector testing and validation
 
-- [ ] 1.1 Create comprehensive testing suite for Monitor Collector behavior
+- [x] 1.1 Create comprehensive testing suite for Monitor Collector behavior
 
   - Write unit tests for all Monitor Collector components and behavior patterns
   - Add integration tests for collector coordination and trigger workflows
@@ -137,10 +137,12 @@ The following foundational components have been successfully implemented:
   **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
 
   **📋 Action Required**:
+
   1. Complete implementation following `.kiro/specs/sql-to-ipc-detection-engine/tasks.md`
   2. Return here to integrate SQL-to-IPC engine with core monitoring infrastructure
 
   **🔗 Integration Points**: Once SQL-to-IPC engine is complete, integrate with:
+
   - Existing daemoneye-agent detection workflow (replace placeholder detection engine)
   - Collector-core EventSource trait for task handling and capability advertisement
   - IPC client infrastructure for SQL-generated detection tasks
@@ -219,8 +221,8 @@ The following foundational components have been successfully implemented:
 - [ ] 10.1 Create metrics collection and export with performance baselines
 
   - Implement Prometheus-compatible metrics for all components (procmond, daemoneye-agent, daemoneye-cli)
-  - Add performance metrics for process enumeration (<5s for 10,000+ processes), detection (<100ms per rule), and alerting
-  - Create resource usage monitoring (<5% CPU, <100MB memory) and reporting
+  - Add performance metrics for process enumeration (\<5s for 10,000+ processes), detection (\<100ms per rule), and alerting
+  - Create resource usage monitoring (\<5% CPU, \<100MB memory) and reporting
   - Implement health check endpoints for external monitoring systems
   - Add criterion benchmarks to establish baseline performance metrics for optimization
   - Create performance regression detection and alerting
@@ -250,11 +252,17 @@ The following collectors are planned for future implementation to extend the vir
 These extensions will follow the established collector-core framework patterns and integrate with the SQL-to-IPC translation system for unified querying across all monitoring domains.d service unit files for Linux with proper dependencies and security settings
 
 - Add launchd plist files for macOS with appropriate permissions and startup configuration
+
 - Create Windows service installer with proper registry entries and security descriptors
+
 - Implement service configuration validation and deployment verification
+
 - Add service update and migration procedures for configuration changes
+
 - Create service deployment documentation with platform-specific installation guides
+
 - Write deployment automation scripts for common service management scenarios
+
 - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
 - [ ] 9.9 Add comprehensive service testing and validation
@@ -761,11 +769,13 @@ These extensions will follow the established collector-core framework patterns a
   **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
 
   **📋 Action Required**:
+
   1. Complete SQL-to-IPC engine implementation (Task 6 above)
   2. Follow tasks 6.1-6.6 from `.kiro/specs/sql-to-ipc-detection-engine/tasks.md`
   3. Return here for integration with core monitoring infrastructure
 
   **🔗 Integration Scope**:
+
   - YARA collector with rule compilation and file/memory scanning
   - Network analysis collector with cross-platform support
   - PE analysis collector for Windows executable inspection
@@ -778,11 +788,13 @@ These extensions will follow the established collector-core framework patterns a
   **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
 
   **📋 Action Required**:
+
   1. Complete SQL-to-IPC engine implementation (Task 6 above)
   2. Follow tasks 7.1-7.5 from `.kiro/specs/sql-to-ipc-detection-engine/tasks.md`
   3. Return here for integration with core monitoring infrastructure
 
   **🔗 Integration Scope**:
+
   - ErrorRecoveryManager with circuit breaker patterns
   - Graceful degradation for collector failures
   - Query execution timeout and resource limits
