@@ -874,11 +874,12 @@ impl EventBus for LocalEventBus {
         }
 
         let (sender, receiver) = mpsc::channel(self.config.max_buffer_size);
-        let backpressure_semaphore = Arc::new(Semaphore::new(
-            self.config
-                .max_buffer_size
-                .saturating_sub(self.config.backpressure_threshold),
-        ));
+        let permit_budget = self
+            .config
+            .max_buffer_size
+            .saturating_sub(self.config.backpressure_threshold)
+            .max(1);
+        let backpressure_semaphore = Arc::new(Semaphore::new(permit_budget));
 
         let subscriber_id = subscription.subscriber_id.clone();
         let capabilities = subscription.capabilities;

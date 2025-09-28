@@ -279,9 +279,9 @@ impl TriggerManager {
                 .iter()
                 .filter(|condition| {
                     condition.target_collector == capabilities.collector_id
-                        && capabilities
-                            .supported_conditions
-                            .contains(&condition.condition_type)
+                        && capabilities.supported_conditions.iter().any(|supported| {
+                            self.condition_types_compatible(supported, &condition.condition_type)
+                        })
                         && capabilities
                             .supported_analysis
                             .contains(&condition.analysis_type)
