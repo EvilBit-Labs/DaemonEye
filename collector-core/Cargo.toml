@@ -3,11 +3,17 @@ name = "collector-core"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 edition.workspace = true
 description = "Extensible collection framework for DaemonEye monitoring components"
+publish = true
+exclude.workspace = true
+readme = "collector-core/README.md"
+
 
 [dependencies]
 # Core async runtime and utilities

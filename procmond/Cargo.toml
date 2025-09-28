@@ -1,6 +1,6 @@
 [package]
 name = "procmond"
-edition = "2024"
+edition.workspace = true
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -9,6 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 description = "DaemonEye Process Monitoring Daemon"
 publish = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+readme.workspace = true
 
 [package.metadata.wix]
 upgrade-guid = "C3B17B71-0443-4060-A962-D4D4F88CC2A2"
@@ -60,6 +64,9 @@ tracing-subscriber = { workspace = true }
 # Cryptographic hashing
 sha2 = { workspace = true }
 
+# UUID generation
+uuid = { workspace = true }
+
 # Platform-specific dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
 # macOS Security Framework and Core Foundation
@@ -72,7 +79,7 @@ core-foundation = "0.10.1"
 # Windows-specific dependencies using third-party crates
 # Enhanced sysinfo is already included in main dependencies
 # windows-rs for safe Windows API bindings
-windows = { version = "0.58.0", features = [
+windows = { version = "0.62.1", features = [
     "Win32_Foundation",
     "Win32_System_ProcessStatus",
     "Win32_System_Threading",
@@ -84,9 +91,9 @@ windows = { version = "0.58.0", features = [
     "Win32_System_Performance",
 ] }
 # windows-service for Windows service detection and management
-windows-service = "0.7.0"
+windows-service = "0.8.0"
 # winreg for safe Windows registry access
-winreg = "0.52.0"
+winreg = "0.55.0"
 # Additional process utilities for Windows
 # Note: psutil-rs and perfmon-rs would be added here when available
 # For now, we use sysinfo + windows-rs for comprehensive Windows process monitoring
@@ -102,7 +109,6 @@ predicates = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 tracing-test = "0.2.5"
-
 
 
 [[bench]]

@@ -1,6 +1,6 @@
 [package]
 name = "daemoneye-agent"
-edition = "2024"
+edition.workspace = true
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -9,6 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 description = "DaemonEye Detection Orchestrator"
 publish = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+readme.workspace = true
 
 [package.metadata.wix]
 upgrade-guid = "93D6515D-DB7A-43E2-AF97-9CC73E38D93C"

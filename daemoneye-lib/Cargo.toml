@@ -1,14 +1,18 @@
 [package]
 name = "daemoneye-lib"
-edition = "2024"
-version = "0.1.0"
-authors = ["UncleSp1d3r", "Krypdo3"]
-license = "Apache-2.0"
-rust-version = "1.85"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Shared library for DaemonEye common functionality"
-repository = "https://github.com/EvilBit-Labs/DaemonEye"
-homepage = "https://evilbitlabs.io/daemoneye"
 publish = false
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+readme.workspace = true
 
 [lib]
 bench = true
