@@ -387,12 +387,310 @@ fn bench_event_throughput(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark performance monitoring overhead.
+fn bench_performance_monitoring_overhead(c: &mut Criterion) {
+    use collector_core::{
+        AnalysisType, PerformanceConfig, PerformanceMonitor, TriggerPriority, TriggerRequest,
+    };
+    use std::collections::HashMap;
+
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("performance_monitoring");
+
+    // Test different monitoring configurations
+    let configs = [
+        (
+            "disabled",
+            PerformanceConfig {
+                enabled: false,
+                ..Default::default()
+            },
+        ),
+        (
+            "minimal",
+            PerformanceConfig {
+                enabled: true,
+                enable_trigger_latency_tracking: false,
+                collection_interval: Duration::from_secs(60),
+                ..Default::default()
+            },
+        ),
+        ("full", PerformanceConfig::default()),
+    ];
+
+    for (config_name, config) in configs.iter() {
+        group.bench_function(BenchmarkId::new("monitoring_overhead", config_name), |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let monitor = PerformanceMonitor::new(config.clone());
+
+                    // Simulate event processing with monitoring
+                    let start = std::time::Instant::now();
+
+                    for i in 0..1000 {
+                        let event = CollectionEvent::Process(ProcessEvent {
+                            pid: 1000 + i,
+                            ppid: Some(1),
+                            name: format!("bench_process_{}", i),
+                            executable_path: Some(format!("/usr/bin/bench_{}", i)),
+                            command_line: vec![format!("bench_{}", i)],
+                            start_time: Some(SystemTime::now()),
+                            cpu_usage: Some(1.5),
+                            memory_usage: Some(1024 * 1024),
+                            executable_hash: Some("bench_hash".to_owned()),
+                            user_id: Some("1000".to_owned()),
+                            accessible: true,
+                            file_exists: true,
+                            timestamp: SystemTime::now(),
+                            platform_metadata: None,
+                        });
+
+                        monitor.record_event(&event);
+
+                        // Simulate trigger processing
+                        if config.enable_trigger_latency_tracking && i % 10 == 0 {
+                            let trigger_id = format!("trigger_{}", i);
+                            monitor.record_trigger_start(&trigger_id);
+
+                            let trigger = TriggerRequest {
+                                trigger_id: trigger_id.clone(),
+                                target_collector: "test_collector".to_string(),
+                                analysis_type: AnalysisType::YaraScan,
+                                priority: TriggerPriority::Normal,
+                                target_pid: Some(1000 + i),
+                                target_path: None,
+                                correlation_id: "test_correlation".to_string(),
+                                metadata: HashMap::new(),
+                                timestamp: SystemTime::now(),
+                            };
+
+                            monitor.record_trigger_completion(&trigger_id, &trigger);
+                        }
+
+                        // Simulate resource updates
+                        if i % 50 == 0 {
+                            monitor.update_cpu_usage(25.0 + (i as f64 % 10.0));
+                            monitor.update_memory_usage(1024 * 1024 + (i as u64 * 1024));
+                        }
+                    }
+
+                    let elapsed = start.elapsed();
+                    black_box(elapsed);
+                })
+            });
+        });
+    }
+    group.finish();
+}
+
+/// Benchmark high process churn scenarios (10,000+ processes).
+fn bench_high_process_churn(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("high_process_churn");
+    group.sample_size(10); // Reduce sample size for expensive benchmarks
+
+    for process_count in [1000, 5000, 10000, 20000].iter() {
+        group.throughput(Throughput::Elements(*process_count as u64));
+        group.bench_with_input(
+            BenchmarkId::new("process_churn", process_count),
+            process_count,
+            |b, &process_count| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let config = CollectorConfig::default()
+                            .with_event_buffer_size(process_count * 2)
+                            .with_max_batch_size(1000)
+                            .with_telemetry(true);
+
+                        let mut collector = Collector::new(config);
+
+                        // Create high-churn event source
+                        let source = BenchmarkEventSource::new(
+                            "churn-bench",
+                            SourceCaps::PROCESS | SourceCaps::REALTIME,
+                            process_count,
+                        )
+                        .with_delay(Duration::from_nanos(1)); // Very fast churn
+
+                        collector.register(Box::new(source)).unwrap();
+
+                        // Measure processing time for high churn
+                        let start = std::time::Instant::now();
+
+                        let collector_handle = tokio::spawn(async move {
+                            let _ = timeout(Duration::from_millis(500), collector.run()).await;
+                        });
+
+                        let _ = collector_handle.await;
+                        let elapsed = start.elapsed();
+
+                        black_box(elapsed);
+                    })
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Benchmark trigger event latency measurement.
+fn bench_trigger_latency_measurement(c: &mut Criterion) {
+    use collector_core::{
+        AnalysisType, PerformanceConfig, PerformanceMonitor, TriggerPriority, TriggerRequest,
+    };
+    use std::collections::HashMap;
+
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("trigger_latency");
+
+    for trigger_count in [10, 100, 1000, 5000].iter() {
+        group.throughput(Throughput::Elements(*trigger_count as u64));
+        group.bench_with_input(
+            BenchmarkId::new("latency_tracking", trigger_count),
+            trigger_count,
+            |b, &trigger_count| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let config = PerformanceConfig {
+                            enable_trigger_latency_tracking: true,
+                            max_latency_samples: trigger_count * 2,
+                            ..Default::default()
+                        };
+                        let monitor = PerformanceMonitor::new(config);
+
+                        let start = std::time::Instant::now();
+
+                        // Simulate trigger processing with latency measurement
+                        for i in 0..trigger_count {
+                            let trigger_id = format!("trigger_{}", i);
+                            monitor.record_trigger_start(&trigger_id);
+
+                            // Simulate variable processing time
+                            tokio::time::sleep(Duration::from_micros(10 + (i % 100) as u64)).await;
+
+                            let trigger = TriggerRequest {
+                                trigger_id: trigger_id.clone(),
+                                target_collector: "test_collector".to_string(),
+                                analysis_type: AnalysisType::YaraScan,
+                                priority: TriggerPriority::Normal,
+                                target_pid: Some(2000 + i as u32),
+                                target_path: None,
+                                correlation_id: "test_correlation".to_string(),
+                                metadata: HashMap::new(),
+                                timestamp: SystemTime::now(),
+                            };
+
+                            monitor.record_trigger_completion(&trigger_id, &trigger);
+                        }
+
+                        // Calculate latency metrics
+                        let _metrics = monitor.calculate_trigger_latency_metrics();
+                        let elapsed = start.elapsed();
+
+                        black_box(elapsed);
+                    })
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Benchmark resource usage tracking overhead.
+fn bench_resource_usage_tracking(c: &mut Criterion) {
+    use collector_core::{PerformanceConfig, PerformanceMonitor};
+
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("resource_tracking");
+
+    for update_frequency in [10, 100, 1000, 5000].iter() {
+        group.throughput(Throughput::Elements(*update_frequency as u64));
+        group.bench_with_input(
+            BenchmarkId::new("resource_updates", update_frequency),
+            update_frequency,
+            |b, &update_frequency| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let config = PerformanceConfig::default();
+                        let monitor = PerformanceMonitor::new(config);
+
+                        let start = std::time::Instant::now();
+
+                        // Simulate frequent resource updates
+                        for i in 0..update_frequency {
+                            let cpu_percent = 10.0 + (i as f64 % 50.0);
+                            let memory_bytes = 1024 * 1024 + (i as u64 * 1024);
+
+                            monitor.update_cpu_usage(cpu_percent);
+                            monitor.update_memory_usage(memory_bytes);
+
+                            // Periodically collect metrics
+                            if i % 100 == 0 {
+                                let _metrics = monitor.collect_resource_metrics().await;
+                            }
+                        }
+
+                        let elapsed = start.elapsed();
+                        black_box(elapsed);
+                    })
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Benchmark baseline establishment performance.
+fn bench_baseline_establishment(c: &mut Criterion) {
+    use collector_core::{PerformanceConfig, PerformanceMonitor};
+
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("baseline_establishment");
+    group.sample_size(10); // Reduce sample size for expensive benchmarks
+
+    for sample_count in [10, 25, 50, 100].iter() {
+        group.bench_with_input(
+            BenchmarkId::new("establish_baseline", sample_count),
+            sample_count,
+            |b, &sample_count| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let config = PerformanceConfig {
+                            collection_interval: Duration::from_millis(10), // Fast for benchmarking
+                            ..Default::default()
+                        };
+                        let monitor = PerformanceMonitor::new(config);
+
+                        // Simulate some activity before establishing baseline
+                        for i in 0..100 {
+                            monitor.update_cpu_usage(20.0 + (i as f64 % 10.0));
+                            monitor.update_memory_usage(1024 * 1024 + (i as u64 * 1024));
+                        }
+
+                        let start = std::time::Instant::now();
+                        let _baseline = monitor.establish_baseline(sample_count).await.unwrap();
+                        let elapsed = start.elapsed();
+
+                        black_box(elapsed);
+                    })
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_event_batching,
     bench_backpressure_handling,
     bench_graceful_shutdown,
     bench_runtime_overhead,
-    bench_event_throughput
+    bench_event_throughput,
+    bench_performance_monitoring_overhead,
+    bench_high_process_churn,
+    bench_trigger_latency_measurement,
+    bench_resource_usage_tracking,
+    bench_baseline_establishment
 );
 criterion_main!(benches);

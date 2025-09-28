@@ -7,6 +7,7 @@ use crate::{
     config::CollectorConfig,
     event::CollectionEvent,
     ipc::CollectorIpcServer,
+    performance::{PerformanceConfig, PerformanceMonitor},
     source::{EventSource, SourceCaps},
 };
 use anyhow::{Context, Result};
@@ -91,6 +92,7 @@ pub struct CollectorRuntime {
     backpressure_semaphore: Arc<Semaphore>,
     event_batch: Vec<CollectionEvent>,
     last_batch_flush: Instant,
+    performance_monitor: Arc<PerformanceMonitor>,
 }
 
 impl Collector {
@@ -195,6 +197,16 @@ impl Collector {
         self.sources.len()
     }
 
+    /// Returns a reference to the performance monitor for external access.
+    ///
+    /// This method is primarily intended for testing and advanced monitoring scenarios
+    /// where direct access to performance metrics is needed.
+    pub fn performance_monitor(&self) -> Option<Arc<PerformanceMonitor>> {
+        // This would require storing the performance monitor in the Collector struct
+        // For now, return None as the monitor is only available in the runtime
+        None
+    }
+
     /// Runs the collector with all registered event sources.
     ///
     /// This method starts all registered event sources, begins event processing,
@@ -251,6 +263,9 @@ impl Collector {
         // Start health monitoring
         runtime.start_health_monitoring().await;
 
+        // Start performance monitoring
+        runtime.start_performance_monitoring().await;
+
         // Start telemetry collection
         if runtime.config.enable_telemetry {
             runtime.start_telemetry_collection().await;
@@ -293,6 +308,10 @@ impl CollectorRuntime {
 
         let max_batch_size = config.max_batch_size;
 
+        // Initialize performance monitor with default configuration
+        let performance_config = PerformanceConfig::default();
+        let performance_monitor = Arc::new(PerformanceMonitor::new(performance_config));
+
         Self {
             config,
             event_rx,
@@ -308,6 +327,7 @@ impl CollectorRuntime {
             backpressure_semaphore,
             event_batch: Vec::with_capacity(max_batch_size),
             last_batch_flush: Instant::now(),
+            performance_monitor,
         }
     }
 
@@ -417,6 +437,127 @@ impl CollectorRuntime {
             .insert("health_monitor".to_string(), handle);
     }
 
+    /// Starts performance monitoring for comprehensive metrics collection.
+    async fn start_performance_monitoring(&mut self) {
+        let performance_monitor = Arc::clone(&self.performance_monitor);
+        let shutdown_signal = Arc::clone(&self.shutdown_signal);
+        let telemetry_collector = Arc::clone(&self.telemetry_collector);
+        let collection_interval = Duration::from_secs(10); // Default collection interval
+
+        let handle = tokio::spawn(async move {
+            let mut monitoring_interval = interval(collection_interval);
+
+            while !shutdown_signal.load(Ordering::Relaxed) {
+                monitoring_interval.tick().await;
+
+                // Collect resource metrics
+                let metrics = performance_monitor.collect_resource_metrics().await;
+
+                // Update system resource usage in performance monitor
+                let cpu_usage = daemoneye_lib::telemetry::ResourceMonitor::get_cpu_usage();
+                let memory_usage = daemoneye_lib::telemetry::ResourceMonitor::get_memory_usage();
+
+                performance_monitor.update_cpu_usage(cpu_usage);
+                performance_monitor.update_memory_usage(memory_usage);
+
+                // Log performance metrics periodically
+                debug!(
+                    throughput_eps = metrics.throughput.events_per_second,
+                    cpu_percent = metrics.cpu.current_cpu_percent,
+                    memory_mb = metrics.memory.current_memory_bytes / (1024 * 1024),
+                    "Performance metrics collected"
+                );
+
+                // Update telemetry collector with performance data
+                {
+                    let mut telemetry = telemetry_collector.write().await;
+                    telemetry.add_custom_metric(
+                        "events_per_second".to_string(),
+                        metrics.throughput.events_per_second,
+                    );
+                    telemetry.add_custom_metric(
+                        "peak_cpu_percent".to_string(),
+                        metrics.cpu.peak_cpu_percent,
+                    );
+                    telemetry.add_custom_metric(
+                        "peak_memory_mb".to_string(),
+                        metrics.memory.peak_memory_bytes as f64 / (1024.0 * 1024.0),
+                    );
+
+                    if let Some(trigger_metrics) = &metrics.trigger_latency {
+                        telemetry.add_custom_metric(
+                            "avg_trigger_latency_ms".to_string(),
+                            trigger_metrics.avg_latency_ms,
+                        );
+                        telemetry.add_custom_metric(
+                            "triggers_per_second".to_string(),
+                            trigger_metrics.triggers_per_second,
+                        );
+                    }
+                }
+
+                // Check for performance degradation
+                if let Some(degradation) = performance_monitor.check_performance_degradation().await
+                {
+                    warn!(
+                        degradation_count = degradation.degradations.len(),
+                        "Performance degradation detected"
+                    );
+
+                    for degradation_type in &degradation.degradations {
+                        match degradation_type {
+                            crate::performance::DegradationType::ThroughputDegradation {
+                                current_ratio,
+                                threshold,
+                            } => {
+                                warn!(
+                                    current_ratio = current_ratio,
+                                    threshold = threshold,
+                                    "Throughput degradation detected"
+                                );
+                            }
+                            crate::performance::DegradationType::CpuUsageIncrease {
+                                current_ratio,
+                                threshold,
+                            } => {
+                                warn!(
+                                    current_ratio = current_ratio,
+                                    threshold = threshold,
+                                    "CPU usage increase detected"
+                                );
+                            }
+                            crate::performance::DegradationType::MemoryUsageIncrease {
+                                current_ratio,
+                                threshold,
+                            } => {
+                                warn!(
+                                    current_ratio = current_ratio,
+                                    threshold = threshold,
+                                    "Memory usage increase detected"
+                                );
+                            }
+                            crate::performance::DegradationType::TriggerLatencyIncrease {
+                                current_ratio,
+                                threshold,
+                            } => {
+                                warn!(
+                                    current_ratio = current_ratio,
+                                    threshold = threshold,
+                                    "Trigger latency increase detected"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(())
+        });
+
+        self.health_handles
+            .insert("performance_monitor".to_string(), handle);
+    }
+
     /// Starts telemetry collection for performance monitoring.
     async fn start_telemetry_collection(&mut self) {
         let interval_duration = self.config.telemetry_interval;
@@ -486,6 +627,7 @@ impl CollectorRuntime {
         let telemetry_collector = Arc::clone(&self.telemetry_collector);
         let backpressure_semaphore = Arc::clone(&self.backpressure_semaphore);
         let max_backpressure_wait = self.config.max_backpressure_wait;
+        let performance_monitor = Arc::clone(&self.performance_monitor);
 
         // Move the receiver into the processing task
         let mut event_rx = std::mem::replace(
@@ -545,7 +687,7 @@ impl CollectorRuntime {
 
                                 // Process batch if it's full
                                 if event_batch.len() >= max_batch_size {
-                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
                                         error!(error = %e, "Failed to process event batch");
                                         error_counter.fetch_add(1, Ordering::Relaxed);
                                     } else {
@@ -579,7 +721,7 @@ impl CollectorRuntime {
 
                                 // Process any remaining events in the batch
                                 if !event_batch.is_empty() {
-                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
                                         error!(error = %e, "Failed to process final event batch");
                                     }
                                 }
@@ -594,7 +736,7 @@ impl CollectorRuntime {
                         if !event_batch.is_empty() && last_batch_flush.elapsed() >= batch_timeout {
                             debug!(batch_size = event_batch.len(), "Flushing batch due to timeout");
 
-                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
                                 error!(error = %e, "Failed to process timed-out event batch");
                                 error_counter.fetch_add(1, Ordering::Relaxed);
                             } else {
@@ -614,7 +756,7 @@ impl CollectorRuntime {
 
                         // Process any remaining events in the batch
                         if !event_batch.is_empty() {
-                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
                                 error!(error = %e, "Failed to process shutdown event batch");
                             }
                         }
@@ -643,6 +785,7 @@ impl CollectorRuntime {
     async fn process_event_batch(
         batch: &mut Vec<CollectionEvent>,
         telemetry_collector: &Arc<RwLock<TelemetryCollector>>,
+        performance_monitor: &Arc<PerformanceMonitor>,
     ) -> Result<()> {
         if batch.is_empty() {
             return Ok(());
@@ -652,6 +795,20 @@ impl CollectorRuntime {
         let batch_size = batch.len();
 
         debug!(batch_size = batch_size, "Processing event batch");
+
+        // Record events in performance monitor
+        for event in batch.iter() {
+            performance_monitor.record_event(event);
+
+            // Handle trigger requests for latency tracking
+            if let CollectionEvent::TriggerRequest(trigger_request) = event {
+                performance_monitor.record_trigger_start(&trigger_request.trigger_id);
+                // In a real implementation, trigger completion would be recorded
+                // when the trigger actually completes processing
+                performance_monitor
+                    .record_trigger_completion(&trigger_request.trigger_id, trigger_request);
+            }
+        }
 
         // In a full implementation, this would:
         // 1. Transform events as needed
@@ -1185,7 +1342,16 @@ mod tests {
             platform_metadata: None,
         })];
 
-        let result = CollectorRuntime::process_event_batch(&mut batch, &telemetry_collector).await;
+        // Create a performance monitor for the test
+        let performance_config = PerformanceConfig::default();
+        let performance_monitor = Arc::new(PerformanceMonitor::new(performance_config));
+
+        let result = CollectorRuntime::process_event_batch(
+            &mut batch,
+            &telemetry_collector,
+            &performance_monitor,
+        )
+        .await;
         assert!(result.is_ok());
         assert!(batch.is_empty()); // Batch should be cleared after processing
     }

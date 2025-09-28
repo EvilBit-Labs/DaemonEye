@@ -69,6 +69,7 @@ pub mod event;
 pub mod event_bus;
 pub mod ipc;
 pub mod monitor_collector;
+pub mod performance;
 pub mod source;
 pub mod trigger;
 
@@ -91,6 +92,11 @@ pub use event_bus::{
 pub use ipc::CollectorIpcServer;
 pub use monitor_collector::{
     MonitorCollector, MonitorCollectorConfig, MonitorCollectorStats, MonitorCollectorStatsSnapshot,
+};
+pub use performance::{
+    BaselineMetrics, CpuUsageMetrics, DegradationType, MemoryUsageMetrics, PerformanceComparison,
+    PerformanceConfig, PerformanceDegradation, PerformanceMonitor, ResourceUsageMetrics,
+    ThroughputMetrics, TriggerLatencyMetrics,
 };
 pub use source::{EventSource, SourceCaps};
 pub use trigger::{
