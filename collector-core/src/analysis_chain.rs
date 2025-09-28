@@ -761,71 +761,50 @@ impl AnalysisChainCoordinator {
         let statistics = Arc::clone(&self.statistics);
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
         let max_completed = self.config.max_completed_workflows;
+        let result_subscription = Arc::clone(&self.result_subscription);
 
         let handle = tokio::spawn(async move {
-            // This would process results from the event bus subscription
-            // For now, it's a placeholder that monitors for completed workflows
-
             let mut check_interval = interval(Duration::from_secs(10));
 
             while !shutdown_signal.load(Ordering::Relaxed) {
-                check_interval.tick().await;
-
-                // Move completed workflows to completed list
-                let mut executions = active_executions.write().await;
-                let mut to_remove = Vec::new();
-
-                for (execution_id, execution) in executions.iter() {
-                    if matches!(
-                        execution.status,
-                        WorkflowStatus::Completed
-                            | WorkflowStatus::Failed
-                            | WorkflowStatus::Cancelled
-                            | WorkflowStatus::TimedOut
-                    ) {
-                        to_remove.push(execution_id.clone());
+                // Process events from the event bus subscription
+                if let Some(receiver) = result_subscription.lock().await.as_mut() {
+                    // Try to receive events with a short timeout to avoid blocking
+                    match tokio::time::timeout(Duration::from_millis(100), receiver.recv()).await {
+                        Ok(Some(bus_event)) => {
+                            if let Err(e) = Self::process_result_event(
+                                &active_executions,
+                                &completed_executions,
+                                &statistics,
+                                &bus_event,
+                                max_completed,
+                            )
+                            .await
+                            {
+                                warn!("Failed to process result event: {}", e);
+                            }
+                        }
+                        Ok(None) => {
+                            // Channel closed, break out of event processing
+                            break;
+                        }
+                        Err(_) => {
+                            // Timeout, continue to fallback interval processing
+                        }
                     }
                 }
 
-                for execution_id in to_remove {
-                    if let Some(execution) = executions.remove(&execution_id) {
-                        // Update statistics
-                        {
-                            let mut stats = statistics.write().await;
-                            match execution.status {
-                                WorkflowStatus::Completed => {
-                                    stats.completed_workflows += 1;
-                                }
-                                WorkflowStatus::Failed => {
-                                    stats.failed_workflows += 1;
-                                    if let Some(error) = &execution.error_info {
-                                        *stats
-                                            .failure_reasons
-                                            .entry(error.error_type.clone())
-                                            .or_insert(0) += 1;
-                                    }
-                                }
-                                WorkflowStatus::Cancelled => {
-                                    stats.cancelled_workflows += 1;
-                                }
-                                WorkflowStatus::TimedOut => {
-                                    stats.timed_out_workflows += 1;
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        // Add to completed list
-                        {
-                            let mut completed = completed_executions.write().await;
-                            completed.push_back(execution);
-
-                            // Maintain size limit
-                            while completed.len() > max_completed {
-                                completed.pop_front();
-                            }
-                        }
-                    }
+                // Fallback: periodic reconciliation via interval tick
+                check_interval.tick().await;
+                if let Err(e) = Self::reconcile_completed_workflows(
+                    &active_executions,
+                    &completed_executions,
+                    &statistics,
+                    max_completed,
+                )
+                .await
+                {
+                    warn!("Failed to reconcile completed workflows: {}", e);
                 }
             }
 
@@ -1276,6 +1255,193 @@ impl AnalysisChainCoordinator {
 
         info!("Analysis chain coordinator shutdown complete");
         Ok(())
+    }
+
+    /// Processes a result event from the event bus and updates stage statuses.
+    async fn process_result_event(
+        active_executions: &Arc<RwLock<HashMap<String, WorkflowExecution>>>,
+        completed_executions: &Arc<RwLock<VecDeque<WorkflowExecution>>>,
+        statistics: &Arc<RwLock<WorkflowStatistics>>,
+        bus_event: &BusEvent,
+        max_completed: usize,
+    ) -> Result<()> {
+        // Extract execution and stage IDs from the event's routing metadata
+        let execution_id = bus_event.routing_metadata.get("execution_id");
+        let stage_id = bus_event.routing_metadata.get("stage_id");
+
+        if let (Some(execution_id), Some(stage_id)) = (execution_id, stage_id) {
+            let mut executions = active_executions.write().await;
+
+            if let Some(execution) = executions.get_mut(execution_id) {
+                // Update the specific stage status based on the event
+                let new_stage_status = match &bus_event.event {
+                    CollectionEvent::TriggerRequest(trigger_request) => {
+                        // Check if this is a result event (success/failure)
+                        if trigger_request.metadata.contains_key("result_status") {
+                            match trigger_request
+                                .metadata
+                                .get("result_status")
+                                .unwrap()
+                                .as_str()
+                            {
+                                "success" => StageStatus::Completed,
+                                "failed" => StageStatus::Failed,
+                                "cancelled" => StageStatus::Cancelled,
+                                "timeout" => StageStatus::TimedOut,
+                                _ => StageStatus::Failed,
+                            }
+                        } else {
+                            // Default to completed if no specific status
+                            StageStatus::Completed
+                        }
+                    }
+                    _ => {
+                        // For other event types, assume success
+                        StageStatus::Completed
+                    }
+                };
+
+                // Update the stage status
+                execution
+                    .stage_statuses
+                    .insert(stage_id.clone(), new_stage_status.clone());
+                execution.last_updated = SystemTime::now();
+
+                // Check if all stages are now complete
+                let all_stages_complete =
+                    execution.workflow_definition.stages.iter().all(|stage| {
+                        execution
+                            .stage_statuses
+                            .get(&stage.stage_id)
+                            .map(|status| {
+                                matches!(
+                                    status,
+                                    StageStatus::Completed
+                                        | StageStatus::Failed
+                                        | StageStatus::Cancelled
+                                        | StageStatus::TimedOut
+                                )
+                            })
+                            .unwrap_or(false)
+                    });
+
+                if all_stages_complete {
+                    // Determine overall workflow status
+                    let has_failures = execution.stage_statuses.values().any(|status| {
+                        matches!(status, StageStatus::Failed | StageStatus::TimedOut)
+                    });
+
+                    let has_cancellations = execution
+                        .stage_statuses
+                        .values()
+                        .any(|status| matches!(status, StageStatus::Cancelled));
+
+                    execution.status = if has_cancellations {
+                        WorkflowStatus::Cancelled
+                    } else if has_failures {
+                        WorkflowStatus::Failed
+                    } else {
+                        WorkflowStatus::Completed
+                    };
+
+                    execution.completed_at = Some(SystemTime::now());
+
+                    // Move to completed executions
+                    let completed_execution = executions.remove(execution_id).unwrap();
+                    Self::move_to_completed_executions(
+                        completed_executions,
+                        statistics,
+                        completed_execution,
+                        max_completed,
+                    )
+                    .await;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Reconciles completed workflows (fallback method for state consistency).
+    async fn reconcile_completed_workflows(
+        active_executions: &Arc<RwLock<HashMap<String, WorkflowExecution>>>,
+        completed_executions: &Arc<RwLock<VecDeque<WorkflowExecution>>>,
+        statistics: &Arc<RwLock<WorkflowStatistics>>,
+        max_completed: usize,
+    ) -> Result<()> {
+        let mut executions = active_executions.write().await;
+        let mut to_remove = Vec::new();
+
+        for (execution_id, execution) in executions.iter() {
+            if matches!(
+                execution.status,
+                WorkflowStatus::Completed
+                    | WorkflowStatus::Failed
+                    | WorkflowStatus::Cancelled
+                    | WorkflowStatus::TimedOut
+            ) {
+                to_remove.push(execution_id.clone());
+            }
+        }
+
+        for execution_id in to_remove {
+            if let Some(execution) = executions.remove(&execution_id) {
+                Self::move_to_completed_executions(
+                    completed_executions,
+                    statistics,
+                    execution,
+                    max_completed,
+                )
+                .await;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Moves a completed execution to the completed executions list and updates statistics.
+    async fn move_to_completed_executions(
+        completed_executions: &Arc<RwLock<VecDeque<WorkflowExecution>>>,
+        statistics: &Arc<RwLock<WorkflowStatistics>>,
+        execution: WorkflowExecution,
+        max_completed: usize,
+    ) {
+        // Update statistics
+        {
+            let mut stats = statistics.write().await;
+            match execution.status {
+                WorkflowStatus::Completed => {
+                    stats.completed_workflows += 1;
+                }
+                WorkflowStatus::Failed => {
+                    stats.failed_workflows += 1;
+                    if let Some(error) = &execution.error_info {
+                        *stats
+                            .failure_reasons
+                            .entry(error.error_type.clone())
+                            .or_insert(0) += 1;
+                    }
+                }
+                WorkflowStatus::Cancelled => {
+                    stats.cancelled_workflows += 1;
+                }
+                WorkflowStatus::TimedOut => {
+                    stats.timed_out_workflows += 1;
+                }
+                _ => {}
+            }
+        }
+
+        // Add to completed list
+        {
+            let mut completed = completed_executions.write().await;
+            completed.push_back(execution);
+
+            // Maintain size limit
+            while completed.len() > max_completed {
+                completed.pop_front();
+            }
+        }
     }
 }
 

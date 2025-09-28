@@ -265,7 +265,7 @@ impl CollectorConfig {
     /// Returns an error if configuration loading or validation fails.
     pub fn load_from_daemoneye_config(component_name: &str) -> Result<Self, Box<ConfigError>> {
         let config_loader = ConfigLoader::new(component_name);
-        let daemoneye_config = config_loader.load().map_err(Box::new)?;
+        let daemoneye_config = config_loader.load()?;
 
         let mut collector_config = Self::default().with_component_name(component_name.to_string());
 
@@ -273,11 +273,11 @@ impl CollectorConfig {
         collector_config = collector_config.apply_daemoneye_config(&daemoneye_config);
 
         // Validate the final configuration
-        collector_config.validate().map_err(|e| {
-            Box::new(ConfigError::ValidationError {
+        collector_config
+            .validate()
+            .map_err(|e| ConfigError::ValidationError {
                 message: e.to_string(),
-            })
-        })?;
+            })?;
 
         Ok(collector_config)
     }
