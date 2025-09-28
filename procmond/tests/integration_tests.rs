@@ -15,17 +15,31 @@ use tempfile::TempDir;
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{sleep, timeout};
 
-/// Creates a test database manager for integration tests.
-fn create_test_database() -> Arc<Mutex<DatabaseManager>> {
-    let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
-    let db_path = temp_dir.path().join("integration_test.db");
-    let db_manager = Arc::new(Mutex::new(
-        DatabaseManager::new(&db_path)
-            .expect("Failed to create database manager for integration test"),
-    ));
-    // Keep the temp_dir alive by leaking it - this is acceptable for tests
-    std::mem::forget(temp_dir);
-    db_manager
+/// Test database manager that properly manages the temporary directory lifecycle.
+struct TestDatabase {
+    _temp_dir: TempDir,
+    db_manager: Arc<Mutex<DatabaseManager>>,
+}
+
+impl TestDatabase {
+    /// Creates a test database manager for integration tests.
+    fn new() -> Self {
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
+        let db_path = temp_dir.path().join("integration_test.db");
+        let db_manager = Arc::new(Mutex::new(
+            DatabaseManager::new(&db_path)
+                .expect("Failed to create database manager for integration test"),
+        ));
+        Self {
+            _temp_dir: temp_dir,
+            db_manager,
+        }
+    }
+
+    /// Returns a reference to the database manager.
+    fn manager(&self) -> Arc<Mutex<DatabaseManager>> {
+        self.db_manager.clone()
+    }
 }
 
 /// Creates a test configuration optimized for integration testing.
@@ -47,7 +61,8 @@ fn create_test_config() -> ProcessSourceConfig {
 #[tokio::test]
 async fn test_process_event_source_with_collector_core() {
     // Create test components
-    let db_manager = create_test_database();
+    let test_db = TestDatabase::new();
+    let db_manager = test_db.manager();
     let config = create_test_config();
     let process_source = ProcessEventSource::with_config(db_manager, config);
 
@@ -90,7 +105,8 @@ async fn test_process_event_source_with_collector_core() {
 
 #[tokio::test]
 async fn test_process_event_source_lifecycle_management() {
-    let db_manager = create_test_database();
+    let test_db = TestDatabase::new();
+    let db_manager = test_db.manager();
     let config = create_test_config();
     let process_source = ProcessEventSource::with_config(db_manager, config);
 
@@ -161,19 +177,21 @@ async fn test_process_event_source_lifecycle_management() {
 
     // Wait for the start task to complete
     let start_result = timeout(Duration::from_secs(5), start_task).await;
-    assert!(
-        start_result.is_ok(),
-        "Start task should complete within timeout"
-    );
-    assert!(
-        start_result.unwrap().is_ok(),
-        "Start task should complete successfully"
-    );
+    match start_result {
+        Err(_) => panic!("Start task timed out after 5 seconds"),
+        Ok(inner_result) => match inner_result {
+            Err(e) => panic!("Start task failed with error: {}", e),
+            Ok(_) => {
+                // Start task completed successfully
+            }
+        },
+    }
 }
 
 #[tokio::test]
 async fn test_process_event_source_error_handling() {
-    let db_manager = create_test_database();
+    let test_db = TestDatabase::new();
+    let db_manager = test_db.manager();
     let mut config = create_test_config();
 
     // Configure for aggressive timeouts to test error handling
@@ -202,7 +220,8 @@ async fn test_process_event_source_error_handling() {
 
 #[tokio::test]
 async fn test_process_event_source_statistics_integration() {
-    let db_manager = create_test_database();
+    let test_db = TestDatabase::new();
+    let db_manager = test_db.manager();
     let config = create_test_config();
     let process_source = ProcessEventSource::with_config(db_manager, config);
 
@@ -218,7 +237,7 @@ async fn test_process_event_source_statistics_integration() {
     // Start collection
     let source_clone = process_source;
     let shutdown_clone = Arc::clone(&shutdown_signal);
-    let _start_task = tokio::spawn(async move {
+    let start_task = tokio::spawn(async move {
         let _ = source_clone.start(tx, shutdown_clone).await;
     });
 
@@ -255,13 +274,27 @@ async fn test_process_event_source_statistics_integration() {
         received_events
     );
 
-    // Signal shutdown
+    // Signal shutdown and wait for task to complete
     shutdown_signal.store(true, Ordering::Relaxed);
+
+    // Wait for the background task to finish with a timeout
+    match tokio::time::timeout(Duration::from_secs(5), start_task).await {
+        Ok(Ok(_)) => {
+            // Task completed successfully
+        }
+        Ok(Err(e)) => {
+            panic!("Background task panicked: {}", e);
+        }
+        Err(_) => {
+            panic!("Background task did not complete within timeout");
+        }
+    }
 }
 
 #[tokio::test]
 async fn test_process_event_source_backpressure_integration() {
-    let db_manager = create_test_database();
+    let test_db = TestDatabase::new();
+    let db_manager = test_db.manager();
     let mut config = create_test_config();
 
     // Configure for low backpressure limits
@@ -296,7 +329,8 @@ async fn test_process_event_source_backpressure_integration() {
 
 #[tokio::test]
 async fn test_process_event_source_graceful_shutdown() {
-    let db_manager = create_test_database();
+    let test_db = TestDatabase::new();
+    let db_manager = test_db.manager();
     let mut config = create_test_config();
     config.shutdown_timeout = Duration::from_millis(100);
     config.max_backpressure_wait = Duration::from_millis(10); // Very fast timeout for test
@@ -333,7 +367,8 @@ async fn test_process_event_source_graceful_shutdown() {
 
 #[tokio::test]
 async fn test_process_event_source_health_monitoring_integration() {
-    let db_manager = create_test_database();
+    let test_db = TestDatabase::new();
+    let db_manager = test_db.manager();
     let config = create_test_config();
     let process_source = ProcessEventSource::with_config(db_manager, config);
 
@@ -358,7 +393,7 @@ async fn test_process_event_source_health_monitoring_integration() {
     // Start collection in background
     let source_clone = process_source;
     let shutdown_clone = Arc::clone(&shutdown_signal);
-    let _start_task = tokio::spawn(async move {
+    let start_task = tokio::spawn(async move {
         let _ = source_clone.start(tx, shutdown_clone).await;
     });
 
@@ -368,8 +403,21 @@ async fn test_process_event_source_health_monitoring_integration() {
     // Note: We can't access source_clone here due to move
     // The health check would be performed inside the spawned task
 
-    // Clean shutdown
+    // Clean shutdown and wait for task to complete
     shutdown_signal.store(true, Ordering::Relaxed);
+
+    // Wait for the background task to finish with a timeout
+    match tokio::time::timeout(Duration::from_secs(5), start_task).await {
+        Ok(Ok(_)) => {
+            // Task completed successfully
+        }
+        Ok(Err(e)) => {
+            panic!("Background task panicked: {}", e);
+        }
+        Err(_) => {
+            panic!("Background task did not complete within timeout");
+        }
+    }
 }
 
 #[tokio::test]
@@ -379,7 +427,8 @@ async fn test_multiple_process_event_sources() {
     let mut collector = Collector::new(collector_config);
 
     // Create a single source (multiple sources with same name would conflict)
-    let db_manager = create_test_database();
+    let test_db = TestDatabase::new();
+    let db_manager = test_db.manager();
     let config = create_test_config();
     let process_source = ProcessEventSource::with_config(db_manager, config);
 

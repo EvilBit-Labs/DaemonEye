@@ -26,32 +26,17 @@ const PRIVILEGE_TEST_TIMEOUT_SECS: u64 = 30;
 fn is_elevated_privileges() -> bool {
     #[cfg(unix)]
     {
-        // Check if running as root by examining environment variables and file permissions
-        // This avoids using unsafe libc calls while still detecting elevated privileges
-        if let Ok(user) = std::env::var("USER") {
-            if user == "root" {
-                return true;
-            }
-        }
-
-        if let Ok(uid) = std::env::var("UID") {
-            if uid == "0" {
-                return true;
-            }
-        }
-
-        // Try to access a root-only file as another indicator
-        std::fs::metadata("/etc/shadow").is_ok()
+        // Use whoami crate to check if running as root
+        // This is completely safe and doesn't require unsafe code
+        whoami::username() == "root"
     }
 
     #[cfg(windows)]
     {
-        // On Windows, check if running as administrator
-        // This is a simplified check - in practice, you'd use Windows APIs
-        std::env::var("USERNAME")
-            .unwrap_or_default()
-            .to_lowercase()
-            .contains("admin")
+        // Use whoami crate to check if running as administrator
+        // This is completely safe and doesn't require unsafe code
+        whoami::username().to_lowercase().contains("admin")
+            || whoami::username().to_lowercase().contains("administrator")
     }
 }
 

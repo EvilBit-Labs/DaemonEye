@@ -89,6 +89,8 @@ windows = { version = "0.62.1", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Memory",
     "Win32_System_Performance",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
 ] }
 # windows-service for Windows service detection and management
 windows-service = "0.8.0"
@@ -109,6 +111,7 @@ predicates = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 tracing-test = "0.2.5"
+whoami = "1.4"
 
 
 [[bench]]
