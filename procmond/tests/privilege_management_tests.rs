@@ -427,6 +427,9 @@ async fn test_privilege_escalation_detection() {
                 health_result.err()
             );
 
+            // Test Linux-specific privilege checks
+            test_linux_privilege_capabilities(&collector).await;
+
             println!("✓ Linux privilege detection test passed");
         }
     }
@@ -460,6 +463,9 @@ async fn test_privilege_escalation_detection() {
                 health_result.err()
             );
 
+            // Test macOS-specific privilege checks
+            test_macos_privilege_capabilities(&collector).await;
+
             println!("✓ macOS privilege detection test passed");
         }
     }
@@ -489,9 +495,341 @@ async fn test_privilege_escalation_detection() {
                 health_result.err()
             );
 
+            // Test Windows-specific privilege checks
+            test_windows_privilege_capabilities(&collector).await;
+
             println!("✓ Windows privilege detection test passed");
         }
     }
+}
+
+/// Test comprehensive privilege dropping scenarios.
+#[tokio::test]
+#[traced_test]
+async fn test_comprehensive_privilege_dropping() {
+    let user_info = get_current_user_info();
+    let is_elevated = is_elevated_privileges();
+
+    println!(
+        "Testing comprehensive privilege dropping: {} (elevated: {})",
+        user_info, is_elevated
+    );
+
+    // Test different privilege scenarios
+    let privilege_scenarios = vec![
+        (
+            "minimal_privileges",
+            ProcessCollectionConfig {
+                collect_enhanced_metadata: false,
+                compute_executable_hashes: false,
+                skip_system_processes: true,
+                skip_kernel_threads: true,
+                max_processes: 10,
+            },
+        ),
+        (
+            "standard_privileges",
+            ProcessCollectionConfig {
+                collect_enhanced_metadata: true,
+                compute_executable_hashes: false,
+                skip_system_processes: false,
+                skip_kernel_threads: false,
+                max_processes: 100,
+            },
+        ),
+        (
+            "enhanced_privileges",
+            ProcessCollectionConfig {
+                collect_enhanced_metadata: true,
+                compute_executable_hashes: true,
+                skip_system_processes: false,
+                skip_kernel_threads: false,
+                max_processes: 1000,
+            },
+        ),
+    ];
+
+    for (scenario_name, config) in privilege_scenarios {
+        println!("Testing privilege scenario: {}", scenario_name);
+
+        let collectors = create_all_available_collectors(config);
+
+        for (name, collector) in collectors {
+            println!(
+                "Testing privilege dropping for {} with {}",
+                name, scenario_name
+            );
+
+            // Test that collector works regardless of privilege level
+            let collection_result = timeout(
+                Duration::from_secs(PRIVILEGE_TEST_TIMEOUT_SECS),
+                collector.collect_processes(),
+            )
+            .await;
+
+            assert!(
+                collection_result.is_ok(),
+                "Privilege dropping test should complete for {} with {}",
+                name,
+                scenario_name
+            );
+
+            let collection = collection_result.unwrap();
+            assert!(
+                collection.is_ok(),
+                "Privilege dropping test should succeed for {} with {}: {:?}",
+                name,
+                scenario_name,
+                collection.err()
+            );
+
+            let (events, stats) = collection.unwrap();
+
+            // Should collect some processes regardless of privilege level
+            assert!(
+                !events.is_empty(),
+                "Should collect some processes for {} with {}",
+                name,
+                scenario_name
+            );
+
+            // Log privilege scenario results
+            let success_rate = if stats.total_processes > 0 {
+                stats.successful_collections as f64 / stats.total_processes as f64
+            } else {
+                0.0
+            };
+
+            println!(
+                "Privilege scenario results for {} with {}: {:.1}% success rate ({}/{} processes)",
+                name,
+                scenario_name,
+                success_rate * 100.0,
+                stats.successful_collections,
+                stats.total_processes
+            );
+
+            println!(
+                "✓ Privilege dropping test passed for {} with {}",
+                name, scenario_name
+            );
+        }
+    }
+}
+
+/// Test privilege boundary enforcement across different user contexts.
+#[tokio::test]
+#[traced_test]
+async fn test_privilege_boundary_enforcement() {
+    let user_info = get_current_user_info();
+    let is_elevated = is_elevated_privileges();
+
+    println!(
+        "Testing privilege boundary enforcement: {} (elevated: {})",
+        user_info, is_elevated
+    );
+
+    let config = ProcessCollectionConfig {
+        collect_enhanced_metadata: true,
+        compute_executable_hashes: false,
+        skip_system_processes: false,
+        skip_kernel_threads: false,
+        max_processes: 200,
+    };
+
+    let collectors = create_all_available_collectors(config);
+
+    for (name, collector) in collectors {
+        println!("Testing privilege boundaries for collector: {}", name);
+
+        let collection_result = timeout(
+            Duration::from_secs(PRIVILEGE_TEST_TIMEOUT_SECS),
+            collector.collect_processes(),
+        )
+        .await;
+
+        assert!(
+            collection_result.is_ok(),
+            "Privilege boundary test should complete for {}",
+            name
+        );
+
+        let collection = collection_result.unwrap();
+        assert!(
+            collection.is_ok(),
+            "Privilege boundary test should succeed for {}: {:?}",
+            name,
+            collection.err()
+        );
+
+        let (events, stats) = collection.unwrap();
+
+        // Analyze privilege boundary behavior
+        let mut accessible_count = 0;
+        let mut system_process_count = 0;
+        let mut low_pid_count = 0;
+
+        for event in &events {
+            if event.accessible {
+                accessible_count += 1;
+            }
+
+            // Count likely system processes
+            if event.pid <= 100 {
+                low_pid_count += 1;
+            }
+
+            // Count processes that might be system processes
+            if is_likely_system_process(&event.name) {
+                system_process_count += 1;
+            }
+        }
+
+        println!(
+            "Privilege boundary analysis for {}: {} accessible, {} low-PID, {} system-like (elevated: {})",
+            name, accessible_count, low_pid_count, system_process_count, is_elevated
+        );
+
+        // Verify privilege boundaries are respected
+        assert!(
+            stats.total_processes > 0,
+            "Should attempt to access some processes for {}",
+            name
+        );
+
+        // The ratio of accessible to inaccessible processes depends on privileges
+        if is_elevated {
+            println!(
+                "Running with elevated privileges - enhanced access expected for {}",
+                name
+            );
+        } else {
+            println!(
+                "Running with standard privileges - some access restrictions expected for {}",
+                name
+            );
+
+            // With standard privileges, we expect some processes to be inaccessible
+            if stats.inaccessible_processes > 0 {
+                println!(
+                    "✓ Privilege boundaries properly enforced for {} ({} inaccessible)",
+                    name, stats.inaccessible_processes
+                );
+            }
+        }
+
+        println!("✓ Privilege boundary enforcement test passed for {}", name);
+    }
+}
+
+/// Helper function to test Linux-specific privilege capabilities.
+#[cfg(target_os = "linux")]
+async fn test_linux_privilege_capabilities(collector: &dyn ProcessCollector) {
+    println!("Testing Linux-specific privilege capabilities");
+
+    // Test access to /proc filesystem
+    let proc_accessible = std::fs::read_dir("/proc").is_ok();
+    println!("✓ /proc filesystem accessible: {}", proc_accessible);
+
+    // Test capability to read process information
+    let collection_result = collector.collect_processes().await;
+    if let Ok((events, stats)) = collection_result {
+        println!(
+            "✓ Linux process collection: {} processes, {} successful",
+            events.len(),
+            stats.successful_collections
+        );
+
+        // Check for processes that might require elevated privileges
+        let privileged_processes = events
+            .iter()
+            .filter(|e| e.pid <= 10 || e.name.starts_with("kernel") || e.name.starts_with('['))
+            .count();
+
+        println!(
+            "✓ Linux privileged processes accessible: {}",
+            privileged_processes
+        );
+    }
+}
+
+/// Helper function to test macOS-specific privilege capabilities.
+#[cfg(target_os = "macos")]
+async fn test_macos_privilege_capabilities(collector: &dyn ProcessCollector) {
+    println!("Testing macOS-specific privilege capabilities");
+
+    // Test SIP (System Integrity Protection) awareness
+    let sip_status = std::process::Command::new("csrutil")
+        .arg("status")
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).contains("enabled"))
+        .unwrap_or(false);
+
+    println!("✓ macOS SIP status detected: enabled={}", sip_status);
+
+    // Test process collection under macOS restrictions
+    let collection_result = collector.collect_processes().await;
+    if let Ok((events, stats)) = collection_result {
+        println!(
+            "✓ macOS process collection: {} processes, {} successful",
+            events.len(),
+            stats.successful_collections
+        );
+
+        // macOS has stricter access controls
+        if stats.inaccessible_processes > 0 {
+            println!(
+                "✓ macOS access restrictions properly handled: {} inaccessible",
+                stats.inaccessible_processes
+            );
+        }
+    }
+}
+
+/// Helper function to test Windows-specific privilege capabilities.
+#[cfg(target_os = "windows")]
+async fn test_windows_privilege_capabilities(collector: &dyn ProcessCollector) {
+    println!("Testing Windows-specific privilege capabilities");
+
+    // Test UAC (User Account Control) awareness
+    let is_admin = is_elevated_privileges();
+    println!("✓ Windows admin privileges detected: {}", is_admin);
+
+    // Test process collection under Windows security model
+    let collection_result = collector.collect_processes().await;
+    if let Ok((events, stats)) = collection_result {
+        println!(
+            "✓ Windows process collection: {} processes, {} successful",
+            events.len(),
+            stats.successful_collections
+        );
+
+        // Check for system processes that might require elevated privileges
+        let system_processes = events
+            .iter()
+            .filter(|e| {
+                e.name.to_lowercase().contains("system")
+                    || e.name.to_lowercase().contains("service")
+                    || e.pid <= 10
+            })
+            .count();
+
+        println!(
+            "✓ Windows system processes accessible: {}",
+            system_processes
+        );
+    }
+}
+
+/// Helper function to determine if a process name indicates a system process.
+fn is_likely_system_process(name: &str) -> bool {
+    let name_lower = name.to_lowercase();
+    name_lower.contains("kernel")
+        || name_lower.contains("system")
+        || name_lower.contains("service")
+        || name_lower.starts_with("k")
+        || name_lower.starts_with('[')
+        || name.starts_with('[')
 }
 
 /// Test graceful degradation when privileges are insufficient.

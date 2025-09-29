@@ -13,18 +13,19 @@ use proptest::prelude::*;
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::mpsc, time::timeout};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Edge case test source for process lifecycle detection.
 #[derive(Clone)]
 struct EdgeCaseMonitorCollector {
     name: &'static str,
     capabilities: SourceCaps,
+    #[allow(dead_code)]
     config: MonitorCollectorConfig,
     stats: Arc<MonitorCollectorStats>,
     events_sent: Arc<AtomicUsize>,
@@ -501,30 +502,6 @@ impl EventSource for EdgeCaseMonitorCollector {
 impl MonitorCollector for EdgeCaseMonitorCollector {
     fn stats(&self) -> collector_core::MonitorCollectorStatsSnapshot {
         self.stats.snapshot()
-    }
-
-    async fn monitor_health_check(&self) -> anyhow::Result<()> {
-        let stats = self.stats();
-
-        // More lenient health checks for edge case testing
-        let total_operations =
-            stats.collection_cycles + stats.trigger_requests + stats.analysis_workflows;
-        let total_errors = stats.collection_errors + stats.trigger_errors + stats.analysis_errors;
-
-        if total_operations > 0 {
-            let error_rate = total_errors as f64 / total_operations as f64;
-            if error_rate > 0.8 {
-                // Higher threshold for edge cases
-                anyhow::bail!(
-                    "Extremely high error rate detected: {:.2}% ({} errors out of {} operations)",
-                    error_rate * 100.0,
-                    total_errors,
-                    total_operations
-                );
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -1037,7 +1014,7 @@ proptest! {
 
         // CPU usage validation (if present, should be reasonable)
         if let Some(cpu) = event.cpu_usage {
-            if cpu.is_finite() && cpu >= 0.0 && cpu <= 100.0 {
+            if cpu.is_finite() && (0.0..=100.0).contains(&cpu) {
                 // Valid CPU usage
             } else {
                 // Edge case CPU usage - should be handled gracefully
@@ -1047,7 +1024,7 @@ proptest! {
         // Memory usage validation
         if let Some(memory) = event.memory_usage {
             // Any memory value should be handled gracefully
-            prop_assert!(memory >= 0);
+            prop_assert!(memory > 0);
         }
 
         // Test serialization with edge cases

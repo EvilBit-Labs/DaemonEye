@@ -11,21 +11,21 @@ use collector_core::{
     ProcessEvent, SourceCaps,
 };
 use std::{
-    collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant, SystemTime},
 };
 use tokio::{sync::mpsc, time::timeout};
-use tracing::{info, warn};
+use tracing::info;
 
 /// Performance test monitor collector with configurable load characteristics.
 #[derive(Clone)]
 struct PerformanceTestMonitorCollector {
     name: &'static str,
     capabilities: SourceCaps,
+    #[allow(dead_code)]
     config: MonitorCollectorConfig,
     stats: Arc<MonitorCollectorStats>,
     events_sent: Arc<AtomicUsize>,
@@ -188,7 +188,9 @@ struct PerformanceSummary {
     p95_latency: Duration,
     p99_latency: Duration,
     total_bytes_processed: u64,
+    #[allow(dead_code)]
     peak_memory_usage: u64,
+    #[allow(dead_code)]
     cpu_time_used: Duration,
 }
 
@@ -744,30 +746,6 @@ impl EventSource for PerformanceTestMonitorCollector {
 impl MonitorCollector for PerformanceTestMonitorCollector {
     fn stats(&self) -> collector_core::MonitorCollectorStatsSnapshot {
         self.stats.snapshot()
-    }
-
-    async fn monitor_health_check(&self) -> anyhow::Result<()> {
-        let stats = self.stats();
-        let summary = self.get_performance_summary();
-
-        // Performance-based health checks
-        if summary.avg_throughput < 10.0 {
-            warn!(
-                monitor = self.name,
-                avg_throughput = summary.avg_throughput,
-                "Low throughput detected"
-            );
-        }
-
-        if summary.avg_latency > Duration::from_millis(100) {
-            warn!(
-                monitor = self.name,
-                avg_latency_ms = summary.avg_latency.as_millis(),
-                "High latency detected"
-            );
-        }
-
-        Ok(())
     }
 }
 

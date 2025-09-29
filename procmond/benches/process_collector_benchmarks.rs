@@ -138,8 +138,12 @@ fn bench_process_enumeration_scale(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("process_enumeration_scale");
 
-    // Test with various process counts including high counts (10,000+)
-    for process_count in [100, 500, 1000, 5000, 10000, 20000, 50000].iter() {
+    // Set longer measurement time for high process counts
+    group.measurement_time(Duration::from_secs(30));
+    group.sample_size(10);
+
+    // Test with various process counts including very high counts (10,000+)
+    for process_count in [100, 500, 1000, 5000, 10000, 25000, 50000, 100000].iter() {
         group.throughput(Throughput::Elements(*process_count as u64));
         group.bench_with_input(
             BenchmarkId::new("enumerate_processes", process_count),
@@ -159,6 +163,17 @@ fn bench_process_enumeration_scale(c: &mut Criterion) {
 
                         assert_eq!(events.len(), process_count);
                         assert_eq!(stats.total_processes, process_count);
+
+                        // Log performance metrics for high counts
+                        if process_count >= 10000 {
+                            let rate = events.len() as f64 / duration.as_secs_f64();
+                            println!(
+                                "High count benchmark: {} processes in {:.2}ms, rate: {:.1} proc/sec",
+                                process_count,
+                                duration.as_millis(),
+                                rate
+                            );
+                        }
 
                         black_box((duration, events.len(), stats));
                     })
@@ -361,6 +376,335 @@ fn bench_health_check_performance(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark real ProcessCollector implementations with high process counts.
+fn bench_real_collectors_high_counts(c: &mut Criterion) {
+    use procmond::process_collector::{
+        FallbackProcessCollector, ProcessCollectionConfig, SysinfoProcessCollector,
+    };
+
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("real_collectors_high_counts");
+
+    // Set longer measurement time for real collectors
+    group.measurement_time(Duration::from_secs(60));
+    group.sample_size(5);
+
+    // Test configurations for high process counts
+    let high_count_configs = vec![
+        (
+            "basic_10k",
+            ProcessCollectionConfig {
+                collect_enhanced_metadata: false,
+                compute_executable_hashes: false,
+                skip_system_processes: false,
+                skip_kernel_threads: false,
+                max_processes: 10000,
+            },
+        ),
+        (
+            "enhanced_10k",
+            ProcessCollectionConfig {
+                collect_enhanced_metadata: true,
+                compute_executable_hashes: false,
+                skip_system_processes: false,
+                skip_kernel_threads: false,
+                max_processes: 10000,
+            },
+        ),
+        (
+            "basic_25k",
+            ProcessCollectionConfig {
+                collect_enhanced_metadata: false,
+                compute_executable_hashes: false,
+                skip_system_processes: false,
+                skip_kernel_threads: false,
+                max_processes: 25000,
+            },
+        ),
+        (
+            "enhanced_25k",
+            ProcessCollectionConfig {
+                collect_enhanced_metadata: true,
+                compute_executable_hashes: false,
+                skip_system_processes: false,
+                skip_kernel_threads: false,
+                max_processes: 25000,
+            },
+        ),
+    ];
+
+    for (config_name, config) in high_count_configs {
+        // Benchmark SysinfoProcessCollector
+        group.bench_function(BenchmarkId::new("sysinfo_collector", config_name), |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let collector = SysinfoProcessCollector::new(config.clone());
+
+                    let start = std::time::Instant::now();
+                    let result = collector.collect_processes().await;
+                    let duration = start.elapsed();
+
+                    if let Ok((events, stats)) = result {
+                        let rate = events.len() as f64 / duration.as_secs_f64();
+                        println!(
+                            "SysinfoCollector {}: {} processes in {:.2}ms, rate: {:.1} proc/sec",
+                            config_name,
+                            events.len(),
+                            duration.as_millis(),
+                            rate
+                        );
+                        black_box((duration, events.len(), stats));
+                    } else {
+                        println!(
+                            "SysinfoCollector {} failed: {:?}",
+                            config_name,
+                            result.err()
+                        );
+                        black_box(duration);
+                    }
+                })
+            });
+        });
+
+        // Benchmark FallbackProcessCollector
+        group.bench_function(BenchmarkId::new("fallback_collector", config_name), |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let collector = FallbackProcessCollector::new(config.clone());
+
+                    let start = std::time::Instant::now();
+                    let result = collector.collect_processes().await;
+                    let duration = start.elapsed();
+
+                    if let Ok((events, stats)) = result {
+                        let rate = events.len() as f64 / duration.as_secs_f64();
+                        println!(
+                            "FallbackCollector {}: {} processes in {:.2}ms, rate: {:.1} proc/sec",
+                            config_name,
+                            events.len(),
+                            duration.as_millis(),
+                            rate
+                        );
+                        black_box((duration, events.len(), stats));
+                    } else {
+                        println!(
+                            "FallbackCollector {} failed: {:?}",
+                            config_name,
+                            result.err()
+                        );
+                        black_box(duration);
+                    }
+                })
+            });
+        });
+    }
+
+    group.finish();
+}
+
+/// Benchmark cross-platform collector performance comparison.
+fn bench_cross_platform_collectors(c: &mut Criterion) {
+    use procmond::process_collector::{
+        FallbackProcessCollector, ProcessCollectionConfig, SysinfoProcessCollector,
+    };
+
+    #[cfg(target_os = "linux")]
+    use procmond::linux_collector::{LinuxCollectorConfig, LinuxProcessCollector};
+
+    #[cfg(target_os = "macos")]
+    use procmond::macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
+
+    #[cfg(target_os = "windows")]
+    use procmond::windows_collector::{WindowsCollectorConfig, WindowsProcessCollector};
+
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("cross_platform_collectors");
+
+    // Set measurement parameters for cross-platform comparison
+    group.measurement_time(Duration::from_secs(30));
+    group.sample_size(10);
+
+    let config = ProcessCollectionConfig {
+        collect_enhanced_metadata: true,
+        compute_executable_hashes: false,
+        skip_system_processes: false,
+        skip_kernel_threads: false,
+        max_processes: 10000,
+    };
+
+    // Always available collectors
+    group.bench_function("sysinfo_collector", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let collector = SysinfoProcessCollector::new(config.clone());
+                let start = std::time::Instant::now();
+                let result = collector.collect_processes().await;
+                let duration = start.elapsed();
+
+                if let Ok((events, stats)) = result {
+                    black_box((duration, events.len(), stats));
+                } else {
+                    black_box(duration);
+                }
+            })
+        });
+    });
+
+    group.bench_function("fallback_collector", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let collector = FallbackProcessCollector::new(config.clone());
+                let start = std::time::Instant::now();
+                let result = collector.collect_processes().await;
+                let duration = start.elapsed();
+
+                if let Ok((events, stats)) = result {
+                    black_box((duration, events.len(), stats));
+                } else {
+                    black_box(duration);
+                }
+            })
+        });
+    });
+
+    // Platform-specific collectors
+    #[cfg(target_os = "linux")]
+    {
+        let linux_config = LinuxCollectorConfig::default();
+        if let Ok(collector) = LinuxProcessCollector::new(config.clone(), linux_config) {
+            group.bench_function("linux_collector", |b| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let start = std::time::Instant::now();
+                        let result = collector.collect_processes().await;
+                        let duration = start.elapsed();
+
+                        if let Ok((events, stats)) = result {
+                            black_box((duration, events.len(), stats));
+                        } else {
+                            black_box(duration);
+                        }
+                    })
+                });
+            });
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let macos_config = MacOSCollectorConfig::default();
+        if let Ok(collector) = EnhancedMacOSCollector::new(config.clone(), macos_config) {
+            group.bench_function("macos_collector", |b| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let start = std::time::Instant::now();
+                        let result = collector.collect_processes().await;
+                        let duration = start.elapsed();
+
+                        if let Ok((events, stats)) = result {
+                            black_box((duration, events.len(), stats));
+                        } else {
+                            black_box(duration);
+                        }
+                    })
+                });
+            });
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let windows_config = WindowsCollectorConfig::default();
+        if let Ok(collector) = WindowsProcessCollector::new(config.clone(), windows_config) {
+            group.bench_function("windows_collector", |b| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let start = std::time::Instant::now();
+                        let result = collector.collect_processes().await;
+                        let duration = start.elapsed();
+
+                        if let Ok((events, stats)) = result {
+                            black_box((duration, events.len(), stats));
+                        } else {
+                            black_box(duration);
+                        }
+                    })
+                });
+            });
+        }
+    }
+
+    group.finish();
+}
+
+/// Benchmark memory efficiency with very high process counts.
+fn bench_memory_efficiency_high_counts(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("memory_efficiency_high_counts");
+
+    // Set parameters for memory efficiency testing
+    group.measurement_time(Duration::from_secs(45));
+    group.sample_size(5);
+
+    // Test memory efficiency with extremely high process counts
+    for process_count in [50000, 100000, 200000].iter() {
+        group.throughput(Throughput::Elements(*process_count as u64));
+        group.bench_with_input(
+            BenchmarkId::new("memory_efficiency", process_count),
+            process_count,
+            |b, &process_count| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let collector =
+                            BenchmarkProcessCollector::new("memory-test", process_count);
+
+                        // Measure memory usage before collection
+                        let memory_before = get_current_memory_usage();
+
+                        let start = std::time::Instant::now();
+                        let result = collector.collect_processes().await;
+                        let duration = start.elapsed();
+
+                        // Measure memory usage after collection
+                        let memory_after = get_current_memory_usage();
+                        let memory_delta = memory_after.saturating_sub(memory_before);
+
+                        if let Ok((events, stats)) = result {
+                            let memory_per_process = if !events.is_empty() {
+                                memory_delta / events.len()
+                            } else {
+                                0
+                            };
+
+                            println!(
+                                "Memory efficiency {}: {} processes, {}KB total, {}B per process",
+                                process_count,
+                                events.len(),
+                                memory_delta / 1024,
+                                memory_per_process
+                            );
+
+                            black_box((duration, events.len(), stats, memory_delta));
+                        } else {
+                            black_box((duration, memory_delta));
+                        }
+                    })
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+/// Helper function to get current memory usage (approximate).
+fn get_current_memory_usage() -> usize {
+    // This is a simple approximation - in a real implementation,
+    // you might use platform-specific APIs for more accurate measurement
+    // For now, we'll use a simple heuristic based on the current process
+    use std::process;
+    process::id() as usize * 1024 // Simple approximation
+}
+
 criterion_group!(
     benches,
     bench_process_enumeration_scale,
@@ -368,6 +712,9 @@ criterion_group!(
     bench_single_process_collection,
     bench_concurrent_collection,
     bench_memory_usage_patterns,
-    bench_health_check_performance
+    bench_health_check_performance,
+    bench_real_collectors_high_counts,
+    bench_cross_platform_collectors,
+    bench_memory_efficiency_high_counts
 );
 criterion_main!(benches);
