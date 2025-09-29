@@ -109,3 +109,27 @@ pub use trigger::{
     TriggerCapabilities, TriggerCondition, TriggerConfig, TriggerEmissionStats, TriggerManager,
     TriggerResourceLimits, TriggerStatistics,
 };
+
+#[cfg(test)]
+mod busrt_integration_tests {
+
+    #[test]
+    fn test_busrt_dependency_available() {
+        // Simple test to verify busrt dependency is properly available
+        // This test ensures the busrt crate can be imported and basic types are accessible
+        use busrt::QoS;
+
+        // Test that we can reference busrt types without compilation errors
+        let qos = QoS::No;
+
+        // Verify the QoS enum has expected variants
+        match qos {
+            QoS::No => {
+                // Test passes if we can match on busrt types
+            }
+            _ => {
+                panic!("Unexpected QoS variant");
+            }
+        }
+    }
+}

@@ -16,6 +16,7 @@ readme = "README.md"
 
 
 [dependencies]
+chrono = { workspace = true, features = ["serde"] }
 # Core async runtime and utilities
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
 async-trait = { workspace = true }
@@ -34,6 +35,9 @@ tracing = { workspace = true }
 
 # Bitflags for capabilities
 bitflags = { workspace = true }
+
+# Message broker for IPC
+busrt = { workspace = true }
 
 # IPC integration
 daemoneye-lib = { path = "../daemoneye-lib" }

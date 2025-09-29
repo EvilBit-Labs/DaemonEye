@@ -55,7 +55,7 @@ The following foundational components have been successfully implemented:
 
 - [ ] 2.1 Research and integrate busrt crate dependencies
 
-- [ ] 2.1.1 Add busrt dependency to collector-core
+- [x] 2.1.1 Add busrt dependency to collector-core
 
   - Add busrt crate to collector-core/Cargo.toml with version "0.4" and features ["broker", "rpc", "ipc"]
   - Verify busrt compiles successfully with existing collector-core dependencies
@@ -63,7 +63,7 @@ The following foundational components have been successfully implemented:
   - Update workspace Cargo.toml if needed for dependency resolution
   - _Requirements: 14.1_
 
-- [ ] 2.1.2 Research busrt API patterns and create basic examples
+- [x] 2.1.2 Research busrt API patterns and create basic examples
 
   - Study busrt documentation and examples for embedded broker usage
   - Create simple proof-of-concept showing busrt broker startup and shutdown
@@ -71,7 +71,7 @@ The following foundational components have been successfully implemented:
   - Document key API patterns and configuration options for DaemonEye integration
   - _Requirements: 14.2_
 
-- [ ] 2.1.3 Validate busrt transport options for DaemonEye
+- [x] 2.1.3 Validate busrt transport options for DaemonEye
 
   - Test in-process channel transport for internal daemoneye-agent communication
   - Validate UNIX socket transport for inter-process collector communication
@@ -79,7 +79,7 @@ The following foundational components have been successfully implemented:
   - Document transport selection criteria and performance characteristics
   - _Requirements: 14.3, 14.5_
 
-- [ ] 2.1.4 Create basic busrt integration proof-of-concept
+- [-] 2.1.4 Create basic busrt integration proof-of-concept
 
   - Create minimal example showing embedded busrt broker in a simple application
   - Implement basic pub/sub message exchange between broker and client

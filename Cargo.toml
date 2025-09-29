@@ -55,6 +55,7 @@ bitflags = { version = "2.9.4", features = ["serde"] }
 
 # Cryptographic operations
 blake3 = "1.8.2"
+busrt = { version = "0.4.21", features = ["broker", "rpc", "ipc"] }
 bytes = "1.10.1"
 
 # Date/time and utilities
