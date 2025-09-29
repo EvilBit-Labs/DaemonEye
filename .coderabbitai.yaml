@@ -147,11 +147,11 @@ reviews:
             },
             {
                 "path": "daemoneye-lib/**",
-                "instructions": "Shared library providing common functionality across all components. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments.",
+                "instructions": "Shared library providing common functionality across all components. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments. Stability and performance of the library is critical.",
             },
             {
                 "path": "collector-core/**",
-                "instructions": "Shared framework library providing common functionality for collectors, such as procmond. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments.",
+                "instructions": "Shared framework library providing common functionality for collectors, such as procmond. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments. Stability and performance of the library is critical.",
             },
             {
                 "path": "docs/src/**",
