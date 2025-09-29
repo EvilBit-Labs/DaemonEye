@@ -25,9 +25,9 @@ use procmond::windows_collector::{WindowsCollectorConfig, WindowsProcessCollecto
 const PROPERTY_TEST_TIMEOUT_SECS: u64 = 60;
 
 /// Property-based test for process collection configuration invariants.
-#[tokio::test]
+#[test]
 #[traced_test]
-async fn test_process_collection_config_properties() {
+fn test_process_collection_config_properties() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     proptest!(|(
@@ -95,9 +95,9 @@ async fn test_process_collection_config_properties() {
 }
 
 /// Property-based test for process data validity invariants.
-#[tokio::test]
+#[test]
 #[traced_test]
-async fn test_process_data_validity_properties() {
+fn test_process_data_validity_properties() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     proptest!(|(
@@ -223,9 +223,9 @@ async fn test_process_data_validity_properties() {
 }
 
 /// Property-based test for PID uniqueness invariants.
-#[tokio::test]
+#[test]
 #[traced_test]
-async fn test_pid_uniqueness_properties() {
+fn test_pid_uniqueness_properties() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     proptest!(|(
