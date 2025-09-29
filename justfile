@@ -336,6 +336,30 @@ install:
     @cargo install --path .
 
 # =============================================================================
+# GORELEASER TESTING
+# =============================================================================
+
+# Test GoReleaser configuration
+goreleaser-check:
+    @goreleaser check
+
+# Build binaries locally with GoReleaser (test build process)
+goreleaser-build:
+    @goreleaser build --clean
+
+# Run snapshot release (test full pipeline without publishing)
+goreleaser-snapshot:
+    @goreleaser release --snapshot --clean
+
+# Test GoReleaser with specific target
+goreleaser-build-target target:
+    @goreleaser build --clean --single-target {{ target }}
+
+# Clean GoReleaser artifacts
+goreleaser-clean:
+    @just rmrf dist
+
+# =============================================================================
 # RELEASE MANAGEMENT
 # =============================================================================
 
