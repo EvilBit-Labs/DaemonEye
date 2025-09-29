@@ -53,7 +53,7 @@ The following foundational components have been successfully implemented:
 
 - [ ] 2. Migrate from crossbeam event bus to busrt message broker
 
-- [ ] 2.1 Research and integrate busrt crate dependencies
+- [x] 2.1 Research and integrate busrt crate dependencies
 
 - [x] 2.1.1 Add busrt dependency to collector-core
 
@@ -87,7 +87,7 @@ The following foundational components have been successfully implemented:
   - Validate graceful startup and shutdown sequences
   - _Requirements: 14.2, 14.3_
 
-- [ ] 2.1.5 Write unit tests for busrt basic functionality
+- [x] 2.1.5 Write unit tests for busrt basic functionality
 
   - Create unit tests for busrt broker startup and configuration
   - Add tests for client connection, subscription, and publishing
@@ -95,7 +95,7 @@ The following foundational components have been successfully implemented:
   - Validate transport layer functionality and error conditions
   - _Requirements: 14.1, 14.2, 14.3_
 
-- [ ] 2.2 Design busrt message broker architecture for DaemonEye
+- [x] 2.2 Design busrt message broker architecture for DaemonEye
 
   - Design topic hierarchy for multi-collector communication (events.process._, events.network._, control.\*)
   - Define RPC call patterns for collector lifecycle management and health checks
@@ -945,7 +945,7 @@ This approach ensures:
 
 ### Task 2.2 Granular Breakdown
 
-- [ ] 2.2.1 Design topic hierarchy for multi-collector communication
+- [x] 2.2.1 Design topic hierarchy for multi-collector communication
 
   - Define topic structure: events.process._, events.network._, events.filesystem._, events.performance._
   - Create control topic hierarchy: control.collector._, control.agent._, control.health.\*
@@ -953,7 +953,7 @@ This approach ensures:
   - Document topic access patterns and security boundaries
   - _Requirements: 15.1, 15.3_
 
-- [ ] 2.2.2 Define RPC call patterns for collector lifecycle management
+- [x] 2.2.2 Define RPC call patterns for collector lifecycle management
 
   - Design RPC service definitions for collector start/stop/restart operations
   - Create health check RPC patterns with heartbeat and status reporting
@@ -961,7 +961,7 @@ This approach ensures:
   - Design graceful shutdown coordination RPC patterns
   - _Requirements: 15.2, 15.5_
 
-- [ ] 2.2.3 Create message schemas using existing protobuf definitions
+- [x] 2.2.3 Create message schemas using existing protobuf definitions
 
   - Extend existing protobuf messages for busrt pub/sub event distribution
   - Design RPC request/response message schemas for collector management
@@ -969,7 +969,7 @@ This approach ensures:
   - Define message versioning and backward compatibility strategy
   - _Requirements: 14.4, 15.1_
 
-- [ ] 2.2.4 Design embedded vs standalone broker deployment options
+- [x] 2.2.4 Design embedded vs standalone broker deployment options
 
   - Document embedded broker architecture within daemoneye-agent process
   - Design standalone broker option for future enterprise deployments
@@ -977,7 +977,7 @@ This approach ensures:
   - Define resource allocation and performance characteristics for each mode
   - _Requirements: 14.2, 16.4_
 
-- [ ] 2.2.5 Document migration strategy from crossbeam to busrt
+- [x] 2.2.5 Document migration strategy from crossbeam to busrt
 
   - Map existing crossbeam channel usage to busrt topic patterns
   - Create migration plan preserving existing event bus semantics
