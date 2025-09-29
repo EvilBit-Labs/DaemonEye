@@ -51,7 +51,96 @@ The following foundational components have been successfully implemented:
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
   - **Implementation**: Modified `test_complete_monitor_workflow` in `collector-core/tests/monitor_collector_comprehensive.rs` to use simplified approach that avoids the stack overflow issue while maintaining test coverage.
 
-- [ ] 2. Implement executable integrity verification with SHA-256 hashing
+- [ ] 2. Migrate from crossbeam event bus to busrt message broker
+
+- [ ] 2.1 Research and integrate busrt crate dependencies
+
+- [ ] 2.1.1 Add busrt dependency to collector-core
+
+  - Add busrt crate to collector-core/Cargo.toml with version "0.4" and features ["broker", "rpc", "ipc"]
+  - Verify busrt compiles successfully with existing collector-core dependencies
+  - Check for any dependency conflicts or version incompatibilities
+  - Update workspace Cargo.toml if needed for dependency resolution
+  - _Requirements: 14.1_
+
+- [ ] 2.1.2 Research busrt API patterns and create basic examples
+
+  - Study busrt documentation and examples for embedded broker usage
+  - Create simple proof-of-concept showing busrt broker startup and shutdown
+  - Test basic client connection and disconnection patterns
+  - Document key API patterns and configuration options for DaemonEye integration
+  - _Requirements: 14.2_
+
+- [ ] 2.1.3 Validate busrt transport options for DaemonEye
+
+  - Test in-process channel transport for internal daemoneye-agent communication
+  - Validate UNIX socket transport for inter-process collector communication
+  - Test TCP transport for potential future network capabilities
+  - Document transport selection criteria and performance characteristics
+  - _Requirements: 14.3, 14.5_
+
+- [ ] 2.1.4 Create basic busrt integration proof-of-concept
+
+  - Create minimal example showing embedded busrt broker in a simple application
+  - Implement basic pub/sub message exchange between broker and client
+  - Test RPC call patterns for request/response communication
+  - Validate graceful startup and shutdown sequences
+  - _Requirements: 14.2, 14.3_
+
+- [ ] 2.1.5 Write unit tests for busrt basic functionality
+
+  - Create unit tests for busrt broker startup and configuration
+  - Add tests for client connection, subscription, and publishing
+  - Test RPC call patterns and error handling
+  - Validate transport layer functionality and error conditions
+  - _Requirements: 14.1, 14.2, 14.3_
+
+- [ ] 2.2 Design busrt message broker architecture for DaemonEye
+
+  - Design topic hierarchy for multi-collector communication (events.process._, events.network._, control.\*)
+  - Define RPC call patterns for collector lifecycle management and health checks
+  - Create message schemas for pub/sub events and RPC requests/responses using existing protobuf definitions
+  - Design embedded broker deployment within daemoneye-agent vs standalone server options
+  - Document migration strategy from current crossbeam channels to busrt topics
+  - _Requirements: 14.2, 14.4, 15.1, 15.2_
+
+- [ ] 2.3 Implement busrt broker integration in collector-core
+
+  - Create BusrtEventBus struct implementing existing EventBus trait for backward compatibility
+  - Implement embedded busrt broker startup and configuration within collector-core runtime
+  - Add busrt client creation and topic subscription/publishing capabilities
+  - Integrate busrt broker with existing IPC server infrastructure for seamless migration
+  - Write integration tests comparing busrt vs crossbeam event distribution performance
+  - _Requirements: 14.1, 14.3, 14.5, 15.1_
+
+- [ ] 2.4 Migrate collector-core event distribution to busrt topics
+
+  - Replace crossbeam channel usage with busrt pub/sub topics in LocalEventBus implementation
+  - Update EventSubscription and event routing logic to use busrt topic patterns
+  - Migrate event filtering and correlation to busrt message broker capabilities
+  - Preserve existing event bus statistics and monitoring through busrt broker metrics
+  - Create migration tests ensuring identical behavior between crossbeam and busrt implementations
+  - _Requirements: 14.4, 14.5, 15.1, 15.3_
+
+- [ ] 2.5 Implement RPC patterns for collector lifecycle management
+
+  - Create RPC service definitions for collector start/stop/restart operations
+  - Implement health check RPC calls between daemoneye-agent and collector processes
+  - Add configuration update RPC patterns for dynamic collector reconfiguration
+  - Create graceful shutdown coordination using RPC calls instead of signal handling
+  - Write integration tests for RPC-based collector management workflows
+  - _Requirements: 15.2, 15.5, 16.4_
+
+- [ ] 2.6 Add multi-process collector coordination via busrt
+
+  - Implement topic-based task distribution for multiple collector types (process, network, filesystem)
+  - Create capability-based routing where tasks are published to appropriate collector topics
+  - Add result aggregation from multiple collectors publishing to domain-specific topics
+  - Implement load balancing and failover for multiple instances of the same collector type
+  - Write end-to-end tests with multiple collector processes coordinating through busrt broker
+  - _Requirements: 15.1, 15.3, 15.4, 16.1, 16.3_
+
+- [ ] 3. Implement executable integrity verification with SHA-256 hashing
 
   - Create HashComputer trait for cryptographic hashing of executable files
   - Implement SHA-256 hash computation for accessible executable files in ProcessMessageHandler
@@ -60,19 +149,19 @@ The following foundational components have been successfully implemented:
   - Write criterion benchmarks to establish baseline performance metrics for hashing impact on enumeration speed (collecting data for future optimization)
   - _Requirements: 2.1, 2.2, 2.4_
 
-- [ ] 3. Complete procmond collector-core integration
+- [ ] 4. Complete procmond collector-core integration with busrt
 
-  - **Prerequisites**: Complete Task 1 (Monitor Collector testing) before integrating with collector-core
-  - Refactor procmond main.rs to use collector-core Collector instead of direct IPC server
+  - **Prerequisites**: Complete Task 1 (Monitor Collector testing) and Task 2 (busrt migration) before integrating
+  - Refactor procmond main.rs to use collector-core Collector with busrt message broker instead of direct IPC server
   - Preserve existing CLI parsing, configuration loading, and database initialization
-  - Register ProcessEventSource with collector-core runtime
-  - Integrate Monitor Collector behavior with collector-core framework
-  - Maintain identical behavior and IPC protocol compatibility
-  - Ensure existing telemetry and logging integration continues to work
-  - Write integration tests to verify identical behavior with existing daemoneye-agent
-  - _Requirements: 11.1, 11.2, 12.1, 12.2_
+  - Register ProcessEventSource with collector-core runtime using busrt for event distribution
+  - Integrate Monitor Collector behavior with busrt-based collector-core framework
+  - Update IPC protocol to use busrt topics while maintaining compatibility with daemoneye-agent
+  - Ensure existing telemetry and logging integration works with busrt broker
+  - Write integration tests to verify identical behavior with existing daemoneye-agent through busrt
+  - _Requirements: 11.1, 11.2, 12.1, 12.2, 14.4, 15.1_
 
-- [ ] 4. Implement privilege management and security boundaries
+- [ ] 5. Implement privilege management and security boundaries
 
   - Create PrivilegeManager for platform-specific privilege handling
   - Implement optional enhanced privilege requests (CAP_SYS_PTRACE, SeDebugPrivilege, macOS entitlements)
@@ -81,9 +170,9 @@ The following foundational components have been successfully implemented:
   - Write security tests to verify privilege boundaries and proper dropping
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 5. Implement daemoneye-agent service management and collector supervision
+- [ ] 6. Implement daemoneye-agent service management and collector supervision
 
-- [ ] 5.1 Add cross-platform service infrastructure
+- [ ] 6.1 Add cross-platform service infrastructure
 
   - Add service management dependencies for cross-platform daemon/service functionality
   - Create `ServiceManager` trait for cross-platform service lifecycle management
@@ -93,47 +182,47 @@ The following foundational components have been successfully implemented:
   - Write unit tests for service manager trait implementations and configuration validation
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 5.2 Implement daemoneye-agent as system service with collector supervision
+- [ ] 6.2 Implement daemoneye-agent as system service with collector supervision
 
   - Create Unix daemon functionality for Linux and macOS
   - Add Windows service functionality with Service Control Manager (SCM) integration
-  - Implement collector process lifecycle management and supervision within daemoneye-agent
-  - Add collector process health monitoring with heartbeat checks and restart policies
-  - Create graceful shutdown coordination for all managed collector processes
-  - Write integration tests for service lifecycle and collector supervision
-  - _Requirements: 6.1, 6.2, 6.4, 6.5, 11.1, 11.2_
+  - Implement collector process lifecycle management and supervision within daemoneye-agent using busrt RPC
+  - Add collector process health monitoring with heartbeat checks and restart policies via busrt broker
+  - Create graceful shutdown coordination for all managed collector processes using busrt control topics
+  - Write integration tests for service lifecycle and collector supervision through busrt message broker
+  - _Requirements: 6.1, 6.2, 6.4, 6.5, 11.1, 11.2, 15.2, 15.5_
 
-- [ ] 5.3 Integrate with existing daemoneye-agent architecture
+- [ ] 6.3 Integrate with existing daemoneye-agent architecture
 
-  - Modify daemoneye-agent main.rs to support both interactive and service/daemon modes
+  - Modify daemoneye-agent main.rs to support both interactive and service/daemon modes with embedded busrt broker
   - Add CLI flags for service operations: --install, --uninstall, --start, --stop, --status
   - Integrate collector supervision with existing configuration system and database initialization
-  - Preserve existing IPC client functionality and detection engine integration
+  - Preserve existing IPC client functionality and detection engine integration while adding busrt broker
   - Add service-specific logging configuration with file rotation and retention policies
   - Write integration tests ensuring service mode maintains identical functionality to interactive mode
-  - _Requirements: 6.1, 6.2, 6.4, 6.5, 11.1, 11.2_
+  - _Requirements: 6.1, 6.2, 6.4, 6.5, 11.1, 11.2, 14.2, 14.5_
 
-- [ ] 5.4 Add service monitoring and health reporting capabilities
+- [ ] 6.4 Add service monitoring and health reporting capabilities
 
   - Implement service health endpoints for external monitoring systems
-  - Add service status reporting with component health aggregation
+  - Add service status reporting with component health aggregation via busrt broker metrics
   - Create service metrics export for monitoring collector process status and establishing performance baselines
   - Implement service configuration validation and startup diagnostics
-  - Add service log aggregation from all managed collector processes
+  - Add service log aggregation from all managed collector processes through busrt topics
   - Create service recovery actions for common failure scenarios and collector crashes
   - Write monitoring integration tests with simulated component failures and recovery validation
-  - _Requirements: 10.1, 10.2, 10.3, 10.4_
+  - _Requirements: 10.1, 10.2, 10.3, 10.4, 15.2_
 
-- [ ] 5.5 Create service deployment and configuration management
+- [ ] 6.5 Create service deployment and configuration management
 
   - Create system service installation scripts for Linux (systemd), macOS (launchd), and Windows (Service Control Manager)
-  - Implement service configuration templates with environment-specific customization
+  - Implement service configuration templates with environment-specific customization including busrt broker settings
   - Add service dependency management and startup ordering
   - Create service uninstallation and cleanup procedures
   - Write deployment validation tests for all supported platforms
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 6. **PLACEHOLDER: Complete SQL-to-IPC Detection Engine Implementation**
+- [ ] 7. **PLACEHOLDER: Complete SQL-to-IPC Detection Engine Implementation**
 
   **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
 
@@ -153,9 +242,9 @@ The following foundational components have been successfully implemented:
 
   _Requirements: 3.1, 3.2, 4.1, 4.3, 12.1, 12.2, 12.3, 12.4, 12.5_
 
-- [ ] 7. Implement audit ledger with tamper-evident logging
+- [ ] 8. Implement audit ledger with tamper-evident logging
 
-- [ ] 7.1 Create BLAKE3-based audit ledger infrastructure
+- [ ] 8.1 Create BLAKE3-based audit ledger infrastructure
 
   - Implement append-only audit ledger using redb with BLAKE3 hashing
   - Create Merkle tree structure for tamper-evident logging
@@ -164,7 +253,7 @@ The following foundational components have been successfully implemented:
   - Write unit tests for audit ledger operations and integrity validation
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-- [ ] 7.2 Integrate audit logging with process collection
+- [ ] 8.2 Integrate audit logging with process collection
 
   - Add audit logging to ProcessMessageHandler for all security-relevant events
   - Implement audit entry generation for process enumeration cycles
@@ -173,9 +262,9 @@ The following foundational components have been successfully implemented:
   - Write integration tests for audit logging with process collection
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-- [ ] 8. Complete daemoneye-cli implementation
+- [ ] 9. Complete daemoneye-cli implementation
 
-- [ ] 8.1 Implement query execution and data export
+- [ ] 9.1 Implement query execution and data export
 
   - Create safe SQL query execution against stored process data
   - Implement multiple output formats (JSON, CSV, human-readable tables)
@@ -184,7 +273,7 @@ The following foundational components have been successfully implemented:
   - Write unit tests for query execution and output formatting
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
-- [ ] 8.2 Add system management and diagnostics
+- [ ] 9.2 Add system management and diagnostics
 
   - Implement system health checking and component status reporting
   - Add rule management capabilities (list, validate, import/export)
@@ -193,9 +282,9 @@ The following foundational components have been successfully implemented:
   - Write integration tests for CLI management functionality
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
-- [ ] 9. Implement comprehensive alerting system (Core Strategic Priority)
+- [ ] 10. Implement comprehensive alerting system (Core Strategic Priority)
 
-- [ ] 9.1 Create multi-channel alert delivery with reliability guarantees
+- [ ] 10.1 Create multi-channel alert delivery with reliability guarantees
 
   - Implement alert sinks for stdout, syslog, webhook, email, and file output
   - Add circuit breaker pattern for failed alert deliveries with configurable failure thresholds
@@ -206,20 +295,20 @@ The following foundational components have been successfully implemented:
   - Write comprehensive unit tests for alert delivery, failure handling, and reliability patterns
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 9.2 Add alert correlation and context enrichment
+- [ ] 10.2 Add alert correlation and context enrichment
 
-  - Implement alert correlation across multiple detection rules and collector types
-  - Add context enrichment with process ancestry, system state, and related events
+  - Implement alert correlation across multiple detection rules and collector types using busrt message broker
+  - Add context enrichment with process ancestry, system state, and related events from multiple collector domains
   - Create alert severity escalation based on correlation patterns and threat assessment
   - Implement alert metadata tracking for forensic analysis and incident response
-  - Add support for alert aggregation and summary reporting
-  - Create alert timeline reconstruction for security investigations
+  - Add support for alert aggregation and summary reporting across multiple collector types
+  - Create alert timeline reconstruction for security investigations using busrt event correlation
   - Write integration tests for alert correlation, enrichment, and forensic capabilities
-  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 15.4, 16.3_
 
-- [ ] 10. Implement comprehensive observability and monitoring
+- [ ] 11. Implement comprehensive observability and monitoring
 
-- [ ] 10.1 Create metrics collection and export with performance baselines
+- [ ] 11.1 Create metrics collection and export with performance baselines
 
   - Implement Prometheus-compatible metrics for all components (procmond, daemoneye-agent, daemoneye-cli)
   - Add performance metrics for process enumeration (\<5s for 10,000+ processes), detection (\<100ms per rule), and alerting
@@ -230,16 +319,16 @@ The following foundational components have been successfully implemented:
   - Write comprehensive unit tests for metrics collection, export, and performance validation
   - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
 
-- [ ] 10.2 Add structured logging and correlation with audit integration
+- [ ] 11.2 Add structured logging and correlation with audit integration
 
-  - Implement correlation ID tracking across all system components for distributed tracing
+  - Implement correlation ID tracking across all system components for distributed tracing through busrt message broker
   - Add structured logging with consistent field naming, JSON formatting, and configurable log levels
-  - Create log aggregation and analysis capabilities with audit ledger integration
+  - Create log aggregation and analysis capabilities with audit ledger integration via busrt topics
   - Implement log retention and rotation policies with tamper-evident storage
-  - Add performance metrics embedding in log entries with correlation IDs
-  - Create log-based alerting for system anomalies and security events
-  - Write integration tests for logging, correlation, and audit trail validation
-  - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
+  - Add performance metrics embedding in log entries with correlation IDs and busrt broker metrics
+  - Create log-based alerting for system anomalies and security events using busrt pub/sub patterns
+  - Write integration tests for logging, correlation, and audit trail validation across busrt-connected components
+  - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 15.4_
 
 ## Future Collector Extensions (Strategic Roadmap)
 
@@ -851,3 +940,215 @@ This approach ensures:
 - ✅ No duplication between specs
 - ✅ Clear dependency management
 - ✅ Focused implementation guidance
+
+## Additional Granular Subtasks for Task 2 (busrt Migration)
+
+### Task 2.2 Granular Breakdown
+
+- [ ] 2.2.1 Design topic hierarchy for multi-collector communication
+
+  - Define topic structure: events.process._, events.network._, events.filesystem._, events.performance._
+  - Create control topic hierarchy: control.collector._, control.agent._, control.health.\*
+  - Design topic naming conventions and wildcarding patterns for subscription flexibility
+  - Document topic access patterns and security boundaries
+  - _Requirements: 15.1, 15.3_
+
+- [ ] 2.2.2 Define RPC call patterns for collector lifecycle management
+
+  - Design RPC service definitions for collector start/stop/restart operations
+  - Create health check RPC patterns with heartbeat and status reporting
+  - Define configuration update RPC calls for dynamic reconfiguration
+  - Design graceful shutdown coordination RPC patterns
+  - _Requirements: 15.2, 15.5_
+
+- [ ] 2.2.3 Create message schemas using existing protobuf definitions
+
+  - Extend existing protobuf messages for busrt pub/sub event distribution
+  - Design RPC request/response message schemas for collector management
+  - Create event correlation metadata for multi-collector workflows
+  - Define message versioning and backward compatibility strategy
+  - _Requirements: 14.4, 15.1_
+
+- [ ] 2.2.4 Design embedded vs standalone broker deployment options
+
+  - Document embedded broker architecture within daemoneye-agent process
+  - Design standalone broker option for future enterprise deployments
+  - Create configuration options for broker deployment mode selection
+  - Define resource allocation and performance characteristics for each mode
+  - _Requirements: 14.2, 16.4_
+
+- [ ] 2.2.5 Document migration strategy from crossbeam to busrt
+
+  - Map existing crossbeam channel usage to busrt topic patterns
+  - Create migration plan preserving existing event bus semantics
+  - Document compatibility layer for gradual migration
+  - Define testing strategy to ensure behavioral equivalence
+  - _Requirements: 14.4, 14.5_
+
+### Task 2.3 Granular Breakdown
+
+- [ ] 2.3.1 Create BusrtEventBus struct with EventBus trait compatibility
+
+  - Implement BusrtEventBus struct that wraps busrt broker functionality
+  - Ensure compatibility with existing EventBus trait interface
+  - Add configuration options for broker startup and client management
+  - Create error handling and logging integration
+  - _Requirements: 14.1, 14.3_
+
+- [ ] 2.3.2 Implement embedded busrt broker startup and configuration
+
+  - Add broker initialization logic within collector-core runtime
+  - Create configuration management for broker settings and transport options
+  - Implement graceful broker startup and shutdown sequences
+  - Add broker health monitoring and status reporting
+  - _Requirements: 14.2, 14.3_
+
+- [ ] 2.3.3 Add busrt client creation and topic management
+
+  - Implement client connection management for collector-core components
+  - Create topic subscription and publishing capabilities
+  - Add client reconnection logic with exponential backoff
+  - Implement client health monitoring and error recovery
+  - _Requirements: 14.3, 15.1_
+
+- [ ] 2.3.4 Integrate busrt broker with existing IPC server infrastructure
+
+  - Create compatibility layer between busrt and existing IPC protocols
+  - Maintain existing protobuf message compatibility
+  - Add migration path for gradual transition from direct IPC to busrt
+  - Ensure seamless integration with daemoneye-agent communication
+  - _Requirements: 14.5, 15.1_
+
+- [ ] 2.3.5 Write integration tests comparing busrt vs crossbeam performance
+
+  - Create performance benchmarks for event distribution throughput
+  - Compare latency characteristics between crossbeam and busrt implementations
+  - Test memory usage and resource consumption under load
+  - Validate behavioral equivalence between old and new implementations
+  - _Requirements: 14.1, 14.5_
+
+### Task 2.4 Granular Breakdown
+
+- [ ] 2.4.1 Replace crossbeam channels with busrt pub/sub in LocalEventBus
+
+  - Modify LocalEventBus implementation to use busrt topics instead of crossbeam channels
+  - Preserve existing event distribution semantics and ordering guarantees
+  - Update event publishing logic to use busrt topic patterns
+  - Maintain backward compatibility with existing event consumers
+  - _Requirements: 14.4, 15.1_
+
+- [ ] 2.4.2 Update EventSubscription and event routing for busrt topics
+
+  - Modify EventSubscription structure to support busrt topic patterns
+  - Update event routing logic to use busrt subscription mechanisms
+  - Implement topic-based filtering and wildcarding support
+  - Preserve existing event filtering capabilities
+  - _Requirements: 14.5, 15.3_
+
+- [ ] 2.4.3 Migrate event filtering and correlation to busrt capabilities
+
+  - Implement event filtering using busrt topic subscription patterns
+  - Create correlation tracking through busrt message metadata
+  - Update event correlation logic to work with busrt message broker
+  - Maintain existing correlation ID and tracing functionality
+  - _Requirements: 15.1, 15.4_
+
+- [ ] 2.4.4 Preserve event bus statistics and monitoring through busrt
+
+  - Implement statistics collection using busrt broker metrics
+  - Create monitoring dashboards for busrt broker performance
+  - Maintain existing event bus monitoring interfaces
+  - Add busrt-specific metrics and health indicators
+  - _Requirements: 14.5, 15.1_
+
+- [ ] 2.4.5 Create migration tests ensuring behavioral equivalence
+
+  - Write comprehensive tests comparing crossbeam vs busrt behavior
+  - Test event ordering, delivery guarantees, and error handling
+  - Validate performance characteristics and resource usage
+  - Create regression tests for migration scenarios
+  - _Requirements: 14.4, 14.5_
+
+### Task 2.5 Granular Breakdown
+
+- [ ] 2.5.1 Create RPC service definitions for collector operations
+
+  - Define RPC interfaces for collector start, stop, restart operations
+  - Create service method signatures and parameter structures
+  - Implement request/response message schemas
+  - Add error handling and timeout specifications
+  - _Requirements: 15.2_
+
+- [ ] 2.5.2 Implement health check RPC calls and heartbeat system
+
+  - Create health check RPC service with status reporting
+  - Implement heartbeat mechanism for collector monitoring
+  - Add health status aggregation and reporting
+  - Create health check scheduling and timeout handling
+  - _Requirements: 15.2, 15.5_
+
+- [ ] 2.5.3 Add configuration update RPC patterns
+
+  - Implement dynamic configuration update RPC calls
+  - Create configuration validation and rollback mechanisms
+  - Add configuration change notification system
+  - Implement hot-reload capabilities for collector settings
+  - _Requirements: 15.5, 16.4_
+
+- [ ] 2.5.4 Create graceful shutdown coordination using RPC
+
+  - Implement shutdown coordination RPC calls
+  - Create shutdown sequence orchestration logic
+  - Add timeout handling for graceful vs forced shutdown
+  - Implement cleanup and resource release coordination
+  - _Requirements: 15.5_
+
+- [ ] 2.5.5 Write integration tests for RPC-based collector management
+
+  - Create end-to-end tests for collector lifecycle management
+  - Test RPC call reliability and error handling
+  - Validate shutdown coordination and cleanup procedures
+  - Test configuration update workflows and rollback scenarios
+  - _Requirements: 15.2, 15.5_
+
+### Task 2.6 Granular Breakdown
+
+- [ ] 2.6.1 Implement topic-based task distribution for multiple collectors
+
+  - Create task distribution logic using busrt topic publishing
+  - Implement collector type routing based on capabilities
+  - Add task queuing and priority handling
+  - Create load balancing across multiple collector instances
+  - _Requirements: 15.1, 15.3_
+
+- [ ] 2.6.2 Create capability-based routing for collector tasks
+
+  - Implement capability advertisement and discovery system
+  - Create routing logic based on collector capabilities
+  - Add dynamic routing updates when collectors join/leave
+  - Implement fallback routing for unavailable collectors
+  - _Requirements: 15.3, 16.1_
+
+- [ ] 2.6.3 Add result aggregation from multiple collector domains
+
+  - Implement result collection from domain-specific topics
+  - Create result correlation and aggregation logic
+  - Add result ordering and deduplication
+  - Implement result streaming and backpressure handling
+  - _Requirements: 15.4, 16.3_
+
+- [ ] 2.6.4 Implement load balancing and failover for collector instances
+
+  - Create load balancing algorithms for task distribution
+  - Implement failover detection and recovery mechanisms
+  - Add collector health monitoring and availability tracking
+  - Create automatic task redistribution on collector failure
+  - _Requirements: 15.3, 16.1_
+
+- [ ] 2.6.5 Write end-to-end tests with multiple collector coordination
+
+  - Create integration tests with multiple collector processes
+  - Test task distribution and result aggregation workflows
+  - Validate load balancing and failover scenarios
+  - Test collector coordination through busrt broker
+  - _Requirements: 15.1, 15.3, 15.4, 16.1, 16.3_
