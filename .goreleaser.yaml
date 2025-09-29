@@ -20,6 +20,7 @@ builds:
       binary: procmond
       flags:
           - --release
+          - --package=procmond
       targets:
           - aarch64-apple-darwin
           - aarch64-unknown-linux-gnu
@@ -34,6 +35,7 @@ builds:
       binary: daemoneye-agent
       flags:
           - --release
+          - --package=daemoneye-agent
       targets:
           - aarch64-apple-darwin
           - aarch64-unknown-linux-gnu
@@ -48,6 +50,7 @@ builds:
       binary: daemoneye-cli
       flags:
           - --release
+          - --package=daemoneye-cli
       targets:
           - aarch64-apple-darwin
           - aarch64-unknown-linux-gnu
