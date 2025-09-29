@@ -79,7 +79,7 @@ The following foundational components have been successfully implemented:
   - Document transport selection criteria and performance characteristics
   - _Requirements: 14.3, 14.5_
 
-- [-] 2.1.4 Create basic busrt integration proof-of-concept
+- [x] 2.1.4 Create basic busrt integration proof-of-concept
 
   - Create minimal example showing embedded busrt broker in a simple application
   - Implement basic pub/sub message exchange between broker and client

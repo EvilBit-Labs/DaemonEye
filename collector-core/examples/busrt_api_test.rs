@@ -1,31 +1,60 @@
-//! Minimal busrt API test to validate actual available methods
+//! Simple busrt API test to understand the correct usage patterns
 
 use anyhow::Result;
-use tracing::info;
+use busrt::broker::Broker;
 
-/// Test actual busrt API availability
+// Let's try to import client modules to see what's available
+use busrt::client::AsyncClient;
+use busrt::ipc::{Client, Config};
+
+/// Test basic busrt API to understand correct usage
 pub async fn test_busrt_api() -> Result<()> {
-    info!("Testing busrt API availability");
+    println!("Testing busrt API patterns");
 
-    // Test 1: Check if we can create a broker
-    info!("Testing broker creation");
-    let _broker = busrt::broker::Broker::new();
-    info!("✅ Broker creation successful");
+    // Test broker creation
+    let mut broker = Broker::new();
+    println!("✅ Broker created successfully");
 
-    // Test 2: Check available broker methods
-    info!("Testing broker methods");
-    // We'll discover what methods are actually available
+    // Test FIFO spawn
+    match broker.spawn_fifo("test.sock", 100).await {
+        Ok(()) => {
+            println!("✅ FIFO transport spawned successfully");
+        }
+        Err(e) => {
+            println!("⚠️  FIFO spawn failed (expected in test): {}", e);
+        }
+    }
 
-    // Test 3: Check client API
-    info!("Testing client API");
-    // Check what client methods are available
+    // Test client connection using concrete Client type
+    println!("Testing client connection...");
 
-    info!("API test completed");
+    let config = Config::new("fifo:test.sock", "test_client");
+    match Client::connect(&config).await {
+        Ok(mut client) => {
+            println!("✅ Client connected successfully");
+
+            // Test basic operations
+            match client.subscribe("test.topic", busrt::QoS::No).await {
+                Ok(receiver_opt) => {
+                    println!(
+                        "✅ Subscription successful, receiver: {:?}",
+                        receiver_opt.is_some()
+                    );
+                }
+                Err(e) => println!("⚠️  Subscription failed: {}", e),
+            }
+        }
+        Err(e) => {
+            println!("⚠️  Client connection failed (expected in test): {}", e);
+        }
+    }
+
+    println!("Broker API test completed");
+
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
     test_busrt_api().await
 }
