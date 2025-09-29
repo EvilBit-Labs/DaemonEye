@@ -98,7 +98,9 @@ impl OSEnvironment {
                     .arg("-buildVersion")
                     .output()
                 {
-                    let build = String::from_utf8_lossy(&build_output.stdout).trim();
+                    let build = String::from_utf8_lossy(&build_output.stdout)
+                        .trim()
+                        .to_string();
                     return format!("{} ({})", version, build);
                 }
                 return version;

@@ -67,6 +67,7 @@ pub mod collector;
 pub mod config;
 pub mod event;
 pub mod event_bus;
+pub mod high_performance_event_bus;
 pub mod ipc;
 pub mod monitor_collector;
 pub mod performance;
@@ -88,6 +89,10 @@ pub use event::{
 pub use event_bus::{
     BusEvent, CorrelationFilter, EventBus, EventBusConfig, EventBusStatistics, EventFilter,
     EventSubscription, LocalEventBus,
+};
+pub use high_performance_event_bus::{
+    BackpressureStrategy, HighPerformanceEventBus, HighPerformanceEventBusConfig,
+    HighPerformanceEventBusImpl,
 };
 pub use ipc::CollectorIpcServer;
 pub use monitor_collector::{

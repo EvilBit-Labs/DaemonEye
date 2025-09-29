@@ -344,16 +344,67 @@ goreleaser-check:
     @goreleaser check
 
 # Build binaries locally with GoReleaser (test build process)
+[windows]
 goreleaser-build:
     @goreleaser build --clean
 
+[unix]
+goreleaser-build:
+    #!/bin/bash
+    set -euo pipefail
+    # Compute and export SDK-related env for macOS; no-ops on non-mac Unix
+    if command -v xcrun >/dev/null 2>&1; then
+        SDKROOT_PATH=$(xcrun --sdk macosx --show-sdk-path)
+        export SDKROOT="${SDKROOT_PATH}"
+        export MACOSX_DEPLOYMENT_TARGET="11.0"
+        # Help cargo-zigbuild/zig locate Apple SDK frameworks
+        export CARGO_ZIGBUILD_SYSROOT="${SDKROOT_PATH}"
+        # Ensure the system linker sees the correct syslibroot and frameworks
+        export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-syslibroot,${SDKROOT_PATH} -C link-arg=-F${SDKROOT_PATH}/System/Library/Frameworks"
+    fi
+    goreleaser build --clean
+
 # Run snapshot release (test full pipeline without publishing)
+[windows]
 goreleaser-snapshot:
     @goreleaser release --snapshot --clean
 
+[unix]
+goreleaser-snapshot:
+    #!/bin/bash
+    set -euo pipefail
+    # Compute and export SDK-related env for macOS; no-ops on non-mac Unix
+    if command -v xcrun >/dev/null 2>&1; then
+        SDKROOT_PATH=$(xcrun --sdk macosx --show-sdk-path)
+        export SDKROOT="${SDKROOT_PATH}"
+        export MACOSX_DEPLOYMENT_TARGET="11.0"
+        # Help cargo-zigbuild/zig locate Apple SDK frameworks
+        export CARGO_ZIGBUILD_SYSROOT="${SDKROOT_PATH}"
+        # Ensure the system linker sees the correct syslibroot and frameworks
+        export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-syslibroot,${SDKROOT_PATH} -C link-arg=-F${SDKROOT_PATH}/System/Library/Frameworks"
+    fi
+    goreleaser release --snapshot --clean
+
 # Test GoReleaser with specific target
+[windows]
 goreleaser-build-target target:
     @goreleaser build --clean --single-target {{ target }}
+
+[unix]
+goreleaser-build-target target:
+    #!/bin/bash
+    set -euo pipefail
+    # Compute and export SDK-related env for macOS; no-ops on non-mac Unix
+    if command -v xcrun >/dev/null 2>&1; then
+        SDKROOT_PATH=$(xcrun --sdk macosx --show-sdk-path)
+        export SDKROOT="${SDKROOT_PATH}"
+        export MACOSX_DEPLOYMENT_TARGET="11.0"
+        # Help cargo-zigbuild/zig locate Apple SDK frameworks
+        export CARGO_ZIGBUILD_SYSROOT="${SDKROOT_PATH}"
+        # Ensure the system linker sees the correct syslibroot and frameworks
+        export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-syslibroot,${SDKROOT_PATH} -C link-arg=-F${SDKROOT_PATH}/System/Library/Frameworks"
+    fi
+    goreleaser build --clean --single-target {{ target }}
 
 # Clean GoReleaser artifacts
 goreleaser-clean:

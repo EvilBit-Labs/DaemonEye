@@ -253,6 +253,7 @@ sequenceDiagram
 - **Logging**: tracing ecosystem with structured JSON output
 - **Configuration**: YAML/TOML via figment and config crates with hierarchical overrides
 - **IPC**: `interprocess` crate for cross-platform transport + protobuf for message serialization
+- **Event Bus**: `crossbeam` crate for high-performance concurrent event distribution in collector-core
 - **Testing**: cargo-nextest, insta, predicates, criterion
 
 ### IPC Communication with interprocess and protobuf

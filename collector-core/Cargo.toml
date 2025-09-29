@@ -45,7 +45,11 @@ tempfile = { workspace = true }
 uuid = { workspace = true }
 
 # SQL parsing for trigger conditions
-sqlparser = "0.52.0"
+sqlparser = "0.59.0"
+
+# High-performance concurrent data structures
+crossbeam = { workspace = true }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4.4"

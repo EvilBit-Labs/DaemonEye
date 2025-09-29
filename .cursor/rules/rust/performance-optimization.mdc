@@ -5,6 +5,15 @@ alwaysApply: false
 
 # Performance Optimization Standards for DaemonEye
 
+## High-Performance Concurrency Foundation
+
+DaemonEye uses idiomatic best practices for high-performance concurrent systems:
+
+- **Event Bus**: `crossbeam` crate for lock-free channels and efficient backoff strategies in collector-core
+- **Async Runtime**: `tokio` primitives (`Semaphore`, `mpsc`, `oneshot`, `watch`, `Notify`) for bounded concurrency
+- **Locking**: `parking_lot::RwLock` for better performance than standard `RwLock` in high-contention scenarios
+- **Threading**: `std::thread::spawn` with `crossbeam::utils::Backoff` for efficient spinning in event routing
+
 ## Performance Targets
 
 DaemonEye must meet strict performance requirements:
@@ -66,18 +75,23 @@ criterion_main!(benches);
 
 ## Memory Management
 
-Implement bounded memory usage patterns:
+Implement bounded memory usage patterns with idiomatic concurrency:
 
 ```rust
 use tokio::sync::Semaphore;
+use parking_lot::RwLock;
+use std::sync::Arc;
 
-// Bounded concurrency pattern
+// Bounded concurrency pattern with tokio Semaphore
 let semaphore = Arc::new(Semaphore::new(64));
 let permit = semaphore.acquire().await?;
 
+// Use parking_lot::RwLock for better performance in high-contention scenarios
+let shared_state = Arc::new(RwLock::new(Vec::new()));
+
 // Critical: no .await calls while holding locks
 {
-    let _guard = shared_state.lock().await;
+    let _guard = shared_state.write();
     // Synchronous work only inside lock scope
     process_data_synchronously(&data);
     // Lock dropped here
@@ -123,38 +137,111 @@ write_txn.commit()?;
 
 ## Async Performance
 
-Use Tokio runtime efficiently:
+Use Tokio runtime efficiently with crossbeam for high-performance event distribution:
 
 ```rust
 // Prefer tokio::sync primitives for async code
 use tokio::sync::{Semaphore, mpsc, oneshot, watch, Notify};
+use crossbeam::channel::{bounded, unbounded};
+use parking_lot::RwLock;
 
-// Bounded channels for backpressure
-let (tx, rx) = mpsc::channel::<Event>(1000);
+// Bounded channels for backpressure (tokio for async, crossbeam for sync)
+let (tx, rx) = mpsc::channel::<Event>(1000);  // Async context
+let (sync_tx, sync_rx) = bounded::<Event>(1000);  // Sync context
 
 // Use Semaphore for bounded concurrency
 let semaphore = Arc::new(Semaphore::new(10));
+
+// High-performance event bus with crossbeam channels
+let (event_tx, event_rx) = unbounded::<BusEvent>();
+let subscribers = Arc::new(RwLock::new(HashMap::new()));
+
+// Efficient backoff for event routing
+use crossbeam::utils::Backoff;
+let backoff = Backoff::new();
 ```
 
 ## Resource Management
 
-Implement proper resource cleanup:
+Implement proper resource cleanup with high-performance locking:
 
 ```rust
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use parking_lot::RwLock;
+use tokio::sync::Semaphore;
 
 struct ResourceManager {
-    resources: Arc<Mutex<Vec<Resource>>>,
+    resources: Arc<RwLock<Vec<Resource>>>,
+    semaphore: Arc<Semaphore>,
+}
+
+impl ResourceManager {
+    async fn cleanup_resources(&self) {
+        let _permit = self.semaphore.acquire().await;
+        {
+            let mut resources = self.resources.write();
+            for resource in resources.drain(..) {
+                resource.cleanup();
+            }
+        }
+        // Permit dropped here, allowing other operations
+    }
 }
 
 impl Drop for ResourceManager {
     fn drop(&mut self) {
         // Ensure resources are properly cleaned up
-        if let Ok(mut resources) = self.resources.try_lock() {
+        if let Ok(mut resources) = self.resources.try_write() {
             for resource in resources.drain(..) {
                 resource.cleanup();
             }
+        }
+    }
+}
+```
+
+## Event Bus Performance Patterns
+
+Implement high-performance event distribution with crossbeam:
+
+```rust
+use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
+use crossbeam::utils::Backoff;
+use parking_lot::RwLock;
+use std::thread;
+use std::sync::Arc;
+use std::collections::HashMap;
+
+// High-performance event bus implementation
+pub struct HighPerformanceEventBus {
+    publisher: Sender<BusEvent>,
+    subscribers: Arc<RwLock<HashMap<String, SubscriberInfo>>>,
+    routing_handle: Option<thread::JoinHandle<()>>,
+}
+
+impl HighPerformanceEventBus {
+    pub fn new() -> Self {
+        let (publisher, receiver) = unbounded::<BusEvent>();
+        let subscribers = Arc::new(RwLock::new(HashMap::new()));
+
+        // Spawn routing thread with crossbeam backoff
+        let routing_handle = thread::spawn(move || {
+            let backoff = Backoff::new();
+            while let Ok(event) = receiver.recv() {
+                // Route to subscribers with efficient backoff
+                let subs = subscribers.read();
+                for (_, subscriber) in subs.iter() {
+                    if let Err(_) = subscriber.sender.try_send(event.clone()) {
+                        backoff.snooze(); // Efficient spinning
+                    }
+                }
+            }
+        });
+
+        Self {
+            publisher,
+            subscribers,
+            routing_handle: Some(routing_handle),
         }
     }
 }
@@ -168,13 +255,13 @@ Include performance regression tests:
 #[tokio::test]
 async fn test_performance_requirements() {
     let start = Instant::now();
-    
+
     // Test process collection performance
     let collector = ProcessCollector::new();
     let processes = collector.collect_processes().await.unwrap();
-    
+
     let duration = start.elapsed();
-    
+
     // Must complete within 5 seconds for 10k+ processes
     assert!(duration < Duration::from_secs(5));
     assert!(processes.len() > 1000);

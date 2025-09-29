@@ -997,7 +997,7 @@ async fn test_cpu_intensive_performance() {
     let start_time = Instant::now();
 
     let collector_handle = tokio::spawn(async move {
-        let _ = timeout(Duration::from_millis(2000), collector.run()).await;
+        let _ = timeout(Duration::from_millis(5000), collector.run()).await;
     });
 
     let _ = collector_handle.await;

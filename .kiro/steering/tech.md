@@ -26,6 +26,12 @@
 - **Features**: Async message handling, automatic reconnection with exponential backoff
 - **Security**: Connection authentication and optional encryption
 
+### Event Bus (collector-core)
+
+- **Foundation**: `crossbeam` crate for high-performance concurrent event distribution
+- **Features**: Lock-free channels, efficient backoff strategies, bounded concurrency
+- **Performance**: Optimized for high-throughput event processing with minimal contention
+
 ### Configuration Management
 
 - **Hierarchical loading**: Embedded defaults → System files → User files → Environment → CLI flags
