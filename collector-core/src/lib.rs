@@ -63,13 +63,17 @@
 //! ```
 
 pub mod analysis_chain;
+pub mod busrt_client;
+pub mod busrt_event_bus;
 pub mod busrt_types;
 pub mod collector;
 pub mod config;
+pub mod embedded_broker;
 pub mod event;
 pub mod event_bus;
 pub mod high_performance_event_bus;
 pub mod ipc;
+pub mod ipc_busrt_bridge;
 pub mod monitor_collector;
 pub mod performance;
 pub mod source;
@@ -81,6 +85,8 @@ pub use analysis_chain::{
     AnalysisWorkflowDefinition, StageStatus, WorkflowError, WorkflowErrorType, WorkflowExecution,
     WorkflowProgress, WorkflowStatistics, WorkflowStatus,
 };
+pub use busrt_client::{CollectorBusrtClient, ReconnectionConfig};
+pub use busrt_event_bus::{BusrtEventBus, BusrtEventBusConfig, BusrtQoS};
 pub use busrt_types::{
     BrokerConfig, BrokerMode, BrokerStats, BusrtClient, BusrtError, BusrtEvent,
     CollectorLifecycleService, ConfigurationService, CrossbeamCompatibilityLayer,
@@ -89,6 +95,7 @@ pub use busrt_types::{
 };
 pub use collector::{Collector, CollectorRuntime, RuntimeStats};
 pub use config::CollectorConfig;
+pub use embedded_broker::{BrokerMessage, BrokerMessageType, EmbeddedBroker};
 pub use event::{
     AnalysisType, CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent,
     TriggerPriority, TriggerRequest,
@@ -102,6 +109,7 @@ pub use high_performance_event_bus::{
     HighPerformanceEventBusImpl,
 };
 pub use ipc::CollectorIpcServer;
+pub use ipc_busrt_bridge::{IpcBridgeConfig, IpcBusrtBridge};
 pub use monitor_collector::{
     MonitorCollector, MonitorCollectorConfig, MonitorCollectorStats, MonitorCollectorStatsSnapshot,
 };

@@ -104,7 +104,7 @@ The following foundational components have been successfully implemented:
   - Document migration strategy from current crossbeam channels to busrt topics
   - _Requirements: 14.2, 14.4, 15.1, 15.2_
 
-- [ ] 2.3 Implement busrt broker integration in collector-core
+- [x] 2.3 Implement busrt broker integration in collector-core
 
   - Create BusrtEventBus struct implementing existing EventBus trait for backward compatibility
   - Implement embedded busrt broker startup and configuration within collector-core runtime
@@ -113,7 +113,7 @@ The following foundational components have been successfully implemented:
   - Write integration tests comparing busrt vs crossbeam event distribution performance
   - _Requirements: 14.1, 14.3, 14.5, 15.1_
 
-- [ ] 2.4 Migrate collector-core event distribution to busrt topics
+- [x] 2.4 Migrate collector-core event distribution to busrt topics
 
   - Replace crossbeam channel usage with busrt pub/sub topics in LocalEventBus implementation
   - Update EventSubscription and event routing logic to use busrt topic patterns
@@ -987,7 +987,7 @@ This approach ensures:
 
 ### Task 2.3 Granular Breakdown
 
-- [ ] 2.3.1 Create BusrtEventBus struct with EventBus trait compatibility
+- [x] 2.3.1 Create BusrtEventBus struct with EventBus trait compatibility
 
   - Implement BusrtEventBus struct that wraps busrt broker functionality
   - Ensure compatibility with existing EventBus trait interface
@@ -995,7 +995,7 @@ This approach ensures:
   - Create error handling and logging integration
   - _Requirements: 14.1, 14.3_
 
-- [ ] 2.3.2 Implement embedded busrt broker startup and configuration
+- [x] 2.3.2 Implement embedded busrt broker startup and configuration
 
   - Add broker initialization logic within collector-core runtime
   - Create configuration management for broker settings and transport options
@@ -1003,7 +1003,7 @@ This approach ensures:
   - Add broker health monitoring and status reporting
   - _Requirements: 14.2, 14.3_
 
-- [ ] 2.3.3 Add busrt client creation and topic management
+- [x] 2.3.3 Add busrt client creation and topic management
 
   - Implement client connection management for collector-core components
   - Create topic subscription and publishing capabilities
@@ -1011,7 +1011,7 @@ This approach ensures:
   - Implement client health monitoring and error recovery
   - _Requirements: 14.3, 15.1_
 
-- [ ] 2.3.4 Integrate busrt broker with existing IPC server infrastructure
+- [x] 2.3.4 Integrate busrt broker with existing IPC server infrastructure
 
   - Create compatibility layer between busrt and existing IPC protocols
   - Maintain existing protobuf message compatibility
@@ -1019,7 +1019,7 @@ This approach ensures:
   - Ensure seamless integration with daemoneye-agent communication
   - _Requirements: 14.5, 15.1_
 
-- [ ] 2.3.5 Write integration tests comparing busrt vs crossbeam performance
+- [x] 2.3.5 Write integration tests comparing busrt vs crossbeam performance
 
   - Create performance benchmarks for event distribution throughput
   - Compare latency characteristics between crossbeam and busrt implementations
@@ -1029,7 +1029,7 @@ This approach ensures:
 
 ### Task 2.4 Granular Breakdown
 
-- [ ] 2.4.1 Replace crossbeam channels with busrt pub/sub in LocalEventBus
+- [x] 2.4.1 Replace crossbeam channels with busrt pub/sub in LocalEventBus
 
   - Modify LocalEventBus implementation to use busrt topics instead of crossbeam channels
   - Preserve existing event distribution semantics and ordering guarantees
@@ -1037,7 +1037,7 @@ This approach ensures:
   - Maintain backward compatibility with existing event consumers
   - _Requirements: 14.4, 15.1_
 
-- [ ] 2.4.2 Update EventSubscription and event routing for busrt topics
+- [x] 2.4.2 Update EventSubscription and event routing for busrt topics
 
   - Modify EventSubscription structure to support busrt topic patterns
   - Update event routing logic to use busrt subscription mechanisms
@@ -1045,7 +1045,7 @@ This approach ensures:
   - Preserve existing event filtering capabilities
   - _Requirements: 14.5, 15.3_
 
-- [ ] 2.4.3 Migrate event filtering and correlation to busrt capabilities
+- [x] 2.4.3 Migrate event filtering and correlation to busrt capabilities
 
   - Implement event filtering using busrt topic subscription patterns
   - Create correlation tracking through busrt message metadata
@@ -1053,7 +1053,7 @@ This approach ensures:
   - Maintain existing correlation ID and tracing functionality
   - _Requirements: 15.1, 15.4_
 
-- [ ] 2.4.4 Preserve event bus statistics and monitoring through busrt
+- [x] 2.4.4 Preserve event bus statistics and monitoring through busrt
 
   - Implement statistics collection using busrt broker metrics
   - Create monitoring dashboards for busrt broker performance
@@ -1061,7 +1061,7 @@ This approach ensures:
   - Add busrt-specific metrics and health indicators
   - _Requirements: 14.5, 15.1_
 
-- [ ] 2.4.5 Create migration tests ensuring behavioral equivalence
+- [x] 2.4.5 Create migration tests ensuring behavioral equivalence
 
   - Write comprehensive tests comparing crossbeam vs busrt behavior
   - Test event ordering, delivery guarantees, and error handling

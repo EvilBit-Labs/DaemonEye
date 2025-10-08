@@ -13,7 +13,7 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 
 /// Test message for busrt communication validation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
 struct BusrtTestMessage {
     message_id: u64,
     sender: String,
@@ -23,7 +23,7 @@ struct BusrtTestMessage {
 }
 
 /// Message priority levels for QoS testing
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
 enum MessagePriority {
     Low,
     Normal,
@@ -144,9 +144,11 @@ async fn test_busrt_message_serialization() {
     assert_eq!(deserialized.priority, MessagePriority::High);
 
     // Test binary serialization with bincode
-    let binary_data = bincode::serialize(&test_message).expect("Failed to serialize with bincode");
-    let binary_deserialized: BusrtTestMessage =
-        bincode::deserialize(&binary_data).expect("Failed to deserialize with bincode");
+    let binary_data = bincode::encode_to_vec(&test_message, bincode::config::standard())
+        .expect("Failed to serialize with bincode");
+    let (binary_deserialized, _): (BusrtTestMessage, usize) =
+        bincode::decode_from_slice(&binary_data, bincode::config::standard())
+            .expect("Failed to deserialize with bincode");
 
     assert_eq!(test_message, binary_deserialized);
 

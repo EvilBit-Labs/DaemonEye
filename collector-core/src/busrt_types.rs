@@ -530,7 +530,7 @@ pub enum TransportType {
 }
 
 /// Security configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SecurityConfig {
     pub authentication_enabled: bool,
     pub tls_enabled: bool,

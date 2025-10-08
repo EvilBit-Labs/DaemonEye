@@ -716,8 +716,12 @@ impl AnalysisChainCoordinator {
                 pids: vec![],
                 min_priority: None,
                 metadata_filters: HashMap::new(),
+                topic_filters: Vec::new(),
+                source_collectors: Vec::new(),
             }),
             correlation_filter: None,
+            topic_patterns: None,
+            enable_wildcards: false,
         };
 
         let receiver = bus.subscribe(subscription).await?;
