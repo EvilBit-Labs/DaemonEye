@@ -282,18 +282,30 @@ impl CollectorBusrtClient {
     ///
     /// This method establishes the connection and starts background tasks
     /// for message handling, heartbeat, and reconnection management.
+    ///
+    /// Blocks until the initial connection is established or fails.
     #[instrument(skip(self))]
     pub async fn connect(&mut self) -> Result<(), BusrtError> {
         info!("Connecting to busrt broker");
 
-        // Start connection management task
-        self.start_connection_management().await?;
+        // Create oneshot channel to signal connection readiness
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+
+        // Start connection management task with readiness notification
+        self.start_connection_management(ready_tx).await?;
 
         // Start heartbeat task
         self.start_heartbeat_task().await?;
 
         // Start message handling task
         self.start_message_handling().await?;
+
+        // Wait for initial connection or error
+        ready_rx.await.map_err(|_| {
+            BusrtError::ConnectionFailed(
+                "Connection task terminated before establishing connection".to_string(),
+            )
+        })??;
 
         info!("Busrt client connected successfully");
         Ok(())
@@ -329,6 +341,9 @@ impl CollectorBusrtClient {
             }
         }
 
+        // Reset shutdown signal to allow reconnection
+        self.shutdown_signal.store(false, Ordering::Relaxed);
+
         // Update connection state
         self.connection_state
             .connected
@@ -343,9 +358,13 @@ impl CollectorBusrtClient {
     }
 
     /// Starts the connection management background task.
-    async fn start_connection_management(&mut self) -> Result<(), BusrtError> {
+    async fn start_connection_management(
+        &mut self,
+        ready_tx: tokio::sync::oneshot::Sender<Result<(), BusrtError>>,
+    ) -> Result<(), BusrtError> {
         let transport_config = self.transport_config.clone();
         let connection_state = Arc::clone(&self.connection_state);
+        let subscription_manager = Arc::clone(&self.subscription_manager);
         let statistics = Arc::clone(&self.statistics);
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
         let reconnection_config = self.reconnection_config.clone();
@@ -354,6 +373,7 @@ impl CollectorBusrtClient {
         let handle = tokio::spawn(async move {
             let mut reconnection_delay = reconnection_config.initial_delay;
             let mut attempt_count = 0;
+            let mut ready_tx = Some(ready_tx);
 
             while !shutdown_signal.load(Ordering::Relaxed) {
                 // Attempt connection
@@ -374,6 +394,11 @@ impl CollectorBusrtClient {
                             *sender = Some(outbound_tx);
                         }
 
+                        // Notify initial connection success
+                        if let Some(tx) = ready_tx.take() {
+                            let _ = tx.send(Ok(()));
+                        }
+
                         // Reset reconnection parameters
                         reconnection_delay = reconnection_config.initial_delay;
                         attempt_count = 0;
@@ -382,6 +407,7 @@ impl CollectorBusrtClient {
                         if let Err(e) = Self::handle_connection(
                             inbound_rx,
                             &connection_state,
+                            &subscription_manager,
                             &statistics,
                             &shutdown_signal,
                         )
@@ -406,6 +432,12 @@ impl CollectorBusrtClient {
                         {
                             let mut last_error = statistics.last_error.write().await;
                             *last_error = Some(SystemTime::now());
+                        }
+
+                        // Notify initial connection failure
+                        if let Some(tx) = ready_tx.take() {
+                            let _ = tx.send(Err(e));
+                            break;
                         }
                     }
                 }
@@ -517,6 +549,7 @@ impl CollectorBusrtClient {
     async fn handle_connection(
         mut inbound_rx: mpsc::Receiver<BusrtEvent>,
         connection_state: &Arc<ConnectionState>,
+        subscription_manager: &Arc<SubscriptionManager>,
         statistics: &Arc<ClientStatistics>,
         shutdown_signal: &Arc<AtomicBool>,
     ) -> Result<(), BusrtError> {
@@ -539,6 +572,12 @@ impl CollectorBusrtClient {
                                 topic = %event.topic,
                                 "Received message from broker"
                             );
+
+                            // Forward event to matching subscriptions
+                            Self::forward_to_subscriptions(
+                                event,
+                                subscription_manager,
+                            ).await;
                         }
                         None => {
                             debug!("Inbound message channel closed");
@@ -553,6 +592,99 @@ impl CollectorBusrtClient {
         }
 
         Ok(())
+    }
+
+    /// Forwards an event to all matching subscriptions.
+    ///
+    /// This method checks each subscription pattern against the event topic,
+    /// forwards the event to matching subscriptions, and removes dead subscriptions.
+    async fn forward_to_subscriptions(
+        event: BusrtEvent,
+        subscription_manager: &Arc<SubscriptionManager>,
+    ) {
+        let topic = &event.topic;
+        let mut dead_subscriptions = Vec::new();
+
+        // Read subscriptions and attempt to send
+        {
+            let subscriptions = subscription_manager.subscriptions.read().await;
+
+            for (pattern, sender) in subscriptions.iter() {
+                // Check if pattern matches topic (simple prefix match for now)
+                if Self::pattern_matches(pattern, topic) {
+                    // Try to send event (clone for each subscription)
+                    match sender.try_send(event.clone()) {
+                        Ok(_) => {
+                            debug!(pattern = %pattern, topic = %topic, "Event forwarded to subscription");
+
+                            // Update subscription metadata
+                            let metadata = subscription_manager.subscription_metadata.read().await;
+                            if let Some(meta) = metadata.get(pattern) {
+                                meta.messages_received.fetch_add(1, Ordering::Relaxed);
+                                let mut last_message = meta.last_message.write().await;
+                                *last_message = Some(SystemTime::now());
+                            }
+                        }
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            warn!(pattern = %pattern, "Subscription channel full, event dropped");
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            warn!(pattern = %pattern, "Subscription channel closed, marking for removal");
+                            dead_subscriptions.push(pattern.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Clean up dead subscriptions
+        if !dead_subscriptions.is_empty() {
+            let mut subscriptions = subscription_manager.subscriptions.write().await;
+            let mut metadata = subscription_manager.subscription_metadata.write().await;
+
+            for pattern in dead_subscriptions {
+                subscriptions.remove(&pattern);
+                metadata.remove(&pattern);
+                info!(pattern = %pattern, "Removed dead subscription");
+            }
+        }
+    }
+
+    /// Checks if a pattern matches a topic.
+    ///
+    /// Supports wildcard patterns:
+    /// - `*` matches a single path segment
+    /// - `**` matches any number of path segments
+    fn pattern_matches(pattern: &str, topic: &str) -> bool {
+        // Simple wildcard matching implementation
+        if pattern == topic {
+            return true;
+        }
+
+        // Handle ** wildcard (match anything)
+        if pattern.contains("**") {
+            let prefix = pattern.split("**").next().unwrap_or("");
+            return topic.starts_with(prefix);
+        }
+
+        // Handle * wildcard (match single segment)
+        if pattern.contains('*') {
+            let pattern_parts: Vec<&str> = pattern.split('/').collect();
+            let topic_parts: Vec<&str> = topic.split('/').collect();
+
+            if pattern_parts.len() != topic_parts.len() {
+                return false;
+            }
+
+            for (p, t) in pattern_parts.iter().zip(topic_parts.iter()) {
+                if *p != "*" && p != t {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        false
     }
 
     /// Starts the heartbeat background task.
