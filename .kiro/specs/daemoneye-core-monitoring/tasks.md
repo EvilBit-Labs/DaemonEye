@@ -122,7 +122,7 @@ The following foundational components have been successfully implemented:
   - Create migration tests ensuring identical behavior between crossbeam and busrt implementations
   - _Requirements: 14.4, 14.5, 15.1, 15.3_
 
-- [ ] 2.5 Implement RPC patterns for collector lifecycle management
+- [x] 2.5 Implement RPC patterns for collector lifecycle management
 
   - Create RPC service definitions for collector start/stop/restart operations
   - Implement health check RPC calls between daemoneye-agent and collector processes
@@ -1071,7 +1071,7 @@ This approach ensures:
 
 ### Task 2.5 Granular Breakdown
 
-- [ ] 2.5.1 Create RPC service definitions for collector operations
+- [x] 2.5.1 Create RPC service definitions for collector operations
 
   - Define RPC interfaces for collector start, stop, restart operations
   - Create service method signatures and parameter structures
@@ -1079,7 +1079,7 @@ This approach ensures:
   - Add error handling and timeout specifications
   - _Requirements: 15.2_
 
-- [ ] 2.5.2 Implement health check RPC calls and heartbeat system
+- [x] 2.5.2 Implement health check RPC calls and heartbeat system
 
   - Create health check RPC service with status reporting
   - Implement heartbeat mechanism for collector monitoring
@@ -1087,7 +1087,7 @@ This approach ensures:
   - Create health check scheduling and timeout handling
   - _Requirements: 15.2, 15.5_
 
-- [ ] 2.5.3 Add configuration update RPC patterns
+- [x] 2.5.3 Add configuration update RPC patterns
 
   - Implement dynamic configuration update RPC calls
   - Create configuration validation and rollback mechanisms
@@ -1095,7 +1095,7 @@ This approach ensures:
   - Implement hot-reload capabilities for collector settings
   - _Requirements: 15.5, 16.4_
 
-- [ ] 2.5.4 Create graceful shutdown coordination using RPC
+- [x] 2.5.4 Create graceful shutdown coordination using RPC
 
   - Implement shutdown coordination RPC calls
   - Create shutdown sequence orchestration logic
@@ -1103,7 +1103,7 @@ This approach ensures:
   - Implement cleanup and resource release coordination
   - _Requirements: 15.5_
 
-- [ ] 2.5.5 Write integration tests for RPC-based collector management
+- [x] 2.5.5 Write integration tests for RPC-based collector management
 
   - Create end-to-end tests for collector lifecycle management
   - Test RPC call reliability and error handling

@@ -161,22 +161,53 @@ pub struct EventCorrelation {
 /// RPC service trait for collector lifecycle management
 #[async_trait]
 pub trait CollectorLifecycleService: Send + Sync {
+    /// Start a collector with specified configuration
     async fn start_collector(
         &self,
         request: StartCollectorRequest,
     ) -> Result<StartCollectorResponse, BusrtError>;
+
+    /// Stop a running collector gracefully or forcefully
     async fn stop_collector(
         &self,
         request: StopCollectorRequest,
     ) -> Result<StopCollectorResponse, BusrtError>;
+
+    /// Restart a collector with optional new configuration
     async fn restart_collector(
         &self,
         request: RestartCollectorRequest,
     ) -> Result<RestartCollectorResponse, BusrtError>;
+
+    /// Get current status of a collector
     async fn get_collector_status(
         &self,
         request: StatusRequest,
     ) -> Result<StatusResponse, BusrtError>;
+
+    /// List all managed collectors
+    async fn list_collectors(
+        &self,
+        request: ListCollectorsRequest,
+    ) -> Result<ListCollectorsResponse, BusrtError>;
+
+    /// Get collector capabilities and metadata
+    async fn get_collector_capabilities(
+        &self,
+        request: CapabilitiesRequest,
+    ) -> Result<CapabilitiesResponse, BusrtError>;
+
+    /// Pause a collector temporarily
+    async fn pause_collector(
+        &self,
+        request: PauseCollectorRequest,
+    ) -> Result<PauseCollectorResponse, BusrtError>;
+
+    /// Resume a paused collector
+    async fn resume_collector(
+        &self,
+        request: ResumeCollectorRequest,
+    ) -> Result<ResumeCollectorResponse, BusrtError>;
 }
 
 /// RPC service trait for health monitoring
@@ -267,6 +298,99 @@ pub struct StatusResponse {
     pub status: CollectorStatus,
     pub uptime_seconds: u64,
     pub last_activity: i64,
+    pub error_message: Option<String>,
+    pub resource_usage: ResourceUsage,
+}
+
+/// List collectors RPC request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListCollectorsRequest {
+    pub filter_status: Option<CollectorStatus>,
+    pub filter_type: Option<String>,
+}
+
+/// List collectors RPC response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListCollectorsResponse {
+    pub collectors: Vec<CollectorInfo>,
+    pub total_count: usize,
+}
+
+/// Collector information summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectorInfo {
+    pub collector_id: String,
+    pub collector_type: String,
+    pub status: CollectorStatus,
+    pub uptime_seconds: u64,
+    pub last_activity: i64,
+    pub capabilities: Vec<String>,
+    pub resource_usage: ResourceUsage,
+}
+
+/// Capabilities request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitiesRequest {
+    pub collector_id: String,
+}
+
+/// Capabilities response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitiesResponse {
+    pub collector_id: String,
+    pub capabilities: Vec<String>,
+    pub supported_operations: Vec<String>,
+    pub resource_limits: ResourceLimits,
+    pub metadata: HashMap<String, String>,
+}
+
+/// Pause collector RPC request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PauseCollectorRequest {
+    pub collector_id: String,
+    pub reason: String,
+}
+
+/// Pause collector RPC response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PauseCollectorResponse {
+    pub success: bool,
+    pub error_message: Option<String>,
+    pub paused_at: i64,
+}
+
+/// Resume collector RPC request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeCollectorRequest {
+    pub collector_id: String,
+}
+
+/// Resume collector RPC response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeCollectorResponse {
+    pub success: bool,
+    pub error_message: Option<String>,
+    pub resumed_at: i64,
+}
+
+/// Resource usage information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceUsage {
+    pub cpu_percent: f64,
+    pub memory_bytes: u64,
+    pub disk_io_bytes: u64,
+    pub network_io_bytes: u64,
+    pub open_files: u32,
+}
+
+/// Resource limits configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceLimits {
+    pub max_cpu_percent: Option<f64>,
+    pub max_memory_bytes: Option<u64>,
+    pub max_disk_io_bytes_per_sec: Option<u64>,
+    pub max_network_io_bytes_per_sec: Option<u64>,
+    pub max_open_files: Option<u32>,
 }
 
 /// Health check RPC request
@@ -365,17 +489,28 @@ pub struct CollectorConfig {
 }
 
 /// Collector status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CollectorStatus {
+    /// Collector is initializing
     Starting,
+    /// Collector is running normally
     Running,
+    /// Collector is paused temporarily
+    Paused,
+    /// Collector is shutting down gracefully
     Stopping,
+    /// Collector has stopped
     Stopped,
+    /// Collector is in error state
     Error,
+    /// Collector is restarting
+    Restarting,
+    /// Collector status is unknown
+    Unknown,
 }
 
 /// Health status enumeration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HealthStatus {
     Healthy,
     Degraded,

@@ -68,14 +68,18 @@ pub mod busrt_event_bus;
 pub mod busrt_types;
 pub mod collector;
 pub mod config;
+pub mod config_manager;
 pub mod embedded_broker;
 pub mod event;
 pub mod event_bus;
+pub mod health_monitor;
 pub mod high_performance_event_bus;
 pub mod ipc;
 pub mod ipc_busrt_bridge;
 pub mod monitor_collector;
 pub mod performance;
+pub mod rpc_services;
+pub mod shutdown_coordinator;
 pub mod source;
 pub mod trigger;
 
@@ -95,6 +99,7 @@ pub use busrt_types::{
 };
 pub use collector::{Collector, CollectorRuntime, RuntimeStats};
 pub use config::CollectorConfig;
+pub use config_manager::{ConfigChangeEvent, ConfigManager, ConfigManagerSettings};
 pub use embedded_broker::{BrokerMessage, BrokerMessageType, EmbeddedBroker};
 pub use event::{
     AnalysisType, CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent,
@@ -103,6 +108,10 @@ pub use event::{
 pub use event_bus::{
     BusEvent, CorrelationFilter, EventBus, EventBusConfig, EventBusStatistics, EventFilter,
     EventSubscription, LocalEventBus,
+};
+pub use health_monitor::{
+    CollectorHealthState, CollectorHealthSummary, HealthEvent, HealthMonitor, HealthMonitorConfig,
+    HealthSnapshot, HealthSummary,
 };
 pub use high_performance_event_bus::{
     BackpressureStrategy, HighPerformanceEventBus, HighPerformanceEventBusConfig,
@@ -117,6 +126,11 @@ pub use performance::{
     BaselineMetrics, CpuUsageMetrics, DegradationType, MemoryUsageMetrics, PerformanceComparison,
     PerformanceConfig, PerformanceDegradation, PerformanceMonitor, ResourceUsageMetrics,
     ThroughputMetrics, TriggerLatencyMetrics,
+};
+pub use rpc_services::CollectorLifecycleManager;
+pub use shutdown_coordinator::{
+    ShutdownConfig, ShutdownCoordinator, ShutdownEvent, ShutdownPhase, ShutdownRequest,
+    ShutdownResponse,
 };
 pub use source::{EventSource, SourceCaps};
 pub use trigger::{

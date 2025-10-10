@@ -61,6 +61,9 @@ base64 = "0.22.1"
 # Regular expressions for topic pattern matching
 regex = "1.11.1"
 
+# MD5 hashing for configuration checksums
+md5 = "0.7.0"
+
 [dev-dependencies]
 tokio-test = "0.4.4"
 tempfile = { workspace = true }
@@ -72,6 +75,7 @@ criterion = { workspace = true, features = ["html_reports"] }
 tracing-subscriber = { workspace = true }
 bincode = "2.0.1"
 futures = { workspace = true }
+anyhow = { workspace = true }
 
 [[bench]]
 name = "collector_benchmarks"
