@@ -31,7 +31,7 @@ pub struct ConfigManager {
     /// Configuration change broadcaster
     change_events: broadcast::Sender<ConfigChangeEvent>,
     /// File watcher handle
-    file_watcher_handle: Option<JoinHandle<Result<()>>>,
+    file_watcher_handle: Option<JoinHandle<()>>,
     /// Configuration validation rules
     validation_rules: Arc<RwLock<HashMap<String, ValidationRule>>>,
     /// Configuration backup store for rollback
@@ -209,6 +209,7 @@ impl ConfigManager {
         // Stop file watcher
         if let Some(handle) = self.file_watcher_handle.take() {
             handle.abort();
+            // JoinHandle<()> returns Result<(), JoinError> on await
             if let Err(e) = handle.await {
                 if !e.is_cancelled() {
                     warn!(error = %e, "File watcher task join error");
@@ -399,7 +400,7 @@ impl ConfigManager {
 
             let stored_config = StoredConfig {
                 config: backup_config.config.clone(),
-                version: from_version + 1,
+                version: backup_config.version,
                 last_updated: SystemTime::now(),
                 source: ConfigSource::Backup,
                 checksum,
@@ -409,6 +410,12 @@ impl ConfigManager {
             store.insert(collector_id.to_string(), stored_config);
             (from_version, backup_config.version)
         };
+
+        // Persist the rolled-back configuration to disk
+        if self.settings.enable_file_watching {
+            self.write_config_to_file(collector_id, &backup_config.config)
+                .await?;
+        }
 
         // Send rollback event
         let event = ConfigChangeEvent::ConfigRolledBack {

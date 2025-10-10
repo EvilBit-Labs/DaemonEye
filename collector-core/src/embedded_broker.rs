@@ -602,11 +602,22 @@ impl EmbeddedBroker {
 
                                 debug!(client_addr = %addr, "New TCP connection accepted");
 
-                                // Handle new client connection
-                                // Note: TCP stream handling would be implemented here
-                                // For now, we'll just log the connection
+                                // Increment counters
                                 state.total_connections.fetch_add(1, Ordering::Relaxed);
                                 state.active_connections.fetch_add(1, Ordering::Relaxed);
+
+                                // Spawn a task to handle the connection and ensure counter is decremented
+                                let state_clone = Arc::clone(&state);
+                                tokio::spawn(async move {
+                                    // Placeholder connection handler
+                                    // Note: TCP stream handling would be implemented here
+                                    // For now, we just log and immediately close
+                                    debug!(client_addr = %addr, "Processing TCP connection (placeholder)");
+
+                                    // When connection completes (success or error), decrement counter
+                                    state_clone.active_connections.fetch_sub(1, Ordering::Relaxed);
+                                    debug!(client_addr = %addr, "TCP connection closed, active connections decremented");
+                                });
                             }
                             Err(e) => {
                                 error!(error = %e, "Failed to accept TCP connection");

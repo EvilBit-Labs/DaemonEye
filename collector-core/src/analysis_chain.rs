@@ -452,13 +452,15 @@ impl AnalysisChainCoordinator {
             .values()
             .filter(|status| matches!(status, StageStatus::Completed))
             .count();
+        // Count both failed and cancelled stages as failures, since cancelled stages
+        // indicate workflows that didn't complete normally (typically due to dependency failures)
         let failed_stages = stage_statuses
             .values()
-            .filter(|status| matches!(status, StageStatus::Failed))
+            .filter(|status| matches!(status, StageStatus::Failed | StageStatus::Cancelled))
             .count();
         let skipped_stages = stage_statuses
             .values()
-            .filter(|status| matches!(status, StageStatus::Cancelled))
+            .filter(|status| matches!(status, StageStatus::Skipped))
             .count();
 
         let percentage = if total_stages > 0 {

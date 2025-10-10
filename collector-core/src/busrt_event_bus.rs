@@ -51,7 +51,7 @@ use tokio::{
     task::JoinHandle,
     time::interval,
 };
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
 /// Busrt-based event bus implementation providing backward compatibility with EventBus trait.
@@ -537,6 +537,11 @@ impl BusrtEventBus {
     /// Converts BusrtEvent back to BusEvent for EventBus compatibility.
     #[allow(dead_code)]
     fn convert_from_busrt_event(&self, busrt_event: BusrtEvent) -> Result<BusEvent> {
+        Self::convert_from_busrt_event_static(busrt_event)
+    }
+
+    /// Static version of convert_from_busrt_event for use in spawned tasks.
+    fn convert_from_busrt_event_static(busrt_event: BusrtEvent) -> Result<BusEvent> {
         // Convert busrt event back to CollectionEvent
         let collection_event = match busrt_event.payload {
             EventPayload::Process(process_data) => {
@@ -667,10 +672,11 @@ impl EventBus for BusrtEventBus {
         &mut self,
         subscription: EventSubscription,
     ) -> Result<mpsc::Receiver<BusEvent>> {
-        let _busrt_client = self
+        let busrt_client = self
             .busrt_client
             .as_ref()
-            .context("Busrt client not initialized - call start() first")?;
+            .context("Busrt client not initialized - call start() first")?
+            .clone();
 
         // Create channel for delivering events to subscriber
         let (sender, receiver) = mpsc::channel(self.config.max_buffer_size);
@@ -678,14 +684,123 @@ impl EventBus for BusrtEventBus {
         // Determine topic patterns for this subscription
         let topic_patterns = self.get_topic_patterns_for_subscription(&subscription);
 
-        // Subscribe to busrt topics
+        // Subscribe to busrt topics and spawn forwarding tasks
+        let shutdown_signal = Arc::clone(&self.shutdown_signal);
         for pattern in &topic_patterns {
-            // Note: In real implementation, we would subscribe to busrt topics here
-            debug!(
-                subscriber_id = %subscription.subscriber_id,
-                pattern = %pattern,
-                "Subscribing to busrt topic pattern"
-            );
+            let pattern_clone = pattern.clone();
+            let subscriber_id = subscription.subscriber_id.clone();
+            let sender_clone = sender.clone();
+            let subscribers_clone = Arc::clone(&self.subscribers);
+            let topic_subs_clone = Arc::clone(&self.topic_subscriptions);
+            let shutdown_clone = Arc::clone(&shutdown_signal);
+
+            // Subscribe to the busrt broker for this pattern
+            let mut busrt_receiver = match busrt_client.subscribe(pattern).await {
+                Ok(rx) => {
+                    debug!(
+                        subscriber_id = %subscriber_id,
+                        pattern = %pattern,
+                        "Subscribed to busrt topic pattern"
+                    );
+                    rx
+                }
+                Err(e) => {
+                    error!(
+                        subscriber_id = %subscriber_id,
+                        pattern = %pattern,
+                        error = %e,
+                        "Failed to subscribe to busrt topic pattern"
+                    );
+                    continue;
+                }
+            };
+
+            // Spawn task to forward events from busrt to subscriber
+            tokio::spawn(async move {
+                debug!(
+                    subscriber_id = %subscriber_id,
+                    pattern = %pattern_clone,
+                    "Starting event forwarding task"
+                );
+
+                loop {
+                    // Check shutdown signal
+                    if shutdown_clone.load(Ordering::Relaxed) {
+                        debug!(subscriber_id = %subscriber_id, "Shutdown signal received, stopping forwarding");
+                        break;
+                    }
+
+                    // Wait for event with timeout
+                    let busrt_event = tokio::select! {
+                        event = busrt_receiver.recv() => {
+                            match event {
+                                Some(e) => e,
+                                None => {
+                                    debug!(subscriber_id = %subscriber_id, "Busrt receiver closed");
+                                    break;
+                                }
+                            }
+                        }
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                            continue;
+                        }
+                    };
+                    // Convert BusrtEvent to BusEvent
+                    let bus_event = match Self::convert_from_busrt_event_static(busrt_event) {
+                        Ok(event) => event,
+                        Err(e) => {
+                            warn!(
+                                subscriber_id = %subscriber_id,
+                                error = %e,
+                                "Failed to convert busrt event"
+                            );
+                            continue;
+                        }
+                    };
+
+                    // Try to send event to subscriber
+                    if let Err(e) = sender_clone.try_send(bus_event) {
+                        match e {
+                            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                                warn!(
+                                    subscriber_id = %subscriber_id,
+                                    "Subscriber channel full, dropping event"
+                                );
+                            }
+                            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                                debug!(
+                                    subscriber_id = %subscriber_id,
+                                    "Subscriber channel closed, stopping forwarding"
+                                );
+
+                                // Clean up subscriber registration
+                                let mut subscribers = subscribers_clone.write().await;
+                                subscribers.remove(&subscriber_id);
+
+                                let mut topic_subs = topic_subs_clone.write().await;
+                                if let Some(subs) = topic_subs.get_mut(&pattern_clone) {
+                                    subs.retain(|id| id != &subscriber_id);
+                                }
+
+                                break;
+                            }
+                        }
+                    } else {
+                        // Update subscriber statistics
+                        let mut subscribers = subscribers_clone.write().await;
+                        if let Some(info) = subscribers.get_mut(&subscriber_id) {
+                            info.last_delivery = SystemTime::now();
+                            info.events_received = info.events_received.saturating_add(1);
+                        }
+                    }
+                }
+
+                debug!(
+                    subscriber_id = %subscriber_id,
+                    pattern = %pattern_clone,
+                    "Event forwarding task stopped"
+                );
+            });
         }
 
         // Store subscriber information

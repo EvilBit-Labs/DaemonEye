@@ -836,11 +836,24 @@ impl LocalEventBus {
     pub async fn start(&mut self) -> Result<()> {
         info!("Starting local event bus with busrt integration");
 
+        // Generate socket path once for both broker and client
+        let socket_path = if cfg!(test) {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let thread_id = std::thread::current().id();
+            format!("/tmp/daemoneye-eventbus-{:?}-{}.sock", thread_id, timestamp)
+        } else {
+            "/tmp/daemoneye-eventbus.sock".to_string()
+        };
+
         // Start embedded busrt broker
-        self.start_embedded_broker().await?;
+        self.start_embedded_broker(&socket_path).await?;
 
         // Create and connect busrt client
-        self.create_busrt_client().await?;
+        self.create_busrt_client(&socket_path).await?;
 
         // Start event routing task
         self.start_event_routing().await?;
@@ -858,28 +871,16 @@ impl LocalEventBus {
     }
 
     /// Starts the embedded busrt broker for local message routing.
-    async fn start_embedded_broker(&mut self) -> Result<()> {
+    async fn start_embedded_broker(&mut self, socket_path: &str) -> Result<()> {
         info!("Starting embedded busrt broker for event bus");
 
         // Create embedded broker configuration
-        let socket_path = if cfg!(test) {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let thread_id = std::thread::current().id();
-            format!("/tmp/daemoneye-eventbus-{:?}-{}.sock", thread_id, timestamp)
-        } else {
-            "/tmp/daemoneye-eventbus.sock".to_string()
-        };
-
         let broker_config = crate::busrt_types::EmbeddedBrokerConfig {
             max_connections: 100,
             message_buffer_size: self.config.max_buffer_size,
             transport: TransportConfig {
                 transport_type: TransportType::UnixSocket,
-                path: Some(socket_path.clone()),
+                path: Some(socket_path.to_string()),
                 address: None,
                 port: None,
             },
@@ -896,24 +897,12 @@ impl LocalEventBus {
     }
 
     /// Creates and connects the busrt client for pub/sub operations.
-    async fn create_busrt_client(&mut self) -> Result<()> {
+    async fn create_busrt_client(&mut self, socket_path: &str) -> Result<()> {
         info!("Creating busrt client for event bus");
-
-        let socket_path = if cfg!(test) {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let thread_id = std::thread::current().id();
-            format!("/tmp/daemoneye-eventbus-{:?}-{}.sock", thread_id, timestamp)
-        } else {
-            "/tmp/daemoneye-eventbus.sock".to_string()
-        };
 
         let transport_config = TransportConfig {
             transport_type: TransportType::UnixSocket,
-            path: Some(socket_path),
+            path: Some(socket_path.to_string()),
             address: None,
             port: None,
         };
