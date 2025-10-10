@@ -1234,9 +1234,9 @@ impl TriggerManager {
         // Clean metadata cache
         if let Ok(mut cache) = self.metadata_cache.lock() {
             if cache.len() > self.config.max_pending_triggers {
-                // Keep only the most recent entries
+                // Keep only the most recent entries by sorting descending and truncating
                 let mut entries: Vec<_> = cache.drain().collect();
-                entries.sort_by_key(|(_, metadata)| metadata.generated_at);
+                entries.sort_by_key(|(_, metadata)| std::cmp::Reverse(metadata.generated_at));
                 entries.truncate(self.config.max_pending_triggers / 2);
                 cache.extend(entries);
             }

@@ -143,8 +143,10 @@ struct TranslationState {
     pending_ipc_requests: RwLock<HashMap<String, tokio::sync::oneshot::Sender<DetectionResult>>>,
     /// Pending busrt requests (correlation_id -> response_channel)
     pending_busrt_requests: RwLock<HashMap<String, tokio::sync::oneshot::Sender<BusrtEvent>>>,
-    /// Message translation queue
-    translation_queue: Mutex<mpsc::Sender<TranslationMessage>>,
+    /// Message translation queue sender
+    translation_queue_tx: Mutex<mpsc::Sender<TranslationMessage>>,
+    /// Message translation queue receiver
+    translation_queue_rx: Mutex<Option<mpsc::Receiver<TranslationMessage>>>,
     /// Topic mapping for message routing
     topic_mapping: RwLock<HashMap<String, String>>,
 }
@@ -202,12 +204,13 @@ impl IpcBusrtBridge {
     /// }
     /// ```
     pub async fn new(config: IpcBridgeConfig) -> Result<Self> {
-        let (translation_tx, _translation_rx) = mpsc::channel(config.message_buffer_size);
+        let (translation_tx, translation_rx) = mpsc::channel(config.message_buffer_size);
 
         let translation_state = Arc::new(TranslationState {
             pending_ipc_requests: RwLock::new(HashMap::new()),
             pending_busrt_requests: RwLock::new(HashMap::new()),
-            translation_queue: Mutex::new(translation_tx),
+            translation_queue_tx: Mutex::new(translation_tx),
+            translation_queue_rx: Mutex::new(Some(translation_rx)),
             topic_mapping: RwLock::new(Self::create_default_topic_mapping()),
         });
 
@@ -384,7 +387,13 @@ impl IpcBusrtBridge {
 
     /// Starts the message translation processor.
     async fn start_message_processor(&mut self) -> Result<()> {
-        let (_translation_tx, mut translation_rx) = mpsc::channel(self.config.message_buffer_size);
+        // Extract the receiver from the translation state
+        let mut translation_rx = {
+            let mut rx_guard = self.translation_state.translation_queue_rx.lock().await;
+            rx_guard
+                .take()
+                .context("Translation receiver already consumed")?
+        };
 
         let translation_state = Arc::clone(&self.translation_state);
         let statistics = Arc::clone(&self.statistics);

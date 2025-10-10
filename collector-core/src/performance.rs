@@ -193,6 +193,8 @@ pub struct PerformanceMonitor {
     // Trigger latency tracking
     trigger_latency_samples: Arc<Mutex<VecDeque<f64>>>,
     trigger_count: Arc<AtomicU64>,
+    previous_trigger_count: Arc<AtomicU64>,
+    trigger_count_last_sampled: Arc<Mutex<Instant>>,
 
     // Resource usage aggregation
     current_metrics: Arc<RwLock<Option<ResourceUsageMetrics>>>,
@@ -218,6 +220,8 @@ impl PerformanceMonitor {
             last_memory_measurement: Arc::new(Mutex::new(None)),
             trigger_latency_samples: Arc::new(Mutex::new(VecDeque::new())),
             trigger_count: Arc::new(AtomicU64::new(0)),
+            previous_trigger_count: Arc::new(AtomicU64::new(0)),
+            trigger_count_last_sampled: Arc::new(Mutex::new(Instant::now())),
             current_metrics: Arc::new(RwLock::new(None)),
             baseline_metrics: Arc::new(RwLock::new(None)),
             active_timers: Arc::new(Mutex::new(HashMap::new())),
@@ -451,12 +455,30 @@ impl PerformanceMonitor {
             .cloned()
             .unwrap_or(0.0);
 
-        // Calculate triggers per second based on recent activity
-        let triggers_per_second = if samples.len() > 1 {
-            // Estimate based on sample collection rate
-            trigger_count as f64 / self.config.collection_interval.as_secs_f64()
-        } else {
-            0.0
+        // Calculate triggers per second based on delta from previous sample
+        let triggers_per_second = {
+            let previous_count = self.previous_trigger_count.load(Ordering::Relaxed);
+            let delta_triggers = trigger_count.saturating_sub(previous_count);
+
+            // Get elapsed time since last sampling
+            let elapsed = {
+                let mut last_sampled = self.trigger_count_last_sampled.lock().unwrap();
+                let elapsed = last_sampled.elapsed();
+                *last_sampled = Instant::now();
+                elapsed
+            };
+
+            // Update previous count for next calculation
+            self.previous_trigger_count
+                .store(trigger_count, Ordering::Relaxed);
+
+            // Calculate per-second rate from delta
+            let elapsed_secs = elapsed.as_secs_f64();
+            if elapsed_secs > 0.0 {
+                delta_triggers as f64 / elapsed_secs
+            } else {
+                0.0
+            }
         };
 
         Some(TriggerLatencyMetrics {

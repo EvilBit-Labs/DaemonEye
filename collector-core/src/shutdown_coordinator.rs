@@ -362,6 +362,9 @@ impl ShutdownCoordinator {
         };
         let _ = self.shutdown_events.send(event);
 
+        // Notify all waiters that shutdown is complete
+        self.completion_notify.notify_waiters();
+
         Ok(responses)
     }
 
