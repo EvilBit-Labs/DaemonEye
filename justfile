@@ -145,6 +145,10 @@ lint-rust: fmt-check
 lint-rust-min:
     @cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
+# Check documentation compiles without warnings
+lint-docs:
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
+
 # Format justfile
 fmt-justfile:
     @just --fmt --unstable
@@ -153,7 +157,7 @@ fmt-justfile:
 lint-justfile:
     @just --fmt --check --unstable
 
-lint: lint-rust lint-justfile
+lint: lint-rust lint-docs lint-justfile
 
 # Run clippy with fixes
 fix:
