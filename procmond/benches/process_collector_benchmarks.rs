@@ -75,7 +75,7 @@ impl BenchmarkProcessCollector {
             ],
             start_time: Some(SystemTime::now()),
             cpu_usage: Some(1.5 + (index as f64 * 0.1) % 10.0),
-            memory_usage: Some(1_048_576_u64.saturating_add((index * 4096) as u64)),
+            memory_usage: Some(1_048_576_u64.saturating_add((index as u64).saturating_mul(4096))),
             executable_hash: Some(format!("hash_{:08x}", index)),
             user_id: Some("1000".to_owned()),
             accessible: true,

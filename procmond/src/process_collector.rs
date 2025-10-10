@@ -321,7 +321,7 @@ impl SysinfoProcessCollector {
 
             // Memory usage should be reasonable (convert from KB to bytes)
             let memory_usage = if memory > 0 {
-                Some(memory * 1024)
+                Some(memory.saturating_mul(1024))
             } else {
                 None
             };

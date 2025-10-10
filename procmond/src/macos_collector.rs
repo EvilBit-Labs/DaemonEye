@@ -489,7 +489,11 @@ impl EnhancedMacOSCollector {
 
         let memory_usage = if self.base_config.collect_enhanced_metadata {
             let memory = process.memory();
-            if memory > 0 { Some(memory) } else { None }
+            if memory > 0 {
+                Some(memory.saturating_mul(1024))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -573,9 +577,9 @@ impl EnhancedMacOSCollector {
         let virtual_memory = process.virtual_memory();
 
         if memory > 0 || virtual_memory > 0 {
-            metadata.memory_footprint = Some(memory * 1024); // Convert KB to bytes
-            metadata.resident_memory = Some(memory * 1024);
-            metadata.virtual_memory = Some(virtual_memory * 1024);
+            metadata.memory_footprint = Some(memory.saturating_mul(1024)); // Convert KB to bytes
+            metadata.resident_memory = Some(memory.saturating_mul(1024));
+            metadata.virtual_memory = Some(virtual_memory.saturating_mul(1024));
             // Note: sysinfo doesn't provide thread count or priority on macOS
             // These would require platform-specific APIs which we avoid for safety
             metadata.thread_count = None;

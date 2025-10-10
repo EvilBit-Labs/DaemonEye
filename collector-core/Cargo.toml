@@ -18,7 +18,7 @@ readme = "README.md"
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
 # Core async runtime and utilities
-tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 async-trait = { workspace = true }
 futures = { workspace = true }
 

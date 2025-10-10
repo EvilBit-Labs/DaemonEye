@@ -498,6 +498,8 @@ impl PerformanceMonitor {
 
     /// Establishes baseline performance metrics.
     pub async fn establish_baseline(&self, sample_count: usize) -> anyhow::Result<BaselineMetrics> {
+        anyhow::ensure!(sample_count > 0, "sample_count must be > 0");
+
         info!(
             "Establishing performance baseline with {} samples",
             sample_count
@@ -587,7 +589,13 @@ impl PerformanceMonitor {
                 trigger_latency_ratio: current
                     .trigger_latency
                     .as_ref()
-                    .map(|t| t.avg_latency_ms / baseline.baseline_trigger_latency_ms)
+                    .map(|t| {
+                        if baseline.baseline_trigger_latency_ms == 0.0 {
+                            1.0
+                        } else {
+                            t.avg_latency_ms / baseline.baseline_trigger_latency_ms
+                        }
+                    })
                     .unwrap_or(1.0),
                 baseline_established_at: baseline.established_at,
                 comparison_timestamp: SystemTime::now(),

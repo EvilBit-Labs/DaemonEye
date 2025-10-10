@@ -929,7 +929,8 @@ impl AnalysisChainCoordinator {
                                     execution
                                         .stage_statuses
                                         .get(&stage_exec.stage_id)
-                                        .is_none_or(|status| matches!(status, StageStatus::Running))
+                                        .map(|status| matches!(status, StageStatus::Running))
+                                        .unwrap_or(true)
                                 } else {
                                     false
                                 };

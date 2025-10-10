@@ -1196,7 +1196,6 @@ impl ProcessCollector for WindowsProcessCollector {
             } else {
                 system.refresh_processes_specifics(
                     sysinfo::ProcessesToUpdate::All,
-                    true,
                     sysinfo::ProcessRefreshKind::everything(),
                 );
             }
@@ -1291,7 +1290,6 @@ impl ProcessCollector for WindowsProcessCollector {
             } else {
                 system.refresh_processes_specifics(
                     sysinfo::ProcessesToUpdate::All,
-                    true,
                     sysinfo::ProcessRefreshKind::everything(),
                 );
             }
@@ -1325,7 +1323,6 @@ impl ProcessCollector for WindowsProcessCollector {
             let mut system = System::new();
             system.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::All,
-                true,
                 sysinfo::ProcessRefreshKind::nothing(),
             );
 
