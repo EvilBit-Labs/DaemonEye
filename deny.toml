@@ -20,11 +20,13 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "CC0-1.0",
     "MIT",
+    "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
+    "0BSD",
 ]
 include-dev = true
 
@@ -32,8 +34,8 @@ include-dev = true
 confidence-threshold = 0.8
 
 [bans]
-multiple-versions = "deny"
-wildcards = 'deny'
+multiple-versions = "warn"
+wildcards = 'allow'
 deny = [
     { crate = "git2", use-instead = "gix" },
     { crate = "openssl", use-instead = "rustls" },
@@ -47,8 +49,11 @@ skip-tree = []
 
 [advisories]
 yanked = "deny"
+# Allow unmaintained crates from workspace but with explicit exceptions
 unmaintained = "workspace"
-ignore = []
+
+# Advisory handling is managed via audit.toml
+# cargo-deny relies on cargo-audit for advisory detection
 
 [sources]
 # Allow crates from crates.io

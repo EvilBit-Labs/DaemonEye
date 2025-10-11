@@ -289,11 +289,24 @@ bench-save:
 # SECURITY AND AUDITING
 # =============================================================================
 
-audit:
+# Supply-chain security checks
+audit-deps:
     cargo audit
 
-deny:
+deny-deps:
     cargo deny check
+
+# Composed security scan
+security-scan:
+    @just audit-deps
+    @just deny-deps
+
+# Legacy aliases (backward compatibility)
+audit:
+    @just audit-deps
+
+deny:
+    @just deny-deps
 
 # =============================================================================
 # CI AND QUALITY ASSURANCE
@@ -308,7 +321,7 @@ coverage-check:
     cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 9.7
 
 # Full local CI parity check
-ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release audit coverage-check dist-plan
+ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release security-scan coverage-check dist-plan
 
 # =============================================================================
 # DEVELOPMENT AND EXECUTION

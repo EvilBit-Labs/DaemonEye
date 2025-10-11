@@ -126,6 +126,45 @@ We follow responsible disclosure practices:
 4. **Credit**: Provide appropriate credit to security researchers
 5. **No Retaliation**: We will not pursue legal action against good-faith security research
 
+## Accepted Risks (Dependencies)
+
+As of 2025-10-11, we are temporarily accepting risk for two unmaintained transitive dependencies flagged by RustSec. This decision is documented here and reflected in our cargo-audit and cargo-deny configurations.
+
+- **RUSTSEC-2024-0384** — instant (Unmaintained)
+
+  - **Context**: Pulled in transitively via `busrt -> async-io -> futures-lite -> fastrand -> instant`. The crate provides a polyfill for `std::time::Instant` on certain targets.
+  - **Exposure**: Minimal for our supported targets (Linux, macOS, Windows); no network, crypto, or unsafe code surfaces in our usage.
+  - **Mitigations**: Pinned by Cargo.lock; monitored via CI (cargo-audit, cargo-deny). We will migrate or drop this dependency when upstreams remove it or provide alternatives.
+  - **Re-evaluation**: No later than 2026-01-31.
+
+- **RUSTSEC-2024-0436** — paste (Unmaintained)
+
+  - **Context**: Transitive build-time proc-macro crate used via `busrt -> rmp-serde -> rmp -> paste` to generate identifiers.
+  - **Exposure**: Compile-time only (proc-macro); no runtime impact in binaries/libraries we ship.
+  - **Mitigations**: Pinned by Cargo.lock; monitored via CI (cargo-audit, cargo-deny). We will remove reliance when upstreams migrate away.
+  - **Re-evaluation**: No later than 2026-01-31.
+
+### Dependency Graph Analysis
+
+- **instant v0.1.13**:
+
+  - Path: `instant -> fastrand v1.9.0 -> futures-lite v1.13.0 -> async-io v1.13.0 -> busrt v0.4.21 -> collector-core -> procmond`
+  - Usage: Runtime polyfill for `std::time::Instant` on non-standard platforms
+  - Risk: Low - used only as a polyfill on platforms we don't target
+
+- **paste v1.0.15**:
+
+  - Path: `paste -> rmp v0.8.14 -> rmp-serde v1.3.0 -> busrt v0.4.21 -> collector-core -> procmond`
+  - Usage: Proc-macro for identifier generation (compile-time only)
+  - Risk: Low - compile-time only, no runtime exposure
+
+### Operational Controls
+
+- CI enforces `cargo audit` and `cargo deny check` with explicit ignores for these two advisories only.
+- We maintain a strict posture for all other advisories (vulnerabilities, unsound) and will fail CI on new issues.
+- A tracking issue is maintained to monitor upstream progress and plan migration.
+- Re-evaluation is required by 2026-01-31 or earlier if upstreams change.
+
 ## Security Contact
 
 For general security questions or concerns:

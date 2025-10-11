@@ -41,7 +41,7 @@ bitflags = { workspace = true }
 busrt = { workspace = true }
 
 # IPC integration
-daemoneye-lib = { path = "../daemoneye-lib" }
+daemoneye-lib = { workspace = true }
 
 # Temporary file handling
 tempfile = { workspace = true }
@@ -60,10 +60,10 @@ parking_lot = { workspace = true }
 base64 = "0.22.1"
 
 # Regular expressions for topic pattern matching
-regex = "1.11.1"
+regex = "1.12.1"
 
 # MD5 hashing for configuration checksums
-md5 = "0.7.0"
+md5 = "0.8.0"
 
 [dev-dependencies]
 tokio-test = "0.4.4"
