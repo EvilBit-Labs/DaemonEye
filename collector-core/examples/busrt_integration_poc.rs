@@ -334,8 +334,8 @@ impl Default for BusrtIntegrationPoc {
 
 /// Run the complete busrt integration proof-of-concept
 pub async fn run_integration_poc() -> Result<()> {
-    // Initialize tracing for logging
-    tracing_subscriber::fmt::init();
+    // Initialize tracing for logging (use try_init to avoid panic on repeated calls)
+    let _ = tracing_subscriber::fmt::try_init();
 
     info!("Starting busrt integration proof-of-concept");
 

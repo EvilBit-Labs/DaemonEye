@@ -57,9 +57,19 @@ impl BusrtExample {
         // Create broker with configuration suitable for DaemonEye
         let mut broker = Broker::new();
 
+        // Remove existing FIFO if present to prevent spawn_fifo failures
+        let fifo_path = "daemoneye.sock";
+        if std::path::Path::new(fifo_path).exists() {
+            if let Err(e) = std::fs::remove_file(fifo_path) {
+                tracing::warn!("Failed to remove existing FIFO {}: {}", fifo_path, e);
+            } else {
+                tracing::debug!("Removed existing FIFO: {}", fifo_path);
+            }
+        }
+
         // Configure broker for local IPC communication
         // Use FIFO for local communication (Unix domain socket alternative)
-        broker.spawn_fifo("daemoneye.sock", 100).await?;
+        broker.spawn_fifo(fifo_path, 100).await?;
 
         self.broker = Some(broker);
         info!("Embedded busrt broker started successfully");

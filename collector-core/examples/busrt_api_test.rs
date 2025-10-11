@@ -51,6 +51,18 @@ pub async fn test_busrt_api() -> Result<()> {
 
     println!("Broker API test completed");
 
+    // Cleanup: broker shutdown is handled automatically when dropped
+    drop(broker);
+
+    // Remove the socket file to prevent failures on subsequent runs
+    if let Err(e) = std::fs::remove_file("test.sock") {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            eprintln!("⚠️  Failed to remove test socket: {}", e);
+        }
+    } else {
+        println!("✅ Cleaned up test socket file");
+    }
+
     Ok(())
 }
 

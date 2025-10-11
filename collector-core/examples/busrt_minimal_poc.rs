@@ -47,29 +47,22 @@ impl MinimalBusrtPoc {
 
         let mut broker = Broker::new();
 
-        // Try to initialize the broker properly
-        // Based on the error, we might need to initialize the RPC client first
-        match broker.spawn_fifo(&self.broker_path, 1000).await {
-            Ok(()) => {
-                self.broker = Some(broker);
-                self.startup_time = Some(SystemTime::now());
-                info!("✅ Embedded busrt broker started successfully");
-                Ok(())
-            }
-            Err(e) => {
-                // Log the error but don't fail completely - this might be expected in some environments
-                warn!(
-                    "⚠️  Broker startup failed (may be expected in test environment): {}",
-                    e
-                );
-
-                // For the proof-of-concept, we'll simulate successful startup
-                // This allows us to demonstrate the API patterns even if the actual broker can't start
-                self.startup_time = Some(SystemTime::now());
-                info!("📋 Simulating broker startup for API demonstration");
-                Ok(())
+        // Remove existing FIFO if present to prevent spawn_fifo failures
+        if std::path::Path::new(&self.broker_path).exists() {
+            if let Err(e) = std::fs::remove_file(&self.broker_path) {
+                tracing::warn!("Failed to remove existing FIFO {}: {}", self.broker_path, e);
+            } else {
+                tracing::debug!("Removed existing FIFO: {}", self.broker_path);
             }
         }
+
+        // Initialize the broker - propagate errors instead of simulating success
+        broker.spawn_fifo(&self.broker_path, 1000).await?;
+
+        self.broker = Some(broker);
+        self.startup_time = Some(SystemTime::now());
+        info!("✅ Embedded busrt broker started successfully");
+        Ok(())
     }
 
     /// Stop the embedded broker gracefully
@@ -302,8 +295,8 @@ impl Default for MinimalBusrtPoc {
 
 /// Run the minimal busrt integration proof-of-concept
 pub async fn run_minimal_poc() -> Result<()> {
-    // Initialize tracing for logging
-    tracing_subscriber::fmt::init();
+    // Initialize tracing for logging (use try_init to avoid panic on repeated calls)
+    let _ = tracing_subscriber::fmt::try_init();
 
     info!("Starting minimal busrt integration proof-of-concept");
 
