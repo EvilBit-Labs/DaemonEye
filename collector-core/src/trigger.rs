@@ -621,10 +621,8 @@ impl TriggerManager {
             }
         }
 
-        // Update pending count
-        if let Ok(mut count) = self.pending_count.lock() {
-            *count = count.saturating_add(triggers.len());
-        }
+        // Pending count is derived from the queue length, no separate bookkeeping needed
+        // The queue itself is the source of truth for pending triggers
 
         Ok(triggers)
     }

@@ -312,8 +312,17 @@ impl ShutdownCoordinator {
     pub async fn shutdown_all_collectors(&self, reason: String) -> Result<Vec<ShutdownResponse>> {
         info!(reason = %reason, "Initiating global shutdown");
 
+        // RAII guard to ensure flag is reset on all exit paths
+        struct ShutdownGuard<'a>(&'a AtomicBool);
+        impl Drop for ShutdownGuard<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Relaxed);
+            }
+        }
+
         // Set global shutdown flag
         self.global_shutdown.store(true, Ordering::Relaxed);
+        let _guard = ShutdownGuard(&self.global_shutdown);
 
         // Get list of active collectors
         let collector_ids: Vec<String> = {
@@ -608,6 +617,10 @@ impl ShutdownCoordinator {
 
     /// Wait for all shutdowns to complete
     pub async fn wait_for_completion(&self, timeout: Duration) -> Result<()> {
+        // Check if shutdown is already complete to avoid blocking on a completed shutdown
+        if self.global_shutdown.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         tokio::time::timeout(timeout, self.completion_notify.notified()).await?;
         Ok(())
     }

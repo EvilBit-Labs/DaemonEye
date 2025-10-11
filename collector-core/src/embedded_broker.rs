@@ -125,7 +125,7 @@ struct BrokerState {
 }
 
 /// Client connection information.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[allow(dead_code)]
 struct ClientInfo {
     /// Unique client identifier
@@ -136,6 +136,8 @@ struct ClientInfo {
     last_activity: SystemTime,
     /// Message sender for this client
     sender: mpsc::Sender<BrokerMessage>,
+    /// Message receiver for this client (kept alive to prevent channel drops)
+    receiver: Option<mpsc::Receiver<BrokerMessage>>,
     /// Client subscriptions
     subscriptions: Vec<String>,
     /// Client metadata
@@ -665,13 +667,14 @@ impl EmbeddedBroker {
         // 4. Register client in broker state
 
         let client_id = uuid::Uuid::new_v4().to_string();
-        let (sender, _receiver) = mpsc::channel(1000);
+        let (sender, receiver) = mpsc::channel(1000);
 
         let client_info = ClientInfo {
             client_id: client_id.clone(),
             connected_at: SystemTime::now(),
             last_activity: SystemTime::now(),
             sender,
+            receiver: Some(receiver),
             subscriptions: Vec::new(),
             metadata: HashMap::new(),
         };

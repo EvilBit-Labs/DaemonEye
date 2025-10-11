@@ -724,6 +724,7 @@ impl HealthMonitor {
     ) -> Result<()> {
         let health_states = Arc::clone(&self.health_states);
         let config = self.config.clone();
+        let health_events = self.health_events.clone();
 
         let handle = tokio::spawn(async move {
             let mut interval = interval(config.health_check_interval);
@@ -740,8 +741,64 @@ impl HealthMonitor {
                         };
 
                         for collector_id in collector_ids {
-                            // Health check logic is handled by the main health check method
-                            debug!(collector_id = %collector_id, "Periodic health check");
+                            // Evaluate health status for each collector
+                            let health_result = {
+                                let states = health_states.read().unwrap();
+                                if let Some(state) = states.get(&collector_id) {
+                                    let now = SystemTime::now();
+                                    let time_since_heartbeat = now
+                                        .duration_since(state.last_heartbeat)
+                                        .unwrap_or(Duration::from_secs(0));
+
+                                    // Check if collector has timed out
+                                    if time_since_heartbeat > config.health_timeout {
+                                        Some((HealthStatus::Unhealthy, state.consecutive_failures + 1))
+                                    } else if state.consecutive_failures >= config.max_consecutive_failures {
+                                        Some((HealthStatus::Degraded, state.consecutive_failures))
+                                    } else {
+                                        Some((HealthStatus::Healthy, 0))
+                                    }
+                                } else {
+                                    None
+                                }
+                            };
+
+                            if let Some((new_status, failures)) = health_result {
+                                // Update health state
+                                {
+                                    let mut states = health_states.write().unwrap();
+                                    if let Some(state) = states.get_mut(&collector_id) {
+                                        let old_status = state.health_status.clone();
+                                        state.health_status = new_status.clone();
+                                        state.consecutive_failures = failures;
+                                        state.last_health_check = SystemTime::now();
+
+                                        // Emit health event if status changed
+                                        if old_status != new_status {
+                                            let event = match new_status {
+                                                HealthStatus::Healthy => HealthEvent::CollectorHealthy {
+                                                    collector_id: collector_id.clone(),
+                                                    timestamp: SystemTime::now(),
+                                                },
+                                                HealthStatus::Degraded => HealthEvent::CollectorDegraded {
+                                                    collector_id: collector_id.clone(),
+                                                    reason: format!("Consecutive failures: {}", failures),
+                                                    timestamp: SystemTime::now(),
+                                                },
+                                                HealthStatus::Unhealthy => HealthEvent::CollectorUnhealthy {
+                                                    collector_id: collector_id.clone(),
+                                                    error: "Health check timeout".to_string(),
+                                                    timestamp: SystemTime::now(),
+                                                },
+                                                HealthStatus::Unknown => continue, // Don't emit event for unknown status
+                                            };
+                                            let _ = health_events.send(event);
+                                        }
+                                    }
+                                }
+                            }
+
+                            debug!(collector_id = %collector_id, "Periodic health check completed");
                         }
                     }
                     _ = shutdown_rx.recv() => {

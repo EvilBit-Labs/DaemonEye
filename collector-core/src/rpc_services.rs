@@ -295,29 +295,50 @@ impl CollectorLifecycleService for CollectorLifecycleManager {
         )
         .await?;
 
-        // Update status to running
-        self.update_collector_status(&request.collector_id, CollectorStatus::Running, None)
-            .await?;
-
         // Store configuration using config manager
-        {
+        let config_result = {
             let config_manager = self.config_manager.lock().await;
             let update_request = UpdateConfigRequest {
                 collector_id: request.collector_id.clone(),
                 new_config: request.config.clone(),
                 validate_only: false,
             };
-            config_manager.update_config(update_request).await?;
+            config_manager.update_config(update_request).await
+        };
+
+        // Only update status to running after successful config persistence
+        match config_result {
+            Ok(_) => {
+                self.update_collector_status(&request.collector_id, CollectorStatus::Running, None)
+                    .await?;
+
+                let collector = self.get_collector(&request.collector_id)?;
+
+                Ok(StartCollectorResponse {
+                    success: true,
+                    collector_id: request.collector_id,
+                    error_message: None,
+                    status: collector.status,
+                })
+            }
+            Err(e) => {
+                // Config persistence failed, set error status
+                let error_msg = format!("Failed to persist configuration: {}", e);
+                self.update_collector_status(
+                    &request.collector_id,
+                    CollectorStatus::Error,
+                    Some(error_msg.clone()),
+                )
+                .await?;
+
+                Ok(StartCollectorResponse {
+                    success: false,
+                    collector_id: request.collector_id,
+                    error_message: Some(error_msg),
+                    status: CollectorStatus::Error,
+                })
+            }
         }
-
-        let collector = self.get_collector(&request.collector_id)?;
-
-        Ok(StartCollectorResponse {
-            success: true,
-            collector_id: request.collector_id,
-            error_message: None,
-            status: collector.status,
-        })
     }
 
     #[instrument(skip(self), fields(collector_id = %request.collector_id))]

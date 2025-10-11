@@ -208,18 +208,6 @@ impl HighPerformanceEventBusImpl {
         let delivery_counter = Arc::new(AtomicU64::new(0));
         let drop_counter = Arc::new(AtomicU64::new(0));
 
-        let bus = Self {
-            config,
-            publisher,
-            subscribers: Arc::clone(&subscribers),
-            statistics: Arc::clone(&statistics_arc),
-            shutdown_signal: Arc::clone(&shutdown_signal),
-            event_counter: Arc::clone(&event_counter),
-            delivery_counter: Arc::clone(&delivery_counter),
-            drop_counter: Arc::clone(&drop_counter),
-            routing_handle: None,
-        };
-
         // Start the event routing task using crossbeam scope for safe concurrency
         let routing_handle = thread::spawn(move || {
             let backoff = Backoff::new();

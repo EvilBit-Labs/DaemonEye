@@ -29,6 +29,7 @@ thiserror = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+humantime-serde = "1.1.1"
 
 # Logging
 tracing = { workspace = true }

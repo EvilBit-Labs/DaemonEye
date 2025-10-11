@@ -92,6 +92,8 @@ pub struct EventSubscription {
     pub event_filter: Option<EventFilter>,
     /// Optional correlation ID filtering
     pub correlation_filter: Option<String>,
+    /// Backpressure strategy for this subscriber
+    pub backpressure_strategy: BackpressureStrategy,
 }
 
 /// Event filtering criteria.
@@ -241,20 +243,63 @@ impl HighPerformanceEventBusImpl {
                             }
                         }
 
-                        // Send to subscriber using crossbeam channel
-                        match subscriber_info.sender.try_send(bus_event.clone()) {
-                            Ok(_) => {
-                                delivered += 1;
-                                delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
+                        // Send to subscriber respecting backpressure strategy
+                        match subscriber_info.subscription.backpressure_strategy {
+                            BackpressureStrategy::Blocking => {
+                                // Block until we can send
+                                let mut sent = false;
+                                while !sent {
+                                    match subscriber_info.sender.try_send(bus_event.clone()) {
+                                        Ok(_) => {
+                                            delivered += 1;
+                                            delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                            sent = true;
+                                        }
+                                        Err(_) => {
+                                            // Channel full, yield and retry
+                                            std::thread::yield_now();
+                                        }
+                                    }
+                                }
                             }
-                            Err(_) => {
-                                dropped += 1;
-                                drop_counter_clone.fetch_add(1, Ordering::Relaxed);
-                                if tracing::enabled!(tracing::Level::WARN) {
-                                    warn!(
-                                        subscriber_id = %subscriber_id,
-                                        "Failed to deliver event to subscriber - channel full"
-                                    );
+                            BackpressureStrategy::DropOldest => {
+                                // Try to send, if full drop oldest and retry
+                                // Note: crossbeam Sender doesn't have try_recv, so we can't access the receiver
+                                // to drop old events. For now, just treat as DropNewest since we can't access receiver
+                                match subscriber_info.sender.try_send(bus_event.clone()) {
+                                    Ok(_) => {
+                                        delivered += 1;
+                                        delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(_) => {
+                                        dropped += 1;
+                                        drop_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                        if tracing::enabled!(tracing::Level::WARN) {
+                                            warn!(
+                                                subscriber_id = %subscriber_id,
+                                                "Failed to deliver event - DropOldest requires receiver access"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            BackpressureStrategy::DropNewest => {
+                                // Try to send, if full drop the new event
+                                match subscriber_info.sender.try_send(bus_event.clone()) {
+                                    Ok(_) => {
+                                        delivered += 1;
+                                        delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(_) => {
+                                        dropped += 1;
+                                        drop_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                        if tracing::enabled!(tracing::Level::WARN) {
+                                            warn!(
+                                                subscriber_id = %subscriber_id,
+                                                "Failed to deliver event to subscriber - channel full, dropping newest"
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -468,6 +513,7 @@ mod tests {
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
+            backpressure_strategy: BackpressureStrategy::Blocking,
         };
 
         let event_queue = event_bus.subscribe(subscription).await.unwrap();

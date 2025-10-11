@@ -102,6 +102,8 @@ pub struct BusrtEventBus {
     config: EventBusConfig,
     /// Busrt broker configuration
     broker_config: BrokerConfig,
+    /// Enable crossbeam compatibility mode
+    enable_compatibility_mode: bool,
     /// Embedded broker instance (if running embedded mode)
     embedded_broker: Option<EmbeddedBroker>,
     /// Busrt client for publishing and subscribing
@@ -120,6 +122,7 @@ pub struct BusrtEventBus {
     routing_handle: Option<JoinHandle<Result<()>>>,
     cleanup_handle: Option<JoinHandle<Result<()>>>,
     /// Crossbeam compatibility layer
+    #[allow(dead_code)] // Placeholder for future implementation
     compatibility_layer: Option<CrossbeamCompatibilityLayer>,
     /// Topic subscription mapping
     topic_subscriptions: Arc<RwLock<HashMap<String, Vec<String>>>>,
@@ -157,8 +160,10 @@ pub struct BusrtEventBusConfig {
     /// Maximum message size in bytes
     pub max_message_size: usize,
     /// Connection timeout for busrt client
+    #[serde(with = "humantime_serde")]
     pub connection_timeout: Duration,
     /// Reconnection interval on connection failure
+    #[serde(with = "humantime_serde")]
     pub reconnection_interval: Duration,
 }
 
@@ -279,6 +284,7 @@ impl BusrtEventBus {
         Ok(Self {
             config: config.event_bus,
             broker_config: config.broker,
+            enable_compatibility_mode: config.enable_compatibility_mode,
             embedded_broker: None,
             busrt_client: None,
             subscribers: Arc::new(RwLock::new(HashMap::new())),
@@ -318,10 +324,15 @@ impl BusrtEventBus {
         }
 
         // Initialize compatibility layer if enabled
-        if let Some(_client) = &self.busrt_client {
-            // Create a boxed clone of the client for the compatibility layer
-            let boxed_client: Box<dyn BusrtClient> = Box::new(PlaceholderCompatibilityClient);
-            self.compatibility_layer = Some(CrossbeamCompatibilityLayer::new(boxed_client));
+        // Note: We cannot directly clone Arc<dyn BusrtClient> into Box<dyn BusrtClient>
+        // The compatibility layer will need to work with the Arc directly
+        // For now, leave this as a placeholder until the compatibility layer is refactored
+        // to accept Arc<dyn BusrtClient> instead of Box<dyn BusrtClient>
+        if self.enable_compatibility_mode && self.busrt_client.is_some() {
+            warn!(
+                "Compatibility mode requested but requires refactoring to support Arc<dyn BusrtClient>"
+            );
+            // self.compatibility_layer = Some(CrossbeamCompatibilityLayer::new(...));
         }
 
         info!("Busrt event bus started successfully");
@@ -926,6 +937,7 @@ impl EventBus for BusrtEventBus {
 }
 
 /// Placeholder client for compatibility layer
+#[allow(dead_code)] // Placeholder for future implementation
 struct PlaceholderCompatibilityClient;
 
 #[async_trait]
