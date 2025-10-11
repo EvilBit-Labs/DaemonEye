@@ -113,10 +113,9 @@ impl ProcmondMonitorCollector {
             config.base_config.trigger_config.clone(),
         ));
 
-        // Create analysis chain coordinator
-        let analysis_coordinator = Arc::new(AnalysisChainCoordinator::new(
-            config.base_config.analysis_config.clone(),
-        ));
+        // Create analysis chain coordinator (already returns Arc<Self>)
+        let analysis_coordinator =
+            AnalysisChainCoordinator::new(config.base_config.analysis_config.clone());
 
         // Create event bus if event-driven architecture is enabled
         let event_bus = if config.base_config.enable_event_driven {

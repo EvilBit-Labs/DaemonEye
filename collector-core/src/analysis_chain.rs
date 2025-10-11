@@ -484,6 +484,8 @@ impl AnalysisChainCoordinator {
     /// and background task management. The coordinator starts in a stopped state and
     /// requires calling [`start`](Self::start) before executing workflows.
     ///
+    /// Returns an `Arc<Self>` to enable shared ownership across async tasks.
+    ///
     /// # Arguments
     ///
     /// * `config` - Configuration for workflow coordination behavior including timeouts,
@@ -502,7 +504,7 @@ impl AnalysisChainCoordinator {
     /// };
     /// let coordinator = AnalysisChainCoordinator::new(config);
     /// ```
-    pub fn new(config: AnalysisChainConfig) -> Self {
+    pub fn new(config: AnalysisChainConfig) -> Arc<Self> {
         let statistics = WorkflowStatistics {
             total_workflows: 0,
             running_workflows: 0,
@@ -516,7 +518,7 @@ impl AnalysisChainCoordinator {
             last_updated: SystemTime::now(),
         };
 
-        Self {
+        Arc::new(Self {
             config,
             workflow_definitions: Arc::new(RwLock::new(HashMap::new())),
             active_executions: Arc::new(RwLock::new(HashMap::new())),
@@ -528,7 +530,7 @@ impl AnalysisChainCoordinator {
             task_handles: Arc::new(Mutex::new(Vec::new())),
             execution_counter: Arc::new(AtomicU64::new(0)),
             stage_tracker: Arc::new(RwLock::new(HashMap::new())),
-        }
+        })
     }
 
     /// Registers a workflow definition for execution.
@@ -687,7 +689,7 @@ impl AnalysisChainCoordinator {
     ///
     /// This method must be called before executing workflows. It starts
     /// the monitoring, result processing, and timeout management tasks.
-    pub async fn start(&self) -> Result<()> {
+    pub async fn start(self: &Arc<Self>) -> Result<()> {
         info!("Starting analysis chain coordinator");
 
         // Subscribe to analysis results
@@ -794,7 +796,7 @@ impl AnalysisChainCoordinator {
     }
 
     /// Starts result processing background task.
-    async fn start_result_processing(&self) -> Result<()> {
+    async fn start_result_processing(self: &Arc<Self>) -> Result<()> {
         let active_executions = Arc::clone(&self.active_executions);
         let completed_executions = Arc::clone(&self.completed_executions);
         let statistics = Arc::clone(&self.statistics);
@@ -802,6 +804,7 @@ impl AnalysisChainCoordinator {
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
         let max_completed = self.config.max_completed_workflows;
         let result_subscription = Arc::clone(&self.result_subscription);
+        let coordinator = Arc::clone(self);
 
         let handle = tokio::spawn(async move {
             let mut check_interval = interval(Duration::from_secs(10));
@@ -813,6 +816,7 @@ impl AnalysisChainCoordinator {
                     match tokio::time::timeout(Duration::from_millis(100), receiver.recv()).await {
                         Ok(Some(bus_event)) => {
                             if let Err(e) = Self::process_result_event(
+                                &coordinator,
                                 &active_executions,
                                 &completed_executions,
                                 &statistics,
@@ -912,60 +916,66 @@ impl AnalysisChainCoordinator {
                 }
 
                 // Check stage timeouts
-                {
+                // Collect timed-out stages while holding the lock, then drop it before any awaits
+                let timed_out_stage_data = {
                     let mut tracker = stage_tracker.write().await;
-                    let mut timed_out_stages = Vec::new();
+                    let mut timed_out = Vec::new();
 
                     for (stage_key, stage_exec) in tracker.iter() {
                         if stage_exec.started_at.elapsed() > stage_exec.timeout {
-                            timed_out_stages.push(stage_key.clone());
+                            timed_out.push((stage_key.clone(), stage_exec.clone()));
                         }
                     }
 
-                    for stage_key in timed_out_stages {
-                        if let Some(stage_exec) = tracker.remove(&stage_key) {
-                            // Defensive check: verify the stage is still in-progress before marking as TimedOut
-                            let executions = active_executions.read().await;
-                            let should_timeout =
-                                if let Some(execution) = executions.get(&stage_exec.execution_id) {
-                                    execution
-                                        .stage_statuses
-                                        .get(&stage_exec.stage_id)
-                                        .map(|status| matches!(status, StageStatus::Running))
-                                        .unwrap_or(true)
-                                } else {
-                                    false
-                                };
-                            drop(executions);
+                    // Remove timed-out stages from tracker while we still hold the lock
+                    for (stage_key, _) in &timed_out {
+                        tracker.remove(stage_key);
+                    }
 
-                            if should_timeout {
-                                warn!(
-                                    execution_id = %stage_exec.execution_id,
-                                    stage_id = %stage_exec.stage_id,
-                                    elapsed_seconds = stage_exec.started_at.elapsed().as_secs(),
-                                    timeout_seconds = stage_exec.timeout.as_secs(),
-                                    "Stage execution timed out"
-                                );
+                    timed_out
+                };
+                // stage_tracker lock is now dropped
 
-                                // Update execution status
-                                let mut executions = active_executions.write().await;
-                                if let Some(execution) =
-                                    executions.get_mut(&stage_exec.execution_id)
-                                {
-                                    execution
-                                        .stage_statuses
-                                        .insert(stage_exec.stage_id.clone(), StageStatus::TimedOut);
-                                    execution.last_updated = now;
-                                }
-                            } else {
-                                // Stage was already completed/failed, don't override with timeout
-                                debug!(
-                                    execution_id = %stage_exec.execution_id,
-                                    stage_id = %stage_exec.stage_id,
-                                    "Skipping timeout for already completed stage"
-                                );
-                            }
+                // Process timed-out stages with consistent lock ordering: active_executions first
+                for (_stage_key, stage_exec) in timed_out_stage_data {
+                    // Acquire active_executions lock (read first, then write if needed)
+                    let executions_read = active_executions.read().await;
+                    let should_timeout =
+                        if let Some(execution) = executions_read.get(&stage_exec.execution_id) {
+                            execution
+                                .stage_statuses
+                                .get(&stage_exec.stage_id)
+                                .map(|status| matches!(status, StageStatus::Running))
+                                .unwrap_or(true)
+                        } else {
+                            false
+                        };
+                    drop(executions_read);
+
+                    if should_timeout {
+                        warn!(
+                            execution_id = %stage_exec.execution_id,
+                            stage_id = %stage_exec.stage_id,
+                            elapsed_seconds = stage_exec.started_at.elapsed().as_secs(),
+                            timeout_seconds = stage_exec.timeout.as_secs(),
+                            "Stage execution timed out"
+                        );
+
+                        // Update execution status with write lock
+                        let mut executions = active_executions.write().await;
+                        if let Some(execution) = executions.get_mut(&stage_exec.execution_id) {
+                            execution
+                                .stage_statuses
+                                .insert(stage_exec.stage_id.clone(), StageStatus::TimedOut);
+                            execution.last_updated = now;
                         }
+                    } else {
+                        // Stage was already completed/failed, don't override with timeout
+                        debug!(
+                            execution_id = %stage_exec.execution_id,
+                            stage_id = %stage_exec.stage_id,
+                            "Skipping timeout for already completed stage"
+                        );
                     }
                 }
             }
@@ -1325,6 +1335,7 @@ impl AnalysisChainCoordinator {
 
     /// Processes a result event from the event bus and updates stage statuses.
     async fn process_result_event(
+        coordinator: &Arc<AnalysisChainCoordinator>,
         active_executions: &Arc<RwLock<HashMap<String, WorkflowExecution>>>,
         completed_executions: &Arc<RwLock<VecDeque<WorkflowExecution>>>,
         statistics: &Arc<RwLock<WorkflowStatistics>>,
@@ -1387,10 +1398,87 @@ impl AnalysisChainCoordinator {
                     tracker.remove(&stage_key);
                 }
 
+                // If this stage failed/cancelled/timedout, mark dependent stages appropriately
+                let is_failing_terminal_state = matches!(
+                    new_stage_status,
+                    StageStatus::Failed | StageStatus::Cancelled | StageStatus::TimedOut
+                );
+
+                if is_failing_terminal_state {
+                    // Find all stages that depend on this failed stage
+                    let dependent_stage_ids: Vec<String> = execution
+                        .workflow_definition
+                        .dependencies
+                        .iter()
+                        .filter(|(_, deps)| deps.contains(stage_id))
+                        .map(|(dependent_stage_id, _)| dependent_stage_id.clone())
+                        .collect();
+
+                    // Mark dependent stages as Skipped or Failed based on whether they're optional
+                    for dependent_stage_id in dependent_stage_ids {
+                        let current_status = execution
+                            .stage_statuses
+                            .get(&dependent_stage_id)
+                            .cloned()
+                            .unwrap_or(StageStatus::Pending);
+
+                        // Only update if still pending (don't override already-processed stages)
+                        if current_status == StageStatus::Pending {
+                            // Find the stage definition to check if it's optional
+                            let is_optional = execution
+                                .workflow_definition
+                                .stages
+                                .iter()
+                                .find(|s| s.stage_id == dependent_stage_id)
+                                .map(|s| s.optional)
+                                .unwrap_or(false);
+
+                            let new_status = if is_optional {
+                                StageStatus::Skipped
+                            } else {
+                                StageStatus::Failed
+                            };
+
+                            execution
+                                .stage_statuses
+                                .insert(dependent_stage_id.clone(), new_status);
+
+                            // Also remove from stage_tracker if it was queued
+                            let dep_stage_key = format!("{}:{}", execution_id, dependent_stage_id);
+                            let mut tracker = stage_tracker.write().await;
+                            tracker.remove(&dep_stage_key);
+                        }
+                    }
+                }
+
                 // Recalculate progress when stage status changes
                 let total_stages = execution.workflow_definition.stages.len();
                 execution.progress =
                     Self::calculate_progress(&execution.stage_statuses, total_stages);
+
+                // Release the write lock before calling execute_ready_stages
+                let exec_id_for_scheduling = execution_id.clone();
+                drop(executions);
+
+                // Trigger scheduler to run newly-ready stages
+                // This ensures the workflow continues to progress
+                if let Err(e) = coordinator
+                    .execute_ready_stages(&exec_id_for_scheduling)
+                    .await
+                {
+                    warn!(
+                        execution_id = %exec_id_for_scheduling,
+                        error = %e,
+                        "Failed to execute ready stages after status update"
+                    );
+                }
+
+                // Re-acquire lock to check completion status
+                let mut executions = active_executions.write().await;
+                let Some(execution) = executions.get_mut(execution_id) else {
+                    // Execution was removed (possibly completed), nothing more to do
+                    return Ok(());
+                };
 
                 // Check if all stages are now complete
                 let all_stages_complete =
