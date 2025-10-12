@@ -670,7 +670,6 @@ impl ProcessCollector for LinuxProcessCollector {
                 } else {
                     system.refresh_processes_specifics(
                         sysinfo::ProcessesToUpdate::All,
-                        true,
                         sysinfo::ProcessRefreshKind::everything(),
                     );
                 }
@@ -769,7 +768,6 @@ impl ProcessCollector for LinuxProcessCollector {
                 } else {
                     system.refresh_processes_specifics(
                         sysinfo::ProcessesToUpdate::All,
-                        true,
                         sysinfo::ProcessRefreshKind::everything(),
                     );
                 }
