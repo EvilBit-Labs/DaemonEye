@@ -147,6 +147,8 @@ The following foundational components have been successfully implemented:
 
 - [ ] 2.3 Implement daemoneye-eventbus broker integration in collector-core
 
+- [ ] 2.3.1 Implement daemoneye-eventbus broker integration in collector-core
+
   - Create DaemoneyeEventBus struct implementing existing EventBus trait for backward compatibility
   - Implement embedded daemoneye-eventbus broker startup and configuration within collector-core runtime
   - Add daemoneye-eventbus client creation and topic subscription/publishing capabilities
@@ -154,7 +156,7 @@ The following foundational components have been successfully implemented:
   - Write integration tests comparing daemoneye-eventbus vs crossbeam event distribution performance
   - _Requirements: 14.1, 14.3, 14.5, 15.1_
 
-- [ ] 2.3.1 Create DaemoneyeEventBus struct with EventBus trait compatibility
+- [ ] 2.3.2 Create DaemoneyeEventBus struct with EventBus trait compatibility
 
   - Implement DaemoneyeEventBus struct that wraps daemoneye-eventbus broker functionality
   - Ensure compatibility with existing EventBus trait interface
@@ -162,7 +164,7 @@ The following foundational components have been successfully implemented:
   - Create error handling and logging integration
   - _Requirements: 14.1, 14.3_
 
-- [ ] 2.3.2 Implement embedded daemoneye-eventbus broker within daemoneye-agent
+- [ ] 2.3.3 Implement embedded daemoneye-eventbus broker within daemoneye-agent
 
   - Embed DaemoneyeBroker instance within daemoneye-agent process architecture
   - Create broker initialization during daemoneye-agent startup sequence
@@ -172,7 +174,7 @@ The following foundational components have been successfully implemented:
   - Ensure broker operates independently of IPC server for CLI communication
   - _Requirements: 14.2, 14.3, 16.4_
 
-- [ ] 2.3.3 Add daemoneye-eventbus client creation and topic management
+- [ ] 2.3.4 Add daemoneye-eventbus client creation and topic management
 
   - Implement client connection management for collector-core components
   - Create topic subscription and publishing capabilities with hierarchical topic patterns
@@ -181,7 +183,7 @@ The following foundational components have been successfully implemented:
   - Create topic-based routing for events.process._, control.collector._, and control.health.\* patterns
   - _Requirements: 14.3, 15.1, 15.3_
 
-- [ ] 2.3.4 Integrate daemoneye-eventbus broker with existing IPC infrastructure
+- [ ] 2.3.5 Integrate daemoneye-eventbus broker with existing IPC infrastructure
 
   - Embed daemoneye-eventbus broker within daemoneye-agent process alongside existing IPC server
   - Maintain existing IPC server for daemoneye-cli communication (protobuf + CRC32 framing)
@@ -191,7 +193,7 @@ The following foundational components have been successfully implemented:
   - Ensure both communication channels coexist without interference
   - _Requirements: 14.5, 15.1, 16.4_
 
-- [ ] 2.3.5 Write integration tests comparing daemoneye-eventbus vs crossbeam performance
+- [ ] 2.3.6 Write integration tests comparing daemoneye-eventbus vs crossbeam performance
 
   - Create performance benchmarks for event distribution throughput
   - Compare latency characteristics between crossbeam and daemoneye-eventbus implementations
