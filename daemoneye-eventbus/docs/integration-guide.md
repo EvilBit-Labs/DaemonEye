@@ -208,7 +208,9 @@ mod tests {
         let mut registry = TopicRegistry::new();
 
         // Test procmond registration
-        registry.register_publisher("procmond", "events.process.lifecycle").unwrap();
+        registry
+            .register_publisher("procmond", "events.process.lifecycle")
+            .unwrap();
         assert!(registry.can_publish("procmond", "events.process.lifecycle"));
 
         // Test access control
@@ -239,7 +241,9 @@ async fn test_end_to_end_topic_flow() {
 
     // Publish event
     let event = CollectionEvent::Process(/* ... */);
-    event_bus.publish_to_topic(event, "events.process.lifecycle", "test-correlation").await?;
+    event_bus
+        .publish_to_topic(event, "events.process.lifecycle", "test-correlation")
+        .await?;
 
     // Verify delivery
     let received = receiver.recv().await.unwrap();

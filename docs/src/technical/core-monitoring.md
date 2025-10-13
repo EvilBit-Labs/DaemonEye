@@ -136,7 +136,7 @@ use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::Path;
 
-pub trait HashComputer {
+pub trait HashComputer: Send + Sync {
     fn compute_hash(&self, path: &Path) -> Result<Option<String>>;
     fn get_algorithm(&self) -> &'static str;
 }
@@ -580,30 +580,28 @@ pub struct AlertDeliveryManager {
 
 impl AlertDeliveryManager {
     pub async fn deliver_alert(&self, alert: &Alert) -> Result<Vec<DeliveryResult>> {
-        let mut results = Vec::new();
+        let alert = alert.clone();
 
-        // Deliver to all sinks in parallel
-        let sink_tasks: Vec<_> = self
+        // Collect futures without spawning (avoids 'static lifetime requirement)
+        let delivery_futures: Vec<_> = self
             .sinks
             .iter()
             .map(|sink| {
                 let alert = alert.clone();
-                let sink = sink.as_ref();
-                tokio::spawn(async move { self.deliver_to_sink(sink, &alert).await })
+                async move { sink.send(&alert).await }
             })
             .collect();
 
-        for task in sink_tasks {
-            match task.await {
-                Ok(result) => results.push(result),
-                Err(e) => {
-                    tracing::error!("Alert delivery task failed: {}", e);
-                    results.push(DeliveryResult::Failed(e.to_string()));
-                }
-            }
-        }
+        // Execute all deliveries concurrently
+        let results = futures::future::join_all(delivery_futures).await;
 
-        Ok(results)
+        Ok(results
+            .into_iter()
+            .map(|r| match r {
+                Ok(_) => DeliveryResult::Success,
+                Err(e) => DeliveryResult::Failed(e.to_string()),
+            })
+            .collect())
     }
 
     async fn deliver_to_sink(&self, sink: &dyn AlertSink, alert: &Alert) -> DeliveryResult {

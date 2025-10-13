@@ -224,12 +224,14 @@ impl HighPerformanceEventBus {
         let (publisher, receiver) = unbounded::<BusEvent>();
         let subscribers = Arc::new(RwLock::new(HashMap::new()));
 
+        // Clone Arc before spawning thread
+        let thread_subs = Arc::clone(&subscribers);
         // Spawn routing thread with crossbeam backoff
         let routing_handle = thread::spawn(move || {
             let backoff = Backoff::new();
             while let Ok(event) = receiver.recv() {
                 // Route to subscribers with efficient backoff
-                let subs = subscribers.read();
+                let subs = thread_subs.read();
                 for (_, subscriber) in subs.iter() {
                     if let Err(_) = subscriber.sender.try_send(event.clone()) {
                         backoff.snooze(); // Efficient spinning

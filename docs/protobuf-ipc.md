@@ -241,7 +241,7 @@ fn basic_process_enumeration() -> Result<(), Box<dyn std::error::Error>> {
 
     // Deserialize response
     let response_bytes = &[]; // Sample response data
-    let result: DetectionResult = prost::Message::decode(response_bytes)?;
+    let result = DetectionResult::decode(response_bytes)?;
 
     // Process results
     if result.success {
@@ -305,7 +305,7 @@ All messages are validated during deserialization:
 
 ```rust
 fn validate_message(bytes: &[u8]) -> Result<(), prost::DecodeError> {
-    match prost::Message::decode(bytes) {
+    match DetectionTask::decode(bytes) {
         Ok(task) => process_task(task),
         Err(e) => {
             eprintln!("Invalid message format: {}", e);

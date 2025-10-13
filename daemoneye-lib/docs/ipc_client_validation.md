@@ -325,7 +325,9 @@ Common utilities are shared across test files:
 // Shared configuration creation
 fn create_validation_config(test_name: &str) -> (IpcConfig, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    let config = IpcConfig::default();
+    let endpoint = create_validation_endpoint(&temp_dir, test_name);
+    let mut config = IpcConfig::default();
+    config.socket_path = endpoint;
     (config, temp_dir)
 }
 
