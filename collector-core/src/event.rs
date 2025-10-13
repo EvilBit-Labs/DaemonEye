@@ -50,7 +50,7 @@ use std::time::SystemTime;
 ///     _ => {}
 /// }
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CollectionEvent {
     /// Process monitoring events
     Process(ProcessEvent),
@@ -72,7 +72,7 @@ pub enum CollectionEvent {
 ///
 /// Contains information about process lifecycle, metadata, and security-relevant
 /// attributes collected during process enumeration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProcessEvent {
     /// Process identifier
     pub pid: u32,
@@ -121,7 +121,7 @@ pub struct ProcessEvent {
 ///
 /// Will contain information about network connections, traffic patterns,
 /// and security-relevant network activity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NetworkEvent {
     /// Connection identifier
     pub connection_id: String,
@@ -153,7 +153,7 @@ pub struct NetworkEvent {
 ///
 /// Will contain information about file operations, access patterns,
 /// and security-relevant filesystem activity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FilesystemEvent {
     /// File path
     pub path: String,
@@ -181,7 +181,7 @@ pub struct FilesystemEvent {
 ///
 /// Will contain system resource utilization, performance metrics,
 /// and anomaly detection data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PerformanceEvent {
     /// Metric name
     pub metric_name: String,
@@ -235,7 +235,7 @@ pub struct PerformanceEvent {
 ///     timestamp: SystemTime::now(),
 /// };
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TriggerRequest {
     /// Unique identifier for this trigger request
     pub trigger_id: String,

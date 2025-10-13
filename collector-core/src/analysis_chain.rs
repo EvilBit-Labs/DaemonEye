@@ -413,7 +413,7 @@ pub struct AnalysisChainCoordinator {
     event_bus: Arc<RwLock<Option<Box<dyn EventBus + Send + Sync>>>>,
 
     /// Event subscription for receiving analysis results
-    result_subscription: Arc<Mutex<Option<mpsc::Receiver<BusEvent>>>>,
+    result_subscription: Arc<Mutex<Option<mpsc::UnboundedReceiver<BusEvent>>>>,
 
     /// Workflow execution statistics
     statistics: Arc<RwLock<WorkflowStatistics>>,
@@ -1249,7 +1249,7 @@ impl AnalysisChainCoordinator {
             .with_context(|| "Event bus not configured for trigger request emission")?;
 
         let event = CollectionEvent::TriggerRequest(trigger.clone());
-        bus.publish(event, trigger.correlation_id.clone())
+        bus.publish(event, Some(trigger.correlation_id.clone()))
             .await
             .context("Failed to publish trigger request")?;
 

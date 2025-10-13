@@ -120,9 +120,7 @@ impl ProcmondMonitorCollector {
         // Create event bus if event-driven architecture is enabled
         let event_bus = if config.base_config.enable_event_driven {
             let bus_config = collector_core::EventBusConfig::default();
-            let local_bus = LocalEventBus::new(bus_config)
-                .await
-                .with_context(|| "Failed to create event bus for Procmond Monitor Collector")?;
+            let local_bus = LocalEventBus::new(bus_config);
             Arc::new(RwLock::new(Some(
                 Arc::new(local_bus) as Arc<dyn EventBus + Send + Sync>
             )))

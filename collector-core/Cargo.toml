@@ -37,8 +37,8 @@ tracing = { workspace = true }
 # Bitflags for capabilities
 bitflags = { workspace = true }
 
-# Message broker for IPC
-busrt = { workspace = true }
+# Message broker for IPC (disabled during migration away from busrt)
+# busrt = { workspace = true }
 
 # IPC integration
 daemoneye-lib = { workspace = true }
@@ -82,6 +82,6 @@ anyhow = { workspace = true }
 name = "collector_benchmarks"
 harness = false
 
-[[bench]]
-name = "event_bus_benchmarks"
-harness = false
+[features]
+default = []
+busrt = []
