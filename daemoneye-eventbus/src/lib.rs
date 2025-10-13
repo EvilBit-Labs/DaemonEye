@@ -73,7 +73,10 @@ pub use message::{
     BusEvent, CollectionEvent, CorrelationFilter, EventFilter, EventSubscription, FilesystemEvent,
     Message, MessageType, NetworkEvent, PerformanceEvent, ProcessEvent, SourceCaps, TriggerRequest,
 };
-pub use topic::{TopicMatcher, TopicPattern};
+pub use topic::{
+    Topic, TopicAccessLevel, TopicDomain, TopicError, TopicMatcher, TopicPattern, TopicRegistry,
+    TopicStats, TopicType,
+};
 
 /// EventBus trait for compatibility with collector-core
 #[allow(async_fn_in_trait)]

@@ -103,7 +103,7 @@ The following foundational components have been successfully implemented:
   - Document migration strategy from current crossbeam channels to daemoneye-eventbus topics
   - _Requirements: 14.2, 14.4, 15.1, 15.2_
 
-- [ ] 2.2.1 Design topic hierarchy for multi-collector communication
+- [x] 2.2.1 Design topic hierarchy for multi-collector communication
 
   - Define topic structure: events.process._, events.network._, events.filesystem._, events.performance._
   - Create control topic hierarchy: control.collector._, control.agent._, control.health.\*

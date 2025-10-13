@@ -67,20 +67,20 @@ fn bench_message_deserialization(c: &mut Criterion) {
 }
 
 fn bench_topic_matching(c: &mut Criterion) {
-    use daemoneye_eventbus::TopicPattern;
+    use daemoneye_eventbus::{Topic, TopicPattern};
 
     let patterns = vec![
-        TopicPattern::new("events.process.*".to_string()),
-        TopicPattern::new("events.*".to_string()),
-        TopicPattern::new("events.process.new".to_string()),
+        TopicPattern::new("events.process.*").unwrap(),
+        TopicPattern::new("events.*").unwrap(),
+        TopicPattern::new("events.process.new").unwrap(),
     ];
 
     let topics = vec![
-        "events.process.new",
-        "events.process.old",
-        "events.network.connections",
-        "events.filesystem.create",
-        "control.collector.start",
+        Topic::new("events.process.new").unwrap(),
+        Topic::new("events.process.old").unwrap(),
+        Topic::new("events.network.connections").unwrap(),
+        Topic::new("events.filesystem.create").unwrap(),
+        Topic::new("control.collector.start").unwrap(),
     ];
 
     c.bench_function("topic_matching", |b| {

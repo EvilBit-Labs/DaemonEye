@@ -115,24 +115,30 @@ async fn test_event_subscription() {
 
 #[tokio::test]
 async fn test_topic_wildcard_matching() {
-    use daemoneye_eventbus::TopicPattern;
+    use daemoneye_eventbus::{Topic, TopicPattern};
 
     // Test exact match
-    let pattern = TopicPattern::new("events.process.new".to_string());
-    assert!(pattern.matches("events.process.new"));
-    assert!(!pattern.matches("events.process.old"));
+    let pattern = TopicPattern::new("events.process.lifecycle").unwrap();
+    let topic1 = Topic::new("events.process.lifecycle").unwrap();
+    let topic2 = Topic::new("events.process.metadata").unwrap();
+    assert!(pattern.matches(&topic1));
+    assert!(!pattern.matches(&topic2));
 
     // Test wildcard match
-    let wildcard_pattern = TopicPattern::new("events.process.*".to_string());
-    assert!(wildcard_pattern.matches("events.process.new"));
-    assert!(wildcard_pattern.matches("events.process.old"));
-    assert!(!wildcard_pattern.matches("events.network.new"));
+    let wildcard_pattern = TopicPattern::new("events.process.+").unwrap();
+    assert!(wildcard_pattern.matches(&topic1));
+    assert!(wildcard_pattern.matches(&topic2));
+
+    let network_topic = Topic::new("events.network.connections").unwrap();
+    assert!(!wildcard_pattern.matches(&network_topic));
 
     // Test multi-level wildcard
-    let multi_pattern = TopicPattern::new("events.*".to_string());
-    assert!(multi_pattern.matches("events.process.new"));
-    assert!(multi_pattern.matches("events.network.connections"));
-    assert!(!multi_pattern.matches("control.collector.start"));
+    let multi_pattern = TopicPattern::new("events.#").unwrap();
+    assert!(multi_pattern.matches(&topic1));
+    assert!(multi_pattern.matches(&network_topic));
+
+    let control_topic = Topic::new("control.collector.status").unwrap();
+    assert!(!multi_pattern.matches(&control_topic));
 }
 
 #[tokio::test]

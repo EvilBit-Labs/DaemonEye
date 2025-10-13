@@ -92,7 +92,7 @@ impl DaemoneyeBroker {
 
         // Find subscribers for this topic
         let topic_matcher = self.topic_matcher.read().await;
-        let subscribers = topic_matcher.find_subscribers(topic);
+        let subscribers = topic_matcher.find_subscribers(topic)?;
         drop(topic_matcher);
 
         if subscribers.is_empty() {

@@ -86,3 +86,9 @@ impl EventBusError {
         Self::Shutdown(msg.into())
     }
 }
+
+impl From<crate::topic::TopicError> for EventBusError {
+    fn from(err: crate::topic::TopicError) -> Self {
+        Self::Topic(err.to_string())
+    }
+}

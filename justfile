@@ -147,7 +147,7 @@ lint-rust-min:
 
 # Check documentation compiles without warnings
 lint-docs:
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
+    powershell -Command "$env:RUSTDOCFLAGS='-D warnings'; cargo doc --no-deps --document-private-items"
 
 # Format justfile
 fmt-justfile:
