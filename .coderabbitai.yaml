@@ -154,6 +154,10 @@ reviews:
                 "instructions": "Shared framework library providing common functionality for collectors, such as procmond. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments. Stability and performance of the library is critical.",
             },
             {
+                "path": "daemoneye-eventbus/**",
+                "instructions": "Cross-platform IPC event bus for DaemonEye monitoring system. Enforce cross-platform compatibility: PRIMARY platforms (Linux Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Alma/Rocky Linux 8+, Debian 11+ LTS, macOS 14.0+, Windows 10+, Windows Server 2019+, Windows Server 2022, Windows 11) and SECONDARY platforms (Alpine 3.16+, Amazon Linux 2+, Ubuntu 18.04, RHEL 7, macOS 12.0+, FreeBSD 13.0+). Use Windows named pipes and Unix domain sockets. Focus on performance (10k+ messages/sec), security (local IPC only), and reliability (at-most-once delivery). Flag any network exposure, privilege escalation, or performance regressions. Ensure proper error handling and resource cleanup.",
+            },
+            {
                 "path": "docs/src/**",
                 "instructions": "Documentation source files. Enforce clear, technical writing for cybersecurity professionals. Focus on accuracy, completeness, and operational relevance. Flag missing security considerations or unclear technical explanations.",
             },
