@@ -157,6 +157,12 @@ impl TransportClient {
     }
 }
 
+impl Default for TransportClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Transport connection manager for handling multiple clients
 pub struct TransportManager {
     server: TransportServer,

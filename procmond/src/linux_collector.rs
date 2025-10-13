@@ -13,7 +13,7 @@ use std::fs;
 use std::io::{self};
 use std::path::Path;
 use std::time::SystemTime;
-use sysinfo::{Pid, Process, System};
+use sysinfo::{Process, System};
 use thiserror::Error;
 use tracing::{debug, error, warn};
 
@@ -670,6 +670,7 @@ impl ProcessCollector for LinuxProcessCollector {
                 } else {
                     system.refresh_processes_specifics(
                         sysinfo::ProcessesToUpdate::All,
+                        false,
                         sysinfo::ProcessRefreshKind::everything(),
                     );
                 }
@@ -768,6 +769,7 @@ impl ProcessCollector for LinuxProcessCollector {
                 } else {
                     system.refresh_processes_specifics(
                         sysinfo::ProcessesToUpdate::All,
+                        false,
                         sysinfo::ProcessRefreshKind::everything(),
                     );
                 }
@@ -832,7 +834,9 @@ impl ProcessCollector for LinuxProcessCollector {
 
         Ok(())
     }
+}
 
+impl LinuxProcessCollector {
     /// Converts a sysinfo process to a ProcessEvent with Linux-specific enhancements.
     async fn convert_sysinfo_to_event(
         &self,
@@ -932,9 +936,7 @@ impl ProcessCollector for LinuxProcessCollector {
             platform_metadata,
         })
     }
-}
 
-impl LinuxProcessCollector {
     /// Determines if a process is a system process based on name and PID.
     fn is_system_process(&self, name: &str, pid: u32) -> bool {
         // Common system process patterns

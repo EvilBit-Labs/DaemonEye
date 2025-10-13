@@ -33,6 +33,8 @@ pub struct DaemoneyeBroker {
     /// Subscriber senders for message delivery
     subscriber_senders:
         Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<BusEvent>>>>,
+    /// Reverse mapping from original subscriber IDs to broker UUIDs
+    subscriber_id_mapping: Arc<Mutex<std::collections::HashMap<String, Uuid>>>,
 }
 
 impl DaemoneyeBroker {
@@ -63,6 +65,7 @@ impl DaemoneyeBroker {
             shutdown_rx: Arc::new(Mutex::new(Some(shutdown_rx))),
             config,
             subscriber_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            subscriber_id_mapping: Arc::new(Mutex::new(std::collections::HashMap::new())),
         };
 
         info!("DaemonEye broker created with socket: {}", socket_path);
@@ -335,23 +338,57 @@ impl EventBus for DaemoneyeEventBus {
         // Create a new receiver for this subscription
         let (tx, rx) = mpsc::unbounded_channel();
 
-        // Store the sender for this subscription
+        // Store the sender for this subscription using the broker-side UUID
+        // and maintain the mapping from original subscriber ID to broker UUID
         {
             let mut senders = self.broker.subscriber_senders.lock().await;
-            senders.insert(subscription.subscriber_id.clone(), tx);
+            let mut mapping = self.broker.subscriber_id_mapping.lock().await;
+
+            senders.insert(subscriber_id.to_string(), tx);
+            mapping.insert(subscription.subscriber_id.clone(), subscriber_id);
         }
 
         Ok(rx)
     }
 
     async fn unsubscribe(&mut self, subscriber_id: &str) -> Result<()> {
-        // Try to parse subscriber ID as UUID, otherwise treat as string ID
+        // First try to parse subscriber ID as UUID
         match subscriber_id.parse::<Uuid>() {
-            Ok(id) => self.broker.unsubscribe(id).await,
-            Err(_) => {
-                // Remove from internal subscribers by string ID
+            Ok(id) => {
+                // Direct UUID lookup - unsubscribe from broker and remove sender
+                self.broker.unsubscribe(id).await?;
                 let mut senders = self.broker.subscriber_senders.lock().await;
-                senders.remove(subscriber_id);
+                let mut mapping = self.broker.subscriber_id_mapping.lock().await;
+
+                senders.remove(&id.to_string());
+                // Remove from mapping by finding the key that maps to this UUID
+                mapping.retain(|_, &mut uuid| uuid != id);
+                Ok(())
+            }
+            Err(_) => {
+                // String-based lookup - find the corresponding broker UUID
+                let mapping = self.broker.subscriber_id_mapping.lock().await;
+                if let Some(&broker_uuid) = mapping.get(subscriber_id) {
+                    // Found the mapping, now unsubscribe from broker and clean up
+                    drop(mapping); // Release mapping lock before calling broker
+                    self.broker.unsubscribe(broker_uuid).await?;
+
+                    let mut senders = self.broker.subscriber_senders.lock().await;
+                    let mut mapping = self.broker.subscriber_id_mapping.lock().await;
+
+                    senders.remove(&broker_uuid.to_string());
+                    mapping.remove(subscriber_id);
+                } else {
+                    // No mapping found - this might be a direct UUID string that wasn't parsed
+                    // Try to find it in the senders map directly
+                    let mut senders = self.broker.subscriber_senders.lock().await;
+                    if senders.contains_key(subscriber_id) {
+                        // This is a direct string key, remove it
+                        senders.remove(subscriber_id);
+                    } else {
+                        warn!("No subscription found for subscriber ID: {}", subscriber_id);
+                    }
+                }
                 Ok(())
             }
         }

@@ -76,6 +76,7 @@ pub use message::{
 pub use topic::{TopicMatcher, TopicPattern};
 
 /// EventBus trait for compatibility with collector-core
+#[allow(async_fn_in_trait)]
 pub trait EventBus: Send + Sync {
     /// Publishes an event to the event bus with correlation tracking.
     async fn publish(&mut self, event: CollectionEvent, correlation_id: String) -> Result<()>;
@@ -97,7 +98,7 @@ pub trait EventBus: Send + Sync {
 }
 
 /// Statistics about event bus operation
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct EventBusStatistics {
     /// Total messages published
     pub messages_published: u64,
@@ -109,16 +110,4 @@ pub struct EventBusStatistics {
     pub active_topics: usize,
     /// Broker uptime in seconds
     pub uptime_seconds: u64,
-}
-
-impl Default for EventBusStatistics {
-    fn default() -> Self {
-        Self {
-            messages_published: 0,
-            messages_delivered: 0,
-            active_subscribers: 0,
-            active_topics: 0,
-            uptime_seconds: 0,
-        }
-    }
 }

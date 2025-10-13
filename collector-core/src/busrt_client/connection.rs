@@ -8,11 +8,11 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use tokio::{
-    net::UnixStream,
-    sync::{Mutex, RwLock, mpsc},
-    time::timeout,
-};
+#[cfg(unix)]
+use tokio::net::UnixStream;
+use tokio::sync::{Mutex, RwLock, mpsc};
+#[cfg(unix)]
+use tokio::time::timeout;
 use tracing::debug;
 
 use super::types::OutboundMessage;
@@ -48,34 +48,44 @@ impl ConnectionState {
     /// Establishes a connection to the busrt broker.
     pub(super) async fn establish_connection(
         transport_config: &TransportConfig,
-        timeout_duration: Duration,
+        _timeout_duration: Duration,
     ) -> Result<(mpsc::Sender<OutboundMessage>, mpsc::Receiver<BusrtEvent>), BusrtError> {
         match transport_config.transport_type {
             TransportType::UnixSocket => {
-                let socket_path = transport_config.path.as_ref().ok_or_else(|| {
-                    BusrtError::ConnectionFailed("Unix socket path not configured".to_string())
-                })?;
-
-                let _stream = timeout(timeout_duration, UnixStream::connect(socket_path))
-                    .await
-                    .map_err(|_| BusrtError::RpcTimeout("Connection timeout".to_string()))?
-                    .map_err(|e| {
-                        BusrtError::ConnectionFailed(format!(
-                            "Unix socket connection failed: {}",
-                            e
-                        ))
+                #[cfg(unix)]
+                {
+                    let socket_path = transport_config.path.as_ref().ok_or_else(|| {
+                        BusrtError::ConnectionFailed("Unix socket path not configured".to_string())
                     })?;
 
-                // Create channels for message handling
-                let (outbound_tx, _outbound_rx) = mpsc::channel(1000);
-                let (_inbound_tx, inbound_rx) = mpsc::channel(1000);
+                    let _stream = timeout(_timeout_duration, UnixStream::connect(socket_path))
+                        .await
+                        .map_err(|_| BusrtError::RpcTimeout("Connection timeout".to_string()))?
+                        .map_err(|e| {
+                            BusrtError::ConnectionFailed(format!(
+                                "Unix socket connection failed: {}",
+                                e
+                            ))
+                        })?;
 
-                // Start stream handling tasks
-                // Note: In a real implementation, this would handle the actual stream I/O
-                // For now, we'll create placeholder channels
-                debug!(path = %socket_path, "Unix socket connection established");
+                    // Create channels for message handling
+                    let (outbound_tx, _outbound_rx) = mpsc::channel(1000);
+                    let (_inbound_tx, inbound_rx) = mpsc::channel(1000);
 
-                Ok((outbound_tx, inbound_rx))
+                    // Start stream handling tasks
+                    // Note: In a real implementation, this would handle the actual stream I/O
+                    // For now, we'll create placeholder channels
+                    debug!(path = %socket_path, "Unix socket connection established");
+
+                    Ok((outbound_tx, inbound_rx))
+                }
+
+                #[cfg(not(unix))]
+                {
+                    Err(BusrtError::ConnectionFailed(
+                        "Unix sockets are not supported on this platform".to_string(),
+                    ))
+                }
             }
             TransportType::Tcp => {
                 // Placeholder for TCP connection

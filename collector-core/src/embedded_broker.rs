@@ -36,8 +36,10 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
+#[cfg(unix)]
+use tokio::net::UnixListener;
 use tokio::{
-    net::{TcpListener, UnixListener},
+    net::TcpListener,
     sync::{Mutex, RwLock, mpsc},
     task::JoinHandle,
     time::{interval, timeout},
@@ -504,6 +506,7 @@ impl EmbeddedBroker {
     }
 
     /// Starts Unix socket listener.
+    #[cfg(unix)]
     async fn start_unix_socket_listener(&mut self) -> Result<()> {
         let socket_path = self
             .config
@@ -563,6 +566,11 @@ impl EmbeddedBroker {
 
         self.listener_handles.push(handle);
         Ok(())
+    }
+
+    #[cfg(not(unix))]
+    async fn start_unix_socket_listener(&mut self) -> Result<()> {
+        anyhow::bail!("Unix sockets are not supported on this platform");
     }
 
     /// Starts TCP listener.
@@ -655,6 +663,7 @@ impl EmbeddedBroker {
     }
 
     /// Handles a new client connection.
+    #[cfg(unix)]
     async fn handle_new_client(
         _stream: tokio::net::UnixStream,
         state: &Arc<BrokerState>,
@@ -689,6 +698,13 @@ impl EmbeddedBroker {
 
         info!(client_id = %client_id, "New client connected");
 
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    #[allow(dead_code)]
+    async fn handle_new_client(_unused: (), _state: &Arc<BrokerState>) -> Result<()> {
+        // Not used on non-Unix platforms
         Ok(())
     }
 

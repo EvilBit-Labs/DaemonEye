@@ -87,13 +87,13 @@ impl TopicMatcher {
         // Add to subscriptions
         self.subscriptions
             .entry(topic_pattern.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(subscriber_id);
 
         // Add to subscriber patterns
         self.subscriber_patterns
             .entry(subscriber_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(topic_pattern);
 
         Ok(())
