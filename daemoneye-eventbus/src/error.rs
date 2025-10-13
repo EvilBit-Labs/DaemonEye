@@ -43,6 +43,10 @@ pub enum EventBusError {
     /// Shutdown errors
     #[error("Shutdown error: {0}")]
     Shutdown(String),
+
+    /// RPC operation errors
+    #[error("RPC error: {0}")]
+    Rpc(String),
 }
 
 impl EventBusError {
@@ -84,6 +88,11 @@ impl EventBusError {
     /// Create a shutdown error
     pub fn shutdown(msg: impl Into<String>) -> Self {
         Self::Shutdown(msg.into())
+    }
+
+    /// Create an RPC error
+    pub fn rpc(msg: impl Into<String>) -> Self {
+        Self::Rpc(msg.into())
     }
 }
 

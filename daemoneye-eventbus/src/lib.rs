@@ -18,7 +18,7 @@
 //! use std::collections::HashMap;
 //! use std::time::SystemTime;
 //!
-//! #[tokio::main]
+//! #[tokio::main(flavor = "current_thread")]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Start embedded broker
 //!     let broker = DaemoneyeBroker::new("/tmp/daemoneye.sock").await?;
@@ -63,6 +63,7 @@
 pub mod broker;
 pub mod error;
 pub mod message;
+pub mod rpc;
 pub mod topic;
 pub mod transport;
 
@@ -72,6 +73,11 @@ pub use error::{EventBusError, Result};
 pub use message::{
     BusEvent, CollectionEvent, CorrelationFilter, EventFilter, EventSubscription, FilesystemEvent,
     Message, MessageType, NetworkEvent, PerformanceEvent, ProcessEvent, SourceCaps, TriggerRequest,
+};
+pub use rpc::{
+    CapabilitiesData, CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient,
+    CollectorRpcService, ConfigUpdateRequest, HealthCheckData, HealthStatus, RpcPayload,
+    RpcRequest, RpcResponse, RpcStatus, ShutdownRequest, ShutdownType,
 };
 pub use topic::{
     Topic, TopicAccessLevel, TopicDomain, TopicError, TopicMatcher, TopicPattern, TopicRegistry,

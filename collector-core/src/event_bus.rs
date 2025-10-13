@@ -200,12 +200,12 @@ impl EventBus for LocalEventBus {
         // Create a channel for the subscriber
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
-        // Spawn a task to forward events
-        let event_tx = self.event_tx.clone();
+        // Prepare a receiver before returning to avoid a race where publish happens
+        // before the forwarding task is actually listening, which would drop events.
+        let mut forwarding_rx = self.event_tx.subscribe();
         let _subscriber_id = subscription.subscriber_id.clone();
         tokio::spawn(async move {
-            let mut receiver = event_tx.subscribe();
-            while let Ok(event) = receiver.recv().await {
+            while let Ok(event) = forwarding_rx.recv().await {
                 // Convert CollectionEvent to BusEvent
                 let bus_event = BusEvent {
                     id: Uuid::new_v4(),
@@ -247,7 +247,9 @@ impl EventBus for LocalEventBus {
 mod tests {
     use super::*;
     use crate::event::ProcessEvent;
+    use std::time::Duration;
     use std::time::SystemTime;
+    use tokio::time::timeout;
 
     #[tokio::test]
     async fn test_local_event_bus() {
@@ -284,7 +286,10 @@ mod tests {
 
         bus.publish(event.clone(), None).await.unwrap();
 
-        let received_event = receiver.recv().await.unwrap();
+        let received_event = timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("timed out waiting for event")
+            .unwrap();
         assert_eq!(received_event.event, event);
     }
 }

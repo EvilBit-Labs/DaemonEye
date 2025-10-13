@@ -15,8 +15,8 @@ categories = [
 ]
 
 [dependencies]
-interprocess = { version = "2.2", features = ["tokio"] }
-tokio = { version = "1.47", features = [
+interprocess = { version = "2.2.3", features = ["tokio"] }
+tokio = { version = "1.47.1", features = [
     "sync",
     "rt",
     "macros",
@@ -24,18 +24,19 @@ tokio = { version = "1.47", features = [
     "net",
     "io-util",
 ] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 bincode = { version = "2.0.1", features = ["serde"] }
-thiserror = "2.0"
-tracing = "0.1"
-uuid = { version = "1.0", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-async-trait = "0.1"
+thiserror = "2.0.17"
+tracing = "0.1.41"
+uuid = { version = "1.18.1", features = ["v4", "serde"] }
+chrono = { version = "0.4.42", features = ["serde"] }
+async-trait = "0.1.89"
 
 [dev-dependencies]
-tokio-test = "0.4"
-criterion = { version = "0.5", features = ["html_reports"] }
-tempfile = "3.0"
+tokio-test = "0.4.4"
+criterion = { version = "0.7.0", features = ["html_reports"] }
+tempfile = "3.23.0"
 
 [[bench]]
 name = "throughput"

@@ -53,6 +53,8 @@ The following foundational components have been successfully implemented:
 
 - [x] 2. Migrate from crossbeam event bus to daemoneye-eventbus message broker
 
+  > We are defining daemoneye-eventbus to meet our needs, so missing features should be added as necessary. This is to replace the busrt crate that does not provide full crossplatform support.
+
 - [x] 2.1 Research and implement daemoneye-eventbus crate
 
 - [x] 2.1.1 Create daemoneye-eventbus crate foundation
@@ -111,7 +113,7 @@ The following foundational components have been successfully implemented:
   - Document topic access patterns and security boundaries
   - _Requirements: 15.1, 15.3_
 
-- [ ] 2.2.2 Define RPC call patterns for collector lifecycle management
+- [x] 2.2.2 Define RPC call patterns for collector lifecycle management
 
   - Design RPC service definitions for collector start/stop/restart operations
   - Create health check RPC patterns with heartbeat and status reporting
@@ -1072,26 +1074,11 @@ These extensions will follow the established collector-core framework patterns a
 
   _Requirements: 6.1, 6.2, 11.1, 11.2_
 
-- [ ] 12. **PLACEHOLDER: Build Comprehensive Error Handling and Recovery System**
+- [ ] 12. **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
 
-  **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
-
-  **📋 Action Required**:
-
-  1. Complete SQL-to-IPC engine implementation (Task 6 above)
-  2. Follow tasks 7.1-7.5 from `.kiro/specs/sql-to-ipc-detection-engine/tasks.md`
-  3. Return here for integration with core monitoring infrastructure
-
-  **🔗 Integration Scope**:
-
-  - ErrorRecoveryManager with circuit breaker patterns
-  - Graceful degradation for collector failures
-  - Query execution timeout and resource limits
-  - Comprehensive error classification and recovery
-
-  _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
-
-## Future Collector Extensions (Strategic Roadmap)
+  - Complete SQL-to-IPC engine implementation (Task 6 above)
+  - Follow tasks 7.1-7.5 from #[[file:.kiro/specs/sql-to-ipc-detection-engine/tasks.md]]
+  - Return here for integration with core monitoring infrastructure _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
 
 The following collectors are planned for future implementation to extend the virtual table system:
 
@@ -1100,42 +1087,3 @@ The following collectors are planned for future implementation to extend the vir
 - [ ] 15. Performance Collector (perfmond) - Virtual tables: `system_metrics`, `resource_usage`
 
 These extensions will follow the established collector-core framework patterns and integrate with the SQL-to-IPC translation system for unified querying across all monitoring domains.
-
-## Spec Coordination Strategy
-
-This specification focuses on **core monitoring infrastructure** that is independent of the SQL-to-IPC detection engine. The two specs are designed to work together with clear boundaries:
-
-### DaemonEye Core Monitoring (This Spec)
-
-**Scope**: Infrastructure, process collection, service management, CLI, alerting, observability
-
-- ✅ **Independent Tasks**: Can be implemented without SQL-to-IPC engine
-- 🚧 **Placeholder Tasks**: Require SQL-to-IPC engine completion first
-
-### SQL-to-IPC Detection Engine (Separate Spec)
-
-**Scope**: SQL parsing, query optimization, reactive orchestration, specialty collectors
-
-- 📍 **Location**: `.kiro/specs/sql-to-ipc-detection-engine/`
-- 🎯 **Focus**: Complete detection engine architecture and implementation
-
-### Implementation Workflow
-
-1. **Phase 1**: Complete independent tasks in this spec (Tasks 1-5, 7-10)
-2. **Phase 2**: Complete SQL-to-IPC detection engine spec entirely
-3. **Phase 3**: Return to complete placeholder tasks (Tasks 6, 11, 12)
-4. **Phase 4**: Integration testing and system validation
-
-### Integration Points
-
-- **Task 6**: SQL-to-IPC engine integration with daemoneye-agent
-- **Task 11**: Specialty collectors integration with collector-core
-- **Task 12**: Error handling integration across all components
-
-This approach ensures:
-
-- ✅ Clear separation of concerns
-- ✅ Parallel development capability
-- ✅ No duplication between specs
-- ✅ Clear dependency management
-- ✅ Focused implementation guidance

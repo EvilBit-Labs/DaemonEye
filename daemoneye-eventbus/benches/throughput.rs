@@ -1,11 +1,12 @@
 //! Performance benchmarks for daemoneye-eventbus
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use daemoneye_eventbus::{
     CollectionEvent, DaemoneyeBroker, DaemoneyeEventBus, EventBus, EventSubscription, ProcessEvent,
     SourceCaps,
 };
 use std::collections::HashMap;
+use std::hint::black_box;
 use std::time::SystemTime;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
