@@ -101,9 +101,12 @@ async fn test_event_subscription() {
     };
 
     // Subscribe
-    let _receiver = event_bus.subscribe(subscription).await.unwrap();
-    // Just check that we got a receiver
-    assert!(true);
+    let receiver = event_bus.subscribe(subscription).await.unwrap();
+    // Verify receiver is open and ready to receive messages
+    assert!(
+        !receiver.is_closed(),
+        "Receiver should not be closed immediately after subscription"
+    );
 
     // Check statistics
     let stats = event_bus.statistics().await;
@@ -187,5 +190,9 @@ async fn test_statistics_tracking() {
     // Check updated stats
     let updated_stats = event_bus.statistics().await;
     assert_eq!(updated_stats.messages_published, 1);
-    assert!(updated_stats.uptime_seconds >= 0);
+    // Just verify uptime is a valid value (can be 0 if very fast)
+    assert!(
+        updated_stats.uptime_seconds < 10,
+        "Uptime should be reasonable for a short test"
+    );
 }

@@ -140,16 +140,20 @@ fn bench_statistics_collection(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
 
     c.bench_function("statistics_collection", |b| {
+        // Setup outside the iteration
+        let temp_dir = TempDir::new().unwrap();
+        let socket_path = temp_dir.path().join("bench-stats.sock");
+
+        let broker = rt.block_on(async {
+            DaemoneyeBroker::new(socket_path.to_str().unwrap())
+                .await
+                .unwrap()
+        });
+        let event_bus =
+            rt.block_on(async { DaemoneyeEventBus::from_broker(broker).await.unwrap() });
+
         b.iter(|| {
             rt.block_on(async {
-                let temp_dir = TempDir::new().unwrap();
-                let socket_path = temp_dir.path().join("bench-stats.sock");
-
-                let broker = DaemoneyeBroker::new(socket_path.to_str().unwrap())
-                    .await
-                    .unwrap();
-                let event_bus = DaemoneyeEventBus::from_broker(broker).await.unwrap();
-
                 let stats = event_bus.statistics().await;
                 black_box(stats)
             })

@@ -84,7 +84,7 @@ pub trait EventBus: Send + Sync {
     async fn subscribe(
         &mut self,
         subscription: EventSubscription,
-    ) -> Result<tokio::sync::mpsc::Receiver<BusEvent>>;
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>>;
 
     /// Unsubscribes a subscriber from the event bus.
     async fn unsubscribe(&mut self, subscriber_id: &str) -> Result<()>;

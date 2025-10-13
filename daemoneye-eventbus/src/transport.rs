@@ -1,7 +1,7 @@
 //! Transport layer for cross-platform IPC communication
 
 use crate::error::{EventBusError, Result};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// Cross-platform socket path configuration
 #[derive(Debug, Clone)]
@@ -37,6 +37,7 @@ impl SocketConfig {
 /// Transport server for accepting client connections
 pub struct TransportServer {
     config: SocketConfig,
+    accept_count: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl TransportServer {
@@ -44,11 +45,29 @@ impl TransportServer {
     pub async fn new(config: SocketConfig) -> Result<Self> {
         let socket_path = config.get_socket_path();
         info!("Transport server created for: {}", socket_path);
-        Ok(Self { config })
+        Ok(Self {
+            config,
+            accept_count: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        })
     }
 
     /// Accept a new client connection
     pub async fn accept(&self) -> Result<TransportClient> {
+        // Simulate blocking accept with proper async sleep
+        // In a real implementation, this would be a real async accept on a socket/pipe
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        let count = self
+            .accept_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        // Simulate connection limit - stop accepting after a reasonable number
+        if count >= 100 {
+            return Err(EventBusError::transport(
+                "Server shutdown or connection limit reached",
+            ));
+        }
+
         debug!("Accepting new client connection");
         Ok(TransportClient::new())
     }
@@ -62,31 +81,58 @@ impl TransportServer {
 /// Transport client for connecting to the server
 pub struct TransportClient {
     connected: bool,
+    buffer: Vec<u8>,
 }
 
 impl TransportClient {
     /// Create a new transport client
     pub fn new() -> Self {
-        Self { connected: true }
+        Self {
+            connected: true,
+            buffer: Vec::new(),
+        }
     }
 
     /// Connect to a transport server
     pub async fn connect(config: &SocketConfig) -> Result<Self> {
         let socket_path = config.get_socket_path();
         info!("Connecting to transport server: {}", socket_path);
-        Ok(Self { connected: true })
+        Ok(Self {
+            connected: true,
+            buffer: Vec::new(),
+        })
     }
 
     /// Send a message through the transport
     pub async fn send(&mut self, data: &[u8]) -> Result<()> {
+        if !self.connected {
+            return Err(EventBusError::transport("Transport connection is closed"));
+        }
+
+        // Simulate async write operation
+        tokio::task::yield_now().await;
+
+        // In a real implementation, this would write to a Unix socket or named pipe
         debug!("Sent {} bytes through transport", data.len());
         Ok(())
     }
 
     /// Receive a message from the transport
     pub async fn receive(&mut self) -> Result<Vec<u8>> {
+        if !self.connected {
+            return Err(EventBusError::transport("Transport connection is closed"));
+        }
+
+        // Simulate async read operation
+        tokio::task::yield_now().await;
+
+        // In a real implementation, this would read from a Unix socket or named pipe
+        if self.buffer.is_empty() {
+            return Err(EventBusError::transport("No data available"));
+        }
+
         debug!("Received message through transport");
-        Ok(Vec::new())
+        Ok(std::mem::take(&mut self.buffer))
     }
 
     /// Check if the connection is still alive
@@ -96,7 +142,16 @@ impl TransportClient {
 
     /// Close the transport connection
     pub async fn close(mut self) -> Result<()> {
+        if !self.connected {
+            return Ok(());
+        }
+
         self.connected = false;
+        self.buffer.clear();
+
+        // Simulate async shutdown operation
+        tokio::task::yield_now().await;
+
         debug!("Transport connection closed");
         Ok(())
     }

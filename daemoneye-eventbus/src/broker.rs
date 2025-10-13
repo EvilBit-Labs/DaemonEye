@@ -27,6 +27,11 @@ pub struct DaemoneyeBroker {
     shutdown_tx: mpsc::UnboundedSender<()>,
     /// Shutdown receiver
     shutdown_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<()>>>>,
+    /// Socket configuration
+    config: SocketConfig,
+    /// Subscriber senders for message delivery
+    subscriber_senders:
+        Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<BusEvent>>>>,
 }
 
 impl DaemoneyeBroker {
@@ -36,7 +41,7 @@ impl DaemoneyeBroker {
         let config = SocketConfig::new(&instance_id);
 
         // Override with provided socket path if different
-        let _config = if socket_path != config.get_socket_path() {
+        let config = if socket_path != config.get_socket_path() {
             SocketConfig {
                 unix_path: socket_path.to_string(),
                 windows_pipe: socket_path.to_string(),
@@ -55,6 +60,8 @@ impl DaemoneyeBroker {
             start_time: Instant::now(),
             shutdown_tx,
             shutdown_rx: Arc::new(Mutex::new(Some(shutdown_rx))),
+            config,
+            subscriber_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
         };
 
         info!("DaemonEye broker created with socket: {}", socket_path);
@@ -67,12 +74,34 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
+    /// Get the socket configuration
+    pub fn config(&self) -> &SocketConfig {
+        &self.config
+    }
+
     /// Publish a message to the broker
     pub async fn publish(&self, topic: &str, correlation_id: &str, payload: Vec<u8>) -> Result<()> {
         let mut seq_guard = self.sequence.lock().await;
         let sequence = *seq_guard;
         *seq_guard += 1;
         drop(seq_guard);
+
+        // Find subscribers for this topic
+        let topic_matcher = self.topic_matcher.read().await;
+        let subscribers = topic_matcher.find_subscribers(topic);
+        drop(topic_matcher);
+
+        if subscribers.is_empty() {
+            debug!("No subscribers for topic: {}", topic);
+            // Update statistics even when no subscribers
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.messages_published += 1;
+            return Ok(());
+        }
+
+        // Deserialize payload to CollectionEvent before creating message
+        let collection_event: CollectionEvent = bincode::deserialize(&payload)
+            .map_err(|e| EventBusError::serialization(e.to_string()))?;
 
         let message = Message::event(
             topic.to_string(),
@@ -81,26 +110,10 @@ impl DaemoneyeBroker {
             sequence,
         );
 
-        // Find subscribers for this topic
-        let topic_matcher = self.topic_matcher.read().await;
-        let subscribers = topic_matcher.find_subscribers(topic);
-        drop(topic_matcher);
-
-        // Update statistics regardless of subscribers
-        {
-            let mut stats_guard = self.stats.lock().await;
-            stats_guard.messages_published += 1;
-        }
-
-        if subscribers.is_empty() {
-            debug!("No subscribers for topic: {}", topic);
-            return Ok(());
-        }
-
         // Serialize message
         let message_data = message.serialize()?;
 
-        // Send to all subscribers
+        // Send to transport clients
         let mut clients_guard = self.clients.lock().await;
         let mut failed_clients = Vec::new();
         let mut delivered_count = 0;
@@ -119,12 +132,43 @@ impl DaemoneyeBroker {
             clients_guard.remove(i);
         }
 
-        // Update statistics
+        // Send to internal subscribers
+        let mut senders_guard = self.subscriber_senders.lock().await;
+        let mut failed_senders = Vec::new();
+
+        for (subscriber_id, sender) in senders_guard.iter() {
+            let bus_event = BusEvent {
+                event_id: Uuid::new_v4().to_string(),
+                event: collection_event.clone(),
+                correlation_id: correlation_id.to_string(),
+                bus_timestamp: std::time::SystemTime::now(),
+                matched_pattern: topic.to_string(),
+                subscriber_id: subscriber_id.clone(),
+            };
+
+            if sender.send(bus_event).is_err() {
+                failed_senders.push(subscriber_id.clone());
+            } else {
+                delivered_count += 1;
+            }
+        }
+
+        // Remove failed senders
+        for subscriber_id in failed_senders {
+            senders_guard.remove(&subscriber_id);
+        }
+
+        // Get total subscriber count before dropping guards
+        let total_subscribers = clients_guard.len() + senders_guard.len();
+        drop(senders_guard);
+        drop(clients_guard);
+
+        // Update statistics: increment messages_published exactly once
         {
             let mut stats_guard = self.stats.lock().await;
             stats_guard.messages_published += 1;
             stats_guard.messages_delivered += delivered_count;
-            stats_guard.active_subscribers = subscribers.len();
+            stats_guard.active_subscribers = total_subscribers;
         }
 
         debug!(
@@ -249,7 +293,7 @@ impl EventBus for DaemoneyeEventBus {
     async fn subscribe(
         &mut self,
         subscription: EventSubscription,
-    ) -> Result<tokio::sync::mpsc::Receiver<BusEvent>> {
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>> {
         // Extract topic patterns from subscription
         let patterns = if let Some(topic_patterns) = &subscription.topic_patterns {
             topic_patterns.clone()
@@ -268,27 +312,44 @@ impl EventBus for DaemoneyeEventBus {
             patterns
         };
 
-        // Subscribe to each pattern
+        // Parse subscriber ID from subscription, generate UUID if needed
+        let subscriber_id = if subscription.subscriber_id.is_empty() {
+            Uuid::new_v4()
+        } else {
+            subscription
+                .subscriber_id
+                .parse::<Uuid>()
+                .unwrap_or_else(|_| Uuid::new_v4())
+        };
+
+        // Subscribe to each pattern using the parsed subscriber ID
         for pattern in patterns {
-            self.broker.subscribe(&pattern, self.subscriber_id).await?;
+            self.broker.subscribe(&pattern, subscriber_id).await?;
         }
 
         // Create a new receiver for this subscription
-        let (_tx, rx) = mpsc::channel(1000);
+        let (tx, rx) = mpsc::unbounded_channel();
 
-        // Store the sender for this subscription (simplified approach)
-        // In a real implementation, we'd need to track multiple receivers
+        // Store the sender for this subscription
+        {
+            let mut senders = self.broker.subscriber_senders.lock().await;
+            senders.insert(subscription.subscriber_id.clone(), tx);
+        }
 
         Ok(rx)
     }
 
     async fn unsubscribe(&mut self, subscriber_id: &str) -> Result<()> {
-        // Parse subscriber ID as UUID
-        let id = subscriber_id
-            .parse::<Uuid>()
-            .map_err(|_| EventBusError::configuration("Invalid subscriber ID format"))?;
-
-        self.broker.unsubscribe(id).await
+        // Try to parse subscriber ID as UUID, otherwise treat as string ID
+        match subscriber_id.parse::<Uuid>() {
+            Ok(id) => self.broker.unsubscribe(id).await,
+            Err(_) => {
+                // Remove from internal subscribers by string ID
+                let mut senders = self.broker.subscriber_senders.lock().await;
+                senders.remove(subscriber_id);
+                Ok(())
+            }
+        }
     }
 
     async fn statistics(&self) -> EventBusStatistics {
@@ -344,8 +405,11 @@ mod tests {
             enable_wildcards: true,
         };
         let receiver = event_bus.subscribe(subscription).await.unwrap();
-        // Just check that we got a receiver
-        assert!(true);
+        // Verify receiver is open and ready to receive messages
+        assert!(
+            !receiver.is_closed(),
+            "Receiver should not be closed immediately after subscription"
+        );
 
         let stats = event_bus.statistics().await;
         assert_eq!(stats.active_subscribers, 1);

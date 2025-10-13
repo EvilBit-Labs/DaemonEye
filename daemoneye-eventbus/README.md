@@ -12,6 +12,12 @@ A cross-platform IPC event bus designed specifically for the DaemonEye monitorin
 
 ## Basic Usage
 
+> **Note**: This example requires adding `tokio` to your `Cargo.toml`:
+>
+> ```toml
+> tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+> ```
+
 ```rust
 use daemoneye_eventbus::{DaemoneyeBroker, DaemoneyeEventBus, EventBus, CollectionEvent, ProcessEvent};
 use std::collections::HashMap;
@@ -34,8 +40,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metadata: HashMap::new(),
     };
 
-    // Publish the event
+    // Publish the event - returns Result and uses ? operator for error propagation
     event_bus.publish(CollectionEvent::Process(process_event), "correlation-123".to_string()).await?;
+
+    // Alternative: Explicit error handling
+    // match event_bus.publish(CollectionEvent::Process(process_event), "correlation-123".to_string()).await {
+    //     Ok(_) => println!("Event published successfully"),
+    //     Err(e) => eprintln!("Failed to publish event: {}", e),
+    // }
 
     Ok(())
 }

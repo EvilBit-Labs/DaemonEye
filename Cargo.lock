@@ -236,15 +236,6 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "bincode"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
@@ -341,20 +332,15 @@ dependencies = [
  "async-channel",
  "async-io",
  "async-trait",
- "ipnetwork",
  "log",
- "nix",
  "oneshot",
  "parking_lot",
  "regex",
  "rmp-serde",
  "serde",
  "serde-value",
- "submap",
  "tokio",
  "tokio-task-pool",
- "triggered",
- "unix-named-pipe",
 ]
 
 [[package]]
@@ -485,7 +471,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
- "bincode 2.0.1",
+ "bincode",
  "bitflags 2.9.4",
  "busrt",
  "chrono",
@@ -504,7 +490,7 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "tempfile",
- "thiserror 2.0.17",
+ "thiserror",
  "tokio",
  "tokio-test",
  "tracing",
@@ -727,7 +713,6 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "async-trait",
- "busrt",
  "bytes",
  "chrono",
  "clap",
@@ -744,11 +729,10 @@ dependencies = [
  "serde_json",
  "sqlparser",
  "tempfile",
- "thiserror 2.0.17",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -766,7 +750,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.17",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -777,13 +761,13 @@ name = "daemoneye-eventbus"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "bincode 1.3.3",
+ "bincode",
  "chrono",
  "criterion 0.5.1",
  "interprocess",
  "serde",
  "tempfile",
- "thiserror 2.0.17",
+ "thiserror",
  "tokio",
  "tokio-test",
  "tracing",
@@ -820,7 +804,7 @@ dependencies = [
  "sqlparser",
  "sysinfo",
  "tempfile",
- "thiserror 2.0.17",
+ "thiserror",
  "tokio",
  "toml 0.9.8",
  "tracing",
@@ -875,33 +859,12 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "errno"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f639046355ee4f37944e44f60642c6f3a7efa3cf6b78c78a0d989a8ce6c396a1"
-dependencies = [
- "errno-dragonfly",
- "libc",
- "winapi",
-]
-
-[[package]]
-name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
-]
-
-[[package]]
-name = "errno-dragonfly"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa68f1b12764fab894d2755d2518754e71b4fd80ecfb822714a1206c2aab39bf"
-dependencies = [
- "cc",
- "libc",
 ]
 
 [[package]]
@@ -1249,15 +1212,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ipnetwork"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf466541e9d546596ee94f9f69590f89473455f88372423e0008fc1a7daf100e"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "is-terminal"
 version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1389,15 +1343,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
-name = "memoffset"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5aa361d4faea93603064a027415f07bd8e1d5c88c9fbf68bf56a285428fd79ce"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1422,20 +1367,6 @@ name = "multimap"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
-
-[[package]]
-name = "nix"
-version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f346ff70e7dbfd675fe90590b92d59ef2de15a8779ae305ebcbfd3f0caf59be4"
-dependencies = [
- "autocfg",
- "bitflags 1.3.2",
- "cfg-if",
- "libc",
- "memoffset",
- "pin-utils",
-]
 
 [[package]]
 name = "normalize-line-endings"
@@ -1733,7 +1664,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "async-trait",
- "bincode 2.0.1",
+ "bincode",
  "bytes",
  "chrono",
  "clap",
@@ -1756,7 +1687,7 @@ dependencies = [
  "sha2",
  "sysinfo",
  "tempfile",
- "thiserror 2.0.17",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2054,7 +1985,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "519165d378b97752ca44bbe15047d5d3409e875f39327546b42ac81d7e18c1b6"
 dependencies = [
  "bitflags 1.3.2",
- "errno 0.3.14",
+ "errno",
  "io-lifetimes",
  "libc",
  "linux-raw-sys 0.3.8",
@@ -2068,7 +1999,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd15f8a2c5551a84d56efdc1cd049089e409ac19a3072d5037a17fd70719ff3e"
 dependencies = [
  "bitflags 2.9.4",
- "errno 0.3.14",
+ "errno",
  "libc",
  "linux-raw-sys 0.11.0",
  "windows-sys 0.60.2",
@@ -2316,17 +2247,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
-name = "submap"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cb558a660d0330bbd4899c14e73a814ede4e541b1d0e697e6ca441f7f407c34"
-dependencies = [
- "regex",
- "sha2",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "syn"
 version = "2.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2372,31 +2292,11 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f63587ca0f12b72a0600bcba1d40081f830876000bb46dd2337a3051618f4fc8"
 dependencies = [
- "thiserror-impl 2.0.17",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -2656,12 +2556,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "triggered"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "593eddbc8a11f3e099e942c8c065fe376b9d1776741430888f2796682e08ab43"
-
-[[package]]
 name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2687,16 +2581,6 @@ name = "unicode-ident"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f63a545481291138910575129486daeaf8ac54aee4387fe7906919f7830c7d9d"
-
-[[package]]
-name = "unix-named-pipe"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ad653da8f36ac5825ba06642b5a3cce14a4e52c6a5fab4a8928d53f4426dae2"
-dependencies = [
- "errno 0.2.8",
- "libc",
-]
 
 [[package]]
 name = "unty"
