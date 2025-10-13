@@ -121,7 +121,7 @@ The following foundational components have been successfully implemented:
   - Design graceful shutdown coordination RPC patterns
   - _Requirements: 15.2, 15.5_
 
-- [ ] 2.2.3 Create message schemas using existing protobuf definitions
+- [x] 2.2.3 Create message schemas using existing protobuf definitions
 
   - Extend existing protobuf messages for daemoneye-eventbus pub/sub event distribution
   - Design RPC request/response message schemas for collector management
@@ -129,12 +129,12 @@ The following foundational components have been successfully implemented:
   - Define message versioning and backward compatibility strategy
   - _Requirements: 14.4, 15.1_
 
-- [ ] 2.2.4 Design embedded vs standalone broker deployment options
+- [ ] 2.2.4 Design embedded broker deployment functionality
 
   - Document embedded broker architecture within daemoneye-agent process
-  - Design standalone broker option for future enterprise deployments
-  - Create configuration options for broker deployment mode selection
-  - Define resource allocation and performance characteristics for each mode
+  - Design embedded broker startup and configuration management (to be implemented in task 2.3.2)
+  - Create embedded broker health monitoring and status reporting
+  - Define resource allocation and performance characteristics
   - _Requirements: 14.2, 16.4_
 
 - [ ] 2.2.5 Document migration strategy from crossbeam to daemoneye-eventbus
@@ -178,11 +178,12 @@ The following foundational components have been successfully implemented:
   - Implement client health monitoring and error recovery
   - _Requirements: 14.3, 15.1_
 
-- [ ] 2.3.4 Integrate daemoneye-eventbus broker with existing IPC server infrastructure
+- [ ] 2.3.4 Replace existing IPC server infrastructure with daemoneye-eventbus broke
 
-  - Create compatibility layer between daemoneye-eventbus and existing IPC protocols
-  - Maintain existing protobuf message compatibility
-  - Add migration path for gradual transition from direct IPC to daemoneye-eventbus
+  - Fully integrate daemoneye-eventbus broker functionality in daemoneye-agent
+  - Replace existing protobuf message functionality with daemoneye-eventbus pub/sub functionality
+  - Verify removal of legacy IPC implementation from daemoneye-lib, collector-core, and daemoneye-agent
+  - Verify removal of busrt artifacts from entire workspace
   - Ensure seamless integration with daemoneye-agent communication
   - _Requirements: 14.5, 15.1_
 

@@ -1,0 +1,651 @@
+syntax = "proto3";
+
+import "common.proto";
+import "ipc.proto";
+
+// EventBus message schemas for daemoneye-eventbus pub/sub event distribution
+// and RPC request/response patterns for collector management
+
+/// Message versioning and backward compatibility
+message MessageVersion {
+  /// Major version (breaking changes)
+  uint32 major = 1;
+  /// Minor version (backward compatible additions)
+  uint32 minor = 2;
+  /// Patch version (bug fixes)
+  uint32 patch = 3;
+  /// Protocol version identifier
+  string protocol_version = 4;
+}
+
+/// Event correlation metadata for multi-collector workflows
+message CorrelationMetadata {
+  /// Primary correlation ID for tracking related events across collectors
+  string correlation_id = 1;
+  /// Parent correlation ID for hierarchical event relationships
+  optional string parent_correlation_id = 2;
+  /// Root correlation ID for the entire workflow
+  string root_correlation_id = 3;
+  /// Trace ID for distributed tracing integration
+  optional string trace_id = 4;
+  /// Span ID for distributed tracing integration
+  optional string span_id = 5;
+  /// Event sequence number within correlation group
+  uint64 sequence_number = 6;
+  /// Workflow stage identifier
+  optional string workflow_stage = 7;
+  /// Custom correlation tags for flexible grouping
+  map<string, string> correlation_tags = 8;
+}
+
+/// EventBus message envelope for pub/sub distribution
+message EventBusMessage {
+  /// Message metadata
+  MessageMetadata metadata = 1;
+  /// Event correlation information
+  CorrelationMetadata correlation = 2;
+  /// Message payload (one of the payload types)
+  oneof payload {
+    /// Collection event from collector-core components
+    CollectionEventPayload collection_event = 3;
+    /// RPC request for collector management
+    RpcRequestPayload rpc_request = 4;
+    /// RPC response from collector services
+    RpcResponsePayload rpc_response = 5;
+    /// Control message for system coordination
+    ControlMessagePayload control_message = 6;
+    /// Heartbeat message for health monitoring
+    HeartbeatPayload heartbeat = 7;
+    /// Alert message for notification delivery
+    AlertPayload alert = 8;
+  }
+}
+
+/// Message metadata for routing and processing
+message MessageMetadata {
+  /// Unique message identifier
+  string message_id = 1;
+  /// Topic this message is published to
+  string topic = 2;
+  /// Message type for routing decisions
+  MessageType message_type = 3;
+  /// Message priority (0=lowest, 255=highest)
+  uint32 priority = 4;
+  /// Message timestamp (Unix timestamp in milliseconds)
+  int64 timestamp = 5;
+  /// Time-to-live in milliseconds (0=no expiration)
+  uint64 ttl_ms = 6;
+  /// Source collector or service identifier
+  string source_id = 7;
+  /// Target collector or service identifier (for directed messages)
+  optional string target_id = 8;
+  /// Message version for compatibility checking
+  MessageVersion version = 9;
+  /// Custom message headers
+  map<string, string> headers = 10;
+}
+
+/// Message types for EventBus routing
+enum MessageType {
+  /// Collection event from monitoring components
+  COLLECTION_EVENT = 0;
+  /// RPC request message
+  RPC_REQUEST = 1;
+  /// RPC response message
+  RPC_RESPONSE = 2;
+  /// System control message
+  CONTROL_MESSAGE = 3;
+  /// Heartbeat/keepalive message
+  HEARTBEAT = 4;
+  /// Alert notification message
+  ALERT = 5;
+  /// Configuration update message
+  CONFIG_UPDATE = 6;
+  /// Shutdown coordination message
+  SHUTDOWN = 7;
+}
+
+/// Collection event payload for pub/sub distribution
+message CollectionEventPayload {
+  /// Event type identifier
+  EventType event_type = 1;
+  /// Source collector capabilities
+  CollectionCapabilities source_capabilities = 2;
+  /// Event-specific data (one of the event types)
+  oneof event_data {
+    /// Process monitoring event
+    ProcessEventData process_event = 3;
+    /// Network monitoring event (future: netmond)
+    NetworkEventData network_event = 4;
+    /// Filesystem monitoring event (future: fsmond)
+    FilesystemEventData filesystem_event = 5;
+    /// Performance monitoring event (future: perfmond)
+    PerformanceEventData performance_event = 6;
+    /// Analysis trigger request event
+    TriggerEventData trigger_event = 7;
+  }
+}
+
+/// Event types for collection events
+enum EventType {
+  /// Process lifecycle event (start, stop, modify)
+  PROCESS_EVENT = 0;
+  /// Network connection event
+  NETWORK_EVENT = 1;
+  /// Filesystem operation event
+  FILESYSTEM_EVENT = 2;
+  /// Performance metric event
+  PERFORMANCE_EVENT = 3;
+  /// Analysis trigger request
+  TRIGGER_EVENT = 4;
+  /// Correlation result event
+  CORRELATION_EVENT = 5;
+}
+
+/// Process event data for EventBus distribution
+message ProcessEventData {
+  /// Process record from collector
+  ProcessRecord process = 1;
+  /// Event subtype (created, modified, terminated)
+  ProcessEventSubtype subtype = 2;
+  /// Process tree context
+  optional ProcessTreeContext tree_context = 3;
+  /// Security context information
+  optional SecurityContext security_context = 4;
+  /// Performance metrics
+  optional ProcessPerformanceMetrics performance = 5;
+}
+
+/// Process event subtypes
+enum ProcessEventSubtype {
+  /// New process created
+  PROCESS_CREATED = 0;
+  /// Process information updated
+  PROCESS_UPDATED = 1;
+  /// Process terminated
+  PROCESS_TERMINATED = 2;
+  /// Process suspended
+  PROCESS_SUSPENDED = 3;
+  /// Process resumed
+  PROCESS_RESUMED = 4;
+}
+
+/// Process tree context for hierarchical analysis
+message ProcessTreeContext {
+  /// Parent process information
+  optional ProcessRecord parent_process = 1;
+  /// Child process identifiers
+  repeated uint32 child_pids = 2;
+  /// Process tree depth
+  uint32 tree_depth = 3;
+  /// Session identifier
+  optional string session_id = 4;
+  /// Process group identifier
+  optional uint32 process_group_id = 5;
+}
+
+/// Security context for process events
+message SecurityContext {
+  /// User identifier
+  optional string user_id = 1;
+  /// Group identifier
+  optional string group_id = 2;
+  /// Security labels or contexts
+  repeated string security_labels = 3;
+  /// Privilege level
+  optional string privilege_level = 4;
+  /// Integrity level (Windows)
+  optional string integrity_level = 5;
+}
+
+/// Process performance metrics
+message ProcessPerformanceMetrics {
+  /// CPU usage percentage
+  optional double cpu_percent = 1;
+  /// Memory usage in bytes
+  optional uint64 memory_bytes = 2;
+  /// I/O read bytes
+  optional uint64 io_read_bytes = 3;
+  /// I/O write bytes
+  optional uint64 io_write_bytes = 4;
+  /// Network bytes sent
+  optional uint64 network_sent_bytes = 5;
+  /// Network bytes received
+  optional uint64 network_received_bytes = 6;
+}
+
+/// Network event data for EventBus distribution (future: netmond)
+message NetworkEventData {
+  /// Network record from collector
+  NetworkRecord network = 1;
+  /// Event subtype (connection, data transfer, etc.)
+  NetworkEventSubtype subtype = 2;
+  /// Connection metadata
+  optional NetworkConnectionMetadata connection_metadata = 3;
+  /// Traffic analysis results
+  optional TrafficAnalysisResults traffic_analysis = 4;
+}
+
+/// Network event subtypes
+enum NetworkEventSubtype {
+  /// New connection established
+  CONNECTION_ESTABLISHED = 0;
+  /// Connection closed
+  CONNECTION_CLOSED = 1;
+  /// Data transmitted
+  DATA_TRANSMITTED = 2;
+  /// Suspicious traffic detected
+  SUSPICIOUS_TRAFFIC = 3;
+  /// DNS query performed
+  DNS_QUERY = 4;
+}
+
+/// Network connection metadata
+message NetworkConnectionMetadata {
+  /// Connection duration in milliseconds
+  optional uint64 duration_ms = 1;
+  /// Connection flags
+  repeated string flags = 2;
+  /// Quality of service information
+  optional string qos_class = 3;
+  /// Encryption status
+  optional bool encrypted = 4;
+}
+
+/// Traffic analysis results
+message TrafficAnalysisResults {
+  /// Detected protocols
+  repeated string protocols = 1;
+  /// Suspicious patterns detected
+  repeated string suspicious_patterns = 2;
+  /// Threat indicators
+  repeated string threat_indicators = 3;
+  /// Analysis confidence score (0.0-1.0)
+  optional double confidence_score = 4;
+}
+
+/// Filesystem event data for EventBus distribution (future: fsmond)
+message FilesystemEventData {
+  /// Filesystem record from collector
+  FilesystemRecord filesystem = 1;
+  /// Event subtype (create, modify, delete, access)
+  FilesystemEventSubtype subtype = 2;
+  /// File metadata
+  optional FileMetadata file_metadata = 3;
+  /// Access pattern analysis
+  optional AccessPatternAnalysis access_analysis = 4;
+}
+
+/// Filesystem event subtypes
+enum FilesystemEventSubtype {
+  /// File created
+  FILE_CREATED = 0;
+  /// File modified
+  FILE_MODIFIED = 1;
+  /// File deleted
+  FILE_DELETED = 2;
+  /// File accessed
+  FILE_ACCESSED = 3;
+  /// File moved/renamed
+  FILE_MOVED = 4;
+  /// Permissions changed
+  PERMISSIONS_CHANGED = 5;
+}
+
+/// File metadata for filesystem events
+message FileMetadata {
+  /// File type (regular, directory, symlink, etc.)
+  string file_type = 1;
+  /// File attributes
+  repeated string attributes = 2;
+  /// MIME type
+  optional string mime_type = 3;
+  /// File signature/magic bytes
+  optional string file_signature = 4;
+  /// Extended attributes
+  map<string, string> extended_attributes = 5;
+}
+
+/// Access pattern analysis for filesystem events
+message AccessPatternAnalysis {
+  /// Access frequency
+  optional uint64 access_frequency = 1;
+  /// Access pattern type
+  optional string pattern_type = 2;
+  /// Anomaly score (0.0-1.0)
+  optional double anomaly_score = 3;
+  /// Related processes
+  repeated uint32 related_pids = 4;
+}
+
+/// Performance event data for EventBus distribution (future: perfmond)
+message PerformanceEventData {
+  /// Performance record from collector
+  PerformanceRecord performance = 1;
+  /// Event subtype (threshold, anomaly, etc.)
+  PerformanceEventSubtype subtype = 2;
+  /// Threshold information
+  optional ThresholdInfo threshold_info = 3;
+  /// Trend analysis results
+  optional TrendAnalysis trend_analysis = 4;
+}
+
+/// Performance event subtypes
+enum PerformanceEventSubtype {
+  /// Threshold exceeded
+  THRESHOLD_EXCEEDED = 0;
+  /// Anomaly detected
+  ANOMALY_DETECTED = 1;
+  /// Performance degradation
+  PERFORMANCE_DEGRADED = 2;
+  /// Resource exhaustion
+  RESOURCE_EXHAUSTED = 3;
+  /// Baseline updated
+  BASELINE_UPDATED = 4;
+}
+
+/// Threshold information for performance events
+message ThresholdInfo {
+  /// Threshold type (warning, critical)
+  string threshold_type = 1;
+  /// Threshold value
+  double threshold_value = 2;
+  /// Current value
+  double current_value = 3;
+  /// Threshold duration in milliseconds
+  optional uint64 duration_ms = 4;
+}
+
+/// Trend analysis results for performance events
+message TrendAnalysis {
+  /// Trend direction (increasing, decreasing, stable)
+  string trend_direction = 1;
+  /// Trend strength (0.0-1.0)
+  double trend_strength = 2;
+  /// Prediction confidence (0.0-1.0)
+  optional double prediction_confidence = 3;
+  /// Forecasted values
+  repeated double forecasted_values = 4;
+}
+
+/// Trigger event data for analysis collector activation
+message TriggerEventData {
+  /// Trigger request identifier
+  string trigger_id = 1;
+  /// Target collector type
+  string target_collector = 2;
+  /// Trigger priority (0=lowest, 255=highest)
+  uint32 priority = 3;
+  /// Trigger reason/context
+  string trigger_reason = 4;
+  /// Source event that caused the trigger
+  optional string source_event_id = 5;
+  /// Trigger payload data
+  bytes trigger_payload = 6;
+  /// Trigger metadata
+  map<string, string> trigger_metadata = 7;
+}
+
+/// RPC request payload for collector management
+message RpcRequestPayload {
+  /// RPC request details
+  RpcRequest request = 1;
+  /// Request routing information
+  RpcRoutingInfo routing = 2;
+  /// Request authentication/authorization
+  optional RpcAuthInfo auth_info = 3;
+}
+
+/// RPC response payload for collector management
+message RpcResponsePayload {
+  /// RPC response details
+  RpcResponse response = 1;
+  /// Response routing information
+  RpcRoutingInfo routing = 2;
+  /// Response performance metrics
+  optional RpcPerformanceMetrics performance_metrics = 3;
+}
+
+/// RPC routing information
+message RpcRoutingInfo {
+  /// Request/response routing path
+  repeated string routing_path = 1;
+  /// Load balancing hint
+  optional string load_balance_hint = 2;
+  /// Retry count
+  uint32 retry_count = 3;
+  /// Circuit breaker state
+  optional string circuit_breaker_state = 4;
+}
+
+/// RPC authentication/authorization information
+message RpcAuthInfo {
+  /// Client certificate fingerprint
+  optional string client_cert_fingerprint = 1;
+  /// Authorization token
+  optional string auth_token = 2;
+  /// Client permissions
+  repeated string permissions = 3;
+  /// Authentication method
+  string auth_method = 4;
+}
+
+/// RPC performance metrics
+message RpcPerformanceMetrics {
+  /// Request processing time in microseconds
+  uint64 processing_time_us = 1;
+  /// Queue wait time in microseconds
+  optional uint64 queue_wait_time_us = 2;
+  /// Network latency in microseconds
+  optional uint64 network_latency_us = 3;
+  /// Serialization time in microseconds
+  optional uint64 serialization_time_us = 4;
+}
+
+/// Control message payload for system coordination
+message ControlMessagePayload {
+  /// Control operation type
+  ControlOperation operation = 1;
+  /// Target component or service
+  string target = 2;
+  /// Control parameters
+  map<string, string> parameters = 3;
+  /// Control payload data
+  optional bytes payload_data = 4;
+  /// Expected response timeout in milliseconds
+  optional uint64 response_timeout_ms = 5;
+}
+
+/// Control operations for system coordination
+enum ControlOperation {
+  /// Subscribe to topic pattern
+  SUBSCRIBE = 0;
+  /// Unsubscribe from topic pattern
+  UNSUBSCRIBE = 1;
+  /// Update subscription filters
+  UPDATE_SUBSCRIPTION = 2;
+  /// Pause message delivery
+  PAUSE_DELIVERY = 3;
+  /// Resume message delivery
+  RESUME_DELIVERY = 4;
+  /// Flush message queues
+  FLUSH_QUEUES = 5;
+  /// Update configuration
+  UPDATE_CONFIG = 6;
+  /// Request status report
+  STATUS_REPORT = 7;
+  /// Initiate graceful shutdown
+  GRACEFUL_SHUTDOWN = 8;
+}
+
+/// Heartbeat payload for health monitoring
+message HeartbeatPayload {
+  /// Component identifier
+  string component_id = 1;
+  /// Component health status
+  HealthStatus health_status = 2;
+  /// Component uptime in seconds
+  uint64 uptime_seconds = 3;
+  /// Performance metrics
+  map<string, double> metrics = 4;
+  /// Active connections count
+  optional uint32 active_connections = 5;
+  /// Message queue depths
+  map<string, uint32> queue_depths = 6;
+  /// Error counts since last heartbeat
+  map<string, uint32> error_counts = 7;
+}
+
+/// Alert payload for notification delivery
+message AlertPayload {
+  /// Alert identifier
+  string alert_id = 1;
+  /// Alert severity level
+  AlertSeverity severity = 2;
+  /// Alert title
+  string title = 3;
+  /// Alert description
+  string description = 4;
+  /// Source collector or component
+  string source = 5;
+  /// Affected resources
+  repeated string affected_resources = 6;
+  /// Alert metadata
+  map<string, string> metadata = 7;
+  /// Alert correlation information
+  optional CorrelationMetadata alert_correlation = 8;
+  /// Remediation suggestions
+  repeated string remediation_suggestions = 9;
+}
+
+/// Alert severity levels
+enum AlertSeverity {
+  /// Informational alert
+  INFO = 0;
+  /// Low severity alert
+  LOW = 1;
+  /// Medium severity alert
+  MEDIUM = 2;
+  /// High severity alert
+  HIGH = 3;
+  /// Critical severity alert
+  CRITICAL = 4;
+}
+
+/// Topic hierarchy patterns for EventBus routing
+message TopicPattern {
+  /// Base topic pattern
+  string pattern = 1;
+  /// Wildcard support enabled
+  bool wildcard_enabled = 2;
+  /// Pattern priority for matching
+  uint32 priority = 3;
+  /// Pattern metadata
+  map<string, string> metadata = 4;
+}
+
+/// Subscription configuration for EventBus clients
+message SubscriptionConfig {
+  /// Subscriber identifier
+  string subscriber_id = 1;
+  /// Topic patterns to subscribe to
+  repeated TopicPattern topic_patterns = 2;
+  /// Message type filters
+  repeated MessageType message_type_filters = 3;
+  /// Event type filters
+  repeated EventType event_type_filters = 4;
+  /// Correlation filters
+  optional CorrelationFilter correlation_filter = 5;
+  /// Quality of service settings
+  optional QosSettings qos_settings = 6;
+}
+
+/// Correlation filtering for subscriptions
+message CorrelationFilter {
+  /// Specific correlation IDs to include
+  repeated string correlation_ids = 1;
+  /// Correlation ID patterns to match
+  repeated string correlation_patterns = 2;
+  /// Correlation tags to match
+  map<string, string> correlation_tags = 3;
+  /// Workflow stages to include
+  repeated string workflow_stages = 4;
+}
+
+/// Quality of service settings for subscriptions
+message QosSettings {
+  /// Message delivery guarantee
+  DeliveryGuarantee delivery_guarantee = 1;
+  /// Maximum queue depth
+  uint32 max_queue_depth = 2;
+  /// Message ordering requirement
+  bool ordered_delivery = 3;
+  /// Duplicate message handling
+  DuplicateHandling duplicate_handling = 4;
+  /// Message retention policy
+  optional RetentionPolicy retention_policy = 5;
+}
+
+/// Message delivery guarantees
+enum DeliveryGuarantee {
+  /// At most once delivery (fire and forget)
+  AT_MOST_ONCE = 0;
+  /// At least once delivery (with retries)
+  AT_LEAST_ONCE = 1;
+  /// Exactly once delivery (with deduplication)
+  EXACTLY_ONCE = 2;
+}
+
+/// Duplicate message handling strategies
+enum DuplicateHandling {
+  /// Allow duplicate messages
+  ALLOW_DUPLICATES = 0;
+  /// Drop duplicate messages
+  DROP_DUPLICATES = 1;
+  /// Merge duplicate messages
+  MERGE_DUPLICATES = 2;
+}
+
+/// Message retention policy
+message RetentionPolicy {
+  /// Retention duration in milliseconds
+  uint64 retention_duration_ms = 1;
+  /// Maximum retained messages
+  optional uint32 max_retained_messages = 2;
+  /// Retention based on message size
+  optional uint64 max_retained_size_bytes = 3;
+}
+
+/// Backward compatibility information
+message CompatibilityInfo {
+  /// Minimum supported version
+  MessageVersion min_supported_version = 1;
+  /// Maximum supported version
+  MessageVersion max_supported_version = 2;
+  /// Deprecated features
+  repeated string deprecated_features = 3;
+  /// Migration instructions
+  optional string migration_instructions = 4;
+}
+
+/// Version negotiation request
+message VersionNegotiationRequest {
+  /// Client supported versions
+  repeated MessageVersion supported_versions = 1;
+  /// Client preferred version
+  MessageVersion preferred_version = 2;
+  /// Client capabilities
+  repeated string client_capabilities = 3;
+}
+
+/// Version negotiation response
+message VersionNegotiationResponse {
+  /// Negotiated version
+  MessageVersion negotiated_version = 1;
+  /// Server capabilities
+  repeated string server_capabilities = 2;
+  /// Compatibility warnings
+  repeated string compatibility_warnings = 3;
+  /// Negotiation success status
+  bool negotiation_success = 4;
+}
