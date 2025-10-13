@@ -162,30 +162,34 @@ The following foundational components have been successfully implemented:
   - Create error handling and logging integration
   - _Requirements: 14.1, 14.3_
 
-- [ ] 2.3.2 Implement embedded daemoneye-eventbus broker startup and configuration
+- [ ] 2.3.2 Implement embedded daemoneye-eventbus broker within daemoneye-agent
 
-  - Add broker initialization logic within collector-core runtime
-  - Create configuration management for broker settings and transport options
-  - Implement graceful broker startup and shutdown sequences
-  - Add broker health monitoring and status reporting
-  - _Requirements: 14.2, 14.3_
+  - Embed DaemoneyeBroker instance within daemoneye-agent process architecture
+  - Create broker initialization during daemoneye-agent startup sequence
+  - Implement broker configuration management with topic hierarchy and transport settings
+  - Add graceful broker startup and shutdown coordination with agent lifecycle
+  - Create broker health monitoring and status reporting for embedded deployment
+  - Ensure broker operates independently of IPC server for CLI communication
+  - _Requirements: 14.2, 14.3, 16.4_
 
 - [ ] 2.3.3 Add daemoneye-eventbus client creation and topic management
 
   - Implement client connection management for collector-core components
-  - Create topic subscription and publishing capabilities
-  - Add client reconnection logic with exponential backoff
+  - Create topic subscription and publishing capabilities with hierarchical topic patterns
+  - Add client reconnection logic with exponential backoff for broker communication
   - Implement client health monitoring and error recovery
-  - _Requirements: 14.3, 15.1_
+  - Create topic-based routing for events.process._, control.collector._, and control.health.\* patterns
+  - _Requirements: 14.3, 15.1, 15.3_
 
-- [ ] 2.3.4 Replace existing IPC server infrastructure with daemoneye-eventbus broke
+- [ ] 2.3.4 Integrate daemoneye-eventbus broker with existing IPC infrastructure
 
-  - Fully integrate daemoneye-eventbus broker functionality in daemoneye-agent
-  - Replace existing protobuf message functionality with daemoneye-eventbus pub/sub functionality
-  - Verify removal of legacy IPC implementation from daemoneye-lib, collector-core, and daemoneye-agent
-  - Verify removal of busrt artifacts from entire workspace
-  - Ensure seamless integration with daemoneye-agent communication
-  - _Requirements: 14.5, 15.1_
+  - Embed daemoneye-eventbus broker within daemoneye-agent process alongside existing IPC server
+  - Maintain existing IPC server for daemoneye-cli communication (protobuf + CRC32 framing)
+  - Add daemoneye-eventbus broker for collector-core component communication (topic-based pub/sub)
+  - Implement dual-protocol architecture: IPC for CLI, EventBus for collectors as designed
+  - Create broker startup and shutdown coordination with existing daemoneye-agent lifecycle
+  - Ensure both communication channels coexist without interference
+  - _Requirements: 14.5, 15.1, 16.4_
 
 - [ ] 2.3.5 Write integration tests comparing daemoneye-eventbus vs crossbeam performance
 
@@ -293,6 +297,24 @@ The following foundational components have been successfully implemented:
   - Test configuration update workflows and rollback scenarios
   - _Requirements: 15.2, 15.5_
 
+- [ ] 2.5.6 Implement comprehensive RPC message schemas and correlation
+
+  - Create RpcRequest and RpcResponse message structures with correlation metadata
+  - Implement CollectorOperation enum for all lifecycle operations (Start, Stop, Restart, HealthCheck, UpdateConfig, etc.)
+  - Add RPC timeout handling and correlation ID tracking for distributed operations
+  - Create RPC error classification and recovery patterns
+  - Implement RPC call statistics and performance monitoring
+  - _Requirements: 15.2, 15.5, 16.4_
+
+- [ ] 2.5.7 Add RPC-based capability negotiation and schema advertisement
+
+  - Implement GetCapabilities RPC operation for dynamic collector discovery
+  - Create schema advertisement RPC calls for collector registration with daemoneye-agent
+  - Add capability-based task routing through RPC metadata
+  - Implement dynamic capability updates and change notifications via RPC
+  - Create RPC-based collector registration and deregistration workflows
+  - _Requirements: 15.2, 15.3, 16.1_
+
 - [ ] 2.6 Add multi-process collector coordination via daemoneye-eventbus
 
   - Implement topic-based task distribution for multiple collector types (process, network, filesystem)
@@ -341,6 +363,26 @@ The following foundational components have been successfully implemented:
   - Validate load balancing and failover scenarios
   - Test collector coordination through daemoneye-eventbus broker
   - _Requirements: 15.1, 15.3, 15.4, 16.1, 16.3_
+
+- [ ] 2.6.6 Implement complete topic hierarchy as designed in architecture
+
+  - Create events.process.\* topic hierarchy (lifecycle, metadata, tree, integrity, anomaly, batch)
+  - Implement control.collector.\* topics (lifecycle, config, task) for collector management
+  - Add control.health.\* topics (heartbeat, status, diagnostics) for health monitoring
+  - Create future-ready topic patterns: events.network._, events.filesystem._, events.performance.\*
+  - Implement wildcard topic matching with + (single-level) and # (multi-level) support
+  - Add topic-based access control and security boundaries
+  - _Requirements: 15.1, 15.3, 16.1_
+
+- [ ] 2.6.7 Add correlation metadata and multi-collector workflow support
+
+  - Implement CorrelationMetadata with correlation_id, parent_correlation_id, root_correlation_id
+  - Create sequence numbering and workflow stage tracking for complex operations
+  - Add correlation tags for flexible event correlation across collector domains
+  - Implement correlation ID propagation through EventBus message envelopes
+  - Create correlation-based event filtering and routing capabilities
+  - Add forensic correlation tracking for security investigations
+  - _Requirements: 15.4, 16.3_
 
 - [ ] 3. Implement executable integrity verification with SHA-256 hashing
 
