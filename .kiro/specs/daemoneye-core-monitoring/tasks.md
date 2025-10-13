@@ -97,7 +97,7 @@ The following foundational components have been successfully implemented:
   - Create performance characteristics and troubleshooting documentation
   - _Requirements: 14.1, 14.2, 14.3_
 
-- [ ] 2.2 Design daemoneye-eventbus message broker architecture for DaemonEye
+- [x] 2.2 Design daemoneye-eventbus message broker architecture for DaemonEye
 
   - Design topic hierarchy for multi-collector communication (events.process._, events.network._, control.\*)
   - Define message schemas for pub/sub events using existing protobuf definitions
@@ -129,7 +129,7 @@ The following foundational components have been successfully implemented:
   - Define message versioning and backward compatibility strategy
   - _Requirements: 14.4, 15.1_
 
-- [ ] 2.2.4 Design embedded broker deployment functionality
+- [x] 2.2.4 Design embedded broker deployment functionality
 
   - Document embedded broker architecture within daemoneye-agent process
   - Design embedded broker startup and configuration management (to be implemented in task 2.3.2)
@@ -137,7 +137,7 @@ The following foundational components have been successfully implemented:
   - Define resource allocation and performance characteristics
   - _Requirements: 14.2, 16.4_
 
-- [ ] 2.2.5 Document migration strategy from crossbeam to daemoneye-eventbus
+- [x] 2.2.5 Document migration strategy from crossbeam to daemoneye-eventbus
 
   - Map existing crossbeam channel usage to daemoneye-eventbus topic patterns
   - Create migration plan preserving existing event bus semantics
