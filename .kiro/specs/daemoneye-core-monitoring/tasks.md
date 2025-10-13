@@ -141,7 +141,7 @@ The following foundational components have been successfully implemented:
 
   - Map existing crossbeam channel usage to daemoneye-eventbus topic patterns
   - Create migration plan preserving existing event bus semantics
-  - Document compatibility layer for gradual migration
+  - Document full replacement with no legacy artifacts
   - Define testing strategy to ensure behavioral equivalence
   - _Requirements: 14.4, 14.5_
 
