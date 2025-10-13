@@ -86,6 +86,7 @@ chrono = { workspace = true }
 crc32c = { workspace = true }
 
 # Configuration management
+dirs = { workspace = true }
 figment = { workspace = true }
 
 # Futures utilities

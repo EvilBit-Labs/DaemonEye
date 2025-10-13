@@ -3,6 +3,8 @@
 //! This module provides utilities to run all IPC client validation tests
 //! and collect comprehensive results for task 3.5 validation.
 
+#![allow(clippy::print_stdout)] // Test output is intentional
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 

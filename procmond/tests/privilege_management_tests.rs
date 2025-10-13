@@ -44,14 +44,23 @@ fn is_elevated_privileges() -> bool {
 fn get_current_user_info() -> String {
     #[cfg(unix)]
     {
-        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        let uid = std::env::var("UID").unwrap_or_else(|_| "unknown".to_string());
-        format!("User: {}, UID: {}", user, uid)
+        use uzers::{get_current_uid, get_user_by_uid};
+
+        let uid = get_current_uid();
+        let username = get_user_by_uid(uid)
+            .map(|u| u.name().to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("{}", uid));
+        format!("User: {}, UID: {}", username, uid)
     }
 
     #[cfg(windows)]
     {
-        format!("User: {}", std::env::var("USERNAME").unwrap_or_default())
+        use uzers::get_current_username;
+
+        let username = get_current_username()
+            .map(|u| u.to_string_lossy().into_owned())
+            .unwrap_or_else(|| std::env::var("USERNAME").unwrap_or_else(|_| "unknown".to_string()));
+        format!("User: {}", username)
     }
 }
 

@@ -125,6 +125,7 @@ impl AlertSink for StdoutSink {
     /// let res = rt.block_on(async { sink.send(&alert).await }).unwrap();
     /// assert_eq!(res.sink_name, "stdout-test");
     /// ```
+    #[allow(clippy::print_stdout)] // Intentional stdout output for StdoutSink
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 

@@ -397,10 +397,10 @@ impl PerformanceMonitor {
             (current, avg)
         };
 
-        // Calculate memory growth rate
+        // Calculate memory growth rate (preserve previous measurement before updating)
         let growth_rate = {
-            let last_measurement = self.last_memory_measurement.lock().unwrap();
-            if let Some((last_memory, last_time)) = *last_measurement {
+            let mut last_measurement_guard = self.last_memory_measurement.lock().unwrap();
+            let growth = if let Some((last_memory, last_time)) = *last_measurement_guard {
                 let time_diff = last_time.elapsed().as_secs_f64();
                 if time_diff > 0.0 && current_memory >= last_memory {
                     (current_memory - last_memory) as f64 / time_diff
@@ -409,7 +409,10 @@ impl PerformanceMonitor {
                 }
             } else {
                 0.0
-            }
+            };
+            // Update measurement after computing growth rate
+            *last_measurement_guard = Some((current_memory, Instant::now()));
+            growth
         };
 
         MemoryUsageMetrics {

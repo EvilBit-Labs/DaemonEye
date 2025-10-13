@@ -13,6 +13,7 @@
     clippy::uninlined_format_args,
     clippy::use_debug,
     clippy::shadow_reuse,
+    clippy::print_stdout, // Test output is intentional
     clippy::shadow_unrelated,
     clippy::single_match_else,
     clippy::case_sensitive_file_extension_comparisons,

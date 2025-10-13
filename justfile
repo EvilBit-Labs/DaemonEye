@@ -146,8 +146,13 @@ lint-rust-min:
     @cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
 # Check documentation compiles without warnings
+[windows]
 lint-docs:
-    powershell -Command "$env:RUSTDOCFLAGS='-D warnings'; cargo doc --no-deps --document-private-items"
+    $env:RUSTDOCFLAGS='-D warnings'; cargo doc --no-deps --document-private-items
+
+[unix]
+lint-docs:
+    RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items
 
 # Format justfile
 fmt-justfile:

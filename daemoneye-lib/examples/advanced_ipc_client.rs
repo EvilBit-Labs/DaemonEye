@@ -7,6 +7,8 @@
 //! - Circuit breaker patterns
 //! - Comprehensive metrics collection
 
+#![allow(clippy::print_stdout)] // Example output is intentional
+
 use daemoneye_lib::ipc::{
     IpcConfig, TransportType,
     client::{CollectorEndpoint, LoadBalancingStrategy, ResilientIpcClient},

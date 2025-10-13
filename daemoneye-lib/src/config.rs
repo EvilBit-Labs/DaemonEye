@@ -89,10 +89,16 @@ pub struct AlertingConfig {
 pub struct AlertSinkConfig {
     /// Sink type identifier
     pub sink_type: String,
-    /// Sink-specific configuration
-    pub config: std::collections::HashMap<String, String>,
+    /// Sink-specific configuration supporting numeric, boolean, array, and table values
+    #[serde(default = "default_sink_config")]
+    pub config: serde_json::Value,
     /// Enable/disable this sink
     pub enabled: bool,
+}
+
+/// Default configuration for alert sinks (empty object)
+fn default_sink_config() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
 }
 
 /// Logging configuration.
@@ -226,10 +232,31 @@ impl ConfigLoader {
         self.load()
     }
 
-    /// Get the user configuration file path.
+    /// Get the user configuration file path using platform-aware directory lookup.
+    ///
+    /// Priority:
+    /// 1. Platform-specific config directory (via `dirs::config_dir()`)
+    /// 2. HOME environment variable (if available)
+    /// 3. /tmp as last-resort fallback
     fn user_config_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_owned());
-        PathBuf::from(home).join(".config/daemoneye/config.toml")
+        // Try platform-aware config directory first
+        if let Some(config_dir) = dirs::config_dir() {
+            return config_dir.join("daemoneye").join("config.toml");
+        }
+
+        // Fallback to HOME environment variable
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home)
+                .join(".config")
+                .join("daemoneye")
+                .join("config.toml");
+        }
+
+        // Last-resort fallback to /tmp
+        PathBuf::from("/tmp")
+            .join(".config")
+            .join("daemoneye")
+            .join("config.toml")
     }
 
     /// Validate the final configuration.
@@ -407,5 +434,212 @@ mod tests {
         // Test custom threshold
         config.recent_threshold_seconds = 1800;
         assert_eq!(config.recent_threshold_seconds, 1800);
+    }
+
+    #[test]
+    fn test_alert_sink_config_with_different_value_types() {
+        use serde_json::json;
+
+        // Test with string values
+        let sink_with_strings = AlertSinkConfig {
+            sink_type: "webhook".to_owned(),
+            config: json!({
+                "url": "https://example.com/webhook",
+                "method": "POST"
+            }),
+            enabled: true,
+        };
+        assert_eq!(
+            sink_with_strings
+                .config
+                .get("url")
+                .and_then(serde_json::Value::as_str),
+            Some("https://example.com/webhook")
+        );
+
+        // Test with numeric values
+        let sink_with_numbers = AlertSinkConfig {
+            sink_type: "syslog".to_owned(),
+            config: json!({
+                "port": 514,
+                "timeout_ms": 5000,
+                "retry_count": 3
+            }),
+            enabled: true,
+        };
+        assert_eq!(
+            sink_with_numbers
+                .config
+                .get("port")
+                .and_then(serde_json::Value::as_u64),
+            Some(514)
+        );
+        assert_eq!(
+            sink_with_numbers
+                .config
+                .get("timeout_ms")
+                .and_then(serde_json::Value::as_u64),
+            Some(5000)
+        );
+        assert_eq!(
+            sink_with_numbers
+                .config
+                .get("retry_count")
+                .and_then(serde_json::Value::as_u64),
+            Some(3)
+        );
+
+        // Test with boolean values
+        let sink_with_bools = AlertSinkConfig {
+            sink_type: "custom".to_owned(),
+            config: json!({
+                "use_tls": true,
+                "verify_ssl": false
+            }),
+            enabled: true,
+        };
+        assert_eq!(
+            sink_with_bools
+                .config
+                .get("use_tls")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            sink_with_bools
+                .config
+                .get("verify_ssl")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+
+        // Test with array values
+        let sink_with_arrays = AlertSinkConfig {
+            sink_type: "multi".to_owned(),
+            config: json!({
+                "endpoints": ["http://endpoint1.com", "http://endpoint2.com"],
+                "priorities": [1, 2, 3]
+            }),
+            enabled: true,
+        };
+        assert!(
+            sink_with_arrays
+                .config
+                .get("endpoints")
+                .is_some_and(serde_json::Value::is_array)
+        );
+        assert_eq!(
+            sink_with_arrays
+                .config
+                .get("endpoints")
+                .and_then(serde_json::Value::as_array)
+                .map(std::vec::Vec::len),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_config_toml_with_complex_sink_config() {
+        let toml_str = r#"
+[app]
+scan_interval_ms = 30000
+batch_size = 1000
+enhanced_metadata = false
+
+[database]
+path = "/tmp/test.db"
+retention_days = 30
+encryption_enabled = false
+
+[logging]
+level = "info"
+format = "human"
+structured = false
+
+[alerting]
+dedup_window_seconds = 300
+recent_threshold_seconds = 3600
+
+[[alerting.sinks]]
+sink_type = "webhook"
+enabled = true
+[alerting.sinks.config]
+url = "https://example.com/webhook"
+timeout_ms = 5000
+retry_count = 3
+
+[[alerting.sinks]]
+sink_type = "syslog"
+enabled = true
+[alerting.sinks.config]
+facility = "daemon"
+port = 514
+use_tls = false
+"#;
+
+        let config: Config =
+            toml::from_str(toml_str).expect("Failed to parse TOML with complex sink config");
+
+        assert_eq!(config.alerting.sinks.len(), 2);
+
+        // Verify webhook sink
+        let webhook_sink = config
+            .alerting
+            .sinks
+            .first()
+            .expect("expected first alert sink");
+        assert_eq!(webhook_sink.sink_type, "webhook");
+        assert!(webhook_sink.enabled);
+        assert_eq!(
+            webhook_sink
+                .config
+                .get("url")
+                .and_then(serde_json::Value::as_str),
+            Some("https://example.com/webhook")
+        );
+        assert_eq!(
+            webhook_sink
+                .config
+                .get("timeout_ms")
+                .and_then(serde_json::Value::as_i64),
+            Some(5000)
+        );
+        assert_eq!(
+            webhook_sink
+                .config
+                .get("retry_count")
+                .and_then(serde_json::Value::as_i64),
+            Some(3)
+        );
+
+        // Verify syslog sink
+        let syslog_sink = config
+            .alerting
+            .sinks
+            .get(1)
+            .expect("expected second alert sink");
+        assert_eq!(syslog_sink.sink_type, "syslog");
+        assert!(syslog_sink.enabled);
+        assert_eq!(
+            syslog_sink
+                .config
+                .get("facility")
+                .and_then(serde_json::Value::as_str),
+            Some("daemon")
+        );
+        assert_eq!(
+            syslog_sink
+                .config
+                .get("port")
+                .and_then(serde_json::Value::as_i64),
+            Some(514)
+        );
+        assert_eq!(
+            syslog_sink
+                .config
+                .get("use_tls")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
     }
 }

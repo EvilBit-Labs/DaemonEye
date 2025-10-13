@@ -73,6 +73,7 @@ criterion = "0.7.0"
 # High-performance concurrent data structures
 crossbeam = "0.8.4"
 daemoneye-lib = { path = "daemoneye-lib" }
+dirs = "5.0"
 figment = { version = "0.10.19", features = ["toml", "json", "env"] }
 futures = "0.3.31"
 futures-util = "0.3.31"
@@ -149,7 +150,7 @@ expect_used = "warn"
 # Security anti-patterns
 # allow_attributes = "warn" # I think we need them for test and benchmarks
 dbg_macro = "warn"
-# print_stdout = "warn" # TODO: Revisit this
+print_stdout = "warn" # Allowed per-use only with a specific annotation and justification
 # print_stderr = "warn"
 todo = "warn"
 unimplemented = "warn"
@@ -213,8 +214,8 @@ verbose_file_reads = "warn"
 wildcard_enum_match_arm = "warn"
 zero_sized_map_values = "warn"
 
-# Allow specific lints that are too noisy for this project
-missing_errors_doc = "allow"       # TODO: Revisit this
+# Allow specific lints that are too noisy for this project; each of these will get set to warn/deny at some point
+missing_errors_doc = "allow"
 missing_panics_doc = "allow"       # TODO: Revisit this
 must_use_candidate = "allow"       # TODO: Revisit this
 cast_possible_truncation = "allow" # TODO: Revisit this

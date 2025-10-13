@@ -698,11 +698,21 @@ fn bench_memory_efficiency_high_counts(c: &mut Criterion) {
 
 /// Helper function to get current memory usage (approximate).
 fn get_current_memory_usage() -> usize {
-    // This is a simple approximation - in a real implementation,
-    // you might use platform-specific APIs for more accurate measurement
-    // For now, we'll use a simple heuristic based on the current process
     use std::process;
-    process::id() as usize * 1024 // Simple approximation
+    use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+
+    // Use sysinfo to get real memory measurement
+    let system = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
+    );
+    let pid = sysinfo::Pid::from_u32(process::id());
+
+    if let Some(process) = system.process(pid) {
+        process.memory() as usize
+    } else {
+        // Fallback to 0 if process lookup fails
+        0
+    }
 }
 
 criterion_group!(

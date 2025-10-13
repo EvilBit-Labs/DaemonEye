@@ -263,9 +263,14 @@ impl HighPerformanceEventBusImpl {
                                 }
                             }
                             BackpressureStrategy::DropOldest => {
-                                // Try to send, if full drop oldest and retry
-                                // Note: crossbeam Sender doesn't have try_recv, so we can't access the receiver
-                                // to drop old events. For now, just treat as DropNewest since we can't access receiver
+                                // NOTE: DropOldest strategy requires receiver access to evict old events.
+                                // crossbeam::channel::Sender doesn't provide receiver access, so we cannot
+                                // implement true DropOldest behavior with the current architecture.
+                                //
+                                // Future enhancement: Use ArrayQueue or a custom bounded queue that
+                                // supports evicting the oldest element on push when full.
+                                //
+                                // For now, we treat DropOldest as DropNewest and log a warning.
                                 match subscriber_info.sender.try_send(bus_event.clone()) {
                                     Ok(_) => {
                                         delivered += 1;
@@ -277,7 +282,7 @@ impl HighPerformanceEventBusImpl {
                                         if tracing::enabled!(tracing::Level::WARN) {
                                             warn!(
                                                 subscriber_id = %subscriber_id,
-                                                "Failed to deliver event - DropOldest requires receiver access"
+                                                "DropOldest not implemented - dropping newest event instead (requires architectural change)"
                                             );
                                         }
                                     }
