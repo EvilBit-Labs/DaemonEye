@@ -103,6 +103,46 @@ The following foundational components have been successfully implemented:
   - Document migration strategy from current crossbeam channels to daemoneye-eventbus topics
   - _Requirements: 14.2, 14.4, 15.1, 15.2_
 
+- [ ] 2.2.1 Design topic hierarchy for multi-collector communication
+
+  - Define topic structure: events.process._, events.network._, events.filesystem._, events.performance._
+  - Create control topic hierarchy: control.collector._, control.agent._, control.health.\*
+  - Design topic naming conventions and wildcarding patterns for subscription flexibility
+  - Document topic access patterns and security boundaries
+  - _Requirements: 15.1, 15.3_
+
+- [ ] 2.2.2 Define RPC call patterns for collector lifecycle management
+
+  - Design RPC service definitions for collector start/stop/restart operations
+  - Create health check RPC patterns with heartbeat and status reporting
+  - Define configuration update RPC calls for dynamic reconfiguration
+  - Design graceful shutdown coordination RPC patterns
+  - _Requirements: 15.2, 15.5_
+
+- [ ] 2.2.3 Create message schemas using existing protobuf definitions
+
+  - Extend existing protobuf messages for daemoneye-eventbus pub/sub event distribution
+  - Design RPC request/response message schemas for collector management
+  - Create event correlation metadata for multi-collector workflows
+  - Define message versioning and backward compatibility strategy
+  - _Requirements: 14.4, 15.1_
+
+- [ ] 2.2.4 Design embedded vs standalone broker deployment options
+
+  - Document embedded broker architecture within daemoneye-agent process
+  - Design standalone broker option for future enterprise deployments
+  - Create configuration options for broker deployment mode selection
+  - Define resource allocation and performance characteristics for each mode
+  - _Requirements: 14.2, 16.4_
+
+- [ ] 2.2.5 Document migration strategy from crossbeam to daemoneye-eventbus
+
+  - Map existing crossbeam channel usage to daemoneye-eventbus topic patterns
+  - Create migration plan preserving existing event bus semantics
+  - Document compatibility layer for gradual migration
+  - Define testing strategy to ensure behavioral equivalence
+  - _Requirements: 14.4, 14.5_
+
 - [ ] 2.3 Implement daemoneye-eventbus broker integration in collector-core
 
   - Create DaemoneyeEventBus struct implementing existing EventBus trait for backward compatibility
@@ -111,6 +151,46 @@ The following foundational components have been successfully implemented:
   - Integrate daemoneye-eventbus broker with existing IPC server infrastructure for seamless migration
   - Write integration tests comparing daemoneye-eventbus vs crossbeam event distribution performance
   - _Requirements: 14.1, 14.3, 14.5, 15.1_
+
+- [ ] 2.3.1 Create DaemoneyeEventBus struct with EventBus trait compatibility
+
+  - Implement DaemoneyeEventBus struct that wraps daemoneye-eventbus broker functionality
+  - Ensure compatibility with existing EventBus trait interface
+  - Add configuration options for broker startup and client management
+  - Create error handling and logging integration
+  - _Requirements: 14.1, 14.3_
+
+- [ ] 2.3.2 Implement embedded daemoneye-eventbus broker startup and configuration
+
+  - Add broker initialization logic within collector-core runtime
+  - Create configuration management for broker settings and transport options
+  - Implement graceful broker startup and shutdown sequences
+  - Add broker health monitoring and status reporting
+  - _Requirements: 14.2, 14.3_
+
+- [ ] 2.3.3 Add daemoneye-eventbus client creation and topic management
+
+  - Implement client connection management for collector-core components
+  - Create topic subscription and publishing capabilities
+  - Add client reconnection logic with exponential backoff
+  - Implement client health monitoring and error recovery
+  - _Requirements: 14.3, 15.1_
+
+- [ ] 2.3.4 Integrate daemoneye-eventbus broker with existing IPC server infrastructure
+
+  - Create compatibility layer between daemoneye-eventbus and existing IPC protocols
+  - Maintain existing protobuf message compatibility
+  - Add migration path for gradual transition from direct IPC to daemoneye-eventbus
+  - Ensure seamless integration with daemoneye-agent communication
+  - _Requirements: 14.5, 15.1_
+
+- [ ] 2.3.5 Write integration tests comparing daemoneye-eventbus vs crossbeam performance
+
+  - Create performance benchmarks for event distribution throughput
+  - Compare latency characteristics between crossbeam and daemoneye-eventbus implementations
+  - Test memory usage and resource consumption under load
+  - Validate behavioral equivalence between old and new implementations
+  - _Requirements: 14.1, 14.5_
 
 - [ ] 2.4 Migrate collector-core event distribution to daemoneye-eventbus topics
 
@@ -121,6 +201,46 @@ The following foundational components have been successfully implemented:
   - Create migration tests ensuring identical behavior between crossbeam and daemoneye-eventbus implementations
   - _Requirements: 14.4, 14.5, 15.1, 15.3_
 
+- [ ] 2.4.1 Replace crossbeam channels with daemoneye-eventbus pub/sub in LocalEventBus
+
+  - Modify LocalEventBus implementation to use daemoneye-eventbus topics instead of crossbeam channels
+  - Preserve existing event distribution semantics and ordering guarantees
+  - Update event publishing logic to use daemoneye-eventbus topic patterns
+  - Maintain backward compatibility with existing event consumers
+  - _Requirements: 14.4, 15.1_
+
+- [ ] 2.4.2 Update EventSubscription and event routing for daemoneye-eventbus topics
+
+  - Modify EventSubscription structure to support daemoneye-eventbus topic patterns
+  - Update event routing logic to use daemoneye-eventbus subscription mechanisms
+  - Implement topic-based filtering and wildcarding support
+  - Preserve existing event filtering capabilities
+  - _Requirements: 14.5, 15.3_
+
+- [ ] 2.4.3 Migrate event filtering and correlation to daemoneye-eventbus capabilities
+
+  - Implement event filtering using daemoneye-eventbus topic subscription patterns
+  - Create correlation tracking through daemoneye-eventbus message metadata
+  - Update event correlation logic to work with daemoneye-eventbus message broker
+  - Maintain existing correlation ID and tracing functionality
+  - _Requirements: 15.1, 15.4_
+
+- [ ] 2.4.4 Preserve event bus statistics and monitoring through daemoneye-eventbus
+
+  - Implement statistics collection using daemoneye-eventbus broker metrics
+  - Create monitoring dashboards for daemoneye-eventbus broker performance
+  - Maintain existing event bus monitoring interfaces
+  - Add daemoneye-eventbus-specific metrics and health indicators
+  - _Requirements: 14.5, 15.1_
+
+- [ ] 2.4.5 Create migration tests ensuring behavioral equivalence
+
+  - Write comprehensive tests comparing crossbeam vs daemoneye-eventbus behavior
+  - Test event ordering, delivery guarantees, and error handling
+  - Validate performance characteristics and resource usage
+  - Create regression tests for migration scenarios
+  - _Requirements: 14.4, 14.5_
+
 - [ ] 2.5 Implement RPC patterns for collector lifecycle management
 
   - Create RPC service definitions for collector start/stop/restart operations
@@ -130,6 +250,46 @@ The following foundational components have been successfully implemented:
   - Write integration tests for RPC-based collector management workflows
   - _Requirements: 15.2, 15.5, 16.4_
 
+- [ ] 2.5.1 Create RPC service definitions for collector operations
+
+  - Define RPC interfaces for collector start, stop, restart operations
+  - Create service method signatures and parameter structures
+  - Implement request/response message schemas
+  - Add error handling and timeout specifications
+  - _Requirements: 15.2_
+
+- [ ] 2.5.2 Implement health check RPC calls and heartbeat system
+
+  - Create health check RPC service with status reporting
+  - Implement heartbeat mechanism for collector monitoring
+  - Add health status aggregation and reporting
+  - Create health check scheduling and timeout handling
+  - _Requirements: 15.2, 15.5_
+
+- [ ] 2.5.3 Add configuration update RPC patterns
+
+  - Implement dynamic configuration update RPC calls
+  - Create configuration validation and rollback mechanisms
+  - Add configuration change notification system
+  - Implement hot-reload capabilities for collector settings
+  - _Requirements: 15.5, 16.4_
+
+- [ ] 2.5.4 Create graceful shutdown coordination using RPC
+
+  - Implement shutdown coordination RPC calls
+  - Create shutdown sequence orchestration logic
+  - Add timeout handling for graceful vs forced shutdown
+  - Implement cleanup and resource release coordination
+  - _Requirements: 15.5_
+
+- [ ] 2.5.5 Write integration tests for RPC-based collector management
+
+  - Create end-to-end tests for collector lifecycle management
+  - Test RPC call reliability and error handling
+  - Validate shutdown coordination and cleanup procedures
+  - Test configuration update workflows and rollback scenarios
+  - _Requirements: 15.2, 15.5_
+
 - [ ] 2.6 Add multi-process collector coordination via daemoneye-eventbus
 
   - Implement topic-based task distribution for multiple collector types (process, network, filesystem)
@@ -137,6 +297,46 @@ The following foundational components have been successfully implemented:
   - Add result aggregation from multiple collectors publishing to domain-specific topics
   - Implement load balancing and failover for multiple instances of the same collector type
   - Write end-to-end tests with multiple collector processes coordinating through daemoneye-eventbus broker
+  - _Requirements: 15.1, 15.3, 15.4, 16.1, 16.3_
+
+- [ ] 2.6.1 Implement topic-based task distribution for multiple collectors
+
+  - Create task distribution logic using daemoneye-eventbus topic publishing
+  - Implement collector type routing based on capabilities
+  - Add task queuing and priority handling
+  - Create load balancing across multiple collector instances
+  - _Requirements: 15.1, 15.3_
+
+- [ ] 2.6.2 Create capability-based routing for collector tasks
+
+  - Implement capability advertisement and discovery system
+  - Create routing logic based on collector capabilities
+  - Add dynamic routing updates when collectors join/leave
+  - Implement fallback routing for unavailable collectors
+  - _Requirements: 15.3, 16.1_
+
+- [ ] 2.6.3 Add result aggregation from multiple collector domains
+
+  - Implement result collection from domain-specific topics
+  - Create result correlation and aggregation logic
+  - Add result ordering and deduplication
+  - Implement result streaming and backpressure handling
+  - _Requirements: 15.4, 16.3_
+
+- [ ] 2.6.4 Implement load balancing and failover for collector instances
+
+  - Create load balancing algorithms for task distribution
+  - Implement failover detection and recovery mechanisms
+  - Add collector health monitoring and availability tracking
+  - Create automatic task redistribution on collector failure
+  - _Requirements: 15.3, 16.1_
+
+- [ ] 2.6.5 Write end-to-end tests with multiple collector coordination
+
+  - Create integration tests with multiple collector processes
+  - Test task distribution and result aggregation workflows
+  - Validate load balancing and failover scenarios
+  - Test collector coordination through daemoneye-eventbus broker
   - _Requirements: 15.1, 15.3, 15.4, 16.1, 16.3_
 
 - [ ] 3. Implement executable integrity verification with SHA-256 hashing
@@ -939,215 +1139,3 @@ This approach ensures:
 - ✅ No duplication between specs
 - ✅ Clear dependency management
 - ✅ Focused implementation guidance
-
-## Additional Granular Subtasks for Task 2 (daemoneye-eventbus Migration)
-
-### Task 2.2 Granular Breakdown
-
-- [ ] 2.2.1 Design topic hierarchy for multi-collector communication
-
-  - Define topic structure: events.process._, events.network._, events.filesystem._, events.performance._
-  - Create control topic hierarchy: control.collector._, control.agent._, control.health.\*
-  - Design topic naming conventions and wildcarding patterns for subscription flexibility
-  - Document topic access patterns and security boundaries
-  - _Requirements: 15.1, 15.3_
-
-- [ ] 2.2.2 Define RPC call patterns for collector lifecycle management
-
-  - Design RPC service definitions for collector start/stop/restart operations
-  - Create health check RPC patterns with heartbeat and status reporting
-  - Define configuration update RPC calls for dynamic reconfiguration
-  - Design graceful shutdown coordination RPC patterns
-  - _Requirements: 15.2, 15.5_
-
-- [ ] 2.2.3 Create message schemas using existing protobuf definitions
-
-  - Extend existing protobuf messages for daemoneye-eventbus pub/sub event distribution
-  - Design RPC request/response message schemas for collector management
-  - Create event correlation metadata for multi-collector workflows
-  - Define message versioning and backward compatibility strategy
-  - _Requirements: 14.4, 15.1_
-
-- [ ] 2.2.4 Design embedded vs standalone broker deployment options
-
-  - Document embedded broker architecture within daemoneye-agent process
-  - Design standalone broker option for future enterprise deployments
-  - Create configuration options for broker deployment mode selection
-  - Define resource allocation and performance characteristics for each mode
-  - _Requirements: 14.2, 16.4_
-
-- [ ] 2.2.5 Document migration strategy from crossbeam to daemoneye-eventbus
-
-  - Map existing crossbeam channel usage to daemoneye-eventbus topic patterns
-  - Create migration plan preserving existing event bus semantics
-  - Document compatibility layer for gradual migration
-  - Define testing strategy to ensure behavioral equivalence
-  - _Requirements: 14.4, 14.5_
-
-### Task 2.3 Granular Breakdown
-
-- [ ] 2.3.1 Create DaemoneyeEventBus struct with EventBus trait compatibility
-
-  - Implement DaemoneyeEventBus struct that wraps daemoneye-eventbus broker functionality
-  - Ensure compatibility with existing EventBus trait interface
-  - Add configuration options for broker startup and client management
-  - Create error handling and logging integration
-  - _Requirements: 14.1, 14.3_
-
-- [ ] 2.3.2 Implement embedded daemoneye-eventbus broker startup and configuration
-
-  - Add broker initialization logic within collector-core runtime
-  - Create configuration management for broker settings and transport options
-  - Implement graceful broker startup and shutdown sequences
-  - Add broker health monitoring and status reporting
-  - _Requirements: 14.2, 14.3_
-
-- [ ] 2.3.3 Add daemoneye-eventbus client creation and topic management
-
-  - Implement client connection management for collector-core components
-  - Create topic subscription and publishing capabilities
-  - Add client reconnection logic with exponential backoff
-  - Implement client health monitoring and error recovery
-  - _Requirements: 14.3, 15.1_
-
-- [ ] 2.3.4 Integrate daemoneye-eventbus broker with existing IPC server infrastructure
-
-  - Create compatibility layer between daemoneye-eventbus and existing IPC protocols
-  - Maintain existing protobuf message compatibility
-  - Add migration path for gradual transition from direct IPC to daemoneye-eventbus
-  - Ensure seamless integration with daemoneye-agent communication
-  - _Requirements: 14.5, 15.1_
-
-- [ ] 2.3.5 Write integration tests comparing daemoneye-eventbus vs crossbeam performance
-
-  - Create performance benchmarks for event distribution throughput
-  - Compare latency characteristics between crossbeam and daemoneye-eventbus implementations
-  - Test memory usage and resource consumption under load
-  - Validate behavioral equivalence between old and new implementations
-  - _Requirements: 14.1, 14.5_
-
-### Task 2.4 Granular Breakdown
-
-- [ ] 2.4.1 Replace crossbeam channels with daemoneye-eventbus pub/sub in LocalEventBus
-
-  - Modify LocalEventBus implementation to use daemoneye-eventbus topics instead of crossbeam channels
-  - Preserve existing event distribution semantics and ordering guarantees
-  - Update event publishing logic to use daemoneye-eventbus topic patterns
-  - Maintain backward compatibility with existing event consumers
-  - _Requirements: 14.4, 15.1_
-
-- [ ] 2.4.2 Update EventSubscription and event routing for daemoneye-eventbus topics
-
-  - Modify EventSubscription structure to support daemoneye-eventbus topic patterns
-  - Update event routing logic to use daemoneye-eventbus subscription mechanisms
-  - Implement topic-based filtering and wildcarding support
-  - Preserve existing event filtering capabilities
-  - _Requirements: 14.5, 15.3_
-
-- [ ] 2.4.3 Migrate event filtering and correlation to daemoneye-eventbus capabilities
-
-  - Implement event filtering using daemoneye-eventbus topic subscription patterns
-  - Create correlation tracking through daemoneye-eventbus message metadata
-  - Update event correlation logic to work with daemoneye-eventbus message broker
-  - Maintain existing correlation ID and tracing functionality
-  - _Requirements: 15.1, 15.4_
-
-- [ ] 2.4.4 Preserve event bus statistics and monitoring through daemoneye-eventbus
-
-  - Implement statistics collection using daemoneye-eventbus broker metrics
-  - Create monitoring dashboards for daemoneye-eventbus broker performance
-  - Maintain existing event bus monitoring interfaces
-  - Add daemoneye-eventbus-specific metrics and health indicators
-  - _Requirements: 14.5, 15.1_
-
-- [ ] 2.4.5 Create migration tests ensuring behavioral equivalence
-
-  - Write comprehensive tests comparing crossbeam vs daemoneye-eventbus behavior
-  - Test event ordering, delivery guarantees, and error handling
-  - Validate performance characteristics and resource usage
-  - Create regression tests for migration scenarios
-  - _Requirements: 14.4, 14.5_
-
-### Task 2.5 Granular Breakdown
-
-- [ ] 2.5.1 Create RPC service definitions for collector operations
-
-  - Define RPC interfaces for collector start, stop, restart operations
-  - Create service method signatures and parameter structures
-  - Implement request/response message schemas
-  - Add error handling and timeout specifications
-  - _Requirements: 15.2_
-
-- [ ] 2.5.2 Implement health check RPC calls and heartbeat system
-
-  - Create health check RPC service with status reporting
-  - Implement heartbeat mechanism for collector monitoring
-  - Add health status aggregation and reporting
-  - Create health check scheduling and timeout handling
-  - _Requirements: 15.2, 15.5_
-
-- [ ] 2.5.3 Add configuration update RPC patterns
-
-  - Implement dynamic configuration update RPC calls
-  - Create configuration validation and rollback mechanisms
-  - Add configuration change notification system
-  - Implement hot-reload capabilities for collector settings
-  - _Requirements: 15.5, 16.4_
-
-- [ ] 2.5.4 Create graceful shutdown coordination using RPC
-
-  - Implement shutdown coordination RPC calls
-  - Create shutdown sequence orchestration logic
-  - Add timeout handling for graceful vs forced shutdown
-  - Implement cleanup and resource release coordination
-  - _Requirements: 15.5_
-
-- [ ] 2.5.5 Write integration tests for RPC-based collector management
-
-  - Create end-to-end tests for collector lifecycle management
-  - Test RPC call reliability and error handling
-  - Validate shutdown coordination and cleanup procedures
-  - Test configuration update workflows and rollback scenarios
-  - _Requirements: 15.2, 15.5_
-
-### Task 2.6 Granular Breakdown
-
-- [ ] 2.6.1 Implement topic-based task distribution for multiple collectors
-
-  - Create task distribution logic using daemoneye-eventbus topic publishing
-  - Implement collector type routing based on capabilities
-  - Add task queuing and priority handling
-  - Create load balancing across multiple collector instances
-  - _Requirements: 15.1, 15.3_
-
-- [ ] 2.6.2 Create capability-based routing for collector tasks
-
-  - Implement capability advertisement and discovery system
-  - Create routing logic based on collector capabilities
-  - Add dynamic routing updates when collectors join/leave
-  - Implement fallback routing for unavailable collectors
-  - _Requirements: 15.3, 16.1_
-
-- [ ] 2.6.3 Add result aggregation from multiple collector domains
-
-  - Implement result collection from domain-specific topics
-  - Create result correlation and aggregation logic
-  - Add result ordering and deduplication
-  - Implement result streaming and backpressure handling
-  - _Requirements: 15.4, 16.3_
-
-- [ ] 2.6.4 Implement load balancing and failover for collector instances
-
-  - Create load balancing algorithms for task distribution
-  - Implement failover detection and recovery mechanisms
-  - Add collector health monitoring and availability tracking
-  - Create automatic task redistribution on collector failure
-  - _Requirements: 15.3, 16.1_
-
-- [ ] 2.6.5 Write end-to-end tests with multiple collector coordination
-
-  - Create integration tests with multiple collector processes
-  - Test task distribution and result aggregation workflows
-  - Validate load balancing and failover scenarios
-  - Test collector coordination through daemoneye-eventbus broker
-  - _Requirements: 15.1, 15.3, 15.4, 16.1, 16.3_
