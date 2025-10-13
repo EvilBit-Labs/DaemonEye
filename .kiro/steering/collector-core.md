@@ -54,7 +54,7 @@ impl EventSource for MySource {
 Use strongly-typed events with consistent field naming:
 
 ```rust
-use collector_core::CollectionEvent;
+use collector_core::{CollectionEvent, ProcessEvent};
 use std::time::SystemTime;
 
 // Always include timestamp and use SystemTime
