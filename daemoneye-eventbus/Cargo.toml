@@ -19,6 +19,7 @@ interprocess = { version = "2.2.3", features = ["tokio"] }
 tokio = { version = "1.47.1", features = [
     "sync",
     "rt",
+    "rt-multi-thread",
     "macros",
     "time",
     "net",
