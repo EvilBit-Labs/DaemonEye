@@ -42,7 +42,8 @@ fn bench_message_serialization(c: &mut Criterion) {
     c.bench_function("message_serialization", |b| {
         b.iter(|| {
             let event = create_test_process_event(black_box(1234));
-            let serialized = bincode::serialize(&event).unwrap();
+            let serialized =
+                bincode::serde::encode_to_vec(&event, bincode::config::standard()).unwrap();
             black_box(serialized)
         })
     });
@@ -51,12 +52,15 @@ fn bench_message_serialization(c: &mut Criterion) {
 fn bench_message_deserialization(c: &mut Criterion) {
     // Pre-serialize some data
     let event = create_test_process_event(1234);
-    let serialized = bincode::serialize(&event).unwrap();
+    let serialized = bincode::serde::encode_to_vec(&event, bincode::config::standard()).unwrap();
 
     c.bench_function("message_deserialization", |b| {
         b.iter(|| {
-            let deserialized: CollectionEvent =
-                bincode::deserialize(black_box(&serialized)).unwrap();
+            let (deserialized, _): (CollectionEvent, _) = bincode::serde::decode_from_slice(
+                black_box(&serialized),
+                bincode::config::standard(),
+            )
+            .unwrap();
             black_box(deserialized)
         })
     });

@@ -114,14 +114,15 @@ impl Message {
 
     /// Serialize message to bytes
     pub fn serialize(&self) -> Result<Vec<u8>, crate::error::EventBusError> {
-        bincode::serialize(self)
+        bincode::serde::encode_to_vec(self, bincode::config::standard())
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))
     }
 
     /// Deserialize message from bytes
     pub fn deserialize(data: &[u8]) -> Result<Self, crate::error::EventBusError> {
-        bincode::deserialize(data)
+        bincode::serde::decode_from_slice(data, bincode::config::standard())
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))
+            .map(|(result, _)| result)
     }
 }
 

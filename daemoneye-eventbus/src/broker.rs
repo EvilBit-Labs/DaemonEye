@@ -26,6 +26,7 @@ pub struct DaemoneyeBroker {
     /// Shutdown signal
     shutdown_tx: mpsc::UnboundedSender<()>,
     /// Shutdown receiver
+    #[allow(dead_code)]
     shutdown_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<()>>>>,
     /// Socket configuration
     config: SocketConfig,
@@ -100,8 +101,10 @@ impl DaemoneyeBroker {
         }
 
         // Deserialize payload to CollectionEvent before creating message
-        let collection_event: CollectionEvent = bincode::deserialize(&payload)
-            .map_err(|e| EventBusError::serialization(e.to_string()))?;
+        let collection_event: CollectionEvent =
+            bincode::serde::decode_from_slice(&payload, bincode::config::standard())
+                .map_err(|e| EventBusError::serialization(e.to_string()))?
+                .0;
 
         let message = Message::event(
             topic.to_string(),
@@ -243,7 +246,9 @@ impl DaemoneyeBroker {
 /// EventBus implementation using the embedded broker
 pub struct DaemoneyeEventBus {
     broker: Arc<DaemoneyeBroker>,
+    #[allow(dead_code)]
     subscriber_id: Uuid,
+    #[allow(dead_code)]
     event_sender: mpsc::UnboundedSender<BusEvent>,
 }
 
@@ -284,8 +289,8 @@ impl EventBus for DaemoneyeEventBus {
         };
 
         // Serialize event to payload
-        let payload =
-            bincode::serialize(&event).map_err(|e| EventBusError::serialization(e.to_string()))?;
+        let payload = bincode::serde::encode_to_vec(&event, bincode::config::standard())
+            .map_err(|e| EventBusError::serialization(e.to_string()))?;
 
         self.broker.publish(topic, &correlation_id, payload).await
     }
