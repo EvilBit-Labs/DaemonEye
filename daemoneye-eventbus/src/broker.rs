@@ -105,27 +105,57 @@ impl DaemoneyeBroker {
         let server = Arc::clone(&self.transport_server);
         let _client_manager = Arc::clone(&self.client_manager);
         let _socket_config = self.config.clone();
+        let shutdown_rx = Arc::clone(&self.shutdown_rx);
 
         tokio::spawn(async move {
             loop {
-                let server_guard = server.lock().await;
-                if let Some(ref transport_server) = *server_guard {
-                    match transport_server.accept().await {
-                        Ok(_client) => {
-                            let client_id = Uuid::new_v4().to_string();
-                            info!("Accepted new client connection: {}", client_id);
-
-                            // Add client to manager (this will fail since we need to refactor the manager)
-                            // For now, we'll just log the connection
-                            debug!("Client {} connected but not yet managed", client_id);
+                tokio::select! {
+                    // Accept new connections with timeout
+                    result = async {
+                        let server_guard = server.lock().await;
+                        if let Some(ref transport_server) = *server_guard {
+                            tokio::time::timeout(
+                                tokio::time::Duration::from_millis(100),
+                                transport_server.accept()
+                            ).await
+                        } else {
+                            Ok(Err(EventBusError::transport("Server not listening")))
                         }
-                        Err(e) => {
-                            error!("Failed to accept client connection: {}", e);
-                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    } => {
+                        match result {
+                            Ok(Ok(_client)) => {
+                                let client_id = Uuid::new_v4().to_string();
+                                info!("Accepted new client connection: {}", client_id);
+
+                                // Add client to manager (this will fail since we need to refactor the manager)
+                                // For now, we'll just log the connection
+                                debug!("Client {} connected but not yet managed", client_id);
+                            }
+                            Ok(Err(e)) => {
+                                error!("Failed to accept client connection: {}", e);
+                                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            }
+                            Err(_timeout) => {
+                                // Timeout is normal when no clients are connecting
+                                // Just continue the loop
+                            }
                         }
                     }
-                } else {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+                    // Handle shutdown signal
+                    _ = async {
+                        let mut shutdown_guard = shutdown_rx.lock().await;
+                        if let Some(mut rx) = shutdown_guard.take() {
+                            rx.recv().await
+                        } else {
+                            // Already taken, wait forever
+                            let _: () = std::future::pending::<()>().await;
+                            Some(())
+                        }
+                    } => {
+                        info!("Client acceptance task shutting down");
+                        break;
+                    }
                 }
             }
         });
@@ -136,15 +166,34 @@ impl DaemoneyeBroker {
     /// Start health monitoring background task
     async fn start_health_monitoring_task(&self) -> Result<()> {
         let client_manager = Arc::clone(&self.client_manager);
+        let shutdown_rx = Arc::clone(&self.shutdown_rx);
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    // Health check interval
+                    _ = interval.tick() => {
+                        let mut manager = client_manager.lock().await;
+                        if let Err(e) = manager.health_check_all().await {
+                            error!("Health check failed: {}", e);
+                        }
+                    }
 
-                let mut manager = client_manager.lock().await;
-                if let Err(e) = manager.health_check_all().await {
-                    error!("Health check failed: {}", e);
+                    // Handle shutdown signal
+                    _ = async {
+                        let mut shutdown_guard = shutdown_rx.lock().await;
+                        if let Some(mut rx) = shutdown_guard.take() {
+                            rx.recv().await
+                        } else {
+                            // Already taken, wait forever
+                            let _: () = std::future::pending::<()>().await;
+                            Some(())
+                        }
+                    } => {
+                        info!("Health monitoring task shutting down");
+                        break;
+                    }
                 }
             }
         });

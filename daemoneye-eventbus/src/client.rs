@@ -454,6 +454,7 @@ impl EventBusClient {
 mod tests {
     use super::*;
     use crate::message::ProcessEvent;
+    use crate::transport::TransportServer;
     use std::time::SystemTime;
     use tempfile::tempdir;
 
@@ -466,7 +467,9 @@ mod tests {
             windows_pipe: socket_path.to_string_lossy().to_string(),
         };
 
-        // This test will fail to connect since no server is running, but we can test the creation logic
+        // Start a server first
+        let _server = TransportServer::new(socket_config.clone()).await.unwrap();
+
         let result = EventBusClient::new(
             "test-client".to_string(),
             socket_config,
@@ -474,7 +477,7 @@ mod tests {
         )
         .await;
 
-        // Mock implementation should succeed
+        // Should succeed with real server
         assert!(result.is_ok());
     }
 
@@ -487,7 +490,9 @@ mod tests {
             windows_pipe: socket_path.to_string_lossy().to_string(),
         };
 
-        // Mock implementation will succeed, so create client and test validation
+        // Start a server first
+        let _server = TransportServer::new(socket_config.clone()).await.unwrap();
+
         let client = EventBusClient::new(
             "test-client".to_string(),
             socket_config,
@@ -520,7 +525,9 @@ mod tests {
             windows_pipe: socket_path.to_string_lossy().to_string(),
         };
 
-        // Mock implementation will succeed, so create client and test subscription
+        // Start a server first
+        let _server = TransportServer::new(socket_config.clone()).await.unwrap();
+
         let client = EventBusClient::new(
             "test-client".to_string(),
             socket_config,

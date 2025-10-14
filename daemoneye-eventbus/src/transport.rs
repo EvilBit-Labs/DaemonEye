@@ -4,9 +4,33 @@
 //! and health monitoring for the daemoneye-eventbus system.
 
 use crate::error::{EventBusError, Result};
+use interprocess::local_socket::tokio::prelude::*;
+use interprocess::local_socket::{ListenerOptions, Name};
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{sleep, timeout};
+
+#[cfg(unix)]
+use interprocess::local_socket::{GenericFilePath, ToFsName};
+#[cfg(windows)]
+use interprocess::local_socket::{GenericNamespaced, ToNsName};
 use tracing::{debug, error, info, warn};
+
+/// Create a socket name from a path string, handling platform differences
+fn create_socket_name(
+    socket_path: &str,
+) -> std::result::Result<Name<'_>, Box<dyn std::error::Error>> {
+    #[cfg(unix)]
+    {
+        use std::path::Path;
+        let path = Path::new(socket_path);
+        Ok(path.to_fs_name::<GenericFilePath>()?)
+    }
+    #[cfg(windows)]
+    {
+        Ok(socket_path.to_ns_name::<GenericNamespaced>()?)
+    }
+}
 
 /// Cross-platform socket path configuration
 #[derive(Debug, Clone)]
@@ -72,9 +96,10 @@ impl Default for ClientConfig {
     }
 }
 
-/// Transport server for accepting client connections (mock implementation)
+/// Transport server for accepting client connections
 pub struct TransportServer {
     config: SocketConfig,
+    listener: Option<LocalSocketListener>,
     accept_count: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -82,31 +107,62 @@ impl TransportServer {
     /// Create a new transport server
     pub async fn new(config: SocketConfig) -> Result<Self> {
         let socket_path = config.get_socket_path();
-        info!("Mock transport server created for: {}", socket_path);
+
+        // Clean up any existing socket file
+        #[cfg(unix)]
+        if std::path::Path::new(&socket_path).exists()
+            && let Err(e) = std::fs::remove_file(&socket_path)
+        {
+            warn!(
+                "Failed to remove existing socket file {}: {}",
+                socket_path, e
+            );
+        }
+
+        // Create the listener using the appropriate name type
+        let name = create_socket_name(&socket_path).map_err(|e| {
+            EventBusError::transport(format!("Invalid socket name {}: {}", socket_path, e))
+        })?;
+
+        let opts = ListenerOptions::new().name(name);
+        let listener = opts.create_tokio().map_err(|e| {
+            EventBusError::transport(format!("Failed to bind to socket {}: {}", socket_path, e))
+        })?;
+
+        info!("Transport server created for: {}", socket_path);
         Ok(Self {
             config,
+            listener: Some(listener),
             accept_count: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
-    /// Accept a new client connection (mock implementation)
+    /// Accept a new client connection
     pub async fn accept(&self) -> Result<TransportClient> {
-        // Simulate blocking accept with proper async sleep
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        let listener = self
+            .listener
+            .as_ref()
+            .ok_or_else(|| EventBusError::transport("Server not listening"))?;
 
         let count = self
             .accept_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-        // Simulate connection limit - stop accepting after a reasonable number
+        // Connection limit to prevent resource exhaustion
         if count >= 100 {
             return Err(EventBusError::transport(
                 "Server shutdown or connection limit reached",
             ));
         }
 
-        debug!("Mock: Accepted new client connection");
-        Ok(TransportClient::new())
+        // Accept the connection
+        let stream = listener
+            .accept()
+            .await
+            .map_err(|e| EventBusError::transport(format!("Failed to accept connection: {}", e)))?;
+
+        debug!("Accepted new client connection");
+        Ok(TransportClient::from_stream(stream, self.config.clone()))
     }
 
     /// Get the socket configuration
@@ -116,7 +172,27 @@ impl TransportServer {
 
     /// Shutdown the server
     pub async fn shutdown(&mut self) -> Result<()> {
-        info!("Mock transport server shutdown");
+        info!("Transport server shutdown");
+
+        // Close the listener
+        if let Some(_listener) = self.listener.take() {
+            // Listener will be dropped here, closing the socket
+            debug!("Closed transport server listener");
+        }
+
+        // Clean up socket file on Unix systems
+        #[cfg(unix)]
+        {
+            let socket_path = self.config.get_socket_path();
+            if std::path::Path::new(&socket_path).exists() {
+                if let Err(e) = std::fs::remove_file(&socket_path) {
+                    warn!("Failed to remove socket file {}: {}", socket_path, e);
+                } else {
+                    debug!("Removed socket file: {}", socket_path);
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -126,6 +202,7 @@ impl TransportServer {
 pub struct TransportClient {
     config: ClientConfig,
     socket_config: SocketConfig,
+    stream: Option<LocalSocketStream>,
     connected: bool,
     reconnect_attempts: u32,
     last_health_check: std::time::Instant,
@@ -138,18 +215,20 @@ impl TransportClient {
         Self {
             config: ClientConfig::default(),
             socket_config: SocketConfig::new("default"),
-            connected: true,
+            stream: None,
+            connected: false,
             reconnect_attempts: 0,
             last_health_check: std::time::Instant::now(),
             buffer: Vec::new(),
         }
     }
 
-    /// Create a transport client from an existing stream (mock)
-    pub fn from_stream(_stream: ()) -> Self {
+    /// Create a transport client from an existing stream
+    pub fn from_stream(stream: LocalSocketStream, socket_config: SocketConfig) -> Self {
         Self {
             config: ClientConfig::default(),
-            socket_config: SocketConfig::new("default"),
+            socket_config,
+            stream: Some(stream),
             connected: true,
             reconnect_attempts: 0,
             last_health_check: std::time::Instant::now(),
@@ -168,11 +247,12 @@ impl TransportClient {
         config: ClientConfig,
     ) -> Result<Self> {
         let socket_path = socket_config.get_socket_path();
-        info!("Mock: Connecting to transport server: {}", socket_path);
+        info!("Connecting to transport server: {}", socket_path);
 
         let mut client = Self {
             config,
             socket_config: socket_config.clone(),
+            stream: None,
             connected: false,
             reconnect_attempts: 0,
             last_health_check: std::time::Instant::now(),
@@ -183,20 +263,43 @@ impl TransportClient {
         Ok(client)
     }
 
-    /// Establish connection with timeout and retry logic (mock)
+    /// Establish connection with timeout and retry logic
     async fn establish_connection(&mut self) -> Result<()> {
         let socket_path = self.socket_config.get_socket_path();
 
-        // Simulate connection attempt
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        // Attempt to connect with timeout
+        let name = create_socket_name(&socket_path).map_err(|e| {
+            EventBusError::transport(format!("Invalid socket name {}: {}", socket_path, e))
+        })?;
+        let connection_future = LocalSocketStream::connect(name);
+        let timeout_duration = self.config.connection_timeout;
 
-        self.connected = true;
-        self.reconnect_attempts = 0;
-        info!(
-            "Mock: Successfully connected to transport server: {}",
-            socket_path
-        );
-        Ok(())
+        match timeout(timeout_duration, connection_future).await {
+            Ok(Ok(stream)) => {
+                self.stream = Some(stream);
+                self.connected = true;
+                self.reconnect_attempts = 0;
+                info!(
+                    "Successfully connected to transport server: {}",
+                    socket_path
+                );
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                self.connected = false;
+                Err(EventBusError::transport(format!(
+                    "Failed to connect to {}: {}",
+                    socket_path, e
+                )))
+            }
+            Err(_) => {
+                self.connected = false;
+                Err(EventBusError::transport(format!(
+                    "Connection to {} timed out after {:?}",
+                    socket_path, timeout_duration
+                )))
+            }
+        }
     }
 
     /// Reconnect with exponential backoff
@@ -221,7 +324,7 @@ impl TransportClient {
         );
 
         warn!(
-            "Mock: Reconnection attempt {} after {:?}",
+            "Reconnection attempt {} after {:?}",
             self.reconnect_attempts + 1,
             delay
         );
@@ -230,6 +333,7 @@ impl TransportClient {
         self.reconnect_attempts += 1;
 
         // Close existing connection if any
+        self.stream = None;
         self.connected = false;
 
         self.establish_connection().await
@@ -241,9 +345,31 @@ impl TransportClient {
             self.reconnect().await?;
         }
 
-        // Mock send operation
-        tokio::task::yield_now().await;
-        debug!("Mock: Sent {} bytes through transport", data.len());
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or_else(|| EventBusError::transport("No active connection"))?;
+
+        // Send length prefix first
+        let length = data.len() as u32;
+        let length_bytes = length.to_le_bytes();
+
+        stream.write_all(&length_bytes).await.map_err(|e| {
+            EventBusError::transport(format!("Failed to write length prefix: {}", e))
+        })?;
+
+        // Send the actual data
+        stream
+            .write_all(data)
+            .await
+            .map_err(|e| EventBusError::transport(format!("Failed to write data: {}", e)))?;
+
+        stream
+            .flush()
+            .await
+            .map_err(|e| EventBusError::transport(format!("Failed to flush data: {}", e)))?;
+
+        debug!("Sent {} bytes through transport", data.len());
         Ok(())
     }
 
@@ -253,15 +379,28 @@ impl TransportClient {
             self.reconnect().await?;
         }
 
-        // Mock receive operation
-        tokio::task::yield_now().await;
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or_else(|| EventBusError::transport("No active connection"))?;
 
-        if self.buffer.is_empty() {
-            return Err(EventBusError::transport("No data available"));
-        }
+        // Read length prefix first
+        let mut length_bytes = [0u8; 4];
+        stream.read_exact(&mut length_bytes).await.map_err(|e| {
+            EventBusError::transport(format!("Failed to read length prefix: {}", e))
+        })?;
 
-        debug!("Mock: Received message through transport");
-        Ok(std::mem::take(&mut self.buffer))
+        let length = u32::from_le_bytes(length_bytes) as usize;
+
+        // Read the actual data
+        let mut data = vec![0u8; length];
+        stream
+            .read_exact(&mut data)
+            .await
+            .map_err(|e| EventBusError::transport(format!("Failed to read data: {}", e)))?;
+
+        debug!("Received {} bytes through transport", data.len());
+        Ok(data)
     }
 
     /// Perform health check
@@ -283,16 +422,16 @@ impl TransportClient {
 
         match timeout(timeout_duration, health_check_future).await {
             Ok(Ok(())) => {
-                debug!("Mock: Health check passed");
+                debug!("Health check passed");
                 Ok(true)
             }
             Ok(Err(e)) => {
-                warn!("Mock: Health check failed: {}", e);
+                warn!("Health check failed: {}", e);
                 self.connected = false;
                 Ok(false)
             }
             Err(_) => {
-                warn!("Mock: Health check timeout");
+                warn!("Health check timeout");
                 self.connected = false;
                 Ok(false)
             }
@@ -317,7 +456,13 @@ impl TransportClient {
     pub async fn close(mut self) -> Result<()> {
         self.connected = false;
         self.buffer.clear();
-        debug!("Mock: Transport connection closed");
+
+        // Close the stream
+        if let Some(stream) = self.stream.take() {
+            drop(stream); // Stream will be closed when dropped
+        }
+
+        debug!("Transport connection closed");
         Ok(())
     }
 }
@@ -738,12 +883,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_connection_manager() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let socket_path = temp_dir.path().join("test-manager.sock");
+        let socket_config = SocketConfig {
+            unix_path: socket_path.to_string_lossy().to_string(),
+            windows_pipe: socket_path.to_string_lossy().to_string(),
+        };
+
+        // Start a server first
+        let mut server = TransportServer::new(socket_config.clone()).await.unwrap();
+
         let config = ClientConfig::default();
         let mut manager = ClientConnectionManager::new(config);
 
-        let socket_config = SocketConfig::new("test");
-
-        // Add a client
+        // Add a client (this will now connect to the real server)
         let result = manager
             .add_client("test-client".to_string(), &socket_config)
             .await;
@@ -773,6 +928,9 @@ mod tests {
 
         let stats = manager.get_stats();
         assert_eq!(stats.total_clients, 0);
+
+        // Clean up server
+        let _ = server.shutdown().await;
     }
 
     #[tokio::test]
