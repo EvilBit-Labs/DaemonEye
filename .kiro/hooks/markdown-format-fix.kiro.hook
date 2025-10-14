@@ -4,9 +4,9 @@
   "description": "Runs mdformat across all markdown files in the repository to identify and fix formatting issues, with special attention to embedded code blocks. Makes safe, targeted corrections to ensure code blocks are valid without disabling formatters or applying risky blanket commands.",
   "version": "1",
   "when": {
-    "type": "userTriggered",
+    "type": "fileEdited",
     "patterns": [
-      "**/*.md"
+      "docs/src/**/*.md"
     ]
   },
   "then": {
