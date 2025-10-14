@@ -636,8 +636,13 @@ impl AnalysisChainCoordinator {
         // Build dependency graph
         for (stage_id, deps) in &workflow.dependencies {
             for dep in deps {
-                graph.get_mut(dep).unwrap().push(stage_id.clone());
-                *in_degree.get_mut(stage_id).unwrap() += 1;
+                graph
+                    .get_mut(dep)
+                    .expect("Dependency should exist in graph")
+                    .push(stage_id.clone());
+                *in_degree
+                    .get_mut(stage_id)
+                    .expect("Stage should exist in in_degree map") += 1;
             }
         }
 
@@ -655,7 +660,9 @@ impl AnalysisChainCoordinator {
 
             if let Some(dependents) = graph.get(&stage_id) {
                 for dependent in dependents {
-                    let degree = in_degree.get_mut(dependent).unwrap();
+                    let degree = in_degree
+                        .get_mut(dependent)
+                        .expect("Dependent should exist in in_degree map");
                     *degree -= 1;
                     if *degree == 0 {
                         queue.push_back(dependent.clone());
@@ -1359,7 +1366,7 @@ impl AnalysisChainCoordinator {
                             match trigger_request
                                 .metadata
                                 .get("result_status")
-                                .unwrap()
+                                .expect("result_status should be present when contains_key returns true")
                                 .as_str()
                             {
                                 "success" => StageStatus::Completed,
@@ -1525,7 +1532,9 @@ impl AnalysisChainCoordinator {
                         Self::calculate_progress(&execution.stage_statuses, total_stages);
 
                     // Move to completed executions
-                    let completed_execution = executions.remove(execution_id).unwrap();
+                    let completed_execution = executions
+                        .remove(execution_id)
+                        .expect("Execution should exist when processing completion");
                     Self::move_to_completed_executions(
                         completed_executions,
                         statistics,

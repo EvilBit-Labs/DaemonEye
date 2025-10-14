@@ -1,11 +1,11 @@
 [package]
 name = "daemoneye-eventbus"
-version = "0.1.0"
-edition = "2024"
-authors = ["DaemonEye Team"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "Cross-platform IPC event bus for DaemonEye monitoring system"
-license = "Apache-2.0"
-repository = "https://github.com/EvilBit-Labs/DaemonEye"
+license.workspace = true
+repository.workspace = true
 keywords = ["ipc", "eventbus", "pubsub", "monitoring", "cross-platform"]
 categories = [
     "asynchronous",
@@ -14,9 +14,19 @@ categories = [
     "os::windows-apis",
 ]
 
+[lib]
+name = "daemoneye_eventbus"
+path = "src/lib.rs"
+
 [dependencies]
-interprocess = { version = "2.2.3", features = ["tokio"] }
-tokio = { version = "1.47.1", features = [
+async-trait = { workspace = true }
+bincode = { workspace = true, features = ["serde"] }
+chrono = { workspace = true }
+interprocess = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
     "sync",
     "rt",
     "rt-multi-thread",
@@ -25,25 +35,15 @@ tokio = { version = "1.47.1", features = [
     "net",
     "io-util",
 ] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-bincode = { version = "2.0.1", features = ["serde"] }
-thiserror = "2.0.17"
-tracing = "0.1.41"
-uuid = { version = "1.18.1", features = ["v4", "serde"] }
-chrono = { version = "0.4.42", features = ["serde"] }
-async-trait = "0.1.89"
+tracing = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
- tokio-test = "0.4.4"
- criterion = { version = "0.7.0", features = ["html_reports"] }
- tempfile = "3.23.0"
- insta = { version = "1.40.0", features = ["yaml"] }
+criterion = { workspace = true, features = ["html_reports"] }
+insta = { workspace = true, features = ["yaml"] }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
 
 [[bench]]
 name = "throughput"
 harness = false
-
-[lib]
-name = "daemoneye_eventbus"
-path = "src/lib.rs"

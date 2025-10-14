@@ -147,7 +147,7 @@ The following foundational components have been successfully implemented:
 
 - [ ] 2.3 Implement daemoneye-eventbus broker integration in collector-core
 
-- [ ] 2.3.1 Implement daemoneye-eventbus broker integration in collector-core
+- [x] 2.3.1 Implement daemoneye-eventbus broker integration in collector-core
 
   - Create DaemoneyeEventBus struct implementing existing EventBus trait for backward compatibility
   - Implement embedded daemoneye-eventbus broker startup and configuration within collector-core runtime

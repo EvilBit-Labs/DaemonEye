@@ -27,6 +27,9 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+
+# Internal library
+daemoneye-lib = { workspace = true }
 futures = { workspace = true }
 
 # IPC communication
@@ -38,9 +41,6 @@ prost-types = { workspace = true }
 
 # Database
 redb = { workspace = true }
-
-# Internal library
-daemoneye-lib = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

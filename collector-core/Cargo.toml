@@ -14,75 +14,73 @@ publish = true
 exclude.workspace = true
 readme = "README.md"
 
+[features]
+default = []
+busrt = []
 
 [dependencies]
-chrono = { workspace = true, features = ["serde"] }
-# Core async runtime and utilities
-tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
-async-trait = { workspace = true }
-futures = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
-thiserror = { workspace = true }
+async-trait = { workspace = true }
 
-# Serialization
-serde = { workspace = true }
-serde_json = { workspace = true }
-humantime-serde = "1.1.1"
-
-# Logging
-tracing = { workspace = true }
+# Base64 encoding for message payloads
+base64 = { workspace = true }
 
 # Bitflags for capabilities
 bitflags = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
 
+# High-performance concurrent data structures
+crossbeam = { workspace = true }
+daemoneye-eventbus = { path = "../daemoneye-eventbus" }
 # Message broker for IPC (disabled during migration away from busrt)
 # busrt = { workspace = true }
 
 # IPC integration
 daemoneye-lib = { workspace = true }
-daemoneye-eventbus = { path = "../daemoneye-eventbus" }
+futures = { workspace = true }
+humantime-serde = { workspace = true }
+
+# MD5 hashing for configuration checksums
+md5 = { workspace = true }
+parking_lot = { workspace = true }
+
+# Regular expressions for topic pattern matching
+regex = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# SQL parsing for trigger conditions
+sqlparser = { workspace = true }
 
 # Temporary file handling
 tempfile = { workspace = true }
+thiserror = { workspace = true }
+# Core async runtime and utilities
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+
+# Logging
+tracing = { workspace = true }
 
 # UUID generation
 uuid = { workspace = true }
 
-# SQL parsing for trigger conditions
-sqlparser = "0.59.0"
-
-# High-performance concurrent data structures
-crossbeam = { workspace = true }
-parking_lot = { workspace = true }
-
-# Base64 encoding for message payloads
-base64 = "0.22.1"
-
-# Regular expressions for topic pattern matching
-regex = "1.12.1"
-
-# MD5 hashing for configuration checksums
-md5 = "0.8.0"
-
 [dev-dependencies]
-tokio-test = "0.4.4"
-tempfile = { workspace = true }
-serde_json = { workspace = true }
-prost = { workspace = true }
-proptest = "1.8.0"
-rand = "0.9.2"
-criterion = { workspace = true, features = ["html_reports"] }
-tracing-subscriber = { workspace = true }
-bincode = "2.0.1"
-futures = { workspace = true }
 anyhow = { workspace = true }
+bincode = { workspace = true }
+criterion = { workspace = true, features = ["html_reports"] }
+futures = { workspace = true }
+proptest = { workspace = true }
+prost = { workspace = true }
+rand = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "collector_benchmarks"
 harness = false
-
-[features]
-default = []
-busrt = []

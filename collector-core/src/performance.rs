@@ -245,7 +245,10 @@ impl PerformanceMonitor {
             return;
         }
 
-        let mut timers = self.active_timers.lock().unwrap();
+        let mut timers = self
+            .active_timers
+            .lock()
+            .expect("Active timers lock should not be poisoned");
         timers.insert(trigger_id.to_string(), Instant::now());
     }
 
@@ -256,14 +259,20 @@ impl PerformanceMonitor {
         }
 
         let start_time = {
-            let mut timers = self.active_timers.lock().unwrap();
+            let mut timers = self
+                .active_timers
+                .lock()
+                .expect("Failed to acquire active_timers lock");
             timers.remove(trigger_id)
         };
 
         if let Some(start) = start_time {
             let latency_ms = start.elapsed().as_millis() as f64;
 
-            let mut samples = self.trigger_latency_samples.lock().unwrap();
+            let mut samples = self
+                .trigger_latency_samples
+                .lock()
+                .expect("Failed to acquire trigger_latency_samples lock");
             samples.push_back(latency_ms);
 
             if samples.len() > self.config.max_latency_samples {
@@ -286,14 +295,20 @@ impl PerformanceMonitor {
             return;
         }
 
-        let mut samples = self.cpu_samples.lock().unwrap();
+        let mut samples = self
+            .cpu_samples
+            .lock()
+            .expect("Failed to acquire cpu_samples lock");
         samples.push_back(cpu_percent);
 
         if samples.len() > self.config.max_throughput_samples {
             samples.pop_front();
         }
 
-        let mut peak = self.peak_cpu_usage.lock().unwrap();
+        let mut peak = self
+            .peak_cpu_usage
+            .lock()
+            .expect("Failed to acquire peak_cpu_usage lock");
         if cpu_percent > *peak {
             *peak = cpu_percent;
         }
@@ -306,26 +321,38 @@ impl PerformanceMonitor {
         }
 
         let now = Instant::now();
-        let mut samples = self.memory_samples.lock().unwrap();
+        let mut samples = self
+            .memory_samples
+            .lock()
+            .expect("Failed to acquire memory_samples lock");
         samples.push_back(memory_bytes);
 
         if samples.len() > self.config.max_throughput_samples {
             samples.pop_front();
         }
 
-        let mut peak = self.peak_memory_usage.lock().unwrap();
+        let mut peak = self
+            .peak_memory_usage
+            .lock()
+            .expect("Failed to acquire peak_memory_usage lock");
         if memory_bytes > *peak {
             *peak = memory_bytes;
         }
 
         // Update memory growth rate
-        let mut last_measurement = self.last_memory_measurement.lock().unwrap();
+        let mut last_measurement = self
+            .last_memory_measurement
+            .lock()
+            .expect("Failed to acquire last_memory_measurement lock");
         *last_measurement = Some((memory_bytes, now));
     }
 
     /// Calculates current throughput metrics.
     pub fn calculate_throughput_metrics(&self) -> ThroughputMetrics {
-        let window_start = *self.window_start.lock().unwrap();
+        let window_start = *self
+            .window_start
+            .lock()
+            .expect("Failed to acquire window_start lock");
         let window_duration = window_start.elapsed();
         let window_events = self.events_in_current_window.load(Ordering::Relaxed);
         let total_events = self.events_processed.load(Ordering::Relaxed);
@@ -336,7 +363,10 @@ impl PerformanceMonitor {
             0.0
         };
 
-        let samples = self.throughput_samples.lock().unwrap();
+        let samples = self
+            .throughput_samples
+            .lock()
+            .expect("Failed to acquire throughput_samples lock");
         let (peak_events_per_second, avg_events_per_second) = if samples.is_empty() {
             (events_per_second, events_per_second)
         } else {
@@ -362,7 +392,10 @@ impl PerformanceMonitor {
 
     /// Calculates current CPU usage metrics.
     pub fn calculate_cpu_metrics(&self) -> CpuUsageMetrics {
-        let samples = self.cpu_samples.lock().unwrap();
+        let samples = self
+            .cpu_samples
+            .lock()
+            .expect("Failed to acquire cpu_samples lock");
         let peak_cpu = *self.peak_cpu_usage.lock().unwrap();
 
         let (current_cpu, avg_cpu) = if samples.is_empty() {

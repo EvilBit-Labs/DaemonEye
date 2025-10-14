@@ -37,9 +37,13 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 
+# Internal libraries
+collector-core = { workspace = true }
+crc32c = { workspace = true }
+daemoneye-lib = { workspace = true }
+
 # IPC communication
 interprocess = { workspace = true }
-crc32c = { workspace = true }
 
 # Protocol Buffers
 prost = { workspace = true }
@@ -47,12 +51,11 @@ prost-types = { workspace = true }
 
 # Database
 redb = { workspace = true }
-
-# Internal libraries
-collector-core = { workspace = true }
-daemoneye-lib = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Cryptographic hashing
+sha2 = { workspace = true }
 
 # System information
 sysinfo = { workspace = true }
@@ -61,17 +64,14 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-# Cryptographic hashing
-sha2 = { workspace = true }
-
 # UUID generation
 uuid = { workspace = true }
 
 # Platform-specific dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = { workspace = true }
 # macOS Security Framework and Core Foundation
-security-framework = "3.5.0"
-core-foundation = "0.10.1"
+security-framework = { workspace = true }
 # Note: procfs removed as it's Linux-specific and not compatible with macOS
 # Using sysinfo for cross-platform process information instead
 
@@ -79,23 +79,11 @@ core-foundation = "0.10.1"
 # Windows-specific dependencies using third-party crates
 # Enhanced sysinfo is already included in main dependencies
 # windows-rs for safe Windows API bindings
-windows = { version = "0.62.1", features = [
-    "Win32_Foundation",
-    "Win32_System_ProcessStatus",
-    "Win32_System_Threading",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_Security",
-    "Win32_System_Services",
-    "Win32_System_SystemInformation",
-    "Win32_System_Memory",
-    "Win32_System_Performance",
-    "Win32_System_Registry",
-    "Win32_UI_Shell",
-] }
+windows = { workspace = true }
 # windows-service for Windows service detection and management
-windows-service = "0.8.0"
+windows-service = { workspace = true }
 # winreg for safe Windows registry access
-winreg = "0.55.0"
+winreg = { workspace = true }
 # Additional process utilities for Windows
 # Note: psutil-rs and perfmon-rs would be added here when available
 # For now, we use sysinfo + windows-rs for comprehensive Windows process monitoring
@@ -110,10 +98,9 @@ insta = { workspace = true }
 predicates = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
-tracing-test = "0.2.5"
-uzers = "0.12.1"
-whoami = "1.4"
-
+tracing-test = { workspace = true }
+uzers = { workspace = true }
+whoami = { workspace = true }
 
 [[bench]]
 name = "process_collector_benchmarks"
