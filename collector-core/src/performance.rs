@@ -674,9 +674,20 @@ impl PerformanceMonitor {
     fn get_load_average() -> Option<[f64; 3]> {
         #[cfg(unix)]
         {
-            // In a real implementation, this would read from /proc/loadavg
-            // For now, return placeholder values
-            Some([0.1, 0.2, 0.3])
+            use std::fs;
+            if let Ok(contents) = fs::read_to_string("/proc/loadavg") {
+                let parts: Vec<&str> = contents.split_whitespace().collect();
+                if parts.len() >= 3 {
+                    if let (Ok(load1), Ok(load5), Ok(load15)) = (
+                        parts[0].parse::<f64>(),
+                        parts[1].parse::<f64>(),
+                        parts[2].parse::<f64>(),
+                    ) {
+                        return Some([load1, load5, load15]);
+                    }
+                }
+            }
+            None
         }
         #[cfg(not(unix))]
         {
@@ -688,9 +699,12 @@ impl PerformanceMonitor {
     fn get_file_descriptor_count() -> Option<u64> {
         #[cfg(unix)]
         {
-            // In a real implementation, this would count open file descriptors
-            // For now, return a placeholder value
-            Some(50)
+            use std::fs;
+            if let Ok(entries) = fs::read_dir("/proc/self/fd") {
+                Some(entries.count() as u64)
+            } else {
+                None
+            }
         }
         #[cfg(not(unix))]
         {
@@ -700,9 +714,37 @@ impl PerformanceMonitor {
 
     /// Gets current network connection count.
     fn get_network_connection_count() -> Option<u64> {
-        // In a real implementation, this would count network connections
-        // For now, return a placeholder value
-        Some(10)
+        #[cfg(unix)]
+        {
+            use std::fs;
+            let mut count = 0u64;
+
+            // Count TCP connections
+            if let Ok(contents) = fs::read_to_string("/proc/net/tcp") {
+                count += contents.lines().count() as u64 - 1; // Subtract header line
+            }
+
+            // Count TCP6 connections
+            if let Ok(contents) = fs::read_to_string("/proc/net/tcp6") {
+                count += contents.lines().count() as u64 - 1; // Subtract header line
+            }
+
+            // Count UDP connections
+            if let Ok(contents) = fs::read_to_string("/proc/net/udp") {
+                count += contents.lines().count() as u64 - 1; // Subtract header line
+            }
+
+            // Count UDP6 connections
+            if let Ok(contents) = fs::read_to_string("/proc/net/udp6") {
+                count += contents.lines().count() as u64 - 1; // Subtract header line
+            }
+
+            Some(count)
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
     }
 
     /// Returns current performance statistics.

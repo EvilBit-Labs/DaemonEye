@@ -8,7 +8,7 @@ use crate::{event::CollectionEvent, source::SourceCaps};
 use anyhow::Result;
 use async_trait::async_trait;
 use crossbeam::{
-    channel::{Receiver, Sender, bounded, unbounded},
+    channel::{Receiver, Sender, bounded},
     utils::Backoff,
 };
 use serde::{Deserialize, Serialize};
@@ -59,8 +59,6 @@ impl Default for HighPerformanceEventBusConfig {
 pub enum BackpressureStrategy {
     /// Block publishers when ring buffer is full
     Blocking,
-    /// Drop oldest events when ring buffer is full
-    DropOldest,
     /// Drop newest events when ring buffer is full
     DropNewest,
 }
@@ -177,8 +175,8 @@ impl HighPerformanceEventBusImpl {
             config.channel_capacity
         );
 
-        // Create crossbeam unbounded channel for high-performance event distribution
-        let (publisher, receiver) = unbounded::<BusEvent>();
+        // Create crossbeam bounded channel for high-performance event distribution
+        let (publisher, receiver) = bounded::<BusEvent>(config.channel_capacity);
 
         let statistics = EventBusStatistics {
             events_published: 0,
@@ -258,32 +256,6 @@ impl HighPerformanceEventBusImpl {
                                         Err(_) => {
                                             // Channel full, yield and retry
                                             std::thread::yield_now();
-                                        }
-                                    }
-                                }
-                            }
-                            BackpressureStrategy::DropOldest => {
-                                // NOTE: DropOldest strategy requires receiver access to evict old events.
-                                // crossbeam::channel::Sender doesn't provide receiver access, so we cannot
-                                // implement true DropOldest behavior with the current architecture.
-                                //
-                                // Future enhancement: Use ArrayQueue or a custom bounded queue that
-                                // supports evicting the oldest element on push when full.
-                                //
-                                // For now, we treat DropOldest as DropNewest and log a warning.
-                                match subscriber_info.sender.try_send(bus_event.clone()) {
-                                    Ok(_) => {
-                                        delivered += 1;
-                                        delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
-                                    }
-                                    Err(_) => {
-                                        dropped += 1;
-                                        drop_counter_clone.fetch_add(1, Ordering::Relaxed);
-                                        if tracing::enabled!(tracing::Level::WARN) {
-                                            warn!(
-                                                subscriber_id = %subscriber_id,
-                                                "DropOldest not implemented - dropping newest event instead (requires architectural change)"
-                                            );
                                         }
                                     }
                                 }

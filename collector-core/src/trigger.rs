@@ -274,7 +274,7 @@ impl TriggerManager {
         // Register with SQL evaluator
         if let Ok(mut evaluator) = self.sql_evaluator.lock() {
             // Extract conditions that this collector can handle
-            let collector_conditions: Vec<TriggerCondition> = self
+            let collector_conditions: Vec<&TriggerCondition> = self
                 .conditions
                 .iter()
                 .filter(|condition| {
@@ -286,7 +286,6 @@ impl TriggerManager {
                             .supported_analysis
                             .contains(&condition.analysis_type)
                 })
-                .cloned()
                 .collect();
 
             evaluator.register_collector_conditions(
@@ -441,7 +440,6 @@ impl TriggerManager {
             .conditions
             .iter()
             .filter(|c| c.target_collector == collector_id)
-            .cloned()
             .collect();
         evaluator.register_collector_conditions(collector_id, collector_conditions)?;
 
@@ -939,7 +937,7 @@ impl TriggerManager {
         // Track timeout for this trigger request
         self.track_trigger_timeout(&trigger).await?;
 
-        // Update emission statistics
+        // Update emission statistics in a single lock acquisition
         {
             let mut stats = self
                 .emission_stats
@@ -948,6 +946,7 @@ impl TriggerManager {
 
             stats.total_emitted += 1;
             stats.pending_responses += 1;
+            stats.successful_emissions += 1;
 
             // Calculate emission latency
             if let Ok(duration) = start_time.elapsed() {
@@ -959,15 +958,6 @@ impl TriggerManager {
                     (stats.avg_emission_latency_ms * (total_emissions - 1.0) + latency_ms)
                         / total_emissions;
             }
-        }
-
-        // Simulate emission success
-        {
-            let mut stats = self
-                .emission_stats
-                .lock()
-                .map_err(|_| TriggerError::LockError("emission_stats".to_string()))?;
-            stats.successful_emissions += 1;
         }
 
         debug!(
@@ -1170,41 +1160,55 @@ impl TriggerManager {
     pub fn get_statistics(&self) -> TriggerStatistics {
         let pending_count = self.pending_count.lock().map(|count| *count).unwrap_or(0);
 
-        let dedup_cache_size = self
-            .deduplication_cache
-            .lock()
-            .map(|cache| cache.len())
-            .unwrap_or(0);
+        // Batch lock acquisitions to minimize lock contention
+        let (
+            dedup_cache_size,
+            rate_limit_states,
+            registered_capabilities,
+            queue_stats,
+            sql_evaluation_stats,
+            emission_stats,
+        ) = {
+            let dedup_cache_size = self
+                .deduplication_cache
+                .lock()
+                .map(|cache| cache.len())
+                .unwrap_or(0);
+            let rate_limit_states = self
+                .rate_limits
+                .lock()
+                .map(|limits| limits.len())
+                .unwrap_or(0);
+            let registered_capabilities = self
+                .collector_capabilities
+                .lock()
+                .map(|caps| caps.len())
+                .unwrap_or(0);
+            let queue_stats = self
+                .trigger_queue
+                .lock()
+                .map(|queue| queue.get_statistics())
+                .unwrap_or_default();
+            let sql_evaluation_stats = self
+                .sql_evaluator
+                .lock()
+                .map(|evaluator| evaluator.get_evaluation_stats())
+                .unwrap_or_default();
+            let emission_stats = self
+                .emission_stats
+                .lock()
+                .map(|stats| stats.clone())
+                .unwrap_or_default();
 
-        let rate_limit_states = self
-            .rate_limits
-            .lock()
-            .map(|limits| limits.len())
-            .unwrap_or(0);
-
-        let registered_capabilities = self
-            .collector_capabilities
-            .lock()
-            .map(|caps| caps.len())
-            .unwrap_or(0);
-
-        let queue_stats = self
-            .trigger_queue
-            .lock()
-            .map(|queue| queue.get_statistics())
-            .unwrap_or_default();
-
-        let sql_evaluation_stats = self
-            .sql_evaluator
-            .lock()
-            .map(|evaluator| evaluator.get_evaluation_stats())
-            .unwrap_or_default();
-
-        let emission_stats = self
-            .emission_stats
-            .lock()
-            .map(|stats| stats.clone())
-            .unwrap_or_default();
+            (
+                dedup_cache_size,
+                rate_limit_states,
+                registered_capabilities,
+                queue_stats,
+                sql_evaluation_stats,
+                emission_stats,
+            )
+        };
 
         TriggerStatistics {
             registered_conditions: self.conditions.len(),
@@ -1544,12 +1548,12 @@ impl SqlTriggerEvaluator {
     pub fn register_collector_conditions(
         &mut self,
         collector_id: String,
-        conditions: Vec<TriggerCondition>,
+        conditions: Vec<&TriggerCondition>,
     ) -> Result<(), TriggerError> {
         let mut compiled_conditions = Vec::new();
 
         for condition in conditions {
-            let compiled = self.compile_condition(condition)?;
+            let compiled = self.compile_condition(condition.clone())?;
             compiled_conditions.push(compiled);
         }
 
@@ -1618,13 +1622,14 @@ impl SqlTriggerEvaluator {
         let start_time = SystemTime::now();
         self.evaluation_stats.total_evaluations += 1;
 
-        // Clone conditions to avoid borrow checker issues
+        // Get conditions reference to avoid expensive clone
         let conditions = match self.compiled_conditions.get(collector_id) {
-            Some(conditions) => conditions.clone(),
+            Some(conditions) => conditions,
             None => return Ok(Vec::new()), // No conditions registered for this collector
         };
 
         let mut triggers = Vec::new();
+        let mut match_results = Vec::new();
 
         for (index, compiled_condition) in conditions.iter().enumerate() {
             let condition_start = SystemTime::now();
@@ -1639,9 +1644,12 @@ impl SqlTriggerEvaluator {
                         error = %e,
                         "Failed to evaluate trigger condition"
                     );
+                    match_results.push((index, false, condition_start));
                     continue;
                 }
             };
+
+            match_results.push((index, matches, condition_start));
 
             if matches {
                 self.evaluation_stats.successful_matches += 1;
@@ -1651,8 +1659,10 @@ impl SqlTriggerEvaluator {
                     self.create_sql_trigger_request(&compiled_condition.condition, process_data)?;
                 triggers.push(trigger);
             }
+        }
 
-            // Update condition statistics
+        // Update condition statistics after the loop to avoid borrow conflicts
+        for (index, matches, condition_start) in match_results {
             if let Some(conditions_mut) = self.compiled_conditions.get_mut(collector_id) {
                 if let Some(compiled_condition_mut) = conditions_mut.get_mut(index) {
                     compiled_condition_mut.stats.evaluation_count += 1;

@@ -11,7 +11,9 @@ use std::time::SystemTime;
 #[tokio::test]
 async fn test_daemoneye_eventbus_creation_and_startup() {
     let config = EventBusConfig::default();
-    let event_bus = DaemoneyeEventBus::new(config, "/tmp/simple-test.sock")
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("simple-test.sock");
+    let event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
         .await
         .expect("Failed to create DaemoneyeEventBus");
 

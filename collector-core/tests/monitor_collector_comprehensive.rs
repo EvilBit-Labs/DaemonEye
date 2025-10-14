@@ -568,12 +568,11 @@ async fn test_monitor_collector_health_check() {
 // Integration Tests for Collector Coordination and Trigger Workflows
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_monitor_collector_coordination() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // when running multiple monitors simultaneously
-    println!("test_monitor_collector_coordination: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -926,12 +925,11 @@ async fn test_chaos_event_generation_failures() {
 // Performance Regression Tests with Baseline Validation
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_monitor_collector_performance_baseline() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the performance monitoring or collector implementation
-    println!("test_monitor_collector_performance_baseline: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {

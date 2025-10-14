@@ -67,6 +67,9 @@ pub struct CollectorConfig {
 
     /// Component name for configuration loading
     pub component_name: String,
+
+    /// DaemoneyeEventBus socket path for embedded broker communication
+    pub daemoneye_socket_path: Option<String>,
 }
 
 impl Default for CollectorConfig {
@@ -85,6 +88,7 @@ impl Default for CollectorConfig {
             enable_telemetry: true,
             telemetry_interval: Duration::from_secs(30),
             component_name: "collector-core".to_string(),
+            daemoneye_socket_path: None,
         }
     }
 }

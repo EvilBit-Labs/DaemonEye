@@ -151,27 +151,14 @@ impl Collector {
             "Creating collector with DaemoneyeEventBus"
         );
 
-        let collector = Self::new(config);
+        let mut collector = Self::new(config);
 
-        // This will be set up during runtime creation
+        // Store the socket path in the config for later use during runtime creation
+        // This ensures the EventBus will be properly initialized when the collector runs
+        collector.config.daemoneye_socket_path = Some(socket_path.to_string());
+
         info!("Collector created with DaemoneyeEventBus configuration");
         Ok(collector)
-    }
-
-    /// Creates a new collector with an existing DaemoneyeEventBus.
-    ///
-    /// This method allows sharing a DaemoneyeEventBus instance across
-    /// multiple collectors.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Configuration for the collector runtime
-    /// * `event_bus` - Existing DaemoneyeEventBus instance
-    pub fn with_existing_eventbus(config: CollectorConfig, _event_bus: DaemoneyeEventBus) -> Self {
-        info!("Creating collector with existing DaemoneyeEventBus");
-
-        // This will be set up during runtime creation
-        Self::new(config)
     }
 
     /// Registers an event source with the collector.
@@ -256,8 +243,32 @@ impl Collector {
 
     /// Returns a reference to the performance monitor for external access.
     ///
-    /// This method is primarily intended for testing and advanced monitoring scenarios
-    /// where direct access to performance metrics is needed.
+    /// # Deprecation Notice
+    ///
+    /// This is a temporary placeholder that currently always returns None.
+    /// The performance monitor is only available in the runtime and is not
+    /// stored on the Collector struct. This method will be implemented when
+    /// the PerformanceMonitor is properly stored on the Collector.
+    ///
+    /// # Planned Behavior
+    ///
+    /// When implemented, this method will return a reference to the performance
+    /// monitor for external access to metrics and monitoring capabilities.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use collector_core::{Collector, CollectorConfig};
+    ///
+    /// let collector = Collector::new(CollectorConfig::default());
+    /// if let Some(monitor) = collector.performance_monitor() {
+    ///     // Access performance metrics
+    ///     let stats = monitor.get_statistics();
+    /// }
+    /// ```
+    #[deprecated(
+        note = "temporary placeholder; always returns None until PerformanceMonitor is stored on Collector"
+    )]
     pub fn performance_monitor(&self) -> Option<Arc<PerformanceMonitor>> {
         // This would require storing the performance monitor in the Collector struct
         // For now, return None as the monitor is only available in the runtime
@@ -306,8 +317,13 @@ impl Collector {
         // Create runtime
         let mut runtime = CollectorRuntime::new(self.config.clone(), event_tx.clone(), event_rx);
 
-        // Initialize EventBus (default to LocalEventBus for backward compatibility)
-        runtime.initialize_local_eventbus().await?;
+        // Initialize EventBus based on configuration
+        let socket_path = runtime.config.daemoneye_socket_path.clone();
+        if let Some(socket_path) = socket_path {
+            runtime.initialize_daemoneye_eventbus(&socket_path).await?;
+        } else {
+            runtime.initialize_local_eventbus().await?;
+        }
 
         // Start IPC server
         runtime.start_ipc_server().await?;
@@ -770,7 +786,6 @@ impl CollectorRuntime {
 
         // Clone event_bus for the spawned task (we need to handle the Option<Box<dyn EventBus>>)
         // Since we can't clone Box<dyn EventBus>, we'll pass a flag to indicate if EventBus is available
-        let _has_event_bus = self.event_bus.is_some();
 
         // Move the receiver into the processing task
         let mut event_rx = std::mem::replace(
@@ -1363,10 +1378,8 @@ impl CollectorRuntime {
         if let Some(event_bus) = self.event_bus.take() {
             info!("Shutting down EventBus");
 
-            // For DaemoneyeEventBus, we need to call shutdown
-            if let Some(daemoneye_bus) = event_bus.as_any().downcast_ref::<DaemoneyeEventBus>() {
-                daemoneye_bus.shutdown().await?;
-            }
+            // Call shutdown on the EventBus trait
+            event_bus.shutdown().await?;
 
             info!("EventBus shutdown completed");
         }

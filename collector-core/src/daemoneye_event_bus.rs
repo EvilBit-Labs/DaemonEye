@@ -526,6 +526,11 @@ impl EventBus for DaemoneyeEventBus {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    async fn shutdown(&self) -> Result<()> {
+        // Delegate to the existing shutdown method
+        self.shutdown().await
+    }
 }
 
 #[cfg(test)]
@@ -541,7 +546,9 @@ mod tests {
     #[tokio::test]
     async fn test_daemoneye_event_bus_creation() {
         let config = EventBusConfig::default();
-        let event_bus = DaemoneyeEventBus::new(config, "/tmp/test-daemoneye-eventbus.sock")
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-daemoneye-eventbus.sock");
+        let event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
             .await
             .unwrap();
 
@@ -560,7 +567,9 @@ mod tests {
     #[tokio::test]
     async fn test_event_publishing_and_subscription() {
         let config = EventBusConfig::default();
-        let mut event_bus = DaemoneyeEventBus::new(config, "/tmp/test-pub-sub.sock")
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-pub-sub.sock");
+        let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
             .await
             .unwrap();
 
@@ -630,7 +639,9 @@ mod tests {
     #[tokio::test]
     async fn test_trigger_request_conversion() {
         let config = EventBusConfig::default();
-        let mut event_bus = DaemoneyeEventBus::new(config, "/tmp/test-trigger.sock")
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-trigger.sock");
+        let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
             .await
             .unwrap();
 
@@ -704,7 +715,9 @@ mod tests {
     #[tokio::test]
     async fn test_statistics_collection() {
         let config = EventBusConfig::default();
-        let mut event_bus = DaemoneyeEventBus::new(config, "/tmp/test-stats.sock")
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-stats.sock");
+        let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
             .await
             .unwrap();
 
@@ -757,7 +770,9 @@ mod tests {
     #[tokio::test]
     async fn test_unsubscribe() {
         let config = EventBusConfig::default();
-        let mut event_bus = DaemoneyeEventBus::new(config, "/tmp/test-unsub.sock")
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-unsub.sock");
+        let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
             .await
             .unwrap();
 
@@ -796,7 +811,9 @@ mod tests {
     #[tokio::test]
     async fn test_subscribe_then_immediate_publish_no_loss() {
         let config = EventBusConfig::default();
-        let mut event_bus = DaemoneyeEventBus::new(config, "/tmp/test-immediate.sock")
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-immediate.sock");
+        let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
             .await
             .unwrap();
         event_bus.start().await.unwrap();

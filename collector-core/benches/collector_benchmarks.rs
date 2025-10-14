@@ -127,14 +127,15 @@ fn bench_event_batching(c: &mut Criterion) {
             BenchmarkId::new("batch_processing", batch_size),
             batch_size,
             |b, &batch_size| {
+                // Setup outside the iteration
+                let config = CollectorConfig::default()
+                    .with_max_batch_size(batch_size)
+                    .with_event_buffer_size(batch_size * 2)
+                    .with_batch_timeout(Duration::from_millis(10));
+
                 b.iter(|| {
                     rt.block_on(async {
-                        let config = CollectorConfig::default()
-                            .with_max_batch_size(batch_size)
-                            .with_event_buffer_size(batch_size * 2)
-                            .with_batch_timeout(Duration::from_millis(10));
-
-                        let mut collector = Collector::new(config);
+                        let mut collector = Collector::new(config.clone());
                         let source = BenchmarkEventSource::new(
                             "batch-bench",
                             SourceCaps::PROCESS,
@@ -172,15 +173,16 @@ fn bench_backpressure_handling(c: &mut Criterion) {
             BenchmarkId::new("backpressure_buffer", buffer_size),
             buffer_size,
             |b, &buffer_size| {
+                // Setup outside the iteration
+                let backpressure_threshold = buffer_size * 80 / 100; // 80% threshold
+                let config = CollectorConfig::default()
+                    .with_event_buffer_size(buffer_size)
+                    .with_backpressure_threshold(backpressure_threshold)
+                    .with_max_backpressure_wait(Duration::from_millis(10));
+
                 b.iter(|| {
                     rt.block_on(async {
-                        let backpressure_threshold = buffer_size * 80 / 100; // 80% threshold
-                        let config = CollectorConfig::default()
-                            .with_event_buffer_size(buffer_size)
-                            .with_backpressure_threshold(backpressure_threshold)
-                            .with_max_backpressure_wait(Duration::from_millis(10));
-
-                        let mut collector = Collector::new(config);
+                        let mut collector = Collector::new(config.clone());
                         let source = BenchmarkEventSource::new(
                             "backpressure-bench",
                             SourceCaps::PROCESS,
@@ -218,13 +220,14 @@ fn bench_graceful_shutdown(c: &mut Criterion) {
             BenchmarkId::new("shutdown_sources", source_count),
             source_count,
             |b, &source_count| {
+                // Setup outside the iteration
+                let config = CollectorConfig::default()
+                    .with_max_event_sources(source_count)
+                    .with_shutdown_timeout(Duration::from_millis(100));
+
                 b.iter(|| {
                     rt.block_on(async {
-                        let config = CollectorConfig::default()
-                            .with_max_event_sources(source_count)
-                            .with_shutdown_timeout(Duration::from_millis(100));
-
-                        let mut collector = Collector::new(config);
+                        let mut collector = Collector::new(config.clone());
 
                         // Store source names in a Vec to avoid memory leaks
                         let mut source_names = Vec::with_capacity(source_count);
@@ -256,7 +259,6 @@ fn bench_graceful_shutdown(c: &mut Criterion) {
 
                             collector.register(Box::new(source)).unwrap();
                         }
-
                         // Measure shutdown coordination time
                         let start = std::time::Instant::now();
 
@@ -365,7 +367,6 @@ fn bench_event_throughput(c: &mut Criterion) {
 
                         let events_sent = source.events_sent();
                         collector.register(Box::new(source)).unwrap();
-
                         // Measure sustained throughput
                         let start = std::time::Instant::now();
 
@@ -420,10 +421,11 @@ fn bench_performance_monitoring_overhead(c: &mut Criterion) {
 
     for (config_name, config) in configs.iter() {
         group.bench_function(BenchmarkId::new("monitoring_overhead", config_name), |b| {
+            // Setup outside the iteration
+            let monitor = PerformanceMonitor::new(config.clone());
+
             b.iter(|| {
                 rt.block_on(async {
-                    let monitor = PerformanceMonitor::new(config.clone());
-
                     // Simulate event processing with monitoring
                     let start = std::time::Instant::now();
 
@@ -513,7 +515,6 @@ fn bench_high_process_churn(c: &mut Criterion) {
                         .with_delay(Duration::from_nanos(1)); // Very fast churn
 
                         collector.register(Box::new(source)).unwrap();
-
                         // Measure processing time for high churn
                         let start = std::time::Instant::now();
 
@@ -549,15 +550,16 @@ fn bench_trigger_latency_measurement(c: &mut Criterion) {
             BenchmarkId::new("latency_tracking", trigger_count),
             trigger_count,
             |b, &trigger_count| {
+                // Setup outside the iteration
+                let config = PerformanceConfig {
+                    enable_trigger_latency_tracking: true,
+                    max_latency_samples: trigger_count * 2,
+                    ..Default::default()
+                };
+                let monitor = PerformanceMonitor::new(config);
+
                 b.iter(|| {
                     rt.block_on(async {
-                        let config = PerformanceConfig {
-                            enable_trigger_latency_tracking: true,
-                            max_latency_samples: trigger_count * 2,
-                            ..Default::default()
-                        };
-                        let monitor = PerformanceMonitor::new(config);
-
                         let start = std::time::Instant::now();
 
                         // Simulate trigger processing with latency measurement
@@ -609,11 +611,12 @@ fn bench_resource_usage_tracking(c: &mut Criterion) {
             BenchmarkId::new("resource_updates", update_frequency),
             update_frequency,
             |b, &update_frequency| {
+                // Setup outside the iteration
+                let config = PerformanceConfig::default();
+                let monitor = PerformanceMonitor::new(config);
+
                 b.iter(|| {
                     rt.block_on(async {
-                        let config = PerformanceConfig::default();
-                        let monitor = PerformanceMonitor::new(config);
-
                         let start = std::time::Instant::now();
 
                         // Simulate frequent resource updates
@@ -653,14 +656,15 @@ fn bench_baseline_establishment(c: &mut Criterion) {
             BenchmarkId::new("establish_baseline", sample_count),
             sample_count,
             |b, &sample_count| {
+                // Setup outside the iteration
+                let config = PerformanceConfig {
+                    collection_interval: Duration::from_millis(10), // Fast for benchmarking
+                    ..Default::default()
+                };
+                let monitor = PerformanceMonitor::new(config);
+
                 b.iter(|| {
                     rt.block_on(async {
-                        let config = PerformanceConfig {
-                            collection_interval: Duration::from_millis(10), // Fast for benchmarking
-                            ..Default::default()
-                        };
-                        let monitor = PerformanceMonitor::new(config);
-
                         // Simulate some activity before establishing baseline
                         for i in 0..100 {
                             monitor.update_cpu_usage(20.0 + (i as f64 % 10.0));

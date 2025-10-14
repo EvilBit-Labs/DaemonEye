@@ -21,10 +21,11 @@ use tokio::{sync::RwLock, time::timeout};
 async fn test_daemoneye_eventbus_vs_local_eventbus_performance() {
     // Test DaemoneyeEventBus performance
     let config = EventBusConfig::default();
-    let mut daemoneye_bus =
-        DaemoneyeEventBus::new(config.clone(), "/tmp/test-perf-comparison.sock")
-            .await
-            .expect("Failed to create DaemoneyeEventBus");
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("test-perf-comparison.sock");
+    let mut daemoneye_bus = DaemoneyeEventBus::new(config.clone(), socket_path.to_str().unwrap())
+        .await
+        .expect("Failed to create DaemoneyeEventBus");
 
     daemoneye_bus
         .start()

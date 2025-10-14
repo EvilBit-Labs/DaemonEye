@@ -67,8 +67,11 @@ async fn test_process_event_source_with_collector_core() {
     let process_source = ProcessEventSource::with_config(db_manager, config);
 
     // Create collector configuration
+    let temp_socket_dir = TempDir::new().expect("Failed to create temporary directory for socket");
+    let socket_path = temp_socket_dir.path().join("test_socket.sock");
     let collector_config = CollectorConfig {
         component_name: "test-collector".to_string(),
+        daemoneye_socket_path: Some(socket_path.to_string_lossy().into_owned()),
         max_event_sources: 5,
         event_buffer_size: 1000,
         startup_timeout: Duration::from_secs(10),

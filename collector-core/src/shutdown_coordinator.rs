@@ -617,12 +617,26 @@ impl ShutdownCoordinator {
 
     /// Wait for all shutdowns to complete
     pub async fn wait_for_completion(&self, timeout: Duration) -> Result<()> {
-        // Return immediately if shutdown is NOT in progress
-        if !self.global_shutdown.load(Ordering::SeqCst) {
-            return Ok(());
+        // Use a loop to handle race conditions between checking the flag and waiting
+        loop {
+            if !self.global_shutdown.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+
+            // Wait for notification with timeout
+            match tokio::time::timeout(timeout, self.completion_notify.notified()).await {
+                Ok(_) => {
+                    // Notification received, check if shutdown is still active
+                    if !self.global_shutdown.load(Ordering::SeqCst) {
+                        return Ok(());
+                    }
+                    // If still active, continue waiting (spurious wakeup)
+                }
+                Err(_) => {
+                    return Err(anyhow::anyhow!("Timeout waiting for shutdown completion"));
+                }
+            }
         }
-        tokio::time::timeout(timeout, self.completion_notify.notified()).await?;
-        Ok(())
     }
 }
 

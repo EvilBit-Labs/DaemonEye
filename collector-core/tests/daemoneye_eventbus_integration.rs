@@ -12,7 +12,9 @@ use tokio::time::timeout;
 #[tokio::test]
 async fn test_daemoneye_eventbus_integration() {
     let config = EventBusConfig::default();
-    let mut event_bus = DaemoneyeEventBus::new(config, "/tmp/test-integration.sock")
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("test-integration.sock");
+    let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
         .await
         .expect("Failed to create DaemoneyeEventBus");
 

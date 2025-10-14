@@ -515,12 +515,11 @@ impl MonitorCollector for EdgeCaseMonitorCollector {
 // Edge Case Tests
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_rapid_process_churn() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_rapid_process_churn: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -580,12 +579,11 @@ async fn test_rapid_process_churn() {
 }
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_duplicate_process_names() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_duplicate_process_names: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -641,12 +639,11 @@ async fn test_duplicate_process_names() {
 }
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_long_command_lines() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_long_command_lines: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -699,12 +696,11 @@ async fn test_long_command_lines() {
 }
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_missing_executables() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_missing_executables: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -751,12 +747,11 @@ async fn test_missing_executables() {
 }
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_extreme_resource_usage() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_extreme_resource_usage: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -803,12 +798,11 @@ async fn test_extreme_resource_usage() {
 }
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_timestamp_edge_cases() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_timestamp_edge_cases: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -855,12 +849,11 @@ async fn test_timestamp_edge_cases() {
 }
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_complex_hierarchies() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_complex_hierarchies: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -907,12 +900,11 @@ async fn test_complex_hierarchies() {
 }
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_race_conditions() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_race_conditions: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -959,12 +951,11 @@ async fn test_race_conditions() {
 }
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_system_overload() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_system_overload: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -1011,12 +1002,11 @@ async fn test_system_overload() {
 }
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_special_characters() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_special_characters: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {
@@ -1144,12 +1134,11 @@ proptest! {
 // Multi-edge-case integration test
 
 #[tokio::test]
+#[ignore = "SKIPPED due to stack overflow issue"]
 async fn test_multiple_edge_cases_simultaneously() {
     // TEMPORARY FIX: Disable this test to prevent stack overflow
     // The stack overflow appears to be caused by a deeper architectural issue
     // in the collector framework when running edge case tests
-    println!("test_multiple_edge_cases_simultaneously: SKIPPED due to stack overflow issue");
-    return;
 
     #[allow(unreachable_code)]
     {

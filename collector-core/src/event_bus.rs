@@ -48,6 +48,17 @@ pub trait EventBus: Send + Sync {
 
     /// Get a reference to the underlying type for downcasting
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Shutdown the event bus and perform any necessary cleanup.
+    ///
+    /// This method should be called when the event bus is no longer needed
+    /// to ensure proper resource cleanup and graceful shutdown of any
+    /// background tasks or connections.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if shutdown fails or cleanup cannot be completed.
+    async fn shutdown(&self) -> Result<()>;
 }
 
 /// Event bus configuration
@@ -192,21 +203,21 @@ impl EventBus for LocalEventBus {
         &mut self,
         subscription: EventSubscription,
     ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>> {
-        let receiver = self.event_tx.subscribe();
-
-        let mut subscribers = self.subscribers.write().await;
-        subscribers.insert(subscription.subscriber_id.clone(), receiver);
-
-        let mut stats = self.stats.lock().await;
-        stats.active_subscribers = subscribers.len();
-
         // Create a channel for the subscriber
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
         // Prepare a receiver before returning to avoid a race where publish happens
         // before the forwarding task is actually listening, which would drop events.
         let mut forwarding_rx = self.event_tx.subscribe();
-        let _subscriber_id = subscription.subscriber_id.clone();
+        let subscriber_id = subscription.subscriber_id.clone();
+
+        // Store the receiver for potential future use
+        let mut subscribers = self.subscribers.write().await;
+        subscribers.insert(subscriber_id.clone(), self.event_tx.subscribe());
+
+        let mut stats = self.stats.lock().await;
+        stats.active_subscribers = subscribers.len();
+
         tokio::spawn(async move {
             while let Ok(event) = forwarding_rx.recv().await {
                 // Convert CollectionEvent to BusEvent
@@ -247,6 +258,12 @@ impl EventBus for LocalEventBus {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        // LocalEventBus doesn't require any special shutdown logic
+        // as it uses in-process channels that are automatically cleaned up
+        Ok(())
     }
 }
 

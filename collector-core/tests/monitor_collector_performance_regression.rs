@@ -962,7 +962,7 @@ async fn test_memory_intensive_performance() {
             monitor.events_sent.load(Ordering::Relaxed)
         );
         // Skip the test instead of failing to avoid flaky CI
-        return;
+        return; // Skip the test gracefully instead of panicking
     }
 
     assert!(
@@ -1034,7 +1034,7 @@ async fn test_cpu_intensive_performance() {
             monitor.events_sent.load(Ordering::Relaxed)
         );
         // Skip the test instead of failing to avoid flaky CI
-        return;
+        return; // Skip the test gracefully instead of panicking
     }
 
     assert!(
@@ -1156,7 +1156,7 @@ async fn test_sustained_load_performance() {
             monitor.events_sent.load(Ordering::Relaxed)
         );
         // Skip the test instead of failing to avoid flaky CI
-        return;
+        return; // Skip the test gracefully instead of panicking
     }
 
     assert!(
@@ -1303,7 +1303,7 @@ async fn test_performance_regression_detection() {
             "Performance regression test skipped - insufficient events. Baseline: {}, Degraded: {}",
             baseline_summary.total_events, degraded_summary.total_events
         );
-        return;
+        return; // Skip the test gracefully instead of panicking
     }
 
     assert!(

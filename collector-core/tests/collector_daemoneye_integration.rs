@@ -10,7 +10,9 @@ async fn test_collector_with_daemoneye_eventbus() {
         .with_max_event_sources(1)
         .with_event_buffer_size(100);
 
-    let collector = Collector::with_daemoneye_eventbus(config, "/tmp/collector-integration.sock")
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("collector-integration.sock");
+    let collector = Collector::with_daemoneye_eventbus(config, socket_path.to_str().unwrap())
         .await
         .expect("Failed to create collector with DaemoneyeEventBus");
 
@@ -22,7 +24,9 @@ async fn test_collector_with_daemoneye_eventbus() {
 #[tokio::test]
 async fn test_daemoneye_eventbus_broker_access() {
     let config = EventBusConfig::default();
-    let event_bus = DaemoneyeEventBus::new(config, "/tmp/broker-access-test.sock")
+    let temp_dir2 = tempfile::tempdir().unwrap();
+    let socket_path2 = temp_dir2.path().join("broker-access-test.sock");
+    let event_bus = DaemoneyeEventBus::new(config, socket_path2.to_str().unwrap())
         .await
         .expect("Failed to create DaemoneyeEventBus");
 
