@@ -599,6 +599,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "daemoneye-eventbus",
  "daemoneye-lib",
  "futures",
  "insta",

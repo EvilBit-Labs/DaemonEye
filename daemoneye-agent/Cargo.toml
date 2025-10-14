@@ -30,6 +30,7 @@ clap = { workspace = true }
 
 # Internal library
 daemoneye-lib = { workspace = true }
+daemoneye-eventbus = { workspace = true }
 futures = { workspace = true }
 
 # IPC communication

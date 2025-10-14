@@ -43,6 +43,8 @@ pub struct Config {
     pub alerting: AlertingConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
+    /// `EventBus` broker configuration
+    pub broker: BrokerConfig,
 }
 
 /// Application-specific configuration.
@@ -114,6 +116,60 @@ pub struct LoggingConfig {
     pub structured: bool,
 }
 
+/// `EventBus` broker configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrokerConfig {
+    /// Socket path for the embedded broker
+    pub socket_path: String,
+    /// Enable the embedded broker
+    pub enabled: bool,
+    /// Broker startup timeout in seconds
+    pub startup_timeout_seconds: u64,
+    /// Broker shutdown timeout in seconds
+    pub shutdown_timeout_seconds: u64,
+    /// Maximum number of concurrent connections
+    pub max_connections: usize,
+    /// Message buffer size per connection
+    pub message_buffer_size: usize,
+    /// Topic hierarchy configuration
+    pub topic_hierarchy: TopicHierarchyConfig,
+}
+
+/// Topic hierarchy configuration for the `EventBus`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TopicHierarchyConfig {
+    /// Enable wildcard topic matching
+    pub enable_wildcards: bool,
+    /// Maximum topic depth allowed
+    pub max_topic_depth: usize,
+    /// Event topic prefixes
+    pub event_topics: EventTopicsConfig,
+    /// Control topic prefixes
+    pub control_topics: ControlTopicsConfig,
+}
+
+/// Event topic configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EventTopicsConfig {
+    /// Process event topics (events.process.*)
+    pub process: String,
+    /// Network event topics (events.network.*)
+    pub network: String,
+    /// Filesystem event topics (events.filesystem.*)
+    pub filesystem: String,
+    /// Performance event topics (events.performance.*)
+    pub performance: String,
+}
+
+/// Control topic configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ControlTopicsConfig {
+    /// Collector lifecycle topics (control.collector.*)
+    pub collector: String,
+    /// Health monitoring topics (control.health.*)
+    pub health: String,
+}
+
 // Default implementation is now derived
 
 impl Default for AppConfig {
@@ -174,6 +230,51 @@ impl Default for LoggingConfig {
             format: "human".to_owned(),
             file: None,
             structured: false,
+        }
+    }
+}
+
+impl Default for BrokerConfig {
+    fn default() -> Self {
+        Self {
+            socket_path: "/tmp/daemoneye-eventbus.sock".to_owned(),
+            enabled: true,
+            startup_timeout_seconds: 30,
+            shutdown_timeout_seconds: 60,
+            max_connections: 100,
+            message_buffer_size: 1000,
+            topic_hierarchy: TopicHierarchyConfig::default(),
+        }
+    }
+}
+
+impl Default for TopicHierarchyConfig {
+    fn default() -> Self {
+        Self {
+            enable_wildcards: true,
+            max_topic_depth: 5,
+            event_topics: EventTopicsConfig::default(),
+            control_topics: ControlTopicsConfig::default(),
+        }
+    }
+}
+
+impl Default for EventTopicsConfig {
+    fn default() -> Self {
+        Self {
+            process: "events.process".to_owned(),
+            network: "events.network".to_owned(),
+            filesystem: "events.filesystem".to_owned(),
+            performance: "events.performance".to_owned(),
+        }
+    }
+}
+
+impl Default for ControlTopicsConfig {
+    fn default() -> Self {
+        Self {
+            collector: "control.collector".to_owned(),
+            health: "control.health".to_owned(),
         }
     }
 }
@@ -539,6 +640,26 @@ mod tests {
     }
 
     #[test]
+    fn test_broker_config_creation() {
+        let broker_config = BrokerConfig::default();
+        assert_eq!(broker_config.socket_path, "/tmp/daemoneye-eventbus.sock");
+        assert!(broker_config.enabled);
+        assert_eq!(broker_config.startup_timeout_seconds, 30);
+        assert_eq!(broker_config.shutdown_timeout_seconds, 60);
+        assert_eq!(broker_config.max_connections, 100);
+        assert_eq!(broker_config.message_buffer_size, 1000);
+    }
+
+    #[test]
+    fn test_topic_hierarchy_config_creation() {
+        let topic_config = TopicHierarchyConfig::default();
+        assert!(topic_config.enable_wildcards);
+        assert_eq!(topic_config.max_topic_depth, 5);
+        assert_eq!(topic_config.event_topics.process, "events.process");
+        assert_eq!(topic_config.control_topics.health, "control.health");
+    }
+
+    #[test]
     fn test_config_toml_with_complex_sink_config() {
         let toml_str = r#"
 [app]
@@ -559,6 +680,28 @@ structured = false
 [alerting]
 dedup_window_seconds = 300
 recent_threshold_seconds = 3600
+
+[broker]
+socket_path = "/tmp/test-broker.sock"
+enabled = true
+startup_timeout_seconds = 30
+shutdown_timeout_seconds = 60
+max_connections = 100
+message_buffer_size = 1000
+
+[broker.topic_hierarchy]
+enable_wildcards = true
+max_topic_depth = 5
+
+[broker.topic_hierarchy.event_topics]
+process = "events.process"
+network = "events.network"
+filesystem = "events.filesystem"
+performance = "events.performance"
+
+[broker.topic_hierarchy.control_topics]
+collector = "control.collector"
+health = "control.health"
 
 [[alerting.sinks]]
 sink_type = "webhook"
@@ -581,6 +724,26 @@ use_tls = false
             toml::from_str(toml_str).expect("Failed to parse TOML with complex sink config");
 
         assert_eq!(config.alerting.sinks.len(), 2);
+
+        // Verify broker configuration
+        assert_eq!(config.broker.socket_path, "/tmp/test-broker.sock");
+        assert!(config.broker.enabled);
+        assert_eq!(config.broker.startup_timeout_seconds, 30);
+        assert_eq!(config.broker.shutdown_timeout_seconds, 60);
+        assert_eq!(config.broker.max_connections, 100);
+        assert_eq!(config.broker.message_buffer_size, 1000);
+
+        // Verify topic hierarchy configuration
+        assert!(config.broker.topic_hierarchy.enable_wildcards);
+        assert_eq!(config.broker.topic_hierarchy.max_topic_depth, 5);
+        assert_eq!(
+            config.broker.topic_hierarchy.event_topics.process,
+            "events.process"
+        );
+        assert_eq!(
+            config.broker.topic_hierarchy.control_topics.health,
+            "control.health"
+        );
 
         // Verify webhook sink
         let webhook_sink = config

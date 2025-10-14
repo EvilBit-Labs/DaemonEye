@@ -75,6 +75,7 @@ criterion = "0.7.0"
 
 # High-performance concurrent data structures
 crossbeam = "0.8.4"
+daemoneye-eventbus = { path = "daemoneye-eventbus" }
 daemoneye-lib = { path = "daemoneye-lib" }
 dirs = "6.0.0"
 figment = { version = "0.10.19", features = ["toml", "json", "env"] }

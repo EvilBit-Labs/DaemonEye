@@ -3,9 +3,12 @@
 use clap::Parser;
 use daemoneye_lib::{alerting, config, detection, models, storage, telemetry};
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
+mod broker_manager;
 mod ipc_client;
+
+use broker_manager::BrokerManager;
 use ipc_client::{IpcClientManager, create_default_ipc_config};
 
 #[derive(Parser)]
@@ -58,6 +61,30 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize database
     let _db_manager = storage::DatabaseManager::new(&config.database.path)?;
+
+    // Initialize embedded EventBus broker
+    let broker_manager = BrokerManager::new(config.broker.clone());
+
+    // Start the embedded broker
+    if let Err(e) = broker_manager.start().await {
+        error!(error = %e, "Failed to start embedded EventBus broker");
+        return Err(e.into());
+    }
+
+    // Wait for broker to become healthy
+    let broker_startup_timeout = Duration::from_secs(config.broker.startup_timeout_seconds);
+    if let Err(e) = broker_manager
+        .wait_for_healthy(broker_startup_timeout)
+        .await
+    {
+        error!(error = %e, "Embedded broker failed to become healthy");
+        return Err(e.into());
+    }
+
+    info!(
+        socket_path = %broker_manager.socket_path(),
+        "Embedded EventBus broker is healthy and ready"
+    );
 
     // Initialize IPC client for communication with procmond
     let ipc_config = create_default_ipc_config();
@@ -194,11 +221,39 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if iteration % 10 == 0 { // periodic health check every 10 iterations
                     let h = telemetry.health_check();
                     info!(status=%h.status, "Telemetry health check");
+
+                    // Check broker health
+                    let broker_health = broker_manager.health_check().await;
+                    match broker_health {
+                        broker_manager::BrokerHealth::Healthy => {
+                            if let Some(stats) = broker_manager.statistics().await {
+                                debug!(
+                                    messages_published = stats.messages_published,
+                                    messages_delivered = stats.messages_delivered,
+                                    active_subscribers = stats.active_subscribers,
+                                    uptime_seconds = stats.uptime_seconds,
+                                    "Broker health check passed"
+                                );
+                            }
+                        }
+                        broker_manager::BrokerHealth::Unhealthy(ref error) => {
+                            warn!(error = %error, "Broker health check failed");
+                        }
+                        other => {
+                            debug!(status = ?other, "Broker health status");
+                        }
+                    }
                 }
                 let loop_elapsed = loop_start.elapsed();
                 if loop_elapsed > scan_interval { warn!(elapsed_ms = loop_elapsed.as_millis() as u64, "Loop overran scan interval"); }
             }
         }
+    }
+
+    // Gracefully shutdown the embedded broker
+    info!("Shutting down embedded EventBus broker");
+    if let Err(e) = broker_manager.shutdown().await {
+        error!(error = %e, "Failed to shutdown embedded broker gracefully");
     }
 
     println!("daemoneye-agent shutdown complete.");

@@ -156,7 +156,7 @@ The following foundational components have been successfully implemented:
   - Write integration tests comparing daemoneye-eventbus vs crossbeam event distribution performance
   - _Requirements: 14.1, 14.3, 14.5, 15.1_
 
-- [ ] 2.3.2 Create DaemoneyeEventBus struct with EventBus trait compatibility
+- [x] 2.3.2 Create DaemoneyeEventBus struct with EventBus trait compatibility
 
   - Implement DaemoneyeEventBus struct that wraps daemoneye-eventbus broker functionality
   - Ensure compatibility with existing EventBus trait interface
@@ -164,7 +164,7 @@ The following foundational components have been successfully implemented:
   - Create error handling and logging integration
   - _Requirements: 14.1, 14.3_
 
-- [ ] 2.3.3 Implement embedded daemoneye-eventbus broker within daemoneye-agent
+- [x] 2.3.3 Implement embedded daemoneye-eventbus broker within daemoneye-agent
 
   - Embed DaemoneyeBroker instance within daemoneye-agent process architecture
   - Create broker initialization during daemoneye-agent startup sequence
