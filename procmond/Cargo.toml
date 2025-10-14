@@ -69,8 +69,7 @@ uuid = { workspace = true }
 
 # Platform-specific dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = { workspace = true }
-# macOS Security Framework and Core Foundation
+# macOS Security Framework
 security-framework = { workspace = true }
 # Note: procfs removed as it's Linux-specific and not compatible with macOS
 # Using sysinfo for cross-platform process information instead

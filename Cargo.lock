@@ -1399,7 +1399,6 @@ dependencies = [
  "chrono",
  "clap",
  "collector-core",
- "core-foundation",
  "crc32c",
  "criterion",
  "daemoneye-lib",

@@ -433,6 +433,67 @@ goreleaser-clean:
     @just rmrf dist
 
 # =============================================================================
+# PLATFORM-SPECIFIC RELEASE TESTING
+# =============================================================================
+
+# Test macOS release configuration
+[windows]
+goreleaser-test-macos:
+    @echo "⚠️  Skipping macOS test (not on macOS)"
+
+[unix]
+goreleaser-test-macos:
+    #!/bin/bash
+    set -euo pipefail
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "🍎 Testing macOS configuration..."
+        goreleaser build --config .goreleaser-macos.yaml --snapshot --clean
+        echo "✅ macOS build successful"
+    else
+        echo "⚠️  Skipping macOS test (not on macOS)"
+    fi
+
+# Test Linux release configuration
+[windows]
+goreleaser-test-linux:
+    @echo "⚠️  Skipping Linux test (not on Linux)"
+
+[unix]
+goreleaser-test-linux:
+    #!/bin/bash
+    set -euo pipefail
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "🐧 Testing Linux configuration..."
+        goreleaser build --config .goreleaser-linux.yaml --snapshot --clean
+        echo "✅ Linux build successful"
+    else
+        echo "⚠️  Skipping Linux test (not on Linux)"
+    fi
+
+# Test Windows release configuration
+[windows]
+goreleaser-test-windows:
+    @echo "🪟 Testing Windows configuration..."
+    @goreleaser build --config .goreleaser-windows.yaml --snapshot --clean
+    @echo "✅ Windows build successful"
+
+[unix]
+goreleaser-test-windows:
+    @echo "⚠️  Skipping Windows test (not on Windows)"
+
+# Test all platform configurations (skips incompatible platforms)
+goreleaser-test-all:
+    @just goreleaser-test-macos
+    @just goreleaser-test-linux
+    @just goreleaser-test-windows
+    @echo "🎉 All platform tests completed!"
+
+# Test specific platform configuration
+goreleaser-test-platform platform:
+    @goreleaser build --config .goreleaser-{{ platform }}.yaml --snapshot --clean
+    @echo "✅ {{ platform }} build successful"
+
+# =============================================================================
 # RELEASE MANAGEMENT
 # =============================================================================
 
