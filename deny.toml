@@ -45,7 +45,41 @@ deny = [
     { crate = "cmake", use-instead = "cc" },
 ]
 skip = []
-skip-tree = []
+
+# Whitelist Windows dependency conflicts for cross-platform compatibility
+# These conflicts arise from different dependency chains:
+# - sysinfo v0.37.2 → windows v0.61.3 (older Windows crates)
+# - chrono v0.4.42 → iana-time-zone → windows-core v0.62.2 (newer Windows crates)
+# - interprocess v2.2.3 → windows-sys v0.52.0 (legacy Windows crates)
+# - tokio ecosystem → various windows-sys versions
+# TODO: Monitor for resolution as dependencies update
+skip-tree = [
+    # Windows core dependencies (actual versions from Cargo.lock)
+    { name = "windows", version = "=0.61.3" },
+    { name = "windows-collections", version = "=0.2.0" },
+    { name = "windows-core", version = "=0.61.2" },
+    { name = "windows-core", version = "=0.62.2" },
+    { name = "windows-future", version = "=0.2.1" },
+    { name = "windows-implement", version = "=0.60.2" },
+    { name = "windows-interface", version = "=0.59.3" },
+    { name = "windows-link", version = "=0.1.3" },
+    { name = "windows-link", version = "=0.2.1" },
+    { name = "windows-numerics", version = "=0.2.0" },
+    { name = "windows-result", version = "=0.3.4" },
+    { name = "windows-result", version = "=0.4.1" },
+    { name = "windows-strings", version = "=0.4.2" },
+    { name = "windows-strings", version = "=0.5.1" },
+    { name = "windows-sys", version = "=0.52.0" },
+    { name = "windows-sys", version = "=0.59.0" },
+    { name = "windows-sys", version = "=0.60.2" },
+    { name = "windows-sys", version = "=0.61.2" },
+    { name = "windows-targets", version = "=0.52.6" },
+    { name = "windows-targets", version = "=0.53.5" },
+    { name = "windows_x86_64_gnu", version = "=0.52.6" },
+    { name = "windows_x86_64_gnu", version = "=0.53.1" },
+    { name = "windows_x86_64_msvc", version = "=0.52.6" },
+    { name = "windows_x86_64_msvc", version = "=0.53.1" },
+]
 
 
 [advisories]
