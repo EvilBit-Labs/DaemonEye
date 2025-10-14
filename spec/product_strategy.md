@@ -2,13 +2,23 @@
 
 ## Overview
 
-Procmond is a system monitoring tool that collects process information from the system and sends it to a central server. It is designed to be used in a distributed environment, where each server collects process information from the systems it is running on and sends it to a central server. The central server then aggregates the process information and sends it to a central analysis server.
+### Naming Glossary
+
+- Product: DaemonEye
+- Components:
+  - procmond (Privileged Process Collector)
+  - daemoneye-agent (Detection Orchestrator)
+  - daemoneye-cli (Operator CLI)
+  - daemoneye-lib (Shared library)
+  - collector-core (Collector framework)
+
+DaemonEye is a system monitoring tool that collects process information from the system and sends it to a central server. It is designed to be used in a distributed environment, where each server collects process information from the systems it is running on and sends it to a central server. The central server then aggregates the process information and sends it to a central analysis server.
 
 ## Core Functionality
 
 Setting aside the high-level mission statement, the core functionality of the product is to allow administrators to run queries against the running system to detect suspicious activity. This is done by using a SQL-like query language that is translated into a set of detection tasks for "monitoring" collectors that run on the system and watch processes, files, network connections, and other system resources. When these tasks detect the portion of the "query" they are responsible for, they will trigger additional enrichment by "triggerable" collectors that will run in parallel and provide additional context for the detection. Combining these multiple collectors to return results in the form of a virtual "table" that can be queried against using the same SQL-like language is the core of the system functionality.
 
-The DaemonEye-Agent is responsible for taking the "SQL queries" and turning them into "detection tasks" that are then sent to the appropriate collectors, and then collecting the results and maintaining the virtual database structure. The database structure is entirely logical, as it is actually stored in a high-performance key-value store and presented to by the agent as a virtual database.
+The daemoneye-agent is responsible for taking the "SQL queries" and turning them into "detection tasks" that are then sent to the appropriate collectors, and then collecting the results and maintaining the virtual database structure.
 
 ## Prioritization
 
@@ -23,14 +33,32 @@ From a more practical standpoint, that means that the only real way to truly enh
 
 ### Collector Types
 
-- `monitor`: These collectors are responsible for monitoring the processes through either subscription or polling. They will be responsible for collecting the most basic metadata about the process and then triggering the triggerable collectors to collect more detailed metadata. They will run as daemons, with their lifecycle managed by the DaemonEye-Agent, and will typically run for the entire time that the DaemonEye-Agent is running. They will only poll if they have alert tasks or if they do not have the ability to subscribe to the process events.
-- `triggerable`: These collectors are responsible for collecting more detailed metadata about the process. They do not poll or subscribe to events and will only examine data when provided a task from the DaemonEye-Agent from a monitor collector. They will populate their own virtual tables in the agent's virtual database on demand. They will run as daemons, with their lifecycle managed by the DaemonEye-Agent, and will remain idle awaiting a task provided over their IPC channel. Their tasking is generally setup using the special DaemonEye-dialect SQL syntax `AUTO JOIN` to automatically collect the data they need (see `daemon_eye_spec_sql_to_ipc_detection_architecture.md` for more details).
+- `monitor`: These collectors are responsible for monitoring the processes through either subscription or polling. They will be responsible for collecting the most basic metadata about the process and then triggering the triggerable collectors to collect more detailed metadata. They will run as daemons, with their lifecycle managed by the daemoneye-agent, and will typically run for the entire time that the daemoneye-agent is running. They will only poll if they have alert tasks or if they do not have the ability to subscribe to the process events.
+- `triggerable`: These collectors are responsible for collecting more detailed metadata about the process. They do not poll or subscribe to events and will only examine data when provided a task from the daemoneye-agent from a monitor collector. They will populate their own virtual tables in the agent's virtual database on demand. They will run as daemons, with their lifecycle managed by the daemoneye-agent, and will remain idle awaiting a task provided over their IPC channel. Their tasking is generally setup using the special DaemonEye SQL dialect syntax `AUTO JOIN` to automatically collect the data they need (see `daemon_eye_spec_sql_to_ipc_detection_architecture.md` for more details).
 
 ### Collector Roadmap
 
-The collector framework exposes virtual tables that can be queried using SQL-like syntax. Each collector provides specific data schemas that represent system resources and analysis results. The "primary key" for records is going to be a `pid` column, representing each process on the system. Since pids can be reused, the true primary key will be a composite of `pid`, `timestamp`, and a value that uniquely identifies the process from other possible processes that might reuse that same pid.
+The collector framework exposes virtual tables that can be queried using SQL-like syntax. Each collector provides specific data schemas that represent system resources and analysis results.
 
-Triggerable collectors are not allowed to trigger other triggerable collectors. The DaemonEye-Agent will be responsible for triggering the appropriate collectors based on the SQL query and, when all data is returned, the DaemonEye-Agent will then trigger the alerting sinks to deliver the results. The alerting sinks will be responsible for delivering the results to the administrator. This decoupling allows the individual components to be more focused and have a reduced attack surface.
+#### Composite Primary Key
+
+- All process-scoped virtual tables MUST use a composite primary key of: (pid, \<table_primary_time_field>, process_instance_id)
+- process_instance_id is a deterministic UUIDv5 computed as:
+  - Namespace: "daemoneye/process"
+  - Name string: "{boot_id}:{pid}:{process_start_time_ns}"
+- Boot ID source (platform-specific):
+  - Linux: /proc/sys/kernel/random/boot_id (primary); fallback: btime from /proc/stat rendered as RFC 3339 UTC
+  - macOS: sysctl kern.boottime (seconds.microseconds) rendered as RFC 3339 UTC; if available, prefer kern.bootsessionuuid
+  - Windows: Win32_OperatingSystem.LastBootUpTime (WMI) rendered as RFC 3339 UTC; fallback: now - uptime (GetTickCount64) converted to boot time
+  - FreeBSD: sysctl kern.boottime rendered as RFC 3339 UTC
+- Timestamps:
+  - All times MUST be stored in UTC using RFC 3339 format
+  - Nanosecond precision MUST be used when available; otherwise, use the highest precision provided by the OS
+- Table requirements:
+  - Every virtual table MUST include process_instance_id
+  - Each table MUST explicitly specify its primary time field used in the composite key (e.g., event_time, capture_time, sample_time)
+
+Triggerable collectors are not allowed to trigger other triggerable collectors. The daemoneye-agent will be responsible for triggering the appropriate collectors based on the SQL query and, when all data is returned, the daemoneye-agent will then trigger the alerting sinks to deliver the results. The alerting sinks will be responsible for delivering the results to the administrator. This decoupling allows the individual components to be more focused and have a reduced attack surface.
 
 #### Monitor Collectors (Continuous System Monitoring)
 
@@ -372,7 +400,7 @@ Core fields available across all platforms (provided by `sysinfo` and platform-s
 - `mount_point` (string): Mount point containing the file
 - `filesystem_type` (string): Type of filesystem
 - `device_id` (integer): Device ID containing the file
-- `inode` (integer): Inode number (Linux/Unix) (effective FK to `file_metadata.inode` on Unix systems)
+- `inode` (integer): Inode number (Linux/Unix) (foreign key referencing file_metadata.inode on Unix systems)
 - `hard_links` (integer): Number of hard links
 - `block_size` (integer): Filesystem block size
 - `blocks_allocated` (integer): Number of blocks allocated
@@ -407,7 +435,7 @@ Core fields available across all platforms (provided by `sysinfo` and platform-s
 - `mount_point` (string): Mount point containing the file
 - `filesystem_type` (string): Type of filesystem
 - `device_id` (integer): Device ID containing the file
-- `inode` (integer): Inode number (Linux/Unix) (effective PK on Unix systems and FK to `file_metadata.inode` on Unix systems)
+- `inode` (integer): Inode number (Linux/Unix) (effective primary key in file_metadata on Unix systems; referenced by file_events.inode as a foreign key)
 - `hard_links` (integer): Number of hard links
 - `block_size` (integer): Filesystem block size
 - `blocks_allocated` (integer): Number of blocks allocated
@@ -930,7 +958,7 @@ Core fields available across all platforms (provided by `sysinfo` crate and plat
 - `heap_size` (integer): Heap size in bytes
 - `allocation_count` (integer): Number of allocations
 - `free_count` (integer): Number of frees
-- `leak_count` (integer): Number of potential memory-based persistence techniques
+- `memory_leak_count` (integer): Number of potential memory leaks detected
 - `fragmentation` (float): Heap fragmentation percentage (indicator of suspicious allocation patterns)
 - `largest_allocation` (integer): Size of largest allocation
 - `average_allocation` (float): Average allocation size
