@@ -145,7 +145,7 @@ The following foundational components have been successfully implemented:
   - Define testing strategy to ensure behavioral equivalence
   - _Requirements: 14.4, 14.5_
 
-- [ ] 2.3 Implement daemoneye-eventbus broker integration in collector-core
+- [x] 2.3 Implement daemoneye-eventbus broker integration in collector-core
 
 - [x] 2.3.1 Implement daemoneye-eventbus broker integration in collector-core
 
@@ -193,7 +193,7 @@ The following foundational components have been successfully implemented:
   - Ensure both communication channels coexist without interference
   - _Requirements: 14.5, 15.1, 16.4_
 
-- [ ] 2.3.6 Write integration tests comparing daemoneye-eventbus vs crossbeam performance
+- [x] 2.3.6 Write integration tests comparing daemoneye-eventbus vs crossbeam performance
 
   - Create performance benchmarks for event distribution throughput
   - Compare latency characteristics between crossbeam and daemoneye-eventbus implementations

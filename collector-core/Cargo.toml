@@ -84,3 +84,7 @@ tracing-subscriber = { workspace = true }
 [[bench]]
 name = "collector_benchmarks"
 harness = false
+
+[[bench]]
+name = "eventbus_comparison_benchmarks"
+harness = false
