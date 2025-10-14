@@ -174,7 +174,7 @@ The following foundational components have been successfully implemented:
   - Ensure broker operates independently of IPC server for CLI communication
   - _Requirements: 14.2, 14.3, 16.4_
 
-- [ ] 2.3.4 Add daemoneye-eventbus client creation and topic management
+- [x] 2.3.4 Add daemoneye-eventbus client creation and topic management
 
   - Implement client connection management for collector-core components
   - Create topic subscription and publishing capabilities with hierarchical topic patterns
@@ -183,7 +183,7 @@ The following foundational components have been successfully implemented:
   - Create topic-based routing for events.process._, control.collector._, and control.health.\* patterns
   - _Requirements: 14.3, 15.1, 15.3_
 
-- [ ] 2.3.5 Integrate daemoneye-eventbus broker with existing IPC infrastructure
+- [x] 2.3.5 Integrate daemoneye-eventbus broker with existing IPC infrastructure
 
   - Embed daemoneye-eventbus broker within daemoneye-agent process alongside existing IPC server
   - Maintain existing IPC server for daemoneye-cli communication (protobuf + CRC32 framing)

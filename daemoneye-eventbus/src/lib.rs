@@ -61,6 +61,7 @@
 //! ```
 
 pub mod broker;
+pub mod client;
 pub mod error;
 pub mod message;
 pub mod rpc;
@@ -69,6 +70,7 @@ pub mod transport;
 
 // Re-export main types for convenience
 pub use broker::{DaemoneyeBroker, DaemoneyeEventBus};
+pub use client::{ClientStats, EventBusClient};
 pub use error::{EventBusError, Result};
 pub use message::{
     BusEvent, CollectionEvent, CorrelationFilter, EventFilter, EventSubscription, FilesystemEvent,
@@ -82,6 +84,10 @@ pub use rpc::{
 pub use topic::{
     Topic, TopicAccessLevel, TopicDomain, TopicError, TopicMatcher, TopicPattern, TopicRegistry,
     TopicStats, TopicType,
+};
+pub use transport::{
+    ClientConfig, ClientConnectionManager, ClientInfo, ConnectionManagerStats, ConnectionStats,
+    ManagedClient, SocketConfig, TransportClient, TransportManager, TransportServer,
 };
 
 /// EventBus trait for compatibility with collector-core

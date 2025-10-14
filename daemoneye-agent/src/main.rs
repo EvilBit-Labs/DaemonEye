@@ -7,9 +7,11 @@ use tracing::{debug, error, info, warn};
 
 mod broker_manager;
 mod ipc_client;
+mod ipc_server;
 
 use broker_manager::BrokerManager;
 use ipc_client::{IpcClientManager, create_default_ipc_config};
+use ipc_server::IpcServerManager;
 
 #[derive(Parser)]
 #[command(name = "daemoneye-agent")]
@@ -84,6 +86,31 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     info!(
         socket_path = %broker_manager.socket_path(),
         "Embedded EventBus broker is healthy and ready"
+    );
+
+    // Initialize IPC server for CLI communication
+    let cli_ipc_config = ipc_server::create_cli_ipc_config();
+    let ipc_server_manager = IpcServerManager::new(cli_ipc_config);
+
+    // Start the IPC server
+    if let Err(e) = ipc_server_manager.start().await {
+        error!(error = %e, "Failed to start IPC server for CLI communication");
+        return Err(e.into());
+    }
+
+    // Wait for IPC server to become healthy
+    let ipc_startup_timeout = Duration::from_secs(10); // 10 second timeout for IPC server
+    if let Err(e) = ipc_server_manager
+        .wait_for_healthy(ipc_startup_timeout)
+        .await
+    {
+        error!(error = %e, "IPC server failed to become healthy");
+        return Err(e.into());
+    }
+
+    info!(
+        endpoint_path = %ipc_server_manager.endpoint_path(),
+        "IPC server is healthy and ready for CLI communication"
     );
 
     // Initialize IPC client for communication with procmond
@@ -243,6 +270,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                             debug!(status = ?other, "Broker health status");
                         }
                     }
+
+                    // Check IPC server health
+                    let ipc_health = ipc_server_manager.health_check().await;
+                    match ipc_health {
+                        ipc_server::IpcServerHealth::Healthy => {
+                            debug!("IPC server health check passed");
+                        }
+                        ipc_server::IpcServerHealth::Unhealthy(ref error) => {
+                            warn!(error = %error, "IPC server health check failed");
+                        }
+                        other => {
+                            debug!(status = ?other, "IPC server health status");
+                        }
+                    }
                 }
                 let loop_elapsed = loop_start.elapsed();
                 if loop_elapsed > scan_interval { warn!(elapsed_ms = loop_elapsed.as_millis() as u64, "Loop overran scan interval"); }
@@ -250,9 +291,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Gracefully shutdown the embedded broker
-    info!("Shutting down embedded EventBus broker");
-    if let Err(e) = broker_manager.shutdown().await {
+    // Gracefully shutdown both services in parallel
+    info!("Shutting down IPC server and embedded EventBus broker");
+
+    let (ipc_result, broker_result) =
+        tokio::join!(ipc_server_manager.shutdown(), broker_manager.shutdown());
+
+    if let Err(e) = ipc_result {
+        error!(error = %e, "Failed to shutdown IPC server gracefully");
+    }
+
+    if let Err(e) = broker_result {
         error!(error = %e, "Failed to shutdown embedded broker gracefully");
     }
 

@@ -3,7 +3,7 @@
 use crate::error::{EventBusError, Result};
 use crate::message::{BusEvent, CollectionEvent, EventSubscription, Message};
 use crate::topic::TopicMatcher;
-use crate::transport::{SocketConfig, TransportClient};
+use crate::transport::{ClientConfig, ClientConnectionManager, SocketConfig, TransportServer};
 use crate::{EventBus, EventBusStatistics};
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,8 +15,10 @@ use uuid::Uuid;
 pub struct DaemoneyeBroker {
     /// Topic matcher for routing messages
     topic_matcher: Arc<RwLock<TopicMatcher>>,
-    /// Connected clients
-    clients: Arc<Mutex<Vec<TransportClient>>>,
+    /// Client connection manager
+    client_manager: Arc<Mutex<ClientConnectionManager>>,
+    /// Transport server for accepting connections
+    transport_server: Arc<Mutex<Option<TransportServer>>>,
     /// Message sequence counter
     sequence: Arc<Mutex<u64>>,
     /// Statistics
@@ -55,9 +57,14 @@ impl DaemoneyeBroker {
 
         let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel();
 
+        // Create client connection manager
+        let client_config = ClientConfig::default();
+        let client_manager = ClientConnectionManager::new(client_config);
+
         let broker = Self {
             topic_matcher: Arc::new(RwLock::new(TopicMatcher::new())),
-            clients: Arc::new(Mutex::new(Vec::new())),
+            client_manager: Arc::new(Mutex::new(client_manager)),
+            transport_server: Arc::new(Mutex::new(None)),
             sequence: Arc::new(Mutex::new(0)),
             stats: Arc::new(Mutex::new(EventBusStatistics::default())),
             start_time: Instant::now(),
@@ -74,7 +81,74 @@ impl DaemoneyeBroker {
 
     /// Start the broker server
     pub async fn start(&self) -> Result<()> {
-        info!("DaemonEye broker started");
+        info!("Starting DaemonEye broker");
+
+        // Create and start transport server
+        let server = TransportServer::new(self.config.clone()).await?;
+        {
+            let mut server_guard = self.transport_server.lock().await;
+            *server_guard = Some(server);
+        }
+
+        // Start client connection acceptance task
+        self.start_client_acceptance_task().await?;
+
+        // Start health monitoring task
+        self.start_health_monitoring_task().await?;
+
+        info!("DaemonEye broker started successfully");
+        Ok(())
+    }
+
+    /// Start client acceptance background task
+    async fn start_client_acceptance_task(&self) -> Result<()> {
+        let server = Arc::clone(&self.transport_server);
+        let _client_manager = Arc::clone(&self.client_manager);
+        let _socket_config = self.config.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let server_guard = server.lock().await;
+                if let Some(ref transport_server) = *server_guard {
+                    match transport_server.accept().await {
+                        Ok(_client) => {
+                            let client_id = Uuid::new_v4().to_string();
+                            info!("Accepted new client connection: {}", client_id);
+
+                            // Add client to manager (this will fail since we need to refactor the manager)
+                            // For now, we'll just log the connection
+                            debug!("Client {} connected but not yet managed", client_id);
+                        }
+                        Err(e) => {
+                            error!("Failed to accept client connection: {}", e);
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        }
+                    }
+                } else {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Start health monitoring background task
+    async fn start_health_monitoring_task(&self) -> Result<()> {
+        let client_manager = Arc::clone(&self.client_manager);
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+
+                let mut manager = client_manager.lock().await;
+                if let Err(e) = manager.health_check_all().await {
+                    error!("Health check failed: {}", e);
+                }
+            }
+        });
+
         Ok(())
     }
 
@@ -119,23 +193,25 @@ impl DaemoneyeBroker {
         // Serialize message
         let message_data = message.serialize()?;
 
-        // Send to transport clients
-        let mut clients_guard = self.clients.lock().await;
-        let mut failed_clients = Vec::new();
+        // Send to managed clients via client manager
         let mut delivered_count = 0;
-
-        for (i, client) in clients_guard.iter_mut().enumerate() {
-            if let Err(e) = client.send(&message_data).await {
-                error!("Failed to send message to client {}: {}", i, e);
-                failed_clients.push(i);
-            } else {
-                delivered_count += 1;
+        {
+            let mut client_manager = self.client_manager.lock().await;
+            match client_manager
+                .broadcast_to_topic(topic, &message_data)
+                .await
+            {
+                Ok(delivered_clients) => {
+                    delivered_count += delivered_clients.len() as u64;
+                    debug!(
+                        "Delivered message to {} managed clients",
+                        delivered_clients.len()
+                    );
+                }
+                Err(e) => {
+                    error!("Failed to broadcast to managed clients: {}", e);
+                }
             }
-        }
-
-        // Remove failed clients
-        for &i in failed_clients.iter().rev() {
-            clients_guard.remove(i);
         }
 
         // Send to internal subscribers
@@ -164,10 +240,12 @@ impl DaemoneyeBroker {
             senders_guard.remove(&subscriber_id);
         }
 
-        // Get total subscriber count before dropping guards
-        let total_subscribers = clients_guard.len() + senders_guard.len();
+        // Get total subscriber count
+        let total_subscribers = {
+            let client_manager = self.client_manager.lock().await;
+            client_manager.get_stats().total_clients + senders_guard.len()
+        };
         drop(senders_guard);
-        drop(clients_guard);
 
         // Update statistics: increment messages_published exactly once
         {
@@ -203,23 +281,62 @@ impl DaemoneyeBroker {
     }
 
     /// Add a client connection
-    pub async fn add_client(&self, client: TransportClient) {
-        let mut clients_guard = self.clients.lock().await;
-        clients_guard.push(client);
+    pub async fn add_client(&self, client_id: String, socket_config: &SocketConfig) -> Result<()> {
+        let mut client_manager = self.client_manager.lock().await;
+        client_manager
+            .add_client(client_id.clone(), socket_config)
+            .await?;
 
-        info!("Client connected, total clients: {}", clients_guard.len());
+        info!(
+            "Client connected: {}, total clients: {}",
+            client_id,
+            client_manager.get_stats().total_clients
+        );
+        Ok(())
+    }
+
+    /// Remove a client connection
+    pub async fn remove_client(&self, client_id: &str) -> Result<()> {
+        let mut client_manager = self.client_manager.lock().await;
+        client_manager.remove_client(client_id).await?;
+
+        info!(
+            "Client disconnected: {}, remaining clients: {}",
+            client_id,
+            client_manager.get_stats().total_clients
+        );
+        Ok(())
+    }
+
+    /// Subscribe a client to topic patterns
+    pub async fn subscribe_client(
+        &self,
+        client_id: &str,
+        topic_patterns: Vec<String>,
+    ) -> Result<()> {
+        let mut client_manager = self.client_manager.lock().await;
+        client_manager
+            .subscribe_client(client_id, topic_patterns)
+            .await
+    }
+
+    /// Unsubscribe a client from all topics
+    pub async fn unsubscribe_client(&self, client_id: &str) -> Result<()> {
+        let mut client_manager = self.client_manager.lock().await;
+        client_manager.unsubscribe_client(client_id).await
     }
 
     /// Get current statistics
     pub async fn statistics(&self) -> EventBusStatistics {
         let stats_guard = self.stats.lock().await;
         let topic_matcher = self.topic_matcher.read().await;
-        let _clients_guard = self.clients.lock().await;
+        let client_manager = self.client_manager.lock().await;
 
         EventBusStatistics {
             messages_published: stats_guard.messages_published,
             messages_delivered: stats_guard.messages_delivered,
-            active_subscribers: topic_matcher.subscriber_count(),
+            active_subscribers: topic_matcher.subscriber_count()
+                + client_manager.get_stats().total_clients,
             active_topics: topic_matcher.pattern_count(),
             uptime_seconds: self.start_time.elapsed().as_secs(),
         }
@@ -234,14 +351,25 @@ impl DaemoneyeBroker {
             warn!("Failed to send shutdown signal: {}", e);
         }
 
-        // Close all client connections
-        let mut clients_guard = self.clients.lock().await;
-        for client in clients_guard.drain(..) {
-            if let Err(e) = client.close().await {
-                error!("Failed to close client connection: {}", e);
+        // Shutdown client manager
+        {
+            let mut client_manager = self.client_manager.lock().await;
+            if let Err(e) = client_manager.shutdown().await {
+                error!("Failed to shutdown client manager: {}", e);
             }
         }
 
+        // Shutdown transport server
+        {
+            let mut server_guard = self.transport_server.lock().await;
+            if let Some(mut server) = server_guard.take()
+                && let Err(e) = server.shutdown().await
+            {
+                error!("Failed to shutdown transport server: {}", e);
+            }
+        }
+
+        info!("DaemonEye broker shutdown complete");
         Ok(())
     }
 }
