@@ -20,7 +20,7 @@ use sysinfo::{Pid, ProcessExt, System, SystemExt};
 pub struct ProcessCollector {
     system: System,
     config: CollectorConfig,
-    hash_computer: Box<dyn HashComputer>,
+    hash_computer: Sha256HashComputer,
 }
 
 impl ProcessCollector {
@@ -139,10 +139,19 @@ use std::path::Path;
 pub trait HashComputer: Send + Sync {
     fn compute_hash(&self, path: &Path) -> Result<Option<String>>;
     fn get_algorithm(&self) -> &'static str;
+    fn buffer_size(&self) -> usize;
+    fn set_buffer_size(&mut self, size: usize);
 }
 
+#[derive(Clone)]
 pub struct Sha256HashComputer {
     buffer_size: usize,
+}
+
+impl Sha256HashComputer {
+    pub fn new(buffer_size: usize) -> Self {
+        Self { buffer_size }
+    }
 }
 
 impl HashComputer for Sha256HashComputer {
@@ -169,6 +178,14 @@ impl HashComputer for Sha256HashComputer {
 
     fn get_algorithm(&self) -> &'static str {
         "sha256"
+    }
+
+    fn buffer_size(&self) -> usize {
+        self.buffer_size
+    }
+
+    fn set_buffer_size(&mut self, size: usize) {
+        self.buffer_size = size;
     }
 }
 ```
@@ -598,7 +615,7 @@ impl AlertDeliveryManager {
         Ok(results
             .into_iter()
             .map(|r| match r {
-                Ok(_) => DeliveryResult::Success,
+                Ok(dr) => dr,
                 Err(e) => DeliveryResult::Failed(e.to_string()),
             })
             .collect())
@@ -896,7 +913,7 @@ impl DetectionEngine {
 
 ```rust
 impl ProcessCollector {
-    async fn handle_memory_pressure(&self) -> Result<()> {
+    async fn handle_memory_pressure(&mut self) -> Result<()> {
         let memory_usage = self.get_memory_usage()?;
 
         if memory_usage > self.config.memory_threshold {

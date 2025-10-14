@@ -191,7 +191,7 @@ mkdir C:\ProgramData\DaemonEye\data
 daemoneye-agent --database /var/lib/daemoneye/events.redb --log-level info
 
 # Terminal 2: Use CLI for database queries and health checks
-daemoneye-cli --database /var/lib/daemoneye/events.redb --format json
+daemoneye-cli --database /var/lib/daemoneye/events.redb --format json health
 
 # Terminal 3: Run procmond directly for testing (optional)
 procmond --database /var/lib/daemoneye/events.redb --interval 30 --enhanced-metadata

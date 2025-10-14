@@ -779,6 +779,152 @@ flowchart TD
     L --> N
 ```
 
+### Cascading Workflow Coordination
+
+**Purpose**: Enable complex multi-collector workflows where one collector's results automatically trigger cascading analysis by other specialized collectors
+
+**Trigger Expression Mechanisms**:
+
+- **Event Types**: Collectors express triggers using structured event types (e.g., `process.suspicious`, `network.anomaly`, `file.malicious`)
+- **Predicates**: JSONPath expressions on event payloads for fine-grained filtering (`$.severity >= 'high'`, `$.file_type == 'executable'`)
+- **Rule IDs**: Specific detection rule matches that trigger downstream analysis chains
+
+**Result Routing Architecture**:
+
+- **Topic Naming**: Hierarchical topic structure (`collectors.{collector_id}.results.{event_type}`)
+- **Message Envelopes**: Correlation IDs, timestamps, routing metadata, and priority levels
+- **Routing Keys**: Content-based routing using event attributes and collector capabilities
+
+**Retry and Error Handling**:
+
+- **Exponential Backoff**: 1s, 2s, 4s, 8s maximum retry intervals with jitter
+- **Circuit Breaker**: Automatic failure detection and temporary collector isolation
+- **Dead Letter Queues**: Persistent storage for permanently failed cascades
+- **Correlation Tracking**: End-to-end visibility across multi-hop workflows
+
+**Visibility and Traceability**:
+
+- **Correlation IDs**: Unique identifiers for each workflow execution
+- **Parent-Child Relationships**: Hierarchical correlation tracking across collector chains
+- **Execution Timestamps**: Precise timing for performance analysis and debugging
+- **Workflow Stages**: Named stages for complex multi-step analysis processes
+
+**Sample Workflow Message Schema**:
+
+```json
+{
+  "correlation_id": "uuid-v4",
+  "parent_correlation_id": "uuid-v4-or-null",
+  "workflow_id": "suspicious_process_analysis",
+  "trigger": {
+    "type": "event_type",
+    "value": "process.suspicious",
+    "predicate": "$.severity >= 'high'"
+  },
+  "routing": {
+    "topic": "collectors.binmond.trigger",
+    "priority": "high",
+    "ttl_seconds": 300
+  },
+  "payload": { /* original event data */ }
+}
+```
+
+**Cascading Workflow Sequence**:
+
+1. **Monitor Collector** (procmond) detects suspicious process and publishes to `events.process.suspicious` topic
+2. **Triggerable Collector** (binmond) receives trigger, performs binary analysis, publishes results to `collectors.binmond.results`
+3. **Triggerable Collector** (memmond) receives binary analysis results, performs memory analysis, publishes to `collectors.memmond.results`
+4. **Triggerable Collector** (netanalymond) receives memory results, performs network analysis, publishes final results
+5. All steps maintain correlation ID for end-to-end traceability
+
+**Architecture Alignment**:
+
+- **Monitor Collectors**: Continuous system monitoring (procmond, netmond, fsmond, perfmond) that detect events and trigger cascading analysis
+- **Triggerable Collectors**: Event-driven enrichment (binmond, memmond, netanalymond, regmond) that provide detailed analysis on-demand
+- **Agent Orchestration**: daemoneye-agent coordinates the cascade, ensuring triggerable collectors don't trigger other triggerable collectors
+- **SQL Integration**: Complex SQL queries are translated into collection tasks and cascading workflows using the existing `AUTO JOIN` syntax
+
+### Dynamic Registration Protocol
+
+**Purpose**: Enable runtime registration and capability advertisement of monitoring collectors without system restart
+
+**Registration Handshake Protocol**:
+
+- **REGISTER**: New collectors initiate registration with capability advertisement
+- **REGISTER_ACK**: Broker responds with assigned collector ID and topic assignments
+- **HEARTBEAT**: Collectors maintain 30-second heartbeat intervals
+- **DEREGISTER**: Graceful shutdown with cleanup coordination
+
+**Capability Advertisement Schema**:
+
+```json
+{
+  "message_type": "REGISTER",
+  "collector_id": "binmond_v1.2.3",
+  "capabilities": {
+    "supported_events": [
+      "process.suspicious",
+      "file.created"
+    ],
+    "trigger_patterns": [
+      "$.severity >= 'medium'",
+      "$.file_type == 'executable'"
+    ],
+    "resource_limits": {
+      "max_cpu_percent": 25,
+      "max_memory_mb": 512,
+      "max_concurrent_workflows": 10
+    },
+    "version": "1.2.3",
+    "dependencies": [
+      "procmond",
+      "fsmond"
+    ],
+    "virtual_tables": [
+      "binary_analysis",
+      "code_signing",
+      "imports_exports",
+      "yara_matches"
+    ]
+  },
+  "endpoints": {
+    "trigger_topic": "collectors.binmond.trigger",
+    "result_topic": "collectors.binmond.results",
+    "health_topic": "collectors.binmond.health"
+  }
+}
+```
+
+**Collision and Duplicate Handling**:
+
+- **Timestamp Precedence**: First registration wins for duplicate collector IDs
+- **Automatic Suffixing**: Generate unique suffixes for conflicting registrations
+- **Capability Negotiation**: Resolve conflicts through capability matching and resource allocation
+
+**Static vs Dynamic Registration Relationship**:
+
+- **Static Monitor Collectors**: Core system collectors (procmond, netmond, fsmond, perfmond) registered at startup with highest precedence
+- **Dynamic Triggerable Collectors**: Optional analysis collectors (binmond, memmond, netanalymond, regmond) registered at runtime
+- **Precedence Rules**: Monitor collectors receive events first, triggerable collectors process filtered subsets based on SQL query requirements
+- **Capability Matching**: Dynamic collectors only receive events matching their advertised capabilities and SQL `AUTO JOIN` requirements
+
+**Resource and Lifecycle Management**:
+
+- **Activation Limits**: Maximum 50 concurrent dynamic collectors with configurable quotas
+- **Resource Quotas**: 25% CPU, 512MB memory, 10 concurrent workflows per collector (default)
+- **Shutdown Coordination**: 30-second grace period for active workflows, force termination for unresponsive collectors
+- **Owner Policies**: Dynamic collectors owned by registration process with automatic cleanup on exit
+- **Timeout Policies**: Automatic deregistration after 5 minutes of missed heartbeats
+
+**Registration Flow Sequence**:
+
+1. Collector sends `REGISTER` message with capabilities to broker
+2. Broker validates capabilities and assigns collector ID
+3. Broker responds with `REGISTER_ACK` containing assigned ID and topic assignments
+4. Collector begins sending `HEARTBEAT` messages every 30 seconds
+5. Broker monitors heartbeats and deregisters on timeout (3 missed heartbeats)
+
 ## Data Models
 
 ### Core Data Structures

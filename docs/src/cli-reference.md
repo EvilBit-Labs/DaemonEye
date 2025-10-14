@@ -30,16 +30,17 @@ procmond [OPTIONS]
 
 ### Options
 
-| Option                | Short | Default                           | Description                                 |
-| --------------------- | ----- | --------------------------------- | ------------------------------------------- |
-| `--database`          | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for storing process data      |
-| `--log-level`         | `-l`  | `info`                            | Log level (debug, info, warn, error)        |
-| `--interval`          | `-i`  | `30`                              | Collection interval in seconds (5-3600)     |
-| `--max-processes`     |       | `0`                               | Maximum processes per cycle (0 = unlimited) |
-| `--enhanced-metadata` |       |                                   | Enable enhanced metadata collection         |
-| `--compute-hashes`    |       |                                   | Enable executable hashing for integrity     |
-| `--help`              | `-h`  |                                   | Print help information                      |
-| `--version`           | `-V`  |                                   | Print version information                   |
+| Option                  | Short | Default                           | Description                                                                            |
+| ----------------------- | ----- | --------------------------------- | -------------------------------------------------------------------------------------- |
+| `--database`            | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for storing process data                                                 |
+| `--log-level`           | `-l`  | `info`                            | Log level (debug, info, warn, error)                                                   |
+| `--interval`            | `-i`  | `30`                              | Collection interval in seconds (5-3600)                                                |
+| `--max-processes`       |       | `0`                               | Maximum processes per cycle (0 = unlimited)                                            |
+| `--enhanced-metadata`   |       |                                   | Enable enhanced metadata collection                                                    |
+| `--compute-hashes`      |       |                                   | Enable executable hashing for integrity                                                |
+| `--generate-completion` |       |                                   | Generate shell completion script for the specified shell (bash, zsh, fish, powershell) |
+| `--help`                | `-h`  |                                   | Print help information                                                                 |
+| `--version`             | `-V`  |                                   | Print version information                                                              |
 
 ### Examples
 
@@ -89,12 +90,13 @@ daemoneye-agent [OPTIONS]
 
 ### Options
 
-| Option        | Short | Default                           | Description                          |
-| ------------- | ----- | --------------------------------- | ------------------------------------ |
-| `--database`  | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for process data       |
-| `--log-level` | `-l`  | `info`                            | Log level (debug, info, warn, error) |
-| `--help`      | `-h`  |                                   | Print help information               |
-| `--version`   | `-V`  |                                   | Print version information            |
+| Option                  | Short | Default                           | Description                                                                            |
+| ----------------------- | ----- | --------------------------------- | -------------------------------------------------------------------------------------- |
+| `--database`            | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for process data                                                         |
+| `--log-level`           | `-l`  | `info`                            | Log level (debug, info, warn, error)                                                   |
+| `--generate-completion` |       |                                   | Generate shell completion script for the specified shell (bash, zsh, fish, powershell) |
+| `--help`                | `-h`  |                                   | Print help information                                                                 |
+| `--version`             | `-V`  |                                   | Print version information                                                              |
 
 ### Examples
 
@@ -148,12 +150,13 @@ daemoneye-cli [OPTIONS]
 
 ### Options
 
-| Option       | Short | Default                           | Description                 |
-| ------------ | ----- | --------------------------------- | --------------------------- |
-| `--database` | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for queries   |
-| `--format`   | `-f`  | `human`                           | Output format (human, json) |
-| `--help`     | `-h`  |                                   | Print help information      |
-| `--version`  | `-V`  |                                   | Print version information   |
+| Option                  | Short | Default                           | Description                                                                            |
+| ----------------------- | ----- | --------------------------------- | -------------------------------------------------------------------------------------- |
+| `--database`            | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for queries                                                              |
+| `--format`              | `-f`  | `human`                           | Output format (human, json)                                                            |
+| `--generate-completion` |       |                                   | Generate shell completion script for the specified shell (bash, zsh, fish, powershell) |
+| `--help`                | `-h`  |                                   | Print help information                                                                 |
+| `--version`             | `-V`  |                                   | Print version information                                                              |
 
 ### Examples
 
@@ -191,7 +194,8 @@ Health status: Healthy
   "rules": 5,
   "alerts": 42,
   "system_info": 1,
-  "scans": 100
+  "scans": 100,
+  "health_status": "Healthy"
 }
 ```
 
@@ -357,7 +361,6 @@ COPY --from=builder /app/target/release/daemoneye-cli /usr/local/bin/
 COPY --from=builder /app/target/release/procmond /usr/local/bin/
 
 VOLUME ["/data"]
-EXPOSE 8080
 
 CMD ["daemoneye-agent", "--database", "/data/processes.db"]
 ```

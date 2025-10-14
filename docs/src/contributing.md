@@ -163,14 +163,31 @@ pub enum CollectionError {
 // Use anyhow for application error context
 use anyhow::{Context, Result};
 
+// Helper function to validate collected process data
+fn validate_process_data(processes: &[ProcessInfo]) -> Result<()> {
+    if processes.is_empty() {
+        return Err(anyhow::anyhow!("No processes collected"));
+    }
+
+    // Additional validation logic could go here
+    // For example: checking for required fields, data integrity, etc.
+    Ok(())
+}
+
 pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
-    let processes = sysinfo::System::new_all()
+    let mut system = sysinfo::System::new_all();
+    system.refresh_all();
+
+    let processes = system
         .processes()
         .values()
         .map(|p| ProcessInfo::from(p))
         .collect::<Vec<_>>();
 
-    Ok(processes).context("Failed to collect process information")
+    // Validate collected data before returning
+    validate_process_data(&processes).context("Failed to collect process information")?;
+
+    Ok(processes)
 }
 
 // Document all public APIs

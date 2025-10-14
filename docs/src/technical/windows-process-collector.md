@@ -121,15 +121,21 @@ This document analyzes Task 5.5 to ensure it provides comprehensive Windows-cent
 
 1. **sysinfo** - Cross-platform process enumeration (enhanced)
 2. **windows-rs** - Safe Windows API access
-3. **winapi-safe** - Additional Windows API safety wrappers
-4. **psutil-rs** - Process and system utilities
+3. **winsafe** - Modern, well-maintained Windows API safety wrappers
+4. **winapi-util** - Additional Windows API utilities and helpers
 
 ### Secondary Crates
 
 1. **windows-service** - Windows service management
 2. **wmi** - Windows Management Instrumentation
-3. **perfmon-rs** - Performance counter access
+3. **perfmon** - Performance counter access (actively maintained alternative)
 4. **winreg** - Windows registry access
+
+### Maintenance Status Notes
+
+- **winapi-safe** → **winsafe**: Replaced with winsafe for better maintenance and modern Windows API coverage
+- **psutil-rs**: Removed due to limited maintenance; sysinfo provides equivalent functionality
+- **perfmon-rs** → **perfmon**: Updated to recommend actively maintained performance counter library
 
 ### Safety Considerations
 

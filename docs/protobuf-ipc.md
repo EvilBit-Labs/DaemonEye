@@ -240,7 +240,9 @@ fn basic_process_enumeration() -> Result<(), Box<dyn std::error::Error>> {
     // Send via IPC transport...
 
     // Deserialize response
-    let response_bytes = &[]; // Sample response data
+    // Note: This is pseudocode - empty byte slice will always fail to decode
+    // In practice, response_bytes would contain valid serialized DetectionResult data
+    let response_bytes = &[]; // Placeholder - not decodable
     let result = DetectionResult::decode(response_bytes)?;
 
     // Process results
@@ -306,7 +308,11 @@ All messages are validated during deserialization:
 ```rust
 fn validate_message(bytes: &[u8]) -> Result<(), prost::DecodeError> {
     match DetectionTask::decode(bytes) {
-        Ok(task) => process_task(task),
+        Ok(task) => {
+            // Use task here - validate task fields, log task details, etc.
+            println!("Successfully decoded task: {:?}", task);
+            Ok(())
+        }
         Err(e) => {
             eprintln!("Invalid message format: {}", e);
             return Err(e);
