@@ -404,6 +404,7 @@ dependencies = [
  "chrono",
  "criterion",
  "crossbeam",
+ "daemoneye-eventbus",
  "daemoneye-lib",
  "futures",
  "humantime-serde",
@@ -646,6 +647,7 @@ dependencies = [
  "bincode",
  "chrono",
  "criterion",
+ "insta",
  "interprocess",
  "serde",
  "serde_json",
@@ -1036,6 +1038,7 @@ dependencies = [
  "console",
  "once_cell",
  "regex",
+ "serde",
  "similar",
 ]
 

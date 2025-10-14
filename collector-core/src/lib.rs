@@ -73,6 +73,7 @@ pub mod analysis_chain;
 pub mod collector;
 pub mod config;
 pub mod config_manager;
+pub mod daemoneye_event_bus;
 // embedded_broker module disabled during migration away from busrt
 // #[cfg(feature = "busrt")]
 // pub mod embedded_broker;
@@ -113,6 +114,7 @@ pub use collector::{Collector, CollectorRuntime, RuntimeStats};
 pub use config::CollectorConfig;
 #[cfg(not(feature = "busrt"))]
 pub use config_manager::ConfigManager;
+pub use daemoneye_event_bus::DaemoneyeEventBus;
 // busrt-specific config manager types disabled during migration away from busrt
 // #[cfg(feature = "busrt")]
 // pub use config_manager::{ConfigChangeEvent, ConfigManager, ConfigManagerSettings};

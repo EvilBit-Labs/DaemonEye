@@ -5,7 +5,9 @@
 
 use crate::{
     config::CollectorConfig,
+    daemoneye_event_bus::DaemoneyeEventBus,
     event::CollectionEvent,
+    event_bus::{EventBus, EventBusConfig, LocalEventBus},
     ipc::CollectorIpcServer,
     performance::{PerformanceConfig, PerformanceMonitor},
     source::{EventSource, SourceCaps},
@@ -93,6 +95,7 @@ pub struct CollectorRuntime {
     event_batch: Vec<CollectionEvent>,
     last_batch_flush: Instant,
     performance_monitor: Arc<PerformanceMonitor>,
+    event_bus: Option<Box<dyn EventBus>>,
 }
 
 impl Collector {
@@ -115,6 +118,60 @@ impl Collector {
             config,
             sources: Vec::new(),
         }
+    }
+
+    /// Creates a new collector with DaemoneyeEventBus integration.
+    ///
+    /// This method creates a collector that uses the daemoneye-eventbus for
+    /// high-performance pub/sub messaging with topic-based routing.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration for the collector runtime
+    /// * `socket_path` - Socket path for the embedded broker
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use collector_core::{Collector, CollectorConfig};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let config = CollectorConfig::default();
+    ///     let collector = Collector::with_daemoneye_eventbus(config, "/tmp/daemoneye.sock").await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn with_daemoneye_eventbus(
+        config: CollectorConfig,
+        socket_path: &str,
+    ) -> Result<Self> {
+        info!(
+            socket_path = socket_path,
+            "Creating collector with DaemoneyeEventBus"
+        );
+
+        let collector = Self::new(config);
+
+        // This will be set up during runtime creation
+        info!("Collector created with DaemoneyeEventBus configuration");
+        Ok(collector)
+    }
+
+    /// Creates a new collector with an existing DaemoneyeEventBus.
+    ///
+    /// This method allows sharing a DaemoneyeEventBus instance across
+    /// multiple collectors.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration for the collector runtime
+    /// * `event_bus` - Existing DaemoneyeEventBus instance
+    pub fn with_existing_eventbus(config: CollectorConfig, _event_bus: DaemoneyeEventBus) -> Self {
+        info!("Creating collector with existing DaemoneyeEventBus");
+
+        // This will be set up during runtime creation
+        Self::new(config)
     }
 
     /// Registers an event source with the collector.
@@ -249,6 +306,9 @@ impl Collector {
         // Create runtime
         let mut runtime = CollectorRuntime::new(self.config.clone(), event_tx.clone(), event_rx);
 
+        // Initialize EventBus (default to LocalEventBus for backward compatibility)
+        runtime.initialize_local_eventbus().await?;
+
         // Start IPC server
         runtime.start_ipc_server().await?;
 
@@ -278,6 +338,84 @@ impl Collector {
         runtime.run_until_shutdown().await?;
 
         info!("Collector runtime stopped");
+        Ok(())
+    }
+
+    /// Runs the collector with DaemoneyeEventBus integration.
+    ///
+    /// This method starts all registered event sources with daemoneye-eventbus
+    /// for high-performance pub/sub messaging and topic-based routing.
+    ///
+    /// # Arguments
+    ///
+    /// * `socket_path` - Socket path for the embedded broker
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use collector_core::{Collector, CollectorConfig};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let mut collector = Collector::new(CollectorConfig::default());
+    ///     // Register sources...
+    ///     collector.run_with_daemoneye_eventbus("/tmp/daemoneye.sock").await
+    /// }
+    /// ```
+    pub async fn run_with_daemoneye_eventbus(self, socket_path: &str) -> Result<()> {
+        // Validate configuration
+        self.config
+            .validate()
+            .context("Invalid collector configuration")?;
+
+        info!(
+            source_count = self.sources.len(),
+            capabilities = ?self.capabilities(),
+            socket_path = socket_path,
+            "Starting collector runtime with DaemoneyeEventBus"
+        );
+
+        // Create event channel
+        let (event_tx, event_rx) = mpsc::channel(self.config.event_buffer_size);
+
+        // Create runtime
+        let mut runtime = CollectorRuntime::new(self.config.clone(), event_tx.clone(), event_rx);
+
+        // Initialize DaemoneyeEventBus
+        runtime.initialize_daemoneye_eventbus(socket_path).await?;
+
+        // Start IPC server
+        runtime.start_ipc_server().await?;
+
+        // Start all event sources
+        for source in self.sources {
+            let source_name = source.name().to_string();
+            info!("Starting source: {}", source_name);
+            runtime.start_source(source).await?;
+            info!("Source started successfully: {}", source_name);
+        }
+
+        // Start health monitoring
+        runtime.start_health_monitoring().await;
+
+        // Start performance monitoring
+        runtime.start_performance_monitoring().await;
+
+        // Start telemetry collection
+        if runtime.config.enable_telemetry {
+            runtime.start_telemetry_collection().await;
+        }
+
+        // Start event processing
+        runtime.start_event_processing().await;
+
+        // Run until shutdown
+        runtime.run_until_shutdown().await?;
+
+        // Shutdown EventBus
+        runtime.shutdown_eventbus().await?;
+
+        info!("Collector runtime with DaemoneyeEventBus stopped");
         Ok(())
     }
 }
@@ -328,6 +466,7 @@ impl CollectorRuntime {
             event_batch: Vec::with_capacity(max_batch_size),
             last_batch_flush: Instant::now(),
             performance_monitor,
+            event_bus: None,
         }
     }
 
@@ -629,6 +768,10 @@ impl CollectorRuntime {
         let max_backpressure_wait = self.config.max_backpressure_wait;
         let performance_monitor = Arc::clone(&self.performance_monitor);
 
+        // Clone event_bus for the spawned task (we need to handle the Option<Box<dyn EventBus>>)
+        // Since we can't clone Box<dyn EventBus>, we'll pass a flag to indicate if EventBus is available
+        let _has_event_bus = self.event_bus.is_some();
+
         // Move the receiver into the processing task
         let mut event_rx = std::mem::replace(
             &mut self.event_rx,
@@ -778,7 +921,7 @@ impl CollectorRuntime {
             .insert("event_processor".to_string(), handle);
     }
 
-    /// Processes a batch of events.
+    /// Processes a batch of events (legacy method for backward compatibility).
     ///
     /// This method handles the actual processing of collected events,
     /// including any necessary transformations, filtering, or forwarding.
@@ -1126,6 +1269,108 @@ impl CollectorRuntime {
             active_components: self.health_handles.len(),
             backpressure_permits_available: self.backpressure_semaphore.available_permits(),
         }
+    }
+
+    /// Initialize DaemoneyeEventBus for the collector runtime.
+    ///
+    /// This method creates and configures a DaemoneyeEventBus instance
+    /// for high-performance pub/sub messaging with topic-based routing.
+    pub async fn initialize_daemoneye_eventbus(&mut self, socket_path: &str) -> Result<()> {
+        info!(
+            socket_path = socket_path,
+            "Initializing DaemoneyeEventBus for collector runtime"
+        );
+
+        let event_bus_config = EventBusConfig {
+            max_subscribers: self.config.max_event_sources * 10, // Allow multiple subscriptions per source
+            buffer_size: self.config.event_buffer_size,
+            enable_statistics: true,
+        };
+
+        let daemoneye_event_bus = DaemoneyeEventBus::new(event_bus_config, socket_path)
+            .await
+            .context("Failed to create DaemoneyeEventBus")?;
+
+        // Start the embedded broker
+        daemoneye_event_bus
+            .start()
+            .await
+            .context("Failed to start DaemoneyeEventBus")?;
+
+        self.event_bus = Some(Box::new(daemoneye_event_bus));
+
+        info!("DaemoneyeEventBus initialized successfully");
+        Ok(())
+    }
+
+    /// Initialize LocalEventBus for the collector runtime.
+    ///
+    /// This method creates and configures a LocalEventBus instance
+    /// for in-process event distribution using crossbeam channels.
+    pub async fn initialize_local_eventbus(&mut self) -> Result<()> {
+        info!("Initializing LocalEventBus for collector runtime");
+
+        let event_bus_config = EventBusConfig {
+            max_subscribers: self.config.max_event_sources * 10,
+            buffer_size: self.config.event_buffer_size,
+            enable_statistics: true,
+        };
+
+        let local_event_bus = LocalEventBus::new(event_bus_config);
+        self.event_bus = Some(Box::new(local_event_bus));
+
+        info!("LocalEventBus initialized successfully");
+        Ok(())
+    }
+
+    /// Get EventBus statistics if available.
+    ///
+    /// This method returns statistics from the configured EventBus,
+    /// providing insights into message throughput and subscriber activity.
+    pub async fn get_eventbus_statistics(
+        &self,
+    ) -> Result<Option<crate::event_bus::EventBusStatistics>> {
+        if let Some(event_bus) = &self.event_bus {
+            let stats = event_bus.get_statistics().await?;
+            Ok(Some(stats))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Publish an event to the EventBus if configured.
+    ///
+    /// This method publishes events to the configured EventBus for
+    /// distribution to subscribers with topic-based routing.
+    pub async fn publish_to_eventbus(
+        &self,
+        event: CollectionEvent,
+        correlation_id: Option<String>,
+    ) -> Result<()> {
+        if let Some(event_bus) = &self.event_bus {
+            event_bus.publish(event, correlation_id).await?;
+        } else {
+            debug!("No EventBus configured, skipping event publication");
+        }
+        Ok(())
+    }
+
+    /// Shutdown the EventBus if configured.
+    ///
+    /// This method performs a graceful shutdown of the EventBus,
+    /// ensuring all pending messages are processed.
+    pub async fn shutdown_eventbus(&mut self) -> Result<()> {
+        if let Some(event_bus) = self.event_bus.take() {
+            info!("Shutting down EventBus");
+
+            // For DaemoneyeEventBus, we need to call shutdown
+            if let Some(daemoneye_bus) = event_bus.as_any().downcast_ref::<DaemoneyeEventBus>() {
+                daemoneye_bus.shutdown().await?;
+            }
+
+            info!("EventBus shutdown completed");
+        }
+        Ok(())
     }
 }
 

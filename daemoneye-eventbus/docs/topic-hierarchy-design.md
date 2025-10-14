@@ -1,3 +1,29 @@
+# Topic hierarchy
+
+This document describes the topic structure and wildcard semantics used by the DaemonEye event bus.
+
+Wildcard semantics (as enforced by the current matcher):
+
+- Literal segments must match exactly.
+- "+" matches exactly one segment.
+- "#" matches the remaining segments, and must appear only as the final segment in the pattern.
+  - Note: In the current implementation, "#" only matches when there is at least one remaining segment. Patterns like "events.#" will not match the single-segment topic "events"; likewise, "... .#." does not match zero additional segments. The truth-table test below codifies this behavior.
+
+Reference tests
+
+- The matcher’s behavior is locked in by a truth-table snapshot test: daemoneye-eventbus/tests/pattern_truth_table.rs
+- Snapshot file: daemoneye-eventbus/tests/snapshots/pattern_truth_table\_\_topic_pattern_matrix_v1.snap
+- To run the test and review/update snapshots:
+  - cargo test -p daemoneye-eventbus -- tests::pattern_truth_table
+  - cargo insta test
+  - cargo insta review
+
+Example patterns
+
+- events.process.+ matches events.process.new
+- control.trigger.+ matches control.trigger.request
+- events.+.# matches any topic that begins with two segments after "events" and then any tail
+
 # DaemonEye Topic Hierarchy Design
 
 ## Overview

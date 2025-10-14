@@ -42,6 +42,7 @@ bitflags = { workspace = true }
 
 # IPC integration
 daemoneye-lib = { workspace = true }
+daemoneye-eventbus = { path = "../daemoneye-eventbus" }
 
 # Temporary file handling
 tempfile = { workspace = true }

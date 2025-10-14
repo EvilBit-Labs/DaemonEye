@@ -45,6 +45,9 @@ pub trait EventBus: Send + Sync {
 
     /// Get bus statistics
     async fn get_statistics(&self) -> Result<EventBusStatistics>;
+
+    /// Get a reference to the underlying type for downcasting
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Event bus configuration
@@ -240,6 +243,10 @@ impl EventBus for LocalEventBus {
         let mut stats = self.stats.lock().await;
         stats.uptime = self.start_time.elapsed();
         Ok(stats.clone())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
