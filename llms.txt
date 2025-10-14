@@ -5,6 +5,7 @@
 DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agent`, `daemoneye-cli`) with strict privilege separation and a shared core library. Use this index to locate normative specifications, core conceptual docs, and operational guidance. Prefer Documentation first for orientation; Specifications define authoritative requirements and limits; Configuration covers install/deploy/hardening guidance.
 
 ## Documentation
+
 - [AGENTS](AGENTS.md): AI assistant rules of engagement and precedence hierarchy
 - [README](README.md): Project overview, goals, quick start
 - [SECURITY](SECURITY.md): Security policy, reporting process, vulnerability disclosure
@@ -17,10 +18,12 @@ DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agen
 - [Testing](docs/src/testing.md): Testing strategy, tiers, tooling, quality gates
 
 ## Specifications
+
 - [ADR IPC Interprocess](spec/adr-ipc-interprocess.md): ADR for migrating IPC transport to interprocess crate
 - [API Reference](docs/src/api-reference.md): API reference index
 - [Architecture](docs/src/architecture.md): Architecture index linking to detailed subsystem docs
 - [Business Tier](docs/src/technical/business-tier.md): Business tier technical extensions
+- [Collector-Core Framework](docs/src/architecture/collector-core-framework.md): Collector-core framework architecture and implementation patterns
 - [Collector-Core Standards](.kiro/steering/collector-core.md): Collector-core framework patterns and requirements
 - [Core Monitoring](docs/src/technical/core-monitoring.md): Core monitoring capabilities requirements context
 - [Development Guidelines](.kiro/steering/development.md): Operational commands and development workflows
@@ -29,6 +32,7 @@ DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agen
 - [IPC Implementation](docs/src/technical/ipc-implementation.md): IPC implementation details and patterns
 - [Performance Standards](.kiro/steering/performance.md): Performance targets and resource management requirements
 - [Product](spec/product.md): Product feature specifications and tier definitions
+- [Product Strategy](spec/product_strategy.md): Product strategy and roadmap
 - [Query Pipeline](docs/src/technical/query-pipeline.md): Query pipeline architecture and execution
 - [Security Design Overview](docs/src/technical/security_design_overview.md): Security design overview and threat model
 - [Security Standards](.kiro/steering/security.md): Security guidelines and cryptographic standards
@@ -41,6 +45,7 @@ DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agen
 - [Testing Standards](.kiro/steering/testing.md): Testing strategy and quality assurance requirements
 
 ## Configuration
+
 - [Configuration](docs/src/deployment/configuration.md): Configuration parameters and hierarchy
 - [Deployment](docs/src/deployment.md): Deployment index for environment targets
 - [Docker](docs/src/deployment/docker.md): Containerization and Docker deployment guidance
@@ -50,7 +55,14 @@ DaemonEye implements a three-component architecture (`procmond`, `daemoneye-agen
 - [User Configuration](docs/src/user-guides/configuration.md): User-focused configuration walkthrough
 - [User Guides](docs/src/user-guides.md): User guides index
 
+## Examples
+
+- [Collector-Core](collector-core/README.md): Reusable collection infrastructure framework with unified event model
+- [DaemonEye EventBus](daemoneye-eventbus/README.md): Cross-platform IPC event bus with pub/sub messaging and embedded broker
+
 ## Optional
+
+- [CLI Reference](docs/src/cli-reference.md): Comprehensive command-line interface reference for all tools
 - [Core API](docs/src/api-reference/core-api.md): Core API concepts and interface reference
 - [Cursor Rules README](.cursor/rules/README.md): Overview of cursor rules and standards
 - [LICENSE](LICENSE): Project license (permissive usage terms)
