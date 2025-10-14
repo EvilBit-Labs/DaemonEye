@@ -203,6 +203,8 @@ The following foundational components have been successfully implemented:
 
 - [ ] 2.4 Migrate collector-core event distribution to daemoneye-eventbus topics
 
+- [ ] 2.4.1 Migrate collector-core event distribution to daemoneye-eventbus topics
+
   - Replace crossbeam channel usage with daemoneye-eventbus pub/sub topics in LocalEventBus implementation
   - Update EventSubscription and event routing logic to use daemoneye-eventbus topic patterns
   - Migrate event filtering and correlation to daemoneye-eventbus message broker capabilities
@@ -210,7 +212,7 @@ The following foundational components have been successfully implemented:
   - Create migration tests ensuring identical behavior between crossbeam and daemoneye-eventbus implementations
   - _Requirements: 14.4, 14.5, 15.1, 15.3_
 
-- [ ] 2.4.1 Replace crossbeam channels with daemoneye-eventbus pub/sub in LocalEventBus
+- [ ] 2.4.2 Replace crossbeam channels with daemoneye-eventbus pub/sub in LocalEventBus
 
   - Modify LocalEventBus implementation to use daemoneye-eventbus topics instead of crossbeam channels
   - Preserve existing event distribution semantics and ordering guarantees
@@ -218,7 +220,7 @@ The following foundational components have been successfully implemented:
   - Maintain backward compatibility with existing event consumers
   - _Requirements: 14.4, 15.1_
 
-- [ ] 2.4.2 Update EventSubscription and event routing for daemoneye-eventbus topics
+- [ ] 2.4.3 Update EventSubscription and event routing for daemoneye-eventbus topics
 
   - Modify EventSubscription structure to support daemoneye-eventbus topic patterns
   - Update event routing logic to use daemoneye-eventbus subscription mechanisms
@@ -226,7 +228,7 @@ The following foundational components have been successfully implemented:
   - Preserve existing event filtering capabilities
   - _Requirements: 14.5, 15.3_
 
-- [ ] 2.4.3 Migrate event filtering and correlation to daemoneye-eventbus capabilities
+- [ ] 2.4.4 Migrate event filtering and correlation to daemoneye-eventbus capabilities
 
   - Implement event filtering using daemoneye-eventbus topic subscription patterns
   - Create correlation tracking through daemoneye-eventbus message metadata
@@ -234,7 +236,7 @@ The following foundational components have been successfully implemented:
   - Maintain existing correlation ID and tracing functionality
   - _Requirements: 15.1, 15.4_
 
-- [ ] 2.4.4 Preserve event bus statistics and monitoring through daemoneye-eventbus
+- [ ] 2.4.5 Preserve event bus statistics and monitoring through daemoneye-eventbus
 
   - Implement statistics collection using daemoneye-eventbus broker metrics
   - Create monitoring dashboards for daemoneye-eventbus broker performance
@@ -242,7 +244,7 @@ The following foundational components have been successfully implemented:
   - Add daemoneye-eventbus-specific metrics and health indicators
   - _Requirements: 14.5, 15.1_
 
-- [ ] 2.4.5 Create migration tests ensuring behavioral equivalence
+- [ ] 2.4.6 Create migration tests ensuring behavioral equivalence
 
   - Write comprehensive tests comparing crossbeam vs daemoneye-eventbus behavior
   - Test event ordering, delivery guarantees, and error handling
@@ -252,6 +254,8 @@ The following foundational components have been successfully implemented:
 
 - [ ] 2.5 Implement RPC patterns for collector lifecycle management
 
+- [ ] 2.5.1 Implement RPC patterns for collector lifecycle management
+
   - Create RPC service definitions for collector start/stop/restart operations
   - Implement health check RPC calls between daemoneye-agent and collector processes
   - Add configuration update RPC patterns for dynamic collector reconfiguration
@@ -259,7 +263,7 @@ The following foundational components have been successfully implemented:
   - Write integration tests for RPC-based collector management workflows
   - _Requirements: 15.2, 15.5, 16.4_
 
-- [ ] 2.5.1 Create RPC service definitions for collector operations
+- [ ] 2.5.2 Create RPC service definitions for collector operations
 
   - Define RPC interfaces for collector start, stop, restart operations
   - Create service method signatures and parameter structures
@@ -267,7 +271,7 @@ The following foundational components have been successfully implemented:
   - Add error handling and timeout specifications
   - _Requirements: 15.2_
 
-- [ ] 2.5.2 Implement health check RPC calls and heartbeat system
+- [ ] 2.5.3 Implement health check RPC calls and heartbeat system
 
   - Create health check RPC service with status reporting
   - Implement heartbeat mechanism for collector monitoring
@@ -275,7 +279,7 @@ The following foundational components have been successfully implemented:
   - Create health check scheduling and timeout handling
   - _Requirements: 15.2, 15.5_
 
-- [ ] 2.5.3 Add configuration update RPC patterns
+- [ ] 2.5.4 Add configuration update RPC patterns
 
   - Implement dynamic configuration update RPC calls
   - Create configuration validation and rollback mechanisms
@@ -283,7 +287,7 @@ The following foundational components have been successfully implemented:
   - Implement hot-reload capabilities for collector settings
   - _Requirements: 15.5, 16.4_
 
-- [ ] 2.5.4 Create graceful shutdown coordination using RPC
+- [ ] 2.5.5 Create graceful shutdown coordination using RPC
 
   - Implement shutdown coordination RPC calls
   - Create shutdown sequence orchestration logic
@@ -291,7 +295,7 @@ The following foundational components have been successfully implemented:
   - Implement cleanup and resource release coordination
   - _Requirements: 15.5_
 
-- [ ] 2.5.5 Write integration tests for RPC-based collector management
+- [ ] 2.5.6 Write integration tests for RPC-based collector management
 
   - Create end-to-end tests for collector lifecycle management
   - Test RPC call reliability and error handling
@@ -299,7 +303,7 @@ The following foundational components have been successfully implemented:
   - Test configuration update workflows and rollback scenarios
   - _Requirements: 15.2, 15.5_
 
-- [ ] 2.5.6 Implement comprehensive RPC message schemas and correlation
+- [ ] 2.5.7 Implement comprehensive RPC message schemas and correlation
 
   - Create RpcRequest and RpcResponse message structures with correlation metadata
   - Implement CollectorOperation enum for all lifecycle operations (Start, Stop, Restart, HealthCheck, UpdateConfig, etc.)
@@ -308,7 +312,7 @@ The following foundational components have been successfully implemented:
   - Implement RPC call statistics and performance monitoring
   - _Requirements: 15.2, 15.5, 16.4_
 
-- [ ] 2.5.7 Add RPC-based capability negotiation and schema advertisement
+- [ ] 2.5.8 Add RPC-based capability negotiation and schema advertisement
 
   - Implement GetCapabilities RPC operation for dynamic collector discovery
   - Create schema advertisement RPC calls for collector registration with daemoneye-agent
@@ -319,6 +323,8 @@ The following foundational components have been successfully implemented:
 
 - [ ] 2.6 Add multi-process collector coordination via daemoneye-eventbus
 
+- [ ] 2.6.1 Add multi-process collector coordination via daemoneye-eventbus
+
   - Implement topic-based task distribution for multiple collector types (process, network, filesystem)
   - Create capability-based routing where tasks are published to appropriate collector topics
   - Add result aggregation from multiple collectors publishing to domain-specific topics
@@ -326,7 +332,7 @@ The following foundational components have been successfully implemented:
   - Write end-to-end tests with multiple collector processes coordinating through daemoneye-eventbus broker
   - _Requirements: 15.1, 15.3, 15.4, 16.1, 16.3_
 
-- [ ] 2.6.1 Implement topic-based task distribution for multiple collectors
+- [ ] 2.6.2 Implement topic-based task distribution for multiple collectors
 
   - Create task distribution logic using daemoneye-eventbus topic publishing
   - Implement collector type routing based on capabilities
@@ -334,7 +340,7 @@ The following foundational components have been successfully implemented:
   - Create load balancing across multiple collector instances
   - _Requirements: 15.1, 15.3_
 
-- [ ] 2.6.2 Create capability-based routing for collector tasks
+- [ ] 2.6.3 Create capability-based routing for collector tasks
 
   - Implement capability advertisement and discovery system
   - Create routing logic based on collector capabilities
@@ -342,7 +348,7 @@ The following foundational components have been successfully implemented:
   - Implement fallback routing for unavailable collectors
   - _Requirements: 15.3, 16.1_
 
-- [ ] 2.6.3 Add result aggregation from multiple collector domains
+- [ ] 2.6.4 Add result aggregation from multiple collector domains
 
   - Implement result collection from domain-specific topics
   - Create result correlation and aggregation logic
@@ -350,7 +356,7 @@ The following foundational components have been successfully implemented:
   - Implement result streaming and backpressure handling
   - _Requirements: 15.4, 16.3_
 
-- [ ] 2.6.4 Implement load balancing and failover for collector instances
+- [ ] 2.6.5 Implement load balancing and failover for collector instances
 
   - Create load balancing algorithms for task distribution
   - Implement failover detection and recovery mechanisms
@@ -358,7 +364,7 @@ The following foundational components have been successfully implemented:
   - Create automatic task redistribution on collector failure
   - _Requirements: 15.3, 16.1_
 
-- [ ] 2.6.5 Write end-to-end tests with multiple collector coordination
+- [ ] 2.6.6 Write end-to-end tests with multiple collector coordination
 
   - Create integration tests with multiple collector processes
   - Test task distribution and result aggregation workflows
@@ -366,7 +372,7 @@ The following foundational components have been successfully implemented:
   - Test collector coordination through daemoneye-eventbus broker
   - _Requirements: 15.1, 15.3, 15.4, 16.1, 16.3_
 
-- [ ] 2.6.6 Implement complete topic hierarchy as designed in architecture
+- [ ] 2.6.7 Implement complete topic hierarchy as designed in architecture
 
   - Create events.process.\* topic hierarchy (lifecycle, metadata, tree, integrity, anomaly, batch)
   - Implement control.collector.\* topics (lifecycle, config, task) for collector management
@@ -376,7 +382,7 @@ The following foundational components have been successfully implemented:
   - Add topic-based access control and security boundaries
   - _Requirements: 15.1, 15.3, 16.1_
 
-- [ ] 2.6.7 Add correlation metadata and multi-collector workflow support
+- [ ] 2.6.8 Add correlation metadata and multi-collector workflow support
 
   - Implement CorrelationMetadata with correlation_id, parent_correlation_id, root_correlation_id
   - Create sequence numbering and workflow stage tracking for complex operations
