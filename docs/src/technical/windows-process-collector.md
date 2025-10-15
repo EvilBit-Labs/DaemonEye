@@ -128,14 +128,15 @@ This document analyzes Task 5.5 to ensure it provides comprehensive Windows-cent
 
 1. **windows-service** - Windows service management
 2. **wmi** - Windows Management Instrumentation
-3. **perfmon** - Performance counter access (actively maintained alternative)
+3. **windows** or **windows-sys** - PDH performance counter bindings (choose one approach)
 4. **winreg** - Windows registry access
 
 ### Maintenance Status Notes
 
-- **winapi-safe** → **winsafe**: Replaced with winsafe for better maintenance and modern Windows API coverage
+- **winapi-safe** → **winsafe**: Replaced with winsafe v0.0.25 for better maintenance and modern Windows API coverage
 - **psutil-rs**: Removed due to limited maintenance; sysinfo provides equivalent functionality
-- **perfmon-rs** → **perfmon**: Updated to recommend actively maintained performance counter library
+- **perfmon**: Removed recommendation for non-existent crate; use PDH bindings via `windows` or `windows-sys` crates for performance counters
+- **MSRV Compatibility**: Verify winsafe v0.0.25 compatibility with MSRV 1.70+; test PDH approach with chosen Windows crate version
 
 ### Safety Considerations
 

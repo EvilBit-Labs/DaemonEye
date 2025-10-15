@@ -93,8 +93,26 @@ The `.github/workflows/release.yml` file provides:
 For other CI systems, use the same pattern:
 
 ```bash
-# Install GoReleaser
-curl -sL https://git.io/goreleaser | bash
+# Option 1: Install via package manager (recommended)
+# Ubuntu/Debian:
+# sudo apt update && sudo apt install goreleaser
+
+# macOS:
+# brew install goreleaser
+
+# Windows:
+# choco install goreleaser
+
+# Option 2: Download and verify manually
+# Download the latest release
+curl -L -o goreleaser.tar.gz https://github.com/goreleaser/goreleaser/releases/latest/download/goreleaser_Linux_x86_64.tar.gz
+
+# Verify checksum (replace with actual checksum from release page)
+echo "expected_checksum  goreleaser.tar.gz" | sha256sum -c
+
+# Extract and install
+tar -xzf goreleaser.tar.gz
+sudo mv goreleaser /usr/local/bin/
 
 # Run platform-specific build
 goreleaser release --config .goreleaser-<platform>.yaml

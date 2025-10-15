@@ -158,15 +158,18 @@ pub enum CollectionError {
 
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
+
+    #[error("No processes were collected")]
+    NoProcessesCollected,
 }
 
 // Use anyhow for application error context
 use anyhow::{Context, Result};
 
 // Helper function to validate collected process data
-fn validate_process_data(processes: &[ProcessInfo]) -> Result<()> {
+fn validate_process_data(processes: &[ProcessInfo]) -> Result<(), CollectionError> {
     if processes.is_empty() {
-        return Err(anyhow::anyhow!("No processes collected"));
+        return Err(CollectionError::NoProcessesCollected);
     }
 
     // Additional validation logic could go here
@@ -174,7 +177,7 @@ fn validate_process_data(processes: &[ProcessInfo]) -> Result<()> {
     Ok(())
 }
 
-pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
+pub async fn collect_processes() -> Result<Vec<ProcessInfo>, CollectionError> {
     let mut system = sysinfo::System::new_all();
     system.refresh_all();
 
@@ -185,7 +188,7 @@ pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
         .collect::<Vec<_>>();
 
     // Validate collected data before returning
-    validate_process_data(&processes).context("Failed to collect process information")?;
+    validate_process_data(&processes)?;
 
     Ok(processes)
 }

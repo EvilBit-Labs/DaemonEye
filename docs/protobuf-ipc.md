@@ -240,10 +240,22 @@ fn basic_process_enumeration() -> Result<(), Box<dyn std::error::Error>> {
     // Send via IPC transport...
 
     // Deserialize response
-    // Note: This is pseudocode - empty byte slice will always fail to decode
-    // In practice, response_bytes would contain valid serialized DetectionResult data
-    let response_bytes = &[]; // Placeholder - not decodable
-    let result = DetectionResult::decode(response_bytes)?;
+    // Create a mock DetectionResult for demonstration
+    let mock_result = DetectionResult {
+        task_id: "enum-001".to_string(),
+        success: true,
+        processes: vec![ProcessInfo {
+            pid: 1234,
+            name: "example_process".to_string(),
+            executable_path: Some("/usr/bin/example".to_string()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    // Serialize the mock result to demonstrate proper encoding/decoding
+    let response_bytes = prost::Message::encode_to_vec(&mock_result);
+    let result = DetectionResult::decode(&response_bytes[..])?;
 
     // Process results
     if result.success {

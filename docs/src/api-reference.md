@@ -59,11 +59,26 @@ async fn database_operations() -> Result<(), Box<dyn std::error::Error>> {
 ### Alert Management
 
 ```rust
-use daemoneye_lib::alerting::AlertManager;
+use daemoneye_lib::alerting::{Alert, AlertManager, AlertSeverity};
+use daemoneye_lib::models::ProcessInfo;
 
 async fn alert_management() -> Result<(), Box<dyn std::error::Error>> {
     let mut alert_manager = AlertManager::new();
     alert_manager.add_sink(Box::new(SyslogSink::new("daemon")?));
+
+    // Create a sample alert
+    let alert = Alert::new(
+        "suspicious_process_detected",
+        "Process 'malware.exe' detected with suspicious behavior",
+        AlertSeverity::High,
+        Some(ProcessInfo {
+            pid: 1234,
+            name: "malware.exe".to_string(),
+            executable_path: Some("/tmp/malware.exe".to_string()),
+            ..Default::default()
+        }),
+    );
+
     alert_manager.send_alert(alert).await?;
     Ok(())
 }

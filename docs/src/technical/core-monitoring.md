@@ -28,7 +28,9 @@ impl ProcessCollector {
         self.system.refresh_processes();
 
         let mut processes = Vec::new();
-        let collection_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
+        let collection_time =
+            i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())
+                .map_err(|_| "Timestamp overflow: system time exceeds i64::MAX milliseconds")?;
 
         for (pid, process) in self.system.processes() {
             let process_record = ProcessRecord {
