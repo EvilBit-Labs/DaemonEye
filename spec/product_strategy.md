@@ -12,7 +12,9 @@
   - daemoneye-lib (Shared library)
   - collector-core (Collector framework)
 
-DaemonEye is a system monitoring tool that collects process information from the system and sends it to a central server. It is designed to be used in a distributed environment, where each server collects process information from the systems it is running on and sends it to a central server. The central server then aggregates the process information and sends it to a central analysis server.
+DaemonEye is an agent-centric system monitoring tool that operates autonomously on each host to collect and analyze process information locally. The daemoneye-agent component runs independently on each system, collecting process data and executing detection rules without requiring a central server for core functionality.
+
+For enterprise deployments, an optional central server can be deployed to aggregate data from multiple agents, provide centralized management, and enable fleet-wide analysis. However, the core monitoring and detection capabilities function entirely within the local agent, ensuring the system remains operational even in airgapped or isolated environments.
 
 ## Core Functionality
 
@@ -47,16 +49,26 @@ The collector framework exposes virtual tables that can be queried using SQL-lik
   - Namespace: "daemoneye/process"
   - Name string: "{boot_id}:{pid}:{process_start_time_ns}"
 - Boot ID source (platform-specific):
-  - Linux: /proc/sys/kernel/random/boot_id (primary); fallback: btime from /proc/stat rendered as RFC 3339 UTC
-  - macOS: sysctl kern.boottime (seconds.microseconds) rendered as RFC 3339 UTC; if available, prefer kern.bootsessionuuid
-  - Windows: Win32_OperatingSystem.LastBootUpTime (WMI) rendered as RFC 3339 UTC; fallback: now - uptime (GetTickCount64) converted to boot time
-  - FreeBSD: sysctl kern.boottime rendered as RFC 3339 UTC
+  - Linux: /proc/sys/kernel/random/boot_id (primary); fallback: deterministic UUIDv5 from normalized btime timestamp
+  - macOS: kern.bootsessionuuid (primary); fallback: deterministic UUIDv5 from normalized kern.boottime
+  - Windows: Win32_OperatingSystem.LastBootUpTime (WMI) rendered as RFC 3339 UTC; no fallback (avoid clock arithmetic)
+  - FreeBSD: deterministic UUIDv5 from normalized kern.boottime timestamp
 - Timestamps:
   - All times MUST be stored in UTC using RFC 3339 format
   - Nanosecond precision MUST be used when available; otherwise, use the highest precision provided by the OS
+  - **Mixed-precision handling**: Normalize all timestamps to RFC 3339 with nanoseconds padded/truncated to consistent canonical form
+  - Record precision metadata when true nanoseconds are unavailable (e.g., `precision: "microseconds"`)
 - Table requirements:
   - Every virtual table MUST include process_instance_id
-  - Each table MUST explicitly specify its primary time field used in the composite key (e.g., event_time, capture_time, sample_time)
+  - Each table MUST explicitly specify its primary time field used in the composite key
+- **Primary Time Field Mapping:**
+  - `processes`: `start_time`
+  - `network_connections`: `created_time`
+  - `file_events`: `event_time`
+  - `memory_patterns`: `scan_time`
+  - `heap_analysis`: `analysis_time`
+  - `exploit_detection`: `analysis_time`
+  - `protocol_analysis`: `analysis_time`
 
 Triggerable collectors are not allowed to trigger other triggerable collectors. The daemoneye-agent will be responsible for triggering the appropriate collectors based on the SQL query and, when all data is returned, the daemoneye-agent will then trigger the alerting sinks to deliver the results. The alerting sinks will be responsible for delivering the results to the administrator. This decoupling allows the individual components to be more focused and have a reduced attack surface.
 
@@ -95,6 +107,25 @@ Core fields available across all platforms (provided by `sysinfo`):
 - `parent_process` (string): Parent process name
 - `root_directory` (string): Process root directory
 - `session_id` (integer): Process session ID
+
+**Table primary time field:** `start_time` (used in composite primary key: pid + start_time + process_instance_id)
+
+**Sensitive Data Handling:**
+
+Fields likely to contain PII/secrets (marked with `sensitive: true`):
+
+- `environment_variables` (json): Process environment variables (sensitive: true)
+- `command_line` (string): Complete command line arguments (sensitive: true)
+- `working_directory` (string): Current working directory (sensitive: true)
+- `root_directory` (string): Process root directory (sensitive: true)
+
+**Privacy Controls:**
+
+- **Redaction Rules**: Mask API keys, tokens, passwords using regex patterns (e.g., `(?i)(password|token|key|secret)\s*[:=]\s*\S+`)
+- **Encryption-at-Rest**: All sensitive fields must be encrypted in database storage
+- **Access Controls**: Sensitive fields require elevated permissions and audit logging
+- **Retention Policy**: Sensitive data retention limited to 30 days with automated purge
+- **Compliance Mapping**: GDPR (right to erasure), CCPA (data minimization), HIPAA (PHI protection), SOC2 (data handling)
 
 **Platform-Specific Extensions:**
 
@@ -188,7 +219,7 @@ Status: Planned
 Core fields available across all platforms (provided by `sysinfo`):
 
 - `pid` (integer): Process ID owning the connection (effective PK)
-- `connection_id` (string): Unique connection identifier
+- `connection_id` (string): Unique connection identifier (RFC4122 v5 UUID derived from 5-tuple: protocol + local_address + local_port + remote_address + remote_port + socket_inode + created_time_ms)
 - `protocol` (string): Protocol (tcp, udp, unix)
 - `local_address` (string): Local IP address
 - `local_port` (integer): Local port number
@@ -207,6 +238,8 @@ Core fields available across all platforms (provided by `sysinfo`):
 - `send_queue` (integer): Send queue length
 - `uid` (integer): User ID of socket owner
 - `gid` (integer): Group ID of socket owner
+
+**Table primary time field:** `created_time` (used in composite primary key: pid + connection_id + created_time)
 
 **Virtual Table: `network_interfaces`**
 
@@ -285,15 +318,6 @@ Linux extensions (provided by `sysinfo` and `procfs` crates):
 - `tcp_retries2` (integer): TCP retries 2
 - `tcp_orphan_retries` (integer): TCP orphan retries
 - `tcp_tw_reuse` (boolean): TCP TIME_WAIT socket reuse
-- `tcp_fin_timeout` (integer): TCP FIN timeout
-- `tcp_tw_recycle` (boolean): TCP TIME_WAIT socket recycling
-- `tcp_max_tw_buckets` (integer): TCP maximum TIME_WAIT buckets
-- `tcp_max_syn_backlog` (integer): TCP maximum SYN backlog
-- `tcp_syn_retries` (integer): TCP SYN retries
-- `tcp_synack_retries` (integer): TCP SYN-ACK retries
-- `tcp_abort_on_overflow` (boolean): TCP abort on overflow
-- `tcp_stdurg` (boolean): TCP strict URG
-- `tcp_rfc1337` (boolean): TCP RFC 1337
 - `tcp_fin_timeout` (integer): TCP FIN timeout
 - `tcp_tw_recycle` (boolean): TCP TIME_WAIT socket recycling
 - `tcp_max_tw_buckets` (integer): TCP maximum TIME_WAIT buckets
@@ -383,8 +407,9 @@ Core fields available across all platforms (provided by `sysinfo` and platform-s
 
 - `process_pid` (integer): Process ID that triggered the event (effective PK)
 - `event_id` (string): Unique event identifier
+- `canonical_id` (string): Cross-platform canonical identifier (foreign key to `file_metadata.canonical_id`)
 - `event_type` (string): Event type (create, modify, delete, access, move)
-- `file_path` (string): Full path to the file (effective FK to `file_metadata.file_path` on Windows)
+- `file_path` (string): Full path to the file (foreign key to `file_metadata.file_path` on Windows)
 - `file_name` (string): File name only
 - `directory` (string): Directory containing the file
 - `file_size` (integer): File size in bytes
@@ -400,7 +425,7 @@ Core fields available across all platforms (provided by `sysinfo` and platform-s
 - `mount_point` (string): Mount point containing the file
 - `filesystem_type` (string): Type of filesystem
 - `device_id` (integer): Device ID containing the file
-- `inode` (integer): Inode number (Linux/Unix) (foreign key referencing file_metadata.inode on Unix systems)
+- `inode` (integer): Inode number (Linux/Unix) (foreign key to `file_metadata.inode` on Unix systems)
 - `hard_links` (integer): Number of hard links
 - `block_size` (integer): Filesystem block size
 - `blocks_allocated` (integer): Number of blocks allocated
@@ -416,10 +441,24 @@ Core fields available across all platforms (provided by `sysinfo` and platform-s
 - `file_last_access_time` (timestamp): Last access time (Windows)
 - `file_change_time` (timestamp): Last change time (Linux/Unix)
 
+**Join Logic for file_events ↔ file_metadata:**
+
+- **Cross-platform**: Use `file_events.canonical_id = file_metadata.canonical_id`
+- **Unix/Linux**: Use `file_events.inode = file_metadata.inode AND file_events.device_id = file_metadata.device_id`
+- **Windows**: Use `file_events.file_path = file_metadata.file_path`
+
 **Virtual Table: `file_metadata`**
+
+> [!NOTE]
+> `file_metadata` is system-scoped (not process-scoped). Primary keys are platform-specific:
+>
+> - **Unix/Linux**: Primary key = `inode` + `device_id`
+> - **Windows**: Primary key = `file_path`
+> - **Cross-platform**: Use `canonical_id` (computed hash) for joins
 
 Core fields available across all platforms (provided by `sysinfo` and platform-specific crates):
 
+- `canonical_id` (string): Cross-platform canonical identifier (computed hash for joins)
 - `file_path` (string): Full path to the file
 - `file_name` (string): File name only
 - `directory` (string): Directory containing the file
@@ -931,6 +970,8 @@ Core fields available across all platforms (provided by `regex` crate and memory
 
 **Virtual Table: `memory_patterns`**
 
+> **⚠️ LEGAL/COMPLIANCE WARNING**: Memory analysis involves accessing potentially sensitive data including PII, credentials, and proprietary information. Ensure compliance with CFAA, GDPR/CCPA, PCI-DSS, and obtain proper authorization/consent before deployment. Implement redaction/sanitization rules for extracted artifacts and maintain audit logs for all access.
+
 Core fields available across all platforms (provided by `regex` crate and pattern matching utilities):
 
 - `pid` (integer): Process ID
@@ -943,10 +984,23 @@ Core fields available across all platforms (provided by `regex` crate and patter
 - `confidence` (float): Pattern matching confidence
 - `entropy_score` (float): Entropy of matched content
 - `false_positive_rate` (float): Estimated false positive rate
-- `rop_chain_detected` (boolean): Whether ROP chain was detected
-- `buffer_overflow_detected` (boolean): Whether buffer overflow was detected
-- `stack_corruption_detected` (boolean): Whether stack corruption was detected
+- `rop_chain_detected` (boolean): Summary flag for ROP chain detection (detailed analysis in exploit_detection table)
+- `buffer_overflow_detected` (boolean): Summary flag for buffer overflow detection (detailed analysis in exploit_detection table)
+- `stack_corruption_detected` (boolean): Summary flag for stack corruption detection (detailed analysis in exploit_detection table)
 - `scan_time` (timestamp): When pattern scan was performed
+
+**Privacy & Compliance Controls:**
+
+- **Redaction Rules**: Mask PII, credentials, keys using regex patterns; replace with hashed tokens
+- **Retention Policy**: Memory artifacts retained for 7 days with secure deletion; audit logs for 90 days
+- **Access Controls**: Memory analysis requires elevated permissions and multi-factor authentication
+- **Scope Restrictions**: Default scanning excludes heap/user-data regions; limit to code/stack/mapped regions
+- **Operational Checklist**: Obtain explicit consent, document legal basis, implement audit logging, establish data handling procedures
+
+**Table Boundaries:**
+
+- `memory_patterns`: Generic pattern-based detections (crypto keys, URLs, emails, IPs)
+- `exploit_detection`: Deep exploit-specific analysis (ROP chains, buffer overflows, shellcode)
 
 **Virtual Table: `heap_analysis`**
 
@@ -959,7 +1013,7 @@ Core fields available across all platforms (provided by `sysinfo` crate and plat
 - `allocation_count` (integer): Number of allocations
 - `free_count` (integer): Number of frees
 - `memory_leak_count` (integer): Number of potential memory leaks detected
-- `fragmentation` (float): Heap fragmentation percentage (indicator of suspicious allocation patterns)
+- `fragmentation` (float): Heap fragmentation percentage; fragmentation is allocator- and workload-dependent and not by itself indicative of malicious behavior
 - `largest_allocation` (integer): Size of largest allocation
 - `average_allocation` (float): Average allocation size
 - `peak_memory_usage` (integer): Peak memory usage
@@ -1064,6 +1118,18 @@ Core fields available across all platforms (provided by `huginn-net` crate for p
 - `http_accept_language` (string): HTTP Accept-Language header (via huginn-net)
 - `tcp_signature` (string): TCP signature fingerprint (via huginn-net)
 - `analysis_time` (timestamp): When analysis was performed
+
+**Privacy & Compliance Controls:**
+
+**PII and Sensitive Data Handling:**
+
+- **URL/DNS PII Redaction**: Strip or canonicalize query parameters, remove path segments resembling usernames/IDs (e.g., `/user/12345/profile` → `/user/[REDACTED]/profile`)
+- **Token/Credential Detection**: Mask Authorization, Cookie, API key values in `http_headers` using regex patterns (e.g., `(?i)(authorization|cookie|x-api-key):\s*[^\s,]+` → `$1: [MASKED]`)
+- **Data Retention Policy**: Protocol analysis records retained for 30 days with automated purge; audit logs for 1 year
+- **Access Controls**: Protocol analysis requires elevated permissions and audit logging for all access
+- **Legal/Operational Notes**: HTTP/HTTPS inspection requires TLS interception capabilities, explicit consent/notice, and jurisdiction-specific compliance (check local laws for network monitoring requirements)
+
+**Affected Fields**: `url`, `dns_query`, `http_headers`, `user_agent`, `certificate_issuer`
 
 **Virtual Table: `traffic_patterns`**
 
