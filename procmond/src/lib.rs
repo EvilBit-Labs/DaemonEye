@@ -353,18 +353,45 @@ impl ProcessMessageHandler {
     ) -> ProtoProcessRecord {
         use std::time::UNIX_EPOCH;
 
-        // Convert SystemTime to timestamp
-        let start_time = event.start_time.and_then(|st| {
-            st.duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs() as i64)
-        });
+        // Convert SystemTime to timestamp with proper error handling
+        let start_time = event
+            .start_time
+            .and_then(|st| match st.duration_since(UNIX_EPOCH) {
+                Ok(duration) => Some(duration.as_secs() as i64),
+                Err(_) => {
+                    tracing::warn!(
+                        pid = event.pid,
+                        name = %event.name,
+                        "Process start time is before Unix epoch, skipping"
+                    );
+                    None
+                }
+            });
 
-        let collection_time = event
-            .timestamp
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
+        let collection_time = match event.timestamp.duration_since(UNIX_EPOCH) {
+            Ok(duration) => {
+                // Use checked arithmetic to prevent overflow
+                let millis = duration.as_millis();
+                if millis > i64::MAX as u128 {
+                    tracing::warn!(
+                        pid = event.pid,
+                        name = %event.name,
+                        "Collection time overflow, clamping to i64::MAX"
+                    );
+                    i64::MAX
+                } else {
+                    millis as i64
+                }
+            }
+            Err(_) => {
+                tracing::warn!(
+                    pid = event.pid,
+                    name = %event.name,
+                    "Collection time is before Unix epoch, using 0"
+                );
+                0
+            }
+        };
 
         // Check if executable hash exists before moving the value
         let has_executable_hash = event.executable_hash.is_some();

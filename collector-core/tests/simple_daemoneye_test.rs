@@ -81,7 +81,9 @@ async fn test_daemoneye_eventbus_subscription_only() {
 #[tokio::test]
 async fn test_daemoneye_eventbus_publish_only() {
     let config = EventBusConfig::default();
-    let event_bus = DaemoneyeEventBus::new(config, "/tmp/simple-pub-test.sock")
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("simple-pub-test.sock");
+    let event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
         .await
         .expect("Failed to create DaemoneyeEventBus");
 

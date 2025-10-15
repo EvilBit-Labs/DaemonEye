@@ -261,7 +261,7 @@ sequenceDiagram
 **Transport Layer**: Use `interprocess` crate for cross-platform IPC communication:
 
 ```rust
-use daemoneye_lib::proto::{DetectionResult, DetectionTask};
+use daemoneye_lib::proto::{DetectionResult, DetectionTask, ProcessFilter, TaskType};
 use interprocess::local_socket::LocalSocketStream;
 
 fn example_ipc_communication() -> Result<(), Box<dyn std::error::Error>> {
@@ -272,10 +272,15 @@ fn example_ipc_communication() -> Result<(), Box<dyn std::error::Error>> {
     let stream = LocalSocketStream::connect(r"\\.\pipe\DaemonEye")?;
 
     // Protobuf message serialization with CRC32 checksums
-    let task = DetectionTask::new()
-        .with_rule_id("suspicious_process")
-        .with_query("SELECT * FROM processes WHERE name = 'malware.exe'")
-        .build();
+    let task = DetectionTask {
+        task_id: "suspicious_process".to_string(),
+        task_type: TaskType::EnumerateProcesses as i32,
+        process_filter: Some(ProcessFilter {
+            process_names: vec!["malware.exe".to_string()],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
 
     // Serialize and send with framing
     let serialized = prost::Message::encode_to_vec(&task);

@@ -39,6 +39,8 @@ pub struct SocketConfig {
     pub unix_path: String,
     /// Named pipe name for Windows
     pub windows_pipe: String,
+    /// Maximum number of concurrent connections
+    pub connection_limit: usize,
 }
 
 impl SocketConfig {
@@ -47,6 +49,7 @@ impl SocketConfig {
         Self {
             unix_path: format!("/tmp/daemoneye-{}.sock", instance_id),
             windows_pipe: format!(r"\\.\pipe\DaemonEye-{}", instance_id),
+            connection_limit: 100, // Default connection limit
         }
     }
 
@@ -149,7 +152,7 @@ impl TransportServer {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         // Connection limit to prevent resource exhaustion
-        if count >= 100 {
+        if count >= self.config.connection_limit as u64 {
             return Err(EventBusError::transport(
                 "Server shutdown or connection limit reached",
             ));
@@ -890,6 +893,7 @@ mod tests {
         let socket_config = SocketConfig {
             unix_path: socket_path.to_string_lossy().to_string(),
             windows_pipe: socket_path.to_string_lossy().to_string(),
+            connection_limit: 100, // Default connection limit for tests
         };
 
         // Start a server first

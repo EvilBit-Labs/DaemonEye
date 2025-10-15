@@ -34,6 +34,10 @@ use crate::process_collector::{
 };
 
 use sysinfo::{Pid, System};
+
+/// Maximum valid PID on Windows (65535)
+const MAX_VALID_PID: u32 = 65535;
+
 /// Windows-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
 pub enum WindowsCollectionError {
@@ -624,7 +628,7 @@ impl WindowsProcessCollector {
             return;
         }
 
-        if pid == 0 || pid > 1_000_000 {
+        if pid == 0 || pid > MAX_VALID_PID {
             warn!(
                 pid = pid,
                 "Process ID outside reasonable bounds, applying default security settings"
@@ -851,7 +855,7 @@ impl WindowsProcessCollector {
     /// Gets Windows-specific performance counters for a process using sysinfo.
     fn get_performance_counters(&self, pid: u32, system: &System) -> Option<(u64, u64, u64)> {
         // Validate PID to prevent overflow and invalid values
-        if pid == 0 || pid > u32::MAX / 2 {
+        if pid == 0 || pid > MAX_VALID_PID {
             debug!(
                 pid = pid,
                 "Invalid PID provided for performance counter collection"
@@ -862,9 +866,31 @@ impl WindowsProcessCollector {
         // Get process information using sysinfo
         if let Some((_, _, memory_kb, virtual_memory_kb)) = self.get_process_info(pid, system) {
             // Convert to bytes with overflow protection
-            let working_set_size = memory_kb.saturating_mul(1024);
-            let private_bytes = memory_kb.saturating_mul(1024);
-            let virtual_bytes = virtual_memory_kb.saturating_mul(1024);
+            let working_set_size = if memory_kb <= u64::MAX / 1024 {
+                memory_kb * 1024
+            } else {
+                tracing::warn!(
+                    pid = pid,
+                    memory_kb = memory_kb,
+                    "Memory KB value too large, clamping to u64::MAX"
+                );
+                u64::MAX
+            };
+            let private_bytes = if memory_kb <= u64::MAX / 1024 {
+                memory_kb * 1024
+            } else {
+                u64::MAX
+            };
+            let virtual_bytes = if virtual_memory_kb <= u64::MAX / 1024 {
+                virtual_memory_kb * 1024
+            } else {
+                tracing::warn!(
+                    pid = pid,
+                    virtual_memory_kb = virtual_memory_kb,
+                    "Virtual memory KB value too large, clamping to u64::MAX"
+                );
+                u64::MAX
+            };
 
             // Only return real values from sysinfo, omit handle_count and thread_count
             // until real Windows performance counter APIs are implemented

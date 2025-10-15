@@ -73,7 +73,7 @@ async fn test_trigger_emission_system_integration() {
     assert!(timeout_result.is_ok(), "Timeout tracking should succeed");
 
     // Test statistics collection
-    let stats = manager.get_statistics();
+    let stats = manager.get_statistics().unwrap();
     assert_eq!(stats.registered_capabilities, 1);
     assert_eq!(stats.emission_stats.total_emitted, 0);
 

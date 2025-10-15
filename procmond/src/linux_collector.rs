@@ -469,7 +469,7 @@ impl LinuxProcessCollector {
             .split_whitespace()
             .next()
             .and_then(|s| s.parse::<u64>().ok())
-            .map(|kb| kb * 1024) // Convert KB to bytes
+            .and_then(|kb| kb.checked_mul(1024)) // Convert KB to bytes with overflow check
     }
 
     /// Reads basic process information from /proc/[pid]/ files.

@@ -165,7 +165,7 @@ pub struct TriggerManager {
     config: TriggerConfig,
 
     /// Registered trigger conditions
-    conditions: Vec<TriggerCondition>,
+    conditions: Arc<Mutex<Vec<TriggerCondition>>>,
 
     /// Rate limiting state per collector
     rate_limits: Arc<Mutex<HashMap<String, RateLimitState>>>,
@@ -223,7 +223,7 @@ impl TriggerManager {
 
         Self {
             config,
-            conditions: Vec::new(),
+            conditions: Arc::new(Mutex::new(Vec::new())),
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
             deduplication_cache: Arc::new(Mutex::new(HashMap::new())),
             metadata_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -274,8 +274,11 @@ impl TriggerManager {
         // Register with SQL evaluator
         if let Ok(mut evaluator) = self.sql_evaluator.lock() {
             // Extract conditions that this collector can handle
-            let collector_conditions: Vec<&TriggerCondition> = self
+            let conditions = self
                 .conditions
+                .lock()
+                .map_err(|_| TriggerError::LockError("conditions".to_string()))?;
+            let collector_conditions: Vec<TriggerCondition> = conditions
                 .iter()
                 .filter(|condition| {
                     condition.target_collector == capabilities.collector_id
@@ -286,6 +289,7 @@ impl TriggerManager {
                             .supported_analysis
                             .contains(&condition.analysis_type)
                 })
+                .cloned()
                 .collect();
 
             evaluator.register_collector_conditions(
@@ -417,7 +421,7 @@ impl TriggerManager {
     /// # Errors
     ///
     /// Returns an error if the condition validation fails against collector capabilities.
-    pub fn register_condition(&mut self, condition: TriggerCondition) -> Result<(), TriggerError> {
+    pub fn register_condition(&self, condition: TriggerCondition) -> Result<(), TriggerError> {
         info!(
             condition_id = %condition.id,
             analysis_type = ?condition.analysis_type,
@@ -429,18 +433,34 @@ impl TriggerManager {
         self.validate_trigger_condition(&condition)?;
 
         let collector_id = condition.target_collector.clone();
-        self.conditions.push(condition);
 
+        // Add condition to the list
+        {
+            let mut conditions = self
+                .conditions
+                .lock()
+                .map_err(|_| TriggerError::LockError("conditions".to_string()))?;
+            conditions.push(condition);
+        }
+
+        // Get evaluator lock and register conditions
         let mut evaluator = self
             .sql_evaluator
             .lock()
             .map_err(|_| TriggerError::LockError("sql_evaluator".to_string()))?;
 
-        let collector_conditions: Vec<_> = self
-            .conditions
-            .iter()
-            .filter(|c| c.target_collector == collector_id)
-            .collect();
+        // Get conditions for this collector
+        let collector_conditions: Vec<_> = {
+            let conditions = self
+                .conditions
+                .lock()
+                .map_err(|_| TriggerError::LockError("conditions".to_string()))?;
+            conditions
+                .iter()
+                .filter(|c| c.target_collector == collector_id)
+                .cloned()
+                .collect()
+        };
         evaluator.register_collector_conditions(collector_id, collector_conditions)?;
 
         Ok(())
@@ -582,10 +602,14 @@ impl TriggerManager {
         &self,
         process_data: &ProcessTriggerData,
     ) -> Result<Vec<TriggerRequest>, TriggerError> {
-        let mut triggers = Vec::with_capacity(self.conditions.len());
+        let conditions = self
+            .conditions
+            .lock()
+            .map_err(|_| TriggerError::LockError("conditions".to_string()))?;
+        let mut triggers = Vec::with_capacity(conditions.len());
 
         // Evaluate each registered condition
-        for condition in &self.conditions {
+        for condition in conditions.iter() {
             if self.evaluate_condition(condition, process_data)? {
                 debug!(
                     condition_id = %condition.id,
@@ -873,21 +897,7 @@ impl TriggerManager {
         // Validate trigger request against collector capabilities
         self.validate_trigger_request(&trigger).await?;
 
-        // Check if event bus is configured
-        {
-            let bus_guard = self.event_bus.read().await;
-            match bus_guard.as_ref() {
-                Some(_bus) => {
-                    // Event bus is available, proceed with emission
-                }
-                None => {
-                    return Err(TriggerError::EventBusError(
-                        "Event bus not configured".to_string(),
-                    ));
-                }
-            }
-        }
-
+        // Check if event bus is configured and get write lock directly
         let mut bus_guard = self.event_bus.write().await;
         let bus = bus_guard
             .as_mut()
@@ -1157,7 +1167,7 @@ impl TriggerManager {
     }
 
     /// Returns current trigger statistics for monitoring.
-    pub fn get_statistics(&self) -> TriggerStatistics {
+    pub fn get_statistics(&self) -> Result<TriggerStatistics, TriggerError> {
         let pending_count = self.pending_count.lock().map(|count| *count).unwrap_or(0);
 
         // Batch lock acquisitions to minimize lock contention
@@ -1210,8 +1220,14 @@ impl TriggerManager {
             )
         };
 
-        TriggerStatistics {
-            registered_conditions: self.conditions.len(),
+        let conditions_len = self
+            .conditions
+            .lock()
+            .map_err(|_| TriggerError::LockError("conditions".to_string()))?
+            .len();
+
+        Ok(TriggerStatistics {
+            registered_conditions: conditions_len,
             pending_triggers: pending_count,
             deduplication_cache_size: dedup_cache_size,
             rate_limit_states,
@@ -1219,7 +1235,7 @@ impl TriggerManager {
             queue_stats,
             sql_evaluation_stats,
             emission_stats,
-        }
+        })
     }
 
     /// Cleans up expired entries and resets counters.
@@ -1548,7 +1564,7 @@ impl SqlTriggerEvaluator {
     pub fn register_collector_conditions(
         &mut self,
         collector_id: String,
-        conditions: Vec<&TriggerCondition>,
+        conditions: Vec<TriggerCondition>,
     ) -> Result<(), TriggerError> {
         let mut compiled_conditions = Vec::new();
 
@@ -1970,7 +1986,7 @@ mod tests {
         let config = TriggerConfig::default();
         let manager = TriggerManager::new(config);
 
-        let stats = manager.get_statistics();
+        let stats = manager.get_statistics().unwrap();
         assert_eq!(stats.registered_conditions, 0);
         assert_eq!(stats.pending_triggers, 0);
         assert_eq!(stats.registered_capabilities, 0);
@@ -1979,7 +1995,7 @@ mod tests {
     #[test]
     fn test_condition_registration() {
         let config = TriggerConfig::default();
-        let mut manager = TriggerManager::new(config);
+        let manager = TriggerManager::new(config);
 
         // First register collector capabilities
         let capabilities = create_test_capabilities();
@@ -1990,7 +2006,7 @@ mod tests {
         let condition = create_test_condition();
         manager.register_condition(condition).unwrap();
 
-        let stats = manager.get_statistics();
+        let stats = manager.get_statistics().unwrap();
         assert_eq!(stats.registered_conditions, 1);
         assert_eq!(stats.registered_capabilities, 1);
     }
@@ -1998,7 +2014,7 @@ mod tests {
     #[test]
     fn test_process_name_pattern_matching() {
         let config = TriggerConfig::default();
-        let mut manager = TriggerManager::new(config);
+        let manager = TriggerManager::new(config);
 
         // Register capabilities first
         let capabilities = create_test_capabilities();
@@ -2021,7 +2037,7 @@ mod tests {
     #[test]
     fn test_missing_executable_condition() {
         let config = TriggerConfig::default();
-        let mut manager = TriggerManager::new(config);
+        let manager = TriggerManager::new(config);
 
         // Register capabilities first
         let capabilities = create_test_capabilities();
@@ -2050,7 +2066,7 @@ mod tests {
     #[test]
     fn test_resource_anomaly_condition() {
         let config = TriggerConfig::default();
-        let mut manager = TriggerManager::new(config);
+        let manager = TriggerManager::new(config);
 
         // Register capabilities for behavior analyzer
         let mut capabilities = create_test_capabilities();
@@ -2093,7 +2109,7 @@ mod tests {
             deduplication_window_secs: 60,
             ..Default::default()
         };
-        let mut manager = TriggerManager::new(config);
+        let manager = TriggerManager::new(config);
 
         // Register capabilities first
         let capabilities = create_test_capabilities();
@@ -2123,7 +2139,7 @@ mod tests {
             deduplication_window_secs: 0, // Disable deduplication for this test
             ..Default::default()
         };
-        let mut manager = TriggerManager::new(config);
+        let manager = TriggerManager::new(config);
 
         // Register capabilities first
         let capabilities = create_test_capabilities();
@@ -2155,7 +2171,7 @@ mod tests {
             enable_metadata_tracking: true,
             ..Default::default()
         };
-        let mut manager = TriggerManager::new(config);
+        let manager = TriggerManager::new(config);
 
         // Register capabilities first
         let capabilities = create_test_capabilities();
@@ -2227,7 +2243,7 @@ mod tests {
         );
 
         let stats = manager.get_statistics();
-        assert_eq!(stats.registered_capabilities, 1);
+        assert_eq!(stats.unwrap().registered_capabilities, 1);
 
         let retrieved_caps = manager.get_collector_capabilities(&collector_id);
         assert!(retrieved_caps.is_some());
@@ -2268,7 +2284,7 @@ mod tests {
     #[test]
     fn test_sql_trigger_evaluation() {
         let config = TriggerConfig::default();
-        let mut manager = TriggerManager::new(config);
+        let manager = TriggerManager::new(config);
 
         // Register capabilities
         let capabilities = create_test_capabilities();
@@ -2395,7 +2411,7 @@ mod tests {
     #[test]
     fn test_trigger_statistics_collection() {
         let config = TriggerConfig::default();
-        let mut manager = TriggerManager::new(config);
+        let manager = TriggerManager::new(config);
 
         // Register capabilities
         let capabilities = create_test_capabilities();
@@ -2408,7 +2424,7 @@ mod tests {
         manager.register_condition(condition).unwrap();
 
         // Get statistics
-        let stats = manager.get_statistics();
+        let stats = manager.get_statistics().unwrap();
         assert_eq!(stats.registered_conditions, 1);
         assert_eq!(stats.registered_capabilities, 1);
         assert_eq!(stats.queue_stats.total_enqueued, 0);
@@ -2422,7 +2438,13 @@ mod tests {
 
         // Check updated statistics
         let updated_stats = manager.get_statistics();
-        assert!(updated_stats.sql_evaluation_stats.total_evaluations > 0);
+        assert!(
+            updated_stats
+                .unwrap()
+                .sql_evaluation_stats
+                .total_evaluations
+                > 0
+        );
     }
 
     #[test]
@@ -2481,7 +2503,7 @@ mod tests {
         ));
 
         // Check emission statistics
-        let stats = manager.get_statistics();
+        let stats = manager.get_statistics().unwrap();
         assert_eq!(stats.emission_stats.total_emitted, 0);
         assert_eq!(stats.emission_stats.successful_emissions, 0);
     }
@@ -2619,7 +2641,7 @@ mod tests {
             .unwrap();
 
         // Check initial statistics
-        let initial_stats = manager.get_statistics();
+        let initial_stats = manager.get_statistics().unwrap();
         assert_eq!(initial_stats.emission_stats.total_emitted, 0);
         assert_eq!(initial_stats.emission_stats.successful_emissions, 0);
         assert_eq!(initial_stats.emission_stats.validation_failures, 0);
@@ -2643,7 +2665,7 @@ mod tests {
 
         // Statistics should remain unchanged since validation failed before emission
         let stats = manager.get_statistics();
-        assert_eq!(stats.emission_stats.total_emitted, 0);
+        assert_eq!(stats.unwrap().emission_stats.total_emitted, 0);
     }
 
     /// Helper function to create a test trigger request.

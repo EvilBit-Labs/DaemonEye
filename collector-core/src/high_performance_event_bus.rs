@@ -1,8 +1,9 @@
 //! High-performance event bus implementation using crossbeam channels.
 //!
-//! This module provides a lock-free, high-throughput event bus that can handle
+//! This module provides a high-throughput event bus that can handle
 //! millions of events per second with minimal latency using crossbeam's optimized
-//! lock-free channels and proper synchronization primitives.
+//! channels. Note that while the core event routing uses lock-free crossbeam channels,
+//! subscriber management and statistics tracking use blocking synchronization (RwLock).
 
 use crate::{event::CollectionEvent, source::SourceCaps};
 use anyhow::Result;
@@ -19,7 +20,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -29,6 +30,8 @@ use uuid::Uuid;
 pub struct HighPerformanceEventBusConfig {
     /// Maximum number of events in the broadcast channel buffer
     pub channel_capacity: usize,
+    /// Maximum number of events in each subscriber's channel buffer
+    pub per_subscriber_channel_capacity: usize,
     /// Maximum number of concurrent subscribers
     pub max_subscribers: usize,
     /// Backpressure strategy when subscribers are slow
@@ -44,7 +47,8 @@ pub struct HighPerformanceEventBusConfig {
 impl Default for HighPerformanceEventBusConfig {
     fn default() -> Self {
         Self {
-            channel_capacity: 1024 * 1024, // 1M events
+            channel_capacity: 1024 * 1024,         // 1M events
+            per_subscriber_channel_capacity: 1024, // 1K events per subscriber
             max_subscribers: 1000,
             backpressure_strategy: BackpressureStrategy::Blocking,
             enable_persistence: false,
@@ -341,9 +345,8 @@ impl HighPerformanceEventBusImpl {
 
     /// Checks if an event matches the given filter.
     #[allow(dead_code)]
-    fn matches_filter(&self, _event: &CollectionEvent, _filter: &EventFilter) -> bool {
-        // TODO: Implement actual filtering logic
-        true
+    fn matches_filter(&self, event: &CollectionEvent, filter: &EventFilter) -> bool {
+        matches_filter(event, filter)
     }
 
     /// Updates event bus statistics.
@@ -352,6 +355,23 @@ impl HighPerformanceEventBusImpl {
         let mut stats = self.statistics.write();
         stats.events_delivered += delivered;
         stats.events_dropped += dropped;
+        stats.last_updated = SystemTime::now();
+    }
+
+    /// Flushes atomic counters to statistics (called periodically to reduce lock contention).
+    #[allow(dead_code)]
+    fn flush_atomic_counters(&self) {
+        let mut stats = self.statistics.write();
+
+        // Read and reset atomic counters
+        let events_published = self.event_counter.swap(0, Ordering::Acquire);
+        let events_delivered = self.delivery_counter.swap(0, Ordering::Acquire);
+        let events_dropped = self.drop_counter.swap(0, Ordering::Acquire);
+
+        // Update statistics
+        stats.events_published += events_published;
+        stats.events_delivered += events_delivered;
+        stats.events_dropped += events_dropped;
         stats.last_updated = SystemTime::now();
     }
 }
@@ -368,13 +388,8 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
             .send(bus_event)
             .map_err(|_| anyhow::anyhow!("Failed to send event - channel disconnected"))?;
 
-        // Update counters with proper memory ordering
+        // Update atomic counters (lock-free)
         self.event_counter.fetch_add(1, Ordering::Release);
-
-        // Update statistics (batched to reduce lock contention)
-        let mut stats = self.statistics.write();
-        stats.events_published += 1;
-        stats.last_updated = SystemTime::now();
 
         Ok(())
     }
@@ -394,7 +409,7 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
         }
 
         // Create crossbeam bounded channel for this subscriber
-        let (sender, receiver) = bounded::<BusEvent>(self.config.channel_capacity);
+        let (sender, receiver) = bounded::<BusEvent>(self.config.per_subscriber_channel_capacity);
 
         let subscriber_info = SubscriberInfo {
             subscription: subscription.clone(),
@@ -423,7 +438,20 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
     }
 
     async fn get_statistics(&self) -> EventBusStatistics {
-        self.statistics.read().clone()
+        let mut stats = self.statistics.read().clone();
+
+        // Read current values from atomic counters
+        let events_published = self.event_counter.load(Ordering::Acquire);
+        let events_delivered = self.delivery_counter.load(Ordering::Acquire);
+        let events_dropped = self.drop_counter.load(Ordering::Acquire);
+
+        // Update with current atomic values
+        stats.events_published += events_published;
+        stats.events_delivered += events_delivered;
+        stats.events_dropped += events_dropped;
+        stats.last_updated = SystemTime::now();
+
+        stats
     }
 
     async fn shutdown(&mut self) -> Result<()> {
@@ -432,13 +460,50 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
         // Signal shutdown with proper memory ordering
         self.shutdown_signal.store(true, Ordering::Release);
 
-        // Wait for routing task to complete
+        // Wait for routing task to complete with timeout
         if let Some(handle) = self.routing_handle.take() {
-            let _ = handle.join();
+            // Use a reasonable timeout for shutdown
+            match tokio::time::timeout(
+                Duration::from_secs(5),
+                tokio::task::spawn_blocking(move || handle.join()),
+            )
+            .await
+            {
+                Ok(join_result) => {
+                    if let Err(panic_info) = join_result {
+                        tracing::error!(
+                            "Routing thread panicked during shutdown: {:?}",
+                            panic_info
+                        );
+                        return Err(anyhow::anyhow!("Routing thread panicked during shutdown"));
+                    }
+                }
+                Err(_timeout) => {
+                    tracing::warn!("Routing thread shutdown timeout, some events may be lost");
+                    return Err(anyhow::anyhow!("Routing thread shutdown timeout"));
+                }
+            }
         }
 
         info!("High-performance event bus shutdown complete");
         Ok(())
+    }
+}
+
+impl Drop for HighPerformanceEventBusImpl {
+    fn drop(&mut self) {
+        // Signal shutdown to routing thread
+        self.shutdown_signal.store(true, Ordering::Release);
+
+        // Close the publisher to wake the thread if it's blocking on recv()
+        // The publisher will be dropped when the struct is dropped
+
+        // Wait for routing thread to complete
+        if let Some(handle) = self.routing_handle.take() {
+            let _ = handle.join();
+        }
+
+        // Shared Arcs will be dropped after thread exits
     }
 }
 
@@ -454,8 +519,45 @@ fn matches_capabilities(event: &CollectionEvent, capabilities: &SourceCaps) -> b
 }
 
 /// Helper function to check if an event matches a filter.
-fn matches_filter(_event: &CollectionEvent, _filter: &EventFilter) -> bool {
-    // TODO: Implement actual filtering logic
+fn matches_filter(event: &CollectionEvent, filter: &EventFilter) -> bool {
+    // Check event type filtering
+    if !filter.event_types.is_empty() {
+        let event_type = match event {
+            CollectionEvent::Process(_) => "process",
+            CollectionEvent::Network(_) => "network",
+            CollectionEvent::Filesystem(_) => "filesystem",
+            CollectionEvent::Performance(_) => "performance",
+            CollectionEvent::TriggerRequest(_) => "trigger_request",
+        };
+        if !filter.event_types.contains(&event_type.to_string()) {
+            return false;
+        }
+    }
+
+    // Check priority filtering (if event has priority)
+    if let Some(min_priority) = filter.min_priority {
+        // For now, assume all events have normal priority (2) unless they're trigger requests
+        let event_priority = match event {
+            CollectionEvent::TriggerRequest(trigger) => match trigger.priority {
+                crate::event::TriggerPriority::Low => 1,
+                crate::event::TriggerPriority::Normal => 2,
+                crate::event::TriggerPriority::High => 3,
+                crate::event::TriggerPriority::Critical => 4,
+            },
+            _ => 2, // Default normal priority for other events
+        };
+        if event_priority < min_priority {
+            return false;
+        }
+    }
+
+    // Check source filtering (if specified)
+    if let Some(ref _source_filter) = filter.source_filter {
+        // For now, we don't have source information in CollectionEvent
+        // This would need to be added to the event structure
+        // For now, skip source filtering
+    }
+
     true
 }
 

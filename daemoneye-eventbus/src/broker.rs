@@ -50,6 +50,7 @@ impl DaemoneyeBroker {
             SocketConfig {
                 unix_path: socket_path.to_string(),
                 windows_pipe: socket_path.to_string(),
+                connection_limit: 100, // Default connection limit
             }
         } else {
             config

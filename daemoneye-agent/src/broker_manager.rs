@@ -233,9 +233,11 @@ impl BrokerManager {
                     BrokerHealth::Healthy
                 } else {
                     warn!("Broker health check failed - unable to get statistics");
+                    let unhealthy_status =
+                        BrokerHealth::Unhealthy("Unable to get statistics".to_string());
                     let mut health = self.health_status.write().await;
-                    *health = BrokerHealth::Unhealthy("Unable to get statistics".to_string());
-                    BrokerHealth::Unhealthy("Unable to get statistics".to_string())
+                    *health = unhealthy_status.clone();
+                    unhealthy_status
                 }
             }
             other => other,

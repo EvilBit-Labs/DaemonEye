@@ -25,6 +25,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, RwLock, broadcast};
 use uuid::Uuid;
 
@@ -162,6 +163,8 @@ pub struct LocalEventBus {
     event_tx: broadcast::Sender<CollectionEvent>,
     /// Subscriber management
     subscribers: Arc<RwLock<HashMap<String, broadcast::Receiver<CollectionEvent>>>>,
+    /// Forwarding task handles
+    forwarding_tasks: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
     /// Statistics
     stats: Arc<Mutex<EventBusStatistics>>,
     /// Start time
@@ -177,6 +180,7 @@ impl LocalEventBus {
             config,
             event_tx,
             subscribers: Arc::new(RwLock::new(HashMap::new())),
+            forwarding_tasks: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(Mutex::new(EventBusStatistics {
                 events_published: 0,
                 events_delivered: 0,
@@ -218,31 +222,55 @@ impl EventBus for LocalEventBus {
         let mut stats = self.stats.lock().await;
         stats.active_subscribers = subscribers.len();
 
-        tokio::spawn(async move {
-            while let Ok(event) = forwarding_rx.recv().await {
-                // Convert CollectionEvent to BusEvent
-                let bus_event = BusEvent {
-                    id: Uuid::new_v4(),
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                    event,
-                    correlation_id: None,
-                    routing_metadata: HashMap::new(),
-                };
-                if tx.send(bus_event).is_err() {
-                    break;
+        // Spawn forwarding task and track it
+        let task_handle = tokio::spawn(async move {
+            loop {
+                match forwarding_rx.recv().await {
+                    Ok(event) => {
+                        // Convert CollectionEvent to BusEvent
+                        let bus_event = BusEvent {
+                            id: Uuid::new_v4(),
+                            timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                            event,
+                            correlation_id: None,
+                            routing_metadata: HashMap::new(),
+                        };
+                        let _ = tx.send(bus_event);
+                    }
+                    Err(RecvError::Lagged(_)) => {
+                        // Log lag and continue
+                        tracing::warn!("Subscriber lagged behind, continuing");
+                        continue;
+                    }
+                    Err(RecvError::Closed) => {
+                        // Channel closed, terminate task
+                        break;
+                    }
                 }
             }
         });
+
+        // Store the task handle and shutdown sender
+        let mut forwarding_tasks = self.forwarding_tasks.write().await;
+        forwarding_tasks.insert(subscriber_id.clone(), task_handle);
 
         Ok(rx)
     }
 
     async fn unsubscribe(&mut self, subscriber_id: &str) -> Result<()> {
+        // Remove subscriber
         let mut subscribers = self.subscribers.write().await;
         subscribers.remove(subscriber_id);
+
+        // Remove and await forwarding task
+        let mut forwarding_tasks = self.forwarding_tasks.write().await;
+        if let Some(task_handle) = forwarding_tasks.remove(subscriber_id) {
+            // Task will terminate when its shutdown signal is sent or channel closes
+            drop(task_handle); // Let the task finish naturally
+        }
 
         let mut stats = self.stats.lock().await;
         stats.active_subscribers = subscribers.len();
@@ -261,8 +289,13 @@ impl EventBus for LocalEventBus {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        // LocalEventBus doesn't require any special shutdown logic
-        // as it uses in-process channels that are automatically cleaned up
+        // Abort all forwarding tasks
+        let forwarding_tasks = self.forwarding_tasks.read().await;
+        for task_handle in forwarding_tasks.values() {
+            task_handle.abort();
+        }
+        drop(forwarding_tasks);
+
         Ok(())
     }
 }
@@ -312,8 +345,15 @@ mod tests {
 
         let received_event = timeout(Duration::from_secs(2), receiver.recv())
             .await
-            .expect("timed out waiting for event")
-            .unwrap();
-        assert_eq!(received_event.event, event);
+            .expect("timed out waiting for event");
+
+        match received_event {
+            Some(received) => {
+                assert_eq!(received.event, event);
+            }
+            None => {
+                panic!("Channel was closed - forwarding task may have terminated");
+            }
+        }
     }
 }

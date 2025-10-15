@@ -43,7 +43,7 @@
 //!     let process_event = CollectionEvent::Process(ProcessEvent {
 //!         pid: 1234,
 //!         name: "example_process".to_string(),
-//!         command_line: Some("example_command".to_string()),
+//!         command_line: Some("example_command --arg1 --arg2".to_string()),
 //!         executable_path: Some("/bin/example".to_string()),
 //!         ppid: Some(1),
 //!         start_time: Some(SystemTime::now()),

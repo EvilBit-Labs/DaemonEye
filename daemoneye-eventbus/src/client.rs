@@ -465,6 +465,7 @@ mod tests {
         let socket_config = SocketConfig {
             unix_path: socket_path.to_string_lossy().to_string(),
             windows_pipe: socket_path.to_string_lossy().to_string(),
+            connection_limit: 100,
         };
 
         // Start a server first
@@ -488,6 +489,7 @@ mod tests {
         let socket_config = SocketConfig {
             unix_path: socket_path.to_string_lossy().to_string(),
             windows_pipe: socket_path.to_string_lossy().to_string(),
+            connection_limit: 100,
         };
 
         // Start a server first
@@ -523,6 +525,7 @@ mod tests {
         let socket_config = SocketConfig {
             unix_path: socket_path.to_string_lossy().to_string(),
             windows_pipe: socket_path.to_string_lossy().to_string(),
+            connection_limit: 100,
         };
 
         // Start a server first

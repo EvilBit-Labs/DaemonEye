@@ -214,19 +214,16 @@ impl OSEnvironment {
 
     /// Detect container runtime.
     fn detect_container_runtime() -> Option<String> {
+        // Read /proc/1/cgroup once and reuse the content
+        let cgroup_content = std::fs::read_to_string("/proc/1/cgroup").unwrap_or_default();
+
         // Check for Docker
-        if std::fs::read_to_string("/proc/1/cgroup")
-            .map(|content| content.contains("docker"))
-            .unwrap_or(false)
-        {
+        if cgroup_content.contains("docker") {
             return Some("docker".to_string());
         }
 
         // Check for Kubernetes/containerd
-        if std::fs::read_to_string("/proc/1/cgroup")
-            .map(|content| content.contains("kubepods"))
-            .unwrap_or(false)
-        {
+        if cgroup_content.contains("kubepods") {
             return Some("kubernetes".to_string());
         }
 

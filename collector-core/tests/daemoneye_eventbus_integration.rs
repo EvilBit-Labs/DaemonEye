@@ -105,7 +105,9 @@ async fn test_daemoneye_eventbus_integration() {
 #[tokio::test]
 async fn test_daemoneye_eventbus_trigger_requests() {
     let config = EventBusConfig::default();
-    let mut event_bus = DaemoneyeEventBus::new(config, "/tmp/test-trigger-integration.sock")
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("test-trigger-integration.sock");
+    let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
         .await
         .expect("Failed to create DaemoneyeEventBus");
 
@@ -171,7 +173,9 @@ async fn test_daemoneye_eventbus_trigger_requests() {
 #[tokio::test]
 async fn test_daemoneye_eventbus_multiple_subscribers() {
     let config = EventBusConfig::default();
-    let mut event_bus = DaemoneyeEventBus::new(config, "/tmp/test-multi-sub.sock")
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("test-multi-sub.sock");
+    let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
         .await
         .expect("Failed to create DaemoneyeEventBus");
 

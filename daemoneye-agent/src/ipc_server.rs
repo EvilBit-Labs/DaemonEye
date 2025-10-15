@@ -71,8 +71,9 @@ impl IpcServerManager {
 
         // Set up message handler for CLI requests
         server.set_handler(|task: DetectionTask| async move {
-            // Handle CLI requests - for now, return a simple response
-            // This will be expanded to handle actual CLI operations
+            // TODO: This is a placeholder CLI handler to be expanded to handle real CLI operations
+            // Fields intentionally left empty: processes, hash_result, network_events, filesystem_events, performance_events
+            // Expected future behavior: implement actual CLI command processing and data retrieval
             debug!("Received CLI task: {}", task.task_id);
 
             // Create a basic response for CLI requests

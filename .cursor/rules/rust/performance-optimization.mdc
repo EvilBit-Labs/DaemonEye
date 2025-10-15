@@ -205,11 +205,11 @@ impl Drop for ResourceManager {
 Implement high-performance event distribution with crossbeam:
 
 ```rust
-use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
+use crossbeam::channel::{bounded, Receiver, Sender};
 use crossbeam::utils::Backoff;
 use parking_lot::RwLock;
 use std::thread;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use std::collections::HashMap;
 
 // High-performance event bus implementation
@@ -217,24 +217,37 @@ pub struct HighPerformanceEventBus {
     publisher: Sender<BusEvent>,
     subscribers: Arc<RwLock<HashMap<String, SubscriberInfo>>>,
     routing_handle: Option<thread::JoinHandle<()>>,
+    shutdown_signal: Arc<AtomicBool>,
 }
 
 impl HighPerformanceEventBus {
     pub fn new() -> Self {
-        let (publisher, receiver) = unbounded::<BusEvent>();
+        // Use bounded channel to prevent unbounded memory growth
+        let (publisher, receiver) = bounded::<BusEvent>(1024 * 1024); // 1M events
         let subscribers = Arc::new(RwLock::new(HashMap::new()));
+        let shutdown_signal = Arc::new(AtomicBool::new(false));
 
         // Clone Arc before spawning thread
         let thread_subs = Arc::clone(&subscribers);
+        let thread_shutdown = Arc::clone(&shutdown_signal);
+
         // Spawn routing thread with crossbeam backoff
         let routing_handle = thread::spawn(move || {
             let backoff = Backoff::new();
-            while let Ok(event) = receiver.recv() {
-                // Route to subscribers with efficient backoff
-                let subs = thread_subs.read();
-                for (_, subscriber) in subs.iter() {
-                    if let Err(_) = subscriber.sender.try_send(event.clone()) {
-                        backoff.snooze(); // Efficient spinning
+            while !thread_shutdown.load(Ordering::Acquire) {
+                match receiver.try_recv() {
+                    Ok(event) => {
+                        // Route to subscribers with efficient backoff
+                        let subs = thread_subs.read();
+                        for (_, subscriber) in subs.iter() {
+                            if let Err(_) = subscriber.sender.try_send(event.clone()) {
+                                backoff.snooze(); // Efficient spinning
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // No events available, use backoff for efficient spinning
+                        backoff.snooze();
                     }
                 }
             }
@@ -244,7 +257,25 @@ impl HighPerformanceEventBus {
             publisher,
             subscribers,
             routing_handle: Some(routing_handle),
+            shutdown_signal,
         }
+    }
+}
+
+impl Drop for HighPerformanceEventBus {
+    fn drop(&mut self) {
+        // Signal shutdown to routing thread
+        self.shutdown_signal.store(true, Ordering::Release);
+
+        // Close the publisher to wake the thread if it's blocking on recv()
+        // The publisher will be dropped when the struct is dropped
+
+        // Wait for routing thread to complete
+        if let Some(handle) = self.routing_handle.take() {
+            let _ = handle.join();
+        }
+
+        // Shared Arcs will be dropped after thread exits
     }
 }
 ```

@@ -677,7 +677,7 @@ async fn test_trigger_workflow_integration() {
     }
 
     let stats = trigger_manager.get_statistics();
-    assert_eq!(stats.registered_capabilities, 0); // No capabilities registered yet
+    assert_eq!(stats.unwrap().registered_capabilities, 0); // No capabilities registered yet
 }
 
 // Property-Based Tests for Process Lifecycle Detection

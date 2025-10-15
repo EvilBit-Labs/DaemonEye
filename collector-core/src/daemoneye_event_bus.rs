@@ -192,47 +192,51 @@ impl DaemoneyeEventBus {
     /// Convert collector-core CollectionEvent to daemoneye-eventbus CollectionEvent.
     fn convert_collection_event(
         event: &crate::event::CollectionEvent,
-    ) -> daemoneye_eventbus::CollectionEvent {
+    ) -> Result<daemoneye_eventbus::CollectionEvent, anyhow::Error> {
         match event {
-            crate::event::CollectionEvent::Process(process_event) => {
+            crate::event::CollectionEvent::Process(process_event) => Ok(
                 daemoneye_eventbus::CollectionEvent::Process(daemoneye_eventbus::ProcessEvent {
                     pid: process_event.pid,
                     name: process_event.name.clone(),
-                    command_line: process_event.command_line.first().cloned(),
+                    command_line: if process_event.command_line.is_empty() {
+                        None
+                    } else {
+                        Some(process_event.command_line.join(" "))
+                    },
                     executable_path: process_event.executable_path.clone(),
                     ppid: process_event.ppid,
                     start_time: process_event.start_time,
                     metadata: std::collections::HashMap::new(),
-                })
-            }
-            crate::event::CollectionEvent::Network(network_event) => {
+                }),
+            ),
+            crate::event::CollectionEvent::Network(network_event) => Ok(
                 daemoneye_eventbus::CollectionEvent::Network(daemoneye_eventbus::NetworkEvent {
                     connection_id: network_event.connection_id.clone(),
                     source_address: network_event.source_addr.clone(),
                     destination_address: network_event.dest_addr.clone(),
                     protocol: network_event.protocol.clone(),
                     metadata: std::collections::HashMap::new(),
-                })
-            }
+                }),
+            ),
             crate::event::CollectionEvent::Filesystem(fs_event) => {
-                daemoneye_eventbus::CollectionEvent::Filesystem(
+                Ok(daemoneye_eventbus::CollectionEvent::Filesystem(
                     daemoneye_eventbus::FilesystemEvent {
                         path: fs_event.path.clone(),
                         event_type: fs_event.operation.clone(),
                         size: fs_event.size,
                         metadata: std::collections::HashMap::new(),
                     },
-                )
+                ))
             }
             crate::event::CollectionEvent::Performance(perf_event) => {
-                daemoneye_eventbus::CollectionEvent::Performance(
+                Ok(daemoneye_eventbus::CollectionEvent::Performance(
                     daemoneye_eventbus::PerformanceEvent {
                         metric_name: perf_event.metric_name.clone(),
                         value: perf_event.value,
                         unit: perf_event.unit.clone(),
                         metadata: std::collections::HashMap::new(),
                     },
-                )
+                ))
             }
             crate::event::CollectionEvent::TriggerRequest(trigger_request) => {
                 let analysis_type_str = match trigger_request.analysis_type {
@@ -245,9 +249,10 @@ impl DaemoneyeEventBus {
                 };
 
                 // Serialize the full trigger request into payload so downstream can reconstruct
-                let payload = serde_json::to_vec(trigger_request).unwrap_or_default();
+                let payload = serde_json::to_vec(trigger_request)
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize trigger request: {}", e))?;
 
-                daemoneye_eventbus::CollectionEvent::TriggerRequest(
+                Ok(daemoneye_eventbus::CollectionEvent::TriggerRequest(
                     daemoneye_eventbus::TriggerRequest {
                         request_id: trigger_request.trigger_id.clone(),
                         collector_type: analysis_type_str.to_string(),
@@ -260,7 +265,7 @@ impl DaemoneyeEventBus {
                         payload,
                         metadata: std::collections::HashMap::new(),
                     },
-                )
+                ))
             }
         }
     }
@@ -409,7 +414,7 @@ impl DaemoneyeEventBus {
 #[async_trait]
 impl EventBus for DaemoneyeEventBus {
     async fn publish(&self, event: CollectionEvent, correlation_id: Option<String>) -> Result<()> {
-        let daemoneye_event = Self::convert_collection_event(&event);
+        let daemoneye_event = Self::convert_collection_event(&event)?;
         let correlation = correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
 
         debug!(

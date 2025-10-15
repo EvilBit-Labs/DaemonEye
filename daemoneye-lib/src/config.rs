@@ -236,8 +236,28 @@ impl Default for LoggingConfig {
 
 impl Default for BrokerConfig {
     fn default() -> Self {
+        // Use platform-aware runtime directory instead of /tmp
+        let socket_path = std::env::var("XDG_RUNTIME_DIR").map_or_else(
+            |_| {
+                #[cfg(unix)]
+                {
+                    if std::path::Path::new("/run/daemoneye").exists() {
+                        "/run/daemoneye/daemoneye-eventbus.sock".to_owned()
+                    } else {
+                        "/var/run/daemoneye/daemoneye-eventbus.sock".to_owned()
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    // Windows fallback
+                    "/tmp/daemoneye-eventbus.sock".to_owned()
+                }
+            },
+            |runtime_dir| format!("{runtime_dir}/daemoneye-eventbus.sock"),
+        );
+
         Self {
-            socket_path: "/tmp/daemoneye-eventbus.sock".to_owned(),
+            socket_path,
             enabled: true,
             startup_timeout_seconds: 30,
             shutdown_timeout_seconds: 60,
@@ -642,7 +662,12 @@ mod tests {
     #[test]
     fn test_broker_config_creation() {
         let broker_config = BrokerConfig::default();
-        assert_eq!(broker_config.socket_path, "/tmp/daemoneye-eventbus.sock");
+        // The socket path is now platform-aware, so we check it contains the expected pattern
+        assert!(
+            broker_config
+                .socket_path
+                .contains("daemoneye-eventbus.sock")
+        );
         assert!(broker_config.enabled);
         assert_eq!(broker_config.startup_timeout_seconds, 30);
         assert_eq!(broker_config.shutdown_timeout_seconds, 60);

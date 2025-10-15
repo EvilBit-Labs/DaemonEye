@@ -148,11 +148,13 @@ fn test_process_data_validity_properties() {
                             event.name.len()
                         );
 
-                        // Property: Timestamp must not be in the future
+                        // Property: Timestamp must not be in the future (allow small tolerance for clock skew)
+                        let now = SystemTime::now();
+                        let tolerance = std::time::Duration::from_secs(2);
                         assert!(
-                            event.timestamp <= SystemTime::now(),
-                            "Event timestamp must not be in the future for {}",
-                            name
+                            event.timestamp <= now + tolerance,
+                            "Event timestamp must not be in the future for {} (timestamp: {:?}, now: {:?})",
+                            name, event.timestamp, now
                         );
 
                         // Property: PPID must be positive if present

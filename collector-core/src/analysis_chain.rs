@@ -464,9 +464,11 @@ impl AnalysisChainCoordinator {
             .count();
 
         let percentage = if total_stages > 0 {
-            (completed_stages * 100) / total_stages
+            let completed_stages_f64 = completed_stages as f64;
+            let total_stages_f64 = total_stages as f64;
+            completed_stages_f64 / total_stages_f64
         } else {
-            0
+            0.0
         };
 
         WorkflowProgress {
@@ -474,7 +476,7 @@ impl AnalysisChainCoordinator {
             total_stages,
             failed_stages,
             skipped_stages,
-            percentage: percentage as f64 / 100.0,
+            percentage,
         }
     }
 

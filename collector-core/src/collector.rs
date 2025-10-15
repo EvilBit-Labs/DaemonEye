@@ -120,10 +120,10 @@ impl Collector {
         }
     }
 
-    /// Creates a new collector with DaemoneyeEventBus integration.
+    /// Configures a collector to use DaemoneyeEventBus integration.
     ///
-    /// This method creates a collector that uses the daemoneye-eventbus for
-    /// high-performance pub/sub messaging with topic-based routing.
+    /// This method only configures the socket path for later initialization.
+    /// The EventBus will be initialized when the collector starts running.
     ///
     /// # Arguments
     ///
@@ -138,11 +138,11 @@ impl Collector {
     /// #[tokio::main]
     /// async fn main() -> anyhow::Result<()> {
     ///     let config = CollectorConfig::default();
-    ///     let collector = Collector::with_daemoneye_eventbus(config, "/tmp/daemoneye.sock").await?;
+    ///     let collector = Collector::configure_daemoneye_eventbus(config, "/tmp/daemoneye.sock")?;
     ///     Ok(())
     /// }
     /// ```
-    pub async fn with_daemoneye_eventbus(
+    pub fn configure_daemoneye_eventbus(
         config: CollectorConfig,
         socket_path: &str,
     ) -> Result<Self> {
