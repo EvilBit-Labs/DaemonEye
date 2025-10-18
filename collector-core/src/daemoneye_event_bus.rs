@@ -589,6 +589,7 @@ mod tests {
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let mut receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -663,6 +664,7 @@ mod tests {
                 "control.trigger.+".to_string(),
             ]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let mut receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -740,6 +742,7 @@ mod tests {
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let _receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -791,6 +794,7 @@ mod tests {
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let _receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -830,6 +834,7 @@ mod tests {
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let mut rx = event_bus.subscribe(subscription).await.unwrap();
@@ -893,6 +898,7 @@ mod tests {
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let mut rx1 = bus1.subscribe(sub("s1")).await.unwrap();

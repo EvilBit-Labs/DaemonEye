@@ -735,6 +735,7 @@ impl AnalysisChainCoordinator {
             correlation_filter: None,
             topic_patterns: None,
             enable_wildcards: false,
+            topic_filter: None,
         };
 
         let receiver = bus.subscribe(subscription).await?;

@@ -201,9 +201,9 @@ The following foundational components have been successfully implemented:
   - Validate behavioral equivalence between old and new implementations
   - _Requirements: 14.1, 14.5_
 
-- [x] 2.4 Migrate collector-core event distribution to daemoneye-eventbus topics
+- [ ] 2.4 Migrate collector-core event distribution to daemoneye-eventbus topics
 
-  - [ ] 2.4.1 Replace crossbeam channels with daemoneye-eventbus in LocalEventBus
+  - [x] 2.4.1 Replace crossbeam channels with daemoneye-eventbus in LocalEventBus
 
     - Modify LocalEventBus implementation to use daemoneye-eventbus topics instead of crossbeam channels
     - Preserve existing event distribution semantics and ordering guarantees
@@ -212,7 +212,7 @@ The following foundational components have been successfully implemented:
     - Write unit tests for LocalEventBus topic-based implementation
     - _Requirements: 14.4, 15.1_
 
-  - [ ] 2.4.2 Update EventSubscription for daemoneye-eventbus topic patterns
+  - [x] 2.4.2 Update EventSubscription for daemoneye-eventbus topic patterns
 
     - Modify EventSubscription structure to support daemoneye-eventbus topic patterns
     - Update event routing logic to use daemoneye-eventbus subscription mechanisms
