@@ -1,6 +1,9 @@
 ---
-
-## inclusion: fileMatch fileMatchPattern: \['collector-core/**/\*', '**/collector\*'\]
+inclusion: fileMatch
+fileMatchPattern:
+  - collector-core/**/*
+  - '**/collector*'
+---
 
 # Collector-Core Framework Standards
 
