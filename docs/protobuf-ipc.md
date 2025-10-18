@@ -244,10 +244,12 @@ fn basic_process_enumeration() -> Result<(), Box<dyn std::error::Error>> {
     let mock_result = DetectionResult {
         task_id: "enum-001".to_string(),
         success: true,
-        processes: vec![ProcessInfo {
+        processes: vec![ProtoProcessRecord {
             pid: 1234,
             name: "example_process".to_string(),
             executable_path: Some("/usr/bin/example".to_string()),
+            ppid: Some(1),
+            command_line: Some("example_process --arg".to_string()),
             ..Default::default()
         }],
         ..Default::default()
