@@ -233,7 +233,7 @@ The following foundational components have been successfully implemented:
   - [ ] 2.4.4 Preserve event bus statistics and monitoring
 
     - Implement statistics collection using daemoneye-eventbus broker metrics
-    - Create monitoring dashboards for daemoneye-eventbus broker performance
+    - Create monitoring metrics collection and logging for daemoneye-eventbus broker performance
     - Maintain existing event bus monitoring interfaces
     - Add daemoneye-eventbus-specific metrics and health indicators
     - Write unit tests for statistics collection and monitoring integration
