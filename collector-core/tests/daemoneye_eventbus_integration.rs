@@ -3,7 +3,7 @@
 use collector_core::{
     DaemoneyeEventBus,
     event::{CollectionEvent, ProcessEvent, TriggerPriority, TriggerRequest},
-    event_bus::{EventBus, EventBusConfig, EventSubscription},
+    event_bus::{CorrelationMetadata, EventBus, EventBusConfig, EventSubscription},
     source::SourceCaps,
 };
 use std::time::{Duration, SystemTime};
@@ -32,6 +32,7 @@ async fn test_daemoneye_eventbus_integration() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.#".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let mut receiver = event_bus
@@ -57,11 +58,9 @@ async fn test_daemoneye_eventbus_integration() {
         platform_metadata: None,
     });
 
+    let correlation_metadata = CorrelationMetadata::new("integration-test-correlation".to_string());
     event_bus
-        .publish(
-            process_event.clone(),
-            Some("integration-test-correlation".to_string()),
-        )
+        .publish(process_event.clone(), correlation_metadata)
         .await
         .expect("Failed to publish event");
 
@@ -83,8 +82,8 @@ async fn test_daemoneye_eventbus_integration() {
 
     // Verify correlation ID
     assert_eq!(
-        received_event.correlation_id,
-        Some("integration-test-correlation".to_string())
+        received_event.correlation_metadata.correlation_id,
+        "integration-test-correlation".to_string()
     );
 
     // Get statistics
@@ -124,6 +123,7 @@ async fn test_daemoneye_eventbus_trigger_requests() {
         correlation_filter: None,
         topic_patterns: Some(vec!["control.#".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let mut receiver = event_bus
@@ -144,11 +144,10 @@ async fn test_daemoneye_eventbus_trigger_requests() {
         timestamp: SystemTime::now(),
     });
 
+    let correlation_metadata =
+        CorrelationMetadata::new("trigger-integration-correlation".to_string());
     event_bus
-        .publish(
-            trigger_request,
-            Some("trigger-integration-correlation".to_string()),
-        )
+        .publish(trigger_request, correlation_metadata)
         .await
         .expect("Failed to publish trigger request");
 
@@ -192,6 +191,7 @@ async fn test_daemoneye_eventbus_multiple_subscribers() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.#".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let subscription2 = EventSubscription {
@@ -201,6 +201,7 @@ async fn test_daemoneye_eventbus_multiple_subscribers() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.process.*".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let mut receiver1 = event_bus
@@ -231,11 +232,9 @@ async fn test_daemoneye_eventbus_multiple_subscribers() {
         platform_metadata: None,
     });
 
+    let correlation_metadata = CorrelationMetadata::new("multi-subscriber-correlation".to_string());
     event_bus
-        .publish(
-            process_event,
-            Some("multi-subscriber-correlation".to_string()),
-        )
+        .publish(process_event, correlation_metadata)
         .await
         .expect("Failed to publish event");
 
@@ -301,6 +300,7 @@ async fn test_daemoneye_eventbus_performance_comparison() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.#".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let mut daemoneye_receiver = daemoneye_bus
@@ -317,6 +317,7 @@ async fn test_daemoneye_eventbus_performance_comparison() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.process.*".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let mut local_receiver = local_bus
@@ -344,8 +345,9 @@ async fn test_daemoneye_eventbus_performance_comparison() {
 
     // Measure DaemoneyeEventBus performance
     let daemoneye_start = Instant::now();
+    let correlation_metadata = CorrelationMetadata::new("perf-test-daemoneye".to_string());
     daemoneye_bus
-        .publish(test_event.clone(), Some("perf-test-daemoneye".to_string()))
+        .publish(test_event.clone(), correlation_metadata)
         .await
         .expect("Failed to publish to DaemoneyeEventBus");
 
@@ -357,8 +359,9 @@ async fn test_daemoneye_eventbus_performance_comparison() {
 
     // Measure LocalEventBus performance
     let local_start = Instant::now();
+    let correlation_metadata = CorrelationMetadata::new("perf-test-local".to_string());
     local_bus
-        .publish(test_event, Some("perf-test-local".to_string()))
+        .publish(test_event, correlation_metadata)
         .await
         .expect("Failed to publish to LocalEventBus");
 

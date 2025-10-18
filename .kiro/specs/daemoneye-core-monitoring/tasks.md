@@ -221,7 +221,7 @@ The following foundational components have been successfully implemented:
     - Write unit tests for EventSubscription topic pattern matching
     - _Requirements: 14.5, 15.3_
 
-  - [ ] 2.4.3 Migrate event filtering and correlation to daemoneye-eventbus
+  - [x] 2.4.3 Migrate event filtering and correlation to daemoneye-eventbus
 
     - Implement event filtering using daemoneye-eventbus topic subscription patterns
     - Create correlation tracking through daemoneye-eventbus message metadata

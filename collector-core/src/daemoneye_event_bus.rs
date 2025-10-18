@@ -294,9 +294,13 @@ impl DaemoneyeEventBus {
                     source_collectors: filter.source_collectors.clone(),
                 }
             }),
-            correlation_filter: subscription.correlation_filter.as_ref().map(|filter_str| {
+            correlation_filter: subscription.correlation_filter.as_ref().map(|filter| {
                 daemoneye_eventbus::CorrelationFilter {
-                    correlation_ids: vec![filter_str.clone()],
+                    correlation_ids: if let Some(id) = &filter.correlation_id {
+                        vec![id.clone()]
+                    } else {
+                        vec![]
+                    },
                     correlation_patterns: vec![],
                 }
             }),
@@ -395,7 +399,9 @@ impl DaemoneyeEventBus {
                 .unwrap_or_default()
                 .as_secs(),
             event: collection_event,
-            correlation_id: Some(event.correlation_id.clone()),
+            correlation_metadata: crate::event_bus::CorrelationMetadata::new(
+                event.correlation_id.clone(),
+            ),
             routing_metadata: std::collections::HashMap::new(),
         }
     }
@@ -413,9 +419,13 @@ impl DaemoneyeEventBus {
 
 #[async_trait]
 impl EventBus for DaemoneyeEventBus {
-    async fn publish(&self, event: CollectionEvent, correlation_id: Option<String>) -> Result<()> {
+    async fn publish(
+        &self,
+        event: CollectionEvent,
+        correlation_metadata: crate::event_bus::CorrelationMetadata,
+    ) -> Result<()> {
         let daemoneye_event = Self::convert_collection_event(&event)?;
-        let correlation = correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let correlation = correlation_metadata.correlation_id.clone();
 
         debug!(
             event_type = event.event_type(),
@@ -612,8 +622,10 @@ mod tests {
             platform_metadata: None,
         });
 
+        let correlation_metadata =
+            crate::event_bus::CorrelationMetadata::new("test-correlation".to_string());
         event_bus
-            .publish(process_event.clone(), Some("test-correlation".to_string()))
+            .publish(process_event.clone(), correlation_metadata)
             .await
             .unwrap();
 
@@ -634,8 +646,8 @@ mod tests {
 
         // Verify correlation ID
         assert_eq!(
-            received_event.correlation_id,
-            Some("test-correlation".to_string())
+            received_event.correlation_metadata.correlation_id,
+            "test-correlation"
         );
 
         // Shutdown
@@ -682,11 +694,10 @@ mod tests {
             timestamp: SystemTime::now(),
         });
 
+        let trigger_correlation =
+            crate::event_bus::CorrelationMetadata::new("trigger-correlation".to_string());
         event_bus
-            .publish(
-                trigger_request.clone(),
-                Some("trigger-correlation".to_string()),
-            )
+            .publish(trigger_request.clone(), trigger_correlation)
             .await
             .unwrap();
 
@@ -712,8 +723,8 @@ mod tests {
 
         // Bus correlation ID should match the one used in publish()
         assert_eq!(
-            received_event.correlation_id,
-            Some("trigger-correlation".to_string())
+            received_event.correlation_metadata.correlation_id,
+            "trigger-correlation"
         );
 
         event_bus.shutdown().await.unwrap();
@@ -765,7 +776,12 @@ mod tests {
             platform_metadata: None,
         });
 
-        event_bus.publish(process_event, None).await.unwrap();
+        let correlation_metadata =
+            crate::event_bus::CorrelationMetadata::new(uuid::Uuid::new_v4().to_string());
+        event_bus
+            .publish(process_event, correlation_metadata)
+            .await
+            .unwrap();
 
         // Get updated statistics
         let updated_stats = event_bus.get_statistics().await.unwrap();
@@ -857,8 +873,10 @@ mod tests {
             platform_metadata: None,
         });
 
+        let correlation_metadata =
+            crate::event_bus::CorrelationMetadata::new("immediate-correlation".to_string());
         event_bus
-            .publish(process_event, Some("immediate-correlation".to_string()))
+            .publish(process_event, correlation_metadata)
             .await
             .unwrap();
 
@@ -876,8 +894,8 @@ mod tests {
         }
 
         assert_eq!(
-            evt.correlation_id,
-            Some("immediate-correlation".to_string())
+            evt.correlation_metadata.correlation_id,
+            "immediate-correlation"
         );
         event_bus.shutdown().await.unwrap();
     }
@@ -921,9 +939,9 @@ mod tests {
             platform_metadata: None,
         });
 
-        bus1.publish(event, Some("multi-correlation".to_string()))
-            .await
-            .unwrap();
+        let correlation_metadata =
+            crate::event_bus::CorrelationMetadata::new("multi-correlation".to_string());
+        bus1.publish(event, correlation_metadata).await.unwrap();
 
         let e1 = timeout(Duration::from_secs(3), rx1.recv())
             .await
@@ -934,8 +952,8 @@ mod tests {
             .expect("Timeout receiving e2")
             .unwrap();
 
-        assert_eq!(e1.correlation_id, Some("multi-correlation".to_string()));
-        assert_eq!(e2.correlation_id, Some("multi-correlation".to_string()));
+        assert_eq!(e1.correlation_metadata.correlation_id, "multi-correlation");
+        assert_eq!(e2.correlation_metadata.correlation_id, "multi-correlation");
         bus1.shutdown().await.unwrap();
     }
 }

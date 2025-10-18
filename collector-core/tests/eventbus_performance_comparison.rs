@@ -15,9 +15,10 @@
 use collector_core::{
     DaemoneyeEventBus,
     event::{CollectionEvent, ProcessEvent},
-    event_bus::{EventBus, EventBusConfig, EventSubscription, LocalEventBus},
+    event_bus::{CorrelationMetadata, EventBus, EventBusConfig, EventSubscription, LocalEventBus},
     source::SourceCaps,
 };
+use futures::future;
 use std::{
     sync::{
         Arc,
@@ -142,6 +143,7 @@ async fn test_crossbeam_throughput(config: &PerformanceTestConfig) -> Performanc
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -183,16 +185,16 @@ async fn test_crossbeam_throughput(config: &PerformanceTestConfig) -> Performanc
     // Measure publishing performance
     let start_time = Instant::now();
 
-    for event in events {
-        event_bus.publish(event, None).await.unwrap();
+    for (i, event) in events.into_iter().enumerate() {
+        let correlation_metadata = CorrelationMetadata::new(format!("crossbeam-test-{}", i));
+        event_bus
+            .publish(event, correlation_metadata)
+            .await
+            .unwrap();
     }
 
     // Wait for all events to be received
-    let _ = timeout(
-        config.test_timeout,
-        futures::future::join_all(receive_handles),
-    )
-    .await;
+    let _ = timeout(config.test_timeout, future::join_all(receive_handles)).await;
     let total_duration = start_time.elapsed();
 
     let final_events_received = events_received.load(Ordering::Relaxed);
@@ -236,6 +238,7 @@ async fn test_daemoneye_eventbus_throughput(config: &PerformanceTestConfig) -> P
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -277,16 +280,16 @@ async fn test_daemoneye_eventbus_throughput(config: &PerformanceTestConfig) -> P
     // Measure publishing performance
     let start_time = Instant::now();
 
-    for event in events {
-        event_bus.publish(event, None).await.unwrap();
+    for (i, event) in events.into_iter().enumerate() {
+        let correlation_metadata = CorrelationMetadata::new(format!("daemoneye-test-{}", i));
+        event_bus
+            .publish(event, correlation_metadata)
+            .await
+            .unwrap();
     }
 
     // Wait for all events to be received
-    let _ = timeout(
-        config.test_timeout,
-        futures::future::join_all(receive_handles),
-    )
-    .await;
+    let _ = timeout(config.test_timeout, future::join_all(receive_handles)).await;
     let total_duration = start_time.elapsed();
 
     // Shutdown the event bus
@@ -605,6 +608,7 @@ async fn test_behavioral_equivalence() {
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let mut receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -625,8 +629,13 @@ async fn test_behavioral_equivalence() {
         });
 
         // Publish events
-        for event in crossbeam_events {
-            event_bus.publish(event, None).await.unwrap();
+        for (i, event) in crossbeam_events.into_iter().enumerate() {
+            let correlation_metadata =
+                CorrelationMetadata::new(format!("crossbeam-memory-test-{}", i));
+            event_bus
+                .publish(event, correlation_metadata)
+                .await
+                .unwrap();
         }
 
         // Collect received events
@@ -662,6 +671,7 @@ async fn test_behavioral_equivalence() {
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let mut receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -682,8 +692,13 @@ async fn test_behavioral_equivalence() {
         });
 
         // Publish events
-        for event in daemoneye_events {
-            event_bus.publish(event, None).await.unwrap();
+        for (i, event) in daemoneye_events.into_iter().enumerate() {
+            let correlation_metadata =
+                CorrelationMetadata::new(format!("daemoneye-memory-test-{}", i));
+            event_bus
+                .publish(event, correlation_metadata)
+                .await
+                .unwrap();
         }
 
         // Collect received events

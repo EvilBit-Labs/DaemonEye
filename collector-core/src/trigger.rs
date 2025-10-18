@@ -933,7 +933,11 @@ impl TriggerManager {
         // Create collection event for the trigger request
         let collection_event = CollectionEvent::TriggerRequest(trigger.clone());
         if let Err(err) = event_bus
-            .publish(collection_event, Some(correlation_id.clone()))
+            .publish(
+                collection_event,
+                crate::event_bus::CorrelationMetadata::new(correlation_id.clone())
+                    .with_tag("trigger_source".to_string(), "trigger_manager".to_string()),
+            )
             .await
         {
             let mut stats = self

@@ -39,6 +39,7 @@ async fn test_daemoneye_eventbus_vs_local_eventbus_performance() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.process.+".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let mut daemoneye_receiver = daemoneye_bus
@@ -55,6 +56,7 @@ async fn test_daemoneye_eventbus_vs_local_eventbus_performance() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.process.+".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let mut local_receiver = local_bus
@@ -88,7 +90,13 @@ async fn test_daemoneye_eventbus_vs_local_eventbus_performance() {
     let daemoneye_start = Instant::now();
     for (i, event) in test_events.iter().enumerate() {
         daemoneye_bus
-            .publish(event.clone(), Some(format!("perf-test-daemoneye-{}", i)))
+            .publish(
+                event.clone(),
+                collector_core::event_bus::CorrelationMetadata::new(format!(
+                    "perf-test-daemoneye-{}",
+                    i
+                )),
+            )
             .await
             .expect("Failed to publish to DaemoneyeEventBus");
     }
@@ -106,7 +114,13 @@ async fn test_daemoneye_eventbus_vs_local_eventbus_performance() {
     let local_start = Instant::now();
     for (i, event) in test_events.iter().enumerate() {
         local_bus
-            .publish(event.clone(), Some(format!("perf-test-local-{}", i)))
+            .publish(
+                event.clone(),
+                collector_core::event_bus::CorrelationMetadata::new(format!(
+                    "perf-test-local-{}",
+                    i
+                )),
+            )
             .await
             .expect("Failed to publish to LocalEventBus");
     }
@@ -308,6 +322,7 @@ async fn test_eventbus_seamless_migration_compatibility() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.process.+".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let mut local_receiver = local_bus
@@ -332,6 +347,7 @@ async fn test_eventbus_seamless_migration_compatibility() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.process.+".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let mut daemoneye_receiver = daemoneye_bus
@@ -358,15 +374,19 @@ async fn test_eventbus_seamless_migration_compatibility() {
     });
 
     // Publish to both buses
+    let local_correlation =
+        collector_core::event_bus::CorrelationMetadata::new("migration-test-local".to_string());
     local_bus
-        .publish(test_event.clone(), Some("migration-test-local".to_string()))
+        .publish(test_event.clone(), local_correlation)
         .await
         .expect("Failed to publish to LocalEventBus");
 
     daemoneye_bus
         .publish(
             test_event.clone(),
-            Some("migration-test-daemoneye".to_string()),
+            collector_core::event_bus::CorrelationMetadata::new(
+                "migration-test-daemoneye".to_string(),
+            ),
         )
         .await
         .expect("Failed to publish to DaemoneyeEventBus");
@@ -397,15 +417,15 @@ async fn test_eventbus_seamless_migration_compatibility() {
     // Verify correlation IDs (LocalEventBus may not preserve correlation IDs the same way)
     // DaemoneyeEventBus should preserve correlation IDs
     assert_eq!(
-        daemoneye_event.correlation_id,
-        Some("migration-test-daemoneye".to_string())
+        daemoneye_event.correlation_metadata.correlation_id,
+        "migration-test-daemoneye".to_string()
     );
 
     // LocalEventBus behavior may differ, so we just verify the event was received
     // (correlation ID preservation is not guaranteed in LocalEventBus)
     println!(
         "LocalEventBus correlation_id: {:?}",
-        local_event.correlation_id
+        local_event.correlation_metadata.correlation_id
     );
 
     // Get statistics from both buses

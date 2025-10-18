@@ -1363,7 +1363,13 @@ impl CollectorRuntime {
         correlation_id: Option<String>,
     ) -> Result<()> {
         if let Some(event_bus) = &self.event_bus {
-            event_bus.publish(event, correlation_id).await?;
+            let correlation_metadata = match correlation_id {
+                Some(id) => crate::event_bus::CorrelationMetadata::new(id),
+                None => {
+                    crate::event_bus::CorrelationMetadata::new(uuid::Uuid::new_v4().to_string())
+                }
+            };
+            event_bus.publish(event, correlation_metadata).await?;
         } else {
             debug!("No EventBus configured, skipping event publication");
         }

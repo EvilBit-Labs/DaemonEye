@@ -59,6 +59,7 @@ async fn test_daemoneye_eventbus_subscription_only() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.process.*".to_string()]),
         enable_wildcards: true,
+        topic_filter: None,
     };
 
     let _receiver = event_bus
@@ -112,7 +113,12 @@ async fn test_daemoneye_eventbus_publish_only() {
 
     // Publish the event (should succeed even without subscribers)
     event_bus
-        .publish(process_event, Some("simple-test-correlation".to_string()))
+        .publish(
+            process_event,
+            collector_core::event_bus::CorrelationMetadata::new(
+                "simple-test-correlation".to_string(),
+            ),
+        )
         .await
         .expect("Failed to publish event");
 

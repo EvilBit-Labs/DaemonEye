@@ -731,6 +731,7 @@ impl AnalysisChainCoordinator {
                 metadata_filters: HashMap::new(),
                 topic_filters: Vec::new(),
                 source_collectors: Vec::new(),
+                eventbus_filters: None, // No daemoneye-eventbus specific filtering
             }),
             correlation_filter: None,
             topic_patterns: None,
@@ -1259,7 +1260,10 @@ impl AnalysisChainCoordinator {
             .with_context(|| "Event bus not configured for trigger request emission")?;
 
         let event = CollectionEvent::TriggerRequest(trigger.clone());
-        bus.publish(event, Some(trigger.correlation_id.clone()))
+        let correlation_metadata =
+            crate::event_bus::CorrelationMetadata::new(trigger.correlation_id.clone())
+                .with_tag("trigger_type".to_string(), "analysis_chain".to_string());
+        bus.publish(event, correlation_metadata)
             .await
             .context("Failed to publish trigger request")?;
 

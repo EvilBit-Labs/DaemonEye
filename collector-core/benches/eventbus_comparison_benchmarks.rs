@@ -7,10 +7,11 @@
 use collector_core::{
     DaemoneyeEventBus,
     event::{CollectionEvent, ProcessEvent},
-    event_bus::{EventBus, EventBusConfig, EventSubscription, LocalEventBus},
+    event_bus::{CorrelationMetadata, EventBus, EventBusConfig, EventSubscription, LocalEventBus},
     source::SourceCaps,
 };
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use futures::future;
 use std::{
     sync::{
         Arc,
@@ -66,6 +67,7 @@ async fn benchmark_crossbeam_throughput(event_count: usize, subscriber_count: us
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -97,16 +99,13 @@ async fn benchmark_crossbeam_throughput(event_count: usize, subscriber_count: us
     // Measure publishing performance
     let start_time = std::time::Instant::now();
 
-    for event in events {
-        let _ = event_bus.publish(event, None).await;
+    for (i, event) in events.into_iter().enumerate() {
+        let correlation_metadata = CorrelationMetadata::new(format!("crossbeam-benchmark-{}", i));
+        let _ = event_bus.publish(event, correlation_metadata).await;
     }
 
     // Wait for all events to be received
-    let _ = timeout(
-        Duration::from_secs(10),
-        futures::future::join_all(receive_handles),
-    )
-    .await;
+    let _ = timeout(Duration::from_secs(10), future::join_all(receive_handles)).await;
     let total_duration = start_time.elapsed();
 
     let final_events_received = events_received.load(Ordering::Relaxed);
@@ -146,6 +145,7 @@ async fn benchmark_daemoneye_throughput(event_count: usize, subscriber_count: us
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.+".to_string()]),
             enable_wildcards: true,
+            topic_filter: None,
         };
 
         let receiver = event_bus.subscribe(subscription).await.unwrap();
@@ -177,16 +177,13 @@ async fn benchmark_daemoneye_throughput(event_count: usize, subscriber_count: us
     // Measure publishing performance
     let start_time = std::time::Instant::now();
 
-    for event in events {
-        let _ = event_bus.publish(event, None).await;
+    for (i, event) in events.into_iter().enumerate() {
+        let correlation_metadata = CorrelationMetadata::new(format!("daemoneye-benchmark-{}", i));
+        let _ = event_bus.publish(event, correlation_metadata).await;
     }
 
     // Wait for all events to be received
-    let _ = timeout(
-        Duration::from_secs(10),
-        futures::future::join_all(receive_handles),
-    )
-    .await;
+    let _ = timeout(Duration::from_secs(10), future::join_all(receive_handles)).await;
     let total_duration = start_time.elapsed();
 
     event_bus.shutdown().await.unwrap();
