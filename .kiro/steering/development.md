@@ -1,149 +1,270 @@
+---
+inclusion: always
+---
+
 # DaemonEye Development Guidelines
 
-## AI Assistant Behavior Rules
+## AI Assistant Rules
 
-### Core Principles
+### Critical Constraints
 
-- **No Auto-Commits**: Never commit code without explicit permission. Always present diffs for approval.
-- **Security-First**: This is a security-critical system. All changes must maintain the principle of least privilege and undergo thorough security review.
-- **Zero-Warnings Policy**: All code must pass `cargo clippy -- -D warnings` with no exceptions.
-- **Operator-Centric Design**: Built for operators, by operators. Prioritize workflows efficient in contested/airgapped environments.
-- **Testing Required**: All code changes must include appropriate tests to ensure quality and correctness.
-- **Linter Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission. All `-D warnings` and `deny` attributes must be preserved.
-- **No Unsafe Code**: Never commit code with `unsafe` blocks or `unsafe` functions. Any unsafe code should be in well-maintained external crates, and avoided whenever possible.
-- **Focused and Managable Files**: Source files should be focused and manageable. Large files should be split into smaller, more focused files; no larger than 500-600 lines, when if possible.
-- **Strictness**: `warnings = "deny"` enforced at workspace level; any use of `allow` **MUST** be accompanied by a justification in the code and cannot be applied to entire files or modules.
+- **Never auto-commit**: Always present changes for approval before committing
+- **Security-critical system**: Maintain principle of least privilege in all changes
+- **Zero-warnings policy**: All code must pass `cargo clippy -- -D warnings`
+- **No unsafe code**: Never use `unsafe` blocks; rely on safe external crates only
+- **File size limit**: Keep source files under 500-600 lines; split larger files
+- **Linter preservation**: Never remove `#[deny(...)]` or `-D warnings` without explicit permission
 
-### Rule Precedence Hierarchy
+### Code Quality Standards
 
-1. **Project Rules** (.cursor/rules/, AGENTS.md) - Highest precedence
-2. **Steering Documents** (.kiro/steering/, specs/) - Architectural authority
-3. **Technical Specifications** (.kiro/specs/) - Implementation requirements
-4. **Embedded defaults** - Lowest precedence
+- **Testing mandatory**: All code changes require appropriate tests
+- **Documentation required**: Public APIs need comprehensive rustdoc with examples
+- **Performance awareness**: Consider CPU/memory impact; target \<5% CPU, \<100MB RAM
+- **Error handling**: Use `thiserror` for libraries, `anyhow` for applications
+- **Async patterns**: Use `tokio::sync` primitives; avoid holding locks across `.await`
 
-## Development Workflow
+## Architecture Patterns
 
-### Task Runner (justfile)
+### Component Structure
 
-All development tasks use the `just` command runner with DRY principles:
+- **procmond**: Privileged collector, minimal attack surface, IPC server
+- **daemoneye-agent**: User-space orchestrator, manages procmond lifecycle
+- **daemoneye-cli**: Read-only interface, no network access
+- **daemoneye-lib**: Shared components with trait-based abstractions
 
-```bash
-# Formatting
-just fmt          # Format all code
-just fmt-check    # Check formatting (CI-friendly)
+### Required Dependencies
 
-# Linting (composed recipe)
-just lint         # Runs fmt-check + clippy + lint-just
-just lint-rust    # Clippy with strict warnings
-just lint-just    # Lint justfile syntax
+- **Database**: `redb` for embedded storage with ACID transactions
+- **IPC**: `interprocess` for cross-platform communication
+- **CLI**: `clap` v4 with derive macros and shell completions
+- **Async**: `tokio` with full features for I/O and task management
+- **Serialization**: `serde` with `prost` for protobuf messages
 
-# Building and Testing
-just build        # Build all binaries with features
-just check        # Quick check without build
-just test         # Run all tests
+### Code Organization
 
-# Component Execution
-just run-procmond [args]      # Run procmond with optional args
-just run-daemoneye-cli [args]   # Run daemoneye-cli with optional args
-just run-daemoneye-agent [args] # Run daemoneye-agent with optional args
+```rust
+// Standard module structure
+pub mod alerting; // Multi-channel alert delivery
+pub mod config; // Configuration management
+pub mod crypto;
+pub mod detection; // SQL-based detection engine
+pub mod models; // Core data structures
+pub mod storage; // Database abstractions // Cryptographic audit functions
 ```
 
-### Justfile Conventions
+## Development Commands
 
-- Compose complex tasks by calling `@just <subrecipe>`
-- Keep paths relative to project directory
-- Use consistent argument patterns with defaults
-- Include `lint-just` recipe to validate justfile syntax with `just --fmt --check --unstable`
-- No hardcoded paths outside project directory for portability
-
-### Git Workflow
-
-- Use conventional commits format
-- Create feature branches for new work
-- Ensure all tests pass before merging
-- No commits without explicit permission
-
-## Quality Assurance
-
-### Pre-commit Requirements
-
-1. `cargo clippy -- -D warnings` (zero warnings)
-2. `cargo fmt --all --check` (formatting validation)
-3. `cargo test --workspace` (all tests pass)
-4. `just lint-just` (justfile syntax validation)
-5. No new `unsafe` code without explicit approval
-6. Performance benchmarks within acceptable ranges
-
-### Test Execution
+### Essential Workflows
 
 ```bash
-# All tests must use stable output environment
+# Quality checks (run before any commit)
+just lint           # Format + clippy + justfile validation
+just test           # Full test suite with stable output
+just build          # Build all workspace components
+
+# Component testing
+just run-procmond --once --verbose
+just run-daemoneye-cli --help
+just run-daemoneye-agent --config /path/to/config
+
+# Coverage and performance
+cargo llvm-cov --workspace --lcov --output-path lcov.info
+cargo bench --baseline previous
+```
+
+## Coding Conventions
+
+### Error Handling Patterns
+
+```rust
+// Libraries: Use thiserror for structured errors
+#[derive(Debug, Error)]
+pub enum CollectionError {
+    #[error("Permission denied accessing process {pid}")]
+    PermissionDenied { pid: u32 },
+    #[error("Database operation failed: {0}")]
+    DatabaseError(String),
+}
+
+// Applications: Use anyhow for error context
+use anyhow::{Context, Result};
+fn main() -> Result<()> {
+    collect_processes().context("Failed to collect process data")?;
+    Ok(())
+}
+```
+
+### Configuration Management
+
+```rust
+// Hierarchical loading order (highest to lowest precedence):
+// 1. CLI flags  2. Environment vars  3. User config  4. System config  5. Defaults
+use figment::{
+    Figment,
+    providers::{Env, Format, Yaml},
+};
+
+#[derive(serde::Deserialize)]
+struct Config {
+    #[serde(with = "humantime_serde")]
+    scan_interval: Duration,
+    database_path: PathBuf,
+}
+```
+
+### Database Patterns
+
+```rust
+// Use redb with strongly-typed tables
+use redb::TableDefinition;
+const PROCESSES_TABLE: TableDefinition<u64, ProcessInfo> =
+    TableDefinition::new("processes");
+
+// ACID transactions for consistency
+let write_txn = db.begin_write()?;
+{
+    let mut table = write_txn.open_table(PROCESSES_TABLE)?;
+    table.insert(process.id, &process)?;
+}
+write_txn.commit()?;
+```
+
+## Security Requirements
+
+### Input Validation
+
+```rust
+// Validate all external inputs at trust boundaries
+use clap::Parser;
+#[derive(Parser)]
+struct Args {
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..=65535))]
+    port: u16,
+}
+
+// SQL injection prevention with AST validation
+use sqlparser::parser::Parser;
+fn validate_query(sql: &str) -> Result<(), SecurityError> {
+    let ast = Parser::parse_sql(&MySqlDialect {}, sql)?;
+    // Only allow SELECT statements with approved functions
+    Ok(())
+}
+```
+
+### Privilege Management
+
+- **procmond**: Runs with elevated privileges, drops immediately after init
+- **daemoneye-agent**: User-space only, outbound network connections only
+- **daemoneye-cli**: No network access, read-only database operations
+- Use `CAP_SYS_PTRACE` on Linux, `SeDebugPrivilege` on Windows
+
+### Cryptographic Standards
+
+```rust
+// Use approved libraries only
+use blake3::Hasher; // Fast cryptographic hashing
+use ed25519_dalek::Keypair; // Digital signatures
+use secrecy::SecretString; // Secure secret handling
+use zeroize::Zeroize; // Memory zeroing
+```
+
+## Testing Strategy
+
+### Test Organization
+
+```rust
+// Unit tests: Individual components only
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_process_collection() {
+        // Test with mock data, minimal scope
+    }
+}
+
+// Integration tests: Cross-component interaction
+// Use insta for snapshot testing, predicates for validation
+use insta::assert_snapshot;
+use predicates::prelude::*;
+```
+
+### Test Execution Environment
+
+```bash
+# Stable output required for all tests
 NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific testing
-RUST_BACKTRACE=1 cargo test -p daemoneye-lib --nocapture
+cargo test -p daemoneye-lib --nocapture
+cargo test -p procmond --features test-utils
 
-# Performance regression testing
-cargo bench --baseline previous
-
-# Coverage reporting
-cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+# Property testing for edge cases
+cargo test --features proptest
 ```
 
-## Documentation Standards
+## Performance Guidelines
 
-### Architectural Documentation
+### Resource Targets
 
-- **Diagrams**: All architectural and flow diagrams must use Mermaid
-- **Markdown**: Prettier is configured to ignore Markdown files (.prettierignore), use mdformat
-- **API Documentation**: Comprehensive rustdoc comments for all public interfaces
-- **Cross-references**: Use relative links and maintain link hygiene
-- **Examples**: Include code examples in rustdoc with `cargo test --doc`
+- **CPU Usage**: \<5% sustained during monitoring
+- **Memory Usage**: \<100MB resident under normal operation
+- **Process Enumeration**: \<5s for 10,000+ processes
+- **Database Operations**: >1,000 records/second write rate
+- **Alert Latency**: \<100ms per detection rule execution
 
-### Code Documentation
+### Optimization Patterns
 
-All public APIs must include comprehensive rustdoc comments with:
+```rust
+// Bounded channels with backpressure
+use tokio::sync::mpsc;
+let (tx, rx) = mpsc::channel(1000); // Configurable capacity
 
-- Purpose and functionality description
-- Security considerations
-- Performance characteristics
-- Usage examples (with `no_run` attribute when appropriate)
-- Error conditions and return types
+// Memory budgets with cooperative yielding
+if memory_usage > budget {
+    tokio::task::yield_now().await;
+}
 
-## CI/CD and Reviews
+// Circuit breakers for external dependencies
+use circuit_breaker::CircuitBreaker;
+let breaker = CircuitBreaker::new(5, Duration::from_secs(60));
+```
 
-### Continuous Integration
+## Documentation Requirements
 
-- **Platform**: GitHub Actions with matrix testing (Linux, macOS, Windows)
-- **Rust Versions**: stable, beta, MSRV (1.85+)
-- **Quality Checks**: fmt-check, clippy strict, comprehensive test suite
-- **Performance**: Benchmark regression detection with criterion
-- **Security**: Dependency scanning, SLSA provenance (Enterprise)
+### Rustdoc Standards
 
-### Code Review Process
+````rust
+/// Collects process information with security validation.
+///
+/// # Security
+/// Requires elevated privileges on startup, drops immediately after init.
+///
+/// # Performance
+/// Targets <5s enumeration for 10,000+ processes.
+///
+/// # Examples
+/// ```no_run
+/// let collector = ProcessCollector::new()?;
+/// let processes = collector.collect().await?;
+/// ```
+///
+/// # Errors
+/// Returns `CollectionError::PermissionDenied` if privileges insufficient.
+pub async fn collect_processes() -> Result<Vec<ProcessInfo>, CollectionError> {
+    // Implementation
+}
+````
 
-- **Primary Review Tool**: coderabbit.ai (preferred over GitHub Copilot)
-- **Review Requirements**: Security focus, performance impact assessment
-- **Single Maintainer**: UncleSp1d3r operates as sole maintainer with appropriate push restrictions
+### Commit Message Format
 
-### Commit and Release Management
+```
+feat(detection): add SQL-based rule engine
 
-#### Commit Standards
+- Implement AST validation with sqlparser crate
+- Add sandboxed execution with resource limits
+- Include comprehensive test coverage
 
-- **Format**: Conventional Commits specification
-- **Types**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`
-- **Scopes**: `(auth)`, `(api)`, `(cli)`, `(models)`, `(detection)`, `(alerting)`, etc.
-- **Breaking Changes**: Indicated with `!` in header or `BREAKING CHANGE:` in footer
-
-#### Release Process
-
-- **Versioning**: Semantic Versioning (SemVer)
-- **Milestones**: Named as version numbers (e.g., `v1.0`) with descriptive context
-- **Automation**: `cargo release` for automated version management
-- **Distribution**: Platform-specific packages with code signing (Business/Enterprise)
-
-#### Git Workflow
-
-- **No Auto-Commits**: Never commit automatically without explicit permission
-- **Branch Strategy**: Feature branches with PR review process
-- **Protection**: Single maintainer with push restrictions and branch protection
+Closes #123
+```
