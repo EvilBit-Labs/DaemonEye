@@ -4,7 +4,7 @@
   "description": "Monitor all source code changes for Rust or protobuf files and analyze ONLY changed files (diff scope) for security posture. Apply clearly safe hardening improvements while preserving all public APIs across 10 security categories including privilege separation, input validation, cryptography, and error handling.",
   "version": "1",
   "when": {
-    "type": "fileCreated",
+    "type": "fileEdited",
     "patterns": [
       "**/*.rs",
       "**/*.proto",
