@@ -167,28 +167,26 @@ let serialized = prost::Message::encode_to_vec(&task)?;
 - Sequence numbers for ordering
 - **Backpressure**: Credit-based flow control with configurable limits (default: 1000 pending records, max 10 concurrent tasks)
 
-## Configuration Management
+## Configuration Management Rules
 
-### Hierarchical Configuration
-
-Support multiple configuration sources with precedence:
+MUST implement hierarchical configuration in this exact order:
 
 1. Command-line flags (highest precedence)
-2. Environment variables (`PROCMOND_*`)
-3. User configuration file (`~/.config/procmond/config.yaml`)
-4. System configuration file (`/etc/procmond/config.yaml`)
+2. Environment variables (`DAEMONEYE_*` prefix)
+3. User config (`~/.config/daemoneye/config.yaml`)
+4. System config (`/etc/daemoneye/config.yaml`)
 5. Embedded defaults (lowest precedence)
 
-### Configuration Structure
+REQUIRED configuration structure:
 
 ```yaml
 app:
-  scan_interval_ms: 30000
-  batch_size: 1000
+  scan_interval_ms: 30000  # MUST be configurable
+  batch_size: 1000         # MUST enforce memory limits
 
 database:
-  path: /var/lib/procmond/processes.sqlite
-  retention_days: 30
+  path: /var/lib/daemoneye/events.redb  # MUST use .redb extension
+  retention_days: 30       # MUST implement cleanup
 
 alerting:
   sinks:
@@ -198,11 +196,9 @@ alerting:
       url: https://alerts.example.com/api
 ```
 
-## Alert System Performance
+## Alert System Requirements
 
-### Plugin-Based Alert Sinks
-
-Use trait-based plugin system:
+MUST use this exact trait-based plugin pattern:
 
 ```rust
 use async_trait::async_trait;
@@ -216,72 +212,52 @@ pub trait AlertSink: Send + Sync {
 }
 ```
 
-### Alert Delivery Performance
+REQUIRED alert delivery features:
 
-- Concurrent delivery to multiple sinks
-- Retry logic with exponential backoff
-- Circuit breaking for failing sinks
-- Delivery audit trail
+- Concurrent delivery to multiple sinks with bounded parallelism
+- Exponential backoff retry logic (max 3 retries)
+- Circuit breaker pattern for failing sinks
+- Complete delivery audit trail in database
 
-## Observability and Monitoring
+## Performance Monitoring Requirements
 
-### Metrics Export
-
-Support Prometheus metrics for operational monitoring:
+MUST implement these exact Prometheus metrics:
 
 ```rust
-// Example Prometheus metrics
-// procmond_collection_duration_seconds{status="success|error"}
-// procmond_processes_collected_total
-// procmond_alerts_generated_total{severity="low|medium|high|critical"}
-// procmond_alert_deliveries_total{sink="stdout|syslog|webhook"}
-
-struct PrometheusMetrics {
-    collection_duration: String,
-    processes_collected: String,
-    alerts_generated: String,
-    alert_deliveries: String,
-}
+// REQUIRED metrics - do not modify names
+// daemoneye_collection_duration_seconds{status="success|error"}
+// daemoneye_processes_collected_total
+// daemoneye_alerts_generated_total{severity="low|medium|high|critical"}
+// daemoneye_alert_deliveries_total{sink="stdout|syslog|webhook"}
 ```
 
-### Health Checks
+REQUIRED health checks:
 
-- Configuration validation endpoints
-- Database connectivity checks
-- Alert sink health monitoring
-- System capability assessment
+- Configuration validation with detailed error messages
+- Database connectivity with latency measurement
+- Alert sink health with circuit breaker status
+- System capability assessment with privilege validation
 
-## Platform Considerations
+## Cross-Platform Performance Rules
 
-### Cross-Platform Compatibility
+MUST use `sysinfo` crate as primary abstraction with these requirements:
 
-- Linux: Primary development target with `/proc` filesystem access
-- macOS: Native process enumeration with security framework integration
-- Windows: Windows API process access with service deployment
+- **Linux**: Primary target, optimize for `/proc` filesystem access
+- **macOS**: Native process enumeration, handle security framework restrictions
+- **Windows**: Windows API access, support service deployment
 
-### Graceful Degradation
+REQUIRED graceful degradation:
 
-- Continue with reduced functionality when elevated privileges unavailable
-- Provide clear diagnostics about system capabilities
-- Fallback mechanisms for constrained environments
+- Continue with reduced functionality when privileges unavailable
+- Provide clear diagnostics about missing capabilities
+- Implement fallback mechanisms for constrained environments
 
-## Process Collection Performance
+## Critical Performance Patterns
 
-- Use `sysinfo` crate as primary cross-platform abstraction
-- Implement platform-specific optimizations where beneficial
-- Handle permission denied gracefully with partial data collection
-- Compute SHA-256 hashes of executable files for integrity checking
+ALWAYS implement these patterns:
 
-## Detection Engine Performance
-
-- Execute SQL rules against redb database with prepared statements
-- Implement rule validation and testing capabilities
-- Support hot-reloading of rule files with change detection
-- Provide performance metrics and optimization hints
-
-## Database Operations Performance
-
-- Use connection pooling for concurrent access
-- Implement automatic schema migrations
-- Support database maintenance operations (VACUUM, ANALYZE)
-- Provide detailed statistics and performance metrics
+- **Process Collection**: Handle permission denied gracefully, compute SHA-256 hashes
+- **Detection Engine**: Use prepared statements only, validate SQL with AST parsing
+- **Database Operations**: Connection pooling, automatic migrations, maintenance operations
+- **Resource Limits**: Enforce memory budgets, implement cooperative yielding
+- **Timeout Enforcement**: All operations MUST have bounded execution time
