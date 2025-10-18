@@ -103,7 +103,7 @@ This document analyzes Task 5.5 to ensure it provides comprehensive Windows-cent
 
 - **Capability**: Access Windows performance counters
 
-- **Implementation**: `perfmon-rs` or similar crate
+- **Implementation**: Use PDH bindings from the `windows` or `windows-sys` crates (Win32::System::Performance) with thin wrappers in our codebase
 
 - **Equivalent to**: macOS sysctl, Linux /proc/stat
 

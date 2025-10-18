@@ -607,11 +607,9 @@ Windows extensions (provided by `sysinfo`, `notify`, and platform-specific crate
 - `file_compression_events` (json): Compression events (via `notify` crate)
 - `file_encryption_events` (json): Encryption events (via `notify` crate)
 - `file_backup_events` (json): Backup events (via `notify` crate)
-- `file_archive_events` (json): Archive events (via `notify` crate)
 - `file_index_events` (json): Index events (via `notify` crate)
 - `file_content_indexed_events` (json): Content indexed events (via `notify` crate)
 - `file_not_content_indexed_events` (json): Not content indexed events (via `notify` crate)
-- `file_offline_events` (json): Offline events (via `notify` crate)
 - `file_recall_on_data_access_events` (json): Recall on data access events (via `notify` crate)
 - `file_recall_on_open_events` (json): Recall on open events (via `notify` crate)
 - `file_pin_events` (json): Pin events (via `notify` crate)
@@ -1050,12 +1048,14 @@ Core fields available across all platforms (provided by `regex` crate, `sysinfo`
 - **Pattern Matching**: Use `regex` crate for pattern matching in memory dumps, scan for URLs, emails, IPs, crypto keys, and other artifacts using compiled regex patterns
 - **Artifact Extraction**: Scan memory regions for strings, extract text using encoding detection, identify structured data patterns using entropy analysis
 - **Heap Analysis**: Use `sysinfo` crate for process memory statistics, analyze allocation patterns, detect memory leaks through allocation/free tracking, calculate fragmentation metrics
-- **Security Analysis**: Use `dhat` crate for heap profiling to detect unusual allocation patterns, `leaktracer` for identifying potential memory-based persistence techniques, `memscope-rs` for tracking suspicious memory allocation patterns
-- **Threat Detection**: Use `re_memory` crate for runtime memory tracking to identify malicious code execution patterns, detect code injection techniques, and analyze memory-based evasion methods
+- **Security Analysis**: Instrument memory activity via first-party telemetry built on `sysinfo`, `procfs`, `mach2`, and the `windows` crate (ToolHelp + ETW providers). Develop and ship an in-house `heap_sentinel` module for sustained allocation/leak detection so no runtime profile depends on experimental crates; keep optional debug profiling behind cargo features.
+- **Threat Detection**: Combine maintained tooling—`capstone` for disassembly, `goblin` for PE/ELF parsing, and OS-backed memory snapshots—with custom heuristics that score injection indicators. Document fallback logic and regression tests for each heuristic so we can evolve without reintroducing unstable dependencies.
 - **Exploit Detection**: Use `regex` crate for pattern matching to detect ROP gadgets, shellcode signatures, and exploit patterns in memory dumps
 - **ROP Analysis**: Scan memory for ROP gadget patterns using regex, analyze return address chains for suspicious patterns, detect gadget sequences
 - **Buffer Overflow Detection**: Use `sysinfo` and platform-specific crates to analyze stack frames, detect canary violations, identify return address corruption patterns
 - **Shellcode Detection**: Use `regex` crate to scan for shellcode signatures, detect encoded payloads, identify suspicious code patterns
+
+Mitigation note: any auxiliary instrumentation that requires vendor or experimental APIs will ship behind an `experimental_telemetry` feature flag. The production build matrix forbids enabling that flag, and security review tickets track removal timelines whenever we prototype with non-hardened crates.
 
 ##### Network Analysis Collector (netanalymond)
 
