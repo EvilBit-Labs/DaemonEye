@@ -583,10 +583,16 @@ impl ProcessLifecycleTracker {
         if self.config.track_memory_changes {
             if let (Some(prev_mem), Some(curr_mem)) = (previous.memory_usage, current.memory_usage)
             {
-                let change_percent =
-                    ((curr_mem as f64 - prev_mem as f64) / prev_mem as f64).abs() * 100.0;
-                if change_percent > self.config.memory_change_threshold {
-                    modified_fields.push("memory_usage".to_string());
+                if prev_mem == 0 {
+                    if curr_mem > 0 {
+                        modified_fields.push("memory_usage".to_string());
+                    }
+                } else {
+                    let change_percent =
+                        ((curr_mem as f64 - prev_mem as f64) / prev_mem as f64).abs() * 100.0;
+                    if change_percent > self.config.memory_change_threshold {
+                        modified_fields.push("memory_usage".to_string());
+                    }
                 }
             }
         }

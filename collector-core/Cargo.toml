@@ -16,7 +16,6 @@ readme = "README.md"
 
 [features]
 default = []
-busrt = []
 
 [dependencies]
 
@@ -34,8 +33,6 @@ chrono = { workspace = true, features = ["serde"] }
 # High-performance concurrent data structures
 crossbeam = { workspace = true }
 daemoneye-eventbus = { path = "../daemoneye-eventbus" }
-# Message broker for IPC (disabled during migration away from busrt)
-# busrt = { workspace = true }
 
 # IPC integration
 daemoneye-lib = { workspace = true }

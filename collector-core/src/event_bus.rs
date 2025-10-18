@@ -222,7 +222,7 @@ impl EventBus for LocalEventBus {
         let mut stats = self.stats.lock().await;
         stats.active_subscribers = subscribers.len();
 
-        // Spawn forwarding task and track it
+        // Spawn forwarding task that forwards broadcast messages into the receiver-specific channel
         let task_handle = tokio::spawn(async move {
             loop {
                 match forwarding_rx.recv().await {
@@ -261,19 +261,28 @@ impl EventBus for LocalEventBus {
     }
 
     async fn unsubscribe(&mut self, subscriber_id: &str) -> Result<()> {
-        // Remove subscriber
+        // Remove subscriber tracking entry
         let mut subscribers = self.subscribers.write().await;
         subscribers.remove(subscriber_id);
+        let active_subscribers = subscribers.len();
+        drop(subscribers);
 
-        // Remove and await forwarding task
-        let mut forwarding_tasks = self.forwarding_tasks.write().await;
-        if let Some(task_handle) = forwarding_tasks.remove(subscriber_id) {
-            // Task will terminate when its shutdown signal is sent or channel closes
-            drop(task_handle); // Let the task finish naturally
+        // Abort the forwarding task so it doesn't continue to process events
+        if let Some(task_handle) = self.forwarding_tasks.write().await.remove(subscriber_id) {
+            task_handle.abort();
+            if let Err(err) = task_handle.await {
+                if !err.is_cancelled() {
+                    tracing::warn!(
+                        subscriber_id = %subscriber_id,
+                        error = %err,
+                        "Forwarding task ended with error during unsubscribe"
+                    );
+                }
+            }
         }
 
         let mut stats = self.stats.lock().await;
-        stats.active_subscribers = subscribers.len();
+        stats.active_subscribers = active_subscribers;
 
         Ok(())
     }

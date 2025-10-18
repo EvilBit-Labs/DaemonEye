@@ -1,31 +1,16 @@
 //! Health monitoring system for collector lifecycle management.
 //!
-//! This module provides comprehensive health monitoring capabilities including
-//! heartbeat tracking, health status aggregation, and automated failure detection
-//! for collector components managed through the busrt message broker.
+//! The dedicated busrt-based health monitor has been removed. This stub keeps the public
+//! surface intact until the DaemonEye event bus health pipeline lands.
 
-#[cfg(feature = "busrt")]
-mod busrt_health_monitor {
-    // Busrt-specific health monitoring implementation would go here
-    // This is disabled during migration away from busrt
-}
+/// Temporary health monitor placeholder.
+#[derive(Default)]
+pub struct HealthMonitor;
 
-// Stub implementation for non-busrt builds
-#[cfg(not(feature = "busrt"))]
-pub struct HealthMonitor {
-    // Minimal stub implementation
-}
-
-#[cfg(not(feature = "busrt"))]
 impl HealthMonitor {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-#[cfg(not(feature = "busrt"))]
-impl Default for HealthMonitor {
-    fn default() -> Self {
-        Self::new()
+    /// Construct a new health monitor stub.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
     }
 }

@@ -63,28 +63,15 @@
 //! ```
 
 pub mod analysis_chain;
-// busrt modules disabled during migration away from busrt
-// #[cfg(feature = "busrt")]
-// pub mod busrt_client;
-// #[cfg(feature = "busrt")]
-// pub mod busrt_event_bus;
-// #[cfg(feature = "busrt")]
-// pub mod busrt_types;
 pub mod collector;
 pub mod config;
 pub mod config_manager;
 pub mod daemoneye_event_bus;
-// embedded_broker module disabled during migration away from busrt
-// #[cfg(feature = "busrt")]
-// pub mod embedded_broker;
 pub mod event;
 pub mod event_bus;
 pub mod health_monitor;
 pub mod high_performance_event_bus;
 pub mod ipc;
-// ipc_busrt_bridge module disabled during migration away from busrt
-// #[cfg(feature = "busrt")]
-// pub mod ipc_busrt_bridge;
 pub mod monitor_collector;
 pub mod performance;
 pub mod rpc_services;
@@ -98,53 +85,24 @@ pub use analysis_chain::{
     AnalysisWorkflowDefinition, StageStatus, WorkflowError, WorkflowErrorType, WorkflowExecution,
     WorkflowProgress, WorkflowStatistics, WorkflowStatus,
 };
-// busrt re-exports disabled during migration away from busrt
-// #[cfg(feature = "busrt")]
-// pub use busrt_client::{CollectorBusrtClient, ReconnectionConfig};
-// #[cfg(feature = "busrt")]
-// pub use busrt_event_bus::{BusrtEventBus, BusrtEventBusConfig, BusrtQoS};
-// #[cfg(feature = "busrt")]
-// pub use busrt_types::{
-//     BrokerConfig, BrokerMode, BrokerStats, BusrtClient, BusrtError, BusrtEvent,
-//     CollectorLifecycleService, ConfigurationService, CrossbeamCompatibilityLayer,
-//     EmbeddedBrokerConfig, EventCorrelation, EventPayload, HealthCheckService,
-//     StandaloneBrokerConfig, topics,
-// };
 pub use collector::{Collector, CollectorRuntime, RuntimeStats};
 pub use config::CollectorConfig;
-#[cfg(not(feature = "busrt"))]
 pub use config_manager::ConfigManager;
 pub use daemoneye_event_bus::DaemoneyeEventBus;
-// busrt-specific config manager types disabled during migration away from busrt
-// #[cfg(feature = "busrt")]
-// pub use config_manager::{ConfigChangeEvent, ConfigManager, ConfigManagerSettings};
-// embedded_broker re-exports disabled during migration away from busrt
-// #[cfg(feature = "busrt")]
-// pub use embedded_broker::{BrokerMessage, BrokerMessageType, EmbeddedBroker};
 pub use event::{
     AnalysisType, CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent,
     TriggerPriority, TriggerRequest,
 };
 pub use event_bus::{
-    BusEvent, CorrelationFilter, EventBus, EventBusConfig, EventBusStatistics, EventFilter,
-    EventSubscription, LocalEventBus,
+    BusEvent, CorrelationFilter, EventBus, EventBusConfig, EventFilter, EventSubscription,
+    LocalEventBus,
 };
-#[cfg(not(feature = "busrt"))]
 pub use health_monitor::HealthMonitor;
-// busrt-specific health monitor types disabled during migration away from busrt
-// #[cfg(feature = "busrt")]
-// pub use health_monitor::{
-//     CollectorHealthState, CollectorHealthSummary, HealthEvent, HealthMonitor, HealthMonitorConfig,
-//     HealthSnapshot, HealthSummary,
-// };
 pub use high_performance_event_bus::{
     BackpressureStrategy, HighPerformanceEventBus, HighPerformanceEventBusConfig,
     HighPerformanceEventBusImpl,
 };
 pub use ipc::CollectorIpcServer;
-// ipc_busrt_bridge re-exports disabled during migration away from busrt
-// #[cfg(feature = "busrt")]
-// pub use ipc_busrt_bridge::{IpcBridgeConfig, IpcBusrtBridge};
 pub use monitor_collector::{
     MonitorCollector, MonitorCollectorConfig, MonitorCollectorStats, MonitorCollectorStatsSnapshot,
 };
@@ -153,10 +111,6 @@ pub use performance::{
     PerformanceConfig, PerformanceDegradation, PerformanceMonitor, ResourceUsageMetrics,
     ThroughputMetrics, TriggerLatencyMetrics,
 };
-// busrt-specific RPC services disabled during migration away from busrt
-// #[cfg(feature = "busrt")]
-// pub use rpc_services::CollectorLifecycleManager;
-#[cfg(not(feature = "busrt"))]
 pub use rpc_services::RpcServices;
 pub use shutdown_coordinator::{
     ShutdownConfig, ShutdownCoordinator, ShutdownEvent, ShutdownPhase, ShutdownRequest,
@@ -168,5 +122,3 @@ pub use trigger::{
     TriggerCapabilities, TriggerCondition, TriggerConfig, TriggerEmissionStats, TriggerManager,
     TriggerResourceLimits, TriggerStatistics,
 };
-
-// busrt integration tests disabled during migration away from busrt
