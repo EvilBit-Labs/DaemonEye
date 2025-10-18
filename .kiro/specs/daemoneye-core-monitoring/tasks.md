@@ -201,55 +201,51 @@ The following foundational components have been successfully implemented:
   - Validate behavioral equivalence between old and new implementations
   - _Requirements: 14.1, 14.5_
 
-- [ ] 2.4 Migrate collector-core event distribution to daemoneye-eventbus topics
+- [x] 2.4 Migrate collector-core event distribution to daemoneye-eventbus topics
 
-  - [ ] 2.4.1 Migrate collector-core event distribution to daemoneye-eventbus topics
-
-    - Replace crossbeam channel usage with daemoneye-eventbus pub/sub topics in LocalEventBus implementation
-    - Update EventSubscription and event routing logic to use daemoneye-eventbus topic patterns
-    - Migrate event filtering and correlation to daemoneye-eventbus message broker capabilities
-    - Preserve existing event bus statistics and monitoring through daemoneye-eventbus broker metrics
-    - Create migration tests ensuring identical behavior between crossbeam and daemoneye-eventbus implementations
-    - _Requirements: 14.4, 14.5, 15.1, 15.3_
-
-  - [ ] 2.4.2 Replace crossbeam channels with daemoneye-eventbus pub/sub in LocalEventBus
+  - [ ] 2.4.1 Replace crossbeam channels with daemoneye-eventbus in LocalEventBus
 
     - Modify LocalEventBus implementation to use daemoneye-eventbus topics instead of crossbeam channels
     - Preserve existing event distribution semantics and ordering guarantees
     - Update event publishing logic to use daemoneye-eventbus topic patterns
     - Maintain backward compatibility with existing event consumers
+    - Write unit tests for LocalEventBus topic-based implementation
     - _Requirements: 14.4, 15.1_
 
-  - [ ] 2.4.3 Update EventSubscription and event routing for daemoneye-eventbus topics
+  - [ ] 2.4.2 Update EventSubscription for daemoneye-eventbus topic patterns
 
     - Modify EventSubscription structure to support daemoneye-eventbus topic patterns
     - Update event routing logic to use daemoneye-eventbus subscription mechanisms
     - Implement topic-based filtering and wildcarding support
     - Preserve existing event filtering capabilities
+    - Write unit tests for EventSubscription topic pattern matching
     - _Requirements: 14.5, 15.3_
 
-  - [ ] 2.4.4 Migrate event filtering and correlation to daemoneye-eventbus capabilities
+  - [ ] 2.4.3 Migrate event filtering and correlation to daemoneye-eventbus
 
     - Implement event filtering using daemoneye-eventbus topic subscription patterns
     - Create correlation tracking through daemoneye-eventbus message metadata
     - Update event correlation logic to work with daemoneye-eventbus message broker
     - Maintain existing correlation ID and tracing functionality
+    - Write unit tests for event filtering and correlation with daemoneye-eventbus
     - _Requirements: 15.1, 15.4_
 
-  - [ ] 2.4.5 Preserve event bus statistics and monitoring through daemoneye-eventbus
+  - [ ] 2.4.4 Preserve event bus statistics and monitoring
 
     - Implement statistics collection using daemoneye-eventbus broker metrics
     - Create monitoring dashboards for daemoneye-eventbus broker performance
     - Maintain existing event bus monitoring interfaces
     - Add daemoneye-eventbus-specific metrics and health indicators
+    - Write unit tests for statistics collection and monitoring integration
     - _Requirements: 14.5, 15.1_
 
-  - [ ] 2.4.6 Create migration tests ensuring behavioral equivalence
+  - [ ] 2.4.5 Create comprehensive migration tests
 
     - Write comprehensive tests comparing crossbeam vs daemoneye-eventbus behavior
     - Test event ordering, delivery guarantees, and error handling
     - Validate performance characteristics and resource usage
     - Create regression tests for migration scenarios
+    - Write integration tests ensuring identical behavior between implementations
     - _Requirements: 14.4, 14.5_
 
 - [ ] 2.5 Implement RPC patterns for collector lifecycle management
