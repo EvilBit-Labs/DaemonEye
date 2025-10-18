@@ -67,7 +67,7 @@ The benchmarks are designed to accommodate resource-constrained CI runners:
 - Full lifecycle benchmarks (startup, subscription) include expensive setup/teardown
 - These establish baselines but may show variance on CI due to resource contention
 - Core operation benchmarks (publishing, delivery) are more stable regression indicators
-- The event bus uses an embedded busrt broker with Unix sockets/named pipes for IPC
+- The event bus uses the embedded `daemoneye-eventbus` broker with Unix domain sockets or Windows named pipes for IPC
 - Socket path synchronization ensures reliable broker-client connections
 
 ## Collector Benchmarks (`collector_benchmarks.rs`)

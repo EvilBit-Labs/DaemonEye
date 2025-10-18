@@ -21,7 +21,7 @@ Security and reliability are emphasized via strict linting, no unsafe code, and 
 - Language: Rust 2024 Edition (MSRV 1.85)
 - Package manager/build: Cargo (workspace)
 - Async runtime: tokio
-- IPC: interprocess (cross-platform); busrt rpc/ipc on Unix where available; daemoneye-eventbus for broker functionality
+- IPC: interprocess (cross-platform) with the daemoneye-eventbus embedded broker
 - CLI: clap v4
 - Database: redb (embedded)
 - Logging/telemetry: tracing, tracing-subscriber
@@ -155,8 +155,8 @@ Additional OS/environment variables may be referenced in tests for compatibility
 
 ## Platform notes
 
-- Unix: Some IPC features use busrt (rpc/ipc) when available; broker functionality provided by daemoneye-eventbus.
-- Windows: busrt rpc/ipc features are not enabled; IPC falls back to interprocess; broker functionality provided by daemoneye-eventbus.
+- Unix: IPC is provided via Unix domain sockets using interprocess + the embedded daemoneye-eventbus broker.
+- Windows: IPC uses named pipes through interprocess with daemoneye-eventbus for broker functionality.
 
 ## Documentation
 

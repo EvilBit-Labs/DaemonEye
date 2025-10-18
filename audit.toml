@@ -4,10 +4,7 @@
 # explicitly accepted after risk assessment. See SECURITY.md for full rationale.
 
 [advisories]
-ignore = [
-  { id = "RUSTSEC-2024-0384", reason = "instant is unmaintained; used transitively via busrt->async-io->futures-lite->fastrand; low risk surface; accepted per SECURITY.md; re-evaluate by 2026-01-31" },
-  { id = "RUSTSEC-2024-0436", reason = "paste is an unmaintained proc-macro crate; compile-time only via busrt->rmp-serde->rmp; accepted per SECURITY.md; re-evaluate by 2026-01-31" },
-]
+ignore = []
 
 # Keep default output settings for transparency
 [output]
