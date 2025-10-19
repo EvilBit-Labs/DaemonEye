@@ -19,7 +19,7 @@
 - [User Guides](./user-guides.md)
   - [Operator Guide](./user-guides/operator-guide.md)
   - [Configuration Guide](./user-guides/configuration.md)
-  - [CLI Reference](./cli-reference.md)
+  - [CLI Reference](./user-guides/cli-reference.md)
 - [API Reference](./api-reference.md)
   - [Core API](./api-reference/core-api.md)
 - [Deployment](./deployment.md)
