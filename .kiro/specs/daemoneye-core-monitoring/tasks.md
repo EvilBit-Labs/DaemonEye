@@ -966,91 +966,75 @@ These extensions will follow the established collector-core framework patterns a
 
 - [ ] 23. Comprehensive stress testing and load validation
 
-- [ ] 23.1 Implement collector-core stress testing suite
+  - [ ] 23.1 Implement collector-core stress testing suite
 
-  - Create stress tests for event batching under extreme load (100,000+ events/second)
-  - Add stress tests for backpressure handling with multiple blocked event sources
-  - Implement stress tests for graceful shutdown coordination under heavy load
-  - Create memory pressure tests for event source registration/deregistration cycles
-  - Add concurrent stress tests for multiple EventSource instances with resource contention
-  - Write endurance tests for 24+ hour continuous operation under load
-  - _Requirements: 11.1, 11.2, 12.1, 12.2, 13.1, 13.2, 13.5_
+    - Create stress tests for event batching under extreme load (100,000+ events/second)
+    - Add stress tests for backpressure handling with multiple blocked event sources
+    - Implement stress tests for graceful shutdown coordination under heavy load
+    - Create memory pressure tests for event source registration/deregistration cycles
+    - Add concurrent stress tests for multiple EventSource instances with resource contention
+    - Write endurance tests for 24+ hour continuous operation under load
+    - _Requirements: 11.1, 11.2, 12.1, 12.2, 13.1, 13.2, 13.5_
 
-- [ ] 23.2 Process enumeration stress testing
+  - [ ] 23.2 Process enumeration stress testing
 
-  - Create stress tests with extremely high process counts (50,000+ processes)
-  - Add stress tests for rapid process creation/termination scenarios
-  - Implement memory pressure tests for process enumeration with limited resources
-  - Create concurrent enumeration stress tests with multiple collectors
-  - Add privilege boundary stress tests under resource exhaustion
-  - Write platform-specific stress tests for OS-level resource limits
-  - _Requirements: 1.1, 1.5, 6.1, 6.2_
+    - Create stress tests with extremely high process counts (50,000+ processes)
+    - Add stress tests for rapid process creation/termination scenarios
+    - Implement memory pressure tests for process enumeration with limited resources
+    - Create concurrent enumeration stress tests with multiple collectors
+    - Add privilege boundary stress tests under resource exhaustion
+    - Write platform-specific stress tests for OS-level resource limits
+    - _Requirements: 1.1, 1.5, 6.1, 6.2_
 
-- [ ] 23.3 Database and storage stress testing
+  - [ ] 23.3 Database and storage stress testing
 
-  - Create stress tests for redb database under extreme write loads (10,000+ records/second)
-  - Add stress tests for concurrent read/write operations with resource contention
-  - Implement stress tests for database growth and retention policy enforcement
-  - Create memory pressure tests for large dataset queries and aggregations
-  - Add stress tests for database corruption recovery and integrity validation
-  - Write endurance tests for long-term database stability under continuous load
-  - _Requirements: 1.3, 4.4, 7.4_
+    - Create stress tests for redb database under extreme write loads (10,000+ records/second)
+    - Add stress tests for concurrent read/write operations with resource contention
+    - Implement stress tests for database growth and retention policy enforcement
+    - Create memory pressure tests for large dataset queries and aggregations
+    - Add stress tests for database corruption recovery and integrity validation
+    - Write endurance tests for long-term database stability under continuous load
+    - _Requirements: 1.3, 4.4, 7.4_
 
-- [ ] 23.4 Alert delivery stress testing
+  - [ ] 23.4 Alert delivery stress testing
 
-  - Create stress tests for alert delivery under high-volume detection scenarios (1,000+ alerts/minute)
-  - Add stress tests for multiple alert sink failures and recovery scenarios
-  - Implement stress tests for network partition and connectivity issues
-  - Create memory pressure tests for alert queuing and dead letter queue management
-  - Add stress tests for circuit breaker behavior under sustained failures
-  - Write endurance tests for alert delivery reliability over extended periods
-  - _Requirements: 5.2, 5.3, 5.4, 5.5_
+    - Create stress tests for alert delivery under high-volume detection scenarios (1,000+ alerts/minute)
+    - Add stress tests for multiple alert sink failures and recovery scenarios
+    - Implement stress tests for network partition and connectivity issues
+    - Create memory pressure tests for alert queuing and dead letter queue management
+    - Add stress tests for circuit breaker behavior under sustained failures
+    - Write endurance tests for alert delivery reliability over extended periods
+    - _Requirements: 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 23.5 IPC communication stress testing
+  - [ ] 23.5 IPC communication stress testing
 
-  - Create stress tests for IPC communication under extreme message loads
-  - Add stress tests for connection failures and automatic reconnection scenarios
-  - Implement stress tests for message serialization/deserialization under load
-  - Create memory pressure tests for IPC buffer management and backpressure
-  - Add stress tests for capability negotiation under rapid collector restarts
-  - Write endurance tests for IPC stability over extended operation periods
-  - _Requirements: 3.1, 3.2, 11.1, 11.2_
+    - Create stress tests for IPC communication under extreme message loads
+    - Add stress tests for connection failures and automatic reconnection scenarios
+    - Implement stress tests for message serialization/deserialization under load
+    - Create memory pressure tests for IPC buffer management and backpressure
+    - Add stress tests for capability negotiation under rapid collector restarts
+    - Write endurance tests for IPC stability over extended operation periods
+    - _Requirements: 3.1, 3.2, 11.1, 11.2_
 
-- [ ] 23.6 System-wide integration stress testing
+  - [ ] 23.6 System-wide integration stress testing
 
-  - Create end-to-end stress tests for complete monitoring workflows under extreme load
-
-  - Add stress tests for system resource exhaustion and graceful degradation
-
-  - Implement stress tests for configuration changes and hot-reloading under load
-
-  - Create chaos engineering tests for random component failures and recovery
-
-  - Add stress tests for security boundary enforcement under resource pressure
-
-  - Write comprehensive load tests simulating real-world deployment scenarios
-
-  - Requirements: All requirements (verification_daemoneye/issues/61)
-
-  - Configure comprehensive CI matrix testing aligned with AGENTS.md OS Support Matrix
-
-  - Add primary platform testing: Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Debian 11+ LTS, macOS 14.0+ (Sonoma), Windows 10+/11/Server 2019+/Server 2022
-
-  - Include architecture matrix: x86_64 and ARM64 for all primary platforms
-
-  - Add secondary platform testing: Alpine 3.16+, Amazon Linux 2+, Ubuntu 18.04, RHEL 7, macOS 12.0+ (Monterey), FreeBSD 13.0+
-
-  - Configure multiple Rust version testing (stable, beta, MSRV 1.70+) across primary platforms
-
-  - Set up quality gates with clippy, rustfmt, security auditing (cargo audit, cargo deny), and overflow-checks validation
-
-  - Create automated test reporting and coverage tracking with llvm-cov
-
-  - Add container-based testing for Alpine and Amazon Linux deployments
-
-  - Configure cross-compilation testing for ARM64 targets
-
-  - _Requirements: All requirements verification_
+    - Create end-to-end stress tests for complete monitoring workflows under extreme load
+    - Add stress tests for system resource exhaustion and graceful degradation
+    - Implement stress tests for configuration changes and hot-reloading under load
+    - Create chaos engineering tests for random component failures and recovery
+    - Add stress tests for security boundary enforcement under resource pressure
+    - Write comprehensive load tests simulating real-world deployment scenarios
+    - Requirements: All requirements (verification_daemoneye/issues/61)
+    - Configure comprehensive CI matrix testing aligned with AGENTS.md OS Support Matrix
+    - Add primary platform testing: Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Debian 11+ LTS, macOS 14.0+ (Sonoma), Windows 10+/11/Server 2019+/Server 2022
+    - Include architecture matrix: x86_64 and ARM64 for all primary platforms
+    - Add secondary platform testing: Alpine 3.16+, Amazon Linux 2+, Ubuntu 18.04, RHEL 7, macOS 12.0+ (Monterey), FreeBSD 13.0+
+    - Configure multiple Rust version testing (stable, beta, MSRV 1.70+) across primary platforms
+    - Set up quality gates with clippy, rustfmt, security auditing (cargo audit, cargo deny), and overflow-checks validation
+    - Create automated test reporting and coverage tracking with llvm-cov
+    - Add container-based testing for Alpine and Amazon Linux deployments
+    - Configure cross-compilation testing for ARM64 targets
+    - _Requirements: All requirements verification_
 
 - [ ] 24. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/DaemonEye/issues/62)
 
@@ -1064,9 +1048,9 @@ These extensions will follow the established collector-core framework patterns a
   - Implement chaos engineering tests for component failure scenarios and recovery behavior
   - _Requirements: 3.5, 6.4, 6.5_
 
-- [ ] 23. Integrate components and implement end-to-end workflows
+- [ ] 25. Integrate components and implement end-to-end workflows
 
-- [ ] 23.1 Wire IPC communication between components via collector-core - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
+- [ ] 25.1 Wire IPC communication between components via collector-core - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
 
   - Integrate daemoneye-agent IPC client with collector-core framework from Task 4
   - Verify task distribution and result collection workflows work through collector-core runtime
@@ -1075,7 +1059,7 @@ These extensions will follow the established collector-core framework patterns a
   - Write integration tests for complete collector-core mediated IPC communication
   - _Requirements: All requirements integration_
 
-- [ ] 23.2 Implement rule translation and execution pipeline - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
+- [ ] 25.2 Implement rule translation and execution pipeline - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
 
   - Integrate SQL-to-IPC translation pipeline from Task 11 with collector-core framework from Task 4
   - Verify detection rule execution works with collector-core event sources and IPC distribution
@@ -1084,7 +1068,7 @@ These extensions will follow the established collector-core framework patterns a
   - Write integration tests for end-to-end rule execution through collector-core architecture
   - _Requirements: All requirements integration_
 
-- [ ] 23.3 Connect alert generation to delivery pipeline - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
+- [ ] 25.3 Connect alert generation to delivery pipeline - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
 
   - Wire alert generation from detection results to multi-channel delivery
   - Implement alert deduplication and priority handling
@@ -1092,7 +1076,7 @@ These extensions will follow the established collector-core framework patterns a
   - Write end-to-end tests for alert generation and delivery
   - _Requirements: All requirements integration_
 
-- [ ] 23.4 Add unified configuration and service management - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
+- [ ] 25.4 Add unified configuration and service management - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
 
   - Implement configuration management across all three components
   - Add daemoneye-agent process lifecycle management for collector-core components
