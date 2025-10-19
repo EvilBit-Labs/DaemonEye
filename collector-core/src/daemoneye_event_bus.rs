@@ -1492,7 +1492,15 @@ mod tests {
     async fn test_broker_health_status_calculation() {
         let config = EventBusConfig::default();
         let temp_dir = tempfile::tempdir().unwrap();
-        let socket_path = temp_dir.path().join("test-health-status.sock");
+        // Use shorter unique identifier to avoid SUN_LEN limits
+        let socket_name = format!("health-{}.sock", std::process::id());
+        let socket_path = temp_dir.path().join(socket_name);
+
+        // Clean up any existing socket from previous test runs
+        if socket_path.exists() {
+            let _ = std::fs::remove_file(&socket_path);
+        }
+
         let event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
             .await
             .unwrap();

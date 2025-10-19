@@ -98,17 +98,21 @@ fn bench_topic_matching(c: &mut Criterion) {
 fn bench_event_publishing(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
 
+    // Setup heavyweight resources outside the benchmark loop
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("bench-publish.sock");
+
+    let broker = rt.block_on(async {
+        DaemoneyeBroker::new(socket_path.to_str().unwrap())
+            .await
+            .unwrap()
+    });
+    let mut event_bus =
+        rt.block_on(async { DaemoneyeEventBus::from_broker(broker).await.unwrap() });
+
     c.bench_function("event_publishing", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let temp_dir = TempDir::new().unwrap();
-                let socket_path = temp_dir.path().join("bench-publish.sock");
-
-                let broker = DaemoneyeBroker::new(socket_path.to_str().unwrap())
-                    .await
-                    .unwrap();
-                let mut event_bus = DaemoneyeEventBus::from_broker(broker).await.unwrap();
-
                 let event = create_test_process_event(black_box(1234));
                 let result = event_bus
                     .publish(event, "bench-correlation".to_string())
@@ -122,18 +126,26 @@ fn bench_event_publishing(c: &mut Criterion) {
 fn bench_subscription_creation(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
 
+    // Setup heavyweight resources outside the benchmark loop
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("bench-subscription.sock");
+
+    let broker = rt.block_on(async {
+        DaemoneyeBroker::new(socket_path.to_str().unwrap())
+            .await
+            .unwrap()
+    });
+    let mut event_bus =
+        rt.block_on(async { DaemoneyeEventBus::from_broker(broker).await.unwrap() });
+
     c.bench_function("subscription_creation", |b| {
+        let mut counter = 0u32;
         b.iter(|| {
             rt.block_on(async {
-                let temp_dir = TempDir::new().unwrap();
-                let socket_path = temp_dir.path().join("bench-subscription.sock");
-
-                let broker = DaemoneyeBroker::new(socket_path.to_str().unwrap())
-                    .await
-                    .unwrap();
-                let mut event_bus = DaemoneyeEventBus::from_broker(broker).await.unwrap();
-
-                let subscription = create_test_subscription();
+                counter += 1;
+                let mut subscription = create_test_subscription();
+                // Make subscriber_id unique for each iteration
+                subscription.subscriber_id = format!("bench-subscriber-{}", counter);
                 let result = event_bus.subscribe(subscription).await;
                 black_box(result)
             })

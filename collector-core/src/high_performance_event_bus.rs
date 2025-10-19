@@ -45,6 +45,12 @@ pub struct HighPerformanceEventBusConfig {
     pub max_persisted_events: usize,
     /// Event correlation tracking
     pub enable_correlation_tracking: bool,
+    /// Timeout for publish operations when channel is full
+    pub publish_timeout: Duration,
+    /// Maximum number of retries for blocking backpressure
+    pub max_blocking_retries: usize,
+    /// Maximum backoff delay for blocking backpressure
+    pub blocking_backoff_max_delay: Duration,
 }
 
 impl Default for HighPerformanceEventBusConfig {
@@ -57,6 +63,9 @@ impl Default for HighPerformanceEventBusConfig {
             enable_persistence: false,
             max_persisted_events: 10000,
             enable_correlation_tracking: true,
+            publish_timeout: Duration::from_secs(5),
+            max_blocking_retries: 1000,
+            blocking_backoff_max_delay: Duration::from_millis(100),
         }
     }
 }
@@ -213,6 +222,7 @@ impl HighPerformanceEventBusImpl {
         let delivery_counter_clone = Arc::clone(&delivery_counter);
         let drop_counter_clone = Arc::clone(&drop_counter);
         let routing_finished_clone = Arc::clone(&routing_finished);
+        let config_clone = config.clone();
 
         // Start the event routing task using crossbeam scope for safe concurrency
         let routing_handle = thread::spawn(move || {
@@ -255,9 +265,11 @@ impl HighPerformanceEventBusImpl {
                         // Send to subscriber respecting backpressure strategy
                         match subscriber_info.subscription.backpressure_strategy {
                             BackpressureStrategy::Blocking => {
-                                // Block until we can send
                                 let mut sent = false;
-                                while !sent {
+                                let mut retries = 0;
+                                let mut backoff_delay = Duration::from_micros(10); // Start with a small delay
+
+                                while !sent && retries < config_clone.max_blocking_retries {
                                     match subscriber_info.sender.try_send(bus_event.clone()) {
                                         Ok(_) => {
                                             delivered += 1;
@@ -265,8 +277,7 @@ impl HighPerformanceEventBusImpl {
                                             sent = true;
                                         }
                                         Err(TrySendError::Full(_)) => {
-                                            // Channel full, yield and retry
-                                            std::thread::yield_now();
+                                            retries += 1;
                                             if shutdown_signal_clone.load(Ordering::Relaxed) {
                                                 dropped += 1;
                                                 drop_counter_clone.fetch_add(1, Ordering::Relaxed);
@@ -276,6 +287,10 @@ impl HighPerformanceEventBusImpl {
                                                 );
                                                 break;
                                             }
+                                            // Use thread::sleep since we're in a sync context (routing thread)
+                                            thread::sleep(backoff_delay);
+                                            backoff_delay = (backoff_delay * 2)
+                                                .min(config_clone.blocking_backoff_max_delay);
                                         }
                                         Err(TrySendError::Disconnected(_)) => {
                                             dropped += 1;
@@ -287,6 +302,15 @@ impl HighPerformanceEventBusImpl {
                                             break;
                                         }
                                     }
+                                }
+                                if !sent {
+                                    dropped += 1;
+                                    drop_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                    warn!(
+                                        subscriber_id = %subscriber_id,
+                                        "Failed to deliver event after {} retries; dropping event.",
+                                        config_clone.max_blocking_retries
+                                    );
                                 }
                             }
                             BackpressureStrategy::DropNewest => {
@@ -421,16 +445,33 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
     async fn publish(&self, event: CollectionEvent, correlation_id: String) -> Result<()> {
         // Create bus event
         let bus_event = self.create_bus_event(event, correlation_id);
+        let start_time = Instant::now();
+        let mut backoff_delay = Duration::from_millis(1); // Initial backoff
 
-        // Send to the main event channel using crossbeam
-        self.publisher
-            .send(bus_event)
-            .map_err(|_| anyhow::anyhow!("Failed to send event - channel disconnected"))?;
-
-        // Update atomic counters (lock-free)
-        self.event_counter.fetch_add(1, Ordering::Release);
-
-        Ok(())
+        loop {
+            match self.publisher.try_send(bus_event.clone()) {
+                Ok(_) => {
+                    // Update atomic counters only on successful send (lock-free)
+                    self.event_counter.fetch_add(1, Ordering::Release);
+                    return Ok(());
+                }
+                Err(TrySendError::Full(_)) => {
+                    if start_time.elapsed() > self.config.publish_timeout {
+                        return Err(anyhow::anyhow!(
+                            "Publish timeout after {:?}: channel full",
+                            self.config.publish_timeout
+                        ));
+                    }
+                    tokio::time::sleep(backoff_delay).await;
+                    backoff_delay = (backoff_delay * 2).min(self.config.publish_timeout / 4); // Cap backoff
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to send event - channel disconnected"
+                    ));
+                }
+            }
+        }
     }
 
     async fn subscribe(&self, subscription: EventSubscription) -> Result<Receiver<BusEvent>> {
@@ -484,10 +525,10 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
         let events_delivered = self.delivery_counter.load(Ordering::Acquire);
         let events_dropped = self.drop_counter.load(Ordering::Acquire);
 
-        // Update with current atomic values
-        stats.events_published += events_published;
-        stats.events_delivered += events_delivered;
-        stats.events_dropped += events_dropped;
+        // Update with current atomic values (use = not += to avoid double-counting)
+        stats.events_published = events_published;
+        stats.events_delivered = events_delivered;
+        stats.events_dropped = events_dropped;
         stats.last_updated = SystemTime::now();
 
         stats

@@ -703,6 +703,7 @@ mod tests {
         let config = ShutdownConfig::default();
         let coordinator = ShutdownCoordinator::new(config);
 
+        // Subscribe BEFORE spawning shutdown task to avoid race condition
         let mut event_rx = coordinator.subscribe_to_shutdown_events();
 
         let request = ShutdownRequest {
@@ -714,16 +715,26 @@ mod tests {
 
         // Start shutdown in background
         let coordinator_clone = coordinator.clone_for_task();
-        tokio::spawn(async move { coordinator_clone.shutdown_collector(request).await });
+        let handle =
+            tokio::spawn(async move { coordinator_clone.shutdown_collector(request).await });
 
-        // Check for shutdown initiated event
-        if let Ok(event) = event_rx.recv().await {
-            match event {
-                ShutdownEvent::ShutdownInitiated { collector_id, .. } => {
-                    assert_eq!(collector_id, "event-test");
-                }
-                _ => panic!("Expected ShutdownInitiated event"),
+        // Check for shutdown initiated event with timeout
+        let event = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
+            .await
+            .expect("Did not receive ShutdownInitiated event within timeout")
+            .expect("Shutdown event channel closed unexpectedly");
+
+        match event {
+            ShutdownEvent::ShutdownInitiated { collector_id, .. } => {
+                assert_eq!(collector_id, "event-test");
             }
+            _ => panic!("Expected ShutdownInitiated event, got {:?}", event),
         }
+
+        // Ensure the spawned task completes
+        handle
+            .await
+            .expect("Shutdown task failed")
+            .expect("Shutdown execution failed");
     }
 }

@@ -2,8 +2,7 @@
 //!
 //! Tests the coexistence of EventBus broker and IPC server within daemoneye-agent
 
-#![allow(unused_must_use)] // Allow unused Results in tests for cleaner code
-
+use anyhow::Result;
 use daemoneye_agent::{BrokerManager, IpcServerManager, create_cli_ipc_config};
 use daemoneye_lib::config::BrokerConfig;
 use std::time::Duration;
@@ -150,13 +149,18 @@ async fn test_independent_health_monitoring() {
     let ipc_server_manager = IpcServerManager::new(ipc_config);
 
     // Start both services
-    tokio::join!(broker_manager.start(), ipc_server_manager.start());
+    let (broker_start_result, ipc_start_result) =
+        tokio::join!(broker_manager.start(), ipc_server_manager.start());
+    broker_start_result.expect("Broker should start");
+    ipc_start_result.expect("IPC server should start");
 
     // Wait for both to be healthy
-    tokio::join!(
+    let (broker_health_result, ipc_health_result) = tokio::join!(
         broker_manager.wait_for_healthy(Duration::from_secs(5)),
         ipc_server_manager.wait_for_healthy(Duration::from_secs(5))
     );
+    broker_health_result.expect("Broker should be healthy");
+    ipc_health_result.expect("IPC server should be healthy");
 
     // Health checks should be independent
     let broker_health = broker_manager.health_check().await;
@@ -183,7 +187,7 @@ async fn test_independent_health_monitoring() {
 }
 
 #[tokio::test]
-async fn test_different_endpoint_paths() {
+async fn test_different_endpoint_paths() -> Result<()> {
     let (broker_config, ipc_config, _temp_dir) = create_test_configs();
 
     // Verify they use different endpoint paths
@@ -200,14 +204,24 @@ async fn test_different_endpoint_paths() {
     );
 
     // Both should be able to start with different paths
-    tokio::join!(broker_manager.start(), ipc_server_manager.start());
+    let (start_broker, start_ipc) =
+        tokio::join!(broker_manager.start(), ipc_server_manager.start());
+    start_broker?;
+    start_ipc?;
 
     // Both should become healthy
-    tokio::join!(
+    let (health_broker, health_ipc) = tokio::join!(
         broker_manager.wait_for_healthy(Duration::from_secs(5)),
         ipc_server_manager.wait_for_healthy(Duration::from_secs(5))
     );
+    health_broker?;
+    health_ipc?;
 
     // Cleanup
-    tokio::join!(broker_manager.shutdown(), ipc_server_manager.shutdown());
+    let (shutdown_broker, shutdown_ipc) =
+        tokio::join!(broker_manager.shutdown(), ipc_server_manager.shutdown());
+    shutdown_broker?;
+    shutdown_ipc?;
+
+    Ok(())
 }

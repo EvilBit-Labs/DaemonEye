@@ -906,8 +906,12 @@ impl CollectorRuntime {
                 performance_monitor.record_trigger_start(&trigger_request.trigger_id);
                 // In a real implementation, trigger completion would be recorded
                 // when the trigger actually completes processing
-                performance_monitor
-                    .record_trigger_completion(&trigger_request.trigger_id, trigger_request);
+                warn!(
+                    "Trigger completion for {} is a placeholder and not a real measurement yet.",
+                    &trigger_request.trigger_id
+                );
+                // performance_monitor
+                //     .record_trigger_completion(&trigger_request.trigger_id, trigger_request);
             }
         }
 

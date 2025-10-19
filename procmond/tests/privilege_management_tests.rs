@@ -33,10 +33,8 @@ fn is_elevated_privileges() -> bool {
 
     #[cfg(windows)]
     {
-        // Use whoami crate to check if running as administrator
-        // This is completely safe and doesn't require unsafe code
-        whoami::username().to_lowercase().contains("admin")
-            || whoami::username().to_lowercase().contains("administrator")
+        // Use is_elevated crate for reliable elevation checking on Windows
+        is_elevated::is_elevated()
     }
 }
 
@@ -768,11 +766,25 @@ async fn test_macos_privilege_capabilities(collector: &dyn ProcessCollector) {
     println!("Testing macOS-specific privilege capabilities");
 
     // Test SIP (System Integrity Protection) awareness
-    let sip_status = std::process::Command::new("csrutil")
-        .arg("status")
-        .output()
-        .map(|output| String::from_utf8_lossy(&output.stdout).contains("enabled"))
-        .unwrap_or(false);
+    let sip_status = match std::process::Command::new("csrutil").arg("status").output() {
+        Ok(output) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!(
+                    "Warning: csrutil status command failed with exit code: {:?}, stderr: {}",
+                    output.status.code(),
+                    stderr
+                );
+                false
+            } else {
+                String::from_utf8_lossy(&output.stdout).contains("enabled")
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to execute 'csrutil status' command: {}", e);
+            false
+        }
+    };
 
     println!("✓ macOS SIP status detected: enabled={}", sip_status);
 

@@ -7,7 +7,7 @@ use crate::transport::{ClientConfig, ClientConnectionManager, SocketConfig, Tran
 use crate::{EventBus, EventBusStatistics};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -25,11 +25,8 @@ pub struct DaemoneyeBroker {
     stats: Arc<Mutex<EventBusStatistics>>,
     /// Broker start time
     start_time: Instant,
-    /// Shutdown signal
-    shutdown_tx: mpsc::UnboundedSender<()>,
-    /// Shutdown receiver
-    #[allow(dead_code)]
-    shutdown_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<()>>>>,
+    /// Shutdown signal broadcaster
+    shutdown_tx: broadcast::Sender<()>,
     /// Socket configuration
     config: SocketConfig,
     /// Subscriber senders for message delivery
@@ -56,7 +53,8 @@ impl DaemoneyeBroker {
             config
         };
 
-        let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel();
+        // Create broadcast channel for shutdown signaling (capacity 1 is sufficient)
+        let (shutdown_tx, _) = broadcast::channel(1);
 
         // Create client connection manager
         let client_config = ClientConfig::default();
@@ -70,7 +68,6 @@ impl DaemoneyeBroker {
             stats: Arc::new(Mutex::new(EventBusStatistics::default())),
             start_time: Instant::now(),
             shutdown_tx,
-            shutdown_rx: Arc::new(Mutex::new(Some(shutdown_rx))),
             config,
             subscriber_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
             subscriber_id_mapping: Arc::new(Mutex::new(std::collections::HashMap::new())),
@@ -106,7 +103,7 @@ impl DaemoneyeBroker {
         let server = Arc::clone(&self.transport_server);
         let _client_manager = Arc::clone(&self.client_manager);
         let _socket_config = self.config.clone();
-        let shutdown_rx = Arc::clone(&self.shutdown_rx);
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
             loop {
@@ -144,16 +141,7 @@ impl DaemoneyeBroker {
                     }
 
                     // Handle shutdown signal
-                    _ = async {
-                        let mut shutdown_guard = shutdown_rx.lock().await;
-                        if let Some(mut rx) = shutdown_guard.take() {
-                            rx.recv().await
-                        } else {
-                            // Already taken, wait forever
-                            let _: () = std::future::pending::<()>().await;
-                            Some(())
-                        }
-                    } => {
+                    _ = shutdown_rx.recv() => {
                         info!("Client acceptance task shutting down");
                         break;
                     }
@@ -167,7 +155,7 @@ impl DaemoneyeBroker {
     /// Start health monitoring background task
     async fn start_health_monitoring_task(&self) -> Result<()> {
         let client_manager = Arc::clone(&self.client_manager);
-        let shutdown_rx = Arc::clone(&self.shutdown_rx);
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
@@ -182,16 +170,7 @@ impl DaemoneyeBroker {
                     }
 
                     // Handle shutdown signal
-                    _ = async {
-                        let mut shutdown_guard = shutdown_rx.lock().await;
-                        if let Some(mut rx) = shutdown_guard.take() {
-                            rx.recv().await
-                        } else {
-                            // Already taken, wait forever
-                            let _: () = std::future::pending::<()>().await;
-                            Some(())
-                        }
-                    } => {
+                    _ = shutdown_rx.recv() => {
                         info!("Health monitoring task shutting down");
                         break;
                     }

@@ -476,20 +476,28 @@ impl PerformanceMonitor {
         let mut sorted_samples: Vec<f64> = samples.iter().cloned().collect();
         sorted_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        let avg_latency = sorted_samples.iter().sum::<f64>() / sorted_samples.len() as f64;
+        let avg_latency = if sorted_samples.is_empty() {
+            0.0
+        } else {
+            sorted_samples.iter().sum::<f64>() / sorted_samples.len() as f64
+        };
         let peak_latency = sorted_samples.last().cloned().unwrap_or(0.0);
 
-        let p95_index = (sorted_samples.len() as f64 * 0.95) as usize;
-        let p99_index = (sorted_samples.len() as f64 * 0.99) as usize;
-
-        let p95_latency = sorted_samples
-            .get(p95_index.saturating_sub(1))
-            .cloned()
-            .unwrap_or(0.0);
-        let p99_latency = sorted_samples
-            .get(p99_index.saturating_sub(1))
-            .cloned()
-            .unwrap_or(0.0);
+        // Use nearest-rank percentile calculation
+        let p95_latency = if sorted_samples.is_empty() {
+            0.0
+        } else {
+            let k = (0.95 * sorted_samples.len() as f64).ceil() as usize;
+            let index = k.saturating_sub(1).min(sorted_samples.len() - 1);
+            sorted_samples.get(index).cloned().unwrap_or(0.0)
+        };
+        let p99_latency = if sorted_samples.is_empty() {
+            0.0
+        } else {
+            let k = (0.99 * sorted_samples.len() as f64).ceil() as usize;
+            let index = k.saturating_sub(1).min(sorted_samples.len() - 1);
+            sorted_samples.get(index).cloned().unwrap_or(0.0)
+        };
 
         // Calculate triggers per second based on delta from previous sample
         let triggers_per_second = {
@@ -586,11 +594,22 @@ impl PerformanceMonitor {
             tokio::time::sleep(self.config.collection_interval).await;
         }
 
-        // Calculate baseline metrics
-        let baseline_throughput =
-            throughput_samples.iter().sum::<f64>() / throughput_samples.len() as f64;
-        let baseline_cpu = cpu_samples.iter().sum::<f64>() / cpu_samples.len() as f64;
-        let baseline_memory = memory_samples.iter().sum::<u64>() / memory_samples.len() as u64;
+        // Calculate baseline metrics with division-by-zero guards
+        let baseline_throughput = if throughput_samples.is_empty() {
+            0.0
+        } else {
+            throughput_samples.iter().sum::<f64>() / throughput_samples.len() as f64
+        };
+        let baseline_cpu = if cpu_samples.is_empty() {
+            0.0
+        } else {
+            cpu_samples.iter().sum::<f64>() / cpu_samples.len() as f64
+        };
+        let baseline_memory = if memory_samples.is_empty() {
+            0
+        } else {
+            memory_samples.iter().sum::<u64>() / memory_samples.len() as u64
+        };
         let baseline_trigger_latency = if trigger_latency_samples.is_empty() {
             0.0
         } else {
@@ -639,11 +658,22 @@ impl PerformanceMonitor {
             (current_metrics.as_ref(), baseline_metrics.as_ref())
         {
             Some(PerformanceComparison {
-                throughput_ratio: current.throughput.events_per_second
-                    / baseline.baseline_throughput,
-                cpu_ratio: current.cpu.current_cpu_percent / baseline.baseline_cpu_percent,
-                memory_ratio: current.memory.current_memory_bytes as f64
-                    / baseline.baseline_memory_bytes as f64,
+                throughput_ratio: if baseline.baseline_throughput == 0.0 {
+                    1.0
+                } else {
+                    current.throughput.events_per_second / baseline.baseline_throughput
+                },
+                cpu_ratio: if baseline.baseline_cpu_percent == 0.0 {
+                    1.0
+                } else {
+                    current.cpu.current_cpu_percent / baseline.baseline_cpu_percent
+                },
+                memory_ratio: if baseline.baseline_memory_bytes == 0 {
+                    1.0
+                } else {
+                    current.memory.current_memory_bytes as f64
+                        / baseline.baseline_memory_bytes as f64
+                },
                 trigger_latency_ratio: current
                     .trigger_latency
                     .as_ref()

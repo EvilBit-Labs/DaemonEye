@@ -100,7 +100,8 @@ pub enum ConditionType {
         memory_threshold: u64,
     },
 
-    /// Custom condition (extensible)
+    /// Custom SQL condition (not yet supported, always evaluates to false)
+    /// See issue #000 for tracking
     Custom(String),
 }
 
@@ -892,28 +893,36 @@ impl TriggerManager {
     /// }
     /// ```
     pub async fn emit_trigger_request(&self, trigger: TriggerRequest) -> Result<(), TriggerError> {
-        let _start_time = SystemTime::now();
+        let start_time = SystemTime::now();
 
         // Validate trigger request against collector capabilities
         self.validate_trigger_request(&trigger).await?;
 
-        // Check if event bus is configured and get write lock directly
-        let mut bus_guard = self.event_bus.write().await;
-        let bus = bus_guard
-            .as_mut()
-            .ok_or_else(|| TriggerError::EventBusError("Event bus not configured".to_string()))?;
+        // Clone the EventBus Arc to avoid holding the lock during async operations
+        let event_bus_clone = {
+            let bus_guard = self.event_bus.read().await;
+            bus_guard.as_ref().ok_or_else(|| {
+                TriggerError::EventBusError("Event bus not configured".to_string())
+            })?;
+            // We need to clone the Arc-wrapped reference, but since it's a Box<dyn EventBus>,
+            // we can't directly clone it. For now, we'll work around this by re-acquiring
+            // the lock in the internal function. A better long-term solution would be to
+            // change the field type to Arc<dyn EventBus> instead of Box<dyn EventBus>.
+            Arc::clone(&self.event_bus)
+        };
+        // Lock is dropped here
 
-        self.emit_trigger_request_internal(bus.as_mut(), trigger, _start_time)
+        self.emit_trigger_request_internal(event_bus_clone, trigger, start_time)
             .await
     }
 
     /// Internal implementation of trigger request emission.
     ///
-    /// This method handles the actual emission logic without requiring mutable
-    /// access to the event bus, working around trait limitations.
+    /// This method handles the actual emission logic, accepting an Arc-wrapped
+    /// event bus reference to avoid holding locks during async operations.
     async fn emit_trigger_request_internal(
         &self,
-        event_bus: &mut (dyn EventBus + Send + Sync),
+        event_bus_arc: Arc<RwLock<Option<Box<dyn EventBus + Send + Sync>>>>,
         trigger: TriggerRequest,
         start_time: SystemTime,
     ) -> Result<(), TriggerError> {
@@ -932,14 +941,25 @@ impl TriggerManager {
 
         // Create collection event for the trigger request
         let collection_event = CollectionEvent::TriggerRequest(trigger.clone());
-        if let Err(err) = event_bus
-            .publish(
-                collection_event,
-                crate::event_bus::CorrelationMetadata::new(correlation_id.clone())
-                    .with_tag("trigger_source".to_string(), "trigger_manager".to_string()),
-            )
-            .await
-        {
+
+        // Acquire lock only for the duration of the publish call
+        let publish_result = {
+            let mut bus_guard = event_bus_arc.write().await;
+            let event_bus = bus_guard.as_mut().ok_or_else(|| {
+                TriggerError::EventBusError("Event bus not configured".to_string())
+            })?;
+
+            event_bus
+                .publish(
+                    collection_event,
+                    crate::event_bus::CorrelationMetadata::new(correlation_id.clone())
+                        .with_tag("trigger_source".to_string(), "trigger_manager".to_string()),
+                )
+                .await
+        };
+        // Lock is dropped here
+
+        if let Err(err) = publish_result {
             let mut stats = self
                 .emission_stats
                 .lock()
@@ -1253,14 +1273,46 @@ impl TriggerManager {
             });
         }
 
-        // Clean metadata cache
-        if let Ok(mut cache) = self.metadata_cache.lock() {
-            if cache.len() > self.config.max_pending_triggers {
-                // Keep only the most recent entries by sorting descending and truncating
-                let mut entries: Vec<_> = cache.drain().collect();
-                entries.sort_by_key(|(_, metadata)| std::cmp::Reverse(metadata.generated_at));
-                entries.truncate(self.config.max_pending_triggers / 2);
-                cache.extend(entries);
+        // Clean metadata cache with incremental eviction to reduce lock contention
+        if let Ok(cache) = self.metadata_cache.lock() {
+            let max_pending_triggers = self.config.max_pending_triggers;
+
+            // Check if the cache size exceeds the maximum allowed
+            if cache.len() > max_pending_triggers {
+                let target_size = max_pending_triggers / 2;
+                let to_remove_count = cache.len() - target_size;
+
+                // Collect keys and their generated_at timestamps while holding the lock briefly
+                let mut entries_to_sort: Vec<(String, SystemTime)> = cache
+                    .iter()
+                    .map(|(id, metadata)| (id.clone(), metadata.generated_at))
+                    .collect();
+
+                // Release the lock for the heavy sorting work
+                drop(cache);
+
+                // Sort entries by generated_at time in ascending order (oldest first)
+                entries_to_sort.sort_by_key(|(_, generated_at)| *generated_at);
+
+                // Reacquire the lock to remove elements
+                if let Ok(mut cache) = self.metadata_cache.lock() {
+                    // Remove the oldest entries
+                    for i in 0..to_remove_count {
+                        if let Some((key, _)) = entries_to_sort.get(i) {
+                            cache.remove(key);
+                            debug!(
+                                trigger_id = %key,
+                                "Evicted old trigger metadata from cache due to size limit."
+                            );
+                        }
+                    }
+                    info!(
+                        current_size = cache.len(),
+                        max_size = max_pending_triggers,
+                        "Cleaned up trigger metadata cache, removed {} entries.",
+                        to_remove_count
+                    );
+                }
             }
         }
 
@@ -1612,13 +1664,64 @@ impl SqlTriggerEvaluator {
         })
     }
 
-    /// Parses a SQL expression for trigger evaluation.
+    /// Parses a SQL WHERE clause expression from a string into an AST.
+    ///
+    /// This function is designed to parse simple SQL predicate expressions suitable for
+    /// filtering process data. It has specific limitations:
+    ///
+    /// - **Predicate-only**: The input string must represent only the WHERE clause content,
+    ///   not a full `SELECT` statement.
+    /// - **No table references**: Expressions should not contain table-qualified identifiers
+    ///   (e.g., `processes.name`). Only unqualified column names (e.g., `name`) are supported.
+    /// - **No subqueries**: Subqueries (e.g., `(SELECT ...)`) are not allowed.
+    /// - **Unqualified column names**: All column names are assumed to refer to fields
+    ///   within the `ProcessInfo` structure.
+    ///
+    /// # Arguments
+    /// * `sql_expr` - The SQL WHERE clause expression string.
+    ///
+    /// # Returns
+    /// A `Result` containing the parsed `Expr` AST node on success, or a `TriggerError` on failure.
+    ///
+    /// # Errors
+    /// Returns `TriggerError::SqlParsingError` if the expression is invalid or contains
+    /// disallowed patterns.
+    ///
+    /// # Examples
+    ///
+    /// **Valid expressions:**
+    /// ```ignore
+    /// let expr = parse_sql_expression("pid > 1000 AND name LIKE 'chrome%'")?;
+    /// ```
+    ///
+    /// **Invalid expressions (will return an error):**
+    /// ```ignore
+    /// // Contains a disallowed "SELECT" keyword
+    /// parse_sql_expression("pid IN (SELECT id FROM other_table)"); // Error
+    ///
+    /// // Contains a table-qualified identifier
+    /// parse_sql_expression("processes.pid > 100"); // Error
+    /// ```
     fn parse_sql_expression(&self, sql_expr: &str) -> Result<sqlparser::ast::Expr, TriggerError> {
+        // Lightweight validation to reject disallowed patterns before parsing
+        let expr_upper = sql_expr.to_uppercase();
+        if expr_upper.contains("SELECT")
+            || expr_upper.contains("FROM")
+            || sql_expr.contains('.')
+            || (sql_expr.contains('(') && expr_upper.contains("SELECT"))
+        {
+            return Err(TriggerError::SqlParsingError(format!(
+                "Expression contains disallowed patterns (e.g., SELECT, FROM, table-qualified identifiers, subqueries): {}",
+                sql_expr
+            )));
+        }
+
         // Wrap the expression in a SELECT statement for parsing
         let sql = format!("SELECT * FROM dummy WHERE {}", sql_expr);
 
-        let statements = Parser::parse_sql(&self.dialect, &sql)
-            .map_err(|e| TriggerError::SqlParsingError(e.to_string()))?;
+        let statements = Parser::parse_sql(&self.dialect, &sql).map_err(|e| {
+            TriggerError::SqlParsingError(format!("Failed to parse SQL expression: {}", e))
+        })?;
 
         if let Some(sqlparser::ast::Statement::Query(query)) = statements.first() {
             if let sqlparser::ast::SetExpr::Select(select) = query.body.as_ref() {
@@ -1629,7 +1732,7 @@ impl SqlTriggerEvaluator {
         }
 
         Err(TriggerError::SqlParsingError(
-            "Failed to extract WHERE clause from SQL expression".to_string(),
+            "Could not extract WHERE clause expression from SQL statement.".to_string(),
         ))
     }
 
@@ -1750,9 +1853,10 @@ impl SqlTriggerEvaluator {
                 Ok(cpu_anomaly || memory_anomaly)
             }
             ConditionType::Custom(_sql_expr) => {
-                // For custom SQL expressions, we would need to evaluate them
-                // against the process data. This is a simplified implementation.
-                // In a full implementation, this would use a SQL evaluation engine.
+                // TODO: Implement SQL evaluation for custom conditions.
+                // For now, custom conditions are not supported and always evaluate to false.
+                // See issue #000 for tracking.
+                warn!("Custom SQL conditions are not yet supported and always evaluate to false.");
                 Ok(false)
             }
         }

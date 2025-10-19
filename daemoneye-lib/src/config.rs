@@ -7,14 +7,15 @@
 //! 4. System configuration file (/etc/daemoneye/config.toml)
 //! 5. Embedded defaults (lowest precedence)
 
+use anyhow::Context;
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Toml},
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use thiserror::Error;
-use tracing::warn;
+use tracing::{info, warn};
 
 /// Configuration loading and validation errors.
 #[derive(Debug, Error)]
@@ -136,21 +137,7 @@ pub struct BrokerConfig {
     pub topic_hierarchy: TopicHierarchyConfig,
 }
 
-impl BrokerConfig {
-    pub fn ensure_socket_directory(&self) -> std::io::Result<()> {
-        if let Some(dir) = Path::new(&self.socket_path).parent() {
-            if let Err(e) = std::fs::create_dir_all(dir) {
-                warn!(
-                    error = %e,
-                    path = %dir.display(),
-                    "Failed to create broker socket directory"
-                );
-                return Err(e);
-            }
-        }
-        Ok(())
-    }
-}
+// BrokerConfig implementation moved below Default impl
 
 /// Topic hierarchy configuration for the `EventBus`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -270,33 +257,12 @@ impl Default for BrokerConfig {
                 }
                 #[cfg(all(not(unix), not(windows)))]
                 {
+                    // Just define the path without creating directories
                     let base_dir = dirs::cache_dir()
                         .or_else(|| dirs::data_local_dir())
                         .unwrap_or_else(|| std::env::temp_dir());
-                    let socket_dir = base_dir.join("daemoneye");
-                    let socket_dir = match std::fs::create_dir_all(&socket_dir) {
-                        Ok(_) => socket_dir,
-                        Err(e) => {
-                            warn!(
-                                error = %e,
-                                path = %socket_dir.display(),
-                                "Failed to create socket directory; falling back to system temporary directory"
-                            );
-                            let fallback_candidate = std::env::temp_dir().join("daemoneye");
-                            match std::fs::create_dir_all(&fallback_candidate) {
-                                Ok(_) => fallback_candidate,
-                                Err(temp_err) => {
-                                    warn!(
-                                        error = %temp_err,
-                                        path = %fallback_candidate.display(),
-                                        "Failed to create fallback socket directory; using system temp root"
-                                    );
-                                    std::env::temp_dir()
-                                }
-                            }
-                        }
-                    };
-                    socket_dir
+                    base_dir
+                        .join("daemoneye")
                         .join("daemoneye-eventbus.sock")
                         .display()
                         .to_string()
@@ -313,6 +279,53 @@ impl Default for BrokerConfig {
             max_connections: 100,
             message_buffer_size: 1000,
             topic_hierarchy: TopicHierarchyConfig::default(),
+        }
+    }
+}
+
+impl BrokerConfig {
+    /// Ensures the directory for the socket path exists.
+    /// This function performs filesystem operations and should be called during broker startup.
+    ///
+    /// # Returns
+    ///
+    /// Returns the socket path on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if directory creation fails.
+    pub fn ensure_socket_directory(&self) -> anyhow::Result<std::path::PathBuf> {
+        let socket_path = std::path::Path::new(&self.socket_path);
+
+        #[cfg(windows)]
+        {
+            // Windows named pipes don't require directory creation
+            return Ok(socket_path.to_path_buf());
+        }
+
+        #[cfg(not(windows))]
+        {
+            let parent_dir = socket_path.parent().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Socket path {} has no parent directory.",
+                    socket_path.display()
+                )
+            })?;
+
+            if !parent_dir.exists() {
+                std::fs::create_dir_all(parent_dir).with_context(|| {
+                    format!(
+                        "Failed to create socket directory: {}",
+                        parent_dir.display()
+                    )
+                })?;
+                info!(
+                    directory = %parent_dir.display(),
+                    "Created socket directory"
+                );
+            }
+
+            Ok(socket_path.to_path_buf())
         }
     }
 }

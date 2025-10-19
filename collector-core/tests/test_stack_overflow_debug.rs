@@ -12,6 +12,7 @@ async fn test_simple_collector_debug() {
     let collector_config = CollectorConfig::default()
         .with_max_event_sources(1)
         .with_event_buffer_size(100)
+        .with_backpressure_threshold(50) // Must be less than event_buffer_size
         .with_telemetry(false);
 
     let mut collector = Collector::new(collector_config);
@@ -22,11 +23,34 @@ async fn test_simple_collector_debug() {
 
     // Run with a very short timeout to see if we can isolate the issue
     let collector_handle = tokio::spawn(async move {
-        let _ = timeout(Duration::from_millis(100), collector.run()).await;
+        let timeout_res = timeout(Duration::from_millis(100), collector.run()).await;
+
+        // Assert that the collector timed out, meaning it was still running
+        assert!(
+            timeout_res.is_err(),
+            "Collector unexpectedly completed instead of timing out: {:?}",
+            timeout_res
+        );
+
+        timeout_res
     });
 
     let result = collector_handle.await;
     println!("Test result: {:?}", result);
+
+    // Verify the test properly detected timeout
+    match result {
+        Ok(Err(_)) => {
+            // Successfully timed out as expected
+            println!("Collector properly timed out as expected");
+        }
+        Ok(Ok(_)) => {
+            panic!("Collector completed unexpectedly when it should have timed out");
+        }
+        Err(e) => {
+            panic!("Collector task panicked: {:?}", e);
+        }
+    }
 }
 
 // Simple test source that generates minimal events

@@ -214,33 +214,42 @@ impl OSEnvironment {
 
     /// Detect container runtime.
     fn detect_container_runtime() -> Option<String> {
-        // Read /proc/1/cgroup once and reuse the content
-        let cgroup_content = std::fs::read_to_string("/proc/1/cgroup").unwrap_or_default();
-
-        // Check for Docker
-        if cgroup_content.contains("docker") {
-            return Some("docker".to_string());
-        }
-
-        // Check for Kubernetes/containerd
-        if cgroup_content.contains("kubepods") {
-            return Some("kubernetes".to_string());
-        }
-
-        // Check for Podman
-        if std::env::var("container").as_deref() == Ok("podman") {
-            return Some("podman".to_string());
-        }
-
-        // Check for LXC
-        if std::fs::read_to_string("/proc/1/environ")
-            .map(|content| content.contains("container=lxc"))
-            .unwrap_or(false)
+        #[cfg(target_os = "linux")]
         {
-            return Some("lxc".to_string());
+            // Read /proc/1/cgroup once and reuse the content
+            let cgroup_content = std::fs::read_to_string("/proc/1/cgroup").unwrap_or_default();
+
+            // Check for Docker
+            if cgroup_content.contains("docker") {
+                return Some("docker".to_string());
+            }
+
+            // Check for Kubernetes/containerd
+            if cgroup_content.contains("kubepods") {
+                return Some("kubernetes".to_string());
+            }
+
+            // Check for Podman
+            if std::env::var("container").as_deref() == Ok("podman") {
+                return Some("podman".to_string());
+            }
+
+            // Check for LXC
+            if std::fs::read_to_string("/proc/1/environ")
+                .map(|content| content.contains("container=lxc"))
+                .unwrap_or(false)
+            {
+                return Some("lxc".to_string());
+            }
+
+            None
         }
 
-        None
+        #[cfg(not(target_os = "linux"))]
+        {
+            // Container detection not available on non-Linux platforms
+            None
+        }
     }
 
     /// Detect security features.

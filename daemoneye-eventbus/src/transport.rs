@@ -2,6 +2,17 @@
 //!
 //! This module provides client connection management, topic-based routing,
 //! and health monitoring for the daemoneye-eventbus system.
+//!
+//! ## Health Check Protocol
+//!
+//! The transport layer includes a simple health-check handshake:
+//! - The client sends a `health_check_request` message (default: "PING")
+//! - The peer (server) must reply with a `health_check_response` message (default: "PONG")
+//! - If the peer does not respond within the configured timeout, the health check fails
+//!
+//! Both request and response messages are configurable via [`ClientConfig`]:
+//! - `health_check_request`: The message sent by the client
+//! - `health_check_response`: The expected response from the server
 
 use crate::{
     error::{EventBusError, Result},
@@ -86,6 +97,10 @@ pub struct ClientConfig {
     pub health_check_interval: Duration,
     /// Maximum time to wait for health check response
     pub health_check_timeout: Duration,
+    /// Health check request message (default: "PING")
+    pub health_check_request: Vec<u8>,
+    /// Expected health check response message (default: "PONG")
+    pub health_check_response: Vec<u8>,
 }
 
 impl Default for ClientConfig {
@@ -98,6 +113,8 @@ impl Default for ClientConfig {
             connection_timeout: Duration::from_secs(5),
             health_check_interval: Duration::from_secs(30),
             health_check_timeout: Duration::from_secs(5),
+            health_check_request: b"PING".to_vec(),
+            health_check_response: b"PONG".to_vec(),
         }
     }
 }
@@ -114,15 +131,21 @@ impl TransportServer {
     pub async fn new(config: SocketConfig) -> Result<Self> {
         let socket_path = config.get_socket_path();
 
-        // Clean up any existing socket file
+        // Clean up any existing socket file (Unix only)
         #[cfg(unix)]
-        if std::path::Path::new(&socket_path).exists()
-            && let Err(e) = std::fs::remove_file(&socket_path)
         {
-            warn!(
-                "Failed to remove existing socket file {}: {}",
-                socket_path, e
-            );
+            use std::path::Path;
+
+            let socket_path_obj = Path::new(&socket_path);
+            if socket_path_obj.exists() {
+                info!("Removing existing socket file: {}", socket_path);
+                if let Err(e) = std::fs::remove_file(socket_path_obj) {
+                    warn!(
+                        "Failed to remove existing socket file {}: {}",
+                        socket_path, e
+                    );
+                }
+            }
         }
 
         // Create the listener using the appropriate name type
@@ -490,14 +513,17 @@ impl TransportClient {
         }
 
         let timeout_duration = self.config.health_check_timeout;
+        let health_check_request = self.config.health_check_request.clone();
+        let health_check_response = self.config.health_check_response.clone();
+
         let ping_future = async {
-            self.send(b"PING").await?;
+            self.send(&health_check_request).await?;
             self.receive().await
         };
 
         match timeout(timeout_duration, ping_future).await {
             Ok(Ok(response)) => {
-                if response.as_slice() == b"PONG" {
+                if response.as_slice() == health_check_response.as_slice() {
                     debug!("Health check passed");
                     Ok(true)
                 } else {
