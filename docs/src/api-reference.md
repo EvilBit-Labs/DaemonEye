@@ -603,7 +603,7 @@ pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
         .map(|p| ProcessInfo::from(p))
         .collect::<Vec<_>>();
 
-    Ok(processes).context("Failed to collect process information")
+    Ok(processes)
 }
 ```
 

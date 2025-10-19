@@ -15,7 +15,7 @@ This document analyzes Task 5.5 to ensure it provides comprehensive Windows-cent
 | **System Information**       | ✅ /proc/sys/\*          | ✅ mac-sys-info                        | ✅ Windows registry + WMI     | ✅ Enhanced |
 | **Container Support**        | ✅ Docker, LXC           | ✅ Docker Desktop                      | ✅ Hyper-V, Server containers | ✅ Enhanced |
 | **Performance Monitoring**   | ✅ /proc/stat            | ✅ sysctl                              | ✅ Performance counters       | ✅ Enhanced |
-| **Third-Party Crates**       | ✅ procfs, sysinfo       | ✅ security-framework, core-foundation | ✅ windows-rs, winapi-safe    | ✅ Enhanced |
+| **Third-Party Crates**       | ✅ procfs, sysinfo       | ✅ security-framework, core-foundation | ✅ windows-rs, winsafe        | ✅ Enhanced |
 
 ## Windows-Specific Capabilities
 
@@ -33,7 +33,7 @@ This document analyzes Task 5.5 to ensure it provides comprehensive Windows-cent
 
 - **Capability**: Extract process tokens, security contexts, and integrity levels
 
-- **Implementation**: `windows-rs` + `winapi-safe` for token manipulation
+- **Implementation**: `windows-rs` + `winsafe` for token manipulation
 
 - **Equivalent to**: macOS Security framework entitlements, Linux capabilities
 
@@ -133,10 +133,10 @@ This document analyzes Task 5.5 to ensure it provides comprehensive Windows-cent
 
 ### Maintenance Status Notes
 
-- **winapi-safe** → **winsafe**: Replaced with winsafe v0.0.25 for better maintenance and modern Windows API coverage
+- **winsafe**: Adopted winsafe v0.0.25 for ergonomic PDH counter helpers, strongly typed handle wrappers, and quicker upstream fixes compared to `windows`/`windows-sys`
 - **psutil-rs**: Removed due to limited maintenance; sysinfo provides equivalent functionality
-- **perfmon**: Removed recommendation for non-existent crate; use PDH bindings via `windows` or `windows-sys` crates for performance counters
-- **MSRV Compatibility**: Verify winsafe v0.0.25 compatibility with MSRV 1.70+; test PDH approach with chosen Windows crate version
+- **perfmon**: Does not provide Windows PDH performance counter support; use PDH bindings via `windows` or `windows-sys` crates for performance counters
+- **MSRV Compatibility**: winsafe v0.0.25 requires Rust 1.87 (the `windows`/`windows-sys` crates support MSRV 1.60); projects pinned to 1.60–1.86 should prefer `windows`/`windows-sys` and implement the PDH bindings manually, trading the richer winsafe ergonomics for a lower MSRV
 
 ### Safety Considerations
 

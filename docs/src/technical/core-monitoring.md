@@ -914,6 +914,8 @@ impl DetectionEngine {
 **Memory Pressure Handling**:
 
 ```rust
+const MIN_HASH_BUFFER_SIZE: usize = 4 * 1024;
+
 impl ProcessCollector {
     async fn handle_memory_pressure(&mut self) -> Result<()> {
         let memory_usage = self.get_memory_usage()?;
@@ -921,9 +923,12 @@ impl ProcessCollector {
         if memory_usage > self.config.memory_threshold {
             tracing::warn!("Memory pressure detected, reducing batch size");
 
-            // Reduce batch size for hash computation
-            self.hash_computer
-                .set_buffer_size(self.hash_computer.buffer_size() / 2);
+            // Reduce batch size for hash computation without dropping below the minimum buffer
+            let current = self.hash_computer.buffer_size();
+            let new_size = (current / 2).max(MIN_HASH_BUFFER_SIZE);
+            if new_size < current {
+                self.hash_computer.set_buffer_size(new_size);
+            }
 
             // Trigger garbage collection
             tokio::task::yield_now().await;
