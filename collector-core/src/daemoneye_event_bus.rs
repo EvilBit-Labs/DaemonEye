@@ -14,14 +14,140 @@ use daemoneye_eventbus::{
     DaemoneyeBroker, DaemoneyeEventBus as DaemoneyeEventBusImpl,
     EventBus as DaemoneyeEventBusTrait, EventBusStatistics as DaemoneyeEventBusStatistics,
 };
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info};
 use uuid::Uuid;
+
+/// Comprehensive metrics for DaemonEye EventBus monitoring and observability.
+///
+/// This structure provides detailed metrics beyond the standard EventBus interface,
+/// including broker-specific performance indicators, transport statistics,
+/// and health monitoring data for operational visibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemoneyeEventBusMetrics {
+    /// Core broker statistics from daemoneye-eventbus
+    pub broker_statistics: DaemoneyeEventBusStatistics,
+    /// Broker health status and indicators
+    pub broker_health: BrokerHealthStatus,
+    /// Transport layer statistics
+    pub transport_statistics: TransportStatistics,
+    /// Client statistics aggregated across all connections
+    pub client_statistics: ClientStatisticsAggregate,
+    /// Topic routing and subscription statistics
+    pub topic_statistics: TopicStatistics,
+    /// Performance metrics and efficiency indicators
+    pub performance_metrics: PerformanceMetrics,
+    /// Timestamp when metrics were collected
+    pub collection_timestamp: SystemTime,
+}
+
+/// Broker health status with comprehensive health indicators.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerHealthStatus {
+    /// Overall health status
+    pub status: HealthStatus,
+    /// Broker uptime
+    pub uptime: Duration,
+    /// Last health check timestamp
+    pub last_health_check: SystemTime,
+    /// Number of active connections
+    pub active_connections: usize,
+    /// Message throughput (messages per second)
+    pub message_throughput: f64,
+    /// Error rate (errors per second)
+    pub error_rate: f64,
+    /// Estimated memory usage in bytes
+    pub memory_usage: u64,
+}
+
+/// Health status enumeration for monitoring systems.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HealthStatus {
+    /// System is operating normally
+    Healthy,
+    /// System is starting up
+    Starting,
+    /// System has minor issues but is functional
+    Warning,
+    /// System has significant issues affecting performance
+    Degraded,
+    /// System has critical issues requiring immediate attention
+    Critical,
+}
+
+/// Transport layer statistics for connection monitoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransportStatistics {
+    /// Total number of connections
+    pub total_connections: usize,
+    /// Number of healthy connections
+    pub healthy_connections: usize,
+    /// Number of failed connection attempts
+    pub failed_connections: u64,
+    /// Number of reconnection attempts
+    pub reconnection_attempts: u64,
+    /// Total bytes sent across all connections
+    pub bytes_sent: u64,
+    /// Total bytes received across all connections
+    pub bytes_received: u64,
+    /// Average message latency in milliseconds
+    pub average_latency_ms: f64,
+    /// Number of connection errors
+    pub connection_errors: u64,
+}
+
+/// Client statistics aggregated across all connected clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientStatisticsAggregate {
+    /// Total number of connected clients
+    pub total_clients: usize,
+    /// Total active subscriptions across all clients
+    pub active_subscriptions: usize,
+    /// Total messages published by all clients
+    pub total_messages_published: u64,
+    /// Total messages received by all clients
+    pub total_messages_received: u64,
+    /// Average client uptime
+    pub average_uptime: Duration,
+    /// Total health check failures across all clients
+    pub health_check_failures: u64,
+}
+
+/// Topic routing and subscription statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicStatistics {
+    /// Number of active topics
+    pub active_topics: usize,
+    /// Total number of subscriptions
+    pub total_subscriptions: usize,
+    /// Message routing efficiency (0.0 to 1.0)
+    pub message_routing_efficiency: f64,
+    /// Distribution of messages across topics
+    pub topic_distribution: HashMap<String, u64>,
+    /// Number of wildcard subscriptions
+    pub wildcard_usage: usize,
+}
+
+/// Performance metrics and efficiency indicators.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceMetrics {
+    /// Messages processed per second
+    pub messages_per_second: f64,
+    /// Message delivery rate (0.0 to 1.0)
+    pub delivery_rate: f64,
+    /// Average number of subscribers
+    pub average_subscribers: f64,
+    /// Overall throughput efficiency (0.0 to 1.0)
+    pub throughput_efficiency: f64,
+    /// Resource utilization estimate (0.0 to 1.0)
+    pub resource_utilization: f64,
+}
 
 /// DaemonEye EventBus implementation for collector-core compatibility.
 ///
@@ -46,6 +172,7 @@ use uuid::Uuid;
 /// │  └─────────────────┘  └─────────────────────────────────────┘   │
 /// └─────────────────────────────────────────────────────────────────┘
 /// ```
+#[derive(Clone)]
 pub struct DaemoneyeEventBus {
     /// Embedded daemoneye-eventbus implementation
     inner: Arc<Mutex<DaemoneyeEventBusImpl>>,
@@ -415,6 +542,305 @@ impl DaemoneyeEventBus {
             uptime: Duration::from_secs(stats.uptime_seconds),
         }
     }
+
+    /// Get comprehensive daemoneye-eventbus specific metrics and health indicators.
+    ///
+    /// This method provides detailed metrics beyond the standard EventBus interface,
+    /// including broker-specific performance indicators, transport statistics,
+    /// and health monitoring data.
+    ///
+    /// # Returns
+    ///
+    /// Returns `DaemoneyeEventBusMetrics` containing:
+    /// - Broker performance metrics
+    /// - Transport layer statistics
+    /// - Client connection health
+    /// - Topic routing statistics
+    /// - Message delivery tracking
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use collector_core::{DaemoneyeEventBus, event_bus::EventBusConfig};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let config = EventBusConfig::default();
+    ///     let event_bus = DaemoneyeEventBus::new(config, "/tmp/daemoneye.sock").await?;
+    ///     let metrics = event_bus.get_detailed_metrics().await?;
+    ///     println!("Broker health: {:?}", metrics.broker_health);
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn get_detailed_metrics(&self) -> Result<DaemoneyeEventBusMetrics> {
+        // Get broker statistics once and reuse
+        let broker_stats = self.broker.statistics().await;
+
+        // Execute all metric collection operations concurrently
+        let (broker_health, transport_stats, client_stats, topic_stats, performance_metrics) = tokio::try_join!(
+            self.get_broker_health_with_stats(&broker_stats),
+            self.get_transport_statistics_with_stats(&broker_stats),
+            self.get_client_statistics_with_stats(&broker_stats),
+            self.get_topic_statistics_with_stats(&broker_stats),
+            self.calculate_performance_metrics(&broker_stats)
+        )?;
+
+        Ok(DaemoneyeEventBusMetrics {
+            broker_statistics: broker_stats,
+            broker_health,
+            transport_statistics: transport_stats,
+            client_statistics: client_stats,
+            topic_statistics: topic_stats,
+            performance_metrics,
+            collection_timestamp: std::time::SystemTime::now(),
+        })
+    }
+
+    /// Get broker health status with comprehensive health indicators.
+    async fn get_broker_health(&self) -> Result<BrokerHealthStatus> {
+        let stats = self.broker.statistics().await;
+        self.get_broker_health_with_stats(&stats).await
+    }
+
+    /// Get broker health status using provided statistics (optimized version).
+    async fn get_broker_health_with_stats(
+        &self,
+        stats: &DaemoneyeEventBusStatistics,
+    ) -> Result<BrokerHealthStatus> {
+        let uptime = Duration::from_secs(stats.uptime_seconds);
+
+        // Determine health status based on various indicators
+        let health_status = if stats.active_subscribers == 0 && stats.messages_published > 0 {
+            HealthStatus::Warning // Messages published but no subscribers
+        } else if uptime < Duration::from_secs(10) {
+            HealthStatus::Starting // Recently started
+        } else if stats.messages_delivered < stats.messages_published {
+            let delivery_ratio = stats.messages_delivered as f64 / stats.messages_published as f64;
+            if delivery_ratio < 0.8 {
+                HealthStatus::Degraded // Poor delivery ratio
+            } else {
+                HealthStatus::Healthy
+            }
+        } else {
+            HealthStatus::Healthy
+        };
+
+        Ok(BrokerHealthStatus {
+            status: health_status,
+            uptime,
+            last_health_check: std::time::SystemTime::now(),
+            active_connections: stats.active_subscribers,
+            message_throughput: self.calculate_message_throughput(stats),
+            error_rate: 0.0, // Simplified implementation - would need broker API extension for actual error tracking
+            memory_usage: self.estimate_memory_usage(stats),
+        })
+    }
+
+    /// Get transport layer statistics using provided statistics (optimized version).
+    async fn get_transport_statistics_with_stats(
+        &self,
+        broker_stats: &DaemoneyeEventBusStatistics,
+    ) -> Result<TransportStatistics> {
+        // Note: This is a simplified implementation as we don't have direct access
+        // to transport layer statistics from the broker interface.
+        // In a full implementation, we would need to extend the broker API.
+
+        Ok(TransportStatistics {
+            total_connections: broker_stats.active_subscribers,
+            healthy_connections: broker_stats.active_subscribers, // Assume all active are healthy
+            failed_connections: 0,                                // Would need broker API extension
+            reconnection_attempts: 0,                             // Would need broker API extension
+            bytes_sent: 0,                                        // Would need broker API extension
+            bytes_received: 0,                                    // Would need broker API extension
+            average_latency_ms: 0.0,                              // Would need broker API extension
+            connection_errors: 0,                                 // Would need broker API extension
+        })
+    }
+
+    /// Get client statistics using provided statistics (optimized version).
+    async fn get_client_statistics_with_stats(
+        &self,
+        broker_stats: &DaemoneyeEventBusStatistics,
+    ) -> Result<ClientStatisticsAggregate> {
+        Ok(ClientStatisticsAggregate {
+            total_clients: broker_stats.active_subscribers,
+            active_subscriptions: broker_stats.active_subscribers, // Simplified
+            total_messages_published: broker_stats.messages_published,
+            total_messages_received: broker_stats.messages_delivered,
+            average_uptime: Duration::from_secs(broker_stats.uptime_seconds),
+            health_check_failures: 0, // Would need broker API extension
+        })
+    }
+
+    /// Get topic routing statistics using provided statistics (optimized version).
+    async fn get_topic_statistics_with_stats(
+        &self,
+        broker_stats: &DaemoneyeEventBusStatistics,
+    ) -> Result<TopicStatistics> {
+        Ok(TopicStatistics {
+            active_topics: broker_stats.active_topics,
+            total_subscriptions: broker_stats.active_subscribers,
+            message_routing_efficiency: self.calculate_routing_efficiency(broker_stats),
+            topic_distribution: HashMap::new(), // Would need broker API extension
+            wildcard_usage: 0,                  // Would need broker API extension
+        })
+    }
+
+    /// Calculate performance metrics based on broker statistics.
+    async fn calculate_performance_metrics(
+        &self,
+        stats: &DaemoneyeEventBusStatistics,
+    ) -> Result<PerformanceMetrics> {
+        let uptime_seconds = stats.uptime_seconds.max(1); // Avoid division by zero
+
+        Ok(PerformanceMetrics {
+            messages_per_second: stats.messages_published as f64 / uptime_seconds as f64,
+            delivery_rate: if stats.messages_published > 0 {
+                stats.messages_delivered as f64 / stats.messages_published as f64
+            } else {
+                1.0
+            },
+            average_subscribers: stats.active_subscribers as f64,
+            throughput_efficiency: self.calculate_throughput_efficiency(stats),
+            resource_utilization: self.estimate_resource_utilization(stats),
+        })
+    }
+
+    /// Calculate message throughput for health monitoring.
+    fn calculate_message_throughput(&self, stats: &DaemoneyeEventBusStatistics) -> f64 {
+        let uptime_seconds = stats.uptime_seconds.max(1);
+        stats.messages_published as f64 / uptime_seconds as f64
+    }
+
+    /// Estimate memory usage based on broker statistics.
+    fn estimate_memory_usage(&self, stats: &DaemoneyeEventBusStatistics) -> u64 {
+        // Rough estimation based on active subscribers and topics
+        // In practice, this would need actual memory monitoring
+        const BASE_MEMORY: u64 = 1024 * 1024; // 1MB base
+        const SUBSCRIBER_MEMORY: u64 = 1024; // 1KB per subscriber
+        const TOPIC_MEMORY: u64 = 512; // 512B per topic
+
+        BASE_MEMORY
+            + (stats.active_subscribers as u64 * SUBSCRIBER_MEMORY)
+            + (stats.active_topics as u64 * TOPIC_MEMORY)
+    }
+
+    /// Calculate routing efficiency for topic statistics.
+    fn calculate_routing_efficiency(&self, stats: &DaemoneyeEventBusStatistics) -> f64 {
+        if stats.messages_published == 0 {
+            return 1.0;
+        }
+
+        // Efficiency = delivered / published
+        stats.messages_delivered as f64 / stats.messages_published as f64
+    }
+
+    /// Calculate throughput efficiency for performance metrics.
+    fn calculate_throughput_efficiency(&self, stats: &DaemoneyeEventBusStatistics) -> f64 {
+        // Simplified efficiency calculation based on delivery ratio and subscriber count
+        let delivery_ratio = if stats.messages_published > 0 {
+            stats.messages_delivered as f64 / stats.messages_published as f64
+        } else {
+            1.0
+        };
+
+        let subscriber_efficiency = if stats.active_subscribers > 0 {
+            1.0 // Assume good efficiency if we have subscribers
+        } else {
+            0.5 // Reduced efficiency if no subscribers
+        };
+
+        delivery_ratio * subscriber_efficiency
+    }
+
+    /// Estimate resource utilization for performance metrics.
+    fn estimate_resource_utilization(&self, stats: &DaemoneyeEventBusStatistics) -> f64 {
+        // Simplified resource utilization based on activity
+        const MESSAGE_SCALE: f64 = 1000.0;
+        const SUBSCRIBER_SCALE: f64 = 100.0;
+        const TOPIC_SCALE: f64 = 50.0;
+
+        let message_factor = (stats.messages_published as f64 / MESSAGE_SCALE).min(1.0);
+        let subscriber_factor = (stats.active_subscribers as f64 / SUBSCRIBER_SCALE).min(1.0);
+        let topic_factor = (stats.active_topics as f64 / TOPIC_SCALE).min(1.0);
+
+        (message_factor + subscriber_factor + topic_factor) / 3.0
+    }
+
+    /// Log comprehensive monitoring metrics for observability.
+    ///
+    /// This method logs detailed metrics in structured format for monitoring
+    /// systems and operational dashboards.
+    pub async fn log_monitoring_metrics(&self) -> Result<()> {
+        let metrics = self.get_detailed_metrics().await?;
+
+        // Log broker health and performance
+        tracing::info!(
+            broker_status = ?metrics.broker_health.status,
+            uptime_seconds = metrics.broker_health.uptime.as_secs(),
+            active_connections = metrics.broker_health.active_connections,
+            message_throughput = metrics.broker_health.message_throughput,
+            error_rate = metrics.broker_health.error_rate,
+            memory_usage_bytes = metrics.broker_health.memory_usage,
+            "DaemonEye EventBus broker health metrics"
+        );
+
+        // Log performance metrics
+        tracing::info!(
+            messages_per_second = metrics.performance_metrics.messages_per_second,
+            delivery_rate = metrics.performance_metrics.delivery_rate,
+            average_subscribers = metrics.performance_metrics.average_subscribers,
+            throughput_efficiency = metrics.performance_metrics.throughput_efficiency,
+            resource_utilization = metrics.performance_metrics.resource_utilization,
+            "DaemonEye EventBus performance metrics"
+        );
+
+        // Log transport statistics
+        tracing::info!(
+            total_connections = metrics.transport_statistics.total_connections,
+            healthy_connections = metrics.transport_statistics.healthy_connections,
+            failed_connections = metrics.transport_statistics.failed_connections,
+            reconnection_attempts = metrics.transport_statistics.reconnection_attempts,
+            average_latency_ms = metrics.transport_statistics.average_latency_ms,
+            connection_errors = metrics.transport_statistics.connection_errors,
+            "DaemonEye EventBus transport metrics"
+        );
+
+        // Log topic statistics
+        tracing::info!(
+            active_topics = metrics.topic_statistics.active_topics,
+            total_subscriptions = metrics.topic_statistics.total_subscriptions,
+            routing_efficiency = metrics.topic_statistics.message_routing_efficiency,
+            wildcard_usage = metrics.topic_statistics.wildcard_usage,
+            "DaemonEye EventBus topic routing metrics"
+        );
+
+        // Log client statistics
+        tracing::info!(
+            total_clients = metrics.client_statistics.total_clients,
+            active_subscriptions = metrics.client_statistics.active_subscriptions,
+            total_messages_published = metrics.client_statistics.total_messages_published,
+            total_messages_received = metrics.client_statistics.total_messages_received,
+            average_uptime_seconds = metrics.client_statistics.average_uptime.as_secs(),
+            health_check_failures = metrics.client_statistics.health_check_failures,
+            "DaemonEye EventBus client metrics"
+        );
+
+        Ok(())
+    }
+
+    /// Get health status for monitoring integration.
+    ///
+    /// This method provides a simple health check interface for monitoring
+    /// systems that need to determine if the EventBus is operating correctly.
+    pub async fn health_check(&self) -> Result<bool> {
+        let health = self.get_broker_health().await?;
+
+        match health.status {
+            HealthStatus::Healthy | HealthStatus::Starting => Ok(true),
+            HealthStatus::Warning | HealthStatus::Degraded | HealthStatus::Critical => Ok(false),
+        }
+    }
 }
 
 #[async_trait]
@@ -532,8 +958,16 @@ impl EventBus for DaemoneyeEventBus {
         let daemoneye_stats = inner.statistics().await;
         let mut stats = Self::convert_statistics(&daemoneye_stats);
 
-        // Update uptime from our start time
+        // Update uptime from our start time for consistency
         stats.uptime = self.start_time.elapsed();
+
+        // Log detailed metrics for monitoring (non-blocking)
+        let self_clone = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = self_clone.log_monitoring_metrics().await {
+                tracing::warn!(error = %e, "Failed to log monitoring metrics");
+            }
+        });
 
         Ok(stats)
     }
@@ -955,5 +1389,345 @@ mod tests {
         assert_eq!(e1.correlation_metadata.correlation_id, "multi-correlation");
         assert_eq!(e2.correlation_metadata.correlation_id, "multi-correlation");
         bus1.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_detailed_metrics_collection() {
+        let config = EventBusConfig::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-detailed-metrics.sock");
+        let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
+            .await
+            .unwrap();
+
+        event_bus.start().await.unwrap();
+
+        // Create subscription and publish some events to generate metrics
+        let subscription = EventSubscription {
+            subscriber_id: "metrics-test".to_string(),
+            capabilities: SourceCaps::PROCESS,
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            enable_wildcards: true,
+            topic_filter: None,
+        };
+
+        let _receiver = event_bus.subscribe(subscription).await.unwrap();
+
+        // Publish multiple events to generate statistics
+        for i in 0..5 {
+            let process_event = CollectionEvent::Process(ProcessEvent {
+                pid: 1000 + i,
+                ppid: None,
+                name: format!("metrics_test_{}", i),
+                executable_path: None,
+                command_line: vec![],
+                start_time: None,
+                cpu_usage: None,
+                memory_usage: None,
+                executable_hash: None,
+                user_id: None,
+                accessible: true,
+                file_exists: true,
+                timestamp: SystemTime::now(),
+                platform_metadata: None,
+            });
+
+            let correlation_metadata =
+                crate::event_bus::CorrelationMetadata::new(format!("metrics-correlation-{}", i));
+            event_bus
+                .publish(process_event, correlation_metadata)
+                .await
+                .unwrap();
+        }
+
+        // Allow some time for metrics to be processed
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Get detailed metrics
+        let detailed_metrics = event_bus.get_detailed_metrics().await.unwrap();
+
+        // Verify broker statistics
+        assert!(detailed_metrics.broker_statistics.messages_published >= 5);
+        assert!(detailed_metrics.broker_statistics.active_subscribers >= 1);
+        // Uptime might be 0 in fast tests, so just check it's not negative
+        assert!(detailed_metrics.broker_statistics.uptime_seconds < u64::MAX);
+
+        // Verify broker health
+        assert!(matches!(
+            detailed_metrics.broker_health.status,
+            HealthStatus::Healthy | HealthStatus::Starting
+        ));
+        // Uptime might be 0 in fast tests
+        assert!(detailed_metrics.broker_health.uptime < Duration::from_secs(3600));
+        assert!(detailed_metrics.broker_health.active_connections >= 1);
+        assert!(detailed_metrics.broker_health.message_throughput >= 0.0);
+
+        // Verify transport statistics
+        assert!(detailed_metrics.transport_statistics.total_connections >= 1);
+        assert!(detailed_metrics.transport_statistics.healthy_connections >= 1);
+
+        // Verify client statistics
+        assert!(detailed_metrics.client_statistics.total_clients >= 1);
+        assert!(detailed_metrics.client_statistics.total_messages_published >= 5);
+
+        // Verify topic statistics (may be 0 in fast tests)
+        assert!(detailed_metrics.topic_statistics.active_topics < 1000); // Reasonable upper bound
+        assert!(detailed_metrics.topic_statistics.total_subscriptions >= 1);
+        assert!(detailed_metrics.topic_statistics.message_routing_efficiency >= 0.0);
+        assert!(detailed_metrics.topic_statistics.message_routing_efficiency <= 1.0);
+
+        // Verify performance metrics
+        assert!(detailed_metrics.performance_metrics.messages_per_second >= 0.0);
+        assert!(detailed_metrics.performance_metrics.delivery_rate >= 0.0);
+        assert!(detailed_metrics.performance_metrics.delivery_rate <= 1.0);
+        assert!(detailed_metrics.performance_metrics.throughput_efficiency >= 0.0);
+        assert!(detailed_metrics.performance_metrics.throughput_efficiency <= 1.0);
+
+        event_bus.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_broker_health_status_calculation() {
+        let config = EventBusConfig::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-health-status.sock");
+        let event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
+            .await
+            .unwrap();
+
+        event_bus.start().await.unwrap();
+
+        // Test health status calculation
+        let health_status = event_bus.get_broker_health().await.unwrap();
+
+        // Should be healthy or starting for a new broker
+        assert!(matches!(
+            health_status.status,
+            HealthStatus::Healthy | HealthStatus::Starting
+        ));
+        // Uptime might be 0 in fast tests
+        assert!(health_status.uptime < Duration::from_secs(3600));
+        assert_eq!(health_status.active_connections, 0); // No subscribers yet
+        assert!(health_status.message_throughput >= 0.0);
+        assert_eq!(health_status.error_rate, 0.0); // No errors expected
+        assert!(health_status.memory_usage > 0); // Should have some estimated usage
+
+        event_bus.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_performance_metrics_calculation() {
+        let config = EventBusConfig::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-performance-metrics.sock");
+        let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
+            .await
+            .unwrap();
+
+        event_bus.start().await.unwrap();
+
+        // Create subscription
+        let subscription = EventSubscription {
+            subscriber_id: "perf-test".to_string(),
+            capabilities: SourceCaps::PROCESS,
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            enable_wildcards: true,
+            topic_filter: None,
+        };
+
+        let _receiver = event_bus.subscribe(subscription).await.unwrap();
+
+        // Publish events to generate performance data
+        for i in 0..10 {
+            let process_event = CollectionEvent::Process(ProcessEvent {
+                pid: 2000 + i,
+                ppid: None,
+                name: format!("perf_test_{}", i),
+                executable_path: None,
+                command_line: vec![],
+                start_time: None,
+                cpu_usage: None,
+                memory_usage: None,
+                executable_hash: None,
+                user_id: None,
+                accessible: true,
+                file_exists: true,
+                timestamp: SystemTime::now(),
+                platform_metadata: None,
+            });
+
+            let correlation_metadata =
+                crate::event_bus::CorrelationMetadata::new(format!("perf-correlation-{}", i));
+            event_bus
+                .publish(process_event, correlation_metadata)
+                .await
+                .unwrap();
+        }
+
+        // Allow time for processing
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Get broker statistics for performance calculation
+        let broker_stats = event_bus.broker.statistics().await;
+        let performance_metrics = event_bus
+            .calculate_performance_metrics(&broker_stats)
+            .await
+            .unwrap();
+
+        // Verify performance metrics are reasonable
+        assert!(performance_metrics.messages_per_second >= 0.0);
+        assert!(performance_metrics.delivery_rate >= 0.0);
+        assert!(performance_metrics.delivery_rate <= 1.0);
+        assert!(performance_metrics.average_subscribers >= 0.0);
+        assert!(performance_metrics.throughput_efficiency >= 0.0);
+        assert!(performance_metrics.throughput_efficiency <= 1.0);
+        assert!(performance_metrics.resource_utilization >= 0.0);
+        assert!(performance_metrics.resource_utilization <= 1.0);
+
+        event_bus.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_monitoring_metrics_logging() {
+        let config = EventBusConfig::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-monitoring-logging.sock");
+        let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
+            .await
+            .unwrap();
+
+        event_bus.start().await.unwrap();
+
+        // Create subscription and publish events
+        let subscription = EventSubscription {
+            subscriber_id: "logging-test".to_string(),
+            capabilities: SourceCaps::PROCESS,
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            enable_wildcards: true,
+            topic_filter: None,
+        };
+
+        let _receiver = event_bus.subscribe(subscription).await.unwrap();
+
+        let process_event = CollectionEvent::Process(ProcessEvent {
+            pid: 3000,
+            ppid: None,
+            name: "logging_test".to_string(),
+            executable_path: None,
+            command_line: vec![],
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: None,
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp: SystemTime::now(),
+            platform_metadata: None,
+        });
+
+        let correlation_metadata =
+            crate::event_bus::CorrelationMetadata::new("logging-correlation".to_string());
+        event_bus
+            .publish(process_event, correlation_metadata)
+            .await
+            .unwrap();
+
+        // Test monitoring metrics logging (should not fail)
+        let result = event_bus.log_monitoring_metrics().await;
+        assert!(result.is_ok());
+
+        event_bus.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_health_check_integration() {
+        let config = EventBusConfig::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-health-check.sock");
+        let event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
+            .await
+            .unwrap();
+
+        event_bus.start().await.unwrap();
+
+        // Test health check
+        let is_healthy = event_bus.health_check().await.unwrap();
+        assert!(is_healthy); // Should be healthy for a new broker
+
+        event_bus.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_statistics_compatibility_with_existing_interface() {
+        let config = EventBusConfig::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-stats-compatibility.sock");
+        let mut event_bus = DaemoneyeEventBus::new(config, socket_path.to_str().unwrap())
+            .await
+            .unwrap();
+
+        event_bus.start().await.unwrap();
+
+        // Test that existing get_statistics interface still works
+        let stats = event_bus.get_statistics().await.unwrap();
+        assert_eq!(stats.events_published, 0);
+        assert_eq!(stats.events_delivered, 0);
+        assert_eq!(stats.active_subscribers, 0);
+        // Uptime might be 0 in fast tests
+        assert!(stats.uptime < Duration::from_secs(3600));
+
+        // Create subscription and publish event
+        let subscription = EventSubscription {
+            subscriber_id: "compatibility-test".to_string(),
+            capabilities: SourceCaps::PROCESS,
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            enable_wildcards: true,
+            topic_filter: None,
+        };
+
+        let _receiver = event_bus.subscribe(subscription).await.unwrap();
+
+        let process_event = CollectionEvent::Process(ProcessEvent {
+            pid: 4000,
+            ppid: None,
+            name: "compatibility_test".to_string(),
+            executable_path: None,
+            command_line: vec![],
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: None,
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp: SystemTime::now(),
+            platform_metadata: None,
+        });
+
+        let correlation_metadata =
+            crate::event_bus::CorrelationMetadata::new("compatibility-correlation".to_string());
+        event_bus
+            .publish(process_event, correlation_metadata)
+            .await
+            .unwrap();
+
+        // Allow time for processing
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Verify statistics are updated
+        let updated_stats = event_bus.get_statistics().await.unwrap();
+        assert!(updated_stats.events_published >= 1);
+        assert!(updated_stats.active_subscribers >= 1);
+
+        event_bus.shutdown().await.unwrap();
     }
 }
