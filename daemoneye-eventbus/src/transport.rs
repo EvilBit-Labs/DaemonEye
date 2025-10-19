@@ -103,7 +103,7 @@ impl Default for ClientConfig {
 pub struct TransportServer {
     config: SocketConfig,
     listener: Option<LocalSocketListener>,
-    accept_count: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    active_connections: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl TransportServer {
@@ -136,7 +136,7 @@ impl TransportServer {
         Ok(Self {
             config,
             listener: Some(listener),
-            accept_count: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            active_connections: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -147,25 +147,53 @@ impl TransportServer {
             .as_ref()
             .ok_or_else(|| EventBusError::transport("Server not listening"))?;
 
-        let count = self
-            .accept_count
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Enforce concurrent connection limit
+        let limit = self.config.connection_limit as u64;
 
-        // Connection limit to prevent resource exhaustion
-        if count >= self.config.connection_limit as u64 {
-            return Err(EventBusError::transport(
-                "Server shutdown or connection limit reached",
-            ));
+        if limit > 0 {
+            loop {
+                let current = self
+                    .active_connections
+                    .load(std::sync::atomic::Ordering::SeqCst);
+
+                if current >= limit {
+                    return Err(EventBusError::transport(
+                        "Server shutdown or connection limit reached",
+                    ));
+                }
+
+                if self
+                    .active_connections
+                    .compare_exchange(
+                        current,
+                        current + 1,
+                        std::sync::atomic::Ordering::SeqCst,
+                        std::sync::atomic::Ordering::SeqCst,
+                    )
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+        } else {
+            self.active_connections
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
 
         // Accept the connection
-        let stream = listener
-            .accept()
-            .await
-            .map_err(|e| EventBusError::transport(format!("Failed to accept connection: {}", e)))?;
+        let stream = listener.accept().await.map_err(|e| {
+            // Roll back active connection counter on failure
+            self.active_connections
+                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            EventBusError::transport(format!("Failed to accept connection: {}", e))
+        })?;
 
         debug!("Accepted new client connection");
-        Ok(TransportClient::from_stream(stream, self.config.clone()))
+        Ok(TransportClient::from_stream(
+            stream,
+            self.config.clone(),
+            Some(std::sync::Arc::clone(&self.active_connections)),
+        ))
     }
 
     /// Get the socket configuration
@@ -200,6 +228,38 @@ impl TransportServer {
     }
 }
 
+#[derive(Debug)]
+struct ActiveConnectionGuard {
+    counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ActiveConnectionGuard {
+    fn new(counter: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
+        Self { counter }
+    }
+
+    fn decrement(&self) {
+        let ordering = std::sync::atomic::Ordering::SeqCst;
+        let mut current = self.counter.load(ordering);
+
+        while current != 0 {
+            match self
+                .counter
+                .compare_exchange(current, current - 1, ordering, ordering)
+            {
+                Ok(_) => return,
+                Err(updated) => current = updated,
+            }
+        }
+    }
+}
+
+impl Drop for ActiveConnectionGuard {
+    fn drop(&mut self) {
+        self.decrement();
+    }
+}
+
 /// Transport client for connecting to the server with reconnection and health monitoring
 #[derive(Debug)]
 pub struct TransportClient {
@@ -210,6 +270,7 @@ pub struct TransportClient {
     reconnect_attempts: u32,
     last_health_check: std::time::Instant,
     buffer: Vec<u8>,
+    connection_guard: Option<ActiveConnectionGuard>,
 }
 
 impl TransportClient {
@@ -223,11 +284,16 @@ impl TransportClient {
             reconnect_attempts: 0,
             last_health_check: std::time::Instant::now(),
             buffer: Vec::new(),
+            connection_guard: None,
         }
     }
 
     /// Create a transport client from an existing stream
-    pub fn from_stream(stream: LocalSocketStream, socket_config: SocketConfig) -> Self {
+    pub fn from_stream(
+        stream: LocalSocketStream,
+        socket_config: SocketConfig,
+        active_counter: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    ) -> Self {
         Self {
             config: ClientConfig::default(),
             socket_config,
@@ -236,6 +302,7 @@ impl TransportClient {
             reconnect_attempts: 0,
             last_health_check: std::time::Instant::now(),
             buffer: Vec::new(),
+            connection_guard: active_counter.map(ActiveConnectionGuard::new),
         }
     }
 
@@ -260,6 +327,7 @@ impl TransportClient {
             reconnect_attempts: 0,
             last_health_check: std::time::Instant::now(),
             buffer: Vec::new(),
+            connection_guard: None,
         };
 
         client.establish_connection().await?;
@@ -473,6 +541,14 @@ impl TransportClient {
 impl Default for TransportClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for TransportClient {
+    fn drop(&mut self) {
+        if let Some(_guard) = self.connection_guard.take() {
+            // Guard drops here, decrementing the active connection count.
+        }
     }
 }
 
@@ -959,5 +1035,60 @@ mod tests {
         // Test no match
         assert!(!manager.topic_matches("events.network.connections", "events.process.+"));
         assert!(!manager.topic_matches("control.collector.status", "events.process.*"));
+    }
+
+    #[tokio::test]
+    async fn test_connection_limit_does_not_leak_counts() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let socket_path = temp_dir.path().join("limit-reuse.sock");
+        let socket_config = SocketConfig {
+            unix_path: socket_path.to_string_lossy().to_string(),
+            windows_pipe: socket_path.to_string_lossy().to_string(),
+            connection_limit: 2,
+        };
+
+        let server = TransportServer::new(socket_config.clone())
+            .await
+            .expect("failed to create server");
+
+        for _ in 0..5 {
+            let accept_future = server.accept();
+            let cfg = socket_config.clone();
+
+            let client = tokio::spawn(async move {
+                let path = cfg.get_socket_path();
+                let name = create_socket_name(&path).expect("invalid socket path");
+                LocalSocketStream::connect(name)
+                    .await
+                    .expect("client failed to connect")
+            });
+
+            let server_client = accept_future.await.expect("server failed to accept client");
+            let client_stream = client.await.expect("client task panicked");
+
+            drop(client_stream);
+            drop(server_client);
+        }
+
+        let accept_future = server.accept();
+        let cfg = socket_config.clone();
+
+        let client = tokio::spawn(async move {
+            let path = cfg.get_socket_path();
+            let name = create_socket_name(&path).expect("invalid socket path");
+            LocalSocketStream::connect(name)
+                .await
+                .expect("client failed to connect")
+        });
+
+        let server_client = accept_future
+            .await
+            .expect("server failed to accept final client");
+        let client_stream = client.await.expect("final client task panicked");
+
+        drop(client_stream);
+        drop(server_client);
     }
 }
