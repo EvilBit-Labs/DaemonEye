@@ -600,9 +600,15 @@ impl ProcessLifecycleTracker {
         // Check CPU usage changes
         if self.config.track_cpu_changes {
             if let (Some(prev_cpu), Some(curr_cpu)) = (previous.cpu_usage, current.cpu_usage) {
-                let change_percent = (curr_cpu - prev_cpu).abs();
-                if change_percent > self.config.cpu_change_threshold {
-                    modified_fields.push("cpu_usage".to_string());
+                if prev_cpu == 0.0 {
+                    if curr_cpu > 0.0 {
+                        modified_fields.push("cpu_usage".to_string());
+                    }
+                } else {
+                    let change_percent = ((curr_cpu - prev_cpu) / prev_cpu).abs() * 100.0;
+                    if change_percent > self.config.cpu_change_threshold {
+                        modified_fields.push("cpu_usage".to_string());
+                    }
                 }
             }
         }

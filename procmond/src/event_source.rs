@@ -19,6 +19,28 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 use tokio::time::{interval, timeout};
 use tracing::{debug, error, info, instrument, warn};
 
+struct BatchOutcome {
+    dead_letters: Vec<CollectionEvent>,
+}
+
+impl BatchOutcome {
+    fn new(dead_letters: Vec<CollectionEvent>) -> Self {
+        Self { dead_letters }
+    }
+
+    fn empty() -> Self {
+        Self {
+            dead_letters: Vec::new(),
+        }
+    }
+
+    fn dead_letters(&self) -> &[CollectionEvent] {
+        &self.dead_letters
+    }
+}
+
+type BatchResult = Result<BatchOutcome, (anyhow::Error, Vec<CollectionEvent>)>;
+
 /// Process event source that implements the EventSource trait.
 ///
 /// This struct wraps the existing `ProcessMessageHandler` and provides a bridge
@@ -442,14 +464,14 @@ impl ProcessEventSource {
         &self,
         tx: &mpsc::Sender<CollectionEvent>,
         shutdown_signal: &Arc<AtomicBool>,
-    ) -> anyhow::Result<()> {
+    ) -> BatchResult {
         let timer = PerformanceTimer::start("process_collection".to_string());
         let collection_start = Instant::now();
 
         // Check for shutdown before starting collection
         if shutdown_signal.load(Ordering::Relaxed) {
             debug!("Shutdown signal detected, skipping process collection");
-            return Ok(());
+            return Ok(BatchOutcome::empty());
         }
 
         // Perform process enumeration using the collector trait
@@ -464,7 +486,10 @@ impl ProcessEventSource {
             Ok(Err(e)) => {
                 error!(error = %e, "Process enumeration failed");
                 self.stats.collection_errors.fetch_add(1, Ordering::Relaxed);
-                return Err(anyhow::anyhow!("Process collection failed: {}", e));
+                return Err((
+                    anyhow::anyhow!("Process collection failed: {}", e),
+                    Vec::new(),
+                ));
             }
             Err(_) => {
                 error!(
@@ -472,7 +497,7 @@ impl ProcessEventSource {
                     "Process enumeration timed out"
                 );
                 self.stats.collection_errors.fetch_add(1, Ordering::Relaxed);
-                return Err(anyhow::anyhow!("Process enumeration timeout"));
+                return Err((anyhow::anyhow!("Process enumeration timeout"), Vec::new()));
             }
         };
 
@@ -489,6 +514,7 @@ impl ProcessEventSource {
         let mut event_batch = Vec::with_capacity(self.config.event_batch_size);
         let mut collected_count = 0;
         let mut batch_count = 0;
+        let mut dead_letter_events = Vec::new();
 
         for process_event in process_events {
             // Check for shutdown during processing
@@ -502,12 +528,16 @@ impl ProcessEventSource {
 
             // Send batch when it's full
             if event_batch.len() >= self.config.event_batch_size {
-                if let Err(e) = self
+                match self
                     .send_event_batch(tx, &mut event_batch, shutdown_signal)
                     .await
                 {
-                    error!(error = %e, "Failed to send event batch");
-                    return Err(e);
+                    Ok(mut dropped) => dead_letter_events.append(&mut dropped),
+                    Err(e) => {
+                        error!(error = %e, "Failed to send event batch");
+                        dead_letter_events.append(&mut event_batch);
+                        return Err((e, dead_letter_events));
+                    }
                 }
                 batch_count += 1;
             }
@@ -515,12 +545,16 @@ impl ProcessEventSource {
 
         // Send any remaining events in the batch
         if !event_batch.is_empty() {
-            if let Err(e) = self
+            match self
                 .send_event_batch(tx, &mut event_batch, shutdown_signal)
                 .await
             {
-                error!(error = %e, "Failed to send final event batch");
-                return Err(e);
+                Ok(mut dropped) => dead_letter_events.append(&mut dropped),
+                Err(e) => {
+                    error!(error = %e, "Failed to send final event batch");
+                    dead_letter_events.append(&mut event_batch);
+                    return Err((e, dead_letter_events));
+                }
             }
             batch_count += 1;
         }
@@ -566,7 +600,7 @@ impl ProcessEventSource {
             "Process collection cycle completed"
         );
 
-        Ok(())
+        Ok(BatchOutcome::new(dead_letter_events))
     }
 
     /// Sends a batch of events with backpressure handling.
@@ -575,15 +609,16 @@ impl ProcessEventSource {
         tx: &mpsc::Sender<CollectionEvent>,
         event_batch: &mut Vec<CollectionEvent>,
         shutdown_signal: &Arc<AtomicBool>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<CollectionEvent>> {
         if event_batch.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let batch_size = event_batch.len();
         debug!(batch_size = batch_size, "Sending event batch");
 
         let mut processed_count = 0;
+        let mut dead_letter_events: Vec<CollectionEvent> = Vec::new();
         let max_retries = 3;
         let retry_delay = Duration::from_millis(10);
 
@@ -591,7 +626,7 @@ impl ProcessEventSource {
             // Check for shutdown before processing
             if shutdown_signal.load(Ordering::Relaxed) {
                 debug!("Shutdown signal detected, stopping event batch send");
-                return Ok(());
+                return Ok(dead_letter_events);
             }
 
             // Peek at the first event without removing it
@@ -661,12 +696,8 @@ impl ProcessEventSource {
                         } else {
                             debug!(
                                 retry_count = retry_count,
-                                "Event send failed after max retries, requeuing to front"
+                                "Event send failed after max retries, giving up on current attempt"
                             );
-                            // Requeue the event to the front of the batch for later processing
-                            // Remove the current event and add it back to the front
-                            event_batch.remove(0);
-                            event_batch.insert(0, event);
                             break;
                         }
                     }
@@ -683,47 +714,63 @@ impl ProcessEventSource {
                     event_batch.remove(0);
                 }
             } else {
-                // If we couldn't send after retries, propagate the failure to the caller
-                // This allows the outer loop to enter degraded mode or abort gracefully
                 warn!(
-                    "Event send failed after {} retries, propagating failure to caller",
-                    max_retries
+                    attempts = retry_count,
+                    max_retries = max_retries,
+                    event_type = event_type,
+                    pid = ?event_pid,
+                    "Event send failed after retries; moving to dead-letter queue"
                 );
-
-                // Use the captured event details for error context
-                let batch_size = event_batch.len();
-
-                // Check for shutdown before applying backpressure delay
-                if shutdown_signal.load(Ordering::Relaxed) {
-                    debug!("Shutdown signal detected during backpressure, stopping batch send");
-                    return Err(anyhow::anyhow!(
-                        "Event send failed after {} retries (shutdown detected), event_type: {}, pid: {:?}",
-                        max_retries,
-                        event_type,
-                        event_pid
-                    ));
+                self.stats.collection_errors.fetch_add(1, Ordering::Relaxed);
+                if !event_batch.is_empty() {
+                    event_batch.remove(0);
                 }
-
-                // Wait a shorter time before returning the error
-                tokio::time::sleep(Duration::from_millis(10)).await;
-
-                // Return error with context, keeping the event in the batch for caller decision
-                return Err(anyhow::anyhow!(
-                    "Event send failed after {} retries, event_type: {}, pid: {:?}, batch_size: {}",
-                    max_retries,
-                    event_type,
-                    event_pid,
-                    batch_size
-                ));
+                dead_letter_events.push(event);
+                if shutdown_signal.load(Ordering::Relaxed) {
+                    debug!(
+                        "Shutdown detected during event send; stopping batch processing after recording dead-letter event"
+                    );
+                    break;
+                }
+                continue;
             }
         }
 
         debug!(
             batch_size = batch_size,
             processed_count = processed_count,
-            "Event batch sent successfully"
+            failed = dead_letter_events.len(),
+            "Event batch processed"
         );
-        Ok(())
+        Ok(dead_letter_events)
+    }
+
+    fn log_dead_letter_events(&self, events: &[CollectionEvent]) {
+        if events.is_empty() {
+            return;
+        }
+
+        const MAX_DETAILED_EVENTS: usize = 5;
+
+        warn!(
+            failed = events.len(),
+            "Dead-letter events retained after batch processing"
+        );
+
+        for event in events.iter().take(MAX_DETAILED_EVENTS) {
+            debug!(
+                event_type = event.event_type(),
+                pid = ?event.pid(),
+                "Dead-letter event details"
+            );
+        }
+
+        if events.len() > MAX_DETAILED_EVENTS {
+            debug!(
+                omitted = events.len() - MAX_DETAILED_EVENTS,
+                "Additional dead-letter events omitted from warn-level logging"
+            );
+        }
     }
 }
 
@@ -770,12 +817,14 @@ impl EventSource for ProcessEventSource {
 
         // Initial collection with error handling
         match self.collect_processes(&tx, &shutdown_signal).await {
-            Ok(()) => {
+            Ok(outcome) => {
+                self.log_dead_letter_events(outcome.dead_letters());
                 info!("Initial process collection completed successfully");
                 consecutive_failures = 0;
             }
-            Err(e) => {
-                error!(error = %e, "Failed during initial process collection");
+            Err((err, dead_letters)) => {
+                self.log_dead_letter_events(&dead_letters);
+                error!(error = %err, "Failed during initial process collection");
                 consecutive_failures = 1;
                 // Don't return error immediately, try to recover
             }
@@ -792,7 +841,8 @@ impl EventSource for ProcessEventSource {
                     }
 
                     match self.collect_processes(&tx, &shutdown_signal).await {
-                        Ok(()) => {
+                        Ok(outcome) => {
+                            self.log_dead_letter_events(outcome.dead_letters());
                             if consecutive_failures > 0 {
                                 info!(
                                     previous_failures = consecutive_failures,
@@ -801,10 +851,11 @@ impl EventSource for ProcessEventSource {
                             }
                             consecutive_failures = 0;
                         }
-                        Err(e) => {
+                        Err((err, dead_letters)) => {
+                            self.log_dead_letter_events(&dead_letters);
                             consecutive_failures += 1;
                             error!(
-                                error = %e,
+                                error = %err,
                                 consecutive_failures = consecutive_failures,
                                 max_failures = MAX_CONSECUTIVE_FAILURES,
                                 "Process collection failed"
@@ -1218,10 +1269,11 @@ mod tests {
         ];
 
         // Send the batch
-        let result = source
+        let dead_letters = source
             .send_event_batch(&tx, &mut event_batch, &shutdown_signal)
-            .await;
-        assert!(result.is_ok(), "Batch send should succeed");
+            .await
+            .expect("Batch send should succeed");
+        assert!(dead_letters.is_empty(), "No events should be dead-lettered");
         assert!(event_batch.is_empty(), "Batch should be drained");
 
         // Verify events were received

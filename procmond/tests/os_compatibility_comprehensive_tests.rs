@@ -308,7 +308,7 @@ impl OSEnvironment {
     }
 
     /// Extract field value from key=value format.
-    #[allow(dead_code)]
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn extract_field(content: &str, field: &str) -> Option<String> {
         for line in content.lines() {
             if let Some(value) = line.strip_prefix(&format!("{}=", field)) {
