@@ -30,17 +30,16 @@ procmond [OPTIONS]
 
 ### Options
 
-| Option                  | Short | Default                           | Description                                                                            |
-| ----------------------- | ----- | --------------------------------- | -------------------------------------------------------------------------------------- |
-| `--database`            | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for storing process data                                                 |
-| `--log-level`           | `-l`  | `info`                            | Log level (debug, info, warn, error)                                                   |
-| `--interval`            | `-i`  | `30`                              | Collection interval in seconds (5-3600)                                                |
-| `--max-processes`       |       | `0`                               | Maximum processes per cycle (0 = unlimited)                                            |
-| `--enhanced-metadata`   |       |                                   | Enable enhanced metadata collection                                                    |
-| `--compute-hashes`      |       |                                   | Enable executable hashing for integrity                                                |
-| `--generate-completion` |       |                                   | Generate shell completion script for the specified shell (bash, zsh, fish, powershell) |
-| `--help`                | `-h`  |                                   | Print help information                                                                 |
-| `--version`             | `-V`  |                                   | Print version information                                                              |
+| Option                | Short | Default                           | Description                                 |
+| --------------------- | ----- | --------------------------------- | ------------------------------------------- |
+| `--database`          | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for storing process data      |
+| `--log-level`         | `-l`  | `info`                            | Log level (debug, info, warn, error)        |
+| `--interval`          | `-i`  | `30`                              | Collection interval in seconds (5-3600)     |
+| `--max-processes`     |       | `0`                               | Maximum processes per cycle (0 = unlimited) |
+| `--enhanced-metadata` |       |                                   | Enable enhanced metadata collection         |
+| `--compute-hashes`    |       |                                   | Enable executable hashing for integrity     |
+| `--help`              | `-h`  |                                   | Print help information                      |
+| `--version`           | `-V`  |                                   | Print version information                   |
 
 ### Examples
 
@@ -60,23 +59,24 @@ procmond --max-processes 100 --interval 5
 
 ### Configuration
 
-procmond supports hierarchical configuration loading:
+`procmond` is orchestrated by `daemoneye-agent`; collectors do not consume component-specific configuration files. When the binary is launched directly (for example during development or troubleshooting) it honours the following sources:
 
 1. Command-line flags (highest precedence)
-2. Environment variables (`PROCMOND_*`)
-3. User configuration file (`~/.config/procmond/config.yaml`)
-4. System configuration file (`/etc/procmond/config.yaml`)
-5. Embedded defaults (lowest precedence)
+2. Environment variables (`PROCMOND_*`) typically injected by the agent
+3. System DaemonEye configuration file (`/etc/daemoneye/config.toml`)
+4. Embedded defaults (lowest precedence)
+
+Per-user configuration is not supported for collectors; only the operator-facing CLI honours user-scoped overrides when invoked directly.
+
+Operators should configure collection behaviour through the agent, which materialises these settings when spawning the collector.
 
 ### Exit Codes
 
-| Code | Description         |
-| ---- | ------------------- |
-| 0    | Success             |
-| 1    | General error       |
-| 2    | Configuration error |
-| 3    | Permission denied   |
-| 4    | Database error      |
+| Code | Description                                                                              |
+| ---- | ---------------------------------------------------------------------------------------- |
+| 0    | Success                                                                                  |
+| 1    | Unhandled error returned from the runtime (includes configuration, permission, database) |
+| 2    | CLI argument parsing failure reported by `clap`                                          |
 
 ## daemoneye-agent
 
@@ -90,13 +90,12 @@ daemoneye-agent [OPTIONS]
 
 ### Options
 
-| Option                  | Short | Default                           | Description                                                                            |
-| ----------------------- | ----- | --------------------------------- | -------------------------------------------------------------------------------------- |
-| `--database`            | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for process data                                                         |
-| `--log-level`           | `-l`  | `info`                            | Log level (debug, info, warn, error)                                                   |
-| `--generate-completion` |       |                                   | Generate shell completion script for the specified shell (bash, zsh, fish, powershell) |
-| `--help`                | `-h`  |                                   | Print help information                                                                 |
-| `--version`             | `-V`  |                                   | Print version information                                                              |
+| Option        | Short | Default                           | Description                          |
+| ------------- | ----- | --------------------------------- | ------------------------------------ |
+| `--database`  | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for process data       |
+| `--log-level` | `-l`  | `info`                            | Log level (debug, info, warn, error) |
+| `--help`      | `-h`  |                                   | Print help information               |
+| `--version`   | `-V`  |                                   | Print version information            |
 
 ### Examples
 
@@ -122,8 +121,9 @@ DAEMONEYE_AGENT_TEST_MODE=1 daemoneye-agent
 
 ### Features
 
-- **Procmond Lifecycle Management**: Automatically manages procmond processes
-- **IPC Communication**: Communicates with procmond via protobuf over Unix sockets/named pipes
+- **Embedded EventBus Broker**: Runs daemoneye-eventbus broker for multi-collector coordination
+- **IPC Server**: Provides IPC server for CLI communication via protobuf over Unix sockets/named pipes
+- **IPC Client**: Communicates with procmond via protobuf over Unix sockets/named pipes
 - **Detection Engine**: Executes SQL-based detection rules against collected data
 - **Alert Management**: Multi-channel alert delivery (stdout, syslog, webhooks, email)
 - **Graceful Shutdown**: Handles SIGTERM/SIGINT for clean shutdown
@@ -150,13 +150,12 @@ daemoneye-cli [OPTIONS]
 
 ### Options
 
-| Option                  | Short | Default                           | Description                                                                            |
-| ----------------------- | ----- | --------------------------------- | -------------------------------------------------------------------------------------- |
-| `--database`            | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for queries                                                              |
-| `--format`              | `-f`  | `human`                           | Output format (human, json)                                                            |
-| `--generate-completion` |       |                                   | Generate shell completion script for the specified shell (bash, zsh, fish, powershell) |
-| `--help`                | `-h`  |                                   | Print help information                                                                 |
-| `--version`             | `-V`  |                                   | Print version information                                                              |
+| Option       | Short | Default                           | Description                 |
+| ------------ | ----- | --------------------------------- | --------------------------- |
+| `--database` | `-d`  | `/var/lib/daemoneye/processes.db` | Database path for queries   |
+| `--format`   | `-f`  | `human`                           | Output format (human, json) |
+| `--help`     | `-h`  |                                   | Print help information      |
+| `--version`  | `-V`  |                                   | Print version information   |
 
 ### Examples
 

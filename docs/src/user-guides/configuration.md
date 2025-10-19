@@ -41,11 +41,11 @@ DaemonEye uses a hierarchical configuration system that allows you to override s
 - Linux/macOS: `~/.config/daemoneye/config.yaml`
 - Windows: `%APPDATA%\DaemonEye\config.yaml`
 
-**Service-Specific Configuration**:
+**Component-Specific Configuration**:
 
-- Linux: `/etc/daemoneye/procmond.yaml`, `/etc/daemoneye/daemoneye-agent.yaml`
-- macOS: `/Library/Application Support/DaemonEye/procmond.yaml`
-- Windows: `C:\ProgramData\DaemonEye\procmond.yaml`
+- Components use the same configuration file with component-specific sections
+- Environment variables can override specific component settings
+- Command-line flags provide the highest precedence overrides
 
 ### Configuration Formats
 
@@ -81,6 +81,20 @@ app:
 
   # Metrics collection interval in seconds
   metrics_interval_secs: 60
+
+# EventBus broker configuration (daemoneye-agent)
+broker:
+  # Unix socket path for EventBus broker
+  socket_path: /tmp/daemoneye-eventbus.sock
+
+  # Broker startup timeout in seconds
+  startup_timeout_seconds: 30
+
+  # Maximum message buffer size
+  max_message_buffer_size: 10000
+
+  # Message processing timeout in milliseconds
+  message_timeout_ms: 5000
 ```
 
 ### Process Collection Settings
@@ -266,85 +280,27 @@ alerting:
 
 ## Database Configuration
 
-### Event Store (redb)
+### Database Configuration (redb)
 
 ```yaml
 database:
-  # Event store configuration
-  event_store:
-    # Database file path
-    path: /var/lib/daemoneye/events.redb
+  # Database file path
+  path: /var/lib/daemoneye/events.redb
 
-    # Maximum database size in MB
-    max_size_mb: 10240
+  # Data retention period in days
+  retention_days: 30
 
-    # Enable WAL mode for better performance
-    wal_mode: true
+  # Maximum database size in MB
+  max_size_mb: 10240
 
-    # WAL checkpoint interval in seconds
-    wal_checkpoint_interval_secs: 300
+  # Enable automatic cleanup
+  enable_cleanup: true
 
-    # Connection pool size
-    max_connections: 10
+  # Cleanup interval in hours
+  cleanup_interval_hours: 24
 
-    # Connection timeout in seconds
-    connection_timeout_secs: 30
-
-    # Idle connection timeout in seconds
-    idle_timeout_secs: 600
-```
-
-### Audit Ledger (SQLite)
-
-```yaml
-database:
-  # Audit ledger configuration
-  audit_ledger:
-    # Database file path
-    path: /var/lib/daemoneye/audit.sqlite
-
-    # Enable WAL mode for durability
-    wal_mode: true
-
-    # WAL checkpoint mode (NORMAL, FULL, RESTART, TRUNCATE)
-    wal_checkpoint_mode: FULL
-
-    # Synchronous mode (OFF, NORMAL, FULL)
-    synchronous: FULL
-
-    # Journal mode (DELETE, TRUNCATE, PERSIST, MEMORY, WAL)
-    journal_mode: WAL
-
-    # Cache size in KB
-    cache_size_kb: 2000
-
-    # Page size in bytes
-    page_size_bytes: 4096
-```
-
-### Data Retention
-
-```yaml
-database:
-  # Data retention policies
-  retention:
-    # Process data retention in days
-    process_data_days: 30
-
-    # Alert data retention in days
-    alert_data_days: 90
-
-    # Audit log retention in days
-    audit_log_days: 365
-
-    # Enable automatic cleanup
-    enable_cleanup: true
-
-    # Cleanup interval in hours
-    cleanup_interval_hours: 24
-
-    # Cleanup batch size
-    cleanup_batch_size: 1000
+  # Cleanup batch size
+  cleanup_batch_size: 1000
 ```
 
 ## Platform-Specific Configuration
@@ -772,44 +728,27 @@ app:
   scan_interval_ms: 30000
   batch_size: 1000
   log_level: info
-  retention_days: 30
-  enable_metrics: true
-
-collection:
-  enable_process_collection: true
-  enable_hash_computation: true
-  hash_algorithm: sha256
-  skip_system_processes: true
-
-detection:
-  rules_path: /etc/daemoneye/rules
-  enable_hot_reload: true
-  rule_timeout_secs: 30
-  max_concurrent_rules: 10
-
-alerting:
-  enabled: true
-  dedupe_window_minutes: 60
-  sinks:
-    - type: syslog
-      enabled: true
-      facility: daemon
-      tag: daemoneye
-    - type: webhook
-      enabled: true
-      url: https://your-siem.com/webhook
-      headers:
-        Authorization: Bearer ${WEBHOOK_TOKEN}
 
 database:
-  event_store:
-    path: /var/lib/daemoneye/events.redb
-    max_size_mb: 10240
-    wal_mode: true
-  audit_ledger:
-    path: /var/lib/daemoneye/audit.sqlite
-    wal_mode: true
-    synchronous: FULL
+  path: /var/lib/daemoneye/events.redb
+  retention_days: 30
+  max_size_mb: 10240
+  enable_cleanup: true
+
+# EventBus broker configuration
+broker:
+  socket_path: /tmp/daemoneye-eventbus.sock
+  startup_timeout_seconds: 30
+  max_message_buffer_size: 10000
+
+# Platform-specific settings
+platform:
+  linux:
+    enable_ebpf: false
+  windows:
+    enable_etw: false
+  macos:
+    enable_endpoint_security: false
 ```
 
 ### High-Performance Configuration

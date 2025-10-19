@@ -128,14 +128,9 @@ sudo chown $USER:$USER /etc/daemoneye
 mkdir C:\ProgramData\DaemonEye
 ```
 
-### 2. Generate Initial Configuration
+### 2. Create Basic Configuration
 
-```bash
-# Generate default configuration
-daemoneye-cli config init --output /etc/daemoneye/config.yaml
-```
-
-This creates a basic configuration file:
+Create a basic configuration file at `/etc/daemoneye/config.yaml`:
 
 ```yaml
 # DaemonEye Configuration
@@ -145,21 +140,13 @@ app:
   log_level: info
 
 database:
-  event_store_path: /var/lib/daemoneye/events.redb
-  audit_ledger_path: /var/lib/daemoneye/audit.sqlite
+  path: /var/lib/daemoneye/events.redb
   retention_days: 30
 
-detection:
-  rules_path: /etc/daemoneye/rules
-  enabled_rules: ['*']
-
-alerting:
-  sinks:
-    - type: stdout
-      enabled: true
-    - type: syslog
-      enabled: true
-      facility: daemon
+# EventBus broker configuration
+broker:
+  socket_path: /tmp/daemoneye-eventbus.sock
+  startup_timeout_seconds: 30
 
 # Platform-specific settings
 platform:
@@ -187,13 +174,13 @@ mkdir C:\ProgramData\DaemonEye\data
 #### Option A: Manual Start (Testing)
 
 ```bash
-# Terminal 1: Start daemoneye-agent (manages procmond automatically)
+# Terminal 1: Start daemoneye-agent (includes embedded EventBus broker and IPC server)
 daemoneye-agent --database /var/lib/daemoneye/events.redb --log-level info
 
 # Terminal 2: Use CLI for database queries and health checks
-daemoneye-cli --database /var/lib/daemoneye/events.redb --format json health
+daemoneye-cli --database /var/lib/daemoneye/events.redb --format json
 
-# Terminal 3: Run procmond directly for testing (optional)
+# Terminal 3: Run procmond directly for testing (uses collector-core framework)
 procmond --database /var/lib/daemoneye/events.redb --interval 30 --enhanced-metadata
 ```
 
@@ -225,7 +212,7 @@ daemoneye-cli --database /var/lib/daemoneye/events.redb --format human
 # View database statistics in JSON format
 daemoneye-cli --database /var/lib/daemoneye/events.redb --format json
 
-# Test procmond collection with enhanced metadata
+# Test procmond collection with enhanced metadata and hashing
 procmond --database /var/lib/daemoneye/events.redb --interval 30 --enhanced-metadata --compute-hashes
 
 # Check component help

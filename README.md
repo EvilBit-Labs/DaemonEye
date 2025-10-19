@@ -8,11 +8,12 @@ Badges: CI, coverage, and maintainability are configured in the repo. See the ba
 
 DaemonEye is a Rust workspace with multiple components for collecting process information, orchestrating detections, and interacting via a CLI. The repository contains:
 
-- procmond: Privileged process monitoring daemon (binary + library)
-- daemoneye-agent: User-space orchestrator (binary)
-- daemoneye-cli: Command-line interface (binary)
-- daemoneye-lib: Shared library (no binary)
-- collector-core: Extensible collection framework (library)
+- **procmond**: Privileged process monitoring daemon (binary + library)
+- **daemoneye-agent**: User-space orchestrator with embedded EventBus broker (binary)
+- **daemoneye-cli**: Command-line interface (binary)
+- **daemoneye-lib**: Shared library (no binary)
+- **collector-core**: Extensible collection framework (library)
+- **daemoneye-eventbus**: Cross-platform IPC event bus (library)
 
 Security and reliability are emphasized via strict linting, no unsafe code, and comprehensive tests and benches.
 
@@ -21,11 +22,12 @@ Security and reliability are emphasized via strict linting, no unsafe code, and 
 - Language: Rust 2024 Edition (MSRV 1.85)
 - Package manager/build: Cargo (workspace)
 - Async runtime: tokio
-- IPC: interprocess (cross-platform) with the daemoneye-eventbus embedded broker
+- IPC: interprocess (cross-platform) with protobuf messaging
+- Event Bus: daemoneye-eventbus (embedded broker for multi-collector coordination)
 - CLI: clap v4
 - Database: redb (embedded)
 - Logging/telemetry: tracing, tracing-subscriber
-- Config: figment (TOML files + env vars)
+- Config: figment (YAML/TOML/JSON + env vars)
 - System info: sysinfo
 - Benchmarks: criterion
 - Testing: cargo-nextest, proptest, insta
@@ -34,15 +36,16 @@ Security and reliability are emphasized via strict linting, no unsafe code, and 
 
 ```
 DaemonEye/
-├─ procmond/         # Process monitoring daemon (bin: procmond)
-├─ daemoneye-agent/  # Orchestrator (bin: daemoneye-agent)
-├─ daemoneye-cli/    # Command-line interface (bin: daemoneye-cli)
-├─ daemoneye-lib/    # Shared library code (no bin)
-├─ collector-core/   # Collection framework (library)
-├─ justfile          # Developer tasks and scripts
-├─ docs/             # Documentation sources (mdBook)
-├─ spec/             # Specifications and design notes
-└─ Cargo.toml        # Workspace manifest
+├─ procmond/           # Process monitoring daemon (bin: procmond)
+├─ daemoneye-agent/    # Orchestrator (bin: daemoneye-agent)
+├─ daemoneye-cli/      # Command-line interface (bin: daemoneye-cli)
+├─ daemoneye-lib/      # Shared library code (no bin)
+├─ collector-core/     # Collection framework (library)
+├─ daemoneye-eventbus/ # Cross-platform IPC event bus (library)
+├─ justfile            # Developer tasks and scripts
+├─ docs/               # Documentation sources (mdBook)
+├─ spec/               # Specifications and design notes
+└─ Cargo.toml          # Workspace manifest
 ```
 
 ## Requirements
@@ -54,8 +57,8 @@ DaemonEye/
 
 ## Setup
 
-- Install Rust: https://rustup.rs
-- (Optional) Install just: https://github.com/casey/just
+- Install Rust: <https://rustup.rs>
+- (Optional) Install just: <https://github.com/casey/just>
 - Initialize developer tools:
   - Windows: `just setup && just install-tools`
   - Unix: `just setup && just install-tools`
@@ -91,8 +94,8 @@ Configuration is provided by daemoneye-lib using Figment with this precedence (h
 
 1. Command-line flags (component binaries)
 2. Environment variables with component prefix
-3. User config file: ~/.config/daemoneye/config.toml
-4. System config file: /etc/daemoneye/config.toml
+3. User config file: ~/.config/daemoneye/config.yaml
+4. System config file: /etc/daemoneye/config.yaml
 5. Built-in defaults
 
 Environment variable prefixes by component (replace dashes with underscores and uppercase):
@@ -155,8 +158,10 @@ Additional OS/environment variables may be referenced in tests for compatibility
 
 ## Platform notes
 
-- Unix: IPC is provided via Unix domain sockets using interprocess + the embedded daemoneye-eventbus broker.
-- Windows: IPC uses named pipes through interprocess with daemoneye-eventbus for broker functionality.
+- **Unix**: IPC is provided via Unix domain sockets using interprocess crate with protobuf messaging
+- **Windows**: IPC uses named pipes through interprocess crate with protobuf messaging
+- **Event Bus**: daemoneye-eventbus provides cross-platform pub/sub messaging for multi-collector coordination
+- **Embedded Broker**: daemoneye-agent runs an embedded EventBus broker for collector communication
 
 ## Documentation
 
