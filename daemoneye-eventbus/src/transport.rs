@@ -3,7 +3,10 @@
 //! This module provides client connection management, topic-based routing,
 //! and health monitoring for the daemoneye-eventbus system.
 
-use crate::error::{EventBusError, Result};
+use crate::{
+    error::{EventBusError, Result},
+    topic::{Topic, TopicPattern},
+};
 use interprocess::local_socket::tokio::prelude::*;
 use interprocess::local_socket::{ListenerOptions, Name};
 use std::time::Duration;
@@ -486,15 +489,22 @@ impl TransportClient {
             return Ok(false);
         }
 
-        // Send a simple ping message
-        let ping_data = b"PING";
         let timeout_duration = self.config.health_check_timeout;
-        let health_check_future = self.send(ping_data);
+        let ping_future = async {
+            self.send(b"PING").await?;
+            self.receive().await
+        };
 
-        match timeout(timeout_duration, health_check_future).await {
-            Ok(Ok(())) => {
-                debug!("Health check passed");
-                Ok(true)
+        match timeout(timeout_duration, ping_future).await {
+            Ok(Ok(response)) => {
+                if response.as_slice() == b"PONG" {
+                    debug!("Health check passed");
+                    Ok(true)
+                } else {
+                    warn!("Health check returned unexpected payload: {:?}", response);
+                    self.connected = false;
+                    Ok(false)
+                }
             }
             Ok(Err(e)) => {
                 warn!("Health check failed: {}", e);
@@ -751,34 +761,25 @@ impl ClientConnectionManager {
         Ok(delivered_clients)
     }
 
-    /// Simple topic pattern matching (supports + and # wildcards)
+    /// Topic pattern matching delegated to TopicPattern implementation
     fn topic_matches(&self, topic: &str, pattern: &str) -> bool {
-        let topic_parts: Vec<&str> = topic.split('.').collect();
-        let pattern_parts: Vec<&str> = pattern.split('.').collect();
-
-        self.match_parts(&topic_parts, &pattern_parts)
-    }
-
-    /// Recursive pattern matching helper
-    #[allow(clippy::only_used_in_recursion)]
-    fn match_parts(&self, topic_parts: &[&str], pattern_parts: &[&str]) -> bool {
-        match (topic_parts.first(), pattern_parts.first()) {
-            (None, None) => true,
-            (Some(_), None) => false,
-            (None, Some(pattern_part)) if *pattern_part == "#" => true,
-            (None, Some(_)) => false,
-            (Some(_topic_part), Some(pattern_part)) if *pattern_part == "#" => true,
-            (Some(_topic_part), Some(pattern_part)) if *pattern_part == "+" => {
-                self.match_parts(&topic_parts[1..], &pattern_parts[1..])
+        let topic_obj = match Topic::new(topic) {
+            Ok(topic) => topic,
+            Err(err) => {
+                debug!("Ignoring publish to invalid topic {topic}: {err}");
+                return false;
             }
-            (Some(topic_part), Some(pattern_part)) => {
-                if topic_part == pattern_part {
-                    self.match_parts(&topic_parts[1..], &pattern_parts[1..])
-                } else {
-                    false
-                }
+        };
+
+        let pattern_obj = match TopicPattern::new(pattern) {
+            Ok(pattern) => pattern,
+            Err(err) => {
+                debug!("Ignoring invalid subscription pattern {pattern}: {err}");
+                return false;
             }
-        }
+        };
+
+        pattern_obj.matches(&topic_obj)
     }
 
     /// Perform health checks on all clients

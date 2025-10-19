@@ -9,7 +9,7 @@ use crate::{event::CollectionEvent, source::SourceCaps};
 use anyhow::Result;
 use async_trait::async_trait;
 use crossbeam::{
-    channel::{Receiver, Sender, bounded},
+    channel::{Receiver, Sender, TrySendError, bounded},
     utils::Backoff,
 };
 use serde::{Deserialize, Serialize};
@@ -20,10 +20,13 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
+
+const ROUTING_THREAD_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const ROUTING_FINISHED_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// High-performance event bus configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +161,7 @@ pub struct HighPerformanceEventBusImpl {
     #[allow(dead_code)]
     drop_counter: Arc<AtomicU64>,
     routing_handle: Option<thread::JoinHandle<()>>,
+    routing_finished: Arc<AtomicBool>,
 }
 
 /// Internal subscriber information.
@@ -197,6 +201,7 @@ impl HighPerformanceEventBusImpl {
         ));
         let statistics_arc = Arc::new(parking_lot::RwLock::new(statistics));
         let shutdown_signal = Arc::new(AtomicBool::new(false));
+        let routing_finished = Arc::new(AtomicBool::new(false));
         let event_counter = Arc::new(AtomicU64::new(0));
         let delivery_counter = Arc::new(AtomicU64::new(0));
         let drop_counter = Arc::new(AtomicU64::new(0));
@@ -207,9 +212,11 @@ impl HighPerformanceEventBusImpl {
         let shutdown_signal_clone = Arc::clone(&shutdown_signal);
         let delivery_counter_clone = Arc::clone(&delivery_counter);
         let drop_counter_clone = Arc::clone(&drop_counter);
+        let routing_finished_clone = Arc::clone(&routing_finished);
 
         // Start the event routing task using crossbeam scope for safe concurrency
         let routing_handle = thread::spawn(move || {
+            let _finished_guard = RoutingFinishedGuard::new(routing_finished_clone);
             let backoff = Backoff::new();
 
             while !shutdown_signal_clone.load(Ordering::Acquire) {
@@ -257,9 +264,27 @@ impl HighPerformanceEventBusImpl {
                                             delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
                                             sent = true;
                                         }
-                                        Err(_) => {
+                                        Err(TrySendError::Full(_)) => {
                                             // Channel full, yield and retry
                                             std::thread::yield_now();
+                                            if shutdown_signal_clone.load(Ordering::Relaxed) {
+                                                dropped += 1;
+                                                drop_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                                warn!(
+                                                    subscriber_id = %subscriber_id,
+                                                    "Dropping event due to shutdown while channel was full"
+                                                );
+                                                break;
+                                            }
+                                        }
+                                        Err(TrySendError::Disconnected(_)) => {
+                                            dropped += 1;
+                                            drop_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                            warn!(
+                                                subscriber_id = %subscriber_id,
+                                                "Subscriber channel disconnected; dropping event"
+                                            );
+                                            break;
                                         }
                                     }
                                 }
@@ -271,7 +296,7 @@ impl HighPerformanceEventBusImpl {
                                         delivered += 1;
                                         delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
                                     }
-                                    Err(_) => {
+                                    Err(TrySendError::Full(_)) => {
                                         dropped += 1;
                                         drop_counter_clone.fetch_add(1, Ordering::Relaxed);
                                         if tracing::enabled!(tracing::Level::WARN) {
@@ -280,6 +305,14 @@ impl HighPerformanceEventBusImpl {
                                                 "Failed to deliver event to subscriber - channel full, dropping newest"
                                             );
                                         }
+                                    }
+                                    Err(TrySendError::Disconnected(_)) => {
+                                        dropped += 1;
+                                        drop_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                        warn!(
+                                            subscriber_id = %subscriber_id,
+                                            "Subscriber channel disconnected; dropping event"
+                                        );
                                     }
                                 }
                             }
@@ -309,6 +342,7 @@ impl HighPerformanceEventBusImpl {
             delivery_counter,
             drop_counter,
             routing_handle: Some(routing_handle),
+            routing_finished,
         })
     }
 
@@ -317,6 +351,11 @@ impl HighPerformanceEventBusImpl {
         info!("Starting high-performance event bus");
         info!("High-performance event bus started successfully");
         Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn routing_finished(&self) -> bool {
+        self.routing_finished.load(Ordering::Acquire)
     }
 
     /// Creates a bus event from a collection event.
@@ -464,7 +503,7 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
         if let Some(handle) = self.routing_handle.take() {
             // Use a reasonable timeout for shutdown
             match tokio::time::timeout(
-                Duration::from_secs(5),
+                ROUTING_THREAD_SHUTDOWN_TIMEOUT,
                 tokio::task::spawn_blocking(move || handle.join()),
             )
             .await
@@ -500,10 +539,39 @@ impl Drop for HighPerformanceEventBusImpl {
 
         // Wait for routing thread to complete
         if let Some(handle) = self.routing_handle.take() {
-            let _ = handle.join();
+            let deadline = Instant::now() + ROUTING_THREAD_SHUTDOWN_TIMEOUT;
+            while !self.routing_finished.load(Ordering::Acquire) {
+                if Instant::now() >= deadline {
+                    warn!(
+                        "Routing thread did not finish within timeout during drop; skipping join"
+                    );
+                    return;
+                }
+                thread::sleep(ROUTING_FINISHED_POLL_INTERVAL);
+            }
+
+            if let Err(err) = handle.join() {
+                error!("Routing thread panicked during drop: {:?}", err);
+            }
         }
 
         // Shared Arcs will be dropped after thread exits
+    }
+}
+
+struct RoutingFinishedGuard {
+    flag: Arc<AtomicBool>,
+}
+
+impl RoutingFinishedGuard {
+    fn new(flag: Arc<AtomicBool>) -> Self {
+        Self { flag }
+    }
+}
+
+impl Drop for RoutingFinishedGuard {
+    fn drop(&mut self) {
+        self.flag.store(true, Ordering::Release);
     }
 }
 

@@ -74,6 +74,10 @@ impl BrokerManager {
             "Starting embedded DaemonEye EventBus broker"
         );
 
+        self.config
+            .ensure_socket_directory()
+            .context("Failed to prepare broker socket directory")?;
+
         // Create the broker instance
         let broker = DaemoneyeBroker::new(&self.config.socket_path)
             .await

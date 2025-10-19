@@ -9,6 +9,13 @@ use collector_core::{
 use std::time::{Duration, SystemTime};
 use tokio::time::timeout;
 
+fn temp_socket_path(name: &str) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().expect("failed to create tempdir for socket");
+    let socket_path = dir.path().join(name);
+    let socket_path_str = socket_path.to_string_lossy().into_owned();
+    (dir, socket_path_str)
+}
+
 #[tokio::test]
 async fn test_daemoneye_eventbus_integration() {
     let config = EventBusConfig::default();
@@ -284,7 +291,8 @@ async fn test_daemoneye_eventbus_performance_comparison() {
 
     // Test DaemoneyeEventBus performance
     let config = EventBusConfig::default();
-    let mut daemoneye_bus = DaemoneyeEventBus::new(config.clone(), "/tmp/test-perf-daemoneye.sock")
+    let (_socket_dir, socket_path) = temp_socket_path("test-perf-daemoneye.sock");
+    let mut daemoneye_bus = DaemoneyeEventBus::new(config.clone(), &socket_path)
         .await
         .expect("Failed to create DaemoneyeEventBus");
 

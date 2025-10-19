@@ -515,7 +515,17 @@ impl ShutdownCoordinator {
             let coordinator = self.clone_for_task();
 
             let task = tokio::spawn(async move {
-                let _permit = semaphore.acquire().await.unwrap();
+                let permit = match semaphore.acquire().await {
+                    Ok(permit) => permit,
+                    Err(err) => {
+                        error!(
+                            collector_id = %collector_id,
+                            error = %err,
+                            "Failed to acquire shutdown semaphore permit"
+                        );
+                        return Err(anyhow::anyhow!("Failed to acquire shutdown permit: {err}"));
+                    }
+                };
 
                 let request = ShutdownRequest {
                     collector_id: collector_id.clone(),
@@ -524,7 +534,9 @@ impl ShutdownCoordinator {
                     timeout: None,
                 };
 
-                coordinator.shutdown_collector(request).await
+                let result = coordinator.shutdown_collector(request).await;
+                drop(permit);
+                result
             });
 
             tasks.push(task);

@@ -42,7 +42,13 @@ async fn test_daemoneye_eventbus_creation_and_startup() {
 #[tokio::test]
 async fn test_daemoneye_eventbus_subscription_only() {
     let config = EventBusConfig::default();
-    let mut event_bus = DaemoneyeEventBus::new(config, "/tmp/simple-sub-test.sock")
+    let temp_dir = tempfile::tempdir().expect("failed to create tempdir for socket");
+    let socket_path = temp_dir.path().join("simple-sub-test.sock");
+    let socket_path_str = socket_path
+        .to_str()
+        .expect("socket path contains invalid UTF-8")
+        .to_owned();
+    let mut event_bus = DaemoneyeEventBus::new(config, &socket_path_str)
         .await
         .expect("Failed to create DaemoneyeEventBus");
 

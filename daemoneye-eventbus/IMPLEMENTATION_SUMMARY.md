@@ -29,7 +29,8 @@ The RPC call patterns have been fully implemented in the `daemoneye-eventbus` cr
   - `GetCapabilities` - Get collector capabilities
   - `GracefulShutdown` - Coordinate graceful shutdown
   - `ForceShutdown` - Emergency shutdown
-  - `Pause/Resume` - Pause/resume operations
+  - `Pause` - Planned (stubbed handlers in `daemoneye-eventbus/src/rpc.rs`)
+  - `Resume` - Planned (stubbed handlers in `daemoneye-eventbus/src/rpc.rs`)
 
 #### 2. Health Check RPC Patterns with Heartbeat and Status Reporting ✅
 
@@ -103,6 +104,8 @@ The RPC call patterns have been fully implemented in the `daemoneye-eventbus` cr
 - **Retry Logic**: Exponential backoff with jitter
 - **Error Categories**: Configuration, Resource, Communication, Permission, Internal, Timeout
 - **Audit Logging**: All RPC operations logged for security audit
+
+> **Note:** Pause/Resume RPCs are currently placeholders. The handlers exist in `CollectorRpcService` but return immediate success until coordination logic lands. The functionality is tracked in the collector lifecycle backlog and will be documented once implemented.
 
 ### Testing Coverage
 

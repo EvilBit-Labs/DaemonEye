@@ -17,6 +17,16 @@ use std::{
 };
 use tokio::{sync::RwLock, time::timeout};
 
+fn temp_socket_path(name: &str) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().expect("failed to create tempdir for socket");
+    let socket_path = dir.path().join(name);
+    let socket_path_str = socket_path
+        .to_str()
+        .expect("temp socket path is not valid UTF-8")
+        .to_owned();
+    (dir, socket_path_str)
+}
+
 #[tokio::test]
 async fn test_daemoneye_eventbus_vs_local_eventbus_performance() {
     // Test DaemoneyeEventBus performance
@@ -178,7 +188,8 @@ async fn test_daemoneye_eventbus_vs_local_eventbus_performance() {
 async fn test_ipc_server_capability_integration() {
     // Create DaemoneyeEventBus
     let config = EventBusConfig::default();
-    let event_bus = DaemoneyeEventBus::new(config, "/tmp/test-ipc-capability.sock")
+    let (_socket_dir, socket_path) = temp_socket_path("test-ipc-capability.sock");
+    let event_bus = DaemoneyeEventBus::new(config, &socket_path)
         .await
         .expect("Failed to create DaemoneyeEventBus");
 
@@ -253,7 +264,8 @@ async fn test_ipc_server_capability_integration() {
 async fn test_eventbus_broker_access_integration() {
     // Create DaemoneyeEventBus
     let config = EventBusConfig::default();
-    let event_bus = DaemoneyeEventBus::new(config, "/tmp/test-broker-access.sock")
+    let (_socket_dir, socket_path) = temp_socket_path("test-broker-access.sock");
+    let event_bus = DaemoneyeEventBus::new(config, &socket_path)
         .await
         .expect("Failed to create DaemoneyeEventBus");
 
@@ -331,7 +343,8 @@ async fn test_eventbus_seamless_migration_compatibility() {
         .expect("Failed to subscribe to LocalEventBus");
 
     // Test with DaemoneyeEventBus
-    let mut daemoneye_bus = DaemoneyeEventBus::new(config, "/tmp/test-migration-compat.sock")
+    let (_socket_dir, socket_path) = temp_socket_path("test-migration-compat.sock");
+    let mut daemoneye_bus = DaemoneyeEventBus::new(config, &socket_path)
         .await
         .expect("Failed to create DaemoneyeEventBus");
 

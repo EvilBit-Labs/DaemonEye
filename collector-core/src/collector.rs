@@ -289,12 +289,30 @@ impl Collector {
     ///
     /// # Examples
     ///
+    /// Running with the in-process event bus:
+    ///
     /// ```rust,no_run
     /// use collector_core::{Collector, CollectorConfig};
     ///
     /// #[tokio::main]
     /// async fn main() -> anyhow::Result<()> {
     ///     let mut collector = Collector::new(CollectorConfig::default());
+    ///     // Register sources...
+    ///     collector.run().await
+    /// }
+    /// ```
+    ///
+    /// Running with the Daemoneye event bus enabled:
+    ///
+    /// ```rust,no_run
+    /// use collector_core::{Collector, CollectorConfig};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let mut collector = Collector::configure_daemoneye_eventbus(
+    ///         CollectorConfig::default(),
+    ///         "/var/run/daemoneye.sock",
+    ///     )?;
     ///     // Register sources...
     ///     collector.run().await
     /// }
@@ -353,85 +371,10 @@ impl Collector {
         // Run until shutdown
         runtime.run_until_shutdown().await?;
 
-        info!("Collector runtime stopped");
-        Ok(())
-    }
-
-    /// Runs the collector with DaemoneyeEventBus integration.
-    ///
-    /// This method starts all registered event sources with daemoneye-eventbus
-    /// for high-performance pub/sub messaging and topic-based routing.
-    ///
-    /// # Arguments
-    ///
-    /// * `socket_path` - Socket path for the embedded broker
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use collector_core::{Collector, CollectorConfig};
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> anyhow::Result<()> {
-    ///     let mut collector = Collector::new(CollectorConfig::default());
-    ///     // Register sources...
-    ///     collector.run_with_daemoneye_eventbus("/tmp/daemoneye.sock").await
-    /// }
-    /// ```
-    pub async fn run_with_daemoneye_eventbus(self, socket_path: &str) -> Result<()> {
-        // Validate configuration
-        self.config
-            .validate()
-            .context("Invalid collector configuration")?;
-
-        info!(
-            source_count = self.sources.len(),
-            capabilities = ?self.capabilities(),
-            socket_path = socket_path,
-            "Starting collector runtime with DaemoneyeEventBus"
-        );
-
-        // Create event channel
-        let (event_tx, event_rx) = mpsc::channel(self.config.event_buffer_size);
-
-        // Create runtime
-        let mut runtime = CollectorRuntime::new(self.config.clone(), event_tx.clone(), event_rx);
-
-        // Initialize DaemoneyeEventBus
-        runtime.initialize_daemoneye_eventbus(socket_path).await?;
-
-        // Start IPC server
-        runtime.start_ipc_server().await?;
-
-        // Start all event sources
-        for source in self.sources {
-            let source_name = source.name().to_string();
-            info!("Starting source: {}", source_name);
-            runtime.start_source(source).await?;
-            info!("Source started successfully: {}", source_name);
-        }
-
-        // Start health monitoring
-        runtime.start_health_monitoring().await;
-
-        // Start performance monitoring
-        runtime.start_performance_monitoring().await;
-
-        // Start telemetry collection
-        if runtime.config.enable_telemetry {
-            runtime.start_telemetry_collection().await;
-        }
-
-        // Start event processing
-        runtime.start_event_processing().await;
-
-        // Run until shutdown
-        runtime.run_until_shutdown().await?;
-
-        // Shutdown EventBus
+        // Ensure the configured EventBus is shut down gracefully
         runtime.shutdown_eventbus().await?;
 
-        info!("Collector runtime with DaemoneyeEventBus stopped");
+        info!("Collector runtime stopped");
         Ok(())
     }
 }

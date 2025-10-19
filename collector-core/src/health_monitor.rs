@@ -1,6 +1,6 @@
 //! Health monitoring system for collector lifecycle management.
 //!
-//! The dedicated busrt-based health monitor has been removed. This stub keeps the public
+//! The dedicated burst-based health monitor has been removed. This stub keeps the public
 //! surface intact until the DaemonEye event bus health pipeline lands.
 
 /// Temporary health monitor placeholder.

@@ -12,8 +12,9 @@ use figment::{
     providers::{Env, Format, Serialized, Toml},
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
+use tracing::warn;
 
 /// Configuration loading and validation errors.
 #[derive(Debug, Error)]
@@ -135,6 +136,22 @@ pub struct BrokerConfig {
     pub topic_hierarchy: TopicHierarchyConfig,
 }
 
+impl BrokerConfig {
+    pub fn ensure_socket_directory(&self) -> std::io::Result<()> {
+        if let Some(dir) = Path::new(&self.socket_path).parent() {
+            if let Err(e) = std::fs::create_dir_all(dir) {
+                warn!(
+                    error = %e,
+                    path = %dir.display(),
+                    "Failed to create broker socket directory"
+                );
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Topic hierarchy configuration for the `EventBus`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TopicHierarchyConfig {
@@ -247,10 +264,42 @@ impl Default for BrokerConfig {
                         "/var/run/daemoneye/daemoneye-eventbus.sock".to_owned()
                     }
                 }
-                #[cfg(not(unix))]
+                #[cfg(windows)]
                 {
-                    // Windows fallback
-                    "/tmp/daemoneye-eventbus.sock".to_owned()
+                    r"\\.\pipe\daemoneye-eventbus".to_owned()
+                }
+                #[cfg(all(not(unix), not(windows)))]
+                {
+                    let base_dir = dirs::cache_dir()
+                        .or_else(|| dirs::data_local_dir())
+                        .unwrap_or_else(|| std::env::temp_dir());
+                    let socket_dir = base_dir.join("daemoneye");
+                    let socket_dir = match std::fs::create_dir_all(&socket_dir) {
+                        Ok(_) => socket_dir,
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                path = %socket_dir.display(),
+                                "Failed to create socket directory; falling back to system temporary directory"
+                            );
+                            let fallback_candidate = std::env::temp_dir().join("daemoneye");
+                            match std::fs::create_dir_all(&fallback_candidate) {
+                                Ok(_) => fallback_candidate,
+                                Err(temp_err) => {
+                                    warn!(
+                                        error = %temp_err,
+                                        path = %fallback_candidate.display(),
+                                        "Failed to create fallback socket directory; using system temp root"
+                                    );
+                                    std::env::temp_dir()
+                                }
+                            }
+                        }
+                    };
+                    socket_dir
+                        .join("daemoneye-eventbus.sock")
+                        .display()
+                        .to_string()
                 }
             },
             |runtime_dir| format!("{runtime_dir}/daemoneye-eventbus.sock"),
@@ -318,16 +367,43 @@ impl ConfigLoader {
             // Start with embedded defaults
             .merge(Serialized::defaults(Config::default()));
 
-        // System configuration file (optional)
-        let system_config_path = "/etc/daemoneye/config.toml";
-        if std::path::Path::new(system_config_path).exists() {
-            figment = figment.merge(Toml::file(system_config_path));
+        // System configuration file (optional, platform-specific)
+        #[cfg(unix)]
+        {
+            let system_config_path = std::path::Path::new("/etc/daemoneye/config.toml");
+            if system_config_path.exists() {
+                figment = figment.merge(Toml::file(system_config_path));
+            }
         }
 
+        #[cfg(windows)]
+        {
+            // Windows: ProgramData provides machine-wide configuration
+            if let Ok(program_data) = std::env::var("PROGRAMDATA") {
+                let system_config_path = std::path::Path::new(&program_data)
+                    .join("DaemonEye")
+                    .join("config.toml");
+                if system_config_path.exists() {
+                    figment = figment.merge(Toml::file(&system_config_path));
+                }
+            }
+        }
+
+        // Other platforms rely solely on user-scoped configuration (loaded below).
+
         // User configuration file (optional)
-        let user_config_path = Self::user_config_path();
-        if user_config_path.exists() {
-            figment = figment.merge(Toml::file(&user_config_path));
+        match Self::user_config_path() {
+            Ok(user_config_path) => {
+                if user_config_path.exists() {
+                    figment = figment.merge(Toml::file(&user_config_path));
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Skipping user-scoped configuration because the directory could not be determined"
+                );
+            }
         }
 
         // Environment variables with component prefix
@@ -358,26 +434,24 @@ impl ConfigLoader {
     /// Priority:
     /// 1. Platform-specific config directory (via `dirs::config_dir()`)
     /// 2. HOME environment variable (if available)
-    /// 3. /tmp as last-resort fallback
-    fn user_config_path() -> PathBuf {
+    /// 3. Returns an error if no user configuration directory can be determined
+    fn user_config_path() -> Result<PathBuf, ConfigError> {
         // Try platform-aware config directory first
         if let Some(config_dir) = dirs::config_dir() {
-            return config_dir.join("daemoneye").join("config.toml");
+            return Ok(config_dir.join("daemoneye").join("config.toml"));
         }
 
         // Fallback to HOME environment variable
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home)
+            return Ok(PathBuf::from(home)
                 .join(".config")
                 .join("daemoneye")
-                .join("config.toml");
+                .join("config.toml"));
         }
 
-        // Last-resort fallback to /tmp
-        PathBuf::from("/tmp")
-            .join(".config")
-            .join("daemoneye")
-            .join("config.toml")
+        Err(ConfigError::ValidationError {
+            message: "Unable to determine a user configuration directory. Ensure HOME is set or provide an explicit configuration path.".to_owned(),
+        })
     }
 
     /// Validate the final configuration.
@@ -662,12 +736,15 @@ mod tests {
     #[test]
     fn test_broker_config_creation() {
         let broker_config = BrokerConfig::default();
-        // The socket path is now platform-aware, so we check it contains the expected pattern
-        assert!(
-            broker_config
-                .socket_path
-                .contains("daemoneye-eventbus.sock")
-        );
+        if cfg!(windows) {
+            assert_eq!(broker_config.socket_path, r"\\.\pipe\daemoneye-eventbus");
+        } else {
+            assert!(
+                broker_config
+                    .socket_path
+                    .ends_with("daemoneye-eventbus.sock")
+            );
+        }
         assert!(broker_config.enabled);
         assert_eq!(broker_config.startup_timeout_seconds, 30);
         assert_eq!(broker_config.shutdown_timeout_seconds, 60);
