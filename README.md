@@ -65,6 +65,10 @@ DaemonEye/
 
 If you don’t use just, you can run the equivalent cargo commands shown below.
 
+## Commit signing
+
+The workspace enables mandatory signed commits and a rebase-first sync strategy via VS Code settings. Follow the step-by-step instructions in [`docs/src/contributing.md`](docs/src/contributing.md#commit-signing-and-gpg-setup) to configure GPG, export your public key, and set up git before contributing.
+
 ## Build and run
 
 With just:
