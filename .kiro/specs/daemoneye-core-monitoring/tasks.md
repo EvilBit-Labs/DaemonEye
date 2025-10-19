@@ -201,7 +201,7 @@ The following foundational components have been successfully implemented:
   - Validate behavioral equivalence between old and new implementations
   - _Requirements: 14.1, 14.5_
 
-- [ ] 2.4 Migrate collector-core event distribution to daemoneye-eventbus topics
+- [x] 2.4 Migrate collector-core event distribution to daemoneye-eventbus topics
 
   - [x] 2.4.1 Replace crossbeam channels with daemoneye-eventbus in LocalEventBus
 
