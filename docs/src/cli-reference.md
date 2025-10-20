@@ -275,7 +275,7 @@ All CLI tools follow consistent error handling patterns:
 
 - **Exit Code 0**: Success
 - **Exit Code 1**: General error
-- **Exit Code 2**: Configuration error
+- **Exit Code 2**: CLI argument parsing failure
 - **Exit Code 3**: Permission denied
 - **Exit Code 4**: Database error
 
@@ -348,7 +348,7 @@ WantedBy=multi-user.target
 ### Docker Deployment
 
 ```dockerfile
-FROM rust:1.85-slim as builder
+FROM rust:1.87-slim as builder
 COPY . /app
 WORKDIR /app
 RUN cargo build --release

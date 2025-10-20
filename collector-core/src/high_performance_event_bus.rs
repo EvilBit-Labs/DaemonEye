@@ -247,19 +247,18 @@ impl HighPerformanceEventBusImpl {
                         }
 
                         // Apply event filtering if configured
-                        if let Some(filter) = &subscriber_info.subscription.event_filter {
-                            if !matches_filter(&bus_event.event, filter) {
-                                continue;
-                            }
+                        if let Some(filter) = &subscriber_info.subscription.event_filter
+                            && !matches_filter(&bus_event.event, filter)
+                        {
+                            continue;
                         }
 
                         // Apply correlation filtering if configured
                         if let Some(correlation_id) =
                             &subscriber_info.subscription.correlation_filter
+                            && bus_event.correlation_id != *correlation_id
                         {
-                            if bus_event.correlation_id != *correlation_id {
-                                continue;
-                            }
+                            continue;
                         }
 
                         // Send to subscriber respecting backpressure strategy

@@ -161,7 +161,7 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 ### **Core Technologies**
 
-- **Language**: Rust 2024 Edition (MSRV: 1.85+)
+- **Language**: Rust 2024 Edition (MSRV: 1.87+)
 - **Safety**: `unsafe_code = "forbid"` at workspace level with comprehensive linting
 - **Quality**: `warnings = "deny"` with zero-warnings policy enforced by CI
 - **Async Runtime**: Tokio with full feature set for I/O and task management

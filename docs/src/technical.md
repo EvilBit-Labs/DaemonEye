@@ -83,7 +83,7 @@ graph LR
 The process collection system uses the `sysinfo` crate for cross-platform process enumeration:
 
 ```rust
-use sysinfo::{ProcessExt, System, SystemExt};
+use sysinfo::System;
 
 pub struct ProcessCollector {
     system: System,

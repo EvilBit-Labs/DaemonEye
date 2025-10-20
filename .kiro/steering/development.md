@@ -46,10 +46,10 @@ inclusion: always
 // Standard module structure
 pub mod alerting; // Multi-channel alert delivery
 pub mod config; // Configuration management
-pub mod crypto;
+pub mod crypto; // Cryptographic audit functions
 pub mod detection; // SQL-based detection engine
 pub mod models; // Core data structures
-pub mod storage; // Database abstractions // Cryptographic audit functions
+pub mod storage; // Database abstractions
 ```
 
 ## Development Commands
@@ -143,10 +143,12 @@ struct Args {
 }
 
 // SQL injection prevention with AST validation
+use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
+
 fn validate_query(sql: &str) -> Result<(), SecurityError> {
-    let ast = Parser::parse_sql(&MySqlDialect {}, sql)?;
-    // Only allow SELECT statements with approved functions
+    let ast = Parser::parse_sql(&SQLiteDialect {}, sql)?;
+    // Only allow SELECT statements with approved functions (including AUTO JOIN)
     Ok(())
 }
 ```

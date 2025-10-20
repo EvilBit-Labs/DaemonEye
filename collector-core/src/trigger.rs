@@ -761,14 +761,13 @@ impl TriggerManager {
         });
 
         // Check if this trigger is a duplicate
-        if let Some(last_trigger_time) = cache.get(&dedup_key) {
-            if now
+        if let Some(last_trigger_time) = cache.get(&dedup_key)
+            && now
                 .duration_since(*last_trigger_time)
                 .unwrap_or(Duration::MAX)
-                < dedup_window
-            {
-                return Ok(true); // Should deduplicate
-            }
+                < Duration::from_secs(self.config.deduplication_window_secs)
+        {
+            return Ok(true); // Should deduplicate
         }
 
         // Record this trigger
@@ -1123,20 +1122,18 @@ impl TriggerManager {
 
             // Find expired triggers
             for (trigger_id, timeout_info) in tracker.iter() {
-                if let Ok(elapsed) = now.duration_since(timeout_info.emitted_at) {
-                    if elapsed > timeout_info.timeout_duration {
-                        expired_triggers.push(trigger_id.clone());
-                        timed_out_triggers.push(trigger_id.clone());
+                if let Ok(elapsed) = now.duration_since(timeout_info.emitted_at)
+                    && elapsed > timeout_info.timeout_duration
+                {
+                    expired_triggers.push(trigger_id.clone());
+                    timed_out_triggers.push(trigger_id.clone());
 
-                        warn!(
-                            trigger_id = %trigger_id,
-                            target_collector = %timeout_info.target_collector,
-                            correlation_id = %timeout_info.correlation_id,
-                            elapsed_secs = elapsed.as_secs(),
-                            timeout_secs = timeout_info.timeout_duration.as_secs(),
-                            "Trigger request timed out"
-                        );
-                    }
+                    debug!(
+                        trigger_id = trigger_id.as_str(),
+                        elapsed_ms = elapsed.as_millis(),
+                        timeout_ms = timeout_info.timeout_duration.as_millis(),
+                        "Trigger timed out"
+                    );
                 }
             }
 
@@ -1599,11 +1596,20 @@ pub struct ConditionEvaluationStats {
     /// Number of times this condition matched
     pub match_count: u64,
 
+    /// Number of times this condition did not match
+    pub no_match_count: u64,
+
     /// Total evaluation time (microseconds)
     pub total_evaluation_time_us: u64,
 
     /// Last evaluation timestamp
     pub last_evaluation: Option<SystemTime>,
+
+    /// Last time this condition matched
+    pub last_match: Option<SystemTime>,
+
+    /// Last time this condition did not match
+    pub last_no_match: Option<SystemTime>,
 }
 
 impl SqlTriggerEvaluator {
@@ -1723,12 +1729,11 @@ impl SqlTriggerEvaluator {
             TriggerError::SqlParsingError(format!("Failed to parse SQL expression: {}", e))
         })?;
 
-        if let Some(sqlparser::ast::Statement::Query(query)) = statements.first() {
-            if let sqlparser::ast::SetExpr::Select(select) = query.body.as_ref() {
-                if let Some(selection) = &select.selection {
-                    return Ok(selection.clone());
-                }
-            }
+        if let Some(sqlparser::ast::Statement::Query(query)) = statements.first()
+            && let sqlparser::ast::SetExpr::Select(select) = query.body.as_ref()
+            && let Some(selection) = &select.selection
+        {
+            return Ok(selection.clone());
         }
 
         Err(TriggerError::SqlParsingError(
@@ -1785,21 +1790,19 @@ impl SqlTriggerEvaluator {
         }
 
         // Update condition statistics after the loop to avoid borrow conflicts
-        for (index, matches, condition_start) in match_results {
-            if let Some(conditions_mut) = self.compiled_conditions.get_mut(collector_id) {
-                if let Some(compiled_condition_mut) = conditions_mut.get_mut(index) {
-                    compiled_condition_mut.stats.evaluation_count += 1;
-                    compiled_condition_mut.stats.last_evaluation = Some(SystemTime::now());
+        for (index, matches, _condition_start) in match_results {
+            if let Some(conditions_mut) = self.compiled_conditions.get_mut(collector_id)
+                && let Some(compiled_condition_mut) = conditions_mut.get_mut(index)
+            {
+                compiled_condition_mut.stats.evaluation_count += 1;
+                compiled_condition_mut.stats.last_evaluation = Some(SystemTime::now());
 
-                    if matches {
-                        compiled_condition_mut.stats.match_count += 1;
-                    }
-
-                    // Update condition evaluation time
-                    if let Ok(elapsed) = condition_start.elapsed() {
-                        compiled_condition_mut.stats.total_evaluation_time_us +=
-                            elapsed.as_micros() as u64;
-                    }
+                if matches {
+                    compiled_condition_mut.stats.match_count += 1;
+                    compiled_condition_mut.stats.last_match = Some(SystemTime::now());
+                } else {
+                    compiled_condition_mut.stats.no_match_count += 1;
+                    compiled_condition_mut.stats.last_no_match = Some(SystemTime::now());
                 }
             }
         }
@@ -1979,6 +1982,7 @@ pub struct TriggerEmissionStats {
 #[derive(Debug, Clone)]
 struct TriggerTimeout {
     /// Target collector name
+    #[allow(dead_code)]
     target_collector: String,
 
     /// Emission timestamp
@@ -1988,6 +1992,7 @@ struct TriggerTimeout {
     timeout_duration: Duration,
 
     /// Correlation ID for forensic tracking
+    #[allow(dead_code)]
     correlation_id: String,
 }
 

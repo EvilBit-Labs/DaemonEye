@@ -1002,12 +1002,12 @@ impl LocalEventBus {
         }
 
         // Check priority-based filtering
-        if !filter.priority_topics.is_empty() {
-            if let Some(_priority) = filter.priority_topics.get(topic) {
-                // Priority-based filtering logic can be extended here
-                // For now, just allow the event through
-                return true;
-            }
+        if !filter.priority_topics.is_empty()
+            && let Some(_priority) = filter.priority_topics.get(topic)
+        {
+            // Priority-based filtering logic can be extended here
+            // For now, just allow the event through
+            return true;
         }
 
         true
@@ -1019,10 +1019,10 @@ impl LocalEventBus {
         filter: &CorrelationFilter,
     ) -> bool {
         // Check correlation ID filter
-        if let Some(filter_correlation_id) = &filter.correlation_id {
-            if correlation_metadata.correlation_id != *filter_correlation_id {
-                return false;
-            }
+        if let Some(filter_correlation_id) = &filter.correlation_id
+            && correlation_metadata.correlation_id != *filter_correlation_id
+        {
+            return false;
         }
 
         // Check parent correlation ID filter
@@ -1035,10 +1035,10 @@ impl LocalEventBus {
         }
 
         // Check root correlation ID filter
-        if let Some(filter_root_id) = &filter.root_correlation_id {
-            if correlation_metadata.root_correlation_id != *filter_root_id {
-                return false;
-            }
+        if let Some(filter_root_id) = &filter.root_correlation_id
+            && correlation_metadata.root_correlation_id != *filter_root_id
+        {
+            return false;
         }
 
         // Check workflow stage filter
@@ -1075,11 +1075,10 @@ impl LocalEventBus {
         }
 
         // Apply daemoneye-eventbus specific correlation filtering
-        if let Some(eventbus_correlation) = &filter.eventbus_correlation {
-            if !Self::apply_eventbus_correlation_filter(correlation_metadata, eventbus_correlation)
-            {
-                return false;
-            }
+        if let Some(eventbus_correlation) = &filter.eventbus_correlation
+            && !Self::apply_eventbus_correlation_filter(correlation_metadata, eventbus_correlation)
+        {
+            return false;
         }
 
         true
@@ -1091,37 +1090,34 @@ impl LocalEventBus {
         eventbus_correlation: &EventBusCorrelation,
     ) -> bool {
         // Check sequence correlation
-        if let Some(sequence_correlation) = &eventbus_correlation.sequence_correlation {
-            if !Self::apply_sequence_correlation_filter(correlation_metadata, sequence_correlation)
-            {
-                return false;
-            }
+        if let Some(sequence_correlation) = &eventbus_correlation.sequence_correlation
+            && !Self::apply_sequence_correlation_filter(correlation_metadata, sequence_correlation)
+        {
+            return false;
         }
 
         // Check topic correlation
-        if let Some(topic_correlation) = &eventbus_correlation.topic_correlation {
-            if !Self::apply_topic_correlation_filter(correlation_metadata, topic_correlation) {
-                return false;
-            }
+        if let Some(topic_correlation) = &eventbus_correlation.topic_correlation
+            && !Self::apply_topic_correlation_filter(correlation_metadata, topic_correlation)
+        {
+            return false;
         }
 
         // Check temporal correlation
-        if let Some(temporal_correlation) = &eventbus_correlation.temporal_correlation {
-            if !Self::apply_temporal_correlation_filter(correlation_metadata, temporal_correlation)
-            {
-                return false;
-            }
+        if let Some(temporal_correlation) = &eventbus_correlation.temporal_correlation
+            && !Self::apply_temporal_correlation_filter(correlation_metadata, temporal_correlation)
+        {
+            return false;
         }
 
         // Check cross-collector correlation
         if let Some(cross_collector_correlation) = &eventbus_correlation.cross_collector_correlation
-        {
-            if !Self::apply_cross_collector_correlation_filter(
+            && !Self::apply_cross_collector_correlation_filter(
                 correlation_metadata,
                 cross_collector_correlation,
-            ) {
-                return false;
-            }
+            )
+        {
+            return false;
         }
 
         true
@@ -1196,22 +1192,21 @@ impl LocalEventBus {
         correlation_metadata: &CorrelationMetadata,
         cross_collector_correlation: &CrossCollectorCorrelation,
     ) -> bool {
-        if let Some(eventbus_metadata) = &correlation_metadata.eventbus_metadata {
-            if let Some(collector_coordination) = &eventbus_metadata.collector_coordination {
-                // Check if initiator collector matches source collectors
-                let source_matches = cross_collector_correlation
-                    .source_collectors
-                    .iter()
-                    .any(|source| source == &collector_coordination.initiator_collector);
+        if let Some(eventbus_metadata) = &correlation_metadata.eventbus_metadata
+            && let Some(collector_coordination) = &eventbus_metadata.collector_coordination
+        {
+            // Check if initiator collector matches source collectors
+            let source_matches = cross_collector_correlation
+                .source_collectors
+                .contains(&collector_coordination.initiator_collector);
+            // Check if target collector matches - check if any target collectors match
+            let target_matches = collector_coordination
+                .target_collectors
+                .iter()
+                .any(|tc| cross_collector_correlation.target_collectors.contains(tc))
+                || cross_collector_correlation.target_collectors.is_empty();
 
-                // Check if any target collectors match
-                let target_matches = cross_collector_correlation
-                    .target_collectors
-                    .iter()
-                    .any(|target| collector_coordination.target_collectors.contains(target));
-
-                return source_matches && target_matches;
-            }
+            return source_matches && target_matches;
         }
 
         // If no collector coordination metadata, allow through (backward compatibility)
@@ -1275,10 +1270,10 @@ impl LocalEventBus {
         }
 
         // Apply daemoneye-eventbus specific filtering
-        if let Some(eventbus_filters) = &filter.eventbus_filters {
-            if !Self::apply_eventbus_filters(event, eventbus_filters) {
-                return false;
-            }
+        if let Some(eventbus_filters) = &filter.eventbus_filters
+            && !Self::apply_eventbus_filters(event, eventbus_filters)
+        {
+            return false;
         }
 
         true

@@ -125,20 +125,20 @@ impl BrokerManager {
         // Send shutdown signal if available
         {
             let mut shutdown_tx_guard = self.shutdown_tx.lock().await;
-            if let Some(tx) = shutdown_tx_guard.take() {
-                if tx.send(()).is_err() {
-                    warn!("Failed to send shutdown signal - receiver may have been dropped");
-                }
+            if let Some(tx) = shutdown_tx_guard.take()
+                && tx.send(()).is_err()
+            {
+                warn!("Failed to send shutdown signal - receiver may have been dropped");
             }
         }
 
         // Shutdown the event bus first
         {
             let mut event_bus_guard = self.event_bus.lock().await;
-            if let Some(mut event_bus) = event_bus_guard.take() {
-                if let Err(e) = event_bus.shutdown().await {
-                    error!(error = %e, "Failed to shutdown EventBus client");
-                }
+            if let Some(mut event_bus) = event_bus_guard.take()
+                && let Err(e) = event_bus.shutdown().await
+            {
+                error!(error = %e, "Failed to shutdown EventBus client");
             }
         }
 

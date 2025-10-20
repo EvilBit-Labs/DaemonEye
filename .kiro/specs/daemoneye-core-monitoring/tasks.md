@@ -587,7 +587,9 @@ The following collectors are planned for future implementation to extend the vir
 - [ ] 13. Performance Collector (perfmond) - Virtual tables: `system_metrics`, `resource_usage`
 - [ ] 14. Triggerable Collectors - Binary Hasher, Memory Analyzer, YARA Scanner, PE Analyzer
 
-These extensions will follow the established collector-core framework patterns and integrate with the SQL-to-IPC translation system for unified querying across all monitoring domains.d service unit files for Linux with proper dependencies and security settings
+These extensions will follow the established collector-core framework patterns and integrate with the SQL-to-IPC translation system for unified querying across all monitoring domains.
+
+- Add systemd service unit files for Linux with proper dependencies and security settings
 
 - Add launchd plist files for macOS with appropriate permissions and startup configuration
 

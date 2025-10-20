@@ -707,14 +707,14 @@ impl PerformanceMonitor {
             use std::fs;
             if let Ok(contents) = fs::read_to_string("/proc/loadavg") {
                 let parts: Vec<&str> = contents.split_whitespace().collect();
-                if parts.len() >= 3 {
-                    if let (Ok(load1), Ok(load5), Ok(load15)) = (
+                if parts.len() >= 3
+                    && let (Ok(load1), Ok(load5), Ok(load15)) = (
                         parts[0].parse::<f64>(),
                         parts[1].parse::<f64>(),
                         parts[2].parse::<f64>(),
-                    ) {
-                        return Some([load1, load5, load15]);
-                    }
+                    )
+                {
+                    return Some([load1, load5, load15]);
                 }
             }
             None

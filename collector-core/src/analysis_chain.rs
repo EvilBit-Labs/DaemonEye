@@ -1308,20 +1308,19 @@ impl AnalysisChainCoordinator {
     /// Returns true if the workflow was cancelled, false if not found or already completed.
     pub async fn cancel_workflow(&self, execution_id: &str) -> bool {
         let mut executions = self.active_executions.write().await;
-        if let Some(execution) = executions.get_mut(execution_id) {
-            if execution.status == WorkflowStatus::Running {
-                execution.status = WorkflowStatus::Cancelled;
-                execution.completed_at = Some(SystemTime::now());
-                execution.last_updated = SystemTime::now();
+        if let Some(execution) = executions.get_mut(execution_id)
+            && execution.status == WorkflowStatus::Running
+        {
+            execution.status = WorkflowStatus::Cancelled;
+            execution.completed_at = Some(SystemTime::now());
 
-                info!(
-                    execution_id = %execution_id,
-                    workflow_id = %execution.workflow_definition.workflow_id,
-                    "Workflow execution cancelled"
-                );
+            debug!(
+                execution_id = execution_id,
+                reason = "Analysis chain shutdown",
+                "Cancelling workflow execution"
+            );
 
-                return true;
-            }
+            return true;
         }
         false
     }

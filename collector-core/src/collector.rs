@@ -808,7 +808,7 @@ impl CollectorRuntime {
                                 drop(permit);
 
                                 // Log milestones
-                                if total_events % 1000 == 0 {
+                                if total_events.is_multiple_of(1000) {
                                     info!(
                                         events_processed = total_events,
                                         batches_processed = batches_processed,
@@ -821,11 +821,10 @@ impl CollectorRuntime {
                                 debug!("Event channel closed, processing remaining events");
 
                                 // Process any remaining events in the batch
-                                if !event_batch.is_empty() {
-                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
+                                if !event_batch.is_empty()
+                                    && let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
                                         error!(error = %e, "Failed to process final event batch");
                                     }
-                                }
 
                                 break;
                             }
@@ -856,11 +855,10 @@ impl CollectorRuntime {
                         info!("Shutdown signal received, processing remaining events");
 
                         // Process any remaining events in the batch
-                        if !event_batch.is_empty() {
-                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
+                        if !event_batch.is_empty()
+                            && let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
                                 error!(error = %e, "Failed to process shutdown event batch");
                             }
-                        }
 
                         break;
                     }

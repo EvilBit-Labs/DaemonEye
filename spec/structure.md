@@ -61,7 +61,7 @@ DaemonEye/
 
 ### Workspace Configuration
 
-- **Edition**: Rust 2024 (MSRV: 1.85+)
+- **Edition**: Rust 2024 (MSRV: 1.87+)
 - **Resolver**: Version 3 for enhanced dependency resolution
 - **Lints**: `unsafe_code = "forbid"`, `warnings = "deny"`
 - **Quality**: Zero-warnings policy enforced by CI

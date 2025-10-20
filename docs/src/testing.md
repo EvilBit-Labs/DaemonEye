@@ -668,7 +668,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [1.85, stable, beta]
+        rust: [1.87, stable, beta]
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:

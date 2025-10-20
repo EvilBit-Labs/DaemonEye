@@ -123,10 +123,10 @@ impl IpcServerManager {
         // Send shutdown signal if available
         {
             let mut shutdown_tx_guard = self.shutdown_tx.lock().await;
-            if let Some(tx) = shutdown_tx_guard.take() {
-                if tx.send(()).is_err() {
-                    warn!("Failed to send shutdown signal - receiver may have been dropped");
-                }
+            if let Some(tx) = shutdown_tx_guard.take()
+                && tx.send(()).is_err()
+            {
+                warn!("Failed to send shutdown signal - receiver may have been dropped");
             }
         }
 

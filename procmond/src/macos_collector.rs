@@ -751,12 +751,11 @@ impl EnhancedMacOSCollector {
             // Check if it's an app bundle
             if path_str.contains(".app/") {
                 // Extract bundle name from path
-                if let Some(app_start) = path_str.rfind('/') {
-                    if let Some(app_end) = path_str[..app_start].rfind(".app") {
-                        if let Some(name_start) = path_str[..app_end].rfind('/') {
-                            bundle_info.name = Some(path_str[name_start + 1..app_end].to_string());
-                        }
-                    }
+                if let Some(app_start) = path_str.rfind('/')
+                    && let Some(app_end) = path_str[..app_start].rfind(".app")
+                    && let Some(name_start) = path_str[..app_end].rfind('/')
+                {
+                    bundle_info.name = Some(path_str[name_start + 1..app_end].to_string());
                 }
 
                 debug!(

@@ -580,40 +580,39 @@ impl ProcessLifecycleTracker {
         }
 
         // Check memory usage changes
-        if self.config.track_memory_changes {
-            if let (Some(prev_mem), Some(curr_mem)) = (previous.memory_usage, current.memory_usage)
-            {
-                if prev_mem == 0 {
-                    if curr_mem > 0 {
-                        modified_fields.push("memory_usage".to_string());
-                    }
-                } else {
-                    let change_percent =
-                        ((curr_mem as f64 - prev_mem as f64) / prev_mem as f64).abs() * 100.0;
-                    if change_percent > self.config.memory_change_threshold {
-                        modified_fields.push("memory_usage".to_string());
-                    }
+        if self.config.track_memory_changes
+            && let (Some(prev_mem), Some(curr_mem)) = (previous.memory_usage, current.memory_usage)
+        {
+            if prev_mem == 0 {
+                if curr_mem > 0 {
+                    modified_fields.push("memory_usage".to_string());
+                }
+            } else {
+                let change_percent =
+                    ((curr_mem as f64 - prev_mem as f64) / prev_mem as f64).abs() * 100.0;
+                if change_percent > self.config.memory_change_threshold {
+                    modified_fields.push("memory_usage".to_string());
                 }
             }
         }
 
         // Check CPU usage changes
-        if self.config.track_cpu_changes {
-            if let (Some(prev_cpu), Some(curr_cpu)) = (previous.cpu_usage, current.cpu_usage) {
-                if prev_cpu == 0.0 {
-                    if curr_cpu > 0.0 {
-                        modified_fields.push("cpu_usage".to_string());
-                    }
-                } else {
-                    let change_percent = ((curr_cpu - prev_cpu) / prev_cpu).abs() * 100.0;
-                    if change_percent > self.config.cpu_change_threshold {
-                        modified_fields.push("cpu_usage".to_string());
-                    }
+        if self.config.track_cpu_changes
+            && let (Some(prev_cpu), Some(curr_cpu)) = (previous.cpu_usage, current.cpu_usage)
+        {
+            if prev_cpu == 0.0 {
+                if curr_cpu > 0.0 {
+                    modified_fields.push("cpu_usage".to_string());
+                }
+            } else {
+                let change_percent = ((curr_cpu - prev_cpu) / prev_cpu).abs() * 100.0;
+                if change_percent > self.config.cpu_change_threshold {
+                    modified_fields.push("cpu_usage".to_string());
                 }
             }
         }
 
-        // Check executable hash changes (potential process hollowing)
+        // Check executable hash changes
         if previous.executable_hash != current.executable_hash
             && previous.executable_hash.is_some()
             && current.executable_hash.is_some()

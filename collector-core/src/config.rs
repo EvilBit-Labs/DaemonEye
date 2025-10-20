@@ -315,30 +315,30 @@ impl CollectorConfig {
     pub fn apply_env_overrides(mut self) -> Self {
         let prefix = format!("{}_COLLECTOR", self.component_name.to_uppercase());
 
-        if let Ok(val) = std::env::var(format!("{prefix}_MAX_EVENT_SOURCES")) {
-            if let Ok(max_sources) = val.parse() {
-                self.max_event_sources = max_sources;
-            }
+        if let Ok(val) = std::env::var(format!("{prefix}_MAX_EVENT_SOURCES"))
+            && let Ok(max_sources) = val.parse()
+        {
+            self.max_event_sources = max_sources;
         }
 
-        if let Ok(val) = std::env::var(format!("{prefix}_EVENT_BUFFER_SIZE")) {
-            if let Ok(buffer_size) = val.parse() {
-                self.event_buffer_size = buffer_size;
-                // Recalculate backpressure threshold
-                self.backpressure_threshold = (buffer_size * 80) / 100;
-            }
+        if let Ok(val) = std::env::var(format!("{prefix}_EVENT_BUFFER_SIZE"))
+            && let Ok(buffer_size) = val.parse()
+        {
+            self.event_buffer_size = buffer_size;
+            // Recalculate backpressure threshold
+            self.backpressure_threshold = (buffer_size * 80) / 100;
         }
 
-        if let Ok(val) = std::env::var(format!("{prefix}_ENABLE_TELEMETRY")) {
-            if let Ok(enabled) = val.parse() {
-                self.enable_telemetry = enabled;
-            }
+        if let Ok(val) = std::env::var(format!("{prefix}_ENABLE_TELEMETRY"))
+            && let Ok(enabled) = val.parse()
+        {
+            self.enable_telemetry = enabled;
         }
 
-        if let Ok(val) = std::env::var(format!("{prefix}_DEBUG_LOGGING")) {
-            if let Ok(enabled) = val.parse() {
-                self.enable_debug_logging = enabled;
-            }
+        if let Ok(val) = std::env::var(format!("{prefix}_DEBUG_LOGGING"))
+            && let Ok(enabled) = val.parse()
+        {
+            self.enable_debug_logging = enabled;
         }
 
         self

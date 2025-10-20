@@ -237,16 +237,16 @@ impl InterprocessServer {
         {
             // Unix domain socket - use filesystem path
             let path = Path::new(&self.config.endpoint_path);
-            if let Some(parent) = path.parent() {
-                if !parent.exists() {
-                    std::fs::create_dir_all(parent).map_err(IpcError::Io)?;
-                    // Set directory permissions to 0700 (owner only)
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let perms = std::fs::Permissions::from_mode(0o700);
-                        std::fs::set_permissions(parent, perms).map_err(IpcError::Io)?;
-                    }
+            if let Some(parent) = path.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent).map_err(IpcError::Io)?;
+                // Set directory permissions to 0700 (owner only)
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let perms = std::fs::Permissions::from_mode(0o700);
+                    std::fs::set_permissions(parent, perms).map_err(IpcError::Io)?;
                 }
             }
 

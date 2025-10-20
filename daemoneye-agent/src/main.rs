@@ -245,7 +245,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Update telemetry with rough resource usage snapshot (placeholder zeros for now)
                 telemetry.update_resource_usage(0.0, 0);
-                if iteration % 10 == 0 { // periodic health check every 10 iterations
+                if iteration.is_multiple_of(10) { // periodic health check every 10 iterations
                     let h = telemetry.health_check();
                     info!(status=%h.status, "Telemetry health check");
 

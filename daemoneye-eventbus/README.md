@@ -90,7 +90,7 @@ The event bus uses a hierarchical topic structure:
 ### Unix Systems (Linux, macOS)
 
 - Uses Unix domain sockets
-- Socket files created in `/tmp/daemoneye-{instance}.sock`
+- Socket files created in `/tmp/daemoneye.sock` (default) or `/tmp/daemoneye-{instance}.sock` for multiple instances
 - File permissions: 0600 (owner read/write only)
 
 ### Windows

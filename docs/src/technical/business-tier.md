@@ -748,7 +748,7 @@ alerting:
 
 ```dockerfile
 # Build stage
-FROM rust:1.85 as builder
+FROM rust:1.87 as builder
 WORKDIR /app
 COPY . .
 RUN cargo build --release
