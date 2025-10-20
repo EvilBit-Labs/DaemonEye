@@ -82,7 +82,7 @@ serde_yaml = "0.9.33"
 sha2 = "0.10.9"
 
 # SQL parsing
-sqlparser = "0.58.0"
+sqlparser = "0.59.0"
 
 # System information
 sysinfo = "0.37.0"
