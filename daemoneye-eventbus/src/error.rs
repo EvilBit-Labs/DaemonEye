@@ -94,6 +94,21 @@ impl EventBusError {
     pub fn rpc(msg: impl Into<String>) -> Self {
         Self::Rpc(msg.into())
     }
+
+    /// Create an RPC error with additional context
+    pub fn rpc_with_context(msg: impl Into<String>, context: impl Into<String>) -> Self {
+        Self::Rpc(format!("{}: {}", msg.into(), context.into()))
+    }
+
+    /// Check if this error is a timeout error
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, Self::Timeout(_))
+    }
+
+    /// Check if this error is an RPC error
+    pub fn is_rpc_error(&self) -> bool {
+        matches!(self, Self::Rpc(_))
+    }
 }
 
 impl From<crate::topic::TopicError> for EventBusError {

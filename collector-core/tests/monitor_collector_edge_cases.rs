@@ -214,8 +214,8 @@ impl EdgeCaseMonitorCollector {
             }
             EdgeCaseMode::MissingExecutables => {
                 // Processes with missing or inaccessible executables
-                let accessible = index % 3 != 0;
-                let file_exists = index % 4 != 0;
+                let accessible = !index.is_multiple_of(3);
+                let file_exists = !index.is_multiple_of(4);
 
                 CollectionEvent::Process(ProcessEvent {
                     pid: base_pid,

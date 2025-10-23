@@ -213,7 +213,7 @@ impl MockMonitorCollector {
         let event = match self.behavior_mode {
             MonitorBehaviorMode::ProcessTree => {
                 // Create parent-child relationships
-                let ppid = if index % 3 == 0 {
+                let ppid = if index.is_multiple_of(3) {
                     Some(1)
                 } else {
                     Some(base_pid - 1)
@@ -281,9 +281,9 @@ impl MockMonitorCollector {
                     cpu_usage: Some(0.1),           // Low CPU to avoid detection
                     memory_usage: Some(512 * 1024), // Small memory footprint
                     executable_hash: Some("suspicious_hash".to_string()),
-                    user_id: Some("0".to_string()), // Root user
-                    accessible: index % 4 != 0,     // Some processes inaccessible
-                    file_exists: index % 5 != 0,    // Some executables missing
+                    user_id: Some("0".to_string()),        // Root user
+                    accessible: !index.is_multiple_of(4),  // Some processes inaccessible
+                    file_exists: !index.is_multiple_of(5), // Some executables missing
                     timestamp: SystemTime::now(),
                     platform_metadata: None,
                 })

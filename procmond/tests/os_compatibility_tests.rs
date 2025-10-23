@@ -83,10 +83,9 @@ fn gather_system_info() -> SystemInfo {
         if let Ok(output) = std::process::Command::new("sw_vers")
             .arg("-productVersion")
             .output()
+            && let Ok(version) = String::from_utf8(output.stdout)
         {
-            if let Ok(version) = String::from_utf8(output.stdout) {
-                additional_info.insert("macos_version".to_string(), version.trim().to_string());
-            }
+            additional_info.insert("macos_version".to_string(), version.trim().to_string());
         }
 
         // Check for Rosetta (Apple Silicon compatibility layer)
@@ -94,12 +93,10 @@ fn gather_system_info() -> SystemInfo {
             .arg("-n")
             .arg("sysctl.proc_translated")
             .output()
+            && let Ok(translated) = String::from_utf8(output.stdout)
+            && translated.trim() == "1"
         {
-            if let Ok(translated) = String::from_utf8(output.stdout) {
-                if translated.trim() == "1" {
-                    additional_info.insert("rosetta".to_string(), "true".to_string());
-                }
-            }
+            additional_info.insert("rosetta".to_string(), "true".to_string());
         }
     }
 

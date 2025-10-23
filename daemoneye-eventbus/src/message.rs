@@ -112,6 +112,38 @@ impl Message {
         )
     }
 
+    /// Create an RPC request message
+    pub fn rpc_request(
+        topic: String,
+        request: &crate::rpc::RpcRequest,
+    ) -> Result<Self, crate::error::EventBusError> {
+        let payload = bincode::serde::encode_to_vec(request, bincode::config::standard())
+            .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))?;
+
+        Ok(Self::control(
+            topic,
+            request.correlation_id.clone(),
+            payload,
+            0, // Sequence will be set by broker
+        ))
+    }
+
+    /// Create an RPC response message
+    pub fn rpc_response(
+        topic: String,
+        response: &crate::rpc::RpcResponse,
+    ) -> Result<Self, crate::error::EventBusError> {
+        let payload = bincode::serde::encode_to_vec(response, bincode::config::standard())
+            .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))?;
+
+        Ok(Self::control(
+            topic,
+            response.request_id.clone(),
+            payload,
+            0, // Sequence will be set by broker
+        ))
+    }
+
     /// Serialize message to bytes
     pub fn serialize(&self) -> Result<Vec<u8>, crate::error::EventBusError> {
         bincode::serde::encode_to_vec(self, bincode::config::standard())

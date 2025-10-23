@@ -98,11 +98,11 @@ impl ComprehensiveTestSource {
         metrics.total_events = event_count;
 
         // Calculate average event interval
-        if let (Some(first), Some(last)) = (metrics.first_event_time, metrics.last_event_time) {
-            if event_count > 1 {
-                let total_duration = last.duration_since(first);
-                metrics.avg_event_interval = total_duration / (event_count - 1) as u32;
-            }
+        if let (Some(first), Some(last)) = (metrics.first_event_time, metrics.last_event_time)
+            && event_count > 1
+        {
+            let total_duration = last.duration_since(first);
+            metrics.avg_event_interval = total_duration / (event_count - 1) as u32;
         }
     }
 }

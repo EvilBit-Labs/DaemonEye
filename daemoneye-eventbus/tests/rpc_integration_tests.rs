@@ -3,14 +3,20 @@
 //! These tests validate the RPC patterns for collector lifecycle management,
 //! health checks, configuration updates, and graceful shutdown coordination.
 
-use daemoneye_eventbus::rpc::{
-    CapabilitiesData, CollectorLifecycleRequest, CollectorOperation, CollectorRpcService,
-    ComponentHealth, ConfigUpdateRequest, HealthCheckData, HealthStatus, ResourceRequirements,
-    RpcPayload, RpcRequest, RpcResponse, RpcStatus, ServiceCapabilities, ShutdownRequest,
-    ShutdownType, TimeoutLimits,
+use daemoneye_eventbus::{
+    broker::DaemoneyeBroker,
+    error::{EventBusError, Result},
+    rpc::{
+        CapabilitiesData, CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient,
+        CollectorRpcService, ComponentHealth, ConfigUpdateRequest, HealthCheckData, HealthStatus,
+        ResourceRequirements, RpcPayload, RpcRequest, RpcResponse, RpcStatus, ServiceCapabilities,
+        ShutdownRequest, ShutdownType, TimeoutLimits,
+    },
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use uuid::Uuid;
 
 /// Test RPC service for integration testing
 struct TestRpcService {
@@ -510,4 +516,439 @@ async fn test_error_response_handling() {
         assert_eq!(error.code, "UNSUPPORTED_OPERATION");
         assert!(error.message.contains("not supported"));
     }
+}
+
+//
+// Broker-based RPC Integration Tests
+//
+
+/// Test helper function to setup broker and client
+async fn setup_test_broker_and_client()
+-> Result<(tempfile::TempDir, Arc<DaemoneyeBroker>, CollectorRpcClient)> {
+    // Create temporary directory for socket
+    let temp_dir = tempfile::tempdir()
+        .map_err(|e| EventBusError::configuration(format!("Failed to create temp dir: {}", e)))?;
+
+    let socket_path = temp_dir.path().join("test_broker.sock");
+    let socket_path_str = socket_path.to_string_lossy().to_string();
+
+    // Create and start broker
+    let broker = DaemoneyeBroker::new(&socket_path_str).await?;
+    broker.start().await?;
+    let broker = Arc::new(broker);
+
+    // Create RPC client
+    let client = CollectorRpcClient::new("control.collector.test", broker.clone()).await?;
+
+    Ok((temp_dir, broker, client))
+}
+
+/// Test helper function to setup RPC service handler
+async fn setup_test_service_handler(
+    broker: Arc<DaemoneyeBroker>,
+    service_topic: &str,
+) -> Result<tokio::task::JoinHandle<()>> {
+    let service_topic = service_topic.to_string();
+    let subscriber_id = Uuid::new_v4();
+
+    // Subscribe to service topic for incoming RPC requests
+    let mut message_receiver = broker.subscribe_raw(&service_topic, subscriber_id).await?;
+
+    // Spawn background task to handle requests
+    let handle = tokio::spawn(async move {
+        let mut test_service = TestRpcService::new();
+
+        while let Some(message) = message_receiver.recv().await {
+            // Debug the received message
+            println!(
+                "DEBUG: Service received message - topic: {}, payload length: {}",
+                message.topic,
+                message.payload.len()
+            );
+
+            // Skip response messages (only handle request messages)
+            if message.topic.contains("rpc.response") {
+                println!(
+                    "DEBUG: Skipping response message on topic: {}",
+                    message.topic
+                );
+                continue;
+            }
+
+            println!(
+                "DEBUG: Message payload first 20 bytes: {:?}",
+                &message.payload[..std::cmp::min(20, message.payload.len())]
+            );
+
+            // Deserialize RPC request
+            let request: RpcRequest = match bincode::serde::decode_from_slice::<RpcRequest, _>(
+                &message.payload,
+                bincode::config::standard(),
+            ) {
+                Ok((req, _)) => {
+                    println!(
+                        "DEBUG: Successfully deserialized RPC request: {:?}",
+                        req.operation
+                    );
+                    req
+                }
+                Err(e) => {
+                    eprintln!("Failed to deserialize RPC request: {}", e);
+                    eprintln!("DEBUG: Payload bytes: {:?}", message.payload);
+                    continue;
+                }
+            };
+
+            // Handle request
+            let response = test_service.handle_request(request.clone()).await;
+
+            // Determine response topic from request - use client_id as the unique identifier
+            let response_topic = format!("control.rpc.response.{}", request.client_id);
+
+            println!(
+                "DEBUG: Sending response to topic '{}' for request ID '{}'",
+                response_topic, request.request_id
+            );
+
+            // Serialize and publish response
+            let payload =
+                match bincode::serde::encode_to_vec(&response, bincode::config::standard()) {
+                    Ok(data) => {
+                        println!("DEBUG: Serialized response payload length: {}", data.len());
+                        data
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to serialize RPC response: {}", e);
+                        continue;
+                    }
+                };
+
+            match broker
+                .publish(&response_topic, &response.request_id, payload)
+                .await
+            {
+                Ok(()) => println!(
+                    "DEBUG: Successfully published response to {}",
+                    response_topic
+                ),
+                Err(e) => eprintln!("Failed to publish RPC response: {}", e),
+            }
+        }
+    });
+
+    Ok(handle)
+}
+
+#[tokio::test]
+async fn test_rpc_call_through_broker() -> Result<()> {
+    let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
+    let _service_handle =
+        setup_test_service_handler(broker.clone(), "control.collector.test").await?;
+
+    // Give service handler time to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Create health check request
+    let request = RpcRequest::health_check(
+        client.client_id.clone(),
+        "control.collector.test".to_string(),
+        Duration::from_secs(5),
+    );
+
+    println!("DEBUG: Created RPC request: {:?}", request);
+    println!("DEBUG: Operation variant: {:?}", request.operation as u8);
+    println!(
+        "DEBUG: Payload variant: {:?}",
+        std::mem::discriminant(&request.payload)
+    );
+
+    // Test serialization/deserialization locally first
+    let serialized = bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+    println!("DEBUG: Serialized length: {}", serialized.len());
+
+    let (deserialized, _): (RpcRequest, _) =
+        bincode::serde::decode_from_slice(&serialized, bincode::config::standard()).unwrap();
+    println!(
+        "DEBUG: Deserialized successfully: {:?}",
+        deserialized.operation
+    );
+
+    // Make RPC call
+    let response = client.call(request, Duration::from_secs(5)).await?;
+
+    // Verify response
+    assert_eq!(response.status, RpcStatus::Success);
+    assert_eq!(response.operation, CollectorOperation::HealthCheck);
+
+    // Verify health check payload
+    if let Some(RpcPayload::HealthCheck(health_data)) = response.payload {
+        assert_eq!(health_data.status, HealthStatus::Unhealthy);
+    } else {
+        panic!("Expected HealthCheck payload in response");
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rpc_call_with_lifecycle_operation() -> Result<()> {
+    let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
+    let _service_handle =
+        setup_test_service_handler(broker.clone(), "control.collector.test").await?;
+
+    // Give service handler time to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Create start request
+    let lifecycle_request = CollectorLifecycleRequest::start("test-collector", None);
+    let request = RpcRequest::lifecycle(
+        client.client_id.clone(),
+        "control.collector.test".to_string(),
+        CollectorOperation::Start,
+        lifecycle_request,
+        Duration::from_secs(5),
+    );
+
+    // Make RPC call for start
+    let response = client.call(request, Duration::from_secs(5)).await?;
+
+    // Verify start response
+    assert_eq!(response.status, RpcStatus::Success);
+    assert_eq!(response.operation, CollectorOperation::Start);
+
+    // Create stop request
+    let lifecycle_request = CollectorLifecycleRequest::stop("test-collector");
+    let request = RpcRequest::lifecycle(
+        client.client_id.clone(),
+        "control.collector.test".to_string(),
+        CollectorOperation::Stop,
+        lifecycle_request,
+        Duration::from_secs(5),
+    );
+
+    // Make RPC call for stop
+    let response = client.call(request, Duration::from_secs(5)).await?;
+
+    // Verify stop response
+    assert_eq!(response.status, RpcStatus::Success);
+    assert_eq!(response.operation, CollectorOperation::Stop);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rpc_call_timeout() -> Result<()> {
+    let (_temp_dir, _broker, client) = setup_test_broker_and_client().await?;
+    // Note: No service handler setup, so requests will timeout
+
+    // Create request with short timeout
+    let request = RpcRequest::health_check(
+        client.client_id.clone(),
+        "control.collector.nonexistent".to_string(),
+        Duration::from_millis(100),
+    );
+
+    // Make RPC call and expect timeout
+    let result = client.call(request, Duration::from_millis(100)).await;
+
+    // Verify timeout error
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    assert!(
+        error.is_timeout(),
+        "Expected timeout error, got: {:?}",
+        error
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rpc_call_timeout_cleanup() -> Result<()> {
+    let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
+    // No service handler, so all requests will timeout
+
+    // Send multiple requests with short timeouts
+    let mut handles = Vec::new();
+
+    for _i in 0..5 {
+        let broker_clone = broker.clone();
+        let handle = tokio::spawn(async move {
+            // Create a separate client for each timeout test
+            let client =
+                CollectorRpcClient::new("control.collector.nonexistent", broker_clone).await?;
+
+            let request = RpcRequest::health_check(
+                client.client_id.clone(),
+                "control.collector.nonexistent".to_string(),
+                Duration::from_millis(50),
+            );
+
+            client.call(request, Duration::from_millis(50)).await
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all requests to timeout
+    for handle in handles {
+        let result = handle.await.unwrap(); // This returns Result<RpcResponse, EventBusError>
+        assert!(result.is_err()); // This should be a timeout error
+        assert!(result.unwrap_err().is_timeout());
+    }
+
+    // Verify subsequent requests still work (no resource leaks)
+    let request = RpcRequest::health_check(
+        client.client_id.clone(),
+        "control.collector.test".to_string(),
+        Duration::from_millis(100),
+    );
+
+    let result = client.call(request, Duration::from_millis(100)).await;
+    // Should timeout again but not crash
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rpc_response_correlation() -> Result<()> {
+    let (_temp_dir, broker, _client) = setup_test_broker_and_client().await?;
+    let _service_handle =
+        setup_test_service_handler(broker.clone(), "control.collector.test").await?;
+
+    // Give service handler time to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Send multiple concurrent requests
+    let mut handles = Vec::new();
+
+    for _i in 0..3 {
+        let broker_clone = broker.clone();
+        let handle = tokio::spawn(async move {
+            // Create a separate client for each concurrent request
+            let client = CollectorRpcClient::new("control.collector.test", broker_clone).await?;
+
+            let request = RpcRequest::health_check(
+                client.client_id.clone(),
+                "control.collector.test".to_string(),
+                Duration::from_secs(5),
+            );
+
+            let request_id = request.request_id.clone();
+            let response = client.call(request, Duration::from_secs(5)).await?;
+
+            // Verify correlation
+            assert_eq!(response.request_id, request_id);
+            assert_eq!(response.status, RpcStatus::Success);
+
+            Ok::<_, EventBusError>(response.request_id)
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all responses and verify each is correctly correlated
+    for handle in handles {
+        let request_id = handle.await.unwrap()?;
+        // Each request should have received its own response
+        assert!(!request_id.is_empty());
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_multiple_rpc_clients() -> Result<()> {
+    let (_temp_dir, broker, _) = setup_test_broker_and_client().await?;
+    let _service_handle =
+        setup_test_service_handler(broker.clone(), "control.collector.test").await?;
+
+    // Give service handler time to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Create multiple clients
+    let client1 = CollectorRpcClient::new("control.collector.test", broker.clone()).await?;
+    let client2 = CollectorRpcClient::new("control.collector.test", broker.clone()).await?;
+    let client3 = CollectorRpcClient::new("control.collector.test", broker.clone()).await?;
+
+    // Send requests from all clients concurrently
+    let handle1 = tokio::spawn(async move {
+        let request = RpcRequest::health_check(
+            client1.client_id.clone(),
+            "control.collector.test".to_string(),
+            Duration::from_secs(5),
+        );
+        client1.call(request, Duration::from_secs(5)).await
+    });
+
+    let handle2 = tokio::spawn(async move {
+        let request = RpcRequest::health_check(
+            client2.client_id.clone(),
+            "control.collector.test".to_string(),
+            Duration::from_secs(5),
+        );
+        client2.call(request, Duration::from_secs(5)).await
+    });
+
+    let handle3 = tokio::spawn(async move {
+        let request = RpcRequest::health_check(
+            client3.client_id.clone(),
+            "control.collector.test".to_string(),
+            Duration::from_secs(5),
+        );
+        client3.call(request, Duration::from_secs(5)).await
+    });
+
+    // Wait for all responses
+    let response1 = handle1.await.unwrap()?;
+    let response2 = handle2.await.unwrap()?;
+    let response3 = handle3.await.unwrap()?;
+
+    // Verify all responses are successful and unique
+    assert_eq!(response1.status, RpcStatus::Success);
+    assert_eq!(response2.status, RpcStatus::Success);
+    assert_eq!(response3.status, RpcStatus::Success);
+
+    // Verify request IDs are different (no cross-contamination)
+    assert_ne!(response1.request_id, response2.request_id);
+    assert_ne!(response2.request_id, response3.request_id);
+    assert_ne!(response1.request_id, response3.request_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rpc_client_shutdown() -> Result<()> {
+    let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
+    let _service_handle =
+        setup_test_service_handler(broker.clone(), "control.collector.test").await?;
+
+    // Give service handler time to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Make a successful request first
+    let request = RpcRequest::health_check(
+        client.client_id.clone(),
+        "control.collector.test".to_string(),
+        Duration::from_secs(5),
+    );
+
+    let response = client.call(request, Duration::from_secs(5)).await?;
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Shutdown client
+    client.shutdown().await?;
+
+    // Subsequent requests should fail appropriately
+    let request = RpcRequest::health_check(
+        client.client_id.clone(),
+        "control.collector.test".to_string(),
+        Duration::from_secs(1),
+    );
+
+    // The call should either fail immediately or timeout
+    let result = client.call(request, Duration::from_secs(1)).await;
+    // We expect this to fail in some way after shutdown
+    assert!(result.is_err());
+
+    Ok(())
 }

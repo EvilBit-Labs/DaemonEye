@@ -32,6 +32,9 @@ pub struct DaemoneyeBroker {
     /// Subscriber senders for message delivery
     subscriber_senders:
         Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<BusEvent>>>>,
+    /// Raw message subscribers for RPC (receive Message directly)
+    raw_subscriber_senders:
+        Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<Message>>>>,
     /// Reverse mapping from original subscriber IDs to broker UUIDs
     subscriber_id_mapping: Arc<Mutex<std::collections::HashMap<String, Uuid>>>,
 }
@@ -70,6 +73,7 @@ impl DaemoneyeBroker {
             shutdown_tx,
             config,
             subscriber_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            raw_subscriber_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
             subscriber_id_mapping: Arc::new(Mutex::new(std::collections::HashMap::new())),
         };
 
@@ -188,6 +192,13 @@ impl DaemoneyeBroker {
 
     /// Publish a message to the broker
     pub async fn publish(&self, topic: &str, correlation_id: &str, payload: Vec<u8>) -> Result<()> {
+        // Check if this is a control message (based on topic prefix)
+        if topic.starts_with("control.") {
+            return self
+                .publish_control_message(topic, correlation_id, payload)
+                .await;
+        }
+
         let mut seq_guard = self.sequence.lock().await;
         let sequence = *seq_guard;
         *seq_guard += 1;
@@ -243,24 +254,26 @@ impl DaemoneyeBroker {
             }
         }
 
-        // Send to internal subscribers
+        // Send to internal subscribers (only those matching the topic)
         let mut senders_guard = self.subscriber_senders.lock().await;
         let mut failed_senders = Vec::new();
 
-        for (subscriber_id, sender) in senders_guard.iter() {
-            let bus_event = BusEvent {
-                event_id: Uuid::new_v4().to_string(),
-                event: collection_event.clone(),
-                correlation_id: correlation_id.to_string(),
-                bus_timestamp: std::time::SystemTime::now(),
-                matched_pattern: topic.to_string(),
-                subscriber_id: subscriber_id.clone(),
-            };
+        for subscriber_id in &subscribers {
+            if let Some(sender) = senders_guard.get(subscriber_id) {
+                let bus_event = BusEvent {
+                    event_id: Uuid::new_v4().to_string(),
+                    event: collection_event.clone(),
+                    correlation_id: correlation_id.to_string(),
+                    bus_timestamp: std::time::SystemTime::now(),
+                    matched_pattern: topic.to_string(),
+                    subscriber_id: subscriber_id.clone(),
+                };
 
-            if sender.send(bus_event).is_err() {
-                failed_senders.push(subscriber_id.clone());
-            } else {
-                delivered_count += 1;
+                if sender.send(bus_event).is_err() {
+                    failed_senders.push(subscriber_id.clone());
+                } else {
+                    delivered_count += 1;
+                }
             }
         }
 
@@ -291,6 +304,106 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
+    /// Publish a control message without CollectionEvent deserialization
+    async fn publish_control_message(
+        &self,
+        topic: &str,
+        correlation_id: &str,
+        payload: Vec<u8>,
+    ) -> Result<()> {
+        let mut seq_guard = self.sequence.lock().await;
+        let sequence = *seq_guard;
+        *seq_guard += 1;
+        drop(seq_guard);
+
+        // Find subscribers for this topic
+        let topic_matcher = self.topic_matcher.read().await;
+        let subscribers = topic_matcher.find_subscribers(topic)?;
+        drop(topic_matcher);
+
+        if subscribers.is_empty() {
+            debug!("No subscribers for control topic: {}", topic);
+            // Update statistics even when no subscribers
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.messages_published += 1;
+            return Ok(());
+        }
+
+        // Create control message directly without CollectionEvent deserialization
+        let message = Message::control(
+            topic.to_string(),
+            correlation_id.to_string(),
+            payload,
+            sequence,
+        );
+
+        // Serialize message
+        let message_data = message.serialize()?;
+
+        // Send to managed clients via client manager
+        let mut delivered_count = 0;
+        {
+            let mut client_manager = self.client_manager.lock().await;
+            match client_manager
+                .broadcast_to_topic(topic, &message_data)
+                .await
+            {
+                Ok(delivered_clients) => {
+                    delivered_count += delivered_clients.len() as u64;
+                    debug!(
+                        "Delivered control message to {} managed clients",
+                        delivered_clients.len()
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to broadcast control message to managed clients: {}",
+                        e
+                    );
+                }
+            }
+        }
+
+        // Send raw messages to RPC subscribers (only those matching the topic)
+        let mut raw_senders_guard = self.raw_subscriber_senders.lock().await;
+        let mut raw_failed_senders = Vec::new();
+        let mut raw_delivered_count = 0;
+
+        for subscriber_id in &subscribers {
+            if let Some(sender) = raw_senders_guard.get(subscriber_id) {
+                if sender.send(message.clone()).is_err() {
+                    warn!(
+                        "Failed to send raw message to subscriber: {}",
+                        subscriber_id
+                    );
+                    raw_failed_senders.push(subscriber_id.clone());
+                } else {
+                    raw_delivered_count += 1;
+                }
+            }
+        }
+
+        // Remove failed raw senders
+        for subscriber_id in raw_failed_senders {
+            raw_senders_guard.remove(&subscriber_id);
+        }
+        drop(raw_senders_guard);
+
+        // Update statistics
+        {
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.messages_published += 1;
+            stats_guard.messages_delivered += delivered_count + raw_delivered_count;
+        }
+
+        debug!(
+            "Published control message to {} subscribers on topic: {}",
+            delivered_count + raw_delivered_count,
+            topic
+        );
+        Ok(())
+    }
+
     /// Subscribe to a topic pattern
     pub async fn subscribe(&self, pattern: &str, subscriber_id: Uuid) -> Result<()> {
         let mut topic_matcher = self.topic_matcher.write().await;
@@ -300,10 +413,47 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
+    /// Subscribe to raw messages (for RPC clients)
+    pub async fn subscribe_raw(
+        &self,
+        pattern: &str,
+        subscriber_id: Uuid,
+    ) -> Result<mpsc::UnboundedReceiver<Message>> {
+        // Subscribe to topic pattern
+        let mut topic_matcher = self.topic_matcher.write().await;
+        topic_matcher.subscribe(pattern, subscriber_id)?;
+        drop(topic_matcher);
+
+        // Create channel for raw messages
+        let (tx, rx) = mpsc::unbounded_channel();
+
+        // Store sender for raw message delivery
+        let mut raw_senders = self.raw_subscriber_senders.lock().await;
+        raw_senders.insert(subscriber_id.to_string(), tx);
+
+        debug!(
+            "Subscribed {} to raw messages for pattern: {}",
+            subscriber_id, pattern
+        );
+        Ok(rx)
+    }
+
     /// Unsubscribe from all patterns
     pub async fn unsubscribe(&self, subscriber_id: Uuid) -> Result<()> {
         let mut topic_matcher = self.topic_matcher.write().await;
         topic_matcher.unsubscribe(subscriber_id)?;
+        drop(topic_matcher);
+
+        // Remove from both regular and raw subscribers
+        let subscriber_str = subscriber_id.to_string();
+        {
+            let mut senders = self.subscriber_senders.lock().await;
+            senders.remove(&subscriber_str);
+        }
+        {
+            let mut raw_senders = self.raw_subscriber_senders.lock().await;
+            raw_senders.remove(&subscriber_str);
+        }
 
         debug!("Unsubscribed: {}", subscriber_id);
         Ok(())
@@ -400,6 +550,15 @@ impl DaemoneyeBroker {
 
         info!("DaemonEye broker shutdown complete");
         Ok(())
+    }
+}
+
+impl std::fmt::Debug for DaemoneyeBroker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DaemoneyeBroker")
+            .field("start_time", &self.start_time)
+            .field("config", &self.config)
+            .finish_non_exhaustive()
     }
 }
 
