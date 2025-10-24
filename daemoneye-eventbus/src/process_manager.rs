@@ -1,0 +1,1103 @@
+//! Collector Process Manager
+//!
+//! This module provides comprehensive lifecycle management for collector processes,
+//! including spawning, monitoring, termination, pause/resume, and automatic restart
+//! capabilities. It handles platform-specific differences between Unix and Windows
+//! process control mechanisms.
+//!
+//! # Features
+//!
+//! - **Process Spawning**: Start collector processes with custom configuration
+//! - **State Tracking**: Monitor process state and health in real-time
+//! - **Graceful Shutdown**: Timeout-based graceful shutdown with automatic escalation
+//! - **Pause/Resume**: Suspend and resume collectors (Unix only via SIGSTOP/SIGCONT)
+//! - **Auto-Restart**: Configurable automatic restart on process crash
+//! - **Health Monitoring**: Track process health and detect crashes
+//!
+//! # Platform Support
+//!
+//! - **Unix**: Full support including pause/resume via signals (SIGTERM, SIGKILL, SIGSTOP, SIGCONT)
+//! - **Windows**: Process spawning and termination; pause/resume not supported
+//!
+//! # Example Usage
+//!
+//! ```rust,no_run
+//! use daemoneye_eventbus::process_manager::{
+//!     CollectorProcessManager, ProcessManagerConfig, CollectorConfig
+//! };
+//! use std::collections::HashMap;
+//! use std::path::PathBuf;
+//! use std::time::Duration;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create process manager configuration
+//! let config = ProcessManagerConfig {
+//!     collector_binaries: HashMap::from([
+//!         ("procmond".to_string(), PathBuf::from("/usr/local/bin/procmond")),
+//!     ]),
+//!     default_graceful_timeout: Duration::from_secs(30),
+//!     default_force_timeout: Duration::from_secs(5),
+//!     health_check_interval: Duration::from_secs(60),
+//!     enable_auto_restart: false,
+//! };
+//!
+//! // Create process manager
+//! let manager = CollectorProcessManager::new(config);
+//!
+//! // Start a collector
+//! let collector_config = CollectorConfig {
+//!     binary_path: PathBuf::from("/usr/local/bin/procmond"),
+//!     args: vec!["--config".to_string(), "/etc/procmond.conf".to_string()],
+//!     env: HashMap::new(),
+//!     working_dir: None,
+//!     resource_limits: None,
+//!     auto_restart: true,
+//!     max_restarts: 3,
+//! };
+//!
+//! let pid = manager.start_collector("procmond-1", "procmond", collector_config).await?;
+//! println!("Started collector with PID: {}", pid);
+//!
+//! // Check health
+//! let status = manager.get_collector_status("procmond-1").await?;
+//! println!("Collector status: {:?}", status.state);
+//!
+//! // Stop gracefully
+//! manager.stop_collector("procmond-1", true, Duration::from_secs(30)).await?;
+//! # Ok(())
+//! # }
+//! ```
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use thiserror::Error;
+use tokio::process::{Child, Command};
+use tokio::sync::{Mutex, broadcast, mpsc};
+use tracing::{debug, error, info, warn};
+
+#[cfg(unix)]
+use nix::sys::signal::{self, Signal};
+#[cfg(unix)]
+use nix::unistd::Pid;
+
+/// Request to restart a collector process
+#[derive(Debug, Clone)]
+struct RestartRequest {
+    /// Collector identifier
+    collector_id: String,
+    /// Collector type
+    collector_type: String,
+    /// Configuration to use
+    config: CollectorConfig,
+    /// Current restart count
+    restart_count: u32,
+}
+
+/// State of a collector process
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollectorState {
+    /// Process is starting up
+    Starting,
+    /// Process is running normally
+    Running,
+    /// Process is paused (Unix only)
+    Paused,
+    /// Process is shutting down
+    Stopping,
+    /// Process has stopped cleanly
+    Stopped,
+    /// Process failed with error
+    Failed(String),
+}
+
+/// Configuration for spawning a collector process
+#[derive(Debug, Clone)]
+pub struct CollectorConfig {
+    /// Path to collector executable
+    pub binary_path: PathBuf,
+    /// Command-line arguments
+    pub args: Vec<String>,
+    /// Environment variables
+    pub env: HashMap<String, String>,
+    /// Working directory
+    pub working_dir: Option<PathBuf>,
+    /// Resource constraints (not yet implemented)
+    pub resource_limits: Option<ResourceLimits>,
+    /// Whether to auto-restart on crash
+    pub auto_restart: bool,
+    /// Maximum restart attempts
+    pub max_restarts: u32,
+}
+
+/// Resource limits for collector processes (placeholder for future implementation)
+#[derive(Debug, Clone)]
+pub struct ResourceLimits {
+    /// Maximum memory in bytes
+    pub max_memory_bytes: Option<u64>,
+    /// Maximum CPU percentage (0-100)
+    pub max_cpu_percent: Option<u32>,
+}
+
+/// Information about a running collector process
+#[derive(Debug)]
+pub struct CollectorProcess {
+    /// Unique identifier
+    pub collector_id: String,
+    /// Type (procmond, netmond, etc.)
+    pub collector_type: String,
+    /// Process handle (None if extracted for termination)
+    pub child: Option<Child>,
+    /// Process ID
+    pub pid: u32,
+    /// Current state
+    pub state: CollectorState,
+    /// When process started
+    pub start_time: SystemTime,
+    /// Configuration used to start
+    pub config: CollectorConfig,
+    /// Number of restarts
+    pub restart_count: u32,
+    /// Last health check time
+    pub last_health_check: Option<SystemTime>,
+}
+
+/// Configuration for the process manager
+#[derive(Debug, Clone)]
+pub struct ProcessManagerConfig {
+    /// Collector ID to binary path mapping
+    pub collector_binaries: HashMap<String, PathBuf>,
+    /// Default graceful shutdown timeout
+    pub default_graceful_timeout: Duration,
+    /// Default force kill timeout
+    pub default_force_timeout: Duration,
+    /// Health check interval
+    pub health_check_interval: Duration,
+    /// Global auto-restart flag
+    pub enable_auto_restart: bool,
+}
+
+impl Default for ProcessManagerConfig {
+    fn default() -> Self {
+        Self {
+            collector_binaries: HashMap::new(),
+            default_graceful_timeout: Duration::from_secs(30),
+            default_force_timeout: Duration::from_secs(5),
+            health_check_interval: Duration::from_secs(60),
+            enable_auto_restart: false,
+        }
+    }
+}
+
+/// Status of a collector process
+#[derive(Debug, Clone)]
+pub struct CollectorStatus {
+    /// Collector identifier
+    pub collector_id: String,
+    /// Current state
+    pub state: CollectorState,
+    /// Process ID
+    pub pid: u32,
+    /// Start time
+    pub start_time: SystemTime,
+    /// Number of restarts
+    pub restart_count: u32,
+    /// Time since start
+    pub uptime: Duration,
+    /// Current health
+    pub health: HealthStatus,
+}
+
+/// Health status of a collector
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HealthStatus {
+    /// Process is healthy
+    Healthy,
+    /// Process is unhealthy
+    Unhealthy,
+    /// Health status unknown
+    Unknown,
+}
+
+/// Errors that can occur during process management
+#[derive(Debug, Error)]
+pub enum ProcessManagerError {
+    /// Collector not found
+    #[error("Collector not found: {0}")]
+    ProcessNotFound(String),
+
+    /// Collector already running
+    #[error("Collector already running: {0}")]
+    AlreadyRunning(String),
+
+    /// Failed to spawn process
+    #[error("Failed to spawn process: {0}")]
+    SpawnFailed(String),
+
+    /// Failed to terminate process
+    #[error("Failed to terminate process: {0}")]
+    TerminateFailed(String),
+
+    /// Operation not valid in current state
+    #[error("Invalid state for operation: {0}")]
+    InvalidState(String),
+
+    /// Operation not supported on platform
+    #[error("Platform not supported: {0}")]
+    PlatformNotSupported(String),
+
+    /// Operation timed out
+    #[error("Operation timed out: {0}")]
+    Timeout(String),
+
+    /// I/O error
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Manager for collector process lifecycle
+#[derive(Debug)]
+pub struct CollectorProcessManager {
+    /// Manager configuration
+    pub config: ProcessManagerConfig,
+    /// Running processes
+    processes: Arc<Mutex<HashMap<String, CollectorProcess>>>,
+    /// Shutdown signal broadcaster
+    shutdown_tx: broadcast::Sender<()>,
+    /// Restart request sender
+    restart_tx: mpsc::UnboundedSender<RestartRequest>,
+}
+
+impl CollectorProcessManager {
+    /// Create a new process manager
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Process manager configuration
+    ///
+    /// # Returns
+    ///
+    /// New process manager instance
+    pub fn new(config: ProcessManagerConfig) -> Arc<Self> {
+        let (shutdown_tx, _) = broadcast::channel(16);
+        let (restart_tx, mut restart_rx) = mpsc::unbounded_channel();
+
+        let manager = Arc::new(Self {
+            config,
+            processes: Arc::new(Mutex::new(HashMap::new())),
+            shutdown_tx,
+            restart_tx,
+        });
+
+        // Spawn restart handler task
+        let manager_clone = Arc::clone(&manager);
+        tokio::spawn(async move {
+            while let Some(req) = restart_rx.recv().await {
+                info!(
+                    "Processing restart request for collector {} (attempt {}/{})",
+                    req.collector_id,
+                    req.restart_count + 1,
+                    req.config.max_restarts
+                );
+
+                match manager_clone
+                    .start_collector(&req.collector_id, &req.collector_type, req.config.clone())
+                    .await
+                {
+                    Ok(new_pid) => {
+                        info!(
+                            "Successfully restarted collector {} with new PID: {}",
+                            req.collector_id, new_pid
+                        );
+
+                        // Update restart count
+                        let mut procs = manager_clone.processes.lock().await;
+                        if let Some(proc) = procs.get_mut(&req.collector_id) {
+                            proc.restart_count = req.restart_count + 1;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to restart collector {}: {}", req.collector_id, e);
+
+                        // Set Failed state
+                        let mut procs = manager_clone.processes.lock().await;
+                        if let Some(proc) = procs.get_mut(&req.collector_id) {
+                            proc.state = CollectorState::Failed(format!("Restart failed: {}", e));
+                        }
+                    }
+                }
+            }
+        });
+
+        manager
+    }
+
+    /// Start a collector process
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - Unique identifier for the collector
+    /// * `collector_type` - Type of collector (procmond, netmond, etc.)
+    /// * `config` - Configuration for spawning the process
+    ///
+    /// # Returns
+    ///
+    /// Process ID on success
+    ///
+    /// # Errors
+    ///
+    /// - `AlreadyRunning` if collector is already running
+    /// - `SpawnFailed` if process spawn fails
+    pub async fn start_collector(
+        &self,
+        collector_id: &str,
+        collector_type: &str,
+        config: CollectorConfig,
+    ) -> Result<u32, ProcessManagerError> {
+        let mut processes = self.processes.lock().await;
+
+        // Check if already running
+        if processes.contains_key(collector_id) {
+            return Err(ProcessManagerError::AlreadyRunning(
+                collector_id.to_string(),
+            ));
+        }
+
+        // Resolve binary path
+        let binary_path = if config.binary_path.as_os_str().is_empty() {
+            self.config
+                .collector_binaries
+                .get(collector_type)
+                .cloned()
+                .ok_or_else(|| {
+                    ProcessManagerError::SpawnFailed(format!(
+                        "No binary path configured for collector type: {}",
+                        collector_type
+                    ))
+                })?
+        } else {
+            config.binary_path.clone()
+        };
+
+        info!(
+            "Starting collector: {} (type: {}) with binary: {}",
+            collector_id,
+            collector_type,
+            binary_path.display()
+        );
+
+        // Create command
+        let mut command = Command::new(&binary_path);
+        command.args(&config.args);
+
+        // Set environment variables
+        for (key, value) in &config.env {
+            command.env(key, value);
+        }
+
+        // Set working directory
+        if let Some(working_dir) = &config.working_dir {
+            command.current_dir(working_dir);
+        }
+
+        // Configure stdio
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+
+        // Spawn process
+        let child = command.spawn().map_err(|e| {
+            ProcessManagerError::SpawnFailed(format!(
+                "Failed to spawn {}: {}",
+                binary_path.display(),
+                e
+            ))
+        })?;
+
+        let pid = child
+            .id()
+            .ok_or_else(|| ProcessManagerError::SpawnFailed("Failed to get PID".to_string()))?;
+
+        info!("Spawned collector {} with PID: {}", collector_id, pid);
+
+        // Create process record
+        let process = CollectorProcess {
+            collector_id: collector_id.to_string(),
+            collector_type: collector_type.to_string(),
+            child: Some(child),
+            pid,
+            state: CollectorState::Starting,
+            start_time: SystemTime::now(),
+            config: config.clone(),
+            restart_count: 0,
+            last_health_check: None,
+        };
+
+        processes.insert(collector_id.to_string(), process);
+        drop(processes);
+
+        // Spawn monitoring task
+        self.spawn_process_monitor(collector_id.to_string()).await;
+
+        // Update state to Running
+        let mut processes = self.processes.lock().await;
+        if let Some(process) = processes.get_mut(collector_id) {
+            process.state = CollectorState::Running;
+        }
+
+        Ok(pid)
+    }
+
+    /// Spawn a monitoring task for a collector process
+    ///
+    /// This task waits for the process to exit and handles auto-restart if configured.
+    /// Auto-restart is performed if:
+    /// - Global `enable_auto_restart` is true
+    /// - Process-level `auto_restart` is true
+    /// - `restart_count < max_restarts`
+    ///
+    /// On exit without restart, the collector is removed from the process map to allow subsequent start calls.
+    async fn spawn_process_monitor(&self, collector_id: String) {
+        let processes = Arc::clone(&self.processes);
+        let process_manager_config = self.config.clone();
+        let restart_tx = self.restart_tx.clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
+                // Check if process exited and decide on restart
+                let restart_request = {
+                    let mut procs = processes.lock().await;
+
+                    let Some(proc) = procs.get_mut(&collector_id) else {
+                        debug!(
+                            "Collector {} no longer in process map, ending monitor",
+                            collector_id
+                        );
+                        return;
+                    };
+
+                    let child_pid = proc.pid;
+
+                    match proc
+                        .child
+                        .as_mut()
+                        .and_then(|c| c.try_wait().ok())
+                        .flatten()
+                    {
+                        Some(status) => {
+                            info!(
+                                "Collector {} (PID: {}) exited with status: {:?}",
+                                collector_id, child_pid, status
+                            );
+
+                            // Determine if should auto-restart
+                            let should_restart = process_manager_config.enable_auto_restart
+                                && proc.config.auto_restart
+                                && proc.restart_count < proc.config.max_restarts;
+
+                            if should_restart {
+                                let restart_count = proc.restart_count;
+                                let collector_type = proc.collector_type.clone();
+                                let config = proc.config.clone();
+
+                                info!(
+                                    "Collector {} will be auto-restarted (attempt {}/{})",
+                                    collector_id,
+                                    restart_count + 1,
+                                    config.max_restarts
+                                );
+
+                                // Remove from map to allow start_collector to succeed
+                                procs.remove(&collector_id);
+
+                                Some(RestartRequest {
+                                    collector_id: collector_id.clone(),
+                                    collector_type,
+                                    config,
+                                    restart_count,
+                                })
+                            } else {
+                                // Not restarting, remove from map
+                                if status.success() {
+                                    info!(
+                                        "Collector {} stopped cleanly, removing from map",
+                                        collector_id
+                                    );
+                                } else {
+                                    warn!(
+                                        "Collector {} failed with exit code: {:?}, removing from map",
+                                        collector_id,
+                                        status.code()
+                                    );
+                                }
+                                procs.remove(&collector_id);
+                                None
+                            }
+                        }
+                        None => {
+                            // Still running, continue monitoring
+                            None
+                        }
+                    }
+                };
+                // Lock dropped here
+
+                // Send restart request if needed, then exit monitor
+                if let Some(req) = restart_request {
+                    if let Err(e) = restart_tx.send(req) {
+                        error!("Failed to send restart request: {}", e);
+                    }
+                    return;
+                }
+
+                // If no restart but we removed the process, exit monitor
+                if restart_request.is_none() {
+                    let procs = processes.lock().await;
+                    if !procs.contains_key(&collector_id) {
+                        debug!("Monitor exiting for collector {}", collector_id);
+                        return;
+                    }
+                }
+            }
+        });
+    }
+    /// Stop a collector process
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - Identifier of the collector to stop
+    /// * `graceful` - Whether to attempt graceful shutdown first
+    /// * `timeout` - Timeout for graceful shutdown
+    ///
+    /// # Returns
+    ///
+    /// Exit status on success
+    ///
+    /// # Errors
+    ///
+    /// - `ProcessNotFound` if collector doesn't exist
+    /// - `TerminateFailed` if termination fails
+    /// - `Timeout` if graceful shutdown times out
+    ///
+    /// # Platform Notes
+    ///
+    /// - **Unix**: Graceful stop sends SIGTERM, force kill sends SIGKILL
+    /// - **Windows**: Both graceful and force kill use `TerminateProcess` (immediate termination)
+    ///   Windows does not support graceful process termination; applications must implement
+    ///   their own shutdown coordination (e.g., via named events or window messages).
+    pub async fn stop_collector(
+        &self,
+        collector_id: &str,
+        graceful: bool,
+        timeout: Duration,
+    ) -> Result<Option<i32>, ProcessManagerError> {
+        // Extract child handle before awaiting to avoid holding lock across await points
+        let (mut child, pid, collector_id_owned) = {
+            let mut processes = self.processes.lock().await;
+            let proc = processes
+                .get_mut(collector_id)
+                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+
+            // If child is None, process already stopped or being stopped
+            if proc.child.is_none() {
+                info!(
+                    "Collector {} already stopped (no child handle)",
+                    collector_id
+                );
+                let exit_code = None;
+                processes.remove(collector_id);
+                return Ok(exit_code);
+            }
+
+            info!(
+                "Stopping collector {} (PID: {}, graceful: {})",
+                collector_id, proc.pid, graceful
+            );
+
+            // Mark as stopping
+            proc.state = CollectorState::Stopping;
+            let pid = proc.pid;
+            let collector_id_owned = collector_id.to_string();
+
+            // Extract child, leaving None in its place
+            let child = proc.child.take().expect("invariant: child exists");
+
+            (child, pid, collector_id_owned)
+        };
+        // Lock dropped here
+
+        let exit_code = if graceful {
+            // Send termination signal
+            #[cfg(unix)]
+            {
+                // Treat ESRCH (no such process) as benign: the process likely exited between checks
+                match send_signal(pid, Signal::SIGTERM) {
+                    Ok(()) => {}
+                    Err(ProcessManagerError::TerminateFailed(msg))
+                        if msg.contains("ESRCH") || msg.contains("No such process") =>
+                    {
+                        warn!(
+                            "SIGTERM returned ESRCH for collector {} (PID: {}), proceeding as already exited",
+                            collector_id_owned, pid
+                        );
+                        // Continue to wait() which should return immediately if already exited
+                    }
+                    Err(e) => {
+                        // Re-acquire lock to set Failed state and restore child
+                        let mut processes = self.processes.lock().await;
+                        if let Some(proc) = processes.get_mut(&collector_id_owned) {
+                            proc.state = CollectorState::Failed(format!("Signal failed: {}", e));
+                            proc.child = Some(child);
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            #[cfg(windows)]
+            {
+                // Windows: start_kill() uses TerminateProcess (immediate termination)
+                // No graceful shutdown mechanism available at OS level
+                if let Err(e) = child.start_kill() {
+                    let err =
+                        ProcessManagerError::TerminateFailed(format!("Failed to terminate: {}", e));
+                    // Re-acquire lock to set Failed state and restore child
+                    let mut processes = self.processes.lock().await;
+                    if let Some(proc) = processes.get_mut(&collector_id_owned) {
+                        proc.state = CollectorState::Failed(format!("Terminate failed: {}", e));
+                        proc.child = Some(child);
+                    }
+                    return Err(err);
+                }
+            }
+
+            // Wait with timeout (lock not held)
+            let wait_result = tokio::time::timeout(timeout, child.wait()).await;
+
+            match wait_result {
+                Ok(Ok(status)) => {
+                    info!(
+                        "Collector {} exited gracefully with status: {:?}",
+                        collector_id_owned, status
+                    );
+                    // Re-acquire lock to remove entry on successful termination
+                    let mut processes = self.processes.lock().await;
+                    processes.remove(&collector_id_owned);
+                    status.code()
+                }
+                Ok(Err(e)) => {
+                    warn!("Error waiting for collector {}: {}", collector_id_owned, e);
+                    // Re-acquire lock to set Failed state and keep entry for visibility
+                    let mut processes = self.processes.lock().await;
+                    if let Some(proc) = processes.get_mut(&collector_id_owned) {
+                        proc.state = CollectorState::Failed(format!("Wait failed: {}", e));
+                        // Don't restore child as it's consumed by wait()
+                    }
+                    // Fall through to force kill
+                    None
+                }
+                Err(_) => {
+                    warn!(
+                        "Graceful shutdown timeout for collector {}, escalating to force kill",
+                        collector_id_owned
+                    );
+                    // Keep entry for force kill attempt
+                    // Fall through to force kill
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // If graceful succeeded, return immediately
+        if exit_code.is_some() {
+            return Ok(exit_code);
+        }
+
+        // Force kill path
+        #[cfg(unix)]
+        {
+            // Treat ESRCH (no such process) as benign and proceed to wait
+            match send_signal(pid, Signal::SIGKILL) {
+                Ok(()) => {}
+                Err(ProcessManagerError::TerminateFailed(msg))
+                    if msg.contains("ESRCH") || msg.contains("No such process") =>
+                {
+                    warn!(
+                        "SIGKILL returned ESRCH for collector {} (PID: {}), assuming already exited",
+                        collector_id_owned, pid
+                    );
+                }
+                Err(e) => {
+                    // Re-acquire lock to set Failed state
+                    let mut processes = self.processes.lock().await;
+                    if let Some(proc) = processes.get_mut(&collector_id_owned) {
+                        proc.state = CollectorState::Failed(format!("Force signal failed: {}", e));
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        #[cfg(windows)]
+        {
+            if let Err(e) = child.start_kill() {
+                let err = ProcessManagerError::TerminateFailed(format!("Failed to kill: {}", e));
+                // Re-acquire lock to set Failed state
+                let mut processes = self.processes.lock().await;
+                if let Some(proc) = processes.get_mut(&collector_id_owned) {
+                    proc.state = CollectorState::Failed(format!("Force kill failed: {}", e));
+                }
+                return Err(err);
+            }
+        }
+
+        // Wait with force timeout (lock not held)
+        let force_timeout = self.config.default_force_timeout;
+        match tokio::time::timeout(force_timeout, child.wait()).await {
+            Ok(Ok(status)) => {
+                info!(
+                    "Collector {} force killed: {:?}",
+                    collector_id_owned, status
+                );
+                // Re-acquire lock to remove entry on successful termination
+                let mut processes = self.processes.lock().await;
+                processes.remove(&collector_id_owned);
+                Ok(status.code())
+            }
+            Ok(Err(e)) => {
+                // Re-acquire lock to set Failed state and keep entry for visibility
+                let mut processes = self.processes.lock().await;
+                if let Some(proc) = processes.get_mut(&collector_id_owned) {
+                    proc.state = CollectorState::Failed(format!("Force wait failed: {}", e));
+                }
+                Err(ProcessManagerError::TerminateFailed(format!(
+                    "Force wait failed: {}",
+                    e
+                )))
+            }
+            Err(_) => {
+                error!("Force kill timeout for collector {}", collector_id_owned);
+                // Re-acquire lock to set Failed state and keep entry for visibility
+                let mut processes = self.processes.lock().await;
+                if let Some(proc) = processes.get_mut(&collector_id_owned) {
+                    proc.state = CollectorState::Failed("Force kill timeout".to_string());
+                }
+                Err(ProcessManagerError::Timeout(format!(
+                    "Force kill timeout for {}",
+                    collector_id_owned
+                )))
+            }
+        }
+    }
+
+    /// Restart a collector process
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - Identifier of the collector to restart
+    /// * `timeout` - Timeout for stop operation
+    ///
+    /// # Returns
+    ///
+    /// New process ID on success
+    ///
+    /// # Errors
+    ///
+    /// - `ProcessNotFound` if collector doesn't exist
+    /// - `SpawnFailed` if restart fails
+    pub async fn restart_collector(
+        &self,
+        collector_id: &str,
+        timeout: Duration,
+    ) -> Result<u32, ProcessManagerError> {
+        info!("Restarting collector: {}", collector_id);
+
+        // Get current config
+        let (collector_type, config, restart_count) = {
+            let processes = self.processes.lock().await;
+            let process = processes
+                .get(collector_id)
+                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+
+            (
+                process.collector_type.clone(),
+                process.config.clone(),
+                process.restart_count,
+            )
+        };
+
+        // Stop the collector
+        self.stop_collector(collector_id, true, timeout).await?;
+
+        // Start with incremented restart count
+        let pid = self
+            .start_collector(collector_id, &collector_type, config)
+            .await?;
+
+        // Update restart count
+        let mut processes = self.processes.lock().await;
+        if let Some(process) = processes.get_mut(collector_id) {
+            process.restart_count = restart_count + 1;
+        }
+
+        Ok(pid)
+    }
+
+    /// Pause a collector process (Unix only)
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - Identifier of the collector to pause
+    ///
+    /// # Errors
+    ///
+    /// - `ProcessNotFound` if collector doesn't exist
+    /// - `InvalidState` if collector is not in Running state
+    /// - `PlatformNotSupported` on Windows
+    pub async fn pause_collector(&self, collector_id: &str) -> Result<(), ProcessManagerError> {
+        #[cfg(unix)]
+        {
+            let mut processes = self.processes.lock().await;
+            let process = processes
+                .get_mut(collector_id)
+                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+
+            // Validate state before pausing
+            if process.state != CollectorState::Running {
+                return Err(ProcessManagerError::InvalidState(format!(
+                    "Collector {} is not running (state: {:?}), cannot pause",
+                    collector_id, process.state
+                )));
+            }
+
+            info!("Pausing collector {} (PID: {})", collector_id, process.pid);
+
+            send_signal(process.pid, Signal::SIGSTOP)?;
+            process.state = CollectorState::Paused;
+
+            Ok(())
+        }
+
+        #[cfg(windows)]
+        {
+            Err(ProcessManagerError::PlatformNotSupported(
+                "Pause operation not supported on Windows".to_string(),
+            ))
+        }
+    }
+
+    /// Resume a paused collector process (Unix only)
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - Identifier of the collector to resume
+    ///
+    /// # Errors
+    ///
+    /// - `ProcessNotFound` if collector doesn't exist
+    /// - `InvalidState` if collector is not paused
+    /// - `PlatformNotSupported` on Windows
+    pub async fn resume_collector(&self, collector_id: &str) -> Result<(), ProcessManagerError> {
+        #[cfg(unix)]
+        {
+            let mut processes = self.processes.lock().await;
+            let process = processes
+                .get_mut(collector_id)
+                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+
+            if process.state != CollectorState::Paused {
+                return Err(ProcessManagerError::InvalidState(format!(
+                    "Collector {} is not paused (state: {:?})",
+                    collector_id, process.state
+                )));
+            }
+
+            info!("Resuming collector {} (PID: {})", collector_id, process.pid);
+
+            send_signal(process.pid, Signal::SIGCONT)?;
+            process.state = CollectorState::Running;
+
+            Ok(())
+        }
+
+        #[cfg(windows)]
+        {
+            Err(ProcessManagerError::PlatformNotSupported(
+                "Resume operation not supported on Windows".to_string(),
+            ))
+        }
+    }
+
+    /// Check collector health
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - Identifier of the collector to check
+    ///
+    /// # Returns
+    ///
+    /// Health status
+    pub async fn check_collector_health(
+        &self,
+        collector_id: &str,
+    ) -> Result<HealthStatus, ProcessManagerError> {
+        let mut processes = self.processes.lock().await;
+        let process = processes
+            .get_mut(collector_id)
+            .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+
+        process.last_health_check = Some(SystemTime::now());
+
+        // Check if process is still running
+        match process
+            .child
+            .as_mut()
+            .and_then(|c| c.try_wait().ok())
+            .flatten()
+        {
+            Some(_) => Ok(HealthStatus::Unhealthy), // Process exited
+            None => Ok(HealthStatus::Healthy),      // Still running or no child handle
+        }
+    }
+
+    /// Get collector status
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - Identifier of the collector
+    ///
+    /// # Returns
+    ///
+    /// Collector status
+    pub async fn get_collector_status(
+        &self,
+        collector_id: &str,
+    ) -> Result<CollectorStatus, ProcessManagerError> {
+        let mut processes = self.processes.lock().await;
+        let process = processes
+            .get_mut(collector_id)
+            .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+
+        let uptime = SystemTime::now()
+            .duration_since(process.start_time)
+            .unwrap_or_default();
+
+        let health = match process
+            .child
+            .as_mut()
+            .and_then(|c| c.try_wait().ok())
+            .flatten()
+        {
+            Some(_) => HealthStatus::Unhealthy, // Process exited
+            None => HealthStatus::Healthy,      // Still running or no child handle
+        };
+
+        Ok(CollectorStatus {
+            collector_id: process.collector_id.clone(),
+            state: process.state.clone(),
+            pid: process.pid,
+            start_time: process.start_time,
+            restart_count: process.restart_count,
+            uptime,
+            health,
+        })
+    }
+
+    /// Shutdown all collectors
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or failure
+    pub async fn shutdown_all(&self) -> Result<(), ProcessManagerError> {
+        info!("Shutting down all collectors");
+
+        // Send shutdown signal
+        let _ = self.shutdown_tx.send(());
+
+        // Get list of collector IDs
+        let collector_ids: Vec<String> = {
+            let processes = self.processes.lock().await;
+            processes.keys().cloned().collect()
+        };
+
+        // First pass: attempt graceful stop for each collector
+        for collector_id in &collector_ids {
+            match self
+                .stop_collector(collector_id, true, self.config.default_graceful_timeout)
+                .await
+            {
+                Ok(_) => {
+                    info!("Successfully stopped collector: {}", collector_id);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to gracefully stop collector {}: {}. Will attempt force stop.",
+                        collector_id, e
+                    );
+                }
+            }
+        }
+
+        // Second pass: force kill any remaining collectors
+        let remaining_ids: Vec<String> = {
+            let processes = self.processes.lock().await;
+            processes.keys().cloned().collect()
+        };
+
+        for collector_id in &remaining_ids {
+            match self
+                .stop_collector(collector_id, false, self.config.default_force_timeout)
+                .await
+            {
+                Ok(_) => info!("Force-stopped collector: {}", collector_id),
+                Err(e) => warn!(
+                    "Collector {} did not terminate after force stop: {}. Keeping entry for visibility.",
+                    collector_id, e
+                ),
+            }
+        }
+
+        info!("All collectors shut down");
+        Ok(())
+    }
+}
+
+/// Send a signal to a process (Unix only)
+#[cfg(unix)]
+fn send_signal(pid: u32, signal: Signal) -> Result<(), ProcessManagerError> {
+    let nix_pid = Pid::from_raw(pid as i32);
+    signal::kill(nix_pid, signal)
+        .map_err(|e| ProcessManagerError::TerminateFailed(format!("Failed to send signal: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_collector_state_transitions() {
+        let state = CollectorState::Starting;
+        assert_eq!(state, CollectorState::Starting);
+
+        let state = CollectorState::Running;
+        assert_eq!(state, CollectorState::Running);
+    }
+
+    #[test]
+    fn test_process_manager_config_default() {
+        let config = ProcessManagerConfig::default();
+        assert_eq!(config.default_graceful_timeout, Duration::from_secs(30));
+        assert_eq!(config.default_force_timeout, Duration::from_secs(5));
+        assert!(!config.enable_auto_restart);
+    }
+
+    #[test]
+    fn test_health_status() {
+        assert_eq!(HealthStatus::Healthy, HealthStatus::Healthy);
+        assert_ne!(HealthStatus::Healthy, HealthStatus::Unhealthy);
+    }
+}

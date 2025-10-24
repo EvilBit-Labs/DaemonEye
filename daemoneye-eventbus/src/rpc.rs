@@ -17,11 +17,17 @@
 //!
 //! ```rust,no_run
 //! use daemoneye_eventbus::rpc::{CollectorRpcClient, CollectorLifecycleRequest, RpcRequest, CollectorOperation};
+//! use daemoneye_eventbus::broker::DaemoneyeBroker;
+//! use std::sync::Arc;
 //! use std::time::Duration;
 //!
 //! #[tokio::main(flavor = "current_thread")]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let mut rpc_client = CollectorRpcClient::new("control.collector.procmond").await?;
+//!     // Create an embedded broker and wrap in Arc
+//!     let broker = Arc::new(DaemoneyeBroker::new("/tmp/example-eventbus.sock").await?);
+//!
+//!     // Create the RPC client targeting the collector control topic
+//!     let mut rpc_client = CollectorRpcClient::new("control.collector.procmond", broker).await?;
 //!
 //!     // Create a lifecycle request
 //!     let lifecycle_request = CollectorLifecycleRequest::start("procmond", None);
@@ -49,6 +55,10 @@ use uuid::Uuid;
 use crate::broker::DaemoneyeBroker;
 use crate::error::{EventBusError, Result};
 use crate::message::Message;
+use crate::process_manager::{
+    CollectorConfig, CollectorProcessManager, HealthStatus as ProcessHealthStatus,
+    ProcessManagerError,
+};
 
 /// RPC client for collector lifecycle management
 #[derive(Debug)]
@@ -82,6 +92,8 @@ pub struct CollectorRpcService {
     pub supported_operations: Vec<CollectorOperation>,
     /// Service capabilities
     pub capabilities: ServiceCapabilities,
+    /// Process manager for lifecycle operations
+    pub process_manager: Arc<CollectorProcessManager>,
 }
 
 /// RPC request message for collector operations
@@ -564,11 +576,16 @@ impl CollectorRpcClient {
 
 impl CollectorRpcService {
     /// Create a new RPC service
-    pub fn new(service_id: String, capabilities: ServiceCapabilities) -> Self {
+    pub fn new(
+        service_id: String,
+        capabilities: ServiceCapabilities,
+        process_manager: Arc<CollectorProcessManager>,
+    ) -> Self {
         Self {
             service_id,
             supported_operations: capabilities.operations.clone(),
             capabilities,
+            process_manager,
         }
     }
 
@@ -624,8 +641,77 @@ impl CollectorRpcService {
         request: RpcRequest,
         start_time: SystemTime,
     ) -> RpcResponse {
-        // TODO: Implement actual collector start logic
-        self.create_success_response(request, None, start_time)
+        // Extract lifecycle request from payload
+        let lifecycle_request = match &request.payload {
+            RpcPayload::Lifecycle(req) => req,
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Expected Lifecycle payload for Start operation".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        // Create collector configuration
+        let mut collector_config = CollectorConfig {
+            binary_path: self
+                .process_manager
+                .config
+                .collector_binaries
+                .get(&lifecycle_request.collector_type)
+                .cloned()
+                .unwrap_or_default(),
+            args: vec![],
+            env: lifecycle_request.environment.clone().unwrap_or_default(),
+            working_dir: lifecycle_request
+                .working_directory
+                .as_ref()
+                .map(|s| s.into()),
+            resource_limits: lifecycle_request.resource_limits.as_ref().map(|limits| {
+                crate::process_manager::ResourceLimits {
+                    max_memory_bytes: limits.max_memory_bytes,
+                    max_cpu_percent: limits.max_cpu_percent.map(|p| p as u32),
+                }
+            }),
+            auto_restart: self.process_manager.config.enable_auto_restart,
+            max_restarts: 3,
+        };
+
+        // Add config overrides as command-line args
+        if let Some(overrides) = &lifecycle_request.config_overrides {
+            for (key, value) in overrides {
+                collector_config.args.push(format!("--{}", key));
+                collector_config.args.push(value.to_string());
+            }
+        }
+
+        // Start the collector
+        match self
+            .process_manager
+            .start_collector(
+                &lifecycle_request.collector_id,
+                &lifecycle_request.collector_type,
+                collector_config,
+            )
+            .await
+        {
+            Ok(pid) => {
+                let mut context = HashMap::new();
+                context.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
+                let payload = RpcPayload::Generic(context);
+                self.create_success_response(request, Some(payload), start_time)
+            }
+            Err(e) => {
+                let rpc_error = self.map_process_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
+        }
     }
 
     /// Handle collector stop request
@@ -634,8 +720,48 @@ impl CollectorRpcService {
         request: RpcRequest,
         start_time: SystemTime,
     ) -> RpcResponse {
-        // TODO: Implement actual collector stop logic
-        self.create_success_response(request, None, start_time)
+        // Extract lifecycle request from payload
+        let lifecycle_request = match &request.payload {
+            RpcPayload::Lifecycle(req) => req,
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Expected Lifecycle payload for Stop operation".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        // Determine timeout
+        let timeout = self.process_manager.config.default_graceful_timeout;
+
+        // Stop the collector
+        match self
+            .process_manager
+            .stop_collector(&lifecycle_request.collector_id, true, timeout)
+            .await
+        {
+            Ok(exit_code) => {
+                let mut context = HashMap::new();
+                if let Some(code) = exit_code {
+                    context.insert(
+                        "exit_code".to_string(),
+                        serde_json::Value::Number(code.into()),
+                    );
+                }
+                let payload = RpcPayload::Generic(context);
+                self.create_success_response(request, Some(payload), start_time)
+            }
+            Err(e) => {
+                let rpc_error = self.map_process_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
+        }
     }
 
     /// Handle collector restart request
@@ -644,8 +770,44 @@ impl CollectorRpcService {
         request: RpcRequest,
         start_time: SystemTime,
     ) -> RpcResponse {
-        // TODO: Implement actual collector restart logic
-        self.create_success_response(request, None, start_time)
+        // Extract lifecycle request from payload
+        let lifecycle_request = match &request.payload {
+            RpcPayload::Lifecycle(req) => req,
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Expected Lifecycle payload for Restart operation".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        // Determine timeout (stop + start)
+        let timeout =
+            self.process_manager.config.default_graceful_timeout + Duration::from_secs(10);
+
+        // Restart the collector
+        match self
+            .process_manager
+            .restart_collector(&lifecycle_request.collector_id, timeout)
+            .await
+        {
+            Ok(pid) => {
+                let mut context = HashMap::new();
+                context.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
+                let payload = RpcPayload::Generic(context);
+                self.create_success_response(request, Some(payload), start_time)
+            }
+            Err(e) => {
+                let rpc_error = self.map_process_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
+        }
     }
 
     /// Handle health check request
@@ -654,22 +816,96 @@ impl CollectorRpcService {
         request: RpcRequest,
         start_time: SystemTime,
     ) -> RpcResponse {
-        // TODO: Implement actual health check logic
-        let health_data = HealthCheckData {
-            collector_id: "example".to_string(),
-            status: HealthStatus::Healthy,
-            components: HashMap::new(),
-            metrics: HashMap::new(),
-            last_heartbeat: SystemTime::now(),
-            uptime_seconds: 3600,
-            error_count: 0,
+        // Extract collector_id from payload
+        let collector_id = match &request.payload {
+            RpcPayload::Lifecycle(req) => req.collector_id.clone(),
+            RpcPayload::Generic(map) => {
+                if let Some(serde_json::Value::String(id)) = map.get("collector_id") {
+                    id.clone()
+                } else {
+                    return self.create_error_response(
+                        request,
+                        RpcError {
+                            code: "INVALID_PAYLOAD".to_string(),
+                            message: "Missing collector_id in payload".to_string(),
+                            context: HashMap::new(),
+                            category: ErrorCategory::Configuration,
+                        },
+                        start_time,
+                    );
+                }
+            }
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Invalid payload for HealthCheck operation".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
         };
 
-        self.create_success_response(
-            request,
-            Some(RpcPayload::HealthCheck(health_data)),
-            start_time,
-        )
+        // Get collector status
+        let status_result = self
+            .process_manager
+            .get_collector_status(&collector_id)
+            .await;
+        let health_result = self
+            .process_manager
+            .check_collector_health(&collector_id)
+            .await;
+
+        match (status_result, health_result) {
+            (Ok(status), Ok(health)) => {
+                let mut components = HashMap::new();
+                components.insert(
+                    "process".to_string(),
+                    ComponentHealth {
+                        name: "process".to_string(),
+                        status: match health {
+                            ProcessHealthStatus::Healthy => HealthStatus::Healthy,
+                            ProcessHealthStatus::Unhealthy => HealthStatus::Unhealthy,
+                            ProcessHealthStatus::Unknown => HealthStatus::Unknown,
+                        },
+                        message: Some(format!("State: {:?}", status.state)),
+                        last_check: SystemTime::now(),
+                        check_interval_seconds: 60,
+                    },
+                );
+
+                let mut metrics = HashMap::new();
+                metrics.insert("pid".to_string(), status.pid as f64);
+                metrics.insert("restart_count".to_string(), status.restart_count as f64);
+
+                let health_data = HealthCheckData {
+                    collector_id: collector_id.clone(),
+                    status: match health {
+                        ProcessHealthStatus::Healthy => HealthStatus::Healthy,
+                        ProcessHealthStatus::Unhealthy => HealthStatus::Unhealthy,
+                        ProcessHealthStatus::Unknown => HealthStatus::Unknown,
+                    },
+                    components,
+                    metrics,
+                    last_heartbeat: SystemTime::now(),
+                    uptime_seconds: status.uptime.as_secs(),
+                    error_count: 0,
+                };
+
+                self.create_success_response(
+                    request,
+                    Some(RpcPayload::HealthCheck(health_data)),
+                    start_time,
+                )
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                let rpc_error = self.map_process_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
+        }
     }
 
     /// Handle configuration update request
@@ -719,8 +955,37 @@ impl CollectorRpcService {
         request: RpcRequest,
         start_time: SystemTime,
     ) -> RpcResponse {
-        // TODO: Implement actual graceful shutdown logic
-        self.create_success_response(request, None, start_time)
+        // Extract shutdown request from payload
+        let shutdown_request = match &request.payload {
+            RpcPayload::Shutdown(req) => req,
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Expected Shutdown payload".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        let timeout = Duration::from_millis(shutdown_request.graceful_timeout_ms);
+
+        // Stop the collector gracefully
+        match self
+            .process_manager
+            .stop_collector(&shutdown_request.collector_id, true, timeout)
+            .await
+        {
+            Ok(_) => self.create_success_response(request, None, start_time),
+            Err(e) => {
+                let rpc_error = self.map_process_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
+        }
     }
 
     /// Handle force shutdown request
@@ -729,8 +994,36 @@ impl CollectorRpcService {
         request: RpcRequest,
         start_time: SystemTime,
     ) -> RpcResponse {
-        // TODO: Implement actual force shutdown logic
-        self.create_success_response(request, None, start_time)
+        // Extract shutdown request from payload
+        let shutdown_request = match &request.payload {
+            RpcPayload::Shutdown(req) => req,
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Expected Shutdown payload".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        // Force kill with short timeout
+        let timeout = Duration::from_secs(5);
+        match self
+            .process_manager
+            .stop_collector(&shutdown_request.collector_id, false, timeout)
+            .await
+        {
+            Ok(_) => self.create_success_response(request, None, start_time),
+            Err(e) => {
+                let rpc_error = self.map_process_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
+        }
     }
 
     /// Handle pause request
@@ -739,8 +1032,47 @@ impl CollectorRpcService {
         request: RpcRequest,
         start_time: SystemTime,
     ) -> RpcResponse {
-        // TODO: Implement actual pause logic
-        self.create_success_response(request, None, start_time)
+        // Extract collector_id from payload
+        let collector_id = match &request.payload {
+            RpcPayload::Lifecycle(req) => req.collector_id.clone(),
+            RpcPayload::Generic(map) => {
+                if let Some(serde_json::Value::String(id)) = map.get("collector_id") {
+                    id.clone()
+                } else {
+                    return self.create_error_response(
+                        request,
+                        RpcError {
+                            code: "INVALID_PAYLOAD".to_string(),
+                            message: "Missing collector_id in payload".to_string(),
+                            context: HashMap::new(),
+                            category: ErrorCategory::Configuration,
+                        },
+                        start_time,
+                    );
+                }
+            }
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Invalid payload for Pause operation".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        // Pause the collector
+        match self.process_manager.pause_collector(&collector_id).await {
+            Ok(()) => self.create_success_response(request, None, start_time),
+            Err(e) => {
+                let rpc_error = self.map_process_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
+        }
     }
 
     /// Handle resume request
@@ -749,8 +1081,106 @@ impl CollectorRpcService {
         request: RpcRequest,
         start_time: SystemTime,
     ) -> RpcResponse {
-        // TODO: Implement actual resume logic
-        self.create_success_response(request, None, start_time)
+        // Extract collector_id from payload
+        let collector_id = match &request.payload {
+            RpcPayload::Lifecycle(req) => req.collector_id.clone(),
+            RpcPayload::Generic(map) => {
+                if let Some(serde_json::Value::String(id)) = map.get("collector_id") {
+                    id.clone()
+                } else {
+                    return self.create_error_response(
+                        request,
+                        RpcError {
+                            code: "INVALID_PAYLOAD".to_string(),
+                            message: "Missing collector_id in payload".to_string(),
+                            context: HashMap::new(),
+                            category: ErrorCategory::Configuration,
+                        },
+                        start_time,
+                    );
+                }
+            }
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Invalid payload for Resume operation".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        // Resume the collector
+        match self.process_manager.resume_collector(&collector_id).await {
+            Ok(()) => self.create_success_response(request, None, start_time),
+            Err(e) => {
+                let rpc_error = self.map_process_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
+        }
+    }
+
+    /// Map ProcessManagerError to RpcError
+    fn map_process_error_to_rpc_error(&self, error: ProcessManagerError) -> RpcError {
+        let (code, message, category) = match error {
+            ProcessManagerError::ProcessNotFound(ref id) => (
+                "PROCESS_NOT_FOUND",
+                format!("Collector not found: {}", id),
+                ErrorCategory::Resource,
+            ),
+            ProcessManagerError::AlreadyRunning(ref id) => (
+                "ALREADY_RUNNING",
+                format!("Collector already running: {}", id),
+                ErrorCategory::Resource,
+            ),
+            ProcessManagerError::SpawnFailed(ref msg) => (
+                "SPAWN_FAILED",
+                format!("Failed to spawn process: {}", msg),
+                ErrorCategory::Internal,
+            ),
+            ProcessManagerError::TerminateFailed(ref msg) => (
+                "TERMINATE_FAILED",
+                format!("Failed to terminate process: {}", msg),
+                ErrorCategory::Internal,
+            ),
+            ProcessManagerError::InvalidState(ref msg) => (
+                "INVALID_STATE",
+                format!("Invalid state: {}", msg),
+                ErrorCategory::Configuration,
+            ),
+            ProcessManagerError::PlatformNotSupported(ref msg) => (
+                "PLATFORM_NOT_SUPPORTED",
+                format!("Operation not supported: {}", msg),
+                ErrorCategory::Configuration,
+            ),
+            ProcessManagerError::Timeout(ref msg) => (
+                "TIMEOUT",
+                format!("Operation timed out: {}", msg),
+                ErrorCategory::Timeout,
+            ),
+            ProcessManagerError::Io(ref err) => (
+                "IO_ERROR",
+                format!("I/O error: {}", err),
+                ErrorCategory::Internal,
+            ),
+        };
+
+        let mut context = HashMap::new();
+        context.insert(
+            "error_type".to_string(),
+            serde_json::Value::String(code.to_string()),
+        );
+
+        RpcError {
+            code: code.to_string(),
+            message,
+            context,
+            category,
+        }
     }
 
     /// Create a success response
@@ -1032,7 +1462,13 @@ mod tests {
             supported_collectors: vec!["procmond".to_string()],
         };
 
-        let service = CollectorRpcService::new("test-service".to_string(), capabilities);
+        // Create a dummy process manager for testing
+        let process_manager_config = crate::process_manager::ProcessManagerConfig::default();
+        let process_manager =
+            crate::process_manager::CollectorProcessManager::new(process_manager_config);
+
+        let service =
+            CollectorRpcService::new("test-service".to_string(), capabilities, process_manager);
         assert_eq!(service.service_id, "test-service");
         assert_eq!(service.supported_operations.len(), 3);
     }

@@ -25,6 +25,8 @@ fn create_test_configs() -> (BrokerConfig, daemoneye_lib::ipc::IpcConfig, TempDi
         max_connections: 10,
         message_buffer_size: 100,
         topic_hierarchy: daemoneye_lib::config::TopicHierarchyConfig::default(),
+        collector_binaries: std::collections::HashMap::new(),
+        process_manager: daemoneye_lib::config::ProcessManagerConfig::default(),
     };
 
     let mut ipc_config = create_cli_ipc_config();

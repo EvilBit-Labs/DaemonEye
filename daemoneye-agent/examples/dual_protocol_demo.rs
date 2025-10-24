@@ -28,6 +28,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_connections: 50,
         message_buffer_size: 1000,
         topic_hierarchy: daemoneye_lib::config::TopicHierarchyConfig::default(),
+        collector_binaries: std::collections::HashMap::new(),
+        process_manager: daemoneye_lib::config::ProcessManagerConfig::default(),
     };
 
     let mut cli_ipc_config = create_cli_ipc_config();

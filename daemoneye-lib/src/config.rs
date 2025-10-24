@@ -118,6 +118,33 @@ pub struct LoggingConfig {
     pub structured: bool,
 }
 
+/// Process manager configuration for collector lifecycle management.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProcessManagerConfig {
+    /// Graceful shutdown timeout in seconds
+    pub graceful_shutdown_timeout_seconds: u64,
+    /// Force shutdown timeout in seconds
+    pub force_shutdown_timeout_seconds: u64,
+    /// Health check interval in seconds
+    pub health_check_interval_seconds: u64,
+    /// Enable automatic restart on collector failure
+    pub enable_auto_restart: bool,
+    /// Maximum restart attempts before giving up
+    pub max_restart_attempts: u32,
+}
+
+impl Default for ProcessManagerConfig {
+    fn default() -> Self {
+        Self {
+            graceful_shutdown_timeout_seconds: 30,
+            force_shutdown_timeout_seconds: 5,
+            health_check_interval_seconds: 60,
+            enable_auto_restart: false,
+            max_restart_attempts: 3,
+        }
+    }
+}
+
 /// `EventBus` broker configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrokerConfig {
@@ -135,6 +162,12 @@ pub struct BrokerConfig {
     pub message_buffer_size: usize,
     /// Topic hierarchy configuration
     pub topic_hierarchy: TopicHierarchyConfig,
+    /// Collector binary paths (`collector_type` -> `binary_path`)
+    #[serde(default)]
+    pub collector_binaries: std::collections::HashMap<String, PathBuf>,
+    /// Process manager configuration
+    #[serde(default)]
+    pub process_manager: ProcessManagerConfig,
 }
 
 // BrokerConfig implementation moved below Default impl
@@ -279,6 +312,8 @@ impl Default for BrokerConfig {
             max_connections: 100,
             message_buffer_size: 1000,
             topic_hierarchy: TopicHierarchyConfig::default(),
+            collector_binaries: std::collections::HashMap::new(),
+            process_manager: ProcessManagerConfig::default(),
         }
     }
 }
@@ -327,6 +362,71 @@ impl BrokerConfig {
 
             Ok(socket_path.to_path_buf())
         }
+    }
+
+    /// Resolves the binary path for a collector type.
+    ///
+    /// Searches in the following order:
+    /// 1. Configured path in `collector_binaries`
+    /// 2. Default installation paths
+    /// 3. Development build paths
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_type` - The type of collector (e.g., "procmond", "netmond")
+    ///
+    /// # Returns
+    ///
+    /// Returns the resolved binary path, or None if not found.
+    pub fn resolve_collector_binary(&self, collector_type: &str) -> Option<PathBuf> {
+        // 1. Check configured paths first
+        if let Some(path) = self.collector_binaries.get(collector_type) {
+            if path.exists() {
+                return Some(path.clone());
+            }
+            warn!(
+                collector_type,
+                configured_path = %path.display(),
+                "Configured collector binary not found"
+            );
+        }
+
+        // 2. Check default installation paths
+        let default_paths = [
+            PathBuf::from(format!("/usr/local/bin/{collector_type}")),
+            PathBuf::from(format!("/usr/bin/{collector_type}")),
+        ];
+
+        for path in &default_paths {
+            if path.exists() {
+                info!(
+                    collector_type,
+                    resolved_path = %path.display(),
+                    "Resolved collector binary from default path"
+                );
+                return Some(path.clone());
+            }
+        }
+
+        // 3. Check development build paths
+        let dev_paths = [
+            PathBuf::from(format!("./target/release/{collector_type}")),
+            PathBuf::from(format!("./target/debug/{collector_type}")),
+        ];
+
+        for path in &dev_paths {
+            if path.exists() {
+                info!(
+                    collector_type,
+                    resolved_path = %path.display(),
+                    "Resolved collector binary from development path"
+                );
+                return Some(path.clone());
+            }
+        }
+
+        warn!(collector_type, "Failed to resolve collector binary path");
+        None
     }
 }
 

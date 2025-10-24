@@ -6,7 +6,10 @@
 //! for collector-core component coordination.
 
 use anyhow::{Context, Result};
-use daemoneye_eventbus::{DaemoneyeBroker, DaemoneyeEventBus, EventBus, EventBusStatistics};
+use daemoneye_eventbus::{
+    DaemoneyeBroker, DaemoneyeEventBus, EventBus, EventBusStatistics,
+    process_manager::CollectorProcessManager,
+};
 use daemoneye_lib::config::BrokerConfig;
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,17 +44,37 @@ pub struct BrokerManager {
     health_status: Arc<RwLock<BrokerHealth>>,
     /// Shutdown signal sender
     shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// Process manager for collector lifecycle
+    process_manager: Arc<CollectorProcessManager>,
 }
 
 impl BrokerManager {
     /// Create a new broker manager with the given configuration
     pub fn new(config: BrokerConfig) -> Self {
+        // Convert config to process manager config
+        let pm_config = daemoneye_eventbus::process_manager::ProcessManagerConfig {
+            collector_binaries: config.collector_binaries.clone(),
+            default_graceful_timeout: Duration::from_secs(
+                config.process_manager.graceful_shutdown_timeout_seconds,
+            ),
+            default_force_timeout: Duration::from_secs(
+                config.process_manager.force_shutdown_timeout_seconds,
+            ),
+            health_check_interval: Duration::from_secs(
+                config.process_manager.health_check_interval_seconds,
+            ),
+            enable_auto_restart: config.process_manager.enable_auto_restart,
+        };
+
+        let process_manager = CollectorProcessManager::new(pm_config);
+
         Self {
             config,
             broker: Arc::new(RwLock::new(None)),
             event_bus: Arc::new(Mutex::new(None)),
             health_status: Arc::new(RwLock::new(BrokerHealth::Stopped)),
             shutdown_tx: Arc::new(Mutex::new(None)),
+            process_manager,
         }
     }
 
@@ -120,6 +143,15 @@ impl BrokerManager {
         {
             let mut health = self.health_status.write().await;
             *health = BrokerHealth::ShuttingDown;
+        }
+
+        // Shutdown all managed collector processes first
+        info!("Shutting down managed collector processes");
+        if let Err(e) = self.process_manager.shutdown_all().await {
+            error!(error = %e, "Failed to shutdown all collector processes");
+            // Continue with broker shutdown even if collector shutdown fails
+        } else {
+            info!("All collector processes shut down successfully");
         }
 
         // Send shutdown signal if available
@@ -218,6 +250,12 @@ impl BrokerManager {
     /// Get the socket path for the broker
     pub fn socket_path(&self) -> &str {
         &self.config.socket_path
+    }
+
+    /// Get a reference to the process manager
+    #[allow(dead_code)] // Public accessor for future use
+    pub fn process_manager(&self) -> &Arc<CollectorProcessManager> {
+        &self.process_manager
     }
 
     /// Perform a health check on the broker

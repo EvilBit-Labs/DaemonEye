@@ -47,7 +47,13 @@ impl TestRpcService {
             supported_collectors: vec!["test-collector".to_string()],
         };
 
-        let service = CollectorRpcService::new("test-service".to_string(), capabilities);
+        // Create dummy process manager for existing tests
+        use daemoneye_eventbus::process_manager::{CollectorProcessManager, ProcessManagerConfig};
+        let pm_config = ProcessManagerConfig::default();
+        let process_manager = CollectorProcessManager::new(pm_config);
+
+        let service =
+            CollectorRpcService::new("test-service".to_string(), capabilities, process_manager);
 
         Self {
             service,
@@ -64,6 +70,11 @@ impl TestRpcService {
                 self.create_success_response(request, None)
             }
             CollectorOperation::Stop => {
+                self.collector_running = false;
+                self.create_success_response(request, None)
+            }
+            CollectorOperation::GracefulShutdown | CollectorOperation::ForceShutdown => {
+                // Handle shutdown operations in mock
                 self.collector_running = false;
                 self.create_success_response(request, None)
             }
@@ -470,7 +481,13 @@ async fn test_service_capabilities_validation() {
         supported_collectors: vec!["test-collector".to_string()],
     };
 
-    let service = CollectorRpcService::new("test-service".to_string(), capabilities);
+    // Create dummy process manager
+    use daemoneye_eventbus::process_manager::{CollectorProcessManager, ProcessManagerConfig};
+    let pm_config = ProcessManagerConfig::default();
+    let process_manager = CollectorProcessManager::new(pm_config);
+
+    let service =
+        CollectorRpcService::new("test-service".to_string(), capabilities, process_manager);
 
     // Verify service configuration
     assert_eq!(service.service_id, "test-service");
@@ -949,6 +966,640 @@ async fn test_rpc_client_shutdown() -> Result<()> {
     let result = client.call(request, Duration::from_secs(1)).await;
     // We expect this to fail in some way after shutdown
     assert!(result.is_err());
+
+    // Cleanup
+    broker.shutdown().await?;
+
+    Ok(())
+}
+
+//
+// Process Manager Integration Tests
+//
+
+use daemoneye_eventbus::process_manager::{
+    CollectorConfig, CollectorProcessManager, ProcessManagerConfig,
+};
+use std::path::PathBuf;
+use tempfile::TempDir;
+
+/// Setup test process manager with mock binaries
+#[allow(dead_code)]
+fn setup_test_process_manager() -> (Arc<CollectorProcessManager>, TempDir) {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    // Create mock collector binary
+    let binary_path = create_mock_collector_binary(&temp_dir, 300);
+
+    let mut collector_binaries = HashMap::new();
+    collector_binaries.insert("test-collector".to_string(), binary_path.clone());
+
+    let config = ProcessManagerConfig {
+        collector_binaries,
+        default_graceful_timeout: Duration::from_secs(5),
+        default_force_timeout: Duration::from_secs(2),
+        health_check_interval: Duration::from_secs(10),
+        enable_auto_restart: false,
+    };
+
+    let manager = CollectorProcessManager::new(config);
+    (manager, temp_dir)
+}
+
+/// Create mock collector binary for testing
+#[cfg(unix)]
+fn create_mock_collector_binary(temp_dir: &TempDir, sleep_duration: u64) -> PathBuf {
+    let script_path = temp_dir.path().join("mock_collector.sh");
+    let script_content = format!(
+        r#"#!/bin/bash
+# Mock collector that sleeps for {} seconds
+echo "Mock collector started"
+sleep {}
+"#,
+        sleep_duration, sleep_duration
+    );
+
+    std::fs::write(&script_path, script_content).expect("Failed to write script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("Failed to get metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("Failed to set permissions");
+    }
+
+    script_path
+}
+
+#[cfg(windows)]
+fn create_mock_collector_binary(temp_dir: &TempDir, sleep_duration: u64) -> PathBuf {
+    let script_path = temp_dir.path().join("mock_collector.bat");
+    let script_content = format!(
+        r#"@echo off
+REM Mock collector that sleeps for {} seconds
+echo Mock collector started
+timeout /t {} /nobreak
+"#,
+        sleep_duration, sleep_duration
+    );
+
+    std::fs::write(&script_path, script_content).expect("Failed to write script");
+    script_path
+}
+
+#[tokio::test]
+async fn test_rpc_start_collector_with_process_manager() -> Result<()> {
+    let (process_manager, _temp_dir) = setup_test_process_manager();
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::Start],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec!["test-collector".to_string()],
+    };
+
+    let service = CollectorRpcService::new(
+        "test-service".to_string(),
+        capabilities,
+        process_manager.clone(),
+    );
+
+    // Create start request
+    let lifecycle_req = CollectorLifecycleRequest {
+        collector_id: "test-1".to_string(),
+        collector_type: "test-collector".to_string(),
+        config_overrides: Some(HashMap::new()),
+        environment: None,
+        working_directory: None,
+        resource_limits: None,
+        startup_timeout_ms: Some(10000),
+    };
+
+    let request = RpcRequest {
+        request_id: Uuid::new_v4().to_string(),
+        client_id: "test-client".to_string(),
+        target: "control.collector.test".to_string(),
+        operation: CollectorOperation::Start,
+        payload: RpcPayload::Lifecycle(lifecycle_req),
+        timestamp: SystemTime::now(),
+        timeout_ms: 10000,
+        correlation_id: Uuid::new_v4().to_string(),
+    }; // Start collector
+    let response = service.handle_request(request.clone()).await;
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Verify collector is running
+    let status = process_manager
+        .get_collector_status("test-1")
+        .await
+        .expect("Failed to get status");
+    assert!(status.pid > 0);
+
+    // Cleanup
+    let _ = process_manager
+        .stop_collector("test-1", false, Duration::from_secs(2))
+        .await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rpc_stop_collector_with_process_manager() -> Result<()> {
+    let (process_manager, temp_dir) = setup_test_process_manager();
+
+    let binary_path = create_mock_collector_binary(&temp_dir, 300);
+    let collector_config = CollectorConfig {
+        binary_path,
+        args: vec![],
+        env: HashMap::new(),
+        working_dir: None,
+        resource_limits: None,
+        auto_restart: false,
+        max_restarts: 0,
+    };
+
+    // Start collector directly
+    process_manager
+        .start_collector("test-1", "test-collector", collector_config)
+        .await
+        .expect("Failed to start collector");
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::Stop],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec!["test-collector".to_string()],
+    };
+
+    let service = CollectorRpcService::new(
+        "test-service".to_string(),
+        capabilities,
+        process_manager.clone(),
+    );
+
+    // Create stop request with Lifecycle payload (not Shutdown)
+    let lifecycle_req = CollectorLifecycleRequest::stop("test-1");
+
+    let request = RpcRequest {
+        request_id: Uuid::new_v4().to_string(),
+        client_id: "test-client".to_string(),
+        target: "control.collector.test".to_string(),
+        operation: CollectorOperation::Stop,
+        payload: RpcPayload::Lifecycle(lifecycle_req),
+        timestamp: SystemTime::now(),
+        timeout_ms: 10000,
+        correlation_id: Uuid::new_v4().to_string(),
+    };
+
+    // Stop collector
+    let response = service.handle_request(request).await;
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Verify collector is stopped
+    let result = process_manager.get_collector_status("test-1").await;
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rpc_restart_collector_with_process_manager() -> Result<()> {
+    let (process_manager, temp_dir) = setup_test_process_manager();
+
+    let binary_path = create_mock_collector_binary(&temp_dir, 300);
+    let collector_config = CollectorConfig {
+        binary_path,
+        args: vec![],
+        env: HashMap::new(),
+        working_dir: None,
+        resource_limits: None,
+        auto_restart: false,
+        max_restarts: 0,
+    };
+
+    // Start collector directly
+    let initial_pid = process_manager
+        .start_collector("test-1", "test-collector", collector_config)
+        .await
+        .expect("Failed to start collector");
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::Restart],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec!["test-collector".to_string()],
+    };
+
+    let service = CollectorRpcService::new(
+        "test-service".to_string(),
+        capabilities,
+        process_manager.clone(),
+    );
+
+    // Create restart request
+    let lifecycle_req = CollectorLifecycleRequest {
+        collector_id: "test-1".to_string(),
+        collector_type: "test-collector".to_string(),
+        config_overrides: Some(HashMap::new()),
+        environment: None,
+        working_directory: None,
+        resource_limits: None,
+        startup_timeout_ms: Some(15000),
+    };
+
+    let request = RpcRequest {
+        request_id: Uuid::new_v4().to_string(),
+        client_id: "test-client".to_string(),
+        target: "control.collector.test".to_string(),
+        operation: CollectorOperation::Restart,
+        payload: RpcPayload::Lifecycle(lifecycle_req),
+        timestamp: SystemTime::now(),
+        timeout_ms: 15000,
+        correlation_id: Uuid::new_v4().to_string(),
+    };
+
+    // Restart collector
+    let response = service.handle_request(request).await;
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Verify collector restarted with new PID
+    let status = process_manager
+        .get_collector_status("test-1")
+        .await
+        .expect("Failed to get status");
+    assert_ne!(status.pid, initial_pid);
+    assert_eq!(status.restart_count, 1);
+
+    // Cleanup
+    let _ = process_manager
+        .stop_collector("test-1", false, Duration::from_secs(2))
+        .await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rpc_health_check_with_running_collector() -> Result<()> {
+    let (process_manager, temp_dir) = setup_test_process_manager();
+
+    let binary_path = create_mock_collector_binary(&temp_dir, 300);
+    let collector_config = CollectorConfig {
+        binary_path,
+        args: vec![],
+        env: HashMap::new(),
+        working_dir: None,
+        resource_limits: None,
+        auto_restart: false,
+        max_restarts: 0,
+    };
+
+    // Start collector directly
+    process_manager
+        .start_collector("test-1", "test-collector", collector_config)
+        .await
+        .expect("Failed to start collector");
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::HealthCheck],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec!["test-collector".to_string()],
+    };
+
+    let service = CollectorRpcService::new(
+        "test-service".to_string(),
+        capabilities,
+        process_manager.clone(),
+    );
+
+    // Create health check request with proper payload containing collector_id
+    let mut payload_map = HashMap::new();
+    payload_map.insert(
+        "collector_id".to_string(),
+        serde_json::Value::String("test-1".to_string()),
+    );
+
+    let request = RpcRequest {
+        request_id: Uuid::new_v4().to_string(),
+        client_id: "test-client".to_string(),
+        target: "control.collector.test".to_string(),
+        operation: CollectorOperation::HealthCheck,
+        payload: RpcPayload::Generic(payload_map),
+        timestamp: SystemTime::now(),
+        timeout_ms: 5000,
+        correlation_id: Uuid::new_v4().to_string(),
+    };
+
+    // Check health
+    let response = service.handle_request(request).await;
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Verify health data
+    if let Some(RpcPayload::HealthCheck(health_data)) = response.payload {
+        assert_eq!(health_data.status, HealthStatus::Healthy);
+        assert_eq!(health_data.collector_id, "test-1");
+    } else {
+        panic!("Expected HealthCheck payload");
+    }
+
+    // Cleanup
+    let _ = process_manager
+        .stop_collector("test-1", false, Duration::from_secs(2))
+        .await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_rpc_health_check_with_stopped_collector() -> Result<()> {
+    let (process_manager, _temp_dir) = setup_test_process_manager();
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::HealthCheck],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec!["test-collector".to_string()],
+    };
+
+    let service = CollectorRpcService::new(
+        "test-service".to_string(),
+        capabilities,
+        process_manager.clone(),
+    );
+
+    // Create health check request for non-existent collector
+    let request = RpcRequest {
+        request_id: Uuid::new_v4().to_string(),
+        client_id: "test-client".to_string(),
+        target: "control.collector.test".to_string(),
+        operation: CollectorOperation::HealthCheck,
+        payload: RpcPayload::Empty,
+        timestamp: SystemTime::now(),
+        timeout_ms: 5000,
+        correlation_id: Uuid::new_v4().to_string(),
+    };
+
+    // Check health - should return error status
+    let response = service.handle_request(request).await;
+    assert_eq!(response.status, RpcStatus::Error);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_rpc_pause_collector_with_process_manager() -> Result<()> {
+    let (process_manager, temp_dir) = setup_test_process_manager();
+
+    let binary_path = create_mock_collector_binary(&temp_dir, 300);
+    let collector_config = CollectorConfig {
+        binary_path,
+        args: vec![],
+        env: HashMap::new(),
+        working_dir: None,
+        resource_limits: None,
+        auto_restart: false,
+        max_restarts: 0,
+    };
+
+    // Start collector directly
+    process_manager
+        .start_collector("test-1", "test-collector", collector_config)
+        .await
+        .expect("Failed to start collector");
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::Pause],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec!["test-collector".to_string()],
+    };
+
+    let service = CollectorRpcService::new(
+        "test-service".to_string(),
+        capabilities,
+        process_manager.clone(),
+    );
+
+    // Create pause request
+    let lifecycle_req = CollectorLifecycleRequest {
+        collector_id: "test-1".to_string(),
+        collector_type: "test-collector".to_string(),
+        config_overrides: Some(HashMap::new()),
+        environment: None,
+        working_directory: None,
+        resource_limits: None,
+        startup_timeout_ms: Some(5000),
+    };
+
+    let request = RpcRequest {
+        request_id: Uuid::new_v4().to_string(),
+        client_id: "test-client".to_string(),
+        target: "control.collector.test".to_string(),
+        operation: CollectorOperation::Pause,
+        payload: RpcPayload::Lifecycle(lifecycle_req),
+        timestamp: SystemTime::now(),
+        timeout_ms: 5000,
+        correlation_id: Uuid::new_v4().to_string(),
+    };
+
+    // Pause collector
+    let response = service.handle_request(request).await;
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Verify collector is paused
+    let status = process_manager
+        .get_collector_status("test-1")
+        .await
+        .expect("Failed to get status");
+    assert_eq!(format!("{:?}", status.state), "Paused");
+
+    // Cleanup
+    let _ = process_manager
+        .stop_collector("test-1", false, Duration::from_secs(2))
+        .await;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn test_rpc_resume_collector_with_process_manager() -> Result<()> {
+    let (process_manager, temp_dir) = setup_test_process_manager();
+
+    let binary_path = create_mock_collector_binary(&temp_dir, 300);
+    let collector_config = CollectorConfig {
+        binary_path,
+        args: vec![],
+        env: HashMap::new(),
+        working_dir: None,
+        resource_limits: None,
+        auto_restart: false,
+        max_restarts: 0,
+    };
+
+    // Start collector directly
+    process_manager
+        .start_collector("test-1", "test-collector", collector_config)
+        .await
+        .expect("Failed to start collector");
+
+    // Pause first
+    process_manager
+        .pause_collector("test-1")
+        .await
+        .expect("Failed to pause collector");
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::Resume],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec!["test-collector".to_string()],
+    };
+
+    let service = CollectorRpcService::new(
+        "test-service".to_string(),
+        capabilities,
+        process_manager.clone(),
+    );
+
+    // Create resume request
+    let lifecycle_req = CollectorLifecycleRequest {
+        collector_id: "test-1".to_string(),
+        collector_type: "test-collector".to_string(),
+        config_overrides: Some(HashMap::new()),
+        environment: None,
+        working_directory: None,
+        resource_limits: None,
+        startup_timeout_ms: Some(5000),
+    };
+
+    let request = RpcRequest {
+        request_id: Uuid::new_v4().to_string(),
+        client_id: "test-client".to_string(),
+        target: "control.collector.test".to_string(),
+        operation: CollectorOperation::Resume,
+        payload: RpcPayload::Lifecycle(lifecycle_req),
+        timestamp: SystemTime::now(),
+        timeout_ms: 5000,
+        correlation_id: Uuid::new_v4().to_string(),
+    };
+
+    // Resume collector
+    let response = service.handle_request(request).await;
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Verify collector is running
+    let status = process_manager
+        .get_collector_status("test-1")
+        .await
+        .expect("Failed to get status");
+    assert_eq!(format!("{:?}", status.state), "Running");
+
+    // Cleanup
+    let _ = process_manager
+        .stop_collector("test-1", false, Duration::from_secs(2))
+        .await;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(windows)]
+async fn test_rpc_pause_not_supported_windows() -> Result<()> {
+    let (process_manager, temp_dir) = setup_test_process_manager();
+
+    let binary_path = create_mock_collector_binary(&temp_dir, 300);
+    let collector_config = CollectorConfig {
+        binary_path,
+        args: vec![],
+        env: HashMap::new(),
+        working_dir: None,
+        resource_limits: None,
+        auto_restart: false,
+        max_restarts: 0,
+    };
+
+    // Start collector directly
+    process_manager
+        .start_collector("test-1", "test-collector", collector_config)
+        .await
+        .expect("Failed to start collector");
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::Pause],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec!["test-collector".to_string()],
+    };
+
+    let service = CollectorRpcService::new(
+        "test-service".to_string(),
+        capabilities,
+        process_manager.clone(),
+    );
+
+    // Create pause request
+    let lifecycle_req = CollectorLifecycleRequest {
+        collector_id: "test-1".to_string(),
+        collector_type: "test-collector".to_string(),
+        config: HashMap::new(),
+    };
+
+    let request = RpcRequest {
+        request_id: Uuid::new_v4().to_string(),
+        client_id: "test-client".to_string(),
+        operation: CollectorOperation::Pause,
+        destination: "control.collector.test".to_string(),
+        payload: RpcPayload::Lifecycle(lifecycle_req),
+        timestamp: SystemTime::now(),
+        timeout: Duration::from_secs(5),
+    };
+
+    // Pause collector - should fail on Windows
+    let response = service.handle_request(request).await;
+    assert_eq!(response.status, RpcStatus::Error);
+    assert!(response.error_details.is_some());
+
+    // Cleanup
+    let _ = process_manager
+        .stop_collector("test-1", false, Duration::from_secs(2))
+        .await;
 
     Ok(())
 }

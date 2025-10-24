@@ -64,6 +64,7 @@ pub mod broker;
 pub mod client;
 pub mod error;
 pub mod message;
+pub mod process_manager;
 pub mod rpc;
 pub mod topic;
 pub mod transport;
@@ -75,6 +76,10 @@ pub use error::{EventBusError, Result};
 pub use message::{
     BusEvent, CollectionEvent, CorrelationFilter, EventFilter, EventSubscription, FilesystemEvent,
     Message, MessageType, NetworkEvent, PerformanceEvent, ProcessEvent, SourceCaps, TriggerRequest,
+};
+pub use process_manager::{
+    CollectorConfig, CollectorProcessManager, CollectorState, ProcessManagerConfig,
+    ProcessManagerError,
 };
 pub use rpc::{
     CapabilitiesData, CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient,
