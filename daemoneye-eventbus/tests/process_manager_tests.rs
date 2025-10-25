@@ -9,6 +9,7 @@ use daemoneye_eventbus::process_manager::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -20,6 +21,7 @@ fn create_test_config() -> ProcessManagerConfig {
         default_force_timeout: Duration::from_secs(2),
         health_check_interval: Duration::from_secs(10),
         enable_auto_restart: false,
+        heartbeat_timeout_multiplier: 3,
     }
 }
 
@@ -993,4 +995,127 @@ async fn test_shutdown_all() {
             Err(ProcessManagerError::ProcessNotFound(_))
         ));
     }
+}
+
+#[tokio::test]
+async fn test_heartbeat_publish_and_sequence() {
+    use daemoneye_eventbus::broker::DaemoneyeBroker;
+    use daemoneye_eventbus::message::{Message, MessageType};
+    use uuid::Uuid;
+
+    // Start embedded broker
+    let broker = Arc::new(
+        DaemoneyeBroker::new("/tmp/test-heartbeat.sock")
+            .await
+            .unwrap(),
+    );
+    broker.start().await.unwrap();
+
+    // Subscribe to heartbeat topic for a specific collector
+    let collector_id = "hb-collector";
+    let topic = format!("control.health.heartbeat.{}", collector_id);
+    let subscriber_id = Uuid::new_v4();
+    let mut rx = broker.subscribe_raw(&topic, subscriber_id).await.unwrap();
+
+    // Create process manager with heartbeat interval of 1s and broker
+    let mut cfg = create_test_config();
+    cfg.health_check_interval = Duration::from_secs(1);
+    let manager = daemoneye_eventbus::process_manager::CollectorProcessManager::with_broker(
+        cfg,
+        Some(broker.clone()),
+    );
+
+    // Start a long-running mock collector
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let binary_path = create_mock_collector_binary(&temp_dir, 60);
+    let collector_config = CollectorConfig {
+        binary_path,
+        args: vec![],
+        env: HashMap::new(),
+        working_dir: None,
+        resource_limits: None,
+        auto_restart: false,
+        max_restarts: 3,
+    };
+    manager
+        .start_collector(collector_id, "test", collector_config)
+        .await
+        .expect("Failed to start collector");
+
+    // Expect at least two heartbeat messages with increasing sequence numbers
+    let mut seqs = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while seqs.len() < 2 && std::time::Instant::now() < deadline {
+        if let Some(msg) = rx.recv().await {
+            // Outer message is a Control; payload is JSON of inner heartbeat Message
+            assert_eq!(msg.message_type, MessageType::Control);
+            let inner: Message =
+                serde_json::from_slice(&msg.payload).expect("valid inner heartbeat JSON");
+            assert_eq!(inner.message_type, MessageType::Heartbeat);
+            seqs.push(inner.sequence);
+        }
+    }
+    assert!(
+        seqs.len() >= 2,
+        "Did not receive expected heartbeats in time"
+    );
+    assert!(seqs[1] > seqs[0], "Heartbeat sequence should increase");
+
+    // Cleanup
+    let _ = manager
+        .stop_collector(collector_id, false, Duration::from_secs(1))
+        .await;
+}
+
+#[tokio::test]
+async fn test_heartbeat_timeout_degraded_then_unhealthy_without_broker() {
+    // Create process manager with short interval and no broker
+    let mut cfg = create_test_config();
+    cfg.health_check_interval = Duration::from_millis(100);
+    cfg.heartbeat_timeout_multiplier = 3; // unhealthy at >= 3 missed
+    let manager = CollectorProcessManager::new(cfg);
+
+    // Start a long-running mock collector
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let binary_path = create_mock_collector_binary(&temp_dir, 60);
+    let collector_config = CollectorConfig {
+        binary_path,
+        args: vec![],
+        env: HashMap::new(),
+        working_dir: None,
+        resource_limits: None,
+        auto_restart: false,
+        max_restarts: 3,
+    };
+    manager
+        .start_collector("hb-timeout", "test", collector_config)
+        .await
+        .expect("Failed to start collector");
+
+    // Wait just over one interval to trigger missed heartbeat accounting
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let status1 = manager
+        .check_collector_health("hb-timeout")
+        .await
+        .expect("health");
+    assert_eq!(
+        status1,
+        daemoneye_eventbus::process_manager::HealthStatus::Degraded
+    );
+
+    // Wait long enough to exceed threshold for unhealthy
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let status2 = manager
+        .check_collector_health("hb-timeout")
+        .await
+        .expect("health2");
+    assert_eq!(
+        status2,
+        daemoneye_eventbus::process_manager::HealthStatus::Unhealthy
+    );
+
+    // Cleanup
+    let _ = manager
+        .stop_collector("hb-timeout", false, Duration::from_secs(1))
+        .await;
 }

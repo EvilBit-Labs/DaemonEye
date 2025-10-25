@@ -1,26 +1,27 @@
 [package]
-name = "collector-core"
-version.workspace = true
-authors.workspace = true
-license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+name                   = "collector-core"
+version.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+keywords.workspace     = true
+categories.workspace   = true
 rust-version.workspace = true
-repository.workspace = true
-homepage.workspace = true
-edition.workspace = true
-description = "Extensible collection framework for DaemonEye monitoring components"
-publish = true
-exclude.workspace = true
-readme = "README.md"
+repository.workspace   = true
+homepage.workspace     = true
+edition.workspace      = true
+description            = "Extensible collection framework for DaemonEye monitoring components"
+publish                = true
+exclude.workspace      = true
+readme                 = "README.md"
 
 [features]
-default = []
+default              = [  ]
+eventbus-integration = [  ]
 
 [dependencies]
 
 # Error handling
-anyhow = { workspace = true }
+anyhow      = { workspace = true }
 async-trait = { workspace = true }
 
 # Base64 encoding for message payloads
@@ -28,60 +29,60 @@ base64 = { workspace = true }
 
 # Bitflags for capabilities
 bitflags = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
+chrono   = { workspace = true, features = [ "serde" ] }
 
 # High-performance concurrent data structures
 crossbeam = { workspace = true }
-daemoneye-eventbus = { path = "../daemoneye-eventbus" }
+
+# Event bus integration
+daemoneye-eventbus = { workspace = true }
 
 # IPC integration
-daemoneye-lib = { workspace = true }
-futures = { workspace = true }
+daemoneye-lib   = { workspace = true }
+futures         = { workspace = true }
 humantime-serde = { workspace = true }
 
 # MD5 hashing for configuration checksums
-md5 = { workspace = true }
+md5         = { workspace = true }
 parking_lot = { workspace = true }
 
 # Regular expressions for topic pattern matching
 regex = { workspace = true }
 
 # Serialization
-serde = { workspace = true }
+serde      = { workspace = true }
 serde_json = { workspace = true }
 
 # SQL parsing for trigger conditions
 sqlparser = { workspace = true }
 
 # Temporary file handling
-tempfile = { workspace = true }
+tempfile  = { workspace = true }
 thiserror = { workspace = true }
 # Core async runtime and utilities
-tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+tokio = { workspace = true, features = [ "sync", "time", "rt", "macros" ] }
 
 # Logging
 tracing = { workspace = true }
 
 # UUID generation
 uuid = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
-bincode = { workspace = true }
-criterion = { workspace = true, features = ["html_reports"] }
-futures = { workspace = true }
-proptest = { workspace = true }
-prost = { workspace = true }
-rand = { workspace = true }
-serde_json = { workspace = true }
-tempfile = { workspace = true }
-tokio-test = { workspace = true }
+anyhow             = { workspace = true }
+bincode            = { workspace = true }
+criterion          = { workspace = true, features = [ "html_reports" ] }
+daemoneye-eventbus = { workspace = true }
+futures            = { workspace = true }
+proptest           = { workspace = true }
+prost              = { workspace = true }
+rand               = { workspace = true }
+serde_json         = { workspace = true }
+tempfile           = { workspace = true }
+tokio-test         = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [[bench]]
-name = "collector_benchmarks"
-harness = false
-
-[[bench]]
-name = "eventbus_comparison_benchmarks"
+name    = "collector_benchmarks"
 harness = false

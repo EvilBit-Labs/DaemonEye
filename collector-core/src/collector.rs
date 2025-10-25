@@ -5,7 +5,6 @@
 
 use crate::{
     config::CollectorConfig,
-    daemoneye_event_bus::DaemoneyeEventBus,
     event::CollectionEvent,
     event_bus::{EventBus, EventBusConfig, LocalEventBus},
     ipc::CollectorIpcServer,
@@ -261,9 +260,9 @@ impl Collector {
     /// use collector_core::{Collector, CollectorConfig};
     ///
     /// let collector = Collector::new(CollectorConfig::default());
-    /// if let Some(monitor) = collector.performance_monitor() {
-    ///     // Access performance metrics
-    ///     let stats = monitor.get_statistics();
+    /// if let Some(_monitor) = collector.performance_monitor() {
+    ///     // Monitor is available (placeholder example)
+    ///     // In the current version, this will always be None.
     /// }
     /// ```
     #[deprecated(
@@ -337,8 +336,11 @@ impl Collector {
 
         // Initialize EventBus based on configuration
         let socket_path = runtime.config.daemoneye_socket_path.clone();
-        if let Some(socket_path) = socket_path {
-            runtime.initialize_daemoneye_eventbus(&socket_path).await?;
+        if socket_path.is_some() {
+            // DaemoneyeEventBus integration removed due to circular dependency
+            // Use LocalEventBus for now
+            warn!("DaemoneyeEventBus integration not available; using LocalEventBus");
+            runtime.initialize_local_eventbus().await?;
         } else {
             runtime.initialize_local_eventbus().await?;
         }
@@ -1233,36 +1235,6 @@ impl CollectorRuntime {
 
     /// Initialize DaemoneyeEventBus for the collector runtime.
     ///
-    /// This method creates and configures a DaemoneyeEventBus instance
-    /// for high-performance pub/sub messaging with topic-based routing.
-    pub async fn initialize_daemoneye_eventbus(&mut self, socket_path: &str) -> Result<()> {
-        info!(
-            socket_path = socket_path,
-            "Initializing DaemoneyeEventBus for collector runtime"
-        );
-
-        let event_bus_config = EventBusConfig {
-            max_subscribers: self.config.max_event_sources * 10, // Allow multiple subscriptions per source
-            buffer_size: self.config.event_buffer_size,
-            enable_statistics: true,
-        };
-
-        let daemoneye_event_bus = DaemoneyeEventBus::new(event_bus_config, socket_path)
-            .await
-            .context("Failed to create DaemoneyeEventBus")?;
-
-        // Start the embedded broker
-        daemoneye_event_bus
-            .start()
-            .await
-            .context("Failed to start DaemoneyeEventBus")?;
-
-        self.event_bus = Some(Box::new(daemoneye_event_bus));
-
-        info!("DaemoneyeEventBus initialized successfully");
-        Ok(())
-    }
-
     /// Initialize LocalEventBus for the collector runtime.
     ///
     /// This method creates and configures a LocalEventBus instance

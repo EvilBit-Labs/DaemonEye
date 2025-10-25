@@ -382,6 +382,313 @@ async fn test_force_shutdown_request() {
 }
 
 #[tokio::test]
+async fn test_health_check_nonexistent_returns_success_unhealthy() {
+    use daemoneye_eventbus::process_manager::{CollectorProcessManager, ProcessManagerConfig};
+    use daemoneye_eventbus::rpc::{
+        CollectorOperation, HealthStatus, RpcPayload, RpcRequest, RpcStatus,
+    };
+    use std::time::Duration;
+
+    // Minimal service with empty process manager
+    let pm = CollectorProcessManager::new(ProcessManagerConfig::default());
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::HealthCheck],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec![],
+    };
+    let service = CollectorRpcService::new("svc".to_string(), capabilities, pm);
+
+    let mut payload = std::collections::HashMap::new();
+    payload.insert(
+        "collector_id".to_string(),
+        serde_json::json!("does-not-exist"),
+    );
+    let req = RpcRequest::new(
+        "client".to_string(),
+        "control.health.does-not-exist".to_string(),
+        CollectorOperation::HealthCheck,
+        RpcPayload::Generic(payload),
+        Duration::from_secs(2),
+    );
+
+    let resp = service.handle_request(req).await;
+    assert_eq!(resp.status, RpcStatus::Success);
+    if let Some(RpcPayload::HealthCheck(hd)) = resp.payload {
+        assert_eq!(hd.collector_id, "does-not-exist");
+        assert_eq!(hd.status, HealthStatus::Unhealthy);
+    } else {
+        panic!("Expected HealthCheck payload");
+    }
+}
+
+#[tokio::test]
+async fn test_config_validate_only_via_rpc() {
+    use daemoneye_eventbus::process_manager::{
+        CollectorConfig, CollectorProcessManager, ProcessManagerConfig,
+    };
+    use tempfile::TempDir;
+
+    // Prepare a valid config directory
+    let temp_dir = TempDir::new().unwrap();
+    let collector_id = "rpc-validate";
+    let bin_path = temp_dir.path().join("bin");
+    std::fs::write(&bin_path, b"").unwrap();
+
+    // Make binary executable on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&bin_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin_path, perms).unwrap();
+    }
+
+    let cfg = CollectorConfig {
+        binary_path: std::path::PathBuf::from(&bin_path),
+        ..Default::default()
+    };
+    // Seed disk file so ConfigManager::get_config succeeds
+    let toml = toml::to_string_pretty(&cfg).unwrap();
+    std::fs::write(temp_dir.path().join(format!("{}.toml", collector_id)), toml).unwrap();
+
+    // Service with custom config manager (no broker required here)
+    let pm = CollectorProcessManager::new(ProcessManagerConfig::default());
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::UpdateConfig],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec![],
+    };
+    let cm = Arc::new(daemoneye_eventbus::ConfigManager::new(
+        std::path::PathBuf::from(temp_dir.path()),
+    ));
+    let service =
+        CollectorRpcService::with_config_manager("svc".to_string(), capabilities, pm, cm, None);
+
+    // Validate-only update
+    let mut changes = std::collections::HashMap::new();
+    changes.insert("max_restarts".to_string(), serde_json::json!(9));
+    let req = RpcRequest::config_update(
+        "client".to_string(),
+        format!("control.config.{}", collector_id),
+        ConfigUpdateRequest {
+            collector_id: collector_id.to_string(),
+            config_changes: changes,
+            validate_only: true,
+            restart_required: false,
+            rollback_on_failure: true,
+        },
+        Duration::from_secs(2),
+    );
+
+    let resp = service.handle_request(req).await;
+    assert_eq!(resp.status, RpcStatus::Success);
+}
+
+#[tokio::test]
+async fn test_hot_reload_notification_published() {
+    use daemoneye_eventbus::broker::DaemoneyeBroker;
+    use daemoneye_eventbus::process_manager::{
+        CollectorConfig, CollectorProcessManager, ProcessManagerConfig,
+    };
+    use tempfile::TempDir;
+    use uuid::Uuid;
+
+    let broker = Arc::new(
+        DaemoneyeBroker::new("/tmp/test-hotreload.sock")
+            .await
+            .unwrap(),
+    );
+    broker.start().await.unwrap();
+
+    // Prepare valid config on disk
+    let temp_dir = TempDir::new().unwrap();
+    let collector_id = "rpc-hotreload";
+    let bin_path = temp_dir.path().join("bin");
+    std::fs::write(&bin_path, b"").unwrap();
+
+    // Make binary executable on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&bin_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin_path, perms).unwrap();
+    }
+
+    let cfg = CollectorConfig {
+        binary_path: std::path::PathBuf::from(&bin_path),
+        ..Default::default()
+    };
+    let toml = toml::to_string_pretty(&cfg).unwrap();
+    std::fs::write(temp_dir.path().join(format!("{}.toml", collector_id)), toml).unwrap();
+
+    let pm = CollectorProcessManager::new(ProcessManagerConfig::default());
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::UpdateConfig],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec![],
+    };
+    let cm = Arc::new(daemoneye_eventbus::ConfigManager::new(
+        std::path::PathBuf::from(temp_dir.path()),
+    ));
+    let service = CollectorRpcService::with_config_manager(
+        "svc".to_string(),
+        capabilities,
+        pm,
+        cm,
+        Some(broker.clone()),
+    );
+
+    // Subscribe to config change notifications
+    let topic = format!("control.collector.config.{}", collector_id);
+    let subscriber_id = Uuid::new_v4();
+    let mut rx = broker.subscribe_raw(&topic, subscriber_id).await.unwrap();
+
+    // Apply a change that does not require restart (auto_restart)
+    let mut changes = std::collections::HashMap::new();
+    changes.insert("auto_restart".to_string(), serde_json::json!(true));
+    let req = RpcRequest::config_update(
+        "client".to_string(),
+        format!("control.config.{}", collector_id),
+        ConfigUpdateRequest {
+            collector_id: collector_id.to_string(),
+            config_changes: changes,
+            validate_only: false,
+            restart_required: false,
+            rollback_on_failure: true,
+        },
+        Duration::from_secs(2),
+    );
+
+    let resp = service.handle_request(req).await;
+    assert_eq!(resp.status, RpcStatus::Success);
+
+    // Expect a notification on the topic
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let mut got = false;
+    while std::time::Instant::now() < deadline {
+        if let Some(_msg) = rx.recv().await {
+            got = true;
+            break;
+        }
+    }
+    assert!(got, "Expected hot-reload notification to be published");
+}
+
+#[tokio::test]
+async fn test_config_change_triggers_restart_path() {
+    use tempfile::TempDir;
+
+    // Prepare a valid config directory and start a collector so restart can succeed
+    let temp_dir = TempDir::new().unwrap();
+    let collector_id = "rpc-restart";
+    let bin_path = temp_dir.path().join("bin.sh");
+    // Create a simple shell script that sleeps to simulate running
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(&bin_path, b"#!/bin/sh\nsleep 5\n").unwrap();
+        let mut perms = std::fs::metadata(&bin_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin_path, perms).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        std::fs::write(&bin_path, b"@echo off\n timeout /t 5 /nobreak > nul\n").unwrap();
+    }
+
+    let cfg_file = CollectorConfig {
+        binary_path: std::path::PathBuf::from(&bin_path),
+        ..Default::default()
+    };
+    let toml = toml::to_string_pretty(&cfg_file).unwrap();
+    std::fs::write(temp_dir.path().join(format!("{}.toml", collector_id)), toml).unwrap();
+
+    // Process manager with short timeouts for faster test
+    let pm_cfg = ProcessManagerConfig {
+        default_graceful_timeout: Duration::from_secs(1),
+        ..Default::default()
+    };
+    let pm = CollectorProcessManager::new(pm_cfg.clone());
+
+    // Start the collector so restart has a target
+    let cc = CollectorConfig {
+        binary_path: std::path::PathBuf::from(&bin_path),
+        args: vec![],
+        env: HashMap::new(),
+        working_dir: None,
+        resource_limits: None,
+        auto_restart: false,
+        max_restarts: 3,
+    };
+    pm.start_collector(collector_id, "test", cc)
+        .await
+        .expect("start");
+
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::UpdateConfig],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec![],
+    };
+    let cm = Arc::new(daemoneye_eventbus::ConfigManager::new(
+        std::path::PathBuf::from(temp_dir.path()),
+    ));
+    let service = CollectorRpcService::with_config_manager(
+        "svc".to_string(),
+        capabilities,
+        pm.clone(),
+        cm,
+        None,
+    );
+
+    // Apply a change that requires restart (args)
+    let mut changes = std::collections::HashMap::new();
+    changes.insert("args".to_string(), serde_json::json!(vec!["--foo"]));
+    let req = RpcRequest::config_update(
+        "client".to_string(),
+        format!("control.config.{}", collector_id),
+        ConfigUpdateRequest {
+            collector_id: collector_id.to_string(),
+            config_changes: changes,
+            validate_only: false,
+            restart_required: false, // rely on requires_restart
+            rollback_on_failure: true,
+        },
+        Duration::from_secs(5),
+    );
+
+    let resp = service.handle_request(req).await;
+    assert_eq!(resp.status, RpcStatus::Success);
+    // Verify collector still exists after restart path
+    let status = pm.get_collector_status(collector_id).await.unwrap();
+    assert_eq!(
+        status.state,
+        daemoneye_eventbus::process_manager::CollectorState::Running
+    );
+}
+
+#[tokio::test]
 async fn test_rpc_request_serialization() {
     let lifecycle_req = CollectorLifecycleRequest::start("test-collector", None);
     let request = RpcRequest::lifecycle(
@@ -1000,6 +1307,7 @@ fn setup_test_process_manager() -> (Arc<CollectorProcessManager>, TempDir) {
         default_force_timeout: Duration::from_secs(2),
         health_check_interval: Duration::from_secs(10),
         enable_auto_restart: false,
+        heartbeat_timeout_multiplier: 3,
     };
 
     let manager = CollectorProcessManager::new(config);
@@ -1600,6 +1908,356 @@ async fn test_rpc_pause_not_supported_windows() -> Result<()> {
     let _ = process_manager
         .stop_collector("test-1", false, Duration::from_secs(2))
         .await;
+
+    Ok(())
+}
+
+/// Test that config update requiring restart changes PID
+#[tokio::test]
+async fn test_restart_required_changes_pid() -> Result<()> {
+    use daemoneye_eventbus::process_manager::{
+        CollectorConfig, CollectorProcessManager, ProcessManagerConfig,
+    };
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let collector_id = "test-restart-pid";
+
+    // Create executable script
+    let bin_path = temp_dir.path().join("bin.sh");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(&bin_path, b"#!/bin/sh\nsleep 10\n").unwrap();
+        let mut perms = std::fs::metadata(&bin_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin_path, perms).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        std::fs::write(&bin_path, b"@echo off\ntimeout /t 10 /nobreak > nul\n").unwrap();
+    }
+
+    // Write initial config
+    let cfg = CollectorConfig {
+        binary_path: bin_path.clone(),
+        ..Default::default()
+    };
+    let toml = toml::to_string_pretty(&cfg).unwrap();
+    std::fs::write(temp_dir.path().join(format!("{}.toml", collector_id)), toml).unwrap();
+
+    // Create process manager and start collector
+    let pm = CollectorProcessManager::new(ProcessManagerConfig::default());
+    pm.start_collector(collector_id, "test", cfg.clone())
+        .await
+        .expect("Failed to start collector");
+
+    // Wait for process to stabilize
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Get initial PID
+    let initial_status = pm
+        .get_collector_status(collector_id)
+        .await
+        .expect("Failed to get collector status");
+    let initial_pid = initial_status.pid;
+
+    // Create service with config manager
+    let cm = Arc::new(daemoneye_eventbus::ConfigManager::new(
+        temp_dir.path().to_path_buf(),
+    ));
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::UpdateConfig],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec![],
+    };
+    let service = CollectorRpcService::with_config_manager(
+        "test-service".to_string(),
+        capabilities,
+        pm.clone(),
+        cm,
+        None,
+    );
+
+    // Apply config change that requires restart (args)
+    let mut changes = HashMap::new();
+    changes.insert("args".to_string(), serde_json::json!(vec!["--test"]));
+
+    let request = RpcRequest::config_update(
+        "test-client".to_string(),
+        format!("control.config.{}", collector_id),
+        ConfigUpdateRequest {
+            collector_id: collector_id.to_string(),
+            config_changes: changes,
+            validate_only: false,
+            restart_required: false, // will be detected
+            rollback_on_failure: true,
+        },
+        Duration::from_secs(10),
+    );
+
+    let response = service.handle_request(request).await;
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Wait for restart to complete
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Get new PID
+    let new_status = pm
+        .get_collector_status(collector_id)
+        .await
+        .expect("Failed to get new collector status");
+    let new_pid = new_status.pid;
+
+    // Verify PID changed
+    assert_ne!(initial_pid, new_pid, "PID should change after restart");
+
+    // Cleanup
+    let _ = pm
+        .stop_collector(collector_id, false, Duration::from_secs(2))
+        .await;
+
+    Ok(())
+}
+
+/// Test that hot-reload publishes notification and PID remains same
+#[tokio::test]
+async fn test_hot_reload_notification_and_pid_stable() -> Result<()> {
+    use daemoneye_eventbus::broker::DaemoneyeBroker;
+    use daemoneye_eventbus::process_manager::{
+        CollectorConfig, CollectorProcessManager, ProcessManagerConfig,
+    };
+    use tempfile::TempDir;
+    use uuid::Uuid;
+
+    let broker = Arc::new(
+        DaemoneyeBroker::new("/tmp/test-hotreload-pid.sock")
+            .await
+            .unwrap(),
+    );
+    broker.start().await.unwrap();
+
+    let temp_dir = TempDir::new().unwrap();
+    let collector_id = "test-hotreload-pid";
+
+    // Create executable script
+    let bin_path = temp_dir.path().join("bin.sh");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(&bin_path, b"#!/bin/sh\nsleep 10\n").unwrap();
+        let mut perms = std::fs::metadata(&bin_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin_path, perms).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        std::fs::write(&bin_path, b"@echo off\ntimeout /t 10 /nobreak > nul\n").unwrap();
+    }
+
+    // Write initial config
+    let cfg = CollectorConfig {
+        binary_path: bin_path.clone(),
+        ..Default::default()
+    };
+    let toml = toml::to_string_pretty(&cfg).unwrap();
+    std::fs::write(temp_dir.path().join(format!("{}.toml", collector_id)), toml).unwrap();
+
+    // Create process manager and start collector
+    let pm = CollectorProcessManager::new(ProcessManagerConfig::default());
+    pm.start_collector(collector_id, "test", cfg.clone())
+        .await
+        .expect("Failed to start collector");
+
+    // Wait for process to stabilize
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Get initial PID
+    let initial_status = pm
+        .get_collector_status(collector_id)
+        .await
+        .expect("Failed to get initial collector status");
+    let initial_pid = initial_status.pid;
+
+    // Create service with config manager and broker
+    let cm = Arc::new(daemoneye_eventbus::ConfigManager::new(
+        temp_dir.path().to_path_buf(),
+    ));
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::UpdateConfig],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec![],
+    };
+    let service = CollectorRpcService::with_config_manager(
+        "test-service".to_string(),
+        capabilities,
+        pm.clone(),
+        cm,
+        Some(broker.clone()),
+    );
+
+    // Subscribe to config change notifications
+    let topic = format!("control.collector.config.{}", collector_id);
+    let subscriber_id = Uuid::new_v4();
+    let mut rx = broker.subscribe_raw(&topic, subscriber_id).await.unwrap();
+
+    // Apply hot-reload change (auto_restart doesn't require restart)
+    let mut changes = HashMap::new();
+    changes.insert("auto_restart".to_string(), serde_json::json!(true));
+
+    let request = RpcRequest::config_update(
+        "test-client".to_string(),
+        format!("control.config.{}", collector_id),
+        ConfigUpdateRequest {
+            collector_id: collector_id.to_string(),
+            config_changes: changes,
+            validate_only: false,
+            restart_required: false,
+            rollback_on_failure: true,
+        },
+        Duration::from_secs(5),
+    );
+
+    let response = service.handle_request(request).await;
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Verify notification was published
+    let notification_received =
+        tokio::time::timeout(Duration::from_secs(2), async { rx.recv().await }).await;
+    assert!(
+        notification_received.is_ok() && notification_received.unwrap().is_some(),
+        "Expected hot-reload notification to be published"
+    );
+
+    // Wait a moment for any potential restart
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Get current PID and verify it hasn't changed
+    let current_status = pm
+        .get_collector_status(collector_id)
+        .await
+        .expect("Failed to get current collector status");
+    let current_pid = current_status.pid;
+
+    assert_eq!(
+        initial_pid, current_pid,
+        "PID should remain same after hot-reload"
+    );
+
+    // Cleanup
+    let _ = pm
+        .stop_collector(collector_id, false, Duration::from_secs(2))
+        .await;
+    broker.shutdown().await?;
+
+    Ok(())
+}
+
+/// Test config update rollback on validation failure
+#[tokio::test]
+async fn test_config_update_rollback_on_failure() -> Result<()> {
+    use daemoneye_eventbus::process_manager::{
+        CollectorConfig, CollectorProcessManager, ProcessManagerConfig,
+    };
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let collector_id = "test-rollback";
+
+    // Create valid executable
+    let bin_path = temp_dir.path().join("bin.sh");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(&bin_path, b"#!/bin/sh\nsleep 10\n").unwrap();
+        let mut perms = std::fs::metadata(&bin_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin_path, perms).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        std::fs::write(&bin_path, b"@echo off\ntimeout /t 10 /nobreak > nul\n").unwrap();
+    }
+
+    // Write initial config with auto_restart=false
+    let cfg = CollectorConfig {
+        binary_path: bin_path.clone(),
+        auto_restart: false,
+        ..Default::default()
+    };
+    let toml = toml::to_string_pretty(&cfg).unwrap();
+    std::fs::write(temp_dir.path().join(format!("{}.toml", collector_id)), toml).unwrap();
+
+    // Create process manager
+    let pm = CollectorProcessManager::new(ProcessManagerConfig::default());
+
+    // Create service with config manager
+    let cm = Arc::new(daemoneye_eventbus::ConfigManager::new(
+        temp_dir.path().to_path_buf(),
+    ));
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::UpdateConfig],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec![],
+    };
+    let service = CollectorRpcService::with_config_manager(
+        "test-service".to_string(),
+        capabilities,
+        pm.clone(),
+        cm.clone(),
+        None,
+    );
+
+    // Try to apply invalid config change (invalid memory limit)
+    let mut changes = HashMap::new();
+    changes.insert(
+        "resource_limits".to_string(),
+        serde_json::json!({
+            "max_memory_bytes": 0  // Invalid: zero not allowed
+        }),
+    );
+
+    let request = RpcRequest::config_update(
+        "test-client".to_string(),
+        format!("control.config.{}", collector_id),
+        ConfigUpdateRequest {
+            collector_id: collector_id.to_string(),
+            config_changes: changes,
+            validate_only: false,
+            restart_required: false,
+            rollback_on_failure: true,
+        },
+        Duration::from_secs(5),
+    );
+
+    let response = service.handle_request(request).await;
+
+    // Should fail validation
+    assert_eq!(response.status, RpcStatus::Error);
+    assert!(response.error_details.is_some());
+
+    // Verify original config is still in place
+    let current_config = cm
+        .get_config(collector_id)
+        .await
+        .expect("Failed to get config");
+    assert!(!current_config.auto_restart);
+    assert!(current_config.resource_limits.is_none());
 
     Ok(())
 }

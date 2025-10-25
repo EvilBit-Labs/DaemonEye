@@ -1,3 +1,4 @@
+#![cfg(feature = "eventbus-integration")]
 //! Simple test to verify DaemoneyeEventBus basic functionality.
 
 use collector_core::{

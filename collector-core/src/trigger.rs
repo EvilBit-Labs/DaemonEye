@@ -833,7 +833,7 @@ impl TriggerManager {
     ///     let mut manager = TriggerManager::new(config);
     ///
     ///     let event_bus_config = EventBusConfig::default();
-    ///     let event_bus = LocalEventBus::new(event_bus_config).await?;
+    ///     let event_bus = LocalEventBus::new(event_bus_config);
     ///     manager.set_event_bus(Box::new(event_bus)).await;
     ///
     ///     Ok(())

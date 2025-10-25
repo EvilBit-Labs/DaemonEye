@@ -38,6 +38,7 @@
 //!     default_graceful_timeout: Duration::from_secs(30),
 //!     default_force_timeout: Duration::from_secs(5),
 //!     health_check_interval: Duration::from_secs(60),
+//!     heartbeat_timeout_multiplier: 3,
 //!     enable_auto_restart: false,
 //! };
 //!
@@ -68,6 +69,13 @@
 //! # }
 //! ```
 
+use crate::{DaemoneyeBroker, Message};
+#[cfg(unix)]
+use nix::{
+    sys::signal::{self, Signal},
+    unistd::Pid,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -78,43 +86,17 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
-#[cfg(unix)]
-use nix::sys::signal::{self, Signal};
-#[cfg(unix)]
-use nix::unistd::Pid;
-
-/// Request to restart a collector process
-#[derive(Debug, Clone)]
-struct RestartRequest {
-    /// Collector identifier
-    collector_id: String,
-    /// Collector type
-    collector_type: String,
-    /// Configuration to use
-    config: CollectorConfig,
-    /// Current restart count
-    restart_count: u32,
+/// Resource limits for collector processes
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ResourceLimits {
+    /// Maximum memory in bytes
+    pub max_memory_bytes: Option<u64>,
+    /// Maximum CPU percentage (0-100)
+    pub max_cpu_percent: Option<u32>,
 }
 
-/// State of a collector process
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CollectorState {
-    /// Process is starting up
-    Starting,
-    /// Process is running normally
-    Running,
-    /// Process is paused (Unix only)
-    Paused,
-    /// Process is shutting down
-    Stopping,
-    /// Process has stopped cleanly
-    Stopped,
-    /// Process failed with error
-    Failed(String),
-}
-
-/// Configuration for spawning a collector process
-#[derive(Debug, Clone)]
+/// Configuration for a managed collector process
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectorConfig {
     /// Path to collector executable
     pub binary_path: PathBuf,
@@ -124,7 +106,7 @@ pub struct CollectorConfig {
     pub env: HashMap<String, String>,
     /// Working directory
     pub working_dir: Option<PathBuf>,
-    /// Resource constraints (not yet implemented)
+    /// Resource constraints
     pub resource_limits: Option<ResourceLimits>,
     /// Whether to auto-restart on crash
     pub auto_restart: bool,
@@ -132,13 +114,31 @@ pub struct CollectorConfig {
     pub max_restarts: u32,
 }
 
-/// Resource limits for collector processes (placeholder for future implementation)
-#[derive(Debug, Clone)]
-pub struct ResourceLimits {
-    /// Maximum memory in bytes
-    pub max_memory_bytes: Option<u64>,
-    /// Maximum CPU percentage (0-100)
-    pub max_cpu_percent: Option<u32>,
+impl Default for CollectorConfig {
+    fn default() -> Self {
+        Self {
+            binary_path: PathBuf::new(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            working_dir: None,
+            resource_limits: None,
+            auto_restart: false,
+            max_restarts: 3,
+        }
+    }
+}
+
+impl CollectorConfig {
+    /// Validate configuration
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.binary_path.exists() {
+            anyhow::bail!("Binary path does not exist: {}", self.binary_path.display());
+        }
+        if self.max_restarts > 100 {
+            anyhow::bail!("max_restarts cannot exceed 100");
+        }
+        Ok(())
+    }
 }
 
 /// Information about a running collector process
@@ -162,6 +162,29 @@ pub struct CollectorProcess {
     pub restart_count: u32,
     /// Last health check time
     pub last_health_check: Option<SystemTime>,
+    /// Last heartbeat timestamp
+    pub last_heartbeat: SystemTime,
+    /// Count of consecutive missed heartbeats
+    pub missed_heartbeats: u32,
+    /// Whether heartbeat monitoring is enabled
+    pub heartbeat_enabled: bool,
+    /// Heartbeat sequence number
+    pub heartbeat_sequence: u64,
+}
+
+/// Lifecycle state of a collector process
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollectorState {
+    /// Process is starting up
+    Starting,
+    /// Process is running normally
+    Running,
+    /// Process is paused (Unix only)
+    Paused,
+    /// Process is stopping
+    Stopping,
+    /// Process failed with an error message
+    Failed(String),
 }
 
 /// Configuration for the process manager
@@ -173,10 +196,12 @@ pub struct ProcessManagerConfig {
     pub default_graceful_timeout: Duration,
     /// Default force kill timeout
     pub default_force_timeout: Duration,
-    /// Health check interval
+    /// Health check interval (also used as heartbeat interval)
     pub health_check_interval: Duration,
     /// Global auto-restart flag
     pub enable_auto_restart: bool,
+    /// Heartbeat timeout multiplier (default 3, so timeout = interval * 3)
+    pub heartbeat_timeout_multiplier: u32,
 }
 
 impl Default for ProcessManagerConfig {
@@ -187,6 +212,7 @@ impl Default for ProcessManagerConfig {
             default_force_timeout: Duration::from_secs(5),
             health_check_interval: Duration::from_secs(60),
             enable_auto_restart: false,
+            heartbeat_timeout_multiplier: 3,
         }
     }
 }
@@ -208,6 +234,12 @@ pub struct CollectorStatus {
     pub uptime: Duration,
     /// Current health
     pub health: HealthStatus,
+    /// Last heartbeat timestamp
+    pub last_heartbeat: SystemTime,
+    /// Count of consecutive missed heartbeats
+    pub missed_heartbeats: u32,
+    /// Whether heartbeat is healthy
+    pub heartbeat_healthy: bool,
 }
 
 /// Health status of a collector
@@ -215,6 +247,8 @@ pub struct CollectorStatus {
 pub enum HealthStatus {
     /// Process is healthy
     Healthy,
+    /// Process is degraded but functional
+    Degraded,
     /// Process is unhealthy
     Unhealthy,
     /// Health status unknown
@@ -244,6 +278,10 @@ pub enum ProcessManagerError {
     #[error("Invalid state for operation: {0}")]
     InvalidState(String),
 
+    /// Configuration error
+    #[error("Configuration error: {0}")]
+    ConfigurationError(String),
+
     /// Operation not supported on platform
     #[error("Platform not supported: {0}")]
     PlatformNotSupported(String),
@@ -268,6 +306,17 @@ pub struct CollectorProcessManager {
     shutdown_tx: broadcast::Sender<()>,
     /// Restart request sender
     restart_tx: mpsc::UnboundedSender<RestartRequest>,
+    /// Optional broker for heartbeat publishing
+    broker: Option<Arc<DaemoneyeBroker>>,
+}
+
+/// Internal restart request used by the monitor task
+#[derive(Debug, Clone)]
+struct RestartRequest {
+    collector_id: String,
+    collector_type: String,
+    config: CollectorConfig,
+    restart_count: u32,
 }
 
 impl CollectorProcessManager {
@@ -281,6 +330,23 @@ impl CollectorProcessManager {
     ///
     /// New process manager instance
     pub fn new(config: ProcessManagerConfig) -> Arc<Self> {
+        Self::with_broker(config, None)
+    }
+
+    /// Create a new process manager with broker integration
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Process manager configuration
+    /// * `broker` - Optional broker for heartbeat publishing
+    ///
+    /// # Returns
+    ///
+    /// New process manager instance
+    pub fn with_broker(
+        config: ProcessManagerConfig,
+        broker: Option<Arc<DaemoneyeBroker>>,
+    ) -> Arc<Self> {
         let (shutdown_tx, _) = broadcast::channel(16);
         let (restart_tx, mut restart_rx) = mpsc::unbounded_channel();
 
@@ -289,6 +355,7 @@ impl CollectorProcessManager {
             processes: Arc::new(Mutex::new(HashMap::new())),
             shutdown_tx,
             restart_tx,
+            broker,
         });
 
         // Spawn restart handler task
@@ -423,16 +490,21 @@ impl CollectorProcessManager {
         info!("Spawned collector {} with PID: {}", collector_id, pid);
 
         // Create process record
+        let now = SystemTime::now();
         let process = CollectorProcess {
             collector_id: collector_id.to_string(),
             collector_type: collector_type.to_string(),
             child: Some(child),
             pid,
             state: CollectorState::Starting,
-            start_time: SystemTime::now(),
+            start_time: now,
             config: config.clone(),
             restart_count: 0,
             last_health_check: None,
+            last_heartbeat: now,
+            missed_heartbeats: 0,
+            heartbeat_enabled: true,
+            heartbeat_sequence: 0,
         };
 
         processes.insert(collector_id.to_string(), process);
@@ -440,6 +512,9 @@ impl CollectorProcessManager {
 
         // Spawn monitoring task
         self.spawn_process_monitor(collector_id.to_string()).await;
+
+        // Spawn heartbeat task
+        self.spawn_heartbeat_task(collector_id.to_string()).await;
 
         // Update state to Running
         let mut processes = self.processes.lock().await;
@@ -565,6 +640,146 @@ impl CollectorProcessManager {
             }
         });
     }
+
+    /// Spawn a heartbeat task for a collector process
+    ///
+    /// This task periodically publishes heartbeat messages and monitors for timeouts.
+    /// The task exits when the collector is removed from the process map.
+    async fn spawn_heartbeat_task(&self, collector_id: String) {
+        let processes = Arc::clone(&self.processes);
+        let broker = self.broker.clone();
+        let heartbeat_interval = self.config.health_check_interval;
+        let heartbeat_threshold = self.config.heartbeat_timeout_multiplier;
+
+        // Guard against zero or very small intervals
+        if heartbeat_interval.is_zero() || heartbeat_interval < Duration::from_secs(1) {
+            warn!(
+                "Heartbeat interval too small ({:?}), using minimum of 1 second",
+                heartbeat_interval
+            );
+            let safe_interval = Duration::from_secs(1).max(heartbeat_interval);
+            let processes = processes;
+            let broker = broker;
+            tokio::spawn(async move {
+                Self::run_heartbeat_loop(
+                    collector_id,
+                    processes,
+                    broker,
+                    safe_interval,
+                    heartbeat_threshold,
+                )
+                .await;
+            });
+            return;
+        }
+
+        tokio::spawn(async move {
+            Self::run_heartbeat_loop(
+                collector_id,
+                processes,
+                broker,
+                heartbeat_interval,
+                heartbeat_threshold,
+            )
+            .await;
+        });
+    }
+
+    async fn run_heartbeat_loop(
+        collector_id: String,
+        processes: Arc<Mutex<HashMap<String, CollectorProcess>>>,
+        broker: Option<Arc<DaemoneyeBroker>>,
+        heartbeat_interval: Duration,
+        heartbeat_threshold: u32,
+    ) {
+        loop {
+            tokio::time::sleep(heartbeat_interval).await;
+
+            // Update heartbeat and check timeout
+            let should_exit = {
+                let mut procs = processes.lock().await;
+
+                let Some(proc) = procs.get_mut(&collector_id) else {
+                    debug!(
+                        "Collector {} no longer in process map, ending heartbeat task",
+                        collector_id
+                    );
+                    return;
+                };
+
+                let now = SystemTime::now();
+                let elapsed_since_heartbeat = now
+                    .duration_since(proc.last_heartbeat)
+                    .unwrap_or(Duration::from_secs(0));
+
+                // Calculate expected heartbeats missed based on elapsed time.
+                // Use millisecond precision and guard against sub-second intervals to avoid division by zero.
+                let intervals_missed: u64 = {
+                    let interval_ms = heartbeat_interval.as_millis();
+                    if interval_ms == 0 {
+                        0
+                    } else {
+                        let elapsed_ms = elapsed_since_heartbeat.as_millis();
+                        let n = elapsed_ms / interval_ms;
+                        u64::try_from(n).unwrap_or(u64::MAX)
+                    }
+                };
+
+                // Increment heartbeat sequence
+                proc.heartbeat_sequence = proc.heartbeat_sequence.wrapping_add(1);
+                let sequence = proc.heartbeat_sequence;
+
+                // Publish heartbeat if broker available
+                let mut publish_success = false;
+                if let Some(ref broker) = broker {
+                    let topic = format!("control.health.heartbeat.{}", collector_id);
+                    let message = Message::heartbeat(sequence);
+                    let correlation_id = format!("heartbeat-{}-{}", collector_id, sequence);
+
+                    match serde_json::to_vec(&message) {
+                        Ok(payload) => {
+                            if let Err(e) = broker.publish(&topic, &correlation_id, payload).await {
+                                warn!("Failed to publish heartbeat for {}: {}", collector_id, e);
+                                // Increment missed heartbeats on publish failure
+                                proc.missed_heartbeats = proc.missed_heartbeats.saturating_add(1);
+                            } else {
+                                debug!(
+                                    "Published heartbeat {} for collector {}",
+                                    sequence, collector_id
+                                );
+                                // Reset missed heartbeats and update timestamp on success
+                                proc.missed_heartbeats = 0;
+                                proc.last_heartbeat = now;
+                                publish_success = true;
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to serialize heartbeat message: {}", e);
+                            proc.missed_heartbeats = proc.missed_heartbeats.saturating_add(1);
+                        }
+                    }
+                }
+
+                // If no broker or publish failed, increment based on elapsed time
+                if !publish_success && intervals_missed > 0 {
+                    proc.missed_heartbeats =
+                        intervals_missed.min(heartbeat_threshold as u64 + 1) as u32;
+                }
+
+                // Check if we should continue
+                proc.heartbeat_enabled
+            };
+
+            if !should_exit {
+                debug!(
+                    "Heartbeat monitoring disabled for {}, exiting task",
+                    collector_id
+                );
+                return;
+            }
+        }
+    }
+
     /// Stop a collector process
     ///
     /// # Arguments
@@ -952,16 +1167,33 @@ impl CollectorProcessManager {
 
         process.last_health_check = Some(SystemTime::now());
 
+        // Check heartbeat status with graduated response
+        let heartbeat_threshold = self.config.heartbeat_timeout_multiplier;
+        let health_from_heartbeat = if process.missed_heartbeats >= heartbeat_threshold {
+            HealthStatus::Unhealthy
+        } else if process.missed_heartbeats > 0 {
+            HealthStatus::Degraded // Some heartbeats missed but not yet critical
+        } else {
+            HealthStatus::Healthy
+        };
+
         // Check if process is still running
-        match process
+        let health_from_process = match process
             .child
             .as_mut()
             .and_then(|c| c.try_wait().ok())
             .flatten()
         {
-            Some(_) => Ok(HealthStatus::Unhealthy), // Process exited
-            None => Ok(HealthStatus::Healthy),      // Still running or no child handle
-        }
+            Some(_) => HealthStatus::Unhealthy, // Process exited
+            None => HealthStatus::Healthy,      // Still running or no child handle
+        };
+
+        // Return worst status (Unhealthy > Degraded > Healthy)
+        Ok(match (health_from_process, health_from_heartbeat) {
+            (HealthStatus::Unhealthy, _) | (_, HealthStatus::Unhealthy) => HealthStatus::Unhealthy,
+            (HealthStatus::Degraded, _) | (_, HealthStatus::Degraded) => HealthStatus::Degraded,
+            _ => HealthStatus::Healthy,
+        })
     }
 
     /// Get collector status
@@ -996,6 +1228,8 @@ impl CollectorProcessManager {
             None => HealthStatus::Healthy,      // Still running or no child handle
         };
 
+        let heartbeat_healthy = process.missed_heartbeats == 0;
+
         Ok(CollectorStatus {
             collector_id: process.collector_id.clone(),
             state: process.state.clone(),
@@ -1004,6 +1238,9 @@ impl CollectorProcessManager {
             restart_count: process.restart_count,
             uptime,
             health,
+            last_heartbeat: process.last_heartbeat,
+            missed_heartbeats: process.missed_heartbeats,
+            heartbeat_healthy,
         })
     }
 
@@ -1063,6 +1300,12 @@ impl CollectorProcessManager {
 
         info!("All collectors shut down");
         Ok(())
+    }
+
+    /// List the IDs of all known collectors
+    pub async fn list_collector_ids(&self) -> Vec<String> {
+        let processes = self.processes.lock().await;
+        processes.keys().cloned().collect()
     }
 }
 

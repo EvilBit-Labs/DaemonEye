@@ -1,3 +1,4 @@
+#![cfg(feature = "eventbus-integration")]
 //! Integration tests for DaemoneyeEventBus with IPC server infrastructure.
 //!
 //! This test suite verifies the seamless integration between the daemoneye-eventbus

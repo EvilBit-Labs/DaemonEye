@@ -1,3 +1,4 @@
+#![cfg(feature = "eventbus-integration")]
 //! Simplified migration tests comparing crossbeam vs daemoneye-eventbus behavior.
 //!
 //! This test suite validates that the migration from crossbeam-based LocalEventBus

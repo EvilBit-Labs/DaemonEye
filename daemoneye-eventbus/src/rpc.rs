@@ -45,20 +45,21 @@
 //! }
 //! ```
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, mpsc, oneshot};
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::broker::DaemoneyeBroker;
+use crate::config_manager::{ConfigManager, ConfigManagerError};
 use crate::error::{EventBusError, Result};
 use crate::message::Message;
-use crate::process_manager::{
-    CollectorConfig, CollectorProcessManager, HealthStatus as ProcessHealthStatus,
-    ProcessManagerError,
-};
+use crate::process_manager::HealthStatus as ProcessHealthStatus;
+use crate::{CollectorConfig, CollectorProcessManager, ProcessManagerError};
 
 /// RPC client for collector lifecycle management
 #[derive(Debug)]
@@ -84,7 +85,6 @@ pub struct CollectorRpcClient {
 }
 
 /// RPC service for handling collector lifecycle operations
-#[derive(Debug)]
 pub struct CollectorRpcService {
     /// Service identifier
     pub service_id: String,
@@ -94,6 +94,57 @@ pub struct CollectorRpcService {
     pub capabilities: ServiceCapabilities,
     /// Process manager for lifecycle operations
     pub process_manager: Arc<CollectorProcessManager>,
+    /// Health provider for health checks
+    pub health_provider: Arc<dyn HealthProvider + Send + Sync>,
+    /// Config provider for configuration operations
+    pub config_provider: Arc<dyn ConfigProvider + Send + Sync>,
+    /// Optional broker for publishing notifications
+    pub broker: Option<Arc<DaemoneyeBroker>>,
+}
+
+/// Provider interface for health data (typically implemented by the agent)
+#[async_trait]
+pub trait HealthProvider: Send + Sync {
+    async fn get_collector_health(
+        &self,
+        collector_id: &str,
+    ) -> std::result::Result<HealthCheckData, ProcessManagerError>;
+}
+
+/// Provider interface for configuration management (typically implemented by the agent)
+#[async_trait]
+pub trait ConfigProvider: Send + Sync {
+    async fn get_config(
+        &self,
+        collector_id: &str,
+    ) -> std::result::Result<CollectorConfig, ConfigManagerError>;
+
+    async fn update_config(
+        &self,
+        collector_id: &str,
+        changes: HashMap<String, serde_json::Value>,
+        validate_only: bool,
+        rollback_on_failure: bool,
+    ) -> std::result::Result<ConfigUpdateResult, ConfigManagerError>;
+
+    async fn validate_config(
+        &self,
+        _collector_id: &str,
+        config: &CollectorConfig,
+    ) -> std::result::Result<(), ConfigManagerError> {
+        // Default no-op; concrete implementations may use this.
+        let _ = config;
+        Ok(())
+    }
+}
+
+/// Result of a configuration update operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigUpdateResult {
+    pub version: u64,
+    pub changed_fields: Vec<String>,
+    pub restart_performed: bool,
+    pub timestamp: SystemTime,
 }
 
 /// RPC request message for collector operations
@@ -268,7 +319,7 @@ pub struct HealthCheckData {
 }
 
 /// Health status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HealthStatus {
     /// Service is healthy and operational
     Healthy,
@@ -310,6 +361,19 @@ pub struct ConfigUpdateRequest {
     pub restart_required: bool,
     /// Rollback configuration if update fails
     pub rollback_on_failure: bool,
+}
+
+/// Configuration change notification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigChangeNotification {
+    /// Collector identifier
+    pub collector_id: String,
+    /// List of changed field names
+    pub changed_fields: Vec<String>,
+    /// Configuration version number
+    pub version: u64,
+    /// Timestamp when change occurred
+    pub timestamp: u64,
 }
 
 /// Capabilities data structure
@@ -581,11 +645,73 @@ impl CollectorRpcService {
         capabilities: ServiceCapabilities,
         process_manager: Arc<CollectorProcessManager>,
     ) -> Self {
+        // Create default providers backed by internal managers
+        let config_dir = std::path::PathBuf::from("/var/lib/daemoneye/configs");
+        let config_manager = Arc::new(ConfigManager::new(config_dir));
+        let health_provider = Arc::new(DefaultHealthProvider {
+            process_manager: Arc::clone(&process_manager),
+        });
+        let config_provider = Arc::new(DefaultConfigProvider {
+            config_manager: Arc::clone(&config_manager),
+            process_manager: Arc::clone(&process_manager),
+            broker: None,
+        });
+
         Self {
             service_id,
             supported_operations: capabilities.operations.clone(),
             capabilities,
             process_manager,
+            health_provider,
+            config_provider,
+            broker: None,
+        }
+    }
+
+    /// Create a new RPC service with custom config manager and broker
+    pub fn with_config_manager(
+        service_id: String,
+        capabilities: ServiceCapabilities,
+        process_manager: Arc<CollectorProcessManager>,
+        config_manager: Arc<ConfigManager>,
+        broker: Option<Arc<DaemoneyeBroker>>,
+    ) -> Self {
+        let health_provider = Arc::new(DefaultHealthProvider {
+            process_manager: Arc::clone(&process_manager),
+        });
+        let config_provider = Arc::new(DefaultConfigProvider {
+            config_manager: Arc::clone(&config_manager),
+            process_manager: Arc::clone(&process_manager),
+            broker: broker.clone(),
+        });
+        Self {
+            service_id,
+            supported_operations: capabilities.operations.clone(),
+            capabilities,
+            process_manager,
+            health_provider,
+            config_provider,
+            broker,
+        }
+    }
+
+    /// Create a new RPC service with explicit providers
+    pub fn with_providers(
+        service_id: String,
+        capabilities: ServiceCapabilities,
+        process_manager: Arc<CollectorProcessManager>,
+        health_provider: Arc<dyn HealthProvider + Send + Sync>,
+        config_provider: Arc<dyn ConfigProvider + Send + Sync>,
+        broker: Option<Arc<DaemoneyeBroker>>,
+    ) -> Self {
+        Self {
+            service_id,
+            supported_operations: capabilities.operations.clone(),
+            capabilities,
+            process_manager,
+            health_provider,
+            config_provider,
+            broker,
         }
     }
 
@@ -849,62 +975,38 @@ impl CollectorRpcService {
             }
         };
 
-        // Get collector status
-        let status_result = self
-            .process_manager
-            .get_collector_status(&collector_id)
-            .await;
-        let health_result = self
-            .process_manager
-            .check_collector_health(&collector_id)
-            .await;
-
-        match (status_result, health_result) {
-            (Ok(status), Ok(health)) => {
-                let mut components = HashMap::new();
-                components.insert(
-                    "process".to_string(),
-                    ComponentHealth {
-                        name: "process".to_string(),
-                        status: match health {
-                            ProcessHealthStatus::Healthy => HealthStatus::Healthy,
-                            ProcessHealthStatus::Unhealthy => HealthStatus::Unhealthy,
-                            ProcessHealthStatus::Unknown => HealthStatus::Unknown,
-                        },
-                        message: Some(format!("State: {:?}", status.state)),
-                        last_check: SystemTime::now(),
-                        check_interval_seconds: 60,
-                    },
-                );
-
-                let mut metrics = HashMap::new();
-                metrics.insert("pid".to_string(), status.pid as f64);
-                metrics.insert("restart_count".to_string(), status.restart_count as f64);
-
-                let health_data = HealthCheckData {
-                    collector_id: collector_id.clone(),
-                    status: match health {
-                        ProcessHealthStatus::Healthy => HealthStatus::Healthy,
-                        ProcessHealthStatus::Unhealthy => HealthStatus::Unhealthy,
-                        ProcessHealthStatus::Unknown => HealthStatus::Unknown,
-                    },
-                    components,
-                    metrics,
-                    last_heartbeat: SystemTime::now(),
-                    uptime_seconds: status.uptime.as_secs(),
-                    error_count: 0,
-                };
-
-                self.create_success_response(
-                    request,
-                    Some(RpcPayload::HealthCheck(health_data)),
-                    start_time,
-                )
-            }
-            (Err(e), _) | (_, Err(e)) => {
-                let rpc_error = self.map_process_error_to_rpc_error(e);
-                self.create_error_response(request, rpc_error, start_time)
-            }
+        match self
+            .health_provider
+            .get_collector_health(&collector_id)
+            .await
+        {
+            Ok(health_data) => self.create_success_response(
+                request,
+                Some(RpcPayload::HealthCheck(health_data)),
+                start_time,
+            ),
+            Err(e) => match e {
+                ProcessManagerError::ProcessNotFound(_) => {
+                    let health_data = HealthCheckData {
+                        collector_id: collector_id.clone(),
+                        status: HealthStatus::Unhealthy,
+                        components: HashMap::new(),
+                        metrics: HashMap::new(),
+                        last_heartbeat: SystemTime::now(),
+                        uptime_seconds: 0,
+                        error_count: 0,
+                    };
+                    self.create_success_response(
+                        request,
+                        Some(RpcPayload::HealthCheck(health_data)),
+                        start_time,
+                    )
+                }
+                other => {
+                    let rpc_error = self.map_process_error_to_rpc_error(other);
+                    self.create_error_response(request, rpc_error, start_time)
+                }
+            },
         }
     }
 
@@ -914,8 +1016,157 @@ impl CollectorRpcService {
         request: RpcRequest,
         start_time: SystemTime,
     ) -> RpcResponse {
-        // TODO: Implement actual configuration update logic
-        self.create_success_response(request, None, start_time)
+        // Extract ConfigUpdateRequest from payload
+        let config_request = match &request.payload {
+            RpcPayload::ConfigUpdate(req) => req.clone(),
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Invalid payload for ConfigUpdate operation".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        let collector_id = config_request.collector_id.clone();
+
+        info!(
+            "Processing config update for collector {}, validate_only: {}, rollback_on_failure: {}",
+            collector_id, config_request.validate_only, config_request.rollback_on_failure
+        );
+
+        match self
+            .config_provider
+            .update_config(
+                &collector_id,
+                config_request.config_changes.clone(),
+                config_request.validate_only,
+                config_request.rollback_on_failure,
+            )
+            .await
+        {
+            Ok(update) => {
+                // Validate-only response
+                if config_request.validate_only {
+                    info!("Configuration validation successful for {}", collector_id);
+                    let mut context = HashMap::new();
+                    context.insert("validated".to_string(), serde_json::json!(true));
+                    context.insert("version".to_string(), serde_json::json!(update.version));
+                    return self.create_success_response(
+                        request,
+                        Some(RpcPayload::Generic(context)),
+                        start_time,
+                    );
+                }
+
+                let mut response_data = HashMap::new();
+                response_data.insert("collector_id".to_string(), serde_json::json!(collector_id));
+                response_data.insert("version".to_string(), serde_json::json!(update.version));
+                response_data.insert(
+                    "changed_fields".to_string(),
+                    serde_json::json!(update.changed_fields),
+                );
+                response_data.insert(
+                    "restarted".to_string(),
+                    serde_json::json!(update.restart_performed),
+                );
+                response_data.insert(
+                    "timestamp".to_string(),
+                    serde_json::json!(
+                        update
+                            .timestamp
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs()
+                    ),
+                );
+
+                info!("Successfully updated configuration for {}", collector_id);
+
+                self.create_success_response(
+                    request,
+                    Some(RpcPayload::Generic(response_data)),
+                    start_time,
+                )
+            }
+            Err(e) => {
+                error!("Configuration update failed for {}: {}", collector_id, e);
+                self.create_error_response(
+                    request,
+                    self.map_config_error_to_rpc_error(e),
+                    start_time,
+                )
+            }
+        }
+    }
+
+    /// Map configuration manager error to RPC error
+    fn map_config_error_to_rpc_error(&self, error: ConfigManagerError) -> RpcError {
+        use crate::config_manager::ConfigManagerError;
+
+        let mut context = HashMap::new();
+
+        match error {
+            ConfigManagerError::ConfigNotFound(msg) => {
+                context.insert("details".to_string(), serde_json::json!(msg));
+                RpcError {
+                    code: "CONFIG_NOT_FOUND".to_string(),
+                    message: format!("Configuration not found: {}", msg),
+                    context,
+                    category: ErrorCategory::Configuration,
+                }
+            }
+            ConfigManagerError::ValidationFailed(msg) => {
+                context.insert("validation_error".to_string(), serde_json::json!(msg));
+                RpcError {
+                    code: "VALIDATION_FAILED".to_string(),
+                    message: format!("Configuration validation failed: {}", msg),
+                    context,
+                    category: ErrorCategory::Configuration,
+                }
+            }
+            ConfigManagerError::PersistenceFailed(msg) => {
+                context.insert("details".to_string(), serde_json::json!(msg));
+                RpcError {
+                    code: "PERSISTENCE_FAILED".to_string(),
+                    message: format!("Failed to persist configuration: {}", msg),
+                    context,
+                    category: ErrorCategory::Internal,
+                }
+            }
+            ConfigManagerError::RollbackFailed(msg) => {
+                context.insert("details".to_string(), serde_json::json!(msg));
+                RpcError {
+                    code: "ROLLBACK_FAILED".to_string(),
+                    message: format!("Failed to rollback configuration: {}", msg),
+                    context,
+                    category: ErrorCategory::Internal,
+                }
+            }
+            ConfigManagerError::InvalidConfigChange(msg) => {
+                context.insert("details".to_string(), serde_json::json!(msg));
+                RpcError {
+                    code: "INVALID_CONFIG_CHANGE".to_string(),
+                    message: format!("Invalid configuration change: {}", msg),
+                    context,
+                    category: ErrorCategory::Configuration,
+                }
+            }
+            _ => {
+                context.insert("error".to_string(), serde_json::json!(error.to_string()));
+                RpcError {
+                    code: "CONFIGURATION_ERROR".to_string(),
+                    message: format!("Configuration error: {}", error),
+                    context,
+                    category: ErrorCategory::Internal,
+                }
+            }
+        }
     }
 
     /// Handle capabilities request
@@ -1152,6 +1403,11 @@ impl CollectorRpcService {
                 format!("Invalid state: {}", msg),
                 ErrorCategory::Configuration,
             ),
+            ProcessManagerError::ConfigurationError(ref msg) => (
+                "CONFIGURATION_ERROR",
+                format!("Configuration error: {}", msg),
+                ErrorCategory::Configuration,
+            ),
             ProcessManagerError::PlatformNotSupported(ref msg) => (
                 "PLATFORM_NOT_SUPPORTED",
                 format!("Operation not supported: {}", msg),
@@ -1223,6 +1479,215 @@ impl CollectorRpcService {
             execution_time_ms: execution_time.as_millis() as u64,
             error_details: Some(error),
         }
+    }
+}
+
+// -----------------
+// Default providers
+// -----------------
+
+#[derive(Debug)]
+struct DefaultHealthProvider {
+    process_manager: Arc<CollectorProcessManager>,
+}
+
+#[async_trait]
+impl HealthProvider for DefaultHealthProvider {
+    async fn get_collector_health(
+        &self,
+        collector_id: &str,
+    ) -> std::result::Result<HealthCheckData, ProcessManagerError> {
+        // Fetch status and health from process manager
+        let status = self
+            .process_manager
+            .get_collector_status(collector_id)
+            .await?;
+        let health = self
+            .process_manager
+            .check_collector_health(collector_id)
+            .await?;
+
+        // Components
+        let mut components = HashMap::new();
+        components.insert(
+            "process".to_string(),
+            ComponentHealth {
+                name: "process".to_string(),
+                status: match health {
+                    ProcessHealthStatus::Healthy => HealthStatus::Healthy,
+                    ProcessHealthStatus::Degraded => HealthStatus::Degraded,
+                    ProcessHealthStatus::Unhealthy => HealthStatus::Unhealthy,
+                    ProcessHealthStatus::Unknown => HealthStatus::Unknown,
+                },
+                message: Some(format!("PID: {}, State: {:?}", status.pid, status.state)),
+                last_check: SystemTime::now(),
+                check_interval_seconds: 60,
+            },
+        );
+
+        let heartbeat_status = if status.missed_heartbeats >= 3 {
+            HealthStatus::Unhealthy
+        } else if status.missed_heartbeats > 0 {
+            HealthStatus::Degraded
+        } else {
+            HealthStatus::Healthy
+        };
+
+        let heartbeat_age = SystemTime::now()
+            .duration_since(status.last_heartbeat)
+            .unwrap_or_default()
+            .as_secs();
+
+        components.insert(
+            "heartbeat".to_string(),
+            ComponentHealth {
+                name: "heartbeat".to_string(),
+                status: heartbeat_status,
+                message: Some(format!(
+                    "Last heartbeat: {}s ago, Missed: {}",
+                    heartbeat_age, status.missed_heartbeats
+                )),
+                last_check: status.last_heartbeat,
+                check_interval_seconds: 30,
+            },
+        );
+
+        components.insert(
+            "event_sources".to_string(),
+            ComponentHealth {
+                name: "event_sources".to_string(),
+                status: HealthStatus::Healthy,
+                message: Some("Event sources operational".to_string()),
+                last_check: SystemTime::now(),
+                check_interval_seconds: 60,
+            },
+        );
+
+        let overall_status = components
+            .values()
+            .map(|c| c.status)
+            .min()
+            .unwrap_or(HealthStatus::Unknown);
+
+        let mut metrics = HashMap::new();
+        metrics.insert("pid".to_string(), status.pid as f64);
+        metrics.insert("restart_count".to_string(), status.restart_count as f64);
+        metrics.insert("uptime_seconds".to_string(), status.uptime.as_secs() as f64);
+        metrics.insert(
+            "missed_heartbeats".to_string(),
+            status.missed_heartbeats as f64,
+        );
+        metrics.insert(
+            "last_heartbeat_age_seconds".to_string(),
+            heartbeat_age as f64,
+        );
+        metrics.insert("error_count".to_string(), 0.0);
+
+        Ok(HealthCheckData {
+            collector_id: collector_id.to_string(),
+            status: overall_status,
+            components,
+            metrics,
+            last_heartbeat: status.last_heartbeat,
+            uptime_seconds: status.uptime.as_secs(),
+            error_count: 0,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct DefaultConfigProvider {
+    config_manager: Arc<ConfigManager>,
+    process_manager: Arc<CollectorProcessManager>,
+    broker: Option<Arc<DaemoneyeBroker>>,
+}
+
+#[async_trait]
+impl ConfigProvider for DefaultConfigProvider {
+    async fn get_config(
+        &self,
+        collector_id: &str,
+    ) -> std::result::Result<CollectorConfig, ConfigManagerError> {
+        self.config_manager.get_config(collector_id).await
+    }
+
+    async fn update_config(
+        &self,
+        collector_id: &str,
+        changes: HashMap<String, serde_json::Value>,
+        validate_only: bool,
+        rollback_on_failure: bool,
+    ) -> std::result::Result<ConfigUpdateResult, ConfigManagerError> {
+        let current = self.config_manager.get_config(collector_id).await?;
+        let snapshot = self
+            .config_manager
+            .update_config(
+                collector_id,
+                changes.clone(),
+                validate_only,
+                rollback_on_failure,
+            )
+            .await?;
+
+        if validate_only {
+            return Ok(ConfigUpdateResult {
+                version: snapshot.version,
+                changed_fields: Vec::new(),
+                restart_performed: false,
+                timestamp: SystemTime::now(),
+            });
+        }
+
+        let restart_needed = ConfigManager::requires_restart(&current, &snapshot.config);
+        let changed_fields = ConfigManager::get_changed_fields(&current, &snapshot.config);
+
+        if restart_needed {
+            let restart_timeout = Duration::from_secs(30);
+            // Propagate PM errors as config errors? Keep separate; here we bubble via panic? No, map later at service.
+            if let Err(e) = self
+                .process_manager
+                .restart_collector(collector_id, restart_timeout)
+                .await
+            {
+                // Surface as validation-like failure to preserve existing mapping category
+                return Err(ConfigManagerError::PersistenceFailed(format!(
+                    "Failed to restart collector after config update: {}",
+                    e
+                )));
+            }
+        } else if let Some(ref broker) = self.broker {
+            // Publish hot-reload notification
+            let topic = format!("control.collector.config.{}", collector_id);
+            let notification = ConfigChangeNotification {
+                collector_id: collector_id.to_string(),
+                changed_fields: changed_fields.clone(),
+                version: snapshot.version,
+                timestamp: SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            };
+            if let Ok(payload) = serde_json::to_vec(&notification) {
+                let _ = broker
+                    .publish(&topic, &format!("config-change-{}", collector_id), payload)
+                    .await;
+            }
+        }
+
+        Ok(ConfigUpdateResult {
+            version: snapshot.version,
+            changed_fields,
+            restart_performed: restart_needed,
+            timestamp: SystemTime::now(),
+        })
+    }
+
+    async fn validate_config(
+        &self,
+        _collector_id: &str,
+        config: &CollectorConfig,
+    ) -> std::result::Result<(), ConfigManagerError> {
+        self.config_manager.validate_config(config).await
     }
 }
 

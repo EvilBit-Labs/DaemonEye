@@ -62,6 +62,7 @@
 
 pub mod broker;
 pub mod client;
+pub mod config_manager;
 pub mod error;
 pub mod message;
 pub mod process_manager;
@@ -72,6 +73,7 @@ pub mod transport;
 // Re-export main types for convenience
 pub use broker::{DaemoneyeBroker, DaemoneyeEventBus};
 pub use client::{ClientStats, EventBusClient};
+pub use config_manager::{ConfigManager, ConfigManagerError, ConfigSnapshot};
 pub use error::{EventBusError, Result};
 pub use message::{
     BusEvent, CollectionEvent, CorrelationFilter, EventFilter, EventSubscription, FilesystemEvent,
@@ -79,12 +81,13 @@ pub use message::{
 };
 pub use process_manager::{
     CollectorConfig, CollectorProcessManager, CollectorState, ProcessManagerConfig,
-    ProcessManagerError,
+    ProcessManagerError, ResourceLimits,
 };
 pub use rpc::{
     CapabilitiesData, CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient,
-    CollectorRpcService, ConfigUpdateRequest, HealthCheckData, HealthStatus, RpcPayload,
-    RpcRequest, RpcResponse, RpcStatus, ShutdownRequest, ShutdownType,
+    CollectorRpcService, ConfigProvider, ConfigUpdateRequest, ConfigUpdateResult, HealthCheckData,
+    HealthProvider, HealthStatus, RpcPayload, RpcRequest, RpcResponse, RpcStatus, ShutdownRequest,
+    ShutdownType,
 };
 pub use topic::{
     Topic, TopicAccessLevel, TopicDomain, TopicError, TopicMatcher, TopicPattern, TopicRegistry,

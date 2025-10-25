@@ -1,3 +1,4 @@
+#![cfg(feature = "eventbus-integration")]
 //! Performance comparison tests between daemoneye-eventbus and crossbeam event distribution.
 //!
 //! This test suite validates that the migration from crossbeam to daemoneye-eventbus

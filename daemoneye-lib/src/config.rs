@@ -168,6 +168,9 @@ pub struct BrokerConfig {
     /// Process manager configuration
     #[serde(default)]
     pub process_manager: ProcessManagerConfig,
+    /// Configuration directory for collector configs
+    #[serde(default = "default_config_directory")]
+    pub config_directory: PathBuf,
 }
 
 // BrokerConfig implementation moved below Default impl
@@ -208,6 +211,11 @@ pub struct ControlTopicsConfig {
 }
 
 // Default implementation is now derived
+
+/// Default configuration directory for collector configs
+fn default_config_directory() -> PathBuf {
+    PathBuf::from("/var/lib/daemoneye/configs")
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -314,6 +322,7 @@ impl Default for BrokerConfig {
             topic_hierarchy: TopicHierarchyConfig::default(),
             collector_binaries: std::collections::HashMap::new(),
             process_manager: ProcessManagerConfig::default(),
+            config_directory: default_config_directory(),
         }
     }
 }

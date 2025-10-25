@@ -6,6 +6,11 @@
 //! for collector-core component coordination.
 
 use anyhow::{Context, Result};
+use daemoneye_eventbus::ConfigManager;
+use daemoneye_eventbus::rpc::{
+    ComponentHealth, ConfigProvider, ConfigUpdateResult, HealthCheckData, HealthProvider,
+    HealthStatus,
+};
 use daemoneye_eventbus::{
     DaemoneyeBroker, DaemoneyeEventBus, EventBus, EventBusStatistics,
     process_manager::CollectorProcessManager,
@@ -46,6 +51,8 @@ pub struct BrokerManager {
     shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     /// Process manager for collector lifecycle
     process_manager: Arc<CollectorProcessManager>,
+    /// Configuration manager for collectors
+    config_manager: Arc<ConfigManager>,
 }
 
 impl BrokerManager {
@@ -64,9 +71,13 @@ impl BrokerManager {
                 config.process_manager.health_check_interval_seconds,
             ),
             enable_auto_restart: config.process_manager.enable_auto_restart,
+            heartbeat_timeout_multiplier: 3, // Default: 3 missed heartbeats = timeout
         };
 
         let process_manager = CollectorProcessManager::new(pm_config);
+
+        // Initialize configuration manager with configured directory
+        let config_manager = Arc::new(ConfigManager::new(config.config_directory.clone()));
 
         Self {
             config,
@@ -75,6 +86,7 @@ impl BrokerManager {
             health_status: Arc::new(RwLock::new(BrokerHealth::Stopped)),
             shutdown_tx: Arc::new(Mutex::new(None)),
             process_manager,
+            config_manager,
         }
     }
 
@@ -96,6 +108,22 @@ impl BrokerManager {
             max_connections = self.config.max_connections,
             "Starting embedded DaemonEye EventBus broker"
         );
+
+        // Ensure config directory exists
+        if !self.config.config_directory.exists() {
+            tokio::fs::create_dir_all(&self.config.config_directory)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to create config directory: {}",
+                        self.config.config_directory.display()
+                    )
+                })?;
+            info!(
+                config_dir = %self.config.config_directory.display(),
+                "Created config directory"
+            );
+        }
 
         self.config
             .ensure_socket_directory()
@@ -258,6 +286,12 @@ impl BrokerManager {
         &self.process_manager
     }
 
+    /// Get a reference to the configuration manager
+    #[allow(dead_code)]
+    pub fn config_manager(&self) -> Arc<ConfigManager> {
+        Arc::clone(&self.config_manager)
+    }
+
     /// Perform a health check on the broker
     pub async fn health_check(&self) -> BrokerHealth {
         let current_health = self.health_status().await;
@@ -272,7 +306,45 @@ impl BrokerManager {
                         uptime_seconds = stats.uptime_seconds,
                         "Broker health check passed"
                     );
-                    BrokerHealth::Healthy
+                    // Aggregate collector health across all managed collectors
+                    let collector_ids = self.process_manager.list_collector_ids().await;
+                    let mut any_unhealthy = false;
+                    let mut any_degraded = false;
+                    for id in collector_ids {
+                        match self.process_manager.check_collector_health(&id).await {
+                            Ok(daemoneye_eventbus::process_manager::HealthStatus::Unhealthy) => {
+                                any_unhealthy = true;
+                                break;
+                            }
+                            Ok(daemoneye_eventbus::process_manager::HealthStatus::Degraded) => {
+                                any_degraded = true;
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                warn!(collector_id = %id, error = %e, "Failed to check collector health");
+                                any_degraded = true;
+                            }
+                        }
+                    }
+
+                    if any_unhealthy {
+                        let unhealthy_status = BrokerHealth::Unhealthy(
+                            "One or more collectors are unhealthy".to_string(),
+                        );
+                        let mut health = self.health_status.write().await;
+                        *health = unhealthy_status.clone();
+                        unhealthy_status
+                    } else if any_degraded {
+                        // Represent degraded collector state as Unhealthy with reason
+                        let degraded_status = BrokerHealth::Unhealthy(
+                            "One or more collectors are degraded".to_string(),
+                        );
+                        let mut health = self.health_status.write().await;
+                        *health = degraded_status.clone();
+                        degraded_status
+                    } else {
+                        BrokerHealth::Healthy
+                    }
                 } else {
                     warn!("Broker health check failed - unable to get statistics");
                     let unhealthy_status =
@@ -314,6 +386,247 @@ impl BrokerManager {
             "Timeout waiting for broker to become healthy after {:?}",
             timeout
         ))
+    }
+}
+
+// -------------------------------
+// RPC Provider trait implementations
+// -------------------------------
+
+#[async_trait::async_trait]
+impl HealthProvider for BrokerManager {
+    async fn get_collector_health(
+        &self,
+        collector_id: &str,
+    ) -> std::result::Result<HealthCheckData, daemoneye_eventbus::ProcessManagerError> {
+        let status = self
+            .process_manager
+            .get_collector_status(collector_id)
+            .await?;
+        let health = self
+            .process_manager
+            .check_collector_health(collector_id)
+            .await?;
+
+        // Build component details
+        let mut components = std::collections::HashMap::new();
+        components.insert(
+            "process".to_string(),
+            ComponentHealth {
+                name: "process".to_string(),
+                status: match health {
+                    daemoneye_eventbus::process_manager::HealthStatus::Healthy => {
+                        HealthStatus::Healthy
+                    }
+                    daemoneye_eventbus::process_manager::HealthStatus::Degraded => {
+                        HealthStatus::Degraded
+                    }
+                    daemoneye_eventbus::process_manager::HealthStatus::Unhealthy => {
+                        HealthStatus::Unhealthy
+                    }
+                    daemoneye_eventbus::process_manager::HealthStatus::Unknown => {
+                        HealthStatus::Unknown
+                    }
+                },
+                message: Some(format!("PID: {}, State: {:?}", status.pid, status.state)),
+                last_check: std::time::SystemTime::now(),
+                check_interval_seconds: self.process_manager.config.health_check_interval.as_secs(),
+            },
+        );
+
+        let hb_status = if status.missed_heartbeats >= 3 {
+            HealthStatus::Unhealthy
+        } else if status.missed_heartbeats > 0 {
+            HealthStatus::Degraded
+        } else {
+            HealthStatus::Healthy
+        };
+
+        let heartbeat_age = std::time::SystemTime::now()
+            .duration_since(status.last_heartbeat)
+            .unwrap_or_default()
+            .as_secs();
+
+        components.insert(
+            "heartbeat".to_string(),
+            ComponentHealth {
+                name: "heartbeat".to_string(),
+                status: hb_status,
+                message: Some(format!(
+                    "Last heartbeat: {}s ago, Missed: {}",
+                    heartbeat_age, status.missed_heartbeats
+                )),
+                last_check: status.last_heartbeat,
+                check_interval_seconds: self.process_manager.config.health_check_interval.as_secs(),
+            },
+        );
+
+        // Event sources health is not yet implemented
+        components.insert(
+            "event_sources".to_string(),
+            ComponentHealth {
+                name: "event_sources".to_string(),
+                status: HealthStatus::Unknown,
+                message: Some("Event sources health monitoring not yet implemented".to_string()),
+                last_check: std::time::SystemTime::now(),
+                check_interval_seconds: 60,
+            },
+        );
+
+        // Compute overall health using worst-of aggregation
+        let overall = aggregate_worst_of(components.values().map(|c| c.status));
+
+        let mut metrics = std::collections::HashMap::new();
+        metrics.insert("pid".to_string(), status.pid as f64);
+        metrics.insert("restart_count".to_string(), status.restart_count as f64);
+        metrics.insert("uptime_seconds".to_string(), status.uptime.as_secs() as f64);
+        metrics.insert(
+            "missed_heartbeats".to_string(),
+            status.missed_heartbeats as f64,
+        );
+        metrics.insert(
+            "last_heartbeat_age_seconds".to_string(),
+            heartbeat_age as f64,
+        );
+        metrics.insert("error_count".to_string(), 0.0);
+
+        Ok(HealthCheckData {
+            collector_id: collector_id.to_string(),
+            status: overall,
+            components,
+            metrics,
+            last_heartbeat: status.last_heartbeat,
+            uptime_seconds: status.uptime.as_secs(),
+            error_count: 0,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl ConfigProvider for BrokerManager {
+    async fn get_config(
+        &self,
+        collector_id: &str,
+    ) -> std::result::Result<
+        daemoneye_eventbus::CollectorConfig,
+        daemoneye_eventbus::ConfigManagerError,
+    > {
+        self.config_manager.get_config(collector_id).await
+    }
+
+    async fn update_config(
+        &self,
+        collector_id: &str,
+        changes: std::collections::HashMap<String, serde_json::Value>,
+        validate_only: bool,
+        rollback_on_failure: bool,
+    ) -> std::result::Result<ConfigUpdateResult, daemoneye_eventbus::ConfigManagerError> {
+        let current = self.config_manager.get_config(collector_id).await?;
+        let snapshot = self
+            .config_manager
+            .update_config(
+                collector_id,
+                changes.clone(),
+                validate_only,
+                rollback_on_failure,
+            )
+            .await?;
+
+        if validate_only {
+            return Ok(ConfigUpdateResult {
+                version: snapshot.version,
+                changed_fields: Vec::new(),
+                restart_performed: false,
+                timestamp: std::time::SystemTime::now(),
+            });
+        }
+
+        let restart_needed =
+            daemoneye_eventbus::ConfigManager::requires_restart(&current, &snapshot.config);
+        let changed_fields =
+            daemoneye_eventbus::ConfigManager::get_changed_fields(&current, &snapshot.config);
+
+        if restart_needed {
+            let restart_timeout = Duration::from_secs(30);
+            self.process_manager
+                .restart_collector(collector_id, restart_timeout)
+                .await
+                .map_err(|e| {
+                    daemoneye_eventbus::ConfigManagerError::PersistenceFailed(format!(
+                        "Failed to restart collector after config update: {}",
+                        e
+                    ))
+                })?;
+        } else {
+            // Publish hot-reload notification if broker is present
+            let broker_guard = self.broker.read().await;
+            if let Some(broker) = broker_guard.as_ref() {
+                let topic = format!("control.collector.config.{}", collector_id);
+                let notification = daemoneye_eventbus::rpc::ConfigChangeNotification {
+                    collector_id: collector_id.to_string(),
+                    changed_fields: changed_fields.clone(),
+                    version: snapshot.version,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                };
+                if let Ok(payload) = serde_json::to_vec(&notification) {
+                    let _ = broker
+                        .publish(&topic, &format!("config-change-{}", collector_id), payload)
+                        .await;
+                }
+            }
+        }
+
+        Ok(ConfigUpdateResult {
+            version: snapshot.version,
+            changed_fields,
+            restart_performed: restart_needed,
+            timestamp: std::time::SystemTime::now(),
+        })
+    }
+
+    async fn validate_config(
+        &self,
+        _collector_id: &str,
+        config: &daemoneye_eventbus::CollectorConfig,
+    ) -> std::result::Result<(), daemoneye_eventbus::ConfigManagerError> {
+        self.config_manager.validate_config(config).await
+    }
+}
+
+/// Compute worst-of aggregation across component health statuses.
+/// Returns Unhealthy if any component is Unhealthy, else Degraded if any is Degraded,
+/// else Healthy if any is Healthy, else Unknown.
+fn aggregate_worst_of<I: Iterator<Item = HealthStatus>>(iter: I) -> HealthStatus {
+    let mut has_healthy = false;
+    let mut has_degraded = false;
+    let mut has_unhealthy = false;
+    let mut has_unresponsive = false;
+
+    for s in iter {
+        match s {
+            HealthStatus::Unhealthy => has_unhealthy = true,
+            HealthStatus::Unresponsive => has_unresponsive = true,
+            HealthStatus::Degraded => has_degraded = true,
+            HealthStatus::Healthy => has_healthy = true,
+            HealthStatus::Unknown => {}
+        }
+    }
+
+    // Worst-of aggregation: Unresponsive > Unhealthy > Degraded > Healthy > Unknown
+    if has_unresponsive {
+        HealthStatus::Unresponsive
+    } else if has_unhealthy {
+        HealthStatus::Unhealthy
+    } else if has_degraded {
+        HealthStatus::Degraded
+    } else if has_healthy {
+        HealthStatus::Healthy
+    } else {
+        // No components or all unknown
+        HealthStatus::Unknown
     }
 }
 

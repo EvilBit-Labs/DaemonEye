@@ -74,7 +74,7 @@ pub mod high_performance_event_bus;
 pub mod ipc;
 pub mod monitor_collector;
 pub mod performance;
-pub mod rpc_services;
+pub mod process_manager;
 pub mod shutdown_coordinator;
 pub mod source;
 pub mod trigger;
@@ -88,7 +88,10 @@ pub use analysis_chain::{
 pub use collector::{Collector, CollectorRuntime, RuntimeStats};
 pub use config::CollectorConfig;
 pub use config_manager::ConfigManager;
-pub use daemoneye_event_bus::DaemoneyeEventBus;
+pub use daemoneye_event_bus::{
+    BrokerHealthStatus, ClientStatisticsAggregate, DaemoneyeEventBus, DaemoneyeEventBusMetrics,
+    PerformanceMetrics, TopicStatistics, TransportStatistics,
+};
 pub use event::{
     AnalysisType, CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent,
     TriggerPriority, TriggerRequest,
@@ -111,7 +114,6 @@ pub use performance::{
     PerformanceConfig, PerformanceDegradation, PerformanceMonitor, ResourceUsageMetrics,
     ThroughputMetrics, TriggerLatencyMetrics,
 };
-pub use rpc_services::RpcServices;
 pub use shutdown_coordinator::{
     ShutdownConfig, ShutdownCoordinator, ShutdownEvent, ShutdownPhase, ShutdownRequest,
     ShutdownResponse,
