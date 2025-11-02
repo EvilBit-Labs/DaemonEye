@@ -3,7 +3,7 @@
 use daemoneye_agent::BrokerManager;
 use daemoneye_lib::config::BrokerConfig;
 use std::time::Duration;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 
 #[tokio::test]
 async fn test_broker_lifecycle() {
@@ -11,11 +11,17 @@ async fn test_broker_lifecycle() {
     let temp_file = NamedTempFile::new().expect("Failed to create temp file");
     let socket_path = temp_file.path().to_string_lossy().to_string();
 
+    let config_dir = TempDir::new().expect("Failed to create temp directory");
+    let config_directory = config_dir.path().join("collector-configs");
+    std::fs::create_dir_all(&config_directory).expect("Failed to create config directory");
+    let _config_dir = config_dir;
+
     // Create broker configuration
     let config = BrokerConfig {
         socket_path,
         startup_timeout_seconds: 5,
         shutdown_timeout_seconds: 5,
+        config_directory,
         ..Default::default()
     };
 
@@ -80,8 +86,14 @@ async fn test_broker_lifecycle() {
 
 #[tokio::test]
 async fn test_broker_disabled() {
+    let config_dir = TempDir::new().expect("Failed to create temp directory");
+    let config_directory = config_dir.path().join("collector-configs");
+    std::fs::create_dir_all(&config_directory).expect("Failed to create config directory");
+    let _config_dir = config_dir;
+
     let config = BrokerConfig {
         enabled: false,
+        config_directory,
         ..Default::default()
     };
 
@@ -106,8 +118,14 @@ async fn test_broker_health_monitoring() {
     let temp_file = NamedTempFile::new().expect("Failed to create temp file");
     let socket_path = temp_file.path().to_string_lossy().to_string();
 
+    let config_dir = TempDir::new().expect("Failed to create temp directory");
+    let config_directory = config_dir.path().join("collector-configs");
+    std::fs::create_dir_all(&config_directory).expect("Failed to create config directory");
+    let _config_dir = config_dir;
+
     let config = BrokerConfig {
         socket_path,
+        config_directory,
         ..Default::default()
     };
 

@@ -20,6 +20,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting dual-protocol architecture demonstration");
 
     // Create configurations for both services
+    let config_directory = std::env::temp_dir().join("daemoneye-demo-configs");
+    std::fs::create_dir_all(&config_directory)?;
+
     let broker_config = BrokerConfig {
         socket_path: "/tmp/demo-eventbus.sock".to_string(),
         enabled: true,
@@ -30,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         topic_hierarchy: daemoneye_lib::config::TopicHierarchyConfig::default(),
         collector_binaries: std::collections::HashMap::new(),
         process_manager: daemoneye_lib::config::ProcessManagerConfig::default(),
+        config_directory,
     };
 
     let mut cli_ipc_config = create_cli_ipc_config();

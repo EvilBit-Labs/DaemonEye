@@ -803,12 +803,16 @@ impl EventBus for LocalEventBus {
         }
 
         // Update statistics
+        let active_subscribers = {
+            let subscribers = self.subscribers.read().await;
+            subscribers.len()
+        };
+
         {
             let mut stats = self.stats.lock().await;
             stats.events_published += 1;
             stats.events_delivered += delivered_count;
-            let subscribers = self.subscribers.read().await;
-            stats.active_subscribers = subscribers.len();
+            stats.active_subscribers = active_subscribers;
         }
 
         tracing::debug!(

@@ -14,6 +14,9 @@ fn create_test_configs() -> (BrokerConfig, daemoneye_lib::ipc::IpcConfig, TempDi
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let temp_path = temp_dir.path();
 
+    let config_directory = temp_path.join("collector-configs");
+    std::fs::create_dir_all(&config_directory).expect("Failed to create config directory");
+
     let broker_config = BrokerConfig {
         socket_path: temp_path
             .join("test-broker.sock")
@@ -27,6 +30,7 @@ fn create_test_configs() -> (BrokerConfig, daemoneye_lib::ipc::IpcConfig, TempDi
         topic_hierarchy: daemoneye_lib::config::TopicHierarchyConfig::default(),
         collector_binaries: std::collections::HashMap::new(),
         process_manager: daemoneye_lib::config::ProcessManagerConfig::default(),
+        config_directory,
     };
 
     let mut ipc_config = create_cli_ipc_config();
