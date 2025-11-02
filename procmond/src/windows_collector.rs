@@ -734,10 +734,10 @@ impl WindowsProcessCollector {
         let mut service_info = WindowsServiceInfo::default();
 
         // Use heuristic-based service detection
-        if let Some((name, exe_path, _, _)) = self.get_process_info(pid, system) {
-            if self.is_likely_service(&name, exe_path.as_deref()) {
-                self.populate_service_info(&mut service_info, &name, pid, "heuristics");
-            }
+        if let Some((name, exe_path, _, _)) = self.get_process_info(pid, system)
+            && self.is_likely_service(&name, exe_path.as_deref())
+        {
+            self.populate_service_info(&mut service_info, &name, pid, "heuristics");
         }
 
         Ok(service_info)
@@ -1129,15 +1129,15 @@ impl WindowsProcessCollector {
         }
 
         // Collect performance counters if configured
-        if self.windows_config.collect_performance_counters && self.performance_counters_available {
-            if let Some((working_set, private_bytes, virtual_bytes)) =
+        if self.windows_config.collect_performance_counters
+            && self.performance_counters_available
+            && let Some((working_set, private_bytes, virtual_bytes)) =
                 self.get_performance_counters(pid, system)
-            {
-                metadata.working_set_size = Some(working_set);
-                metadata.private_bytes = Some(private_bytes);
-                metadata.virtual_bytes = Some(virtual_bytes);
-                // handle_count and thread_count omitted until real Windows performance counter APIs are implemented
-            }
+        {
+            metadata.working_set_size = Some(working_set);
+            metadata.private_bytes = Some(private_bytes);
+            metadata.virtual_bytes = Some(virtual_bytes);
+            // handle_count and thread_count omitted until real Windows performance counter APIs are implemented
         }
 
         // Detect process architecture

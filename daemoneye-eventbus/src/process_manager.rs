@@ -77,6 +77,7 @@ use nix::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -320,6 +321,52 @@ struct RestartRequest {
 }
 
 impl CollectorProcessManager {
+    async fn spawn_process_with_retries(
+        binary_path: &PathBuf,
+        config: &CollectorConfig,
+    ) -> io::Result<Child> {
+        const MAX_ATTEMPTS: usize = 3;
+        let mut attempt = 0usize;
+
+        loop {
+            let mut command = Command::new(binary_path);
+            command.args(&config.args);
+
+            for (key, value) in &config.env {
+                command.env(key, value);
+            }
+
+            if let Some(working_dir) = &config.working_dir {
+                command.current_dir(working_dir);
+            }
+
+            command.stdin(Stdio::null());
+            command.stdout(Stdio::inherit());
+            command.stderr(Stdio::inherit());
+
+            match command.spawn() {
+                Ok(child) => return Ok(child),
+                Err(e) if Self::is_text_file_busy(&e) && attempt + 1 < MAX_ATTEMPTS => {
+                    attempt += 1;
+                    let backoff_ms = 25 * attempt as u64;
+                    warn!(
+                        attempt,
+                        backoff_ms,
+                        path = %binary_path.display(),
+                        error = %e,
+                        "Collector spawn returned ETXTBUSY, retrying"
+                    );
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn is_text_file_busy(error: &io::Error) -> bool {
+        matches!(error.raw_os_error(), Some(code) if code == 26)
+    }
+
     /// Create a new process manager
     ///
     /// # Arguments
@@ -423,16 +470,15 @@ impl CollectorProcessManager {
         collector_type: &str,
         config: CollectorConfig,
     ) -> Result<u32, ProcessManagerError> {
-        let mut processes = self.processes.lock().await;
-
-        // Check if already running
-        if processes.contains_key(collector_id) {
-            return Err(ProcessManagerError::AlreadyRunning(
-                collector_id.to_string(),
-            ));
+        {
+            let processes = self.processes.lock().await;
+            if processes.contains_key(collector_id) {
+                return Err(ProcessManagerError::AlreadyRunning(
+                    collector_id.to_string(),
+                ));
+            }
         }
 
-        // Resolve binary path
         let binary_path = if config.binary_path.as_os_str().is_empty() {
             self.config
                 .collector_binaries
@@ -455,33 +501,15 @@ impl CollectorProcessManager {
             binary_path.display()
         );
 
-        // Create command
-        let mut command = Command::new(&binary_path);
-        command.args(&config.args);
-
-        // Set environment variables
-        for (key, value) in &config.env {
-            command.env(key, value);
-        }
-
-        // Set working directory
-        if let Some(working_dir) = &config.working_dir {
-            command.current_dir(working_dir);
-        }
-
-        // Configure stdio
-        command.stdin(Stdio::null());
-        command.stdout(Stdio::inherit());
-        command.stderr(Stdio::inherit());
-
-        // Spawn process
-        let child = command.spawn().map_err(|e| {
-            ProcessManagerError::SpawnFailed(format!(
-                "Failed to spawn {}: {}",
-                binary_path.display(),
-                e
-            ))
-        })?;
+        let mut child = Self::spawn_process_with_retries(&binary_path, &config)
+            .await
+            .map_err(|e| {
+                ProcessManagerError::SpawnFailed(format!(
+                    "Failed to spawn {}: {}",
+                    binary_path.display(),
+                    e
+                ))
+            })?;
 
         let pid = child
             .id()
@@ -489,7 +517,21 @@ impl CollectorProcessManager {
 
         info!("Spawned collector {} with PID: {}", collector_id, pid);
 
-        // Create process record
+        let mut processes = self.processes.lock().await;
+        if processes.contains_key(collector_id) {
+            drop(processes);
+            warn!(
+                collector_id,
+                pid,
+                "Collector registered while spawn was in progress; terminating duplicate instance"
+            );
+            if let Err(e) = child.start_kill() {
+                warn!(pid, error = %e, "Failed to signal duplicate collector for termination");
+            }
+            let _ = child.wait().await;
+            return Err(ProcessManagerError::AlreadyRunning(collector_id.to_string()));
+        }
+
         let now = SystemTime::now();
         let process = CollectorProcess {
             collector_id: collector_id.to_string(),
@@ -651,34 +693,30 @@ impl CollectorProcessManager {
         let heartbeat_interval = self.config.health_check_interval;
         let heartbeat_threshold = self.config.heartbeat_timeout_multiplier;
 
-        // Guard against zero or very small intervals
-        if heartbeat_interval.is_zero() || heartbeat_interval < Duration::from_secs(1) {
+        // Guard against zero or extremely small intervals to avoid busy loops
+        let min_interval = Duration::from_millis(50);
+        let effective_interval = if heartbeat_interval.is_zero() {
             warn!(
-                "Heartbeat interval too small ({:?}), using minimum of 1 second",
-                heartbeat_interval
+                "Heartbeat interval is zero, using minimum of {:?}",
+                min_interval
             );
-            let safe_interval = Duration::from_secs(1).max(heartbeat_interval);
-            let processes = processes;
-            let broker = broker;
-            tokio::spawn(async move {
-                Self::run_heartbeat_loop(
-                    collector_id,
-                    processes,
-                    broker,
-                    safe_interval,
-                    heartbeat_threshold,
-                )
-                .await;
-            });
-            return;
-        }
+            min_interval
+        } else if heartbeat_interval < min_interval {
+            warn!(
+                "Heartbeat interval {:?} below minimum {:?}, clamping to minimum",
+                heartbeat_interval, min_interval
+            );
+            min_interval
+        } else {
+            heartbeat_interval
+        };
 
         tokio::spawn(async move {
             Self::run_heartbeat_loop(
                 collector_id,
                 processes,
                 broker,
-                heartbeat_interval,
+                effective_interval,
                 heartbeat_threshold,
             )
             .await;
@@ -1099,6 +1137,7 @@ impl CollectorProcessManager {
 
         #[cfg(windows)]
         {
+            let _ = collector_id; // Parameter required for API consistency
             Err(ProcessManagerError::PlatformNotSupported(
                 "Pause operation not supported on Windows".to_string(),
             ))
@@ -1141,6 +1180,7 @@ impl CollectorProcessManager {
 
         #[cfg(windows)]
         {
+            let _ = collector_id; // Parameter required for API consistency
             Err(ProcessManagerError::PlatformNotSupported(
                 "Resume operation not supported on Windows".to_string(),
             ))

@@ -344,7 +344,7 @@ impl BrokerConfig {
         #[cfg(windows)]
         {
             // Windows named pipes don't require directory creation
-            return Ok(socket_path.to_path_buf());
+            Ok(socket_path.to_path_buf())
         }
 
         #[cfg(not(windows))]

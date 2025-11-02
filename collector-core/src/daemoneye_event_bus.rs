@@ -978,7 +978,7 @@ impl EventBus for DaemoneyeEventBus {
 
     async fn shutdown(&self) -> Result<()> {
         // Delegate to the existing shutdown method
-        self.shutdown().await
+        DaemoneyeEventBus::shutdown(self).await
     }
 }
 

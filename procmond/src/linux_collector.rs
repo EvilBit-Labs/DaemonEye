@@ -110,7 +110,7 @@ pub struct LinuxProcessMetadata {
 ///
 /// ```rust,no_run
 /// use procmond::linux_collector::{LinuxProcessCollector, LinuxCollectorConfig};
-/// use procmond::process_collector::ProcessCollectionConfig;
+/// use procmond::process_collector::{ProcessCollectionConfig, ProcessCollector};
 ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
@@ -121,7 +121,7 @@ pub struct LinuxProcessMetadata {
 ///         collect_file_descriptors: true,
 ///         collect_network_connections: true,
 ///         detect_containers: true,
-///         use_cap_sys_ptrace: false, // Will be auto-detected
+///         use_cap_sys_ptrace: None, // Auto-detect (Some(true/false) to override)
 ///     };
 ///
 ///     let collector = LinuxProcessCollector::new(base_config, linux_config)?;
@@ -683,10 +683,8 @@ impl ProcessCollector for LinuxProcessCollector {
         })?;
 
         let mut events = Vec::new();
-        let mut stats = CollectionStats {
-            total_processes: system.processes().len(),
-            ..Default::default()
-        };
+        let mut stats = CollectionStats::default();
+        let mut processed_count = 0;
 
         // Process each process with individual error handling
         for (sysinfo_pid, process) in system.processes().iter() {
@@ -703,6 +701,8 @@ impl ProcessCollector for LinuxProcessCollector {
                 break;
             }
 
+            processed_count += 1;
+
             match self.convert_sysinfo_to_event(pid, process).await {
                 Ok(event) => {
                     // Apply filtering based on configuration
@@ -716,7 +716,12 @@ impl ProcessCollector for LinuxProcessCollector {
                     };
 
                     if should_skip {
-                        debug!(pid = pid, name = %event.name, "Skipping process due to configuration");
+                        debug!(
+                            pid = pid,
+                            name = %event.name,
+                            "Skipping process due to configuration"
+                        );
+                        stats.inaccessible_processes += 1;
                     } else {
                         events.push(event);
                         stats.successful_collections += 1;
@@ -737,6 +742,7 @@ impl ProcessCollector for LinuxProcessCollector {
             }
         }
 
+        stats.total_processes = processed_count;
         stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
 
         debug!(

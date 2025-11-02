@@ -9,9 +9,14 @@ use daemoneye_eventbus::process_manager::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Duration;
 use tempfile::TempDir;
+
+static SCRIPT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Create a test configuration for process manager
 fn create_test_config() -> ProcessManagerConfig {
@@ -29,9 +34,14 @@ fn create_test_config() -> ProcessManagerConfig {
 #[cfg(unix)]
 fn create_mock_collector_binary(temp_dir: &TempDir, sleep_duration: u64) -> PathBuf {
     use std::fs;
+    use std::fs::OpenOptions;
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
-    let script_path = temp_dir.path().join("mock_collector.sh");
+    let id = SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let script_path = temp_dir
+        .path()
+        .join(format!("mock_collector_{id}.sh"));
     let script_content = format!(
         r#"#!/bin/bash
 echo "Starting collector"
@@ -42,7 +52,15 @@ exit 0
         sleep_duration
     );
 
-    fs::write(&script_path, script_content).expect("Failed to write test script");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&script_path)
+        .expect("Failed to create test script");
+    file.write_all(script_content.as_bytes())
+        .expect("Failed to write test script");
+    file.sync_all().expect("Failed to sync test script");
     let mut perms = fs::metadata(&script_path)
         .expect("Failed to get metadata")
         .permissions();
@@ -55,8 +73,13 @@ exit 0
 #[cfg(windows)]
 fn create_mock_collector_binary(temp_dir: &TempDir, sleep_duration: u64) -> PathBuf {
     use std::fs;
+    use std::fs::OpenOptions;
+    use std::io::Write;
 
-    let script_path = temp_dir.path().join("mock_collector.bat");
+    let id = SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let script_path = temp_dir
+        .path()
+        .join(format!("mock_collector_{id}.bat"));
     let script_content = format!(
         r#"@echo off
 echo Starting collector
@@ -67,7 +90,15 @@ exit /b 0
         sleep_duration
     );
 
-    fs::write(&script_path, script_content).expect("Failed to write test script");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&script_path)
+        .expect("Failed to create test script");
+    file.write_all(script_content.as_bytes())
+        .expect("Failed to write test script");
+    file.sync_all().expect("Failed to sync test script");
     script_path
 }
 
@@ -75,15 +106,28 @@ exit /b 0
 #[cfg(unix)]
 fn create_failing_collector_binary(temp_dir: &TempDir) -> PathBuf {
     use std::fs;
+    use std::fs::OpenOptions;
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
-    let script_path = temp_dir.path().join("failing_collector.sh");
+    let id = SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let script_path = temp_dir
+        .path()
+        .join(format!("failing_collector_{id}.sh"));
     let script_content = r#"#!/bin/bash
 echo "Collector failing"
 exit 1
 "#;
 
-    fs::write(&script_path, script_content).expect("Failed to write test script");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&script_path)
+        .expect("Failed to create test script");
+    file.write_all(script_content.as_bytes())
+        .expect("Failed to write test script");
+    file.sync_all().expect("Failed to sync test script");
     let mut perms = fs::metadata(&script_path)
         .expect("Failed to get metadata")
         .permissions();
@@ -96,14 +140,27 @@ exit 1
 #[cfg(windows)]
 fn create_failing_collector_binary(temp_dir: &TempDir) -> PathBuf {
     use std::fs;
+    use std::fs::OpenOptions;
+    use std::io::Write;
 
-    let script_path = temp_dir.path().join("failing_collector.bat");
+    let id = SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let script_path = temp_dir
+        .path()
+        .join(format!("failing_collector_{id}.bat"));
     let script_content = r#"@echo off
 echo Collector failing
 exit /b 1
 "#;
 
-    fs::write(&script_path, script_content).expect("Failed to write test script");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&script_path)
+        .expect("Failed to create test script");
+    file.write_all(script_content.as_bytes())
+        .expect("Failed to write test script");
+    file.sync_all().expect("Failed to sync test script");
     script_path
 }
 
