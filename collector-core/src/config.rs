@@ -4,9 +4,11 @@
 //! collector runtime and event sources. It integrates with the existing
 //! daemoneye-lib ConfigLoader for hierarchical configuration management.
 
+use daemoneye_eventbus::DaemoneyeBroker;
 use daemoneye_lib::config::{Config as DaemonEyeConfig, ConfigError, ConfigLoader};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use serde_json::Value;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 /// Configuration for the collector-core runtime.
 ///
@@ -70,6 +72,10 @@ pub struct CollectorConfig {
 
     /// DaemoneyeEventBus socket path for embedded broker communication
     pub daemoneye_socket_path: Option<String>,
+
+    /// Optional registration settings for broker auto-registration
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub registration: Option<CollectorRegistrationConfig>,
 }
 
 impl Default for CollectorConfig {
@@ -89,7 +95,59 @@ impl Default for CollectorConfig {
             telemetry_interval: Duration::from_secs(30),
             component_name: "collector-core".to_string(),
             daemoneye_socket_path: None,
+            registration: None,
         }
+    }
+}
+
+/// Registration configuration for automatic broker registration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectorRegistrationConfig {
+    /// Enable broker registration for this collector.
+    pub enabled: bool,
+    /// Target control topic for registration RPC operations.
+    pub topic: String,
+    /// Optional override for collector identifier.
+    #[serde(default)]
+    pub collector_id: Option<String>,
+    /// Optional override for collector type reported to the broker.
+    #[serde(default)]
+    pub collector_type: Option<String>,
+    /// Interval between heartbeats reported to the registry.
+    pub heartbeat_interval: Duration,
+    /// Deadline for registration RPC operations.
+    pub timeout: Duration,
+    /// Number of retry attempts for registration failures.
+    pub retry_attempts: u32,
+    /// Additional metadata attributes reported during registration.
+    #[serde(default)]
+    pub attributes: HashMap<String, Value>,
+    /// Handle to the embedded broker when operating in-process.
+    #[serde(skip)]
+    pub broker: Option<Arc<DaemoneyeBroker>>,
+}
+
+impl Default for CollectorRegistrationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            topic: "control.collector.registration".to_string(),
+            collector_id: None,
+            collector_type: None,
+            heartbeat_interval: Duration::from_secs(30),
+            timeout: Duration::from_secs(10),
+            retry_attempts: 3,
+            attributes: HashMap::new(),
+            broker: None,
+        }
+    }
+}
+
+impl CollectorRegistrationConfig {
+    /// Attach a broker handle for in-process registration.
+    pub fn with_broker(mut self, broker: Arc<DaemoneyeBroker>) -> Self {
+        self.broker = Some(broker);
+        self
     }
 }
 
@@ -152,6 +210,22 @@ impl CollectorConfig {
 
         if self.component_name.is_empty() {
             anyhow::bail!("component_name cannot be empty");
+        }
+
+        if let Some(registration) = &self.registration
+            && registration.enabled
+        {
+            if registration.topic.trim().is_empty() {
+                anyhow::bail!("registration.topic cannot be empty");
+            }
+
+            if registration.timeout.is_zero() {
+                anyhow::bail!("registration.timeout must be greater than 0");
+            }
+
+            if registration.heartbeat_interval.is_zero() {
+                anyhow::bail!("registration.heartbeat_interval must be greater than 0");
+            }
         }
 
         // Warn about potentially problematic configurations
@@ -250,6 +324,19 @@ impl CollectorConfig {
     pub fn with_batch_timeout(mut self, timeout: Duration) -> Self {
         self.batch_timeout = timeout;
         self
+    }
+
+    /// Sets the registration configuration.
+    pub fn with_registration(mut self, registration: CollectorRegistrationConfig) -> Self {
+        self.registration = Some(registration);
+        self
+    }
+
+    /// Assigns a broker handle for registration operations.
+    pub fn set_registration_broker(&mut self, broker: Arc<DaemoneyeBroker>) {
+        if let Some(config) = self.registration.as_mut() {
+            config.broker = Some(broker);
+        }
     }
 
     /// Loads configuration from the existing daemoneye-lib ConfigLoader.

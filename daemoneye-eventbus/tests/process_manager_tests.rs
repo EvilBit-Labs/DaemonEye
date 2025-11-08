@@ -10,8 +10,8 @@ use daemoneye_eventbus::process_manager::{
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
 use tempfile::TempDir;
@@ -39,9 +39,7 @@ fn create_mock_collector_binary(temp_dir: &TempDir, sleep_duration: u64) -> Path
     use std::os::unix::fs::PermissionsExt;
 
     let id = SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let script_path = temp_dir
-        .path()
-        .join(format!("mock_collector_{id}.sh"));
+    let script_path = temp_dir.path().join(format!("mock_collector_{id}.sh"));
     let script_content = format!(
         r#"#!/bin/bash
 echo "Starting collector"
@@ -77,9 +75,7 @@ fn create_mock_collector_binary(temp_dir: &TempDir, sleep_duration: u64) -> Path
     use std::io::Write;
 
     let id = SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let script_path = temp_dir
-        .path()
-        .join(format!("mock_collector_{id}.bat"));
+    let script_path = temp_dir.path().join(format!("mock_collector_{id}.bat"));
     let script_content = format!(
         r#"@echo off
 echo Starting collector
@@ -111,9 +107,7 @@ fn create_failing_collector_binary(temp_dir: &TempDir) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let id = SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let script_path = temp_dir
-        .path()
-        .join(format!("failing_collector_{id}.sh"));
+    let script_path = temp_dir.path().join(format!("failing_collector_{id}.sh"));
     let script_content = r#"#!/bin/bash
 echo "Collector failing"
 exit 1
@@ -144,9 +138,7 @@ fn create_failing_collector_binary(temp_dir: &TempDir) -> PathBuf {
     use std::io::Write;
 
     let id = SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let script_path = temp_dir
-        .path()
-        .join(format!("failing_collector_{id}.bat"));
+    let script_path = temp_dir.path().join(format!("failing_collector_{id}.bat"));
     let script_content = r#"@echo off
 echo Collector failing
 exit /b 1

@@ -12,10 +12,16 @@ use crate::{
     source::{EventSource, SourceCaps},
 };
 use anyhow::{Context, Result};
+use daemoneye_eventbus::{
+    DaemoneyeBroker,
+    rpc::{CollectorRpcClient, DeregistrationRequest, RegistrationRequest, RpcRequest, RpcStatus},
+};
 use daemoneye_lib::telemetry::{HealthStatus, PerformanceTimer, TelemetryCollector};
 use futures::future::try_join_all;
+use std::process;
 use std::{
     collections::HashMap,
+    env,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -95,6 +101,14 @@ pub struct CollectorRuntime {
     last_batch_flush: Instant,
     performance_monitor: Arc<PerformanceMonitor>,
     event_bus: Option<Box<dyn EventBus>>,
+}
+
+#[derive(Clone)]
+struct RegistrationSession {
+    collector_id: String,
+    topic: String,
+    broker: Arc<DaemoneyeBroker>,
+    timeout: Duration,
 }
 
 impl Collector {
@@ -235,6 +249,173 @@ impl Collector {
             .fold(SourceCaps::empty(), |acc, caps| acc | caps)
     }
 
+    fn capability_labels(&self) -> Vec<String> {
+        let caps = self.capabilities();
+        let mut labels = Vec::new();
+        if caps.contains(SourceCaps::PROCESS) {
+            labels.push("process".to_string());
+        }
+        if caps.contains(SourceCaps::NETWORK) {
+            labels.push("network".to_string());
+        }
+        if caps.contains(SourceCaps::FILESYSTEM) {
+            labels.push("filesystem".to_string());
+        }
+        if caps.contains(SourceCaps::PERFORMANCE) {
+            labels.push("performance".to_string());
+        }
+        if caps.contains(SourceCaps::REALTIME) {
+            labels.push("realtime".to_string());
+        }
+        if caps.contains(SourceCaps::KERNEL_LEVEL) {
+            labels.push("kernel".to_string());
+        }
+        if caps.contains(SourceCaps::SYSTEM_WIDE) {
+            labels.push("system-wide".to_string());
+        }
+        labels
+    }
+
+    async fn register_with_broker(&self) -> Result<Option<RegistrationSession>> {
+        let Some(registration) = self.config.registration.as_ref().filter(|cfg| cfg.enabled) else {
+            return Ok(None);
+        };
+
+        let Some(broker) = registration.broker.as_ref() else {
+            warn!("Registration enabled but no broker handle provided; skipping auto-registration");
+            return Ok(None);
+        };
+
+        let collector_id = registration
+            .collector_id
+            .clone()
+            .unwrap_or_else(|| self.config.component_name.clone());
+        let collector_type = registration
+            .collector_type
+            .clone()
+            .unwrap_or_else(|| self.config.component_name.clone());
+        let topic = registration.topic.clone();
+        let mut attempt = 0u32;
+        let mut last_error: Option<anyhow::Error> = None;
+
+        while attempt <= registration.retry_attempts {
+            match self
+                .dispatch_registration(
+                    Arc::clone(broker),
+                    &topic,
+                    &collector_id,
+                    &collector_type,
+                    registration,
+                )
+                .await
+            {
+                Ok(_) => {
+                    info!(collector_id = %collector_id, "Collector registered with broker");
+                    return Ok(Some(RegistrationSession {
+                        collector_id,
+                        topic,
+                        broker: Arc::clone(broker),
+                        timeout: registration.timeout,
+                    }));
+                }
+                Err(err) => {
+                    last_error = Some(err);
+                    attempt = attempt.saturating_add(1);
+                    if attempt > registration.retry_attempts {
+                        break;
+                    }
+                    warn!(
+                        attempt = attempt,
+                        retries = registration.retry_attempts,
+                        "Collector registration failed, retrying"
+                    );
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!("Collector registration failed without specific error")
+        }))
+    }
+
+    async fn dispatch_registration(
+        &self,
+        broker: Arc<DaemoneyeBroker>,
+        topic: &str,
+        collector_id: &str,
+        collector_type: &str,
+        registration: &crate::config::CollectorRegistrationConfig,
+    ) -> Result<()> {
+        let client = CollectorRpcClient::new(topic, broker).await?;
+        let hostname = env::var("HOSTNAME").unwrap_or_else(|_| "unknown-host".to_string());
+        let version = option_env!("COLLECTOR_CORE_VERSION")
+            .map(|v| v.to_string())
+            .or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()));
+        let heartbeat_ms = registration
+            .heartbeat_interval
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+
+        let registration_request = RegistrationRequest {
+            collector_id: collector_id.to_string(),
+            collector_type: collector_type.to_string(),
+            hostname,
+            version,
+            pid: Some(process::id()),
+            capabilities: self.capability_labels(),
+            attributes: registration.attributes.clone(),
+            heartbeat_interval_ms: Some(heartbeat_ms),
+        };
+
+        let timeout = registration.timeout;
+        let request = RpcRequest::register(
+            client.client_id.clone(),
+            topic.to_string(),
+            registration_request,
+            timeout,
+        );
+        let response = client.call(request, timeout).await?;
+
+        if response.status != RpcStatus::Success {
+            let message = response
+                .error_details
+                .as_ref()
+                .map(|err| err.message.clone())
+                .unwrap_or_else(|| "registration failed".to_string());
+            anyhow::bail!("Collector registration failed: {}", message);
+        }
+
+        Ok(())
+    }
+
+    async fn deregister_from_broker(session: RegistrationSession) -> Result<()> {
+        let client = CollectorRpcClient::new(&session.topic, session.broker).await?;
+        let request = RpcRequest::deregister(
+            client.client_id.clone(),
+            session.topic.clone(),
+            DeregistrationRequest {
+                collector_id: session.collector_id,
+                reason: Some("collector shutdown".to_string()),
+                force: false,
+            },
+            session.timeout,
+        );
+
+        let response = client.call(request, session.timeout).await?;
+        if response.status != RpcStatus::Success {
+            let message = response
+                .error_details
+                .as_ref()
+                .map(|err| err.message.clone())
+                .unwrap_or_else(|| "deregistration failed".to_string());
+            anyhow::bail!("Collector deregistration failed: {}", message);
+        }
+
+        info!("Collector deregistered from broker");
+        Ok(())
+    }
+
     /// Returns the number of registered event sources.
     pub fn source_count(&self) -> usize {
         self.sources.len()
@@ -348,6 +529,8 @@ impl Collector {
         // Start IPC server
         runtime.start_ipc_server().await?;
 
+        let registration_session = self.register_with_broker().await?;
+
         // Start all event sources
         for source in self.sources {
             let source_name = source.name().to_string();
@@ -371,7 +554,15 @@ impl Collector {
         runtime.start_event_processing().await;
 
         // Run until shutdown
-        runtime.run_until_shutdown().await?;
+        let run_result = runtime.run_until_shutdown().await;
+
+        if let Some(session) = registration_session
+            && let Err(err) = Collector::deregister_from_broker(session).await
+        {
+            warn!(error = %err, "Failed to deregister collector from broker");
+        }
+
+        run_result?;
 
         // Ensure the configured EventBus is shut down gracefully
         runtime.shutdown_eventbus().await?;

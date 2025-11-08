@@ -8,9 +8,10 @@ use daemoneye_eventbus::{
     error::{EventBusError, Result},
     rpc::{
         CapabilitiesData, CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient,
-        CollectorRpcService, ComponentHealth, ConfigUpdateRequest, HealthCheckData, HealthStatus,
-        ResourceRequirements, RpcPayload, RpcRequest, RpcResponse, RpcStatus, ServiceCapabilities,
-        ShutdownRequest, ShutdownType, TimeoutLimits,
+        CollectorRpcService, ComponentHealth, ConfigUpdateRequest, DeregistrationRequest,
+        HealthCheckData, HealthStatus, RegistrationRequest, ResourceRequirements,
+        RpcCorrelationMetadata, RpcPayload, RpcRequest, RpcResponse, RpcStatus,
+        ServiceCapabilities, ShutdownRequest, ShutdownType, TimeoutLimits,
     },
 };
 use std::collections::HashMap;
@@ -29,6 +30,8 @@ impl TestRpcService {
     fn new() -> Self {
         let capabilities = ServiceCapabilities {
             operations: vec![
+                CollectorOperation::Register,
+                CollectorOperation::Deregister,
                 CollectorOperation::Start,
                 CollectorOperation::Stop,
                 CollectorOperation::Restart,
@@ -111,7 +114,10 @@ impl TestRpcService {
             payload,
             timestamp: SystemTime::now(),
             execution_time_ms: 10,
+            queue_time_ms: None,
+            total_time_ms: 10,
             error_details: None,
+            correlation_metadata: request.correlation_metadata.clone().increment_hop(),
         }
     }
 
@@ -221,6 +227,72 @@ async fn test_collector_stop_lifecycle() {
     assert_eq!(response.status, RpcStatus::Success);
     assert_eq!(response.operation, CollectorOperation::Stop);
     assert!(!service.collector_running);
+}
+
+#[tokio::test]
+async fn test_registration_and_deregistration() {
+    let mut service = TestRpcService::new();
+
+    let registration = RegistrationRequest {
+        collector_id: "test-collector".to_string(),
+        collector_type: "test-collector".to_string(),
+        hostname: "localhost".to_string(),
+        version: Some("1.0.0".to_string()),
+        pid: Some(4242),
+        capabilities: vec!["process-monitoring".to_string()],
+        attributes: HashMap::new(),
+        heartbeat_interval_ms: Some(15_000),
+    };
+
+    let register_request = RpcRequest::register(
+        "test-client".to_string(),
+        "control.collector.test-collector".to_string(),
+        registration,
+        Duration::from_secs(5),
+    );
+
+    let register_response = service.handle_request(register_request).await;
+    assert_eq!(register_response.status, RpcStatus::Success);
+    assert_eq!(register_response.operation, CollectorOperation::Register);
+    if let Some(RpcPayload::RegistrationResponse(resp)) = register_response.payload {
+        assert!(resp.accepted);
+        assert_eq!(resp.collector_id, "test-collector");
+        assert_eq!(resp.heartbeat_interval_ms, 15_000);
+    } else {
+        panic!("Expected RegistrationResponse payload");
+    }
+
+    let deregistration = DeregistrationRequest {
+        collector_id: "test-collector".to_string(),
+        reason: Some("test completed".to_string()),
+        force: false,
+    };
+
+    let deregister_request = RpcRequest::deregister(
+        "test-client".to_string(),
+        "control.collector.test-collector".to_string(),
+        deregistration,
+        Duration::from_secs(5),
+    );
+
+    let deregister_response = service.handle_request(deregister_request).await;
+    assert_eq!(deregister_response.status, RpcStatus::Success);
+    assert_eq!(
+        deregister_response.operation,
+        CollectorOperation::Deregister
+    );
+    if let Some(RpcPayload::Generic(payload)) = deregister_response.payload {
+        assert_eq!(
+            payload.get("collector_id").and_then(|v| v.as_str()),
+            Some("test-collector")
+        );
+        assert_eq!(
+            payload.get("status").and_then(|v| v.as_str()),
+            Some("deregistered")
+        );
+    } else {
+        panic!("Expected Generic payload for deregistration");
+    }
 }
 
 #[tokio::test]
@@ -733,7 +805,10 @@ async fn test_rpc_response_serialization() {
         payload: Some(RpcPayload::HealthCheck(health_data)),
         timestamp: SystemTime::now(),
         execution_time_ms: 100,
+        queue_time_ms: None,
+        total_time_ms: 100,
         error_details: None,
+        correlation_metadata: RpcCorrelationMetadata::default(),
     };
 
     // Test serialization
@@ -766,9 +841,13 @@ async fn test_rpc_timeout_handling() {
         Duration::from_secs(5),
     );
 
-    assert_eq!(request.timeout_ms, 5000);
+    let delta = request
+        .deadline
+        .duration_since(request.timestamp)
+        .unwrap_or(Duration::ZERO);
+    assert!(delta >= Duration::from_millis(4500) && delta <= Duration::from_millis(5500));
     assert!(!request.request_id.is_empty());
-    assert!(!request.correlation_id.is_empty());
+    assert!(!request.correlation_metadata.correlation_id.is_empty());
 }
 
 #[tokio::test]
@@ -1390,15 +1469,16 @@ async fn test_rpc_start_collector_with_process_manager() -> Result<()> {
         startup_timeout_ms: Some(10000),
     };
 
+    let now = SystemTime::now();
     let request = RpcRequest {
         request_id: Uuid::new_v4().to_string(),
         client_id: "test-client".to_string(),
         target: "control.collector.test".to_string(),
         operation: CollectorOperation::Start,
         payload: RpcPayload::Lifecycle(lifecycle_req),
-        timestamp: SystemTime::now(),
-        timeout_ms: 10000,
-        correlation_id: Uuid::new_v4().to_string(),
+        timestamp: now,
+        deadline: now.checked_add(Duration::from_millis(10000)).unwrap_or(now),
+        correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     }; // Start collector
     let response = service.handle_request(request.clone()).await;
     assert_eq!(response.status, RpcStatus::Success);
@@ -1459,15 +1539,16 @@ async fn test_rpc_stop_collector_with_process_manager() -> Result<()> {
     // Create stop request with Lifecycle payload (not Shutdown)
     let lifecycle_req = CollectorLifecycleRequest::stop("test-1");
 
+    let now = SystemTime::now();
     let request = RpcRequest {
         request_id: Uuid::new_v4().to_string(),
         client_id: "test-client".to_string(),
         target: "control.collector.test".to_string(),
         operation: CollectorOperation::Stop,
         payload: RpcPayload::Lifecycle(lifecycle_req),
-        timestamp: SystemTime::now(),
-        timeout_ms: 10000,
-        correlation_id: Uuid::new_v4().to_string(),
+        timestamp: now,
+        deadline: now.checked_add(Duration::from_millis(10000)).unwrap_or(now),
+        correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
     // Stop collector
@@ -1530,15 +1611,16 @@ async fn test_rpc_restart_collector_with_process_manager() -> Result<()> {
         startup_timeout_ms: Some(15000),
     };
 
+    let now = SystemTime::now();
     let request = RpcRequest {
         request_id: Uuid::new_v4().to_string(),
         client_id: "test-client".to_string(),
         target: "control.collector.test".to_string(),
         operation: CollectorOperation::Restart,
         payload: RpcPayload::Lifecycle(lifecycle_req),
-        timestamp: SystemTime::now(),
-        timeout_ms: 15000,
-        correlation_id: Uuid::new_v4().to_string(),
+        timestamp: now,
+        deadline: now.checked_add(Duration::from_millis(15000)).unwrap_or(now),
+        correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
     // Restart collector
@@ -1606,15 +1688,16 @@ async fn test_rpc_health_check_with_running_collector() -> Result<()> {
         serde_json::Value::String("test-1".to_string()),
     );
 
+    let now = SystemTime::now();
     let request = RpcRequest {
         request_id: Uuid::new_v4().to_string(),
         client_id: "test-client".to_string(),
         target: "control.collector.test".to_string(),
         operation: CollectorOperation::HealthCheck,
         payload: RpcPayload::Generic(payload_map),
-        timestamp: SystemTime::now(),
-        timeout_ms: 5000,
-        correlation_id: Uuid::new_v4().to_string(),
+        timestamp: now,
+        deadline: now.checked_add(Duration::from_millis(5000)).unwrap_or(now),
+        correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
     // Check health
@@ -1659,15 +1742,16 @@ async fn test_rpc_health_check_with_stopped_collector() -> Result<()> {
     );
 
     // Create health check request for non-existent collector
+    let now = SystemTime::now();
     let request = RpcRequest {
         request_id: Uuid::new_v4().to_string(),
         client_id: "test-client".to_string(),
         target: "control.collector.test".to_string(),
         operation: CollectorOperation::HealthCheck,
         payload: RpcPayload::Empty,
-        timestamp: SystemTime::now(),
-        timeout_ms: 5000,
-        correlation_id: Uuid::new_v4().to_string(),
+        timestamp: now,
+        deadline: now.checked_add(Duration::from_millis(5000)).unwrap_or(now),
+        correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
     // Check health - should return error status
@@ -1727,15 +1811,16 @@ async fn test_rpc_pause_collector_with_process_manager() -> Result<()> {
         startup_timeout_ms: Some(5000),
     };
 
+    let now = SystemTime::now();
     let request = RpcRequest {
         request_id: Uuid::new_v4().to_string(),
         client_id: "test-client".to_string(),
         target: "control.collector.test".to_string(),
         operation: CollectorOperation::Pause,
         payload: RpcPayload::Lifecycle(lifecycle_req),
-        timestamp: SystemTime::now(),
-        timeout_ms: 5000,
-        correlation_id: Uuid::new_v4().to_string(),
+        timestamp: now,
+        deadline: now.checked_add(Duration::from_millis(5000)).unwrap_or(now),
+        correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
     // Pause collector
@@ -1813,15 +1898,16 @@ async fn test_rpc_resume_collector_with_process_manager() -> Result<()> {
         startup_timeout_ms: Some(5000),
     };
 
+    let now = SystemTime::now();
     let request = RpcRequest {
         request_id: Uuid::new_v4().to_string(),
         client_id: "test-client".to_string(),
         target: "control.collector.test".to_string(),
         operation: CollectorOperation::Resume,
         payload: RpcPayload::Lifecycle(lifecycle_req),
-        timestamp: SystemTime::now(),
-        timeout_ms: 5000,
-        correlation_id: Uuid::new_v4().to_string(),
+        timestamp: now,
+        deadline: now.checked_add(Duration::from_millis(5000)).unwrap_or(now),
+        correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
     // Resume collector

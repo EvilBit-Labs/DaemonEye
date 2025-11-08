@@ -83,6 +83,7 @@ async fn test_process_event_source_with_collector_core() {
         max_batch_size: 50,
         batch_timeout: Duration::from_millis(100),
         backpressure_threshold: 800,
+        registration: None,
         max_backpressure_wait: Duration::from_millis(500),
     };
 

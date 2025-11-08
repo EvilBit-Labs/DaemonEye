@@ -86,7 +86,7 @@ pub use analysis_chain::{
     WorkflowProgress, WorkflowStatistics, WorkflowStatus,
 };
 pub use collector::{Collector, CollectorRuntime, RuntimeStats};
-pub use config::CollectorConfig;
+pub use config::{CollectorConfig, CollectorRegistrationConfig};
 pub use config_manager::ConfigManager;
 pub use daemoneye_event_bus::{
     BrokerHealthStatus, ClientStatisticsAggregate, DaemoneyeEventBus, DaemoneyeEventBusMetrics,

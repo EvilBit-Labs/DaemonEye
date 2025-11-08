@@ -529,7 +529,9 @@ impl CollectorProcessManager {
                 warn!(pid, error = %e, "Failed to signal duplicate collector for termination");
             }
             let _ = child.wait().await;
-            return Err(ProcessManagerError::AlreadyRunning(collector_id.to_string()));
+            return Err(ProcessManagerError::AlreadyRunning(
+                collector_id.to_string(),
+            ));
         }
 
         let now = SystemTime::now();

@@ -5,11 +5,13 @@
 //! of the IPC server for CLI communication and provides topic-based pub/sub messaging
 //! for collector-core component coordination.
 
+use crate::collector_registry::{CollectorRegistry, RegistryError};
 use anyhow::{Context, Result};
 use daemoneye_eventbus::ConfigManager;
 use daemoneye_eventbus::rpc::{
-    ComponentHealth, ConfigProvider, ConfigUpdateResult, HealthCheckData, HealthProvider,
-    HealthStatus,
+    ComponentHealth, ConfigProvider, ConfigUpdateResult, DeregistrationRequest, HealthCheckData,
+    HealthProvider, HealthStatus, RegistrationError, RegistrationProvider, RegistrationRequest,
+    RegistrationResponse,
 };
 use daemoneye_eventbus::{
     DaemoneyeBroker, DaemoneyeEventBus, EventBus, EventBusStatistics,
@@ -53,6 +55,8 @@ pub struct BrokerManager {
     process_manager: Arc<CollectorProcessManager>,
     /// Configuration manager for collectors
     config_manager: Arc<ConfigManager>,
+    /// Registry tracking registered collectors
+    collector_registry: Arc<RwLock<Option<Arc<CollectorRegistry>>>>,
 }
 
 impl BrokerManager {
@@ -87,6 +91,7 @@ impl BrokerManager {
             shutdown_tx: Arc::new(Mutex::new(None)),
             process_manager,
             config_manager,
+            collector_registry: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -151,6 +156,13 @@ impl BrokerManager {
         {
             let mut event_bus_guard = self.event_bus.lock().await;
             *event_bus_guard = Some(event_bus);
+        }
+
+        // Initialize collector registry
+        {
+            let registry = Arc::new(CollectorRegistry::default());
+            let mut registry_guard = self.collector_registry.write().await;
+            *registry_guard = Some(registry);
         }
 
         // Update health status to healthy
@@ -236,6 +248,12 @@ impl BrokerManager {
             *broker_guard = None;
         }
 
+        // Clear collector registry
+        {
+            let mut registry_guard = self.collector_registry.write().await;
+            registry_guard.take();
+        }
+
         // Update health status to stopped
         {
             let mut health = self.health_status.write().await;
@@ -259,6 +277,21 @@ impl BrokerManager {
             Some(broker.statistics().await)
         } else {
             None
+        }
+    }
+
+    async fn registry(&self) -> std::result::Result<Arc<CollectorRegistry>, RegistrationError> {
+        let guard = self.collector_registry.read().await;
+        guard.as_ref().cloned().ok_or_else(|| {
+            RegistrationError::Internal("collector registry not initialized".to_string())
+        })
+    }
+
+    fn map_registry_error(error: RegistryError) -> RegistrationError {
+        match error {
+            RegistryError::AlreadyRegistered(id) => RegistrationError::AlreadyRegistered(id),
+            RegistryError::NotFound(id) => RegistrationError::NotFound(id),
+            RegistryError::Validation(msg) => RegistrationError::Validation(msg),
         }
     }
 
@@ -596,6 +629,42 @@ impl ConfigProvider for BrokerManager {
     }
 }
 
+#[async_trait::async_trait]
+impl RegistrationProvider for BrokerManager {
+    async fn register_collector(
+        &self,
+        request: RegistrationRequest,
+    ) -> std::result::Result<RegistrationResponse, RegistrationError> {
+        let registry = self.registry().await?;
+        registry
+            .register(request)
+            .await
+            .map_err(BrokerManager::map_registry_error)
+    }
+
+    async fn deregister_collector(
+        &self,
+        request: DeregistrationRequest,
+    ) -> std::result::Result<(), RegistrationError> {
+        let registry = self.registry().await?;
+        registry
+            .deregister(request)
+            .await
+            .map_err(BrokerManager::map_registry_error)
+    }
+
+    async fn update_heartbeat(
+        &self,
+        collector_id: &str,
+    ) -> std::result::Result<(), RegistrationError> {
+        let registry = self.registry().await?;
+        registry
+            .update_heartbeat(collector_id)
+            .await
+            .map_err(BrokerManager::map_registry_error)
+    }
+}
+
 /// Compute worst-of aggregation across component health statuses.
 /// Returns Unhealthy if any component is Unhealthy, else Degraded if any is Degraded,
 /// else Healthy if any is Healthy, else Unknown.
@@ -634,6 +703,19 @@ fn aggregate_worst_of<I: Iterator<Item = HealthStatus>>(iter: I) -> HealthStatus
 mod tests {
     use super::*;
     use daemoneye_lib::config::BrokerConfig;
+
+    fn sample_registration_request() -> RegistrationRequest {
+        RegistrationRequest {
+            collector_id: "test-collector".to_string(),
+            collector_type: "test-collector".to_string(),
+            hostname: "localhost".to_string(),
+            version: Some("1.0.0".to_string()),
+            pid: Some(1234),
+            capabilities: vec!["process".to_string()],
+            attributes: std::collections::HashMap::new(),
+            heartbeat_interval_ms: Some(5_000),
+        }
+    }
 
     #[tokio::test]
     async fn test_broker_manager_creation() {
@@ -678,6 +760,38 @@ mod tests {
 
         let stats = manager.statistics().await;
         assert!(stats.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_registration_provider_delegates_to_registry() {
+        let manager = BrokerManager::new(BrokerConfig::default());
+
+        {
+            let mut guard = manager.collector_registry.write().await;
+            *guard = Some(Arc::new(CollectorRegistry::default()));
+        }
+
+        let request = sample_registration_request();
+        let response = manager
+            .register_collector(request.clone())
+            .await
+            .expect("registration succeeds");
+        assert!(response.accepted);
+        assert_eq!(response.collector_id, request.collector_id);
+
+        manager
+            .update_heartbeat(&request.collector_id)
+            .await
+            .expect("heartbeat updated");
+
+        manager
+            .deregister_collector(DeregistrationRequest {
+                collector_id: request.collector_id,
+                reason: Some("test".to_string()),
+                force: false,
+            })
+            .await
+            .expect("deregistration succeeds");
     }
 
     #[tokio::test]

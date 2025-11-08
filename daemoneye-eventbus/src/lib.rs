@@ -85,9 +85,10 @@ pub use process_manager::{
 };
 pub use rpc::{
     CapabilitiesData, CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient,
-    CollectorRpcService, ConfigProvider, ConfigUpdateRequest, ConfigUpdateResult, HealthCheckData,
-    HealthProvider, HealthStatus, RpcPayload, RpcRequest, RpcResponse, RpcStatus, ShutdownRequest,
-    ShutdownType,
+    CollectorRpcService, ConfigProvider, ConfigUpdateRequest, ConfigUpdateResult,
+    DeregistrationRequest, HealthCheckData, HealthProvider, HealthStatus, RegistrationError,
+    RegistrationProvider, RegistrationRequest, RegistrationResponse, RpcPayload, RpcRequest,
+    RpcResponse, RpcStatus, ShutdownRequest, ShutdownType,
 };
 pub use topic::{
     Topic, TopicAccessLevel, TopicDomain, TopicError, TopicMatcher, TopicPattern, TopicRegistry,

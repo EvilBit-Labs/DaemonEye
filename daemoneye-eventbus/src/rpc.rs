@@ -50,7 +50,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use thiserror::Error;
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -98,6 +99,8 @@ pub struct CollectorRpcService {
     pub health_provider: Arc<dyn HealthProvider + Send + Sync>,
     /// Config provider for configuration operations
     pub config_provider: Arc<dyn ConfigProvider + Send + Sync>,
+    /// Registration provider for collector lifecycle coordination
+    pub registration_provider: Arc<dyn RegistrationProvider + Send + Sync>,
     /// Optional broker for publishing notifications
     pub broker: Option<Arc<DaemoneyeBroker>>,
 }
@@ -138,6 +141,51 @@ pub trait ConfigProvider: Send + Sync {
     }
 }
 
+/// Errors that can occur during collector registration lifecycle management.
+#[derive(Debug, Error)]
+pub enum RegistrationError {
+    /// Collector is already registered with the registry.
+    #[error("collector `{0}` is already registered")]
+    AlreadyRegistered(String),
+    /// Collector is not present in the registry.
+    #[error("collector `{0}` not found")]
+    NotFound(String),
+    /// Registration request failed validation.
+    #[error("invalid registration: {0}")]
+    Validation(String),
+    /// Registration lease expired or is considered stale.
+    #[error("registration expired: {0}")]
+    Expired(String),
+    /// Catch-all for unexpected errors.
+    #[error("internal registration error: {0}")]
+    Internal(String),
+}
+
+/// Provider interface for collector registration state.
+#[async_trait]
+pub trait RegistrationProvider: Send + Sync {
+    /// Register a collector with the agent.
+    async fn register_collector(
+        &self,
+        request: RegistrationRequest,
+    ) -> std::result::Result<RegistrationResponse, RegistrationError>;
+
+    /// Deregister a collector from the agent.
+    async fn deregister_collector(
+        &self,
+        request: DeregistrationRequest,
+    ) -> std::result::Result<(), RegistrationError>;
+
+    /// Update the heartbeat timestamp for a collector; default implementation is a no-op.
+    async fn update_heartbeat(
+        &self,
+        collector_id: &str,
+    ) -> std::result::Result<(), RegistrationError> {
+        let _ = collector_id;
+        Ok(())
+    }
+}
+
 /// Result of a configuration update operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigUpdateResult {
@@ -162,10 +210,10 @@ pub struct RpcRequest {
     pub payload: RpcPayload,
     /// Request timestamp
     pub timestamp: SystemTime,
-    /// Timeout for this request
-    pub timeout_ms: u64,
-    /// Correlation ID for distributed tracing
-    pub correlation_id: String,
+    /// Absolute deadline for this request to be completed
+    pub deadline: SystemTime,
+    /// Rich correlation metadata for distributed tracing and workflow tracking
+    pub correlation_metadata: RpcCorrelationMetadata,
 }
 
 /// RPC response message
@@ -185,13 +233,99 @@ pub struct RpcResponse {
     pub timestamp: SystemTime,
     /// Execution time in milliseconds
     pub execution_time_ms: u64,
+    /// Time the request spent queued before processing in milliseconds
+    pub queue_time_ms: Option<u64>,
+    /// Total end-to-end time from request to response in milliseconds
+    pub total_time_ms: u64,
     /// Error details if status is Error
     pub error_details: Option<RpcError>,
+    /// Rich correlation metadata echoed/updated from the request
+    pub correlation_metadata: RpcCorrelationMetadata,
+}
+
+/// Correlation metadata carried with every RPC to enable distributed tracing and
+/// hierarchical workflow tracking.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RpcCorrelationMetadata {
+    /// Primary correlation ID for this RPC call
+    pub correlation_id: String,
+    /// Parent RPC call ID for hierarchical tracking
+    pub parent_correlation_id: Option<String>,
+    /// Root workflow correlation ID
+    pub root_correlation_id: String,
+    /// Distributed tracing trace ID (OpenTelemetry compatible)
+    pub trace_id: Option<String>,
+    /// Distributed tracing span ID
+    pub span_id: Option<String>,
+    /// Sequence number within correlation group
+    pub sequence_number: u64,
+    /// Current workflow stage (e.g., "collection", "analysis", "alerting")
+    pub workflow_stage: Option<String>,
+    /// Workflow identifier for multi-step processes
+    pub workflow_id: Option<String>,
+    /// Number of RPC hops in the call chain
+    pub hop_count: u32,
+    /// Custom tags for flexible grouping
+    pub correlation_tags: HashMap<String, String>,
+}
+
+impl RpcCorrelationMetadata {
+    /// Create new correlation metadata with required correlation_id; sets root_correlation_id to the same value.
+    pub fn new(correlation_id: String) -> Self {
+        Self {
+            root_correlation_id: correlation_id.clone(),
+            correlation_id,
+            parent_correlation_id: None,
+            trace_id: None,
+            span_id: None,
+            sequence_number: 0,
+            workflow_stage: None,
+            workflow_id: None,
+            hop_count: 0,
+            correlation_tags: HashMap::new(),
+        }
+    }
+
+    /// Attach a parent correlation id.
+    pub fn with_parent(mut self, parent_id: String) -> Self {
+        self.parent_correlation_id = Some(parent_id);
+        self
+    }
+
+    /// Set tracing IDs.
+    pub fn with_trace(mut self, trace_id: String, span_id: String) -> Self {
+        self.trace_id = Some(trace_id);
+        self.span_id = Some(span_id);
+        self
+    }
+
+    /// Set workflow identifiers.
+    pub fn with_workflow(mut self, workflow_id: String, stage: String) -> Self {
+        self.workflow_id = Some(workflow_id);
+        self.workflow_stage = Some(stage);
+        self
+    }
+
+    /// Add a tag.
+    pub fn with_tag(mut self, key: String, value: String) -> Self {
+        self.correlation_tags.insert(key, value);
+        self
+    }
+
+    /// Increment hop count for cascading calls.
+    pub fn increment_hop(mut self) -> Self {
+        self.hop_count = self.hop_count.saturating_add(1);
+        self
+    }
 }
 
 /// RPC operation types for collector lifecycle management
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CollectorOperation {
+    /// Register a collector with the broker
+    Register,
+    /// Deregister a collector from the broker
+    Deregister,
     /// Start a collector process
     Start,
     /// Stop a collector process
@@ -219,6 +353,12 @@ pub enum CollectorOperation {
 pub enum RpcPayload {
     /// Collector lifecycle request
     Lifecycle(CollectorLifecycleRequest),
+    /// Collector registration request
+    Registration(RegistrationRequest),
+    /// Collector registration acknowledgment/response
+    RegistrationResponse(RegistrationResponse),
+    /// Collector deregistration request
+    Deregistration(DeregistrationRequest),
     /// Health check request/response
     HealthCheck(HealthCheckData),
     /// Configuration update request
@@ -297,6 +437,53 @@ pub struct CollectorLifecycleRequest {
     pub resource_limits: Option<ResourceLimits>,
     /// Startup timeout
     pub startup_timeout_ms: Option<u64>,
+}
+
+/// Collector registration request data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrationRequest {
+    /// Collector identifier requested by the collector
+    pub collector_id: String,
+    /// Collector implementation type (procmond, netmond, etc.)
+    pub collector_type: String,
+    /// Hostname of the system running the collector
+    pub hostname: String,
+    /// Optional software version reported by the collector
+    pub version: Option<String>,
+    /// Process ID of the collector if available
+    pub pid: Option<u32>,
+    /// Declared capabilities supported by the collector
+    pub capabilities: Vec<String>,
+    /// Arbitrary metadata associated with the collector
+    pub attributes: HashMap<String, serde_json::Value>,
+    /// Requested heartbeat interval in milliseconds
+    pub heartbeat_interval_ms: Option<u64>,
+}
+
+/// Collector registration response payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrationResponse {
+    /// Collector identifier that was registered
+    pub collector_id: String,
+    /// Whether the registration request was accepted
+    pub accepted: bool,
+    /// Heartbeat interval assigned by the registry in milliseconds
+    pub heartbeat_interval_ms: u64,
+    /// Topics or channels assigned to the collector
+    pub assigned_topics: Vec<String>,
+    /// Optional message from the registry (error or informational)
+    pub message: Option<String>,
+}
+
+/// Collector deregistration request payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeregistrationRequest {
+    /// Collector identifier
+    pub collector_id: String,
+    /// Optional reason for deregistration
+    pub reason: Option<String>,
+    /// Whether the deregistration is forced (e.g., shutdown)
+    pub force: bool,
 }
 
 /// Health check data structure
@@ -517,11 +704,23 @@ impl CollectorRpcClient {
 
         // Publish request to broker using the target from the request
         self.broker
-            .publish(&request.target, &request.correlation_id, payload)
+            .publish(
+                &request.target,
+                &request.correlation_metadata.correlation_id,
+                payload,
+            )
             .await?;
 
-        // Wait for response with timeout
-        match tokio::time::timeout(timeout, rx).await {
+        // Compute effective timeout from deadline if present
+        let now = SystemTime::now();
+        let effective_timeout = if request.deadline <= now {
+            Duration::from_millis(0)
+        } else {
+            request.deadline.duration_since(now).unwrap_or(timeout)
+        };
+
+        // Wait for response with computed timeout
+        match tokio::time::timeout(effective_timeout, rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => {
                 // Remove from pending requests and return error
@@ -623,12 +822,15 @@ impl CollectorRpcClient {
                 payload: None,
                 timestamp: SystemTime::now(),
                 execution_time_ms: 0,
+                queue_time_ms: None,
+                total_time_ms: 0,
                 error_details: Some(RpcError {
                     code: "CLIENT_SHUTDOWN".to_string(),
                     message: "RPC client is shutting down".to_string(),
                     context: HashMap::new(),
                     category: ErrorCategory::Internal,
                 }),
+                correlation_metadata: RpcCorrelationMetadata::default(),
             };
 
             let _ = tx.send(error_response); // Ignore send errors during shutdown
@@ -656,6 +858,7 @@ impl CollectorRpcService {
             process_manager: Arc::clone(&process_manager),
             broker: None,
         });
+        let registration_provider = Arc::new(DefaultRegistrationProvider::default());
 
         Self {
             service_id,
@@ -664,6 +867,7 @@ impl CollectorRpcService {
             process_manager,
             health_provider,
             config_provider,
+            registration_provider,
             broker: None,
         }
     }
@@ -684,6 +888,7 @@ impl CollectorRpcService {
             process_manager: Arc::clone(&process_manager),
             broker: broker.clone(),
         });
+        let registration_provider = Arc::new(DefaultRegistrationProvider::default());
         Self {
             service_id,
             supported_operations: capabilities.operations.clone(),
@@ -691,6 +896,7 @@ impl CollectorRpcService {
             process_manager,
             health_provider,
             config_provider,
+            registration_provider,
             broker,
         }
     }
@@ -702,6 +908,7 @@ impl CollectorRpcService {
         process_manager: Arc<CollectorProcessManager>,
         health_provider: Arc<dyn HealthProvider + Send + Sync>,
         config_provider: Arc<dyn ConfigProvider + Send + Sync>,
+        registration_provider: Arc<dyn RegistrationProvider + Send + Sync>,
         broker: Option<Arc<DaemoneyeBroker>>,
     ) -> Self {
         Self {
@@ -711,6 +918,7 @@ impl CollectorRpcService {
             process_manager,
             health_provider,
             config_provider,
+            registration_provider,
             broker,
         }
     }
@@ -718,6 +926,11 @@ impl CollectorRpcService {
     /// Handle an incoming RPC request
     pub async fn handle_request(&self, request: RpcRequest) -> RpcResponse {
         let start_time = SystemTime::now();
+        let deadline = request.deadline;
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(request, start_time, "initial dispatch", deadline);
+        }
 
         // Validate operation is supported
         let operation = request.operation;
@@ -736,28 +949,188 @@ impl CollectorRpcService {
 
         // Process the request based on operation type
         match operation {
-            CollectorOperation::Start => self.handle_start_request(request, start_time).await,
-            CollectorOperation::Stop => self.handle_stop_request(request, start_time).await,
-            CollectorOperation::Restart => self.handle_restart_request(request, start_time).await,
+            CollectorOperation::Register => {
+                self.handle_register_request(request, start_time, deadline)
+                    .await
+            }
+            CollectorOperation::Deregister => {
+                self.handle_deregister_request(request, start_time, deadline)
+                    .await
+            }
+            CollectorOperation::Start => {
+                self.handle_start_request(request, start_time, deadline)
+                    .await
+            }
+            CollectorOperation::Stop => {
+                self.handle_stop_request(request, start_time, deadline)
+                    .await
+            }
+            CollectorOperation::Restart => {
+                self.handle_restart_request(request, start_time, deadline)
+                    .await
+            }
             CollectorOperation::HealthCheck => {
-                self.handle_health_check_request(request, start_time).await
+                self.handle_health_check_request(request, start_time, deadline)
+                    .await
             }
             CollectorOperation::UpdateConfig => {
-                self.handle_config_update_request(request, start_time).await
+                self.handle_config_update_request(request, start_time, deadline)
+                    .await
             }
             CollectorOperation::GetCapabilities => {
-                self.handle_capabilities_request(request, start_time).await
+                self.handle_capabilities_request(request, start_time, deadline)
+                    .await
             }
             CollectorOperation::GracefulShutdown => {
-                self.handle_graceful_shutdown_request(request, start_time)
+                self.handle_graceful_shutdown_request(request, start_time, deadline)
                     .await
             }
             CollectorOperation::ForceShutdown => {
-                self.handle_force_shutdown_request(request, start_time)
+                self.handle_force_shutdown_request(request, start_time, deadline)
                     .await
             }
-            CollectorOperation::Pause => self.handle_pause_request(request, start_time).await,
-            CollectorOperation::Resume => self.handle_resume_request(request, start_time).await,
+            CollectorOperation::Pause => {
+                self.handle_pause_request(request, start_time, deadline)
+                    .await
+            }
+            CollectorOperation::Resume => {
+                self.handle_resume_request(request, start_time, deadline)
+                    .await
+            }
+        }
+    }
+
+    /// Handle collector registration request
+    async fn handle_register_request(
+        &self,
+        request: RpcRequest,
+        start_time: SystemTime,
+        deadline: SystemTime,
+    ) -> RpcResponse {
+        let registration = match &request.payload {
+            RpcPayload::Registration(req) => req.clone(),
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Expected Registration payload for Register operation".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before registration invocation",
+                deadline,
+            );
+        }
+
+        let result = self
+            .registration_provider
+            .register_collector(registration)
+            .await;
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "after registration completion",
+                deadline,
+            );
+        }
+
+        match result {
+            Ok(response) => self.create_success_response(
+                request,
+                Some(RpcPayload::RegistrationResponse(response)),
+                start_time,
+            ),
+            Err(e) => {
+                let rpc_error = self.map_registration_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
+        }
+    }
+
+    /// Handle collector deregistration request
+    async fn handle_deregister_request(
+        &self,
+        request: RpcRequest,
+        start_time: SystemTime,
+        deadline: SystemTime,
+    ) -> RpcResponse {
+        let deregistration = match &request.payload {
+            RpcPayload::Deregistration(req) => req.clone(),
+            _ => {
+                return self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "INVALID_PAYLOAD".to_string(),
+                        message: "Expected Deregistration payload for Deregister operation"
+                            .to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                );
+            }
+        };
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before deregistration invocation",
+                deadline,
+            );
+        }
+
+        let result = self
+            .registration_provider
+            .deregister_collector(deregistration.clone())
+            .await;
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "after deregistration completion",
+                deadline,
+            );
+        }
+
+        match result {
+            Ok(()) => {
+                let mut payload = HashMap::new();
+                payload.insert(
+                    "collector_id".to_string(),
+                    serde_json::json!(deregistration.collector_id),
+                );
+                payload.insert("status".to_string(), serde_json::json!("deregistered"));
+                if let Some(reason) = deregistration.reason {
+                    payload.insert("reason".to_string(), serde_json::json!(reason));
+                }
+                payload.insert(
+                    "forced".to_string(),
+                    serde_json::json!(deregistration.force),
+                );
+                self.create_success_response(
+                    request,
+                    Some(RpcPayload::Generic(payload)),
+                    start_time,
+                )
+            }
+            Err(e) => {
+                let rpc_error = self.map_registration_error_to_rpc_error(e);
+                self.create_error_response(request, rpc_error, start_time)
+            }
         }
     }
 
@@ -766,6 +1139,7 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
         // Extract lifecycle request from payload
         let lifecycle_request = match &request.payload {
@@ -783,6 +1157,15 @@ impl CollectorRpcService {
                 );
             }
         };
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before starting collector process",
+                deadline,
+            );
+        }
 
         // Create collector configuration
         let mut collector_config = CollectorConfig {
@@ -817,16 +1200,35 @@ impl CollectorRpcService {
             }
         }
 
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "after preparing collector configuration",
+                deadline,
+            );
+        }
+
         // Start the collector
-        match self
+        let start_result = self
             .process_manager
             .start_collector(
                 &lifecycle_request.collector_id,
                 &lifecycle_request.collector_type,
                 collector_config,
             )
-            .await
-        {
+            .await;
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "after collector start invocation",
+                deadline,
+            );
+        }
+
+        match start_result {
             Ok(pid) => {
                 let mut context = HashMap::new();
                 context.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
@@ -845,6 +1247,7 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
         // Extract lifecycle request from payload
         let lifecycle_request = match &request.payload {
@@ -866,12 +1269,31 @@ impl CollectorRpcService {
         // Determine timeout
         let timeout = self.process_manager.config.default_graceful_timeout;
 
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before stop request dispatch",
+                deadline,
+            );
+        }
+
         // Stop the collector
-        match self
+        let stop_result = self
             .process_manager
             .stop_collector(&lifecycle_request.collector_id, true, timeout)
-            .await
-        {
+            .await;
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "after stop request completion",
+                deadline,
+            );
+        }
+
+        match stop_result {
             Ok(exit_code) => {
                 let mut context = HashMap::new();
                 if let Some(code) = exit_code {
@@ -895,6 +1317,7 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
         // Extract lifecycle request from payload
         let lifecycle_request = match &request.payload {
@@ -917,12 +1340,31 @@ impl CollectorRpcService {
         let timeout =
             self.process_manager.config.default_graceful_timeout + Duration::from_secs(10);
 
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before restart request dispatch",
+                deadline,
+            );
+        }
+
         // Restart the collector
-        match self
+        let restart_result = self
             .process_manager
             .restart_collector(&lifecycle_request.collector_id, timeout)
-            .await
-        {
+            .await;
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "after restart request completion",
+                deadline,
+            );
+        }
+
+        match restart_result {
             Ok(pid) => {
                 let mut context = HashMap::new();
                 context.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
@@ -941,6 +1383,7 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
         // Extract collector_id from payload
         let collector_id = match &request.payload {
@@ -974,6 +1417,15 @@ impl CollectorRpcService {
                 );
             }
         };
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before health provider invocation",
+                deadline,
+            );
+        }
 
         match self
             .health_provider
@@ -1015,6 +1467,7 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
         // Extract ConfigUpdateRequest from payload
         let config_request = match &request.payload {
@@ -1035,12 +1488,21 @@ impl CollectorRpcService {
 
         let collector_id = config_request.collector_id.clone();
 
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before configuration update dispatch",
+                deadline,
+            );
+        }
+
         info!(
             "Processing config update for collector {}, validate_only: {}, rollback_on_failure: {}",
             collector_id, config_request.validate_only, config_request.rollback_on_failure
         );
 
-        match self
+        let update_result = self
             .config_provider
             .update_config(
                 &collector_id,
@@ -1048,8 +1510,18 @@ impl CollectorRpcService {
                 config_request.validate_only,
                 config_request.rollback_on_failure,
             )
-            .await
-        {
+            .await;
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "after configuration update completion",
+                deadline,
+            );
+        }
+
+        match update_result {
             Ok(update) => {
                 // Validate-only response
                 if config_request.validate_only {
@@ -1174,7 +1646,17 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before capabilities retrieval",
+                deadline,
+            );
+        }
+
         let capabilities_data = CapabilitiesData {
             collector_id: self.service_id.clone(),
             event_types: vec!["process".to_string()],
@@ -1205,6 +1687,7 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
         // Extract shutdown request from payload
         let shutdown_request = match &request.payload {
@@ -1225,12 +1708,31 @@ impl CollectorRpcService {
 
         let timeout = Duration::from_millis(shutdown_request.graceful_timeout_ms);
 
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before graceful shutdown invocation",
+                deadline,
+            );
+        }
+
         // Stop the collector gracefully
-        match self
+        let shutdown_result = self
             .process_manager
             .stop_collector(&shutdown_request.collector_id, true, timeout)
-            .await
-        {
+            .await;
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "after graceful shutdown completion",
+                deadline,
+            );
+        }
+
+        match shutdown_result {
             Ok(_) => self.create_success_response(request, None, start_time),
             Err(e) => {
                 let rpc_error = self.map_process_error_to_rpc_error(e);
@@ -1244,6 +1746,7 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
         // Extract shutdown request from payload
         let shutdown_request = match &request.payload {
@@ -1264,11 +1767,30 @@ impl CollectorRpcService {
 
         // Force kill with short timeout
         let timeout = Duration::from_secs(5);
-        match self
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before force shutdown invocation",
+                deadline,
+            );
+        }
+
+        let shutdown_result = self
             .process_manager
             .stop_collector(&shutdown_request.collector_id, false, timeout)
-            .await
-        {
+            .await;
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "after force shutdown completion",
+                deadline,
+            );
+        }
+
+        match shutdown_result {
             Ok(_) => self.create_success_response(request, None, start_time),
             Err(e) => {
                 let rpc_error = self.map_process_error_to_rpc_error(e);
@@ -1282,6 +1804,7 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
         // Extract collector_id from payload
         let collector_id = match &request.payload {
@@ -1316,6 +1839,15 @@ impl CollectorRpcService {
             }
         };
 
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before pause invocation",
+                deadline,
+            );
+        }
+
         // Pause the collector
         match self.process_manager.pause_collector(&collector_id).await {
             Ok(()) => self.create_success_response(request, None, start_time),
@@ -1331,6 +1863,7 @@ impl CollectorRpcService {
         &self,
         request: RpcRequest,
         start_time: SystemTime,
+        deadline: SystemTime,
     ) -> RpcResponse {
         // Extract collector_id from payload
         let collector_id = match &request.payload {
@@ -1364,6 +1897,15 @@ impl CollectorRpcService {
                 );
             }
         };
+
+        if Self::deadline_has_passed(deadline) {
+            return self.create_deadline_error(
+                request,
+                start_time,
+                "before resume invocation",
+                deadline,
+            );
+        }
 
         // Resume the collector
         match self.process_manager.resume_collector(&collector_id).await {
@@ -1439,6 +1981,91 @@ impl CollectorRpcService {
         }
     }
 
+    /// Map registration errors to RPC error payloads.
+    fn map_registration_error_to_rpc_error(&self, error: RegistrationError) -> RpcError {
+        let (code, message, category) = match &error {
+            RegistrationError::AlreadyRegistered(id) => (
+                "ALREADY_REGISTERED",
+                format!("Collector `{}` is already registered", id),
+                ErrorCategory::Configuration,
+            ),
+            RegistrationError::NotFound(id) => (
+                "REGISTRATION_NOT_FOUND",
+                format!("Collector `{}` is not registered", id),
+                ErrorCategory::Configuration,
+            ),
+            RegistrationError::Validation(msg) => (
+                "REGISTRATION_INVALID",
+                format!("Invalid registration request: {}", msg),
+                ErrorCategory::Configuration,
+            ),
+            RegistrationError::Expired(msg) => (
+                "REGISTRATION_EXPIRED",
+                format!("Registration expired: {}", msg),
+                ErrorCategory::Timeout,
+            ),
+            RegistrationError::Internal(msg) => (
+                "REGISTRATION_INTERNAL",
+                format!("Registration internal error: {}", msg),
+                ErrorCategory::Internal,
+            ),
+        };
+
+        let mut context = HashMap::new();
+        context.insert(
+            "error".to_string(),
+            serde_json::Value::String(error.to_string()),
+        );
+
+        RpcError {
+            code: code.to_string(),
+            message,
+            context,
+            category,
+        }
+    }
+
+    fn create_deadline_error(
+        &self,
+        request: RpcRequest,
+        start_time: SystemTime,
+        stage: &str,
+        deadline: SystemTime,
+    ) -> RpcResponse {
+        let mut context = HashMap::new();
+        context.insert(
+            "stage".to_string(),
+            serde_json::Value::String(stage.to_string()),
+        );
+        context.insert(
+            "deadline_epoch_seconds".to_string(),
+            serde_json::json!(Self::unix_timestamp(deadline)),
+        );
+        context.insert(
+            "now_epoch_seconds".to_string(),
+            serde_json::json!(Self::unix_timestamp(SystemTime::now())),
+        );
+
+        let error = RpcError {
+            code: "DEADLINE_EXCEEDED".to_string(),
+            message: format!("Request deadline exceeded while {}", stage),
+            context,
+            category: ErrorCategory::Timeout,
+        };
+
+        self.create_error_response(request, error, start_time)
+    }
+
+    fn deadline_has_passed(deadline: SystemTime) -> bool {
+        SystemTime::now().duration_since(deadline).is_ok()
+    }
+
+    fn unix_timestamp(time: SystemTime) -> u64 {
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs()
+    }
+
     /// Create a success response
     fn create_success_response(
         &self,
@@ -1446,7 +2073,15 @@ impl CollectorRpcService {
         payload: Option<RpcPayload>,
         start_time: SystemTime,
     ) -> RpcResponse {
+        let now = SystemTime::now();
         let execution_time = start_time.elapsed().unwrap_or(Duration::ZERO);
+        let queue_time = start_time
+            .duration_since(request.timestamp)
+            .unwrap_or(Duration::ZERO);
+        let total_time = now
+            .duration_since(request.timestamp)
+            .unwrap_or(Duration::ZERO);
+        let correlation_metadata = request.correlation_metadata.clone().increment_hop();
 
         RpcResponse {
             request_id: request.request_id,
@@ -1454,9 +2089,12 @@ impl CollectorRpcService {
             operation: request.operation,
             status: RpcStatus::Success,
             payload,
-            timestamp: SystemTime::now(),
+            timestamp: now,
             execution_time_ms: execution_time.as_millis() as u64,
+            queue_time_ms: Some(queue_time.as_millis() as u64),
+            total_time_ms: total_time.as_millis() as u64,
             error_details: None,
+            correlation_metadata,
         }
     }
 
@@ -1467,7 +2105,15 @@ impl CollectorRpcService {
         error: RpcError,
         start_time: SystemTime,
     ) -> RpcResponse {
+        let now = SystemTime::now();
         let execution_time = start_time.elapsed().unwrap_or(Duration::ZERO);
+        let queue_time = start_time
+            .duration_since(request.timestamp)
+            .unwrap_or(Duration::ZERO);
+        let total_time = now
+            .duration_since(request.timestamp)
+            .unwrap_or(Duration::ZERO);
+        let correlation_metadata = request.correlation_metadata.clone().increment_hop();
 
         RpcResponse {
             request_id: request.request_id,
@@ -1475,9 +2121,12 @@ impl CollectorRpcService {
             operation: request.operation,
             status: RpcStatus::Error,
             payload: None,
-            timestamp: SystemTime::now(),
+            timestamp: now,
             execution_time_ms: execution_time.as_millis() as u64,
+            queue_time_ms: Some(queue_time.as_millis() as u64),
+            total_time_ms: total_time.as_millis() as u64,
             error_details: Some(error),
+            correlation_metadata,
         }
     }
 }
@@ -1596,6 +2245,27 @@ impl HealthProvider for DefaultHealthProvider {
 }
 
 #[derive(Debug)]
+struct DefaultRegistrationProvider {
+    records: RwLock<HashMap<String, RegistrationRecord>>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct RegistrationRecord {
+    _request: RegistrationRequest,
+    _registered_at: SystemTime,
+    last_heartbeat: SystemTime,
+}
+
+impl Default for DefaultRegistrationProvider {
+    fn default() -> Self {
+        Self {
+            records: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct DefaultConfigProvider {
     config_manager: Arc<ConfigManager>,
     process_manager: Arc<CollectorProcessManager>,
@@ -1691,6 +2361,66 @@ impl ConfigProvider for DefaultConfigProvider {
     }
 }
 
+#[async_trait]
+impl RegistrationProvider for DefaultRegistrationProvider {
+    async fn register_collector(
+        &self,
+        request: RegistrationRequest,
+    ) -> std::result::Result<RegistrationResponse, RegistrationError> {
+        let heartbeat_interval = request.heartbeat_interval_ms.unwrap_or(30_000);
+        let mut guard = self.records.write().await;
+        if guard.contains_key(&request.collector_id) {
+            return Err(RegistrationError::AlreadyRegistered(
+                request.collector_id.clone(),
+            ));
+        }
+
+        let now = SystemTime::now();
+        let response = RegistrationResponse {
+            collector_id: request.collector_id.clone(),
+            accepted: true,
+            heartbeat_interval_ms: heartbeat_interval,
+            assigned_topics: Vec::new(),
+            message: None,
+        };
+
+        guard.insert(
+            request.collector_id.clone(),
+            RegistrationRecord {
+                _request: request,
+                _registered_at: now,
+                last_heartbeat: now,
+            },
+        );
+
+        Ok(response)
+    }
+
+    async fn deregister_collector(
+        &self,
+        request: DeregistrationRequest,
+    ) -> std::result::Result<(), RegistrationError> {
+        let mut guard = self.records.write().await;
+        match guard.remove(&request.collector_id) {
+            Some(_) => Ok(()),
+            None => Err(RegistrationError::NotFound(request.collector_id)),
+        }
+    }
+
+    async fn update_heartbeat(
+        &self,
+        collector_id: &str,
+    ) -> std::result::Result<(), RegistrationError> {
+        let mut guard = self.records.write().await;
+        if let Some(record) = guard.get_mut(collector_id) {
+            record.last_heartbeat = SystemTime::now();
+            Ok(())
+        } else {
+            Err(RegistrationError::NotFound(collector_id.to_string()))
+        }
+    }
+}
+
 impl CollectorLifecycleRequest {
     /// Create a start collector request
     pub fn start(
@@ -1747,15 +2477,19 @@ impl RpcRequest {
         payload: RpcPayload,
         timeout: Duration,
     ) -> Self {
+        let now = SystemTime::now();
+        let deadline = now.checked_add(timeout).unwrap_or(now);
+        let correlation_metadata = RpcCorrelationMetadata::new(Uuid::new_v4().to_string());
+
         Self {
             request_id: Uuid::new_v4().to_string(),
             client_id,
             target,
             operation,
             payload,
-            timestamp: SystemTime::now(),
-            timeout_ms: timeout.as_millis() as u64,
-            correlation_id: Uuid::new_v4().to_string(),
+            timestamp: now,
+            deadline,
+            correlation_metadata,
         }
     }
 
@@ -1772,6 +2506,38 @@ impl RpcRequest {
             target,
             operation,
             RpcPayload::Lifecycle(lifecycle_request),
+            timeout,
+        )
+    }
+
+    /// Create a registration request
+    pub fn register(
+        client_id: String,
+        target: String,
+        registration_request: RegistrationRequest,
+        timeout: Duration,
+    ) -> Self {
+        Self::new(
+            client_id,
+            target,
+            CollectorOperation::Register,
+            RpcPayload::Registration(registration_request),
+            timeout,
+        )
+    }
+
+    /// Create a deregistration request
+    pub fn deregister(
+        client_id: String,
+        target: String,
+        deregistration_request: DeregistrationRequest,
+        timeout: Duration,
+    ) -> Self {
+        Self::new(
+            client_id,
+            target,
+            CollectorOperation::Deregister,
+            RpcPayload::Deregistration(deregistration_request),
             timeout,
         )
     }
@@ -1875,7 +2641,12 @@ mod tests {
         assert_eq!(request.client_id, "test-client");
         assert_eq!(request.target, "control.collector.procmond");
         assert_eq!(request.operation, CollectorOperation::HealthCheck);
-        assert_eq!(request.timeout_ms, 10000);
+        let delta = request
+            .deadline
+            .duration_since(request.timestamp)
+            .unwrap_or(Duration::ZERO);
+        assert!(delta >= Duration::from_secs(9) && delta <= Duration::from_secs(11));
+        assert!(!request.correlation_metadata.correlation_id.is_empty());
     }
 
     #[test]
@@ -1896,7 +2667,10 @@ mod tests {
             payload: None,
             timestamp: SystemTime::now(),
             execution_time_ms: 100,
+            queue_time_ms: None,
+            total_time_ms: 100,
             error_details: None,
+            correlation_metadata: RpcCorrelationMetadata::default(),
         };
 
         let serialized = bincode::serde::encode_to_vec(&response, bincode::config::standard());

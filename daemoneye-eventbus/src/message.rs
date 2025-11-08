@@ -122,7 +122,7 @@ impl Message {
 
         Ok(Self::control(
             topic,
-            request.correlation_id.clone(),
+            request.correlation_metadata.correlation_id.clone(),
             payload,
             0, // Sequence will be set by broker
         ))

@@ -7,9 +7,10 @@ use tempfile::{NamedTempFile, TempDir};
 
 #[tokio::test]
 async fn test_broker_lifecycle() {
-    // Create a temporary socket path
+    // Create temporary paths for socket and config
     let temp_file = NamedTempFile::new().expect("Failed to create temp file");
     let socket_path = temp_file.path().to_string_lossy().to_string();
+    let _config_dir = TempDir::new().expect("Failed to create temp directory");
 
     let config_dir = TempDir::new().expect("Failed to create temp directory");
     let config_directory = config_dir.path().join("collector-configs");
