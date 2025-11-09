@@ -100,7 +100,7 @@ pub struct CollectorRuntime {
     event_batch: Vec<CollectionEvent>,
     last_batch_flush: Instant,
     performance_monitor: Arc<PerformanceMonitor>,
-    event_bus: Option<Box<dyn EventBus>>,
+    event_bus: Option<Arc<dyn EventBus>>,
 }
 
 #[derive(Clone)]
@@ -520,11 +520,13 @@ impl Collector {
         if socket_path.is_some() {
             // DaemoneyeEventBus integration removed due to circular dependency
             // Use LocalEventBus for now
-            warn!("DaemoneyeEventBus integration not available; using LocalEventBus");
-            runtime.initialize_local_eventbus().await?;
-        } else {
-            runtime.initialize_local_eventbus().await?;
+            warn!(
+                socket_path = %socket_path.as_ref().unwrap(),
+                "DaemoneyeEventBus integration not available; using LocalEventBus instead"
+            );
         }
+        // Always initialize LocalEventBus (DaemoneyeEventBus not yet implemented)
+        runtime.initialize_local_eventbus().await?;
 
         // Start IPC server
         runtime.start_ipc_server().await?;
@@ -920,8 +922,8 @@ impl CollectorRuntime {
         let max_backpressure_wait = self.config.max_backpressure_wait;
         let performance_monitor = Arc::clone(&self.performance_monitor);
 
-        // Clone event_bus for the spawned task (we need to handle the Option<Box<dyn EventBus>>)
-        // Since we can't clone Box<dyn EventBus>, we'll pass a flag to indicate if EventBus is available
+        // Clone event_bus for the spawned task (Arc allows sharing)
+        let event_bus = self.event_bus.clone();
 
         // Move the receiver into the processing task
         let mut event_rx = std::mem::replace(
@@ -981,7 +983,7 @@ impl CollectorRuntime {
 
                                 // Process batch if it's full
                                 if event_batch.len() >= max_batch_size {
-                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
+                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor, event_bus.as_ref()).await {
                                         error!(error = %e, "Failed to process event batch");
                                         error_counter.fetch_add(1, Ordering::Relaxed);
                                     } else {
@@ -1015,7 +1017,7 @@ impl CollectorRuntime {
 
                                 // Process any remaining events in the batch
                                 if !event_batch.is_empty()
-                                    && let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
+                                    && let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor, event_bus.as_ref()).await {
                                         error!(error = %e, "Failed to process final event batch");
                                     }
 
@@ -1029,7 +1031,7 @@ impl CollectorRuntime {
                         if !event_batch.is_empty() && last_batch_flush.elapsed() >= batch_timeout {
                             debug!(batch_size = event_batch.len(), "Flushing batch due to timeout");
 
-                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
+                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor, event_bus.as_ref()).await {
                                 error!(error = %e, "Failed to process timed-out event batch");
                                 error_counter.fetch_add(1, Ordering::Relaxed);
                             } else {
@@ -1049,7 +1051,7 @@ impl CollectorRuntime {
 
                         // Process any remaining events in the batch
                         if !event_batch.is_empty()
-                            && let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor).await {
+                            && let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor, event_bus.as_ref()).await {
                                 error!(error = %e, "Failed to process shutdown event batch");
                             }
 
@@ -1078,6 +1080,7 @@ impl CollectorRuntime {
         batch: &mut Vec<CollectionEvent>,
         telemetry_collector: &Arc<RwLock<TelemetryCollector>>,
         performance_monitor: &Arc<PerformanceMonitor>,
+        event_bus: Option<&Arc<dyn EventBus>>,
     ) -> Result<()> {
         if batch.is_empty() {
             return Ok(());
@@ -1130,6 +1133,16 @@ impl CollectorRuntime {
                 }
                 CollectionEvent::TriggerRequest(_) => {
                     // Process trigger requests for analysis collector coordination
+                }
+            }
+
+            // Publish event to EventBus if configured
+            if let Some(bus) = event_bus {
+                let correlation_id = uuid::Uuid::new_v4().to_string();
+                let correlation_metadata =
+                    crate::event_bus::CorrelationMetadata::new(correlation_id);
+                if let Err(e) = bus.publish(event.clone(), correlation_metadata).await {
+                    warn!(error = %e, "Failed to publish event to EventBus");
                 }
             }
         }
@@ -1440,7 +1453,7 @@ impl CollectorRuntime {
         };
 
         let local_event_bus = LocalEventBus::new(event_bus_config);
-        self.event_bus = Some(Box::new(local_event_bus));
+        self.event_bus = Some(Arc::new(local_event_bus));
 
         info!("LocalEventBus initialized successfully");
         Ok(())
@@ -1492,7 +1505,7 @@ impl CollectorRuntime {
         if let Some(event_bus) = self.event_bus.take() {
             info!("Shutting down EventBus");
 
-            // Call shutdown on the EventBus trait
+            // Call shutdown on the EventBus trait (Arc<dyn EventBus> supports &self methods)
             event_bus.shutdown().await?;
 
             info!("EventBus shutdown completed");
@@ -1722,6 +1735,7 @@ mod tests {
             &mut batch,
             &telemetry_collector,
             &performance_monitor,
+            None, // No event bus in test
         )
         .await;
         assert!(result.is_ok());

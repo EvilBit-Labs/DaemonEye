@@ -55,8 +55,14 @@ impl BenchmarkEventSource {
     }
 
     /// Returns the current count of events sent by this source.
+    #[allow(dead_code)] // Used in test files, not in benchmarks
     fn events_sent(&self) -> usize {
         self.events_sent.load(Ordering::Relaxed)
+    }
+
+    /// Returns a clone of the Arc to the events_sent counter for benchmarks.
+    fn events_sent_counter(&self) -> Arc<AtomicUsize> {
+        self.events_sent.clone()
     }
 }
 
@@ -365,7 +371,8 @@ fn bench_event_throughput(c: &mut Criterion) {
                         )
                         .with_delay(delay_between_events);
 
-                        let events_sent = source.events_sent();
+                        // Clone the Arc to the atomic counter before moving source into register
+                        let events_sent_counter = source.events_sent_counter();
                         collector.register(Box::new(source)).unwrap();
                         // Measure sustained throughput
                         let start = std::time::Instant::now();
@@ -379,7 +386,10 @@ fn bench_event_throughput(c: &mut Criterion) {
                         let _ = collector_handle.await;
                         let elapsed = start.elapsed();
 
-                        black_box((elapsed, events_sent));
+                        // Read events_sent AFTER the collector has run
+                        let final_events_sent =
+                            events_sent_counter.load(std::sync::atomic::Ordering::Acquire);
+                        black_box((elapsed, final_events_sent));
                     })
                 });
             },
