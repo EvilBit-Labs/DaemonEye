@@ -338,7 +338,7 @@ The following foundational components have been successfully implemented:
   - _Requirements: 15.1, 15.3_
   - **Implementation**: Complete topic infrastructure in `daemoneye-eventbus/src/topic.rs` and `daemoneye-eventbus/src/broker.rs`.
 
-- [ ] 2.6.2 Implement multi-process collector coordination workflows
+- [x] 2.6.2 Implement multi-process collector coordination workflows
 
   - Implement topic-based task distribution for multiple collector types (process, network, filesystem)
   - Create capability-based routing where tasks are published to appropriate collector topics
@@ -347,7 +347,7 @@ The following foundational components have been successfully implemented:
   - Write end-to-end tests with multiple collector processes coordinating through daemoneye-eventbus broker
   - _Requirements: 15.1, 15.3, 15.4, 16.1, 16.3_
 
-- [ ] 2.6.3 Implement task distribution and capability-based routing
+- [x] 2.6.3 Implement task distribution and capability-based routing
 
   - Create task distribution logic using daemoneye-eventbus topic publishing
   - Implement collector type routing based on capabilities

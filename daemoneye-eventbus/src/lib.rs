@@ -67,6 +67,7 @@ pub mod error;
 pub mod message;
 pub mod process_manager;
 pub mod rpc;
+pub mod task_distribution;
 pub mod topic;
 pub mod transport;
 
@@ -89,6 +90,9 @@ pub use rpc::{
     DeregistrationRequest, HealthCheckData, HealthProvider, HealthStatus, RegistrationError,
     RegistrationProvider, RegistrationRequest, RegistrationResponse, RpcPayload, RpcRequest,
     RpcResponse, RpcStatus, ShutdownRequest, ShutdownType,
+};
+pub use task_distribution::{
+    CollectorCapability, DistributionStats, RoutingStrategy, TaskDistributor, TaskRequest,
 };
 pub use topic::{
     Topic, TopicAccessLevel, TopicDomain, TopicError, TopicMatcher, TopicPattern, TopicRegistry,

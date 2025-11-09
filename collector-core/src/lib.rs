@@ -63,6 +63,7 @@
 //! ```
 
 pub mod analysis_chain;
+pub mod capability_router;
 pub mod collector;
 pub mod config;
 pub mod config_manager;
@@ -72,11 +73,14 @@ pub mod event_bus;
 pub mod health_monitor;
 pub mod high_performance_event_bus;
 pub mod ipc;
+pub mod load_balancer;
 pub mod monitor_collector;
 pub mod performance;
 pub mod process_manager;
+pub mod result_aggregator;
 pub mod shutdown_coordinator;
 pub mod source;
+pub mod task_distributor;
 pub mod trigger;
 
 // Re-export main types for convenience
@@ -84,6 +88,9 @@ pub use analysis_chain::{
     AnalysisChainConfig, AnalysisChainCoordinator, AnalysisResult, AnalysisStage,
     AnalysisWorkflowDefinition, StageStatus, WorkflowError, WorkflowErrorType, WorkflowExecution,
     WorkflowProgress, WorkflowStatistics, WorkflowStatus,
+};
+pub use capability_router::{
+    CapabilityRouter, CollectorCapability, CollectorHealthStatus, RoutingDecision, RoutingStats,
 };
 pub use collector::{Collector, CollectorRuntime, RuntimeStats};
 pub use config::{CollectorConfig, CollectorRegistrationConfig};
@@ -106,6 +113,9 @@ pub use high_performance_event_bus::{
     HighPerformanceEventBusImpl,
 };
 pub use ipc::CollectorIpcServer;
+pub use load_balancer::{
+    FailoverEvent, LoadBalancer, LoadBalancerConfig, LoadBalancingStats, LoadBalancingStrategy,
+};
 pub use monitor_collector::{
     MonitorCollector, MonitorCollectorConfig, MonitorCollectorStats, MonitorCollectorStatsSnapshot,
 };
@@ -114,11 +124,16 @@ pub use performance::{
     PerformanceConfig, PerformanceDegradation, PerformanceMonitor, ResourceUsageMetrics,
     ThroughputMetrics, TriggerLatencyMetrics,
 };
+pub use result_aggregator::{
+    AggregatedResult, AggregationConfig, AggregationStats, AggregationStatus, CollectorResult,
+    ResultAggregator,
+};
 pub use shutdown_coordinator::{
     ShutdownConfig, ShutdownCoordinator, ShutdownEvent, ShutdownPhase, ShutdownRequest,
     ShutdownResponse,
 };
 pub use source::{EventSource, SourceCaps};
+pub use task_distributor::{DistributionStats, DistributionTask, TaskDistributor, TaskPriority};
 pub use trigger::{
     PriorityTriggerQueue, ProcessTriggerData, QueueStatistics, SqlTriggerEvaluator,
     TriggerCapabilities, TriggerCondition, TriggerConfig, TriggerEmissionStats, TriggerManager,
