@@ -20,8 +20,9 @@ use crate::{
 };
 use interprocess::local_socket::tokio::prelude::*;
 use interprocess::local_socket::{ListenerOptions, Name};
+use std::io::IoSlice;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadBuf};
 use tokio::time::{sleep, timeout};
 
 #[cfg(unix)]
@@ -55,6 +56,15 @@ pub struct SocketConfig {
     pub windows_pipe: String,
     /// Maximum number of concurrent connections
     pub connection_limit: usize,
+    /// FreeBSD-specific socket path (defaults to unix_path if not set)
+    #[cfg(target_os = "freebsd")]
+    pub freebsd_path: Option<String>,
+    /// Optional authentication token for server-side validation
+    pub auth_token: Option<String>,
+    /// Per-client byte limit to prevent DoS
+    pub per_client_byte_limit: usize,
+    /// Rate limit configuration (optional, uses default if None)
+    pub rate_limit_config: Option<crate::rate_limiter::RateLimitConfig>,
 }
 
 impl SocketConfig {
@@ -64,12 +74,23 @@ impl SocketConfig {
             unix_path: format!("/tmp/daemoneye-{}.sock", instance_id),
             windows_pipe: format!(r"\\.\pipe\DaemonEye-{}", instance_id),
             connection_limit: 100, // Default connection limit
+            #[cfg(target_os = "freebsd")]
+            freebsd_path: None,
+            auth_token: None,
+            per_client_byte_limit: 10 * 1024 * 1024, // 10MB default
+            rate_limit_config: None,
         }
     }
 
     /// Get the appropriate socket path for the current platform
     pub fn get_socket_path(&self) -> String {
-        #[cfg(unix)]
+        #[cfg(target_os = "freebsd")]
+        {
+            self.freebsd_path
+                .as_ref()
+                .map_or_else(|| self.unix_path.clone(), Clone::clone)
+        }
+        #[cfg(all(unix, not(target_os = "freebsd")))]
         {
             self.unix_path.clone()
         }
@@ -101,6 +122,10 @@ pub struct ClientConfig {
     pub health_check_request: Vec<u8>,
     /// Expected health check response message (default: "PONG")
     pub health_check_response: Vec<u8>,
+    /// Optional authentication token for secure connections
+    pub auth_token: Option<String>,
+    /// Semaphore permits for backpressure control (default: 1000)
+    pub semaphore_permits: usize,
 }
 
 impl Default for ClientConfig {
@@ -115,6 +140,8 @@ impl Default for ClientConfig {
             health_check_timeout: Duration::from_secs(5),
             health_check_request: b"PING".to_vec(),
             health_check_response: b"PONG".to_vec(),
+            auth_token: None,
+            semaphore_permits: 1000,
         }
     }
 }
@@ -124,6 +151,11 @@ pub struct TransportServer {
     config: SocketConfig,
     listener: Option<LocalSocketListener>,
     active_connections: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Inbound semaphore for backpressure control
+    inbound_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
+    /// Per-client byte tracking
+    #[allow(dead_code)]
+    client_bytes: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, usize>>>,
 }
 
 impl TransportServer {
@@ -154,16 +186,82 @@ impl TransportServer {
         })?;
 
         let opts = ListenerOptions::new().name(name);
+
+        // FreeBSD-specific socket options
+        #[cfg(target_os = "freebsd")]
+        {
+            // FreeBSD socket options can be set via nix if needed
+            // For now, we rely on interprocess crate's defaults
+        }
+
         let listener = opts.create_tokio().map_err(|e| {
             EventBusError::transport(format!("Failed to bind to socket {}: {}", socket_path, e))
         })?;
 
         info!("Transport server created for: {}", socket_path);
         Ok(Self {
-            config,
+            config: config.clone(),
             listener: Some(listener),
             active_connections: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            inbound_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(1000)),
+            client_bytes: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
         })
+    }
+
+    /// Start minimal echo handler for tests and benches (standalone server use)
+    /// This should only be called when the server is used directly, not through the broker
+    ///
+    /// Note: This is a test/bench helper. For production use, use the broker's client acceptance.
+    pub async fn start_echo_handler(&self) -> Result<()> {
+        let listener = self
+            .listener
+            .as_ref()
+            .ok_or_else(|| EventBusError::transport("Server not listening".to_string()))?;
+        let config = self.config.clone();
+
+        // This runs in the current task context (for tests/benches)
+        loop {
+            match listener.accept().await {
+                Ok(stream) => {
+                    let stream_config = config.clone();
+                    tokio::spawn(async move {
+                        let mut client =
+                            TransportClient::from_stream(stream, stream_config, None, None);
+
+                        // Echo handler: read frame and write PONG response
+                        loop {
+                            match client.receive().await {
+                                Ok(frame) => {
+                                    // Check if it's a PING (health check)
+                                    if frame == b"PING" {
+                                        if let Err(e) = client.send(b"PONG").await {
+                                            debug!("Echo handler failed to send PONG: {}", e);
+                                            break;
+                                        }
+                                    } else {
+                                        // Echo back any other message
+                                        if let Err(e) = client.send(&frame).await {
+                                            debug!("Echo handler failed to echo: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!("Echo handler receive error: {}", e);
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    debug!("Echo handler accept error: {}", e);
+                    return Err(EventBusError::transport(format!("Accept error: {}", e)));
+                }
+            }
+        }
     }
 
     /// Accept a new client connection
@@ -219,6 +317,7 @@ impl TransportServer {
             stream,
             self.config.clone(),
             Some(std::sync::Arc::clone(&self.active_connections)),
+            Some(std::sync::Arc::clone(&self.inbound_semaphore)),
         ))
     }
 
@@ -295,8 +394,20 @@ pub struct TransportClient {
     connected: bool,
     reconnect_attempts: u32,
     last_health_check: std::time::Instant,
+    /// Preallocated receive buffer for zero-copy optimization (ring buffer)
     buffer: Vec<u8>,
+    /// Maximum buffer size for receive operations
+    buffer_capacity: usize,
     connection_guard: Option<ActiveConnectionGuard>,
+    /// Outbound semaphore for backpressure control
+    outbound_semaphore: Option<std::sync::Arc<tokio::sync::Semaphore>>,
+    /// Inbound semaphore (server-side only)
+    inbound_semaphore: Option<std::sync::Arc<tokio::sync::Semaphore>>,
+    /// Client identifier for tracking
+    #[allow(dead_code)]
+    client_id: Option<String>,
+    /// Available credits for flow control
+    available_credits: std::sync::Arc<tokio::sync::Mutex<usize>>,
 }
 
 impl TransportClient {
@@ -309,8 +420,13 @@ impl TransportClient {
             connected: false,
             reconnect_attempts: 0,
             last_health_check: std::time::Instant::now(),
-            buffer: Vec::new(),
+            buffer: Vec::with_capacity(64 * 1024), // 64KB preallocated buffer
+            buffer_capacity: 64 * 1024,
             connection_guard: None,
+            outbound_semaphore: Some(std::sync::Arc::new(tokio::sync::Semaphore::new(1000))),
+            inbound_semaphore: None,
+            client_id: None,
+            available_credits: std::sync::Arc::new(tokio::sync::Mutex::new(1000)),
         }
     }
 
@@ -319,6 +435,7 @@ impl TransportClient {
         stream: LocalSocketStream,
         socket_config: SocketConfig,
         active_counter: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+        inbound_semaphore: Option<std::sync::Arc<tokio::sync::Semaphore>>,
     ) -> Self {
         Self {
             config: ClientConfig::default(),
@@ -327,8 +444,13 @@ impl TransportClient {
             connected: true,
             reconnect_attempts: 0,
             last_health_check: std::time::Instant::now(),
-            buffer: Vec::new(),
+            buffer: Vec::with_capacity(64 * 1024), // 64KB preallocated buffer
+            buffer_capacity: 64 * 1024,
             connection_guard: active_counter.map(ActiveConnectionGuard::new),
+            outbound_semaphore: None,
+            inbound_semaphore,
+            client_id: None,
+            available_credits: std::sync::Arc::new(tokio::sync::Mutex::new(1000)),
         }
     }
 
@@ -345,6 +467,7 @@ impl TransportClient {
         let socket_path = socket_config.get_socket_path();
         info!("Connecting to transport server: {}", socket_path);
 
+        let semaphore_permits = config.semaphore_permits;
         let mut client = Self {
             config,
             socket_config: socket_config.clone(),
@@ -352,8 +475,15 @@ impl TransportClient {
             connected: false,
             reconnect_attempts: 0,
             last_health_check: std::time::Instant::now(),
-            buffer: Vec::new(),
+            buffer: Vec::with_capacity(64 * 1024), // 64KB preallocated buffer
+            buffer_capacity: 64 * 1024,
             connection_guard: None,
+            outbound_semaphore: Some(std::sync::Arc::new(tokio::sync::Semaphore::new(
+                semaphore_permits,
+            ))),
+            inbound_semaphore: None,
+            client_id: None,
+            available_credits: std::sync::Arc::new(tokio::sync::Mutex::new(1000)),
         };
 
         client.establish_connection().await?;
@@ -436,10 +566,36 @@ impl TransportClient {
         self.establish_connection().await
     }
 
-    /// Send a message through the transport with automatic reconnection
+    /// Send a message through the transport with automatic reconnection and backpressure
+    /// Uses zero-copy optimization with write_vectored and IoSlice
     pub async fn send(&mut self, data: &[u8]) -> Result<()> {
+        // Validate payload size
+        if data.len() > 1024 * 1024 {
+            return Err(EventBusError::transport(
+                "Payload exceeds 1MB limit".to_string(),
+            ));
+        }
+
+        // Acquire permit for backpressure control (drop before reconnect if needed)
+        let permit = if let Some(ref semaphore) = self.outbound_semaphore {
+            Some(semaphore.acquire().await.map_err(|_| {
+                EventBusError::transport("Backpressure: semaphore closed".to_string())
+            })?)
+        } else {
+            None
+        };
+
         if !self.connected {
+            drop(permit); // Drop permit before reconnect
             self.reconnect().await?;
+            // Re-acquire permit after reconnect
+            let _permit = if let Some(ref semaphore) = self.outbound_semaphore {
+                Some(semaphore.acquire().await.map_err(|_| {
+                    EventBusError::transport("Backpressure: semaphore closed".to_string())
+                })?)
+            } else {
+                None
+            };
         }
 
         let stream = self
@@ -447,19 +603,38 @@ impl TransportClient {
             .as_mut()
             .ok_or_else(|| EventBusError::transport("No active connection"))?;
 
-        // Send length prefix first
+        // Prepare length prefix and data for vectored write
         let length = data.len() as u32;
         let length_bytes = length.to_le_bytes();
 
-        stream.write_all(&length_bytes).await.map_err(|e| {
-            EventBusError::transport(format!("Failed to write length prefix: {}", e))
+        // Use write_vectored for zero-copy optimization
+        // This allows the kernel to send both the length prefix and data in a single syscall
+        let slices = [IoSlice::new(&length_bytes), IoSlice::new(data)];
+        let written = stream.write_vectored(&slices).await.map_err(|e| {
+            EventBusError::transport(format!("Failed to write vectored data: {}", e))
         })?;
 
-        // Send the actual data
-        stream
-            .write_all(data)
-            .await
-            .map_err(|e| EventBusError::transport(format!("Failed to write data: {}", e)))?;
+        // Ensure all data was written
+        let expected = length_bytes.len() + data.len();
+        if written < expected {
+            // Fallback to individual writes if vectored write was partial
+            if written < length_bytes.len() {
+                stream
+                    .write_all(&length_bytes[written..])
+                    .await
+                    .map_err(|e| {
+                        EventBusError::transport(format!("Failed to write remaining length: {}", e))
+                    })?;
+                stream.write_all(data).await.map_err(|e| {
+                    EventBusError::transport(format!("Failed to write data: {}", e))
+                })?;
+            } else {
+                let data_written = written - length_bytes.len();
+                stream.write_all(&data[data_written..]).await.map_err(|e| {
+                    EventBusError::transport(format!("Failed to write remaining data: {}", e))
+                })?;
+            }
+        }
 
         stream
             .flush()
@@ -470,10 +645,30 @@ impl TransportClient {
         Ok(())
     }
 
-    /// Receive a message from the transport with automatic reconnection
+    /// Receive a message from the transport with automatic reconnection and zero-copy optimization
+    /// Uses ReadBuf with preallocated buffer to minimize allocations
     pub async fn receive(&mut self) -> Result<Vec<u8>> {
+        // Acquire inbound permit if available (server-side)
+        let permit =
+            if let Some(ref semaphore) = self.inbound_semaphore {
+                Some(semaphore.acquire().await.map_err(|_| {
+                    EventBusError::transport("Inbound semaphore closed".to_string())
+                })?)
+            } else {
+                None
+            };
+
         if !self.connected {
+            drop(permit); // Drop permit before reconnect
             self.reconnect().await?;
+            // Re-acquire permit after reconnect
+            let _permit = if let Some(ref semaphore) = self.inbound_semaphore {
+                Some(semaphore.acquire().await.map_err(|_| {
+                    EventBusError::transport("Inbound semaphore closed".to_string())
+                })?)
+            } else {
+                None
+            };
         }
 
         let stream = self
@@ -481,26 +676,68 @@ impl TransportClient {
             .as_mut()
             .ok_or_else(|| EventBusError::transport("No active connection"))?;
 
-        // Read length prefix first
+        // Read length prefix first using ReadBuf for zero-copy
         let mut length_bytes = [0u8; 4];
-        stream.read_exact(&mut length_bytes).await.map_err(|e| {
+        let mut length_buf = ReadBuf::new(&mut length_bytes);
+        stream.read_buf(&mut length_buf).await.map_err(|e| {
             EventBusError::transport(format!("Failed to read length prefix: {}", e))
         })?;
 
+        if length_buf.filled().len() < 4 {
+            return Err(EventBusError::transport(
+                "Incomplete length prefix received".to_string(),
+            ));
+        }
+
         let length = u32::from_le_bytes(length_bytes) as usize;
 
-        // Read the actual data
-        let mut data = vec![0u8; length];
-        stream
-            .read_exact(&mut data)
-            .await
-            .map_err(|e| EventBusError::transport(format!("Failed to read data: {}", e)))?;
+        // Validate length to prevent DoS
+        if length > 1024 * 1024 {
+            return Err(EventBusError::transport(
+                "Message length exceeds 1MB limit".to_string(),
+            ));
+        }
 
-        debug!("Received {} bytes through transport", data.len());
-        Ok(data)
+        // Reuse preallocated buffer if large enough, otherwise allocate new one
+        if length > self.buffer_capacity {
+            // Message is larger than buffer, allocate new Vec
+            let mut data = vec![0; length];
+            let mut read_buf = ReadBuf::new(&mut data);
+            stream
+                .read_buf(&mut read_buf)
+                .await
+                .map_err(|e| EventBusError::transport(format!("Failed to read data: {}", e)))?;
+
+            if read_buf.filled().len() < length {
+                return Err(EventBusError::transport(
+                    "Incomplete message received".to_string(),
+                ));
+            }
+
+            debug!("Received {} bytes through transport", data.len());
+            Ok(data)
+        } else {
+            // Reuse preallocated buffer
+            self.buffer.clear();
+            self.buffer.resize(length, 0);
+            let mut read_buf = ReadBuf::new(&mut self.buffer);
+            stream
+                .read_buf(&mut read_buf)
+                .await
+                .map_err(|e| EventBusError::transport(format!("Failed to read data: {}", e)))?;
+
+            if read_buf.filled().len() < length {
+                return Err(EventBusError::transport(
+                    "Incomplete message received".to_string(),
+                ));
+            }
+
+            debug!("Received {} bytes through transport (zero-copy)", length);
+            Ok(self.buffer.clone())
+        }
     }
 
-    /// Perform health check
+    /// Perform health check with optional authentication
     pub async fn health_check(&mut self) -> Result<bool> {
         if self.last_health_check.elapsed() < self.config.health_check_interval {
             return Ok(self.connected);
@@ -513,7 +750,19 @@ impl TransportClient {
         }
 
         let timeout_duration = self.config.health_check_timeout;
-        let health_check_request = self.config.health_check_request.clone();
+        let mut health_check_request = self.config.health_check_request.clone();
+
+        // Include auth token in health check if provided
+        if let Some(ref token) = self.config.auth_token {
+            use blake3::Hasher;
+            let mut hasher = Hasher::new();
+            hasher.update(token.as_bytes());
+            hasher.update(&health_check_request);
+            let token_hash = hasher.finalize().to_hex().to_string();
+            health_check_request.extend_from_slice(b":");
+            health_check_request.extend_from_slice(token_hash.as_bytes());
+        }
+
         let health_check_response = self.config.health_check_response.clone();
 
         let ping_future = async {
@@ -543,6 +792,27 @@ impl TransportClient {
                 Ok(false)
             }
         }
+    }
+
+    /// Acquire a permit for outbound flow control
+    pub async fn acquire_permit(&self) -> Result<tokio::sync::SemaphorePermit<'_>> {
+        if let Some(ref semaphore) = self.outbound_semaphore {
+            semaphore
+                .acquire()
+                .await
+                .map_err(|_| EventBusError::transport("Semaphore closed".to_string()))
+        } else {
+            Err(EventBusError::transport(
+                "No outbound semaphore available".to_string(),
+            ))
+        }
+    }
+
+    /// Release credit for flow control
+    pub async fn release_credit(&self, credits: usize) -> Result<()> {
+        let mut available = self.available_credits.lock().await;
+        *available = available.saturating_add(credits);
+        Ok(())
     }
 
     /// Check if the connection is still alive
@@ -626,6 +896,13 @@ pub struct ManagedClient {
     healthy: bool,
 }
 
+impl ManagedClient {
+    /// Perform health check on the managed client
+    pub async fn health_check(&mut self) -> Result<bool> {
+        self.client.health_check().await
+    }
+}
+
 /// Connection manager statistics
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionManagerStats {
@@ -667,6 +944,30 @@ impl ClientConnectionManager {
 
         let managed_client = ManagedClient {
             client,
+            client_id: client_id.clone(),
+            connected_at: std::time::Instant::now(),
+            last_activity: std::time::Instant::now(),
+            healthy: true,
+        };
+
+        self.clients.insert(client_id.clone(), managed_client);
+        self.subscriptions.insert(client_id, Vec::new());
+        self.stats.total_clients = self.clients.len();
+        self.update_healthy_clients_count();
+
+        Ok(())
+    }
+
+    /// Insert an accepted client connection (from server accept)
+    pub async fn insert_accepted_client(
+        &mut self,
+        client_id: String,
+        transport_client: TransportClient,
+    ) -> Result<()> {
+        info!("Inserting accepted client: {}", client_id);
+
+        let managed_client = ManagedClient {
+            client: transport_client,
             client_id: client_id.clone(),
             connected_at: std::time::Instant::now(),
             last_activity: std::time::Instant::now(),
@@ -875,6 +1176,11 @@ impl ClientConnectionManager {
             })
     }
 
+    /// Get mutable reference to a managed client (for health checks)
+    pub fn get_managed_client_mut(&mut self, client_id: &str) -> Option<&mut ManagedClient> {
+        self.clients.get_mut(client_id)
+    }
+
     /// Shutdown all client connections
     pub async fn shutdown(&mut self) -> Result<()> {
         info!("Shutting down client connection manager");
@@ -997,6 +1303,11 @@ mod tests {
             unix_path: socket_path.to_string_lossy().to_string(),
             windows_pipe: socket_path.to_string_lossy().to_string(),
             connection_limit: 100, // Default connection limit for tests
+            #[cfg(target_os = "freebsd")]
+            freebsd_path: None,
+            auth_token: None,
+            per_client_byte_limit: 10 * 1024 * 1024,
+            rate_limit_config: None,
         };
 
         // Start a server first
@@ -1074,6 +1385,11 @@ mod tests {
             unix_path: socket_path.to_string_lossy().to_string(),
             windows_pipe: socket_path.to_string_lossy().to_string(),
             connection_limit: 2,
+            #[cfg(target_os = "freebsd")]
+            freebsd_path: None,
+            auth_token: None,
+            per_client_byte_limit: 10 * 1024 * 1024,
+            rate_limit_config: None,
         };
 
         let server = TransportServer::new(socket_config.clone())

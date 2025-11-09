@@ -71,7 +71,7 @@
 
 use crate::rpc::CollectorRpcClient;
 use crate::{DaemoneyeBroker, Message};
-#[cfg(unix)]
+#[cfg(all(unix, feature = "freebsd"))]
 use nix::{
     sys::signal::{self, Signal},
     unistd::Pid,
@@ -879,7 +879,7 @@ impl CollectorProcessManager {
         timeout: Duration,
     ) -> Result<Option<i32>, ProcessManagerError> {
         // Extract child handle and RPC client before awaiting
-        let (mut child, pid, collector_id_owned, rpc_client) = {
+        let (mut child, _pid, collector_id_owned, rpc_client) = {
             let mut processes = self.processes.lock().await;
             let proc = processes
                 .get_mut(collector_id)
@@ -943,7 +943,7 @@ impl CollectorProcessManager {
 
         let exit_code = if graceful {
             // Send termination signal
-            #[cfg(unix)]
+            #[cfg(all(unix, feature = "freebsd"))]
             {
                 // Treat ESRCH (no such process) as benign: the process likely exited between checks
                 match send_signal(pid, Signal::SIGTERM) {
@@ -1030,7 +1030,7 @@ impl CollectorProcessManager {
         }
 
         // Force kill path
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "freebsd"))]
         {
             // Treat ESRCH (no such process) as benign and proceed to wait
             match send_signal(pid, Signal::SIGKILL) {
@@ -1289,10 +1289,18 @@ impl CollectorProcessManager {
 
             info!("Pausing collector {} (PID: {})", collector_id, process.pid);
 
-            send_signal(process.pid, Signal::SIGSTOP)?;
-            process.state = CollectorState::Paused;
-
-            Ok(())
+            #[cfg(feature = "freebsd")]
+            {
+                send_signal(process.pid, Signal::SIGSTOP)?;
+                process.state = CollectorState::Paused;
+                Ok(())
+            }
+            #[cfg(not(feature = "freebsd"))]
+            {
+                Err(ProcessManagerError::SpawnFailed(
+                    "Pause operation requires freebsd feature".to_string(),
+                ))
+            }
         }
 
         #[cfg(windows)]
@@ -1332,10 +1340,18 @@ impl CollectorProcessManager {
 
             info!("Resuming collector {} (PID: {})", collector_id, process.pid);
 
-            send_signal(process.pid, Signal::SIGCONT)?;
-            process.state = CollectorState::Running;
-
-            Ok(())
+            #[cfg(feature = "freebsd")]
+            {
+                send_signal(process.pid, Signal::SIGCONT)?;
+                process.state = CollectorState::Running;
+                Ok(())
+            }
+            #[cfg(not(feature = "freebsd"))]
+            {
+                Err(ProcessManagerError::SpawnFailed(
+                    "Resume operation requires freebsd feature".to_string(),
+                ))
+            }
         }
 
         #[cfg(windows)]
@@ -1510,11 +1526,21 @@ impl CollectorProcessManager {
 }
 
 /// Send a signal to a process (Unix only)
-#[cfg(unix)]
+#[cfg(all(unix, feature = "freebsd"))]
 fn send_signal(pid: u32, signal: Signal) -> Result<(), ProcessManagerError> {
     let nix_pid = Pid::from_raw(pid as i32);
     signal::kill(nix_pid, signal)
         .map_err(|e| ProcessManagerError::TerminateFailed(format!("Failed to send signal: {}", e)))
+}
+
+#[cfg(all(unix, not(feature = "freebsd")))]
+#[allow(dead_code)]
+fn send_signal(_pid: u32, _signal: u32) -> Result<(), ProcessManagerError> {
+    // On non-FreeBSD Unix systems, use tokio::process or std::process
+    // For now, return an error indicating signal sending is not available
+    Err(ProcessManagerError::TerminateFailed(
+        "Signal sending requires freebsd feature".to_string(),
+    ))
 }
 
 #[cfg(test)]
@@ -1542,5 +1568,33 @@ mod tests {
     fn test_health_status() {
         assert_eq!(HealthStatus::Healthy, HealthStatus::Healthy);
         assert_ne!(HealthStatus::Healthy, HealthStatus::Unhealthy);
+    }
+
+    #[test]
+    #[cfg(not(feature = "freebsd"))]
+    fn test_pause_resume_requires_freebsd_feature() {
+        // Test that pause/resume operations fail gracefully without freebsd feature
+        let config = ProcessManagerConfig::default();
+        let manager = CollectorProcessManager::new(config);
+
+        // Use tokio runtime for async test
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            // Both operations should return SpawnFailed error without freebsd feature
+            let pause_result = manager.pause_collector("test-collector").await;
+            assert!(pause_result.is_err());
+            if let Err(ProcessManagerError::SpawnFailed(msg)) = pause_result {
+                assert!(msg.contains("freebsd feature"));
+            } else {
+                panic!("Expected SpawnFailed error for pause without freebsd feature");
+            }
+
+            let resume_result = manager.resume_collector("test-collector").await;
+            assert!(resume_result.is_err());
+            if let Err(ProcessManagerError::SpawnFailed(msg)) = resume_result {
+                assert!(msg.contains("freebsd feature"));
+            } else {
+                panic!("Expected SpawnFailed error for resume without freebsd feature");
+            }
+        });
     }
 }

@@ -2,8 +2,12 @@
 
 use crate::error::{EventBusError, Result};
 use crate::message::{BusEvent, CollectionEvent, EventSubscription, Message};
+use crate::queue_manager::QueueManager;
+use crate::rate_limiter::RateLimiter;
 use crate::topic::TopicMatcher;
-use crate::transport::{ClientConfig, ClientConnectionManager, SocketConfig, TransportServer};
+use crate::transport::{
+    ClientConfig, ClientConnectionManager, SocketConfig, TransportClient, TransportServer,
+};
 use crate::{EventBus, EventBusStatistics};
 use std::sync::Arc;
 use std::time::Instant;
@@ -37,24 +41,53 @@ pub struct DaemoneyeBroker {
         Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<Message>>>>,
     /// Reverse mapping from original subscriber IDs to broker UUIDs
     subscriber_id_mapping: Arc<Mutex<std::collections::HashMap<String, Uuid>>>,
+    /// Routing table for one-to-one messaging (client_id -> transport client)
+    direct_routing: Arc<Mutex<std::collections::HashMap<String, String>>>,
+    /// Global semaphore for publish() backpressure
+    publish_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Rate limiter with token bucket algorithm
+    rate_limiter: Arc<RateLimiter>,
+    /// Authentication enabled flag
+    auth_enabled: bool,
+    /// Queue capacity for queued messages
+    #[allow(dead_code)]
+    queue_capacity: usize,
+    /// Queue manager for handling client message queues
+    queue_manager: Arc<QueueManager>,
 }
 
 impl DaemoneyeBroker {
     /// Create a new embedded broker
     pub async fn new(socket_path: &str) -> Result<Self> {
+        Self::new_with_config(socket_path, false, 1000).await
+    }
+
+    /// Create a new embedded broker with configuration
+    pub async fn new_with_config(
+        socket_path: &str,
+        auth_enabled: bool,
+        queue_capacity: usize,
+    ) -> Result<Self> {
         let instance_id = Uuid::new_v4().to_string();
-        let config = SocketConfig::new(&instance_id);
+        let mut config = SocketConfig::new(&instance_id);
 
         // Override with provided socket path if different
-        let config = if socket_path != config.get_socket_path() {
-            SocketConfig {
+        if socket_path != config.get_socket_path() {
+            config = SocketConfig {
                 unix_path: socket_path.to_string(),
                 windows_pipe: socket_path.to_string(),
                 connection_limit: 100, // Default connection limit
-            }
-        } else {
-            config
-        };
+                #[cfg(target_os = "freebsd")]
+                freebsd_path: None,
+                auth_token: if auth_enabled {
+                    Some(Uuid::new_v4().to_string())
+                } else {
+                    None
+                },
+                per_client_byte_limit: 10 * 1024 * 1024,
+                rate_limit_config: None,
+            };
+        }
 
         // Create broadcast channel for shutdown signaling (capacity 1 is sufficient)
         let (shutdown_tx, _) = broadcast::channel(1);
@@ -62,6 +95,13 @@ impl DaemoneyeBroker {
         // Create client connection manager
         let client_config = ClientConfig::default();
         let client_manager = ClientConnectionManager::new(client_config);
+
+        // Create queue manager with configured capacity
+        let queue_manager = Arc::new(QueueManager::new(queue_capacity, queue_capacity * 10));
+
+        // Create rate limiter with configuration from SocketConfig or default
+        let rate_limit_config = config.rate_limit_config.clone().unwrap_or_default();
+        let rate_limiter = Arc::new(RateLimiter::new(rate_limit_config));
 
         let broker = Self {
             topic_matcher: Arc::new(RwLock::new(TopicMatcher::new())),
@@ -75,6 +115,12 @@ impl DaemoneyeBroker {
             subscriber_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
             raw_subscriber_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
             subscriber_id_mapping: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            direct_routing: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            publish_semaphore: Arc::new(tokio::sync::Semaphore::new(1000)),
+            rate_limiter,
+            auth_enabled,
+            queue_capacity,
+            queue_manager,
         };
 
         info!("DaemonEye broker created with socket: {}", socket_path);
@@ -105,33 +151,133 @@ impl DaemoneyeBroker {
     /// Start client acceptance background task
     async fn start_client_acceptance_task(&self) -> Result<()> {
         let server = Arc::clone(&self.transport_server);
-        let _client_manager = Arc::clone(&self.client_manager);
-        let _socket_config = self.config.clone();
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let client_manager = Arc::clone(&self.client_manager);
+        let direct_routing = Arc::clone(&self.direct_routing);
+        let queue_manager = Arc::clone(&self.queue_manager);
+        let auth_enabled = self.auth_enabled;
+        let auth_token = self.config.auth_token.clone();
+        let shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
+            let mut shutdown_rx = shutdown_rx;
             loop {
                 tokio::select! {
                     // Accept new connections with timeout
-                    result = async {
-                        let server_guard = server.lock().await;
-                        if let Some(ref transport_server) = *server_guard {
-                            tokio::time::timeout(
-                                tokio::time::Duration::from_millis(100),
-                                transport_server.accept()
-                            ).await
-                        } else {
-                            Ok(Err(EventBusError::transport("Server not listening")))
+                    result = {
+                        let server_clone = Arc::clone(&server);
+                        async move {
+                            let server_guard = server_clone.lock().await;
+                            if let Some(ref transport_server) = *server_guard {
+                                // We need to call accept() but can't hold the guard across await.
+                                // Since TransportServer doesn't implement Clone, we'll need to
+                                // restructure this. For now, we'll accept the connection while
+                                // holding the guard, which means this will block other operations.
+                                // TODO: Consider restructuring to avoid holding guard across await
+                                tokio::time::timeout(
+                                    tokio::time::Duration::from_millis(100),
+                                    transport_server.accept()
+                                ).await
+                            } else {
+                                Ok(Err(EventBusError::transport("Server not listening")))
+                            }
                         }
                     } => {
                         match result {
-                            Ok(Ok(_client)) => {
+                            Ok(Ok(mut accepted_client)) => {
                                 let client_id = Uuid::new_v4().to_string();
                                 info!("Accepted new client connection: {}", client_id);
 
-                                // Add client to manager (this will fail since we need to refactor the manager)
-                                // For now, we'll just log the connection
-                                debug!("Client {} connected but not yet managed", client_id);
+                                // Authenticate if enabled (read first frame before inserting)
+                                if auth_enabled && let Err(e) = Self::authenticate_client(&mut accepted_client, &auth_token).await {
+                                    error!("Authentication failed for client {}: {}", client_id, e);
+                                    let _ = accepted_client.close().await;
+                                    continue;
+                                }
+
+                                // Insert client into manager
+                                {
+                                    let mut manager = client_manager.lock().await;
+                                    if let Err(e) = manager.insert_accepted_client(client_id.clone(), accepted_client).await {
+                                        error!("Failed to insert accepted client {}: {}", client_id, e);
+                                        continue;
+                                    }
+                                }
+
+                                // Update direct routing
+                                {
+                                    let mut routing = direct_routing.lock().await;
+                                    routing.insert(client_id.clone(), client_id.clone());
+                                }
+
+                                // Drain queued messages for reconnected client
+                                {
+                                    let queue_manager_drain = Arc::clone(&queue_manager);
+                                    let client_id_drain = client_id.clone();
+                                    let client_manager_drain = Arc::clone(&client_manager);
+                                    tokio::spawn(async move {
+                                        let queued_messages = queue_manager_drain.drain_queue(&client_id_drain).await;
+                                        if let Ok(messages) = queued_messages && !messages.is_empty() {
+                                            info!("Draining {} queued messages for client: {}", messages.len(), client_id_drain);
+                                            let mut manager = client_manager_drain.lock().await;
+                                            for msg in messages {
+                                                if let Err(e) = manager.send_to_client(&client_id_drain, &msg).await {
+                                                    warn!("Failed to send drained message to client {}: {}", client_id_drain, e);
+                                                    // Re-enqueue if send fails
+                                                    let _ = queue_manager_drain.enqueue(&client_id_drain, msg).await;
+                                                    break; // Stop draining if send fails
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
+
+                                // Spawn per-connection task to monitor stream and handle messages
+                                let client_id_task = client_id.clone();
+                                let client_manager_task = Arc::clone(&client_manager);
+                                let direct_routing_task = Arc::clone(&direct_routing);
+                                let mut shutdown_rx_task = shutdown_rx.resubscribe();
+
+                                tokio::spawn(async move {
+                                    loop {
+                                        tokio::select! {
+                                            _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {
+                                                // Periodic health check
+                                                let mut client_guard = client_manager_task.lock().await;
+                                                if let Some(managed_client) = client_guard.get_managed_client_mut(&client_id_task) {
+                                                    if !managed_client.health_check().await.unwrap_or(false) {
+                                                        warn!("Client {} failed health check, removing", client_id_task);
+                                                        drop(client_guard);
+                                                        break;
+                                                    }
+                                                } else {
+                                                    drop(client_guard);
+                                                    break;
+                                                }
+                                            }
+                                            _ = shutdown_rx_task.recv() => {
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // Remove client on disconnect
+                                    {
+                                        let mut client_guard = client_manager_task.lock().await;
+                                        if let Err(e) = client_guard.remove_client(&client_id_task).await {
+                                            error!("Failed to remove client {}: {}", client_id_task, e);
+                                        }
+                                    }
+
+                                    // Remove from direct routing
+                                    {
+                                        let mut routing = direct_routing_task.lock().await;
+                                        routing.remove(&client_id_task);
+                                    }
+
+                                    info!("Client {} connection task completed", client_id_task);
+                                });
+
+                                debug!("Client {} connected and managed", client_id);
                             }
                             Ok(Err(e)) => {
                                 error!("Failed to accept client connection: {}", e);
@@ -154,6 +300,44 @@ impl DaemoneyeBroker {
         });
 
         Ok(())
+    }
+
+    /// Authenticate a client connection
+    async fn authenticate_client(
+        transport_client: &mut TransportClient,
+        expected_token: &Option<String>,
+    ) -> Result<()> {
+        if let Some(expected) = expected_token {
+            // Read first frame (authentication message)
+            let auth_frame = transport_client.receive().await?;
+
+            // Parse and verify token
+            let auth_string = String::from_utf8_lossy(&auth_frame);
+            if let Some((token_hash, _)) = auth_string.split_once(':') {
+                // Verify token hash matches expected
+                use blake3::Hasher;
+                let mut hasher = Hasher::new();
+                hasher.update(expected.as_bytes());
+                hasher.update(b"PING");
+                let expected_hash = hasher.finalize().to_hex().to_string();
+
+                if token_hash == expected_hash {
+                    // Send authentication success
+                    transport_client.send(b"PONG").await?;
+                    Ok(())
+                } else {
+                    Err(EventBusError::transport(
+                        "Authentication failed: invalid token".to_string(),
+                    ))
+                }
+            } else {
+                Err(EventBusError::transport(
+                    "Authentication failed: malformed message".to_string(),
+                ))
+            }
+        } else {
+            Ok(())
+        }
     }
 
     /// Start health monitoring background task
@@ -190,8 +374,120 @@ impl DaemoneyeBroker {
         &self.config
     }
 
-    /// Publish a message to the broker
+    /// Route a one-to-one message to a specific client
+    pub async fn route_one_to_one(&self, client_id: &str, payload: &[u8]) -> Result<()> {
+        // Validate payload
+        if payload.len() > 1024 * 1024 {
+            return Err(EventBusError::transport(
+                "Payload exceeds 1MB limit".to_string(),
+            ));
+        }
+
+        let transport_client_id = {
+            let routing = self.direct_routing.lock().await;
+            routing.get(client_id).cloned()
+        };
+        if let Some(transport_client_id) = transport_client_id {
+            let mut client_manager = self.client_manager.lock().await;
+            match client_manager
+                .send_to_client(&transport_client_id, payload)
+                .await
+            {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    // Client disconnected or backpressure - enqueue message
+                    warn!(
+                        "Failed to send to client {}: {}, enqueueing message",
+                        client_id, e
+                    );
+                    if let Err(queue_err) = self
+                        .queue_manager
+                        .enqueue(client_id, payload.to_vec())
+                        .await
+                    {
+                        error!(
+                            "Failed to enqueue message for client {}: {}",
+                            client_id, queue_err
+                        );
+                    }
+                    Err(e)
+                }
+            }
+        } else {
+            // Client not found - try to enqueue for later delivery
+            warn!(
+                "Client {} not found for direct routing, enqueueing message",
+                client_id
+            );
+            if let Err(queue_err) = self
+                .queue_manager
+                .enqueue(client_id, payload.to_vec())
+                .await
+            {
+                error!(
+                    "Failed to enqueue message for client {}: {}",
+                    client_id, queue_err
+                );
+            }
+            Err(EventBusError::transport(format!(
+                "Client {} not found for direct routing",
+                client_id
+            )))
+        }
+    }
+
+    /// Enqueue a message for a client (queue support)
+    pub async fn enqueue_for_client(
+        &self,
+        client_id: &str,
+        topic: &str,
+        payload: &[u8],
+    ) -> Result<()> {
+        // Validate payload
+        if payload.len() > 1024 * 1024 {
+            return Err(EventBusError::transport(
+                "Payload exceeds 1MB limit".to_string(),
+            ));
+        }
+
+        // Queue topic format: queue.{client_id}.{topic}
+        let queue_topic = format!("queue.{}.{}", client_id, topic);
+        self.publish(&queue_topic, &Uuid::new_v4().to_string(), payload.to_vec())
+            .await
+    }
+
+    /// Publish a message to the broker with backpressure control
     pub async fn publish(&self, topic: &str, correlation_id: &str, payload: Vec<u8>) -> Result<()> {
+        // Acquire global semaphore for backpressure
+        let _permit = self
+            .publish_semaphore
+            .acquire()
+            .await
+            .map_err(|_| EventBusError::transport("Publish semaphore closed".to_string()))?;
+
+        // Rate limit check with proper token bucket algorithm
+        let client_id = self.extract_client_id_from_topic(topic);
+        if !self
+            .rate_limiter
+            .check_rate_limit(client_id.as_deref(), Some(topic))
+            .await
+        {
+            return Err(EventBusError::transport("Rate limit exceeded".to_string()));
+        }
+        // Validate payload size
+        if payload.len() > 1024 * 1024 {
+            return Err(EventBusError::transport(
+                "Payload exceeds 1MB limit".to_string(),
+            ));
+        }
+
+        // Security audit: log all publishes
+        debug!(
+            "Publishing message to topic: {} (size: {} bytes)",
+            topic,
+            payload.len()
+        );
+
         // Check if this is a control message (based on topic prefix)
         if topic.starts_with("control.") {
             return self
@@ -209,31 +505,18 @@ impl DaemoneyeBroker {
         let subscribers = topic_matcher.find_subscribers(topic)?;
         drop(topic_matcher);
 
-        if subscribers.is_empty() {
-            debug!("No subscribers for topic: {}", topic);
-            // Update statistics even when no subscribers
-            let mut stats_guard = self.stats.lock().await;
-            stats_guard.messages_published += 1;
-            return Ok(());
-        }
-
-        // Deserialize payload to CollectionEvent before creating message
-        let collection_event: CollectionEvent =
-            bincode::serde::decode_from_slice(&payload, bincode::config::standard())
-                .map_err(|e| EventBusError::serialization(e.to_string()))?
-                .0;
-
+        // Build Message regardless of subscriber type (no CollectionEvent decoding required for routing)
         let message = Message::event(
             topic.to_string(),
             correlation_id.to_string(),
-            payload,
+            payload.clone(),
             sequence,
         );
 
         // Serialize message
         let message_data = message.serialize()?;
 
-        // Send to managed clients via client manager
+        // Send to managed clients via client manager (no CollectionEvent decoding needed)
         let mut delivered_count = 0;
         {
             let mut client_manager = self.client_manager.lock().await;
@@ -252,27 +535,52 @@ impl DaemoneyeBroker {
                     error!("Failed to broadcast to managed clients: {}", e);
                 }
             }
+
+            // Handle failed clients by enqueueing messages
+            // Note: broadcast_to_topic already removes failed clients, but we can
+            // check for specific client failures and enqueue for them
+            // For now, we'll enqueue on individual send_to_client failures in route_one_to_one
         }
 
         // Send to internal subscribers (only those matching the topic)
+        // For internal subscribers, attempt CollectionEvent decoding but handle errors gracefully
         let mut senders_guard = self.subscriber_senders.lock().await;
         let mut failed_senders = Vec::new();
 
+        // Attempt to decode CollectionEvent for internal subscribers
+        let collection_event_result: Result<CollectionEvent> =
+            bincode::serde::decode_from_slice(&payload, bincode::config::standard())
+                .map(|(event, _)| event)
+                .map_err(|e| EventBusError::serialization(e.to_string()));
+
         for subscriber_id in &subscribers {
             if let Some(sender) = senders_guard.get(subscriber_id) {
-                let bus_event = BusEvent {
-                    event_id: Uuid::new_v4().to_string(),
-                    event: collection_event.clone(),
-                    correlation_metadata: message.correlation_metadata.clone(),
-                    bus_timestamp: std::time::SystemTime::now(),
-                    matched_pattern: topic.to_string(),
-                    subscriber_id: subscriber_id.clone(),
-                };
+                match &collection_event_result {
+                    Ok(collection_event) => {
+                        // Successfully decoded - send BusEvent
+                        let bus_event = BusEvent {
+                            event_id: Uuid::new_v4().to_string(),
+                            event: collection_event.clone(),
+                            correlation_metadata: message.correlation_metadata.clone(),
+                            bus_timestamp: std::time::SystemTime::now(),
+                            matched_pattern: topic.to_string(),
+                            subscriber_id: subscriber_id.clone(),
+                        };
 
-                if sender.send(bus_event).is_err() {
-                    failed_senders.push(subscriber_id.clone());
-                } else {
-                    delivered_count += 1;
+                        if sender.send(bus_event).is_err() {
+                            failed_senders.push(subscriber_id.clone());
+                        } else {
+                            delivered_count += 1;
+                        }
+                    }
+                    Err(e) => {
+                        // Decode failed - log and skip this subscriber
+                        warn!(
+                            "Failed to decode CollectionEvent for subscriber {}: {}. Skipping delivery.",
+                            subscriber_id, e
+                        );
+                        // Could optionally deliver raw message here if needed
+                    }
                 }
             }
         }
@@ -459,12 +767,28 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
-    /// Add a client connection
+    /// Add a client connection with authentication
     pub async fn add_client(&self, client_id: String, socket_config: &SocketConfig) -> Result<()> {
+        // Authenticate if enabled
+        if self.auth_enabled
+            && let Some(ref expected_token) = self.config.auth_token
+            && socket_config.auth_token.as_ref() != Some(expected_token)
+        {
+            return Err(EventBusError::transport(
+                "Authentication failed: invalid token".to_string(),
+            ));
+        }
+
         let mut client_manager = self.client_manager.lock().await;
         client_manager
             .add_client(client_id.clone(), socket_config)
             .await?;
+
+        // Add to direct routing table
+        {
+            let mut routing = self.direct_routing.lock().await;
+            routing.insert(client_id.clone(), client_id.clone());
+        }
 
         info!(
             "Client connected: {}, total clients: {}",
@@ -474,10 +798,33 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
+    /// Extract client ID from topic (helper for rate limiting)
+    fn extract_client_id_from_topic(&self, topic: &str) -> Option<String> {
+        if topic.starts_with("direct.") {
+            topic.strip_prefix("direct.").map(|s| s.to_string())
+        } else if topic.starts_with("queue.") {
+            topic
+                .strip_prefix("queue.")
+                .and_then(|s| s.split('.').next())
+                .map(|s| s.to_string())
+        } else {
+            None
+        }
+    }
+
     /// Remove a client connection
     pub async fn remove_client(&self, client_id: &str) -> Result<()> {
         let mut client_manager = self.client_manager.lock().await;
         client_manager.remove_client(client_id).await?;
+
+        // Remove from direct routing table
+        {
+            let mut routing = self.direct_routing.lock().await;
+            routing.remove(client_id);
+        }
+
+        // Remove from rate limiter
+        self.rate_limiter.remove_client(client_id).await;
 
         info!(
             "Client disconnected: {}, remaining clients: {}",
@@ -771,5 +1118,72 @@ mod tests {
 
         let stats = event_bus.statistics().await;
         assert_eq!(stats.active_subscribers, 1);
+    }
+
+    #[tokio::test]
+    async fn test_queue_manager_enqueue_on_disconnect() {
+        let broker = DaemoneyeBroker::new_with_config("/tmp/test-queue-enqueue.sock", false, 100)
+            .await
+            .unwrap();
+        assert!(broker.start().await.is_ok());
+
+        // Try to route to non-existent client - should enqueue
+        let payload = b"test message".to_vec();
+        let result = broker
+            .route_one_to_one("non-existent-client", &payload)
+            .await;
+        assert!(result.is_err()); // Routing fails
+
+        // Verify message was enqueued
+        let stats = broker.queue_manager.get_stats("non-existent-client").await;
+        assert!(stats.is_some());
+        if let Some(queue_stats) = stats {
+            assert_eq!(queue_stats.messages_enqueued, 1);
+            assert_eq!(queue_stats.current_depth, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_queue_manager_drain_on_reconnect() {
+        let broker = DaemoneyeBroker::new_with_config("/tmp/test-queue-drain.sock", false, 100)
+            .await
+            .unwrap();
+        assert!(broker.start().await.is_ok());
+
+        let client_id = "test-client-drain";
+
+        // Enqueue a message for a client that doesn't exist yet
+        let payload1 = b"queued message 1".to_vec();
+        let _ = broker
+            .queue_manager
+            .enqueue(client_id, payload1.clone())
+            .await;
+
+        let payload2 = b"queued message 2".to_vec();
+        let _ = broker
+            .queue_manager
+            .enqueue(client_id, payload2.clone())
+            .await;
+
+        // Verify messages are queued
+        let stats = broker.queue_manager.get_stats(client_id).await;
+        assert!(stats.is_some());
+        if let Some(queue_stats) = stats {
+            assert_eq!(queue_stats.messages_enqueued, 2);
+            assert_eq!(queue_stats.current_depth, 2);
+        }
+
+        // Simulate client connection by draining the queue
+        let drained = broker.queue_manager.drain_queue(client_id).await.unwrap();
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0], payload1);
+        assert_eq!(drained[1], payload2);
+
+        // Verify queue is now empty
+        let stats_after = broker.queue_manager.get_stats(client_id).await;
+        if let Some(queue_stats) = stats_after {
+            assert_eq!(queue_stats.messages_dequeued, 2);
+            assert_eq!(queue_stats.current_depth, 0);
+        }
     }
 }

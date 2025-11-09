@@ -66,6 +66,8 @@ pub mod config_manager;
 pub mod error;
 pub mod message;
 pub mod process_manager;
+pub mod queue_manager;
+pub mod rate_limiter;
 pub mod result_aggregation;
 pub mod rpc;
 pub mod task_distribution;
@@ -87,6 +89,8 @@ pub use process_manager::{
     CollectorConfig, CollectorProcessManager, CollectorState, ProcessManagerConfig,
     ProcessManagerError, ResourceLimits,
 };
+pub use queue_manager::{QueueManager, QueueStats};
+pub use rate_limiter::{RateLimitConfig, RateLimiter};
 pub use result_aggregation::{
     AggregatedResult, AggregationConfig, AggregationStats, CollectorHealth, CollectorResult,
     ResultAggregator,

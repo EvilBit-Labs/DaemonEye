@@ -22,8 +22,9 @@ path = "src/lib.rs"
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true, features = ["serde"] }
+blake3 = { workspace = true }
 chrono = { workspace = true }
-interprocess = { workspace = true }
+interprocess = { workspace = true, optional = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -44,8 +45,17 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 regex = { workspace = true }
 
+[features]
+default = ["cross-platform"]
+cross-platform = ["interprocess"]
+freebsd = ["nix"]
+high-load = ["tokio/rt-multi-thread"]
+
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30.1", features = ["signal", "process"] }
+nix = { version = "0.30.1", features = ["signal", "process"], optional = true }
+
+[target.'cfg(target_os = "freebsd")'.dependencies]
+nix = { version = "0.30.1", features = ["socket"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
@@ -62,3 +72,15 @@ tokio-test = { workspace = true }
 [[bench]]
 name = "throughput"
 harness = false
+
+[[bench]]
+name = "ipc_performance"
+harness = false
+
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+overflow-checks = true
+lto = "thin"
+codegen-units = 1
