@@ -66,6 +66,7 @@ pub mod config_manager;
 pub mod error;
 pub mod message;
 pub mod process_manager;
+pub mod result_aggregation;
 pub mod rpc;
 pub mod task_distribution;
 pub mod topic;
@@ -83,6 +84,10 @@ pub use message::{
 pub use process_manager::{
     CollectorConfig, CollectorProcessManager, CollectorState, ProcessManagerConfig,
     ProcessManagerError, ResourceLimits,
+};
+pub use result_aggregation::{
+    AggregatedResult, AggregationConfig, AggregationStats, CollectorHealth, CollectorResult,
+    ResultAggregator,
 };
 pub use rpc::{
     CapabilitiesData, CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient,
