@@ -279,11 +279,29 @@ impl ResultAggregator {
 
     /// Deduplicate results based on collector ID and event content
     fn deduplicate_results(&self, results: Vec<CollectorResult>) -> Vec<CollectorResult> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
         let mut seen = HashMap::new();
         let mut deduplicated = Vec::new();
 
         for result in results {
-            let key = format!("{}:{}", result.collector_id, result.events.len());
+            // Create a hash of the collector ID and event content
+            let mut hasher = DefaultHasher::new();
+            result.collector_id.hash(&mut hasher);
+
+            // Hash each event's content by serializing to JSON
+            // This ensures events with different content produce different hashes
+            for event in &result.events {
+                if let Ok(json) = serde_json::to_string(event) {
+                    json.hash(&mut hasher);
+                } else {
+                    // Fallback: hash the debug representation if JSON serialization fails
+                    format!("{:?}", event).hash(&mut hasher);
+                }
+            }
+
+            let key = hasher.finish();
             if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(key) {
                 e.insert(true);
                 deduplicated.push(result);
@@ -486,9 +504,58 @@ mod tests {
             .await
             .unwrap();
 
-        // Add duplicate results
-        let result1 = create_test_result("collector-1");
-        let result2 = create_test_result("collector-1"); // Duplicate
+        // Create a shared timestamp for truly duplicate results
+        let shared_timestamp = SystemTime::now();
+        let shared_start_time = Some(shared_timestamp);
+
+        // Add duplicate results - result1 and result2 should be identical
+        let result1 = CollectorResult {
+            collector_id: "collector-1".to_string(),
+            events: vec![CollectionEvent::Process(ProcessEvent {
+                pid: 1234,
+                name: "test-process".to_string(),
+                command_line: vec![],
+                executable_path: None,
+                ppid: None,
+                start_time: shared_start_time,
+                cpu_usage: None,
+                memory_usage: None,
+                executable_hash: None,
+                user_id: None,
+                accessible: true,
+                file_exists: true,
+                timestamp: shared_timestamp,
+                platform_metadata: None,
+            })],
+            timestamp: shared_timestamp,
+            processing_duration: Duration::from_millis(100),
+            metadata: HashMap::new(),
+        };
+
+        // Create an identical duplicate
+        let result2 = CollectorResult {
+            collector_id: "collector-1".to_string(),
+            events: vec![CollectionEvent::Process(ProcessEvent {
+                pid: 1234,
+                name: "test-process".to_string(),
+                command_line: vec![],
+                executable_path: None,
+                ppid: None,
+                start_time: shared_start_time,
+                cpu_usage: None,
+                memory_usage: None,
+                executable_hash: None,
+                user_id: None,
+                accessible: true,
+                file_exists: true,
+                timestamp: shared_timestamp,
+                platform_metadata: None,
+            })],
+            timestamp: shared_timestamp,
+            processing_duration: Duration::from_millis(100),
+            metadata: HashMap::new(),
+        };
+
         let result3 = create_test_result("collector-2");
 
         aggregator
@@ -505,7 +572,7 @@ mod tests {
             .unwrap();
 
         let aggregated = completed.unwrap();
-        // Should have 2 results after deduplication
+        // Should have 2 results after deduplication (result1 and result2 are identical)
         assert_eq!(aggregated.results.len(), 2);
     }
 

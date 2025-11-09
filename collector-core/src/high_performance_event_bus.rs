@@ -232,44 +232,61 @@ impl HighPerformanceEventBusImpl {
             while !shutdown_signal_clone.load(Ordering::Acquire) {
                 // Use crossbeam's backoff for efficient spinning
                 if let Ok(bus_event) = receiver.try_recv() {
-                    // Route to all subscribers
-                    let subs = subscribers_clone.read();
+                    // Collect subscriber information first, then release lock before blocking operations
+                    let subscribers_to_notify: Vec<(
+                        String,
+                        Sender<BusEvent>,
+                        BackpressureStrategy,
+                    )> = {
+                        let subs = subscribers_clone.read();
+                        subs.iter()
+                            .filter_map(|(subscriber_id, subscriber_info)| {
+                                // Apply capability filtering
+                                if !matches_capabilities(
+                                    &bus_event.event,
+                                    &subscriber_info.subscription.capabilities,
+                                ) {
+                                    return None;
+                                }
+
+                                // Apply event filtering if configured
+                                if let Some(filter) = &subscriber_info.subscription.event_filter
+                                    && !matches_filter(&bus_event.event, filter)
+                                {
+                                    return None;
+                                }
+
+                                // Apply correlation filtering if configured
+                                if let Some(correlation_id) =
+                                    &subscriber_info.subscription.correlation_filter
+                                    && bus_event.correlation_id != *correlation_id
+                                {
+                                    return None;
+                                }
+
+                                Some((
+                                    subscriber_id.clone(),
+                                    subscriber_info.sender.clone(),
+                                    subscriber_info.subscription.backpressure_strategy.clone(),
+                                ))
+                            })
+                            .collect()
+                    }; // Lock released here
+
                     let mut delivered = 0;
                     let mut dropped = 0;
 
-                    for (subscriber_id, subscriber_info) in subs.iter() {
-                        // Apply capability filtering
-                        if !matches_capabilities(
-                            &bus_event.event,
-                            &subscriber_info.subscription.capabilities,
-                        ) {
-                            continue;
-                        }
-
-                        // Apply event filtering if configured
-                        if let Some(filter) = &subscriber_info.subscription.event_filter
-                            && !matches_filter(&bus_event.event, filter)
-                        {
-                            continue;
-                        }
-
-                        // Apply correlation filtering if configured
-                        if let Some(correlation_id) =
-                            &subscriber_info.subscription.correlation_filter
-                            && bus_event.correlation_id != *correlation_id
-                        {
-                            continue;
-                        }
-
+                    // Now process subscribers without holding the lock
+                    for (subscriber_id, sender, backpressure_strategy) in subscribers_to_notify {
                         // Send to subscriber respecting backpressure strategy
-                        match subscriber_info.subscription.backpressure_strategy {
+                        match backpressure_strategy {
                             BackpressureStrategy::Blocking => {
                                 let mut sent = false;
                                 let mut retries = 0;
                                 let mut backoff_delay = Duration::from_micros(10); // Start with a small delay
 
                                 while !sent && retries < config_clone.max_blocking_retries {
-                                    match subscriber_info.sender.try_send(bus_event.clone()) {
+                                    match sender.try_send(bus_event.clone()) {
                                         Ok(_) => {
                                             delivered += 1;
                                             delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
@@ -286,7 +303,7 @@ impl HighPerformanceEventBusImpl {
                                                 );
                                                 break;
                                             }
-                                            // Use thread::sleep since we're in a sync context (routing thread)
+                                            // Lock is released, safe to sleep
                                             thread::sleep(backoff_delay);
                                             backoff_delay = (backoff_delay * 2)
                                                 .min(config_clone.blocking_backoff_max_delay);
@@ -314,7 +331,7 @@ impl HighPerformanceEventBusImpl {
                             }
                             BackpressureStrategy::DropNewest => {
                                 // Try to send, if full drop the new event
-                                match subscriber_info.sender.try_send(bus_event.clone()) {
+                                match sender.try_send(bus_event.clone()) {
                                     Ok(_) => {
                                         delivered += 1;
                                         delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
