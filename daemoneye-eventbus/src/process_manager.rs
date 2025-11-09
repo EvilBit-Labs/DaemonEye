@@ -69,6 +69,7 @@
 //! # }
 //! ```
 
+use crate::rpc::CollectorRpcClient;
 use crate::{DaemoneyeBroker, Message};
 #[cfg(unix)]
 use nix::{
@@ -171,6 +172,8 @@ pub struct CollectorProcess {
     pub heartbeat_enabled: bool,
     /// Heartbeat sequence number
     pub heartbeat_sequence: u64,
+    /// Optional RPC client for lifecycle operations
+    pub rpc_client: Option<Arc<CollectorRpcClient>>,
 }
 
 /// Lifecycle state of a collector process
@@ -549,10 +552,35 @@ impl CollectorProcessManager {
             missed_heartbeats: 0,
             heartbeat_enabled: true,
             heartbeat_sequence: 0,
+            rpc_client: None,
         };
 
         processes.insert(collector_id.to_string(), process);
         drop(processes);
+
+        // Create RPC client if broker is available
+        if let Some(ref broker) = self.broker {
+            let target_topic = format!("control.collector.{}", collector_id);
+            match CollectorRpcClient::new(&target_topic, Arc::clone(broker)).await {
+                Ok(client) => {
+                    let mut processes = self.processes.lock().await;
+                    if let Some(process) = processes.get_mut(collector_id) {
+                        process.rpc_client = Some(Arc::new(client));
+                    }
+                    info!(
+                        collector_id = %collector_id,
+                        "Created RPC client for collector"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        collector_id = %collector_id,
+                        error = %e,
+                        "Failed to create RPC client, will use signal-based operations"
+                    );
+                }
+            }
+        }
 
         // Spawn monitoring task
         self.spawn_process_monitor(collector_id.to_string()).await;
@@ -850,8 +878,8 @@ impl CollectorProcessManager {
         graceful: bool,
         timeout: Duration,
     ) -> Result<Option<i32>, ProcessManagerError> {
-        // Extract child handle before awaiting to avoid holding lock across await points
-        let (mut child, pid, collector_id_owned) = {
+        // Extract child handle and RPC client before awaiting
+        let (mut child, pid, collector_id_owned, rpc_client) = {
             let mut processes = self.processes.lock().await;
             let proc = processes
                 .get_mut(collector_id)
@@ -878,12 +906,40 @@ impl CollectorProcessManager {
             let pid = proc.pid;
             let collector_id_owned = collector_id.to_string();
 
-            // Extract child, leaving None in its place
+            // Extract child and RPC client, leaving None in their places
             let child = proc.child.take().expect("invariant: child exists");
+            let rpc_client = proc.rpc_client.take();
 
-            (child, pid, collector_id_owned)
+            (child, pid, collector_id_owned, rpc_client)
         };
         // Lock dropped here
+
+        // Try RPC-based shutdown first if client is available
+        if graceful && let Some(client) = rpc_client {
+            match self
+                .shutdown_collector_rpc(&collector_id_owned, &client, true, timeout, &mut child)
+                .await
+            {
+                Ok(exit_code) => {
+                    info!(
+                        collector_id = %collector_id_owned,
+                        "Collector stopped via RPC"
+                    );
+                    // Remove from process map
+                    let mut processes = self.processes.lock().await;
+                    processes.remove(&collector_id_owned);
+                    return Ok(exit_code);
+                }
+                Err(e) => {
+                    warn!(
+                        collector_id = %collector_id_owned,
+                        error = %e,
+                        "RPC shutdown failed, falling back to signal-based shutdown"
+                    );
+                    // Fall through to signal-based shutdown
+                }
+            }
+        }
 
         let exit_code = if graceful {
             // Send termination signal
@@ -1045,6 +1101,108 @@ impl CollectorProcessManager {
                     "Force kill timeout for {}",
                     collector_id_owned
                 )))
+            }
+        }
+    }
+
+    /// Shutdown a collector via RPC
+    async fn shutdown_collector_rpc(
+        &self,
+        collector_id: &str,
+        client: &CollectorRpcClient,
+        graceful: bool,
+        timeout: Duration,
+        child: &mut Child,
+    ) -> Result<Option<i32>, ProcessManagerError> {
+        use crate::rpc::{
+            CollectorLifecycleRequest, CollectorOperation, RpcRequest, RpcStatus, ShutdownRequest,
+            ShutdownType,
+        };
+
+        if graceful {
+            let shutdown_request = ShutdownRequest {
+                collector_id: collector_id.to_string(),
+                shutdown_type: ShutdownType::Graceful,
+                graceful_timeout_ms: timeout.as_millis() as u64,
+                force_after_timeout: true,
+                reason: Some("Process manager initiated graceful shutdown".to_string()),
+            };
+            let request = RpcRequest::shutdown(
+                client.client_id.clone(),
+                client.target_topic.clone(),
+                shutdown_request,
+                timeout,
+            );
+
+            match tokio::time::timeout(timeout, client.call(request, timeout)).await {
+                Ok(Ok(response)) => {
+                    if response.status == RpcStatus::Success {
+                        // Wait for process to exit
+                        match tokio::time::timeout(timeout, child.wait()).await {
+                            Ok(Ok(status)) => Ok(status.code()),
+                            Ok(Err(e)) => Err(ProcessManagerError::TerminateFailed(format!(
+                                "Wait failed: {}",
+                                e
+                            ))),
+                            Err(_) => Err(ProcessManagerError::Timeout(
+                                "Process wait timeout".to_string(),
+                            )),
+                        }
+                    } else {
+                        Err(ProcessManagerError::TerminateFailed(
+                            response
+                                .error_details
+                                .map(|e| e.message)
+                                .unwrap_or_else(|| "RPC shutdown failed".to_string()),
+                        ))
+                    }
+                }
+                Ok(Err(e)) => Err(ProcessManagerError::TerminateFailed(format!(
+                    "RPC call failed: {}",
+                    e
+                ))),
+                Err(_) => Err(ProcessManagerError::Timeout(
+                    "RPC shutdown timeout".to_string(),
+                )),
+            }
+        } else {
+            let lifecycle_request = CollectorLifecycleRequest::stop(collector_id);
+            let request = RpcRequest::lifecycle(
+                client.client_id.clone(),
+                client.target_topic.clone(),
+                CollectorOperation::Stop,
+                lifecycle_request,
+                timeout,
+            );
+
+            match tokio::time::timeout(timeout, client.call(request, timeout)).await {
+                Ok(Ok(response)) => {
+                    if response.status == RpcStatus::Success {
+                        // Wait for process to exit
+                        match tokio::time::timeout(timeout, child.wait()).await {
+                            Ok(Ok(status)) => Ok(status.code()),
+                            Ok(Err(e)) => Err(ProcessManagerError::TerminateFailed(format!(
+                                "Wait failed: {}",
+                                e
+                            ))),
+                            Err(_) => Err(ProcessManagerError::Timeout(
+                                "Process wait timeout".to_string(),
+                            )),
+                        }
+                    } else {
+                        Err(ProcessManagerError::TerminateFailed(
+                            response
+                                .error_details
+                                .map(|e| e.message)
+                                .unwrap_or_else(|| "RPC stop failed".to_string()),
+                        ))
+                    }
+                }
+                Ok(Err(e)) => Err(ProcessManagerError::TerminateFailed(format!(
+                    "RPC call failed: {}",
+                    e
+                ))),
+                Err(_) => Err(ProcessManagerError::Timeout("RPC stop timeout".to_string())),
             }
         }
     }

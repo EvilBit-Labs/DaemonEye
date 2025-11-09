@@ -9,6 +9,10 @@ use crate::{
     event_bus::{EventBus, EventBusConfig, LocalEventBus},
     ipc::CollectorIpcServer,
     performance::{PerformanceConfig, PerformanceMonitor},
+    rpc_services::{
+        CollectorConfigProvider, CollectorHealthProvider, CollectorRegistrationProvider,
+        CollectorRpcServiceManager, RpcServiceConfig,
+    },
     source::{EventSource, SourceCaps},
 };
 use anyhow::{Context, Result};
@@ -101,6 +105,7 @@ pub struct CollectorRuntime {
     last_batch_flush: Instant,
     performance_monitor: Arc<PerformanceMonitor>,
     event_bus: Option<Arc<dyn EventBus>>,
+    rpc_service_manager: Option<Arc<CollectorRpcServiceManager>>,
 }
 
 #[derive(Clone)]
@@ -513,10 +518,14 @@ impl Collector {
         let (event_tx, event_rx) = mpsc::channel(self.config.event_buffer_size);
 
         // Create runtime
-        let mut runtime = CollectorRuntime::new(self.config.clone(), event_tx.clone(), event_rx);
+        let runtime = CollectorRuntime::new(self.config.clone(), event_tx.clone(), event_rx);
+
+        // Wrap runtime in Arc for RPC service access
+        let runtime_arc = Arc::new(RwLock::new(runtime));
+        let mut runtime_guard = runtime_arc.write().await;
 
         // Initialize EventBus based on configuration
-        let socket_path = runtime.config.daemoneye_socket_path.clone();
+        let socket_path = runtime_guard.config.daemoneye_socket_path.clone();
         if socket_path.is_some() {
             // DaemoneyeEventBus integration removed due to circular dependency
             // Use LocalEventBus for now
@@ -526,37 +535,71 @@ impl Collector {
             );
         }
         // Always initialize LocalEventBus (DaemoneyeEventBus not yet implemented)
-        runtime.initialize_local_eventbus().await?;
+        runtime_guard.initialize_local_eventbus().await?;
 
         // Start IPC server
-        runtime.start_ipc_server().await?;
+        runtime_guard.start_ipc_server().await?;
 
         let registration_session = self.register_with_broker().await?;
+
+        // Start RPC service if broker is available
+        if let Some(ref session) = registration_session {
+            runtime_guard
+                .start_rpc_service_with_runtime(
+                    session.collector_id.clone(),
+                    Arc::clone(&session.broker),
+                    Arc::clone(&runtime_arc),
+                )
+                .await?;
+        }
+
+        // Release the guard before running
+        drop(runtime_guard);
 
         // Start all event sources
         for source in self.sources {
             let source_name = source.name().to_string();
             info!("Starting source: {}", source_name);
-            runtime.start_source(source).await?;
+            {
+                let mut runtime_guard = runtime_arc.write().await;
+                runtime_guard.start_source(source).await?;
+            }
             info!("Source started successfully: {}", source_name);
         }
 
         // Start health monitoring
-        runtime.start_health_monitoring().await;
+        {
+            let mut runtime_guard = runtime_arc.write().await;
+            runtime_guard.start_health_monitoring().await;
+        }
 
         // Start performance monitoring
-        runtime.start_performance_monitoring().await;
+        {
+            let mut runtime_guard = runtime_arc.write().await;
+            runtime_guard.start_performance_monitoring().await;
+        }
 
         // Start telemetry collection
-        if runtime.config.enable_telemetry {
-            runtime.start_telemetry_collection().await;
+        {
+            let runtime_guard = runtime_arc.read().await;
+            if runtime_guard.config.enable_telemetry {
+                drop(runtime_guard);
+                let mut runtime_guard = runtime_arc.write().await;
+                runtime_guard.start_telemetry_collection().await;
+            }
         }
 
         // Start event processing
-        runtime.start_event_processing().await;
+        {
+            let mut runtime_guard = runtime_arc.write().await;
+            runtime_guard.start_event_processing().await;
+        }
 
         // Run until shutdown
-        let run_result = runtime.run_until_shutdown().await;
+        let run_result = {
+            let mut runtime_guard = runtime_arc.write().await;
+            runtime_guard.run_until_shutdown().await
+        };
 
         if let Some(session) = registration_session
             && let Err(err) = Collector::deregister_from_broker(session).await
@@ -567,7 +610,10 @@ impl Collector {
         run_result?;
 
         // Ensure the configured EventBus is shut down gracefully
-        runtime.shutdown_eventbus().await?;
+        {
+            let mut runtime_guard = runtime_arc.write().await;
+            runtime_guard.shutdown_eventbus().await?;
+        }
 
         info!("Collector runtime stopped");
         Ok(())
@@ -621,6 +667,7 @@ impl CollectorRuntime {
             last_batch_flush: Instant::now(),
             performance_monitor,
             event_bus: None,
+            rpc_service_manager: None,
         }
     }
 
@@ -1170,6 +1217,13 @@ impl CollectorRuntime {
         // Set up signal handling
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
 
+        // Create a future that polls the shutdown signal
+        let shutdown_poll = async {
+            while !shutdown_signal.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        };
+
         #[cfg(unix)]
         {
             use tokio::signal::unix::{SignalKind, signal};
@@ -1187,6 +1241,9 @@ impl CollectorRuntime {
                         _ = sigint.recv() => {
                             info!("Received SIGINT, initiating graceful shutdown");
                         }
+                        _ = shutdown_poll => {
+                            info!("RPC-triggered shutdown signal received");
+                        }
                     }
                 }
                 _ => {
@@ -1196,18 +1253,21 @@ impl CollectorRuntime {
                     let start_time = Instant::now();
                     let max_runtime = Duration::from_secs(30); // 30 second max runtime for tests
 
-                    loop {
-                        if shutdown_signal.load(Ordering::Relaxed) {
-                            break;
+                    tokio::select! {
+                        _ = shutdown_poll => {
+                            info!("RPC-triggered shutdown signal received");
                         }
-
-                        // Check if we've exceeded the maximum runtime
-                        if start_time.elapsed() > max_runtime {
+                        _ = async {
+                            loop {
+                                if start_time.elapsed() > max_runtime {
+                                    info!("Maximum runtime exceeded, shutting down");
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
+                        } => {
                             info!("Maximum runtime exceeded, shutting down");
-                            break;
                         }
-
-                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
             }
@@ -1227,6 +1287,9 @@ impl CollectorRuntime {
                         _ = ctrl_break.recv() => {
                             info!("Received Ctrl+Break, initiating graceful shutdown");
                         }
+                        _ = shutdown_poll => {
+                            info!("RPC-triggered shutdown signal received");
+                        }
                     }
                 }
                 _ => {
@@ -1236,18 +1299,21 @@ impl CollectorRuntime {
                     let start_time = Instant::now();
                     let max_runtime = Duration::from_secs(30); // 30 second max runtime for tests
 
-                    loop {
-                        if shutdown_signal.load(Ordering::Relaxed) {
-                            break;
+                    tokio::select! {
+                        _ = shutdown_poll => {
+                            info!("RPC-triggered shutdown signal received");
                         }
-
-                        // Check if we've exceeded the maximum runtime
-                        if start_time.elapsed() > max_runtime {
+                        _ = async {
+                            loop {
+                                if start_time.elapsed() > max_runtime {
+                                    info!("Maximum runtime exceeded, shutting down");
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
+                        } => {
                             info!("Maximum runtime exceeded, shutting down");
-                            break;
                         }
-
-                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
             }
@@ -1257,12 +1323,7 @@ impl CollectorRuntime {
         {
             warn!("Signal handling not supported on this platform");
             // On unsupported platforms, just wait for shutdown signal
-            loop {
-                if shutdown_signal.load(Ordering::Relaxed) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
+            shutdown_poll.await;
         }
 
         // Signal shutdown to all tasks
@@ -1274,11 +1335,94 @@ impl CollectorRuntime {
         Ok(())
     }
 
+    /// Start the RPC service with a runtime reference
+    async fn start_rpc_service_with_runtime(
+        &mut self,
+        collector_id: String,
+        broker: Arc<DaemoneyeBroker>,
+        runtime_arc: Arc<RwLock<CollectorRuntime>>,
+    ) -> Result<()> {
+        let rpc_topic = format!("control.collector.{}", collector_id);
+        let config = RpcServiceConfig {
+            collector_id: collector_id.clone(),
+            rpc_topic: rpc_topic.clone(),
+            default_timeout: Duration::from_secs(30),
+        };
+
+        // Create providers with references to runtime components
+        let telemetry_for_provider =
+            Arc::new(RwLock::new(Some(Arc::clone(&self.telemetry_collector))));
+        let perf_for_provider = Arc::new(RwLock::new(Some(Arc::clone(&self.performance_monitor))));
+        // Use the provided runtime reference
+        let runtime_for_provider = Arc::new(RwLock::new(Some(Arc::clone(&runtime_arc))));
+
+        let health_provider = Arc::new(CollectorHealthProvider {
+            runtime: Arc::clone(&runtime_for_provider),
+            telemetry: telemetry_for_provider,
+            performance_monitor: perf_for_provider,
+            collector_id: collector_id.clone(),
+        });
+
+        let config_provider = Arc::new(CollectorConfigProvider {
+            collector_id: collector_id.clone(),
+        });
+
+        let registration_provider =
+            Arc::new(CollectorRegistrationProvider::new(collector_id.clone()));
+
+        // Create RPC service manager
+        let rpc_manager = Arc::new(CollectorRpcServiceManager::new(
+            config,
+            broker,
+            health_provider,
+            config_provider,
+            registration_provider,
+        ));
+
+        // Set references
+        rpc_manager
+            .set_telemetry(Arc::clone(&self.telemetry_collector))
+            .await;
+        rpc_manager
+            .set_performance_monitor(Arc::clone(&self.performance_monitor))
+            .await;
+        rpc_manager
+            .set_shutdown_signal(Arc::clone(&self.shutdown_signal))
+            .await;
+
+        // Set runtime reference for health metrics
+        rpc_manager.set_runtime(Arc::clone(&runtime_arc)).await;
+
+        // Start the service
+        rpc_manager
+            .start()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to start RPC service: {}", e))?;
+
+        self.rpc_service_manager = Some(rpc_manager);
+
+        info!(
+            collector_id = %collector_id,
+            rpc_topic = %rpc_topic,
+            "RPC service started for collector"
+        );
+
+        Ok(())
+    }
+
     /// Performs graceful shutdown of all components.
     async fn shutdown_gracefully(&mut self) -> Result<()> {
         info!("Starting graceful shutdown");
 
-        // Shutdown IPC server first
+        // Shutdown RPC service first
+        if let Some(rpc_manager) = self.rpc_service_manager.take() {
+            debug!("Shutting down RPC service");
+            if let Err(e) = rpc_manager.stop().await {
+                error!(error = %e, "Failed to shutdown RPC service gracefully");
+            }
+        }
+
+        // Shutdown IPC server
         if let Some(mut ipc_server) = self.ipc_server.take() {
             debug!("Shutting down IPC server");
             if let Err(e) = ipc_server.shutdown().await {

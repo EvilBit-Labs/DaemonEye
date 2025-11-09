@@ -108,6 +108,13 @@ impl CollectorRegistry {
         let records = self.records.read().await;
         records.get(collector_id).cloned()
     }
+
+    /// Get list of registered collector IDs.
+    #[allow(dead_code)]
+    pub async fn list_collector_ids(&self) -> Vec<String> {
+        let records = self.records.read().await;
+        records.keys().cloned().collect()
+    }
 }
 
 impl Default for CollectorRegistry {

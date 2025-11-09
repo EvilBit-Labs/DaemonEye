@@ -188,6 +188,31 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 iteration += 1;
                 let loop_start = Instant::now();
 
+                // Periodic RPC health checks (every 10 iterations)
+                if iteration.is_multiple_of(10) {
+                    // Get list of registered collectors from RPC clients
+                    let collector_ids = broker_manager.list_registered_collector_ids().await;
+
+                    for collector_id in collector_ids {
+                        match broker_manager.health_check_rpc(&collector_id).await {
+                            Ok(health_data) => {
+                                info!(
+                                    collector_id = %collector_id,
+                                    status = ?health_data.status,
+                                    "RPC health check completed"
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    collector_id = %collector_id,
+                                    error = %e,
+                                    "RPC health check failed"
+                                );
+                            }
+                        }
+                    }
+                }
+
                 // Request process enumeration from procmond via IPC
                 let processes = match ipc_manager.enumerate_processes().await {
                     Ok(result) => {

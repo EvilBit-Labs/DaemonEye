@@ -9,9 +9,10 @@ use crate::collector_registry::{CollectorRegistry, RegistryError};
 use anyhow::{Context, Result};
 use daemoneye_eventbus::ConfigManager;
 use daemoneye_eventbus::rpc::{
-    ComponentHealth, ConfigProvider, ConfigUpdateResult, DeregistrationRequest, HealthCheckData,
-    HealthProvider, HealthStatus, RegistrationError, RegistrationProvider, RegistrationRequest,
-    RegistrationResponse,
+    CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient, ComponentHealth,
+    ConfigProvider, ConfigUpdateResult, DeregistrationRequest, HealthCheckData, HealthProvider,
+    HealthStatus, RegistrationError, RegistrationProvider, RegistrationRequest,
+    RegistrationResponse, RpcPayload, RpcRequest, RpcStatus, ShutdownRequest, ShutdownType,
 };
 use daemoneye_eventbus::{
     DaemoneyeBroker, DaemoneyeEventBus, EventBus, EventBusStatistics,
@@ -57,6 +58,8 @@ pub struct BrokerManager {
     config_manager: Arc<ConfigManager>,
     /// Registry tracking registered collectors
     collector_registry: Arc<RwLock<Option<Arc<CollectorRegistry>>>>,
+    /// RPC clients for collector lifecycle management
+    rpc_clients: Arc<RwLock<std::collections::HashMap<String, Arc<CollectorRpcClient>>>>,
 }
 
 impl BrokerManager {
@@ -92,6 +95,7 @@ impl BrokerManager {
             process_manager,
             config_manager,
             collector_registry: Arc::new(RwLock::new(None)),
+            rpc_clients: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -185,13 +189,47 @@ impl BrokerManager {
             *health = BrokerHealth::ShuttingDown;
         }
 
-        // Shutdown all managed collector processes first
+        // Send graceful shutdown RPC to all collectors first
+        info!("Sending graceful shutdown RPC to all collectors");
+        let collector_ids: Vec<String> = {
+            let clients = self.rpc_clients.read().await;
+            clients.keys().cloned().collect()
+        };
+
+        for collector_id in &collector_ids {
+            if let Err(e) = self.stop_collector_rpc(collector_id, true).await {
+                warn!(
+                    collector_id = %collector_id,
+                    error = %e,
+                    "Failed to send graceful shutdown RPC, will fall back to signal-based shutdown"
+                );
+            }
+        }
+
+        // Wait a bit for RPC responses
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Shutdown all managed collector processes (fallback to signals)
         info!("Shutting down managed collector processes");
         if let Err(e) = self.process_manager.shutdown_all().await {
             error!(error = %e, "Failed to shutdown all collector processes");
             // Continue with broker shutdown even if collector shutdown fails
         } else {
             info!("All collector processes shut down successfully");
+        }
+
+        // Clean up RPC clients
+        {
+            let mut clients = self.rpc_clients.write().await;
+            for (collector_id, client) in clients.drain() {
+                if let Err(e) = client.shutdown().await {
+                    warn!(
+                        collector_id = %collector_id,
+                        error = %e,
+                        "Failed to shutdown RPC client"
+                    );
+                }
+            }
         }
 
         // Send shutdown signal if available
@@ -420,6 +458,162 @@ impl BrokerManager {
             timeout
         ))
     }
+
+    /// Create an RPC client for a collector
+    pub async fn create_rpc_client(&self, collector_id: &str) -> Result<Arc<CollectorRpcClient>> {
+        let broker_guard = self.broker.read().await;
+        let broker = broker_guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Broker not available"))?;
+
+        let target_topic = format!("control.collector.{}", collector_id);
+        let client = Arc::new(
+            CollectorRpcClient::new(&target_topic, Arc::clone(broker))
+                .await
+                .context("Failed to create RPC client")?,
+        );
+
+        // Store the client
+        {
+            let mut clients = self.rpc_clients.write().await;
+            clients.insert(collector_id.to_string(), Arc::clone(&client));
+        }
+
+        info!(
+            collector_id = %collector_id,
+            target_topic = %target_topic,
+            "Created RPC client for collector"
+        );
+
+        Ok(client)
+    }
+
+    /// Start a collector via RPC
+    #[allow(dead_code)]
+    pub async fn start_collector_rpc(&self, collector_id: &str) -> Result<()> {
+        let client = self.get_rpc_client(collector_id).await?;
+        let lifecycle_request = CollectorLifecycleRequest::start(collector_id, None);
+        let request = RpcRequest::lifecycle(
+            client.client_id.clone(),
+            client.target_topic.clone(),
+            CollectorOperation::Start,
+            lifecycle_request,
+            Duration::from_secs(30),
+        );
+
+        let response = client.call(request, Duration::from_secs(30)).await?;
+        if response.status != RpcStatus::Success {
+            anyhow::bail!("Start RPC failed: {:?}", response.error_details);
+        }
+
+        info!(collector_id = %collector_id, "Collector started via RPC");
+        Ok(())
+    }
+
+    /// Stop a collector via RPC
+    pub async fn stop_collector_rpc(&self, collector_id: &str, graceful: bool) -> Result<()> {
+        let client = self.get_rpc_client(collector_id).await?;
+
+        if graceful {
+            let shutdown_request = ShutdownRequest {
+                collector_id: collector_id.to_string(),
+                shutdown_type: ShutdownType::Graceful,
+                graceful_timeout_ms: 30000,
+                force_after_timeout: true,
+                reason: Some("Agent-initiated graceful shutdown".to_string()),
+            };
+            let request = RpcRequest::shutdown(
+                client.client_id.clone(),
+                client.target_topic.clone(),
+                shutdown_request,
+                Duration::from_secs(30),
+            );
+
+            let response = client.call(request, Duration::from_secs(30)).await?;
+            if response.status != RpcStatus::Success {
+                anyhow::bail!("Graceful shutdown RPC failed: {:?}", response.error_details);
+            }
+        } else {
+            let lifecycle_request = CollectorLifecycleRequest::stop(collector_id);
+            let request = RpcRequest::lifecycle(
+                client.client_id.clone(),
+                client.target_topic.clone(),
+                CollectorOperation::Stop,
+                lifecycle_request,
+                Duration::from_secs(30),
+            );
+
+            let response = client.call(request, Duration::from_secs(30)).await?;
+            if response.status != RpcStatus::Success {
+                anyhow::bail!("Stop RPC failed: {:?}", response.error_details);
+            }
+        }
+
+        info!(collector_id = %collector_id, graceful = graceful, "Collector stopped via RPC");
+        Ok(())
+    }
+
+    /// Restart a collector via RPC
+    #[allow(dead_code)]
+    pub async fn restart_collector_rpc(&self, collector_id: &str) -> Result<()> {
+        let client = self.get_rpc_client(collector_id).await?;
+        let lifecycle_request = CollectorLifecycleRequest::restart(collector_id, None);
+        let request = RpcRequest::lifecycle(
+            client.client_id.clone(),
+            client.target_topic.clone(),
+            CollectorOperation::Restart,
+            lifecycle_request,
+            Duration::from_secs(30),
+        );
+
+        let response = client.call(request, Duration::from_secs(30)).await?;
+        if response.status != RpcStatus::Success {
+            anyhow::bail!("Restart RPC failed: {:?}", response.error_details);
+        }
+
+        info!(collector_id = %collector_id, "Collector restarted via RPC");
+        Ok(())
+    }
+
+    /// Perform health check via RPC
+    pub async fn health_check_rpc(&self, collector_id: &str) -> Result<HealthCheckData> {
+        let client = self.get_rpc_client(collector_id).await?;
+        let request = RpcRequest::health_check(
+            client.client_id.clone(),
+            client.target_topic.clone(),
+            Duration::from_secs(10),
+        );
+
+        let response = client.call(request, Duration::from_secs(10)).await?;
+        if response.status != RpcStatus::Success {
+            anyhow::bail!("Health check RPC failed: {:?}", response.error_details);
+        }
+
+        match response.payload {
+            Some(RpcPayload::HealthCheck(health_data)) => Ok(health_data),
+            _ => anyhow::bail!("Invalid health check response payload"),
+        }
+    }
+
+    /// Get or create an RPC client for a collector
+    pub async fn get_rpc_client(&self, collector_id: &str) -> Result<Arc<CollectorRpcClient>> {
+        // Check if client already exists
+        {
+            let clients = self.rpc_clients.read().await;
+            if let Some(client) = clients.get(collector_id) {
+                return Ok(Arc::clone(client));
+            }
+        }
+
+        // Create new client
+        self.create_rpc_client(collector_id).await
+    }
+
+    /// List all registered collector IDs that have RPC clients
+    pub async fn list_registered_collector_ids(&self) -> Vec<String> {
+        let clients = self.rpc_clients.read().await;
+        clients.keys().cloned().collect()
+    }
 }
 
 // -------------------------------
@@ -629,6 +823,10 @@ impl ConfigProvider for BrokerManager {
     }
 }
 
+// -------------------------------
+// RPC Provider trait implementations
+// -------------------------------
+
 #[async_trait::async_trait]
 impl RegistrationProvider for BrokerManager {
     async fn register_collector(
@@ -636,10 +834,23 @@ impl RegistrationProvider for BrokerManager {
         request: RegistrationRequest,
     ) -> std::result::Result<RegistrationResponse, RegistrationError> {
         let registry = self.registry().await?;
-        registry
-            .register(request)
+        let response = registry
+            .register(request.clone())
             .await
-            .map_err(BrokerManager::map_registry_error)
+            .map_err(BrokerManager::map_registry_error)?;
+
+        // Create RPC client after successful registration
+        if response.accepted
+            && let Err(e) = self.create_rpc_client(&request.collector_id).await
+        {
+            warn!(
+                collector_id = %request.collector_id,
+                error = %e,
+                "Failed to create RPC client after registration"
+            );
+        }
+
+        Ok(response)
     }
 
     async fn deregister_collector(
@@ -648,9 +859,23 @@ impl RegistrationProvider for BrokerManager {
     ) -> std::result::Result<(), RegistrationError> {
         let registry = self.registry().await?;
         registry
-            .deregister(request)
+            .deregister(request.clone())
             .await
-            .map_err(BrokerManager::map_registry_error)
+            .map_err(BrokerManager::map_registry_error)?;
+
+        // Remove RPC client and shut it down
+        let mut clients = self.rpc_clients.write().await;
+        if let Some(client) = clients.remove(&request.collector_id)
+            && let Err(e) = client.shutdown().await
+        {
+            warn!(
+                collector_id = %request.collector_id,
+                error = %e,
+                "Failed to shutdown RPC client during deregistration"
+            );
+        }
+
+        Ok(())
     }
 
     async fn update_heartbeat(

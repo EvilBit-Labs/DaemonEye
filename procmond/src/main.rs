@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use collector_core::{Collector, CollectorConfig};
+use collector_core::{Collector, CollectorConfig, CollectorRegistrationConfig};
 use daemoneye_lib::{config, storage, telemetry};
 use procmond::{ProcessEventSource, ProcessSourceConfig};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tracing::info;
 
 /// Parse and validate the collection interval argument.
 ///
@@ -94,7 +96,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Database stats: {:?}", stats);
 
     // Create collector configuration
-    let collector_config = CollectorConfig::new()
+    let mut collector_config = CollectorConfig::new()
         .with_component_name("procmond".to_string())
         .with_max_event_sources(1)
         .with_event_buffer_size(1000)
@@ -102,6 +104,21 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_health_check_interval(Duration::from_secs(60))
         .with_telemetry(true)
         .with_debug_logging(cli.log_level == "debug");
+
+    // Enable broker registration for RPC service
+    // Note: In a real deployment, the broker would be provided via configuration
+    // For now, we'll configure registration but it will only work if a broker is available
+    collector_config.registration = Some(CollectorRegistrationConfig {
+        enabled: true,
+        broker: None, // Will be set if broker is available via environment/config
+        collector_id: Some("procmond".to_string()),
+        collector_type: Some("procmond".to_string()),
+        topic: "control.collector.registration".to_string(),
+        timeout: Duration::from_secs(10),
+        retry_attempts: 3,
+        heartbeat_interval: Duration::from_secs(30),
+        attributes: HashMap::new(),
+    });
 
     // Create process source configuration
     let process_config = ProcessSourceConfig {
@@ -114,6 +131,26 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create process event source
     let process_source = ProcessEventSource::with_config(db_manager, process_config);
+
+    // Log RPC service status before moving collector_config
+    // The RPC service will be automatically started by collector-core after broker registration
+    let registration_enabled = collector_config
+        .registration
+        .as_ref()
+        .map(|r| r.enabled)
+        .unwrap_or(false);
+    let collector_id_str = collector_config
+        .registration
+        .as_ref()
+        .and_then(|r| r.collector_id.as_deref())
+        .unwrap_or("procmond");
+
+    if registration_enabled {
+        info!(
+            collector_id = %collector_id_str,
+            "RPC service will be initialized after broker registration"
+        );
+    }
 
     // Create and configure collector
     let mut collector = Collector::new(collector_config);

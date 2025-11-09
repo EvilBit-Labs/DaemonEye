@@ -78,6 +78,7 @@ pub mod monitor_collector;
 pub mod performance;
 pub mod process_manager;
 pub mod result_aggregator;
+pub mod rpc_services;
 pub mod shutdown_coordinator;
 pub mod source;
 pub mod task_distributor;
@@ -128,6 +129,7 @@ pub use result_aggregator::{
     AggregatedResult, AggregationConfig, AggregationStats, AggregationStatus, CollectorResult,
     ResultAggregator,
 };
+pub use rpc_services::{CollectorRpcServiceManager, RpcServiceConfig};
 pub use shutdown_coordinator::{
     ShutdownConfig, ShutdownCoordinator, ShutdownEvent, ShutdownPhase, ShutdownRequest,
     ShutdownResponse,
