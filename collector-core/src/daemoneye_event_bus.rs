@@ -429,6 +429,13 @@ impl DaemoneyeEventBus {
                         vec![]
                     },
                     correlation_patterns: vec![],
+                    parent_correlation_ids: vec![],
+                    root_correlation_ids: vec![],
+                    workflow_stages: vec![],
+                    required_tags: std::collections::HashMap::new(),
+                    any_tags: std::collections::HashMap::new(),
+                    min_sequence: None,
+                    max_sequence: None,
                 }
             }),
             topic_patterns: subscription.topic_patterns.clone(),
@@ -527,7 +534,7 @@ impl DaemoneyeEventBus {
                 .as_secs(),
             event: collection_event,
             correlation_metadata: crate::event_bus::CorrelationMetadata::new(
-                event.correlation_id.clone(),
+                event.correlation_id().to_string(),
             ),
             routing_metadata: std::collections::HashMap::new(),
         }

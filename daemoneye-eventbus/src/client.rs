@@ -201,7 +201,7 @@ impl EventBusClient {
 
         debug!(
             "Published message to topic: {} (correlation: {})",
-            topic, message.correlation_id
+            topic, message.correlation_metadata.correlation_id
         );
         Ok(())
     }
@@ -326,7 +326,7 @@ impl EventBusClient {
         let bus_event = BusEvent {
             event_id: message.id.to_string(),
             event,
-            correlation_id: message.correlation_id.clone(),
+            correlation_metadata: message.correlation_metadata.clone(),
             bus_timestamp: message.timestamp,
             matched_pattern: message.topic.clone(),
             subscriber_id: "".to_string(), // Will be set per subscription

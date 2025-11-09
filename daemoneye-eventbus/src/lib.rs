@@ -70,6 +70,7 @@ pub mod result_aggregation;
 pub mod rpc;
 pub mod task_distribution;
 pub mod topic;
+pub mod topics;
 pub mod transport;
 
 // Re-export main types for convenience
@@ -78,8 +79,9 @@ pub use client::{ClientStats, EventBusClient};
 pub use config_manager::{ConfigManager, ConfigManagerError, ConfigSnapshot};
 pub use error::{EventBusError, Result};
 pub use message::{
-    BusEvent, CollectionEvent, CorrelationFilter, EventFilter, EventSubscription, FilesystemEvent,
-    Message, MessageType, NetworkEvent, PerformanceEvent, ProcessEvent, SourceCaps, TriggerRequest,
+    BusEvent, CollectionEvent, CorrelationFilter, CorrelationMetadata, EventFilter,
+    EventSubscription, FilesystemEvent, Message, MessageType, NetworkEvent, PerformanceEvent,
+    ProcessEvent, SourceCaps, TriggerRequest,
 };
 pub use process_manager::{
     CollectorConfig, CollectorProcessManager, CollectorState, ProcessManagerConfig,
@@ -102,6 +104,10 @@ pub use task_distribution::{
 pub use topic::{
     Topic, TopicAccessLevel, TopicDomain, TopicError, TopicMatcher, TopicPattern, TopicRegistry,
     TopicStats, TopicType,
+};
+pub use topics::{
+    TopicBuilder, TopicHierarchy, agent, collector, filesystem, health, network, performance,
+    process,
 };
 pub use transport::{
     ClientConfig, ClientConnectionManager, ClientInfo, ConnectionManagerStats, ConnectionStats,

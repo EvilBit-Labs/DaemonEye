@@ -263,7 +263,7 @@ impl DaemoneyeBroker {
                 let bus_event = BusEvent {
                     event_id: Uuid::new_v4().to_string(),
                     event: collection_event.clone(),
-                    correlation_id: correlation_id.to_string(),
+                    correlation_metadata: message.correlation_metadata.clone(),
                     bus_timestamp: std::time::SystemTime::now(),
                     matched_pattern: topic.to_string(),
                     subscriber_id: subscriber_id.clone(),

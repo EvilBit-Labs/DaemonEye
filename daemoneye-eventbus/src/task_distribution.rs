@@ -51,6 +51,7 @@
 //!     distributor.register_collector(capability).await?;
 //!
 //!     // Distribute a task
+//!     let now = std::time::SystemTime::now();
 //!     let task = TaskRequest {
 //!         task_id: "task-1".to_string(),
 //!         operation: "enumerate_processes".to_string(),
@@ -58,6 +59,9 @@
 //!         payload: vec![],
 //!         timeout_ms: 30000,
 //!         metadata: std::collections::HashMap::new(),
+//!         correlation_id: Some("correlation-1".to_string()),
+//!         created_at: now,
+//!         deadline: now + std::time::Duration::from_millis(30000),
 //!     };
 //!     distributor.distribute_task(task).await?;
 //!
