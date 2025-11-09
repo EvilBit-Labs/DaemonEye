@@ -164,8 +164,8 @@ Additional OS/environment variables may be referenced in tests for compatibility
 
 - **Unix**: IPC is provided via Unix domain sockets using interprocess crate with protobuf messaging
 - **Windows**: IPC uses named pipes through interprocess crate with protobuf messaging
-- **Event Bus**: daemoneye-eventbus provides cross-platform pub/sub messaging for multi-collector coordination
-- **Embedded Broker**: daemoneye-agent runs an embedded EventBus broker for collector communication
+- **Event Bus**: daemoneye-eventbus provides local IPC pub/sub messaging between collectors and agent on the same system with hierarchical topic routing and correlation metadata
+- **Embedded Broker**: daemoneye-agent runs an embedded EventBus broker for local collector coordination with support for workflow tracking and forensic analysis
 
 ## Documentation
 

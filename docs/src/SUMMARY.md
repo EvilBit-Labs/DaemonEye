@@ -10,6 +10,7 @@
   - [Feature Tiers](./architecture/feature-tiers.md)
 - [Technical Documentation](./technical.md)
   - [Core Monitoring](./technical/core-monitoring.md)
+  - [EventBus Architecture](./technical/eventbus-architecture.md)
   - [Business Tier Features](./technical/business-tier.md)
   - [Enterprise Tier Features](./technical/enterprise-tier.md)
   - [macOS Process Collector](./technical/macos-process-collector.md)

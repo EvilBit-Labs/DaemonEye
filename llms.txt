@@ -1,103 +1,58 @@
 # DaemonEye
 
-> Security-focused, privilege-separated process monitoring system with SQL-driven detection, tamper-evident audit logging, and cross-platform support
+> Security-focused, privilege-separated process monitoring system with SQL-driven detection, tamper-evident audit logging, and cross-platform support built in Rust
 
-DaemonEye implements a three-component architecture (procmond, daemoneye-agent, daemoneye-cli) with strict privilege separation. This index provides AI assistants with normative specifications, development guidelines, and operational patterns. Start with Documentation for orientation, then Specifications for requirements, and Configuration for deployment guidance.
+DaemonEye implements a three-component architecture (procmond, daemoneye-agent, daemoneye-cli) with strict privilege separation. This index provides AI assistants with normative specifications, development guidelines, and operational patterns. Start with Documentation for orientation, then Specifications for requirements, and Configuration for implementation guidance.
 
 ## Documentation
 
-- [AGENTS](AGENTS.md): AI assistant rules of engagement and precedence hierarchy
-- [Contributing](docs/src/contributing.md): Contribution guidelines and development processes
-- [Getting Started](docs/src/getting-started.md): Initial setup and quick start workflow
-- [Introduction](docs/src/introduction.md): High-level product introduction and context
-- [Pricing](docs/src/pricing.md): Pricing model and tier summary
-- [Project Overview](docs/src/project-overview.md): Component overview and value proposition
-- [README](README.md): Project overview, goals, and quick start
-- [SECURITY](SECURITY.md): Security policy, reporting process, and vulnerability disclosure
-- [Security Overview](docs/src/security.md): Security model, threat considerations, and controls summary
-- [Testing Overview](docs/src/testing.md): Testing strategy, tiers, tooling, and quality gates
+- [AGENTS](AGENTS.md): AI assistant rules, development workflows, and precedence hierarchy
+- [README](README.md): Project overview, architecture, and quick start guide
+- [SECURITY](SECURITY.md): Security policy, vulnerability reporting, and disclosure process
 
 ## Specifications
 
-- [ADR IPC Interprocess](spec/adr-ipc-interprocess.md): Architecture decision record for interprocess crate migration
-- [API Reference](docs/src/api-reference.md): API reference index
-- [Architecture](docs/src/architecture.md): Architecture index linking to detailed subsystem docs
-- [Business Tier](docs/src/technical/business-tier.md): Business tier technical extensions and features
-- [CLI Reference](docs/src/cli-reference.md): Comprehensive command-line interface reference
+- [Architecture](docs/src/architecture/system-architecture.md): Core system architecture, data flows, and component responsibilities
 - [Collector-Core Framework](docs/src/architecture/collector-core-framework.md): Collector-core architecture and implementation patterns
-- [Collector-Core Standards](.kiro/steering/collector-core.md): Collector-core framework patterns and requirements
-- [Core API](docs/src/api-reference/core-api.md): Core API concepts and interface reference
-- [Core Monitoring](docs/src/technical/core-monitoring.md): Core monitoring capabilities and requirements
 - [Development Guidelines](.kiro/steering/development.md): Development workflows, commands, and coding conventions
-- [Enterprise Tier](docs/src/technical/enterprise-tier.md): Enterprise tier advanced capabilities
+- [EventBus Architecture](docs/src/technical/eventbus-architecture.md): Topic hierarchy, correlation metadata, and pub/sub patterns
 - [Feature Tiers](docs/src/architecture/feature-tiers.md): Feature differentiation across Free/Business/Enterprise tiers
-- [IPC Implementation](docs/src/technical/ipc-implementation.md): IPC implementation details and patterns
-- [Performance Standards](.kiro/steering/performance.md): Performance targets and resource management requirements
-- [Product](.kiro/steering/product.md): Product feature specifications and tier definitions
-- [Product Strategy](spec/product_strategy.md): Product strategy and roadmap
-- [Query Pipeline](docs/src/technical/query-pipeline.md): Query pipeline architecture and execution
-- [Security Design](docs/src/technical/security_design_overview.md): Security design overview and threat model
-- [Security Standards](.kiro/steering/security.md): Security guidelines and cryptographic standards
-- [SQL Dialect Reference](docs/src/technical/sql-dialect-reference.md): SQL dialect reference and supported features
-- [SQL to IPC Detection](spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md): SQL-to-IPC detection architecture specification
-- [Structure](.kiro/steering/structure.md): Workspace/component structure and architectural boundaries
-- [System Architecture](docs/src/architecture/system-architecture.md): Core system architecture and data flows
-- [Tech Stack](.kiro/steering/tech.md): Technology stack decisions and enforced requirements
-- [Technical](docs/src/technical.md): Technical topics index for deeper implementation areas
-- [Testing Standards](.kiro/steering/testing.md): Testing strategy and quality assurance requirements
+- [IPC Implementation](docs/src/technical/ipc-implementation.md): IPC protocol details, transport layer, and message framing
+- [Performance Standards](.kiro/steering/performance.md): Performance targets, resource management, and optimization requirements
+- [Product](.kiro/steering/product.md): Product features, value propositions, and tier definitions
+- [Security Standards](.kiro/steering/security.md): Security guidelines, cryptographic standards, and threat model
+- [Structure](.kiro/steering/structure.md): Workspace organization, component structure, and architectural boundaries
+- [Tech Stack](.kiro/steering/tech.md): Technology stack decisions, dependencies, and enforced requirements
+- [Testing Standards](.kiro/steering/testing.md): Testing strategy, quality gates, and coverage requirements
 
 ## Configuration
 
-- [Configuration](docs/src/deployment/configuration.md): Configuration parameters and hierarchy
-- [Deployment](docs/src/deployment.md): Deployment index for environment targets
-- [Docker](docs/src/deployment/docker.md): Containerization and Docker deployment guidance
-- [Installation](docs/src/deployment/installation.md): Installation procedures
-- [Kubernetes](docs/src/deployment/kubernetes.md): Kubernetes deployment patterns
-- [Operator Guide](docs/src/user-guides/operator-guide.md): Operator workflow and usage guidance
-- [User Configuration](docs/src/user-guides/configuration.md): User-focused configuration walkthrough
-- [User Guides](docs/src/user-guides.md): User guides index
+- [Configuration](docs/src/deployment/configuration.md): Configuration parameters, hierarchy, and environment variables
+- [Docker](docs/src/deployment/docker.md): Container deployment, optimization, and security
+- [Installation](docs/src/deployment/installation.md): Installation procedures for all supported platforms
+- [Kubernetes](docs/src/deployment/kubernetes.md): Kubernetes deployment patterns and DaemonSet configuration
 
 ## Examples
 
-- [Collector-Core](collector-core/README.md): Reusable collection infrastructure framework with unified event model
-- [DaemonEye EventBus](daemoneye-eventbus/README.md): Cross-platform IPC event bus with pub/sub messaging and embedded broker
+- [Collector-Core](collector-core/README.md): Reusable collection infrastructure with EventSource trait and unified event model
+- [DaemonEye EventBus](daemoneye-eventbus/README.md): Cross-platform IPC event bus with topic-based pub/sub and correlation tracking
 
 ## Optional
 
-- [Async Patterns](.cursor/rules/rust/async-patterns.mdc): Rust async/await patterns and tokio usage
-- [Cargo.toml Standards](.cursor/rules/rust/cargo-toml.mdc): Cargo.toml configuration standards
-- [CLI Design](.cursor/rules/deployment/cli-design.mdc): CLI design principles and patterns
-- [Collector-Core Rules](.cursor/rules/rust/collector-core.mdc): Collector-core implementation rules
-- [Configuration Management](.cursor/rules/rust/configuration-management.mdc): Configuration management patterns
-- [Container Optimization](.cursor/rules/docker/container-optimization.mdc): Docker container optimization techniques
+- [Async Patterns](.cursor/rules/rust/async-patterns.mdc): Rust async/await patterns and tokio usage guidelines
+- [Cargo.toml Standards](.cursor/rules/rust/cargo-toml.mdc): Cargo.toml configuration and dependency management
+- [CLI Design](.cursor/rules/deployment/cli-design.mdc): CLI design principles and clap patterns
+- [Collector-Core Standards](.cursor/rules/rust/collector-core.mdc): Collector-core implementation rules and EventSource patterns
+- [Configuration Management](.cursor/rules/rust/configuration-management.mdc): Hierarchical configuration and validation patterns
 - [Container Security](.cursor/rules/docker/container-security.mdc): Docker container security best practices
-- [Container Troubleshooting](.cursor/rules/docker/container-troubleshooting.mdc): Docker container troubleshooting guide
-- [Cursor Rules README](.cursor/rules/README.md): Overview of cursor rules and standards
-- [Database Operations](.cursor/rules/rust/database-operations.mdc): Database operation patterns with redb
-- [Database Standards](.cursor/rules/deployment/database-standards.mdc): Database design and usage standards
-- [Docker Compose Standards](.cursor/rules/docker/docker-compose-standards.mdc): Docker Compose configuration standards
-- [Dockerfile Standards](.cursor/rules/docker/dockerfile-standards.mdc): Dockerfile best practices and standards
-- [Documentation Standards](.cursor/rules/project/documentation-standards.mdc): Documentation writing standards
-- [Enterprise Features](.cursor/rules/security/enterprise-features.mdc): Enterprise security features and patterns
-- [Error Handling](.cursor/rules/rust/error-handling.mdc): Error handling patterns with thiserror and anyhow
-- [Error Handling Patterns](.cursor/rules/rust/error-handling-patterns.mdc): Advanced error handling patterns
-- [GitHub Actions Deployment](.cursor/rules/github-actions/github-actions-deployment.mdc): GitHub Actions deployment workflows
-- [GitHub Actions Performance](.cursor/rules/github-actions/github-actions-performance.mdc): GitHub Actions performance optimization
-- [GitHub Actions Security](.cursor/rules/github-actions/github-actions-security.mdc): GitHub Actions security best practices
-- [GitHub Actions Structure](.cursor/rules/github-actions/github-actions-structure.mdc): GitHub Actions workflow structure
-- [GitHub Actions Testing](.cursor/rules/github-actions/github-actions-testing.mdc): GitHub Actions testing workflows
-- [GitHub Actions Troubleshooting](.cursor/rules/github-actions/github-actions-troubleshooting.mdc): GitHub Actions troubleshooting guide
-- [IPC Communication](.cursor/rules/rust/ipc-communication.mdc): IPC communication patterns and protocols
-- [Justfile Standards](.cursor/rules/project/justfile-standards.mdc): Justfile task runner standards
-- [LICENSE](LICENSE): Project license (permissive usage terms)
+- [Database Operations](.cursor/rules/rust/database-operations.mdc): Database patterns with redb and transaction handling
+- [Database Standards](.cursor/rules/deployment/database-standards.mdc): Database design, schema, and access patterns
+- [Documentation Standards](.cursor/rules/project/documentation-standards.mdc): Documentation writing and rustdoc standards
+- [Error Handling](.cursor/rules/rust/error-handling.mdc): Error handling with thiserror and anyhow
+- [IPC Communication](.cursor/rules/rust/ipc-communication.mdc): IPC patterns with interprocess and protobuf
+- [Justfile Standards](.cursor/rules/project/justfile-standards.mdc): Justfile task runner patterns and DRY principles
 - [Linting Rules](.cursor/rules/rust/linting-rules.mdc): Clippy and rustfmt configuration
-- [macOS Process Collector](docs/src/technical/macos-process-collector.md): macOS-specific process collection implementation
 - [Performance Optimization](.cursor/rules/rust/performance-optimization.mdc): Rust performance optimization techniques
-- [Performance Standards Deployment](.cursor/rules/deployment/performance-standards.mdc): Deployment performance standards
-- [Protobuf Integration](.cursor/rules/protobuf-integration.mdc): Protobuf integration patterns
-- [Rust Standards](.cursor/rules/rust/rust-standards.mdc): Rust coding standards and patterns
-- [Security Standards Rules](.cursor/rules/security/security-standards.mdc): Security implementation standards
-- [SUMMARY](docs/src/SUMMARY.md): mdBook summary table of contents
-- [Testing Standards Rules](.cursor/rules/testing/testing-standards.mdc): Testing implementation standards
-- [Windows Process Collector](docs/src/technical/windows-process-collector.md): Windows-specific process collection capabilities
-- [Workspace Structure](.cursor/rules/project/workspace-structure.mdc): Workspace organization and structure
+- [Rust Standards](.cursor/rules/rust/rust-standards.mdc): Rust coding standards and idioms
+- [Security Standards Rules](.cursor/rules/security/security-standards.mdc): Security implementation patterns and cryptography
+- [Testing Standards Rules](.cursor/rules/testing/testing-standards.mdc): Testing implementation with insta and criterion
