@@ -1575,10 +1575,11 @@ mod tests {
     fn test_pause_resume_requires_freebsd_feature() {
         // Test that pause/resume operations fail gracefully without freebsd feature
         let config = ProcessManagerConfig::default();
-        let manager = CollectorProcessManager::new(config);
 
         // Use tokio runtime for async test
+        // Manager must be created inside block_on because it spawns async tasks
         tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let manager = CollectorProcessManager::new(config);
             // Both operations should return SpawnFailed error without freebsd feature
             let pause_result = manager.pause_collector("test-collector").await;
             assert!(pause_result.is_err());
