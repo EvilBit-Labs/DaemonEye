@@ -638,13 +638,70 @@ impl ResultAggregator {
     }
 
     /// Compute hash for result deduplication
+    ///
+    /// Includes multiple fields to ensure distinct events are not deduplicated
+    /// when sequence numbers are equal.
     fn compute_result_hash(&self, result: &CollectorResult) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
+
+        // Hash collector ID and sequence (original fields)
         result.collector_id.hash(&mut hasher);
         result.sequence.hash(&mut hasher);
+
+        // Hash event type discriminant to distinguish different event types
+        std::mem::discriminant(&result.event).hash(&mut hasher);
+
+        // Hash key fields from the event based on event type
+        match &result.event {
+            CollectionEvent::Process(event) => {
+                event.pid.hash(&mut hasher);
+                event.name.hash(&mut hasher);
+                event.executable_path.as_deref().hash(&mut hasher);
+                // Include correlation ID from metadata if present
+                if let Some(corr_id) = event.metadata.get("correlation_id") {
+                    corr_id.hash(&mut hasher);
+                }
+            }
+            CollectionEvent::Network(event) => {
+                event.connection_id.hash(&mut hasher);
+                event.source_address.hash(&mut hasher);
+                event.destination_address.hash(&mut hasher);
+                // Include correlation ID from metadata if present
+                if let Some(corr_id) = event.metadata.get("correlation_id") {
+                    corr_id.hash(&mut hasher);
+                }
+            }
+            CollectionEvent::Filesystem(event) => {
+                event.path.hash(&mut hasher);
+                event.event_type.hash(&mut hasher);
+                event.size.hash(&mut hasher);
+                // Include correlation ID from metadata if present
+                if let Some(corr_id) = event.metadata.get("correlation_id") {
+                    corr_id.hash(&mut hasher);
+                }
+            }
+            CollectionEvent::Performance(event) => {
+                event.metric_name.hash(&mut hasher);
+                event.value.to_bits().hash(&mut hasher);
+                // Include correlation ID from metadata if present
+                if let Some(corr_id) = event.metadata.get("correlation_id") {
+                    corr_id.hash(&mut hasher);
+                }
+            }
+            CollectionEvent::TriggerRequest(event) => {
+                event.request_id.hash(&mut hasher);
+                event.collector_type.hash(&mut hasher);
+                event.priority.hash(&mut hasher);
+                // Include correlation ID from metadata if present
+                if let Some(corr_id) = event.metadata.get("correlation_id") {
+                    corr_id.hash(&mut hasher);
+                }
+            }
+        }
+
         hasher.finish()
     }
 
@@ -763,5 +820,63 @@ mod tests {
             "Only non-duplicate should be collected"
         );
         assert_eq!(stats.results_deduplicated, 1, "One should be deduplicated");
+    }
+
+    #[tokio::test]
+    async fn test_deduplication_distinct_events_same_sequence() {
+        let broker = Arc::new(
+            DaemoneyeBroker::new("/tmp/test-dedup-distinct.sock")
+                .await
+                .unwrap(),
+        );
+        let config = AggregationConfig::default();
+        let aggregator = ResultAggregator::new(broker, config).await.unwrap();
+
+        // Create two distinct events with the same sequence number
+        let result1 = CollectorResult {
+            collector_id: "test-collector".to_string(),
+            collector_type: "procmond".to_string(),
+            event: CollectionEvent::Process(ProcessEvent {
+                pid: 1234,
+                name: "process1".to_string(),
+                command_line: None,
+                executable_path: Some("/bin/process1".to_string()),
+                ppid: None,
+                start_time: None,
+                metadata: HashMap::new(),
+            }),
+            timestamp: SystemTime::now(),
+            sequence: 1,
+        };
+
+        let result2 = CollectorResult {
+            collector_id: "test-collector".to_string(),
+            collector_type: "procmond".to_string(),
+            event: CollectionEvent::Process(ProcessEvent {
+                pid: 5678,
+                name: "process2".to_string(),
+                command_line: None,
+                executable_path: Some("/bin/process2".to_string()),
+                ppid: None,
+                start_time: None,
+                metadata: HashMap::new(),
+            }),
+            timestamp: SystemTime::now(),
+            sequence: 1, // Same sequence number
+        };
+
+        // Both should be collected (not deduplicated) because they have different PIDs
+        aggregator.collect_result(result1).await.unwrap();
+        aggregator.collect_result(result2).await.unwrap();
+
+        let stats = aggregator.get_stats().await;
+        assert_eq!(
+            stats.results_collected, 2,
+            "Both distinct events should be collected even with same sequence"
+        );
+        assert_eq!(
+            stats.results_deduplicated, 0,
+            "No deduplication should occur"
+        );
     }
 }

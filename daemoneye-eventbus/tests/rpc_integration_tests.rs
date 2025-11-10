@@ -409,9 +409,10 @@ async fn test_graceful_shutdown_request() {
         reason: Some("Test shutdown".to_string()),
     };
 
+    use daemoneye_eventbus::topics::shutdown;
     let request = RpcRequest::shutdown(
         "test-client".to_string(),
-        "control.shutdown.test-collector".to_string(),
+        shutdown::shutdown_topic("test-collector"),
         shutdown_req,
         Duration::from_secs(60),
     );
@@ -438,9 +439,10 @@ async fn test_force_shutdown_request() {
         reason: Some("Emergency shutdown".to_string()),
     };
 
+    use daemoneye_eventbus::topics::shutdown;
     let request = RpcRequest::shutdown(
         "test-client".to_string(),
-        "control.shutdown.test-collector".to_string(),
+        shutdown::shutdown_topic("test-collector"),
         shutdown_req,
         Duration::from_secs(5),
     );

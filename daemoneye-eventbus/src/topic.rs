@@ -91,7 +91,9 @@ pub enum TopicError {
 
 impl Topic {
     /// Maximum topic depth (number of segments)
-    pub const MAX_DEPTH: usize = 4;
+    /// Supports up to 5 levels for collector-specific task topics:
+    /// control.collector.task.{collector_type}.{collector_id}
+    pub const MAX_DEPTH: usize = 5;
 
     /// Reserved topic prefixes that cannot be used by applications
     pub const RESERVED_PREFIXES: &'static [&'static str] = &["system", "debug"];
@@ -264,10 +266,19 @@ impl TopicPattern {
                     topic_idx += 1;
                 }
                 PatternSegment::MultiWildcard => {
-                    // Multi-level wildcard matches remaining segments
+                    // Multi-level wildcard matches remaining segments (zero or more)
                     return true;
                 }
             }
+        }
+
+        // If we've consumed all topic segments but pattern has remaining segments
+        // Check if the remaining pattern segment is a MultiWildcard (matches zero segments)
+        if topic_idx == topic_segments.len()
+            && pattern_idx < self.segments.len()
+            && matches!(self.segments[pattern_idx], PatternSegment::MultiWildcard)
+        {
+            return true;
         }
 
         // Check if we consumed all pattern segments and topic segments
@@ -436,8 +447,10 @@ impl TopicMatcher {
 /// Topic registry for managing component topic usage
 #[derive(Debug, Default)]
 pub struct TopicRegistry {
-    /// Topics that components can publish to
+    /// Exact topics that components can publish to
     publishers: HashMap<String, HashSet<String>>,
+    /// Topic patterns that components can publish to
+    publisher_patterns: HashMap<String, HashSet<TopicPattern>>,
     /// Topic patterns that components subscribe to
     subscribers: HashMap<String, HashSet<TopicPattern>>,
     /// Security boundaries for topic access
@@ -500,13 +513,29 @@ impl TopicRegistry {
             .insert("control.+.config".to_string(), TopicAccessLevel::Privileged);
     }
 
-    /// Register a component as a publisher for a topic
+    /// Register a component as a publisher for a topic or pattern
+    ///
+    /// Supports both exact topics (e.g., "control.collector.task") and
+    /// wildcard patterns (e.g., "control.collector.task.#")
     pub fn register_publisher(&mut self, component: &str, topic: &str) -> Result<(), TopicError> {
-        let topic = Topic::new(topic)?;
+        // Try to parse as a pattern first (supports wildcards)
+        if let Ok(pattern) = TopicPattern::new(topic) {
+            // If it contains wildcards, register as a pattern
+            if topic.contains('+') || topic.contains('#') {
+                self.publisher_patterns
+                    .entry(component.to_string())
+                    .or_default()
+                    .insert(pattern);
+                return Ok(());
+            }
+        }
+
+        // Otherwise, register as an exact topic
+        let topic_obj = Topic::new(topic)?;
         self.publishers
             .entry(component.to_string())
             .or_default()
-            .insert(topic.name().to_string());
+            .insert(topic_obj.name().to_string());
         Ok(())
     }
 
@@ -525,11 +554,25 @@ impl TopicRegistry {
     }
 
     /// Check if a component can publish to a topic
+    ///
+    /// Checks both exact topic matches and pattern matches (wildcards)
     pub fn can_publish(&self, component: &str, topic: &str) -> bool {
-        self.publishers
-            .get(component)
-            .map(|topics| topics.contains(topic))
-            .unwrap_or(false)
+        // Check exact topic matches first
+        if let Some(topics) = self.publishers.get(component)
+            && topics.contains(topic)
+        {
+            return true;
+        }
+
+        // Check pattern matches
+        if let Some(patterns) = self.publisher_patterns.get(component)
+            && let Ok(topic_obj) = Topic::new(topic)
+            && patterns.iter().any(|pattern| pattern.matches(&topic_obj))
+        {
+            return true;
+        }
+
+        false
     }
 
     /// Check if a component can subscribe to a topic
@@ -632,6 +675,21 @@ mod tests {
     }
 
     #[test]
+    fn test_collector_task_pattern_matching() {
+        let pattern = TopicPattern::new("control.collector.task.#").unwrap();
+
+        let topic1 = Topic::new("control.collector.task.procmond.procmond-1").unwrap();
+        let topic2 = Topic::new("control.collector.task.netmond.netmond-2").unwrap();
+        let topic3 = Topic::new("control.collector.task").unwrap();
+        let topic4 = Topic::new("control.collector.lifecycle").unwrap();
+
+        assert!(pattern.matches(&topic1));
+        assert!(pattern.matches(&topic2));
+        assert!(pattern.matches(&topic3)); // # matches zero or more segments
+        assert!(!pattern.matches(&topic4));
+    }
+
+    #[test]
     fn test_topic_registry() {
         let mut registry = TopicRegistry::new();
 
@@ -649,6 +707,34 @@ mod tests {
 
         let topic = Topic::new("events.process.lifecycle").unwrap();
         assert!(registry.can_subscribe("daemoneye-agent", &topic));
+    }
+
+    #[test]
+    fn test_publisher_pattern_matching() {
+        let mut registry = TopicRegistry::new();
+
+        // Register a wildcard pattern for publisher
+        registry
+            .register_publisher("daemoneye-agent", "control.collector.task.#")
+            .unwrap();
+
+        // Test that it matches collector-specific task topics
+        assert!(registry.can_publish(
+            "daemoneye-agent",
+            "control.collector.task.procmond.procmond-1"
+        ));
+        assert!(registry.can_publish(
+            "daemoneye-agent",
+            "control.collector.task.netmond.netmond-2"
+        ));
+        assert!(registry.can_publish(
+            "daemoneye-agent",
+            "control.collector.task.procmond.procmond-1"
+        ));
+
+        // Test that it doesn't match unrelated topics
+        assert!(!registry.can_publish("daemoneye-agent", "control.collector.lifecycle"));
+        assert!(!registry.can_publish("daemoneye-agent", "events.process.lifecycle"));
     }
 
     #[test]

@@ -93,6 +93,51 @@ async fn test_correlation_metadata_pattern_matching() {
 }
 
 #[tokio::test]
+async fn test_correlation_metadata_pattern_matching_regex_special_chars() {
+    // Test that regex special characters are properly escaped
+    let correlation_id = "test.correlation+123".to_string();
+    let metadata = CorrelationMetadata::new(correlation_id.clone());
+
+    // Exact match with special characters
+    assert!(metadata.matches_pattern("test.correlation+123"));
+
+    // Wildcard match with special characters
+    assert!(metadata.matches_pattern("test.correlation+*"));
+    assert!(metadata.matches_pattern("test.*"));
+    assert!(metadata.matches_pattern("*.+123"));
+
+    // Pattern with dots should match literally (not as regex wildcard)
+    let correlation_id2 = "test.correlation.456".to_string();
+    let metadata2 = CorrelationMetadata::new(correlation_id2.clone());
+    assert!(metadata2.matches_pattern("test.correlation.*"));
+    assert!(!metadata2.matches_pattern("test.correlation*")); // Should not match without dot
+
+    // Pattern with plus signs should match literally
+    let correlation_id3 = "test+correlation+789".to_string();
+    let metadata3 = CorrelationMetadata::new(correlation_id3.clone());
+    assert!(metadata3.matches_pattern("test+correlation+*"));
+    assert!(!metadata3.matches_pattern("test+correlation*")); // Should not match without plus
+
+    // Pattern with parentheses should match literally
+    let correlation_id4 = "test(correlation)456".to_string();
+    let metadata4 = CorrelationMetadata::new(correlation_id4.clone());
+    assert!(metadata4.matches_pattern("test(correlation)*"));
+    assert!(!metadata4.matches_pattern("testcorrelation*")); // Should not match without parentheses
+
+    // Pattern with brackets should match literally
+    let correlation_id5 = "test[correlation]789".to_string();
+    let metadata5 = CorrelationMetadata::new(correlation_id5.clone());
+    assert!(metadata5.matches_pattern("test[correlation]*"));
+    assert!(!metadata5.matches_pattern("testcorrelation*")); // Should not match without brackets
+
+    // Pattern with anchors (^ and $) should match literally, not as regex anchors
+    let correlation_id6 = "test^correlation$123".to_string();
+    let metadata6 = CorrelationMetadata::new(correlation_id6.clone());
+    assert!(metadata6.matches_pattern("test^correlation$*"));
+    assert!(metadata6.matches_pattern("test^correlation$123")); // Exact match
+}
+
+#[tokio::test]
 async fn test_correlation_metadata_sequence_increment() {
     let mut metadata = CorrelationMetadata::new(Uuid::new_v4().to_string());
 

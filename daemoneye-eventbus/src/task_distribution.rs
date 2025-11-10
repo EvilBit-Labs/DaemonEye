@@ -71,6 +71,7 @@
 
 use crate::broker::DaemoneyeBroker;
 use crate::error::{EventBusError, Result};
+use crate::topics::collector;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -280,8 +281,8 @@ impl TaskDistributor {
         let collector_id = capability.collector_id.clone();
         let collector_type = capability.collector_type.clone();
 
-        // Create task topic for this collector
-        let task_topic = format!("control.tasks.{}.{}", collector_type, collector_id);
+        // Create task topic for this collector using canonical namespace
+        let task_topic = collector::task_topic(&collector_type, &collector_id);
 
         let registration = CollectorRegistration {
             capability,

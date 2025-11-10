@@ -7,8 +7,9 @@
 //! - Cross-platform performance
 //! - Zero-copy optimization improvements
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use daemoneye_eventbus::transport::{SocketConfig, TransportClient, TransportServer};
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -31,7 +32,7 @@ fn throughput_benchmark(c: &mut Criterion) {
             rate_limit_config: None,
         };
 
-        let server = TransportServer::new(socket_config.clone())
+        let _server = TransportServer::new(socket_config.clone())
             .await
             .expect("Failed to create server");
 
@@ -162,7 +163,7 @@ fn backpressure_benchmark(c: &mut Criterion) {
             rate_limit_config: None,
         };
 
-        let server = TransportServer::new(socket_config.clone())
+        let _server = TransportServer::new(socket_config.clone())
             .await
             .expect("Failed to create server");
 
@@ -177,7 +178,7 @@ fn backpressure_benchmark(c: &mut Criterion) {
             b.iter(|| {
                 rt.block_on(async {
                     let permit = client.acquire_permit().await.unwrap();
-                    black_box(permit);
+                    let _ = black_box(permit);
                 });
             });
         });

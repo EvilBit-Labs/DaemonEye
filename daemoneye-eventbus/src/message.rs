@@ -156,7 +156,8 @@ impl CorrelationMetadata {
     ///
     /// # Security
     /// - Limits regex pattern length to prevent ReDoS attacks
-    /// - Uses bounded wildcard expansion
+    /// - Escapes regex special characters to prevent regex injection
+    /// - Uses anchored full-string matching for security
     pub fn matches_pattern(&self, pattern: &str) -> bool {
         // Security: Limit pattern length to prevent ReDoS attacks
         const MAX_PATTERN_LENGTH: usize = 256;
@@ -164,10 +165,15 @@ impl CorrelationMetadata {
             return false;
         }
 
-        // Support wildcard matching for correlation IDs
+        // Support wildcard matching for correlation IDs using glob-style matching
         if pattern.contains('*') {
-            let regex_pattern = pattern.replace('*', ".*");
-            if let Ok(regex) = regex::Regex::new(&regex_pattern) {
+            // Escape all regex special characters except *
+            let escaped_pattern = regex::escape(pattern);
+            // Replace escaped \* with .* for wildcard matching
+            let regex_pattern = escaped_pattern.replace("\\*", ".*");
+            // Anchor with ^ and $ for full-string matching
+            let anchored_pattern = format!("^{}$", regex_pattern);
+            if let Ok(regex) = regex::Regex::new(&anchored_pattern) {
                 return regex.is_match(&self.correlation_id)
                     || self
                         .parent_correlation_id

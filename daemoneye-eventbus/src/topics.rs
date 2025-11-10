@@ -147,6 +147,73 @@ pub mod collector {
     pub fn all_topics() -> Vec<&'static str> {
         vec![LIFECYCLE, CONFIG, TASK, REGISTRATION]
     }
+
+    /// Build a collector-specific task topic
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_type` - The type of collector (e.g., "procmond", "netmond")
+    /// * `collector_id` - The unique identifier for the collector instance
+    ///
+    /// # Returns
+    ///
+    /// A topic string in the format: `control.collector.task.{collector_type}.{collector_id}`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use daemoneye_eventbus::topics::collector;
+    ///
+    /// let topic = collector::task_topic("procmond", "procmond-1");
+    /// assert_eq!(topic, "control.collector.task.procmond.procmond-1");
+    /// ```
+    pub fn task_topic(collector_type: &str, collector_id: &str) -> String {
+        format!("{}.{}.{}", TASK, collector_type, collector_id)
+    }
+
+    /// Build a collector-specific lifecycle topic for RPC operations
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - The unique identifier for the collector instance
+    ///
+    /// # Returns
+    ///
+    /// A topic string in the format: `control.collector.{collector_id}`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use daemoneye_eventbus::topics::collector;
+    ///
+    /// let topic = collector::lifecycle_topic("procmond-1");
+    /// assert_eq!(topic, "control.collector.procmond-1");
+    /// ```
+    pub fn lifecycle_topic(collector_id: &str) -> String {
+        format!("control.collector.{}", collector_id)
+    }
+
+    /// Build a collector-specific config topic for RPC operations
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - The unique identifier for the collector instance
+    ///
+    /// # Returns
+    ///
+    /// A topic string in the format: `control.collector.config.{collector_id}`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use daemoneye_eventbus::topics::collector;
+    ///
+    /// let topic = collector::config_topic("procmond-1");
+    /// assert_eq!(topic, "control.collector.config.procmond-1");
+    /// ```
+    pub fn config_topic(collector_id: &str) -> String {
+        format!("{}.{}", CONFIG, collector_id)
+    }
 }
 
 /// Control topics for agent orchestration
@@ -184,6 +251,64 @@ pub mod health {
     pub fn all_topics() -> Vec<&'static str> {
         vec![HEARTBEAT, STATUS, DIAGNOSTICS]
     }
+
+    /// Build a collector-specific heartbeat topic
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - The unique identifier for the collector instance
+    ///
+    /// # Returns
+    ///
+    /// A topic string in the format: `control.health.heartbeat.{collector_id}`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use daemoneye_eventbus::topics::health;
+    ///
+    /// let topic = health::heartbeat_topic("procmond-1");
+    /// assert_eq!(topic, "control.health.heartbeat.procmond-1");
+    /// ```
+    pub fn heartbeat_topic(collector_id: &str) -> String {
+        format!("{}.{}", HEARTBEAT, collector_id)
+    }
+}
+
+/// Control topics for shutdown coordination
+pub mod shutdown {
+    /// Base shutdown topic for graceful shutdown coordination
+    pub const SHUTDOWN: &str = "control.shutdown";
+
+    /// Wildcard pattern for all shutdown messages
+    pub const ALL: &str = "control.shutdown.#";
+
+    /// Get all shutdown control topics
+    pub fn all_topics() -> Vec<&'static str> {
+        vec![SHUTDOWN]
+    }
+
+    /// Build a collector-specific shutdown topic
+    ///
+    /// # Arguments
+    ///
+    /// * `collector_id` - The unique identifier for the collector instance
+    ///
+    /// # Returns
+    ///
+    /// A topic string in the format: `control.shutdown.{collector_id}`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use daemoneye_eventbus::topics::shutdown;
+    ///
+    /// let topic = shutdown::shutdown_topic("procmond-1");
+    /// assert_eq!(topic, "control.shutdown.procmond-1");
+    /// ```
+    pub fn shutdown_topic(collector_id: &str) -> String {
+        format!("{}.{}", SHUTDOWN, collector_id)
+    }
 }
 
 /// Topic hierarchy utilities
@@ -202,10 +327,11 @@ impl TopicHierarchy {
 
     /// Get all control topics across all domains
     pub fn all_control_topics() -> Vec<&'static str> {
-        let mut topics = Vec::with_capacity(9); // 4+2+3
+        let mut topics = Vec::with_capacity(10); // 4+2+3+1
         topics.extend(collector::all_topics());
         topics.extend(agent::all_topics());
         topics.extend(health::all_topics());
+        topics.extend(shutdown::all_topics());
         topics
     }
 
@@ -235,6 +361,18 @@ impl TopicHierarchy {
             let _ = registry.register_publisher("*", topic);
         }
 
+        // Register anomaly topics as public (accessible to all components)
+        let _ = registry.register_publisher("*", process::ANOMALY);
+        let _ = registry.register_publisher("*", network::ANOMALY);
+        let _ = registry.register_publisher("*", filesystem::ANOMALY);
+        let _ = registry.register_publisher("*", performance::ANOMALY);
+
+        // Register shutdown topics (privileged - daemoneye-agent only)
+        // Base shutdown topic
+        let _ = registry.register_publisher("daemoneye-agent", shutdown::SHUTDOWN);
+        // Register wildcard pattern for collector-specific shutdown topics
+        let _ = registry.register_publisher("daemoneye-agent", shutdown::ALL);
+
         // Register restricted topics (component-specific)
         for topic in process::all_topics() {
             let _ = registry.register_publisher("procmond", topic);
@@ -250,9 +388,18 @@ impl TopicHierarchy {
         }
 
         // Register privileged topics (authenticated only)
-        for topic in collector::all_topics() {
-            let _ = registry.register_publisher("daemoneye-agent", topic);
-        }
+        // Base collector control topics (lifecycle, config, registration)
+        let _ = registry.register_publisher("daemoneye-agent", collector::LIFECYCLE);
+        let _ = registry.register_publisher("daemoneye-agent", collector::CONFIG);
+        let _ = registry.register_publisher("daemoneye-agent", collector::REGISTRATION);
+
+        // Task distribution topics - daemoneye-agent can publish to base task topic
+        // and to specific collector task topics (control.collector.task.*.*)
+        let _ = registry.register_publisher("daemoneye-agent", collector::TASK);
+        // Register wildcard pattern for collector-specific task topics
+        // This allows daemoneye-agent to publish to control.collector.task.{type}.{id}
+        let _ = registry.register_publisher("daemoneye-agent", "control.collector.task.#");
+
         for topic in agent::all_topics() {
             let _ = registry.register_publisher("daemoneye-agent", topic);
         }
@@ -264,6 +411,11 @@ impl TopicHierarchy {
     pub fn get_access_level(topic: &str) -> TopicAccessLevel {
         // Health topics are public
         if topic.starts_with("control.health.") {
+            return TopicAccessLevel::Public;
+        }
+
+        // Anomaly event topics are public (accessible to all components)
+        if topic.ends_with(".anomaly") && topic.starts_with("events.") {
             return TopicAccessLevel::Public;
         }
 
@@ -280,8 +432,20 @@ impl TopicHierarchy {
             return TopicAccessLevel::Privileged;
         }
 
-        // Task distribution is restricted
+        // Shutdown topics are privileged (daemoneye-agent only)
+        if topic.starts_with("control.shutdown") {
+            return TopicAccessLevel::Privileged;
+        }
+
+        // Task distribution topics (base and collector-specific) are restricted
+        // Base: control.collector.task
+        // Collector-specific: control.collector.task.{collector_type}.{collector_id}
         if topic.starts_with("control.collector.task") {
+            return TopicAccessLevel::Restricted;
+        }
+
+        // Collector registration is restricted
+        if topic.starts_with("control.collector.registration") {
             return TopicAccessLevel::Restricted;
         }
 
@@ -550,6 +714,42 @@ mod tests {
     }
 
     #[test]
+    fn test_collector_task_topic() {
+        // Test task topic builder with canonical namespace
+        let topic = collector::task_topic("procmond", "procmond-1");
+        assert_eq!(topic, "control.collector.task.procmond.procmond-1");
+
+        let topic = collector::task_topic("netmond", "netmond-2");
+        assert_eq!(topic, "control.collector.task.netmond.netmond-2");
+
+        // Verify it uses the base TASK constant
+        assert!(topic.starts_with(collector::TASK));
+    }
+
+    #[test]
+    fn test_collector_lifecycle_topic() {
+        // Test lifecycle topic builder for RPC operations
+        let topic = collector::lifecycle_topic("procmond-1");
+        assert_eq!(topic, "control.collector.procmond-1");
+
+        let topic = collector::lifecycle_topic("netmond-2");
+        assert_eq!(topic, "control.collector.netmond-2");
+    }
+
+    #[test]
+    fn test_collector_config_topic() {
+        // Test config topic builder for RPC operations
+        let topic = collector::config_topic("procmond-1");
+        assert_eq!(topic, "control.collector.config.procmond-1");
+
+        let topic = collector::config_topic("netmond-2");
+        assert_eq!(topic, "control.collector.config.netmond-2");
+
+        // Verify it uses the base CONFIG constant
+        assert!(topic.starts_with(collector::CONFIG));
+    }
+
+    #[test]
     fn test_agent_topics() {
         assert_eq!(agent::ORCHESTRATION, "control.agent.orchestration");
         assert_eq!(agent::POLICY, "control.agent.policy");
@@ -568,6 +768,23 @@ mod tests {
 
         let topics = health::all_topics();
         assert_eq!(topics.len(), 3);
+
+        // Test heartbeat topic builder
+        let topic = health::heartbeat_topic("procmond-1");
+        assert_eq!(topic, "control.health.heartbeat.procmond-1");
+    }
+
+    #[test]
+    fn test_shutdown_topics() {
+        assert_eq!(shutdown::SHUTDOWN, "control.shutdown");
+        assert_eq!(shutdown::ALL, "control.shutdown.#");
+
+        let topics = shutdown::all_topics();
+        assert_eq!(topics.len(), 1);
+
+        // Test shutdown topic builder
+        let topic = shutdown::shutdown_topic("procmond-1");
+        assert_eq!(topic, "control.shutdown.procmond-1");
     }
 
     #[test]
@@ -617,6 +834,55 @@ mod tests {
         assert_eq!(
             TopicHierarchy::get_access_level(agent::POLICY),
             TopicAccessLevel::Privileged
+        );
+        // Test base task topic
+        assert_eq!(
+            TopicHierarchy::get_access_level(collector::TASK),
+            TopicAccessLevel::Restricted
+        );
+        // Test collector-specific task topics
+        assert_eq!(
+            TopicHierarchy::get_access_level("control.collector.task.procmond.procmond-1"),
+            TopicAccessLevel::Restricted
+        );
+        assert_eq!(
+            TopicHierarchy::get_access_level("control.collector.task.netmond.netmond-2"),
+            TopicAccessLevel::Restricted
+        );
+        // Test shutdown topics
+        assert_eq!(
+            TopicHierarchy::get_access_level(shutdown::SHUTDOWN),
+            TopicAccessLevel::Privileged
+        );
+        assert_eq!(
+            TopicHierarchy::get_access_level("control.shutdown.procmond-1"),
+            TopicAccessLevel::Privileged
+        );
+        // Test anomaly topics are public
+        assert_eq!(
+            TopicHierarchy::get_access_level(process::ANOMALY),
+            TopicAccessLevel::Public
+        );
+        assert_eq!(
+            TopicHierarchy::get_access_level(network::ANOMALY),
+            TopicAccessLevel::Public
+        );
+        assert_eq!(
+            TopicHierarchy::get_access_level(filesystem::ANOMALY),
+            TopicAccessLevel::Public
+        );
+        assert_eq!(
+            TopicHierarchy::get_access_level(performance::ANOMALY),
+            TopicAccessLevel::Public
+        );
+        // Test other event topics remain restricted
+        assert_eq!(
+            TopicHierarchy::get_access_level(process::METADATA),
+            TopicAccessLevel::Restricted
+        );
+        assert_eq!(
+            TopicHierarchy::get_access_level(network::CONNECTIONS),
+            TopicAccessLevel::Restricted
         );
     }
 
@@ -709,8 +975,34 @@ mod tests {
         assert!(registry.can_publish("daemoneye-agent", collector::LIFECYCLE));
         assert!(registry.can_publish("daemoneye-agent", agent::ORCHESTRATION));
 
+        // Verify daemoneye-agent can publish to base task topic
+        assert!(registry.can_publish("daemoneye-agent", collector::TASK));
+
+        // Verify daemoneye-agent can publish to collector-specific task topics
+        assert!(registry.can_publish(
+            "daemoneye-agent",
+            "control.collector.task.procmond.procmond-1"
+        ));
+        assert!(registry.can_publish(
+            "daemoneye-agent",
+            "control.collector.task.netmond.netmond-2"
+        ));
+
         // Verify anyone can publish health messages
         assert!(registry.can_publish("*", health::HEARTBEAT));
+
+        // Verify daemoneye-agent can publish shutdown messages
+        assert!(registry.can_publish("daemoneye-agent", shutdown::SHUTDOWN));
+        assert!(registry.can_publish("daemoneye-agent", "control.shutdown.procmond-1"));
+
+        // Verify anyone can publish anomaly events (public access)
+        assert!(registry.can_publish("*", process::ANOMALY));
+        assert!(registry.can_publish("*", network::ANOMALY));
+        assert!(registry.can_publish("*", filesystem::ANOMALY));
+        assert!(registry.can_publish("*", performance::ANOMALY));
+        // Verify other event topics remain restricted
+        assert!(!registry.can_publish("*", process::LIFECYCLE));
+        assert!(!registry.can_publish("daemoneye-agent", process::METADATA));
     }
 
     #[test]

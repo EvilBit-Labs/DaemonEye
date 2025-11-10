@@ -161,6 +161,6 @@ mod mock_tests {
     async fn test_freebsd_code_compiles() {
         // This test ensures FreeBSD-specific code compiles on other platforms
         // due to cfg attributes
-        assert!(true);
+        // Test passes if code compiles successfully
     }
 }
