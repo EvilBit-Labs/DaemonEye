@@ -53,8 +53,11 @@ Pluggable routing algorithms:
 Tasks are distributed using daemoneye-eventbus topic publishing:
 
 ```rust
-// Task is published to collector-specific topic
-let task_topic = format!("control.tasks.{}.{}", collector_type, collector_id);
+use daemoneye_eventbus::topics::collector;
+
+// Task is published to collector-specific topic using canonical namespace
+let task_topic = collector::task_topic(&collector_type, &collector_id);
+// Format: control.collector.task.{collector_type}.{collector_id}
 broker.publish(&task_topic, &correlation_id, payload).await?;
 ```
 

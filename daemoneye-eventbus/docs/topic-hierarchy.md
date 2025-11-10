@@ -101,12 +101,13 @@ Control topics manage collector lifecycle, configuration, and health monitoring.
 
 Collector lifecycle and configuration management:
 
-| Topic                            | Description                             | Publisher       | Access Level |
-| -------------------------------- | --------------------------------------- | --------------- | ------------ |
-| `control.collector.lifecycle`    | Start, stop, restart operations         | daemoneye-agent | Privileged   |
-| `control.collector.config`       | Configuration updates and reloads       | daemoneye-agent | Privileged   |
-| `control.collector.task`         | Task assignment and distribution        | daemoneye-agent | Restricted   |
-| `control.collector.registration` | Collector registration and capabilities | collectors      | Restricted   |
+| Topic                                | Description                             | Publisher       | Access Level |
+| ------------------------------------ | --------------------------------------- | --------------- | ------------ |
+| `control.collector.lifecycle`        | Start, stop, restart operations         | daemoneye-agent | Privileged   |
+| `control.collector.config`           | Configuration updates and reloads       | daemoneye-agent | Privileged   |
+| `control.collector.task`             | Base topic for task assignment          | daemoneye-agent | Restricted   |
+| `control.collector.task.{type}.{id}` | Collector-specific task distribution    | daemoneye-agent | Restricted   |
+| `control.collector.registration`     | Collector registration and capabilities | collectors      | Restricted   |
 
 **Wildcard Pattern**: `control.collector.#` - Subscribe to all collector control messages
 
@@ -146,7 +147,7 @@ Topics have three access levels that control who can publish and subscribe:
 ### Restricted Topics
 
 - Component-specific access
-- Examples: `events.process.*`, `control.collector.task`
+- Examples: `events.process.*`, `control.collector.task`, `control.collector.task.*.*`
 - Requires component registration
 
 ### Privileged Topics

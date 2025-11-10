@@ -30,7 +30,7 @@ sequenceDiagram
     Note over Agent,Collector: Health Check Pattern
 
     Agent->>Broker: RpcRequest (Health Check)
-    Broker->>Collector: Route to control.health.procmond
+    Broker->>Collector: Route to control.health.heartbeat.procmond
     Collector->>Collector: Gather Health Metrics
     Collector->>Broker: RpcResponse (Health Data)
     Broker->>Agent: Deliver Health Status
@@ -38,7 +38,7 @@ sequenceDiagram
     Note over Agent,Collector: Configuration Update
 
     Agent->>Broker: RpcRequest (Config Update)
-    Broker->>Collector: Route to control.config.procmond
+    Broker->>Collector: Route to control.collector.config.procmond
     Collector->>Collector: Validate & Apply Config
     Collector->>Broker: RpcResponse (Success/Rollback)
     Broker->>Agent: Deliver Update Result
@@ -54,12 +54,19 @@ sequenceDiagram
 
 ### Topic Hierarchy for RPC
 
-RPC calls use a structured topic hierarchy for routing:
+RPC calls use a structured topic hierarchy for routing. The canonical pattern uses per-collector topics:
 
-- `control.collector.{collector_id}` - Collector lifecycle operations
-- `control.health.{collector_id}` - Health check and monitoring
-- `control.config.{collector_id}` - Configuration management
+- `control.collector.{collector_id}` - Collector lifecycle operations (start, stop, restart)
+- `control.collector.config.{collector_id}` - Configuration management for specific collector
+- `control.health.heartbeat.{collector_id}` - Health check heartbeats (see Health Check section)
 - `control.shutdown.{collector_id}` - Shutdown coordination
+
+**Base Topics** (for broadcasting to all collectors):
+
+- `control.collector.lifecycle` - Base topic for lifecycle operations (use per-collector topics for RPC)
+- `control.collector.config` - Base topic for configuration (use per-collector topics for RPC)
+
+**Helper Functions**: Use `collector::lifecycle_topic(collector_id)` and `collector::config_topic(collector_id)` to build per-collector topics programmatically.
 
 ## RPC Operation Types
 
@@ -186,13 +193,13 @@ RpcResponse {
 
 **Purpose**: Periodic heartbeat for liveness detection
 
-**Implementation**: Collectors send periodic heartbeat messages to `control.heartbeat.{collector_id}` topic. daemoneye-agent monitors these heartbeats and triggers health checks if heartbeats are missed.
+**Implementation**: Collectors send periodic heartbeat messages to `control.health.heartbeat.{collector_id}` topic. daemoneye-agent monitors these heartbeats and triggers health checks if heartbeats are missed.
 
 **Heartbeat Message**:
 
 ```rust
 Message {
-    topic: "control.heartbeat.procmond",
+    topic: "control.health.heartbeat.procmond",
     message_type: MessageType::Heartbeat,
     payload: bincode::encode(HeartbeatData {
         collector_id: "procmond",
@@ -540,7 +547,7 @@ impl CollectorManager {
         for collector_id in self.collectors.keys() {
             let request = RpcRequest::health_check(
                 self.rpc_client.client_id.clone(),
-                format!("control.health.{}", collector_id),
+                format!("control.health.heartbeat.{}", collector_id),
                 Duration::from_secs(10),
             );
 
