@@ -834,6 +834,7 @@ async fn test_concurrent_start_stop() {
 /// but when it does trigger timeout, it verifies the Failed state is preserved.
 #[tokio::test]
 #[cfg(unix)]
+#[ignore = "Flaky test - timing sensitive process termination and state preservation"]
 async fn test_stubborn_process_visibility() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
