@@ -71,7 +71,7 @@ DaemonEye requires elevated privileges for process monitoring. The system is des
 
 ### Option 2: From Source
 
-1. **Install Rust** (1.90+):
+1. **Install Rust** (1.91+):
 
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

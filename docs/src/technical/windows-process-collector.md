@@ -136,7 +136,7 @@ This document analyzes Task 5.5 to ensure it provides comprehensive Windows-cent
 - **winsafe**: Adopted winsafe v0.0.25 for ergonomic PDH counter helpers, strongly typed handle wrappers, and quicker upstream fixes compared to `windows`/`windows-sys`
 - **psutil-rs**: Removed due to limited maintenance; sysinfo provides equivalent functionality
 - **perfmon**: Does not provide Windows PDH performance counter support; use PDH bindings via `windows` or `windows-sys` crates for performance counters
-- **MSRV Compatibility**: winsafe v0.0.25 is supported (DaemonEye MSRV is 1.87+); the `windows`/`windows-sys` crates support MSRV 1.60 for projects with lower MSRV requirements
+- **MSRV Compatibility**: winsafe v0.0.25 is supported (DaemonEye MSRV is 1.91+); the `windows`/`windows-sys` crates support MSRV 1.60 for projects with lower MSRV requirements
 
 ### Safety Considerations
 

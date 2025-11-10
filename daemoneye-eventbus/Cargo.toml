@@ -76,11 +76,3 @@ harness = false
 [[bench]]
 name = "ipc_performance"
 harness = false
-
-[profile.dev]
-overflow-checks = true
-
-[profile.release]
-overflow-checks = true
-lto = "thin"
-codegen-units = 1

@@ -19,7 +19,7 @@ Security and reliability are emphasized via strict linting, no unsafe code, and 
 
 ## Technology stack
 
-- Language: Rust 2024 Edition (MSRV 1.90)
+- Language: Rust 2024 Edition (MSRV 1.91)
 - Package manager/build: Cargo (workspace)
 - Async runtime: tokio
 - IPC: interprocess (cross-platform) with protobuf messaging
@@ -50,7 +50,7 @@ DaemonEye/
 
 ## Requirements
 
-- Rust toolchain 1.90+ (edition = 2024)
+- Rust toolchain 1.91+ (edition = 2024)
 - Cargo (bundled with Rust)
 - just task runner (optional but recommended)
 - Optional developer tools: cargo-nextest, cargo-llvm-cov, cargo-audit, cargo-deny, cargo-dist, cargo-release, mdbook (install via `just install-tools` and `just docs-install`)

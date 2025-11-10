@@ -245,7 +245,7 @@ sequenceDiagram
 
 ### Core Technologies
 
-- **Language**: Rust 2024 Edition (MSRV: 1.90+)
+- **Language**: Rust 2024 Edition (MSRV: 1.91+)
 - **Async Runtime**: Tokio for I/O and task management
 - **Database**: redb pure Rust embedded database for optimal performance and security
 - **CLI Framework**: clap v4 with derive macros and shell completions
@@ -360,7 +360,7 @@ fn example_ipc_communication() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Rust-Specific Requirements
 
-- **Edition**: Always use Rust 2024 Edition (MSRV: 1.90+)
+- **Edition**: Always use Rust 2024 Edition (MSRV: 1.91+)
 - **Linting**: `cargo clippy -- -D warnings` (zero warnings policy)
 - **Safety**: `unsafe_code = "forbid"` enforced at workspace level
 - **Formatting**: Standard `rustfmt` with 119 character line length
@@ -867,7 +867,7 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 ### Continuous Integration
 
 - **Platform**: GitHub Actions with matrix testing (Linux, macOS, Windows)
-- **Rust Versions**: stable, beta, MSRV (1.90+)
+- **Rust Versions**: stable, beta, MSRV (1.91+)
 - **Quality Checks**: fmt-check, clippy strict, comprehensive test suite
 - **Performance**: Benchmark regression detection with criterion
 - **Security**: Dependency scanning, SLSA provenance (Enterprise)

@@ -348,7 +348,7 @@ WantedBy=multi-user.target
 ### Docker Deployment
 
 ```dockerfile
-FROM rust:1.87-slim as builder
+FROM rust:1.91-slim as builder
 COPY . /app
 WORKDIR /app
 RUN cargo build --release

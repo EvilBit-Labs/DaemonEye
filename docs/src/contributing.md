@@ -16,7 +16,7 @@ Thank you for your interest in contributing to DaemonEye! This guide will help y
 
 Before contributing to DaemonEye, ensure you have:
 
-- **Rust 1.90+**: Latest stable Rust toolchain
+- **Rust 1.91+**: Latest stable Rust toolchain
 - **Git**: Version control system
 - **Docker**: For containerized testing (optional)
 - **Just**: Task runner (install with `cargo install just`)
