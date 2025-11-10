@@ -83,7 +83,8 @@ The event bus uses a hierarchical topic structure with up to 4 levels:
 
 - `control.collector.lifecycle` - Start, stop, restart operations
 - `control.collector.config` - Configuration updates and reloads
-- `control.collector.task` - Task assignment and distribution
+- `control.collector.task` - Base topic for task assignment
+- `control.collector.task.{type}.{id}` - Collector-specific task distribution
 - `control.collector.registration` - Collector registration and capabilities
 - `control.agent.orchestration` - Agent coordination messages
 - `control.agent.policy` - Policy updates and enforcement

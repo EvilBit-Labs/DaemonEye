@@ -92,11 +92,19 @@ The RPC call patterns have been fully implemented in the `daemoneye-eventbus` cr
 
 #### Topic Hierarchy for RPC Routing
 
-- `control.collector.{collector_id}` - Lifecycle operations
-- `control.health.{collector_id}` - Health checks
-- `control.config.{collector_id}` - Configuration updates
+The canonical RPC topic pattern uses per-collector addressing:
+
+- `control.collector.{collector_id}` - Lifecycle operations (start, stop, restart)
+- `control.collector.config.{collector_id}` - Configuration updates for specific collector
+- `control.health.heartbeat.{collector_id}` - Health check heartbeats and health status
 - `control.shutdown.{collector_id}` - Shutdown coordination
-- `control.heartbeat.{collector_id}` - Heartbeat messages
+
+**Base Topics** (for broadcasting):
+
+- `control.collector.lifecycle` - Base lifecycle topic
+- `control.collector.config` - Base configuration topic
+
+Use helper functions `collector::lifecycle_topic(collector_id)` and `collector::config_topic(collector_id)` to build per-collector topics.
 
 #### Error Handling and Reliability
 
