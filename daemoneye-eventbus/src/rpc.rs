@@ -374,9 +374,10 @@ pub enum RpcPayload {
 }
 
 /// RPC response status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RpcStatus {
     /// Operation completed successfully
+    #[default]
     Success,
     /// Operation failed with error
     Error,
@@ -404,7 +405,7 @@ pub struct RpcError {
 }
 
 /// Error categories for RPC operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ErrorCategory {
     /// Configuration or validation error
     Configuration,
@@ -415,6 +416,7 @@ pub enum ErrorCategory {
     /// Permission or authorization error
     Permission,
     /// Internal service error
+    #[default]
     Internal,
     /// Timeout or deadline exceeded
     Timeout,
@@ -506,7 +508,7 @@ pub struct HealthCheckData {
 }
 
 /// Health status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum HealthStatus {
     /// Service is healthy and operational
     Healthy,
@@ -517,6 +519,7 @@ pub enum HealthStatus {
     /// Service is not responding
     Unresponsive,
     /// Service status is unknown
+    #[default]
     Unknown,
 }
 
@@ -596,9 +599,10 @@ pub struct ShutdownRequest {
 }
 
 /// Shutdown type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ShutdownType {
     /// Graceful shutdown with cleanup
+    #[default]
     Graceful,
     /// Immediate shutdown
     Immediate,
@@ -2599,30 +2603,6 @@ impl RpcRequest {
             RpcPayload::Shutdown(shutdown_request),
             timeout,
         )
-    }
-}
-
-impl Default for HealthStatus {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
-
-impl Default for RpcStatus {
-    fn default() -> Self {
-        Self::Success
-    }
-}
-
-impl Default for ShutdownType {
-    fn default() -> Self {
-        Self::Graceful
-    }
-}
-
-impl Default for ErrorCategory {
-    fn default() -> Self {
-        Self::Internal
     }
 }
 

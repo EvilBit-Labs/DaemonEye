@@ -1149,7 +1149,7 @@ async fn test_multiple_edge_cases_simultaneously() {
         let mut collector = Collector::new(config);
 
         // Create monitors for different edge cases
-        let edge_case_monitors = vec![
+        let edge_case_monitors = Vec::from([
             EdgeCaseMonitorCollector::new(
                 "rapid-churn",
                 SourceCaps::PROCESS,
@@ -1175,7 +1175,7 @@ async fn test_multiple_edge_cases_simultaneously() {
                 SourceCaps::REALTIME,
                 EdgeCaseMode::RaceConditions,
             ),
-        ];
+        ]);
 
         for monitor in edge_case_monitors.iter() {
             collector.register(Box::new(monitor.clone())).unwrap();

@@ -244,7 +244,12 @@ mod tests {
         assert!(bucket.try_consume(5));
         assert_eq!(bucket.tokens(), 5.0);
         assert!(bucket.try_consume(5));
-        assert_eq!(bucket.tokens(), 0.0);
+        // Use epsilon comparison due to time-based refill between calls
+        assert!(
+            bucket.tokens() < 0.01,
+            "Expected nearly 0 tokens, got {}",
+            bucket.tokens()
+        );
         assert!(!bucket.try_consume(1)); // Should fail, no tokens
     }
 
@@ -252,7 +257,12 @@ mod tests {
     async fn test_token_bucket_refill() {
         let mut bucket = TokenBucket::new(10, 10.0); // 10 capacity, 10 tokens/sec
         assert!(bucket.try_consume(10));
-        assert_eq!(bucket.tokens(), 0.0);
+        // Use epsilon comparison due to time-based refill
+        assert!(
+            bucket.tokens() < 0.01,
+            "Expected nearly 0 tokens, got {}",
+            bucket.tokens()
+        );
 
         // Wait 100ms, should refill ~1 token
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -265,17 +275,19 @@ mod tests {
         let config = RateLimitConfig::new(10, 10.0);
         let limiter = RateLimiter::new(config);
 
-        // Should allow 10 messages immediately
+        // When both client_id and topic are None, there's no rate limiting applied
+        // The global default config is only used when at least one of client_id or topic is provided
+        // Test with a client_id to verify the default config is applied
         for i in 0..10 {
             assert!(
-                limiter.check_rate_limit(None, None).await,
+                limiter.check_rate_limit(Some("test-client"), None).await,
                 "Should allow message {}",
                 i
             );
         }
 
         // 11th should be rate limited
-        assert!(!limiter.check_rate_limit(None, None).await);
+        assert!(!limiter.check_rate_limit(Some("test-client"), None).await);
     }
 
     #[tokio::test]
@@ -347,15 +359,15 @@ mod tests {
         let config = RateLimitConfig::new(10, 10.0); // 10 tokens/sec
         let limiter = RateLimiter::new(config);
 
-        // Consume all tokens
+        // Consume all tokens (using client_id to apply rate limiting)
         for _ in 0..10 {
-            assert!(limiter.check_rate_limit(None, None).await);
+            assert!(limiter.check_rate_limit(Some("test-client"), None).await);
         }
-        assert!(!limiter.check_rate_limit(None, None).await);
+        assert!(!limiter.check_rate_limit(Some("test-client"), None).await);
 
         // Wait 100ms, should refill ~1 token
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(limiter.check_rate_limit(None, None).await);
+        assert!(limiter.check_rate_limit(Some("test-client"), None).await);
     }
 
     #[tokio::test]
@@ -382,16 +394,16 @@ mod tests {
         let config = RateLimitConfig::new(1, 10.0); // 1 capacity, 10 tokens/sec
         let limiter = RateLimiter::new(config);
 
-        // Consume the one token
-        assert!(limiter.check_rate_limit(None, None).await);
-        assert!(!limiter.check_rate_limit(None, None).await);
+        // Consume the one token (using client_id to apply rate limiting)
+        assert!(limiter.check_rate_limit(Some("test-client"), None).await);
+        assert!(!limiter.check_rate_limit(Some("test-client"), None).await);
 
         // Wait 50ms, should refill ~0.5 tokens (not enough for 1)
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(!limiter.check_rate_limit(None, None).await);
+        assert!(!limiter.check_rate_limit(Some("test-client"), None).await);
 
         // Wait another 50ms, should refill ~1 token total
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(limiter.check_rate_limit(None, None).await);
+        assert!(limiter.check_rate_limit(Some("test-client"), None).await);
     }
 }

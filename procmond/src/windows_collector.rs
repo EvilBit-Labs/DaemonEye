@@ -35,8 +35,8 @@ use crate::process_collector::{
 
 use sysinfo::{Pid, System};
 
-/// Maximum valid PID on Windows (65535)
-const MAX_VALID_PID: u32 = 65535;
+/// Maximum valid PID on Windows (u32::MAX for modern Windows)
+const MAX_VALID_PID: u32 = u32::MAX;
 
 /// Windows-specific errors that can occur during process collection.
 #[derive(Debug, Error)]

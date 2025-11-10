@@ -422,7 +422,7 @@
 
 ### Rust Standards Compliance
 
-- ✅ Rust 2024 Edition (MSRV 1.90+)
+- ✅ Rust 2024 Edition (MSRV 1.91+)
 - ✅ Zero warnings with `cargo clippy -- -D warnings`
 - ✅ No unsafe code (enforced with `#![deny(unsafe_code)]` in security-critical modules)
 - ✅ Standard rustfmt formatting
@@ -566,7 +566,7 @@
 | Standard            | Status       | Evidence                          |
 | ------------------- | ------------ | --------------------------------- |
 | Rust 2024 Edition   | ✅ COMPLIANT | Cargo.toml                        |
-| MSRV 1.90+          | ✅ COMPLIANT | rust-toolchain.toml               |
+| MSRV 1.91+          | ✅ COMPLIANT | rust-toolchain.toml               |
 | Zero warnings       | ✅ COMPLIANT | clippy passes                     |
 | No unsafe code      | ✅ COMPLIANT | #![deny(unsafe_code)]             |
 | Comprehensive tests | ✅ COMPLIANT | Unit + integration tests          |

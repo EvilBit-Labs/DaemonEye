@@ -21,7 +21,7 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use daemoneye_eventbus::compatibility::{VersionNegotiator, CompatibilityChecker};
+//! use daemoneye_eventbus::compatibility::{VersionNegotiator, CompatibilityChecker, VersionNegotiationRequest};
 //! use daemoneye_eventbus::message::MessageVersion;
 //!
 //! #[tokio::main(flavor = "current_thread")]
@@ -33,8 +33,15 @@
 //!         MessageVersion { major: 1, minor: 1, patch: 0, protocol_version: "v1.1.0".to_string() },
 //!     ];
 //!
-//!     let negotiated = negotiator.negotiate_version(&client_version, &server_versions)?;
-//!     println!("Negotiated version: {:?}", negotiated);
+//!     let request = VersionNegotiationRequest {
+//!         supported_versions: server_versions.clone(),
+//!         preferred_version: client_version.clone(),
+//!         client_capabilities: vec!["basic_pub_sub".to_string(), "rpc_calls".to_string()],
+//!         client_id: "example-client".to_string(),
+//!     };
+//!
+//!     let response = negotiator.negotiate_version(&request)?;
+//!     println!("Negotiated version: {:?}", response.negotiated_version);
 //!     Ok(())
 //! }
 //! ```

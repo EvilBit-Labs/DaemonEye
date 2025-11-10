@@ -108,6 +108,8 @@ pub struct MonitorCollectorStats {
     pub trigger_errors: AtomicU64,
     /// Analysis coordination errors
     pub analysis_errors: AtomicU64,
+    /// Backpressure events (events dropped or buffered due to backpressure)
+    pub backpressure_events: AtomicU64,
 }
 
 /// Snapshot of Monitor Collector statistics.
@@ -132,6 +134,8 @@ pub struct MonitorCollectorStatsSnapshot {
     pub trigger_errors: u64,
     /// Analysis coordination errors
     pub analysis_errors: u64,
+    /// Backpressure events (events dropped or buffered due to backpressure)
+    pub backpressure_events: u64,
 }
 
 impl MonitorCollectorStats {
@@ -146,6 +150,7 @@ impl MonitorCollectorStats {
             collection_errors: self.collection_errors.load(Ordering::Relaxed),
             trigger_errors: self.trigger_errors.load(Ordering::Relaxed),
             analysis_errors: self.analysis_errors.load(Ordering::Relaxed),
+            backpressure_events: self.backpressure_events.load(Ordering::Relaxed),
         }
     }
 }
@@ -233,5 +238,6 @@ mod tests {
         assert_eq!(snapshot.lifecycle_events, 25);
         assert_eq!(snapshot.events_in_flight, 5);
         assert_eq!(snapshot.trigger_requests, 0);
+        assert_eq!(snapshot.backpressure_events, 0);
     }
 }

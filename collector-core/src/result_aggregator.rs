@@ -99,6 +99,8 @@ pub struct ResultAggregator {
     completed: Arc<RwLock<VecDeque<AggregatedResult>>>,
     /// Aggregation statistics
     stats: Arc<RwLock<AggregationStats>>,
+    /// Result stream senders keyed by correlation ID
+    result_senders: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<CollectorResult>>>>,
 }
 
 /// Pending aggregation state
@@ -141,6 +143,7 @@ impl ResultAggregator {
             pending: Arc::new(RwLock::new(HashMap::new())),
             completed: Arc::new(RwLock::new(VecDeque::new())),
             stats: Arc::new(RwLock::new(AggregationStats::default())),
+            result_senders: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -182,6 +185,15 @@ impl ResultAggregator {
         correlation_id: &str,
         result: CollectorResult,
     ) -> Result<Option<AggregatedResult>> {
+        // Send result to stream if one exists
+        {
+            let senders = self.result_senders.read().await;
+            if let Some(sender) = senders.get(correlation_id) {
+                // Ignore send errors (receiver may have been dropped)
+                let _ = sender.send(result.clone());
+            }
+        }
+
         let mut pending = self.pending.write().await;
 
         let aggregation = pending
@@ -208,6 +220,12 @@ impl ResultAggregator {
             // Remove from pending and create aggregated result
             let completed_aggregation = pending.remove(correlation_id).unwrap();
             drop(pending); // Release lock before processing
+
+            // Clean up result sender when aggregation completes
+            {
+                let mut senders = self.result_senders.write().await;
+                senders.remove(correlation_id);
+            }
 
             let aggregated = self.finalize_aggregation(completed_aggregation).await?;
             Ok(Some(aggregated))
@@ -330,8 +348,14 @@ impl ResultAggregator {
             }
         }
 
-        // Remove timed out aggregations
+        // Remove timed out aggregations and clean up their senders
         for correlation_id in to_remove {
+            // Clean up result sender
+            {
+                let mut senders = self.result_senders.write().await;
+                senders.remove(&correlation_id);
+            }
+
             if let Some(aggregation) = pending.remove(&correlation_id) {
                 let mut aggregated = AggregatedResult {
                     aggregation_id: Uuid::new_v4().to_string(),
@@ -396,13 +420,17 @@ impl ResultAggregator {
         correlation_id: String,
         expected_count: Option<usize>,
     ) -> Result<mpsc::UnboundedReceiver<CollectorResult>> {
-        self.start_aggregation(correlation_id, expected_count)
+        self.start_aggregation(correlation_id.clone(), expected_count)
             .await?;
 
-        let (_tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel();
 
-        // Store sender for this aggregation (would need to add to struct)
-        // For now, return the receiver
+        // Store sender for this aggregation
+        {
+            let mut senders = self.result_senders.write().await;
+            senders.insert(correlation_id, tx);
+        }
+
         Ok(rx)
     }
 

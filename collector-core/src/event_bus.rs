@@ -1137,7 +1137,12 @@ impl LocalEventBus {
         let window = sequence_correlation.window_size;
 
         // Check if sequence is within the correlation window
-        sequence >= base && sequence <= base + window
+        // Use subtraction-based comparison to avoid overflow
+        if sequence < base {
+            return false;
+        }
+        let delta = sequence - base;
+        delta <= window
     }
 
     /// Apply topic-based correlation filtering

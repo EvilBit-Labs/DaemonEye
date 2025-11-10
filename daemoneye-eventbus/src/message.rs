@@ -237,9 +237,10 @@ pub struct Message {
 }
 
 /// Types of messages for routing and handling
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum MessageType {
     /// Regular event message
+    #[default]
     Event,
     /// Control message (subscribe, unsubscribe, etc.)
     Control,
@@ -477,12 +478,6 @@ impl BusEvent {
     /// Get the correlation ID for backward compatibility
     pub fn correlation_id(&self) -> &str {
         &self.correlation_metadata.correlation_id
-    }
-}
-
-impl Default for MessageType {
-    fn default() -> Self {
-        Self::Event
     }
 }
 

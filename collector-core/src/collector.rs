@@ -344,6 +344,89 @@ impl Collector {
         }))
     }
 
+    /// Sanitize and validate hostname from environment variable.
+    ///
+    /// - Trims whitespace
+    /// - Removes control characters (null, newline, carriage return, etc.)
+    /// - Validates against RFC 1123 using hostname-validator crate
+    /// - Returns "unknown-host" if validation fails
+    fn sanitize_hostname(input: &str) -> String {
+        // Trim whitespace
+        let trimmed = input.trim();
+
+        // Remove control characters
+        let cleaned: String = trimmed.chars().filter(|c| !c.is_control()).collect();
+
+        // Validate using RFC 1123 compliant validator
+        if cleaned.is_empty() || !hostname_validator::is_valid(&cleaned) {
+            warn!("Hostname failed RFC 1123 validation, using fallback");
+            return "unknown-host".to_string();
+        }
+
+        cleaned
+    }
+
+    /// Sanitize and validate version string from compile-time sources.
+    ///
+    /// - Prefers compile-time COLLECTOR_CORE_VERSION or CARGO_PKG_VERSION
+    /// - Validates against semver-like pattern (digits, dots, optionally hyphenated pre-release/build metadata)
+    /// - Returns "unknown-version" if validation fails
+    fn sanitize_version() -> Option<String> {
+        // Try compile-time versions
+        let version = option_env!("COLLECTOR_CORE_VERSION")
+            .map(|v| v.to_string())
+            .or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()));
+
+        let version = match version {
+            Some(v) => v,
+            None => {
+                warn!("No version available, using fallback");
+                return Some("unknown-version".to_string());
+            }
+        };
+
+        // Trim whitespace
+        let trimmed = version.trim();
+
+        // Remove control characters
+        let cleaned: String = trimmed.chars().filter(|c| !c.is_control()).collect();
+
+        if cleaned.is_empty() {
+            warn!("Version is empty after sanitization, using fallback");
+            return Some("unknown-version".to_string());
+        }
+
+        // Validate semver-like pattern: digits, dots, optionally hyphenated pre-release/build metadata
+        // Pattern: digits and dots for base version, optionally followed by hyphen and alphanumeric/dash/underscore for pre-release/build
+        let is_valid = if let Some(hyphen_pos) = cleaned.find('-') {
+            // Has pre-release or build metadata
+            let base = &cleaned[..hyphen_pos];
+            let metadata = &cleaned[hyphen_pos + 1..];
+
+            // Base version: digits and dots only
+            let base_valid =
+                !base.is_empty() && base.chars().all(|c| c.is_ascii_digit() || c == '.');
+
+            // Metadata: alphanumeric, dash, underscore, dot
+            let metadata_valid = !metadata.is_empty()
+                && metadata
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+
+            base_valid && metadata_valid
+        } else {
+            // No metadata: digits and dots only
+            !cleaned.is_empty() && cleaned.chars().all(|c| c.is_ascii_digit() || c == '.')
+        };
+
+        if !is_valid {
+            warn!("Version does not match semver-like pattern, using fallback");
+            return Some("unknown-version".to_string());
+        }
+
+        Some(cleaned)
+    }
+
     async fn dispatch_registration(
         &self,
         broker: Arc<DaemoneyeBroker>,
@@ -353,10 +436,9 @@ impl Collector {
         registration: &crate::config::CollectorRegistrationConfig,
     ) -> Result<()> {
         let client = CollectorRpcClient::new(topic, broker).await?;
-        let hostname = env::var("HOSTNAME").unwrap_or_else(|_| "unknown-host".to_string());
-        let version = option_env!("COLLECTOR_CORE_VERSION")
-            .map(|v| v.to_string())
-            .or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()));
+        let hostname_raw = env::var("HOSTNAME").unwrap_or_else(|_| "unknown-host".to_string());
+        let hostname = Self::sanitize_hostname(&hostname_raw);
+        let version = Self::sanitize_version();
         let heartbeat_ms = registration
             .heartbeat_interval
             .as_millis()
@@ -526,12 +608,12 @@ impl Collector {
 
         // Initialize EventBus based on configuration
         let socket_path = runtime_guard.config.daemoneye_socket_path.clone();
-        if socket_path.is_some() {
+        if let Some(ref path) = socket_path {
             // DaemoneyeEventBus integration removed due to circular dependency
-            // Use LocalEventBus for now
-            warn!(
-                socket_path = %socket_path.as_ref().unwrap(),
-                "DaemoneyeEventBus integration not available; using LocalEventBus instead"
+            // Use LocalEventBus as temporary fallback
+            info!(
+                socket_path = %path,
+                "Using LocalEventBus as temporary fallback (circular dependency); daemoneye socket configured but not yet connected"
             );
         }
         // Always initialize LocalEventBus (DaemoneyeEventBus not yet implemented)
@@ -556,44 +638,39 @@ impl Collector {
         // Release the guard before running
         drop(runtime_guard);
 
+        // Check telemetry config first (read-only)
+        let enable_telemetry = {
+            let runtime_guard = runtime_arc.read().await;
+            runtime_guard.config.enable_telemetry
+        };
+
+        // Acquire write lock once for all startup operations
+        let mut runtime_guard = runtime_arc.write().await;
+
         // Start all event sources
         for source in self.sources {
             let source_name = source.name().to_string();
             info!("Starting source: {}", source_name);
-            {
-                let mut runtime_guard = runtime_arc.write().await;
-                runtime_guard.start_source(source).await?;
-            }
+            runtime_guard.start_source(source).await?;
             info!("Source started successfully: {}", source_name);
         }
 
         // Start health monitoring
-        {
-            let mut runtime_guard = runtime_arc.write().await;
-            runtime_guard.start_health_monitoring().await;
-        }
+        runtime_guard.start_health_monitoring().await;
 
         // Start performance monitoring
-        {
-            let mut runtime_guard = runtime_arc.write().await;
-            runtime_guard.start_performance_monitoring().await;
-        }
+        runtime_guard.start_performance_monitoring().await;
 
-        // Start telemetry collection
-        {
-            let runtime_guard = runtime_arc.read().await;
-            if runtime_guard.config.enable_telemetry {
-                drop(runtime_guard);
-                let mut runtime_guard = runtime_arc.write().await;
-                runtime_guard.start_telemetry_collection().await;
-            }
+        // Start telemetry collection (if enabled)
+        if enable_telemetry {
+            runtime_guard.start_telemetry_collection().await;
         }
 
         // Start event processing
-        {
-            let mut runtime_guard = runtime_arc.write().await;
-            runtime_guard.start_event_processing().await;
-        }
+        runtime_guard.start_event_processing().await;
+
+        // Release the guard before running
+        drop(runtime_guard);
 
         // Run until shutdown
         let run_result = {

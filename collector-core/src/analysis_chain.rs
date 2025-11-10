@@ -731,7 +731,7 @@ impl AnalysisChainCoordinator {
                 metadata_filters: HashMap::new(),
                 topic_filters: Vec::new(),
                 source_collectors: Vec::new(),
-                eventbus_filters: None, // No daemoneye-eventbus specific filtering
+                eventbus_filters: None,
             }),
             correlation_filter: None,
             topic_patterns: None,
@@ -1245,6 +1245,9 @@ impl AnalysisChainCoordinator {
             metadata: stage.config.clone(),
             timestamp: SystemTime::now(),
         };
+        trigger_request
+            .validate()
+            .map_err(|e| anyhow::anyhow!("Invalid trigger request: {}", e))?;
 
         // Send trigger request via event bus
         self.send_trigger_request(trigger_request).await?;

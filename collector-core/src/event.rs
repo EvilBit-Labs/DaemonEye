@@ -265,6 +265,52 @@ pub struct TriggerRequest {
     pub timestamp: SystemTime,
 }
 
+impl TriggerRequest {
+    /// Validates the trigger request and returns an error if invalid.
+    ///
+    /// # Validation Rules
+    ///
+    /// - `trigger_id` and `correlation_id` must be non-empty strings
+    /// - `target_collector` must be non-empty
+    /// - At least one of `target_pid` or `target_path` must be present
+    /// - `metadata` must have at most 100 entries
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if valid, or an error message describing the validation failure.
+    pub fn validate(&self) -> Result<(), String> {
+        // Validate trigger_id
+        if self.trigger_id.is_empty() {
+            return Err("trigger_id must be non-empty".to_string());
+        }
+
+        // Validate correlation_id
+        if self.correlation_id.is_empty() {
+            return Err("correlation_id must be non-empty".to_string());
+        }
+
+        // Validate target_collector
+        if self.target_collector.is_empty() {
+            return Err("target_collector must be non-empty".to_string());
+        }
+
+        // Validate at least one target is present
+        if self.target_pid.is_none() && self.target_path.is_none() {
+            return Err("at least one of target_pid or target_path must be present".to_string());
+        }
+
+        // Validate metadata size
+        if self.metadata.len() > 100 {
+            return Err(format!(
+                "metadata exceeds maximum size of 100 entries (found {})",
+                self.metadata.len()
+            ));
+        }
+
+        Ok(())
+    }
+}
+
 /// Types of analysis that can be triggered.
 ///
 /// This enum defines the different types of analysis that can be requested

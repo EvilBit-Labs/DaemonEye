@@ -257,7 +257,7 @@ async fn test_comprehensive_multi_source_integration() {
     let mut collector = Collector::new(config);
 
     // Create sources with different capabilities and test modes
-    let sources = vec![
+    let sources = Vec::from([
         ComprehensiveTestSource::new(
             "process-standard",
             SourceCaps::PROCESS | SourceCaps::REALTIME,
@@ -284,7 +284,7 @@ async fn test_comprehensive_multi_source_integration() {
             TestMode::Standard,
         ),
         ComprehensiveTestSource::new("all-caps", SourceCaps::all(), TestMode::Compatibility),
-    ];
+    ]);
 
     // Register all sources
     for source in sources.iter() {
@@ -583,7 +583,7 @@ async fn test_graceful_shutdown_coordination_comprehensive() {
     let mut collector = Collector::new(config);
 
     // Sources with different characteristics for shutdown testing
-    let sources = vec![
+    let sources = Vec::from([
         ComprehensiveTestSource::new("fast-shutdown", SourceCaps::PROCESS, TestMode::Standard),
         ComprehensiveTestSource::new(
             "slow-shutdown",
@@ -605,7 +605,7 @@ async fn test_graceful_shutdown_coordination_comprehensive() {
             SourceCaps::PROCESS | SourceCaps::NETWORK,
             TestMode::Standard,
         ),
-    ];
+    ]);
 
     for source in sources.iter() {
         collector.register(Box::new(source.clone())).unwrap();

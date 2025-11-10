@@ -725,7 +725,7 @@ impl TriggerManager {
             }
         }
 
-        Ok(TriggerRequest {
+        let request = TriggerRequest {
             trigger_id,
             target_collector: condition.target_collector.clone(),
             analysis_type: condition.analysis_type.clone(),
@@ -735,7 +735,9 @@ impl TriggerManager {
             correlation_id,
             metadata,
             timestamp,
-        })
+        };
+        request.validate().map_err(TriggerError::ValidationError)?;
+        Ok(request)
     }
 
     /// Checks if a trigger should be deduplicated.

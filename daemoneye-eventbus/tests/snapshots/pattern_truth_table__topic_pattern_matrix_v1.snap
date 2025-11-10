@@ -79,12 +79,12 @@ expression: cases
   topic_error: ~
 - pattern: "events.#"
   topic: events
-  matches: false
+  matches: true
   pattern_error: ~
   topic_error: ~
 - pattern: "events.process.new.#"
   topic: events.process.new
-  matches: false
+  matches: true
   pattern_error: ~
   topic_error: ~
 - pattern: events.*.new

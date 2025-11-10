@@ -51,6 +51,7 @@ crc32c = { workspace = true }
 # Configuration management
 dirs = { workspace = true }
 figment = { workspace = true }
+unidirs = { workspace = true }
 
 # Futures utilities
 futures = { workspace = true }

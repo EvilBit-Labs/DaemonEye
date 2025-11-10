@@ -24,6 +24,18 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+/// Metadata for in-flight tasks awaiting acknowledgment
+#[derive(Debug, Clone)]
+struct InFlightTask {
+    /// The task being tracked
+    task: DistributionTask,
+    /// Timestamp when task was published
+    #[allow(dead_code)]
+    published_at: SystemTime,
+    /// Number of retry attempts
+    retry_count: u32,
+}
+
 /// Task priority levels for distribution
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum TaskPriority {
@@ -81,12 +93,15 @@ pub struct DistributionStats {
 pub struct TaskDistributor {
     /// Reference to the event bus broker
     broker: Arc<DaemoneyeBroker>,
-    /// Task queue organized by priority
+    /// Task queue organized by priority (persistent queue)
     task_queue: Arc<RwLock<PriorityTaskQueue>>,
     /// Distribution statistics
     stats: Arc<RwLock<DistributionStats>>,
-    /// Task timeout tracking
+    /// Task timeout tracking (keyed by task_id, value is timeout timestamp)
     timeout_tracker: Arc<RwLock<HashMap<String, SystemTime>>>,
+    /// In-flight tasks awaiting consumer acknowledgment
+    /// Tasks are moved here after successful publish and removed after ack or timeout
+    in_flight: Arc<RwLock<HashMap<String, InFlightTask>>>,
 }
 
 /// Priority-based task queue
@@ -147,10 +162,18 @@ impl TaskDistributor {
             task_queue: Arc::new(RwLock::new(PriorityTaskQueue::new())),
             stats: Arc::new(RwLock::new(DistributionStats::default())),
             timeout_tracker: Arc::new(RwLock::new(HashMap::new())),
+            in_flight: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Distribute a task to appropriate collectors based on capabilities
+    ///
+    /// This method implements at-least-once delivery semantics:
+    /// 1. Task is added to persistent queue
+    /// 2. Task is published to event bus
+    /// 3. If publish succeeds, task is moved to in-flight tracking
+    /// 4. Task remains in queue until explicit acknowledgment via `acknowledge_task`
+    /// 5. Timeout tracking begins only after successful publish
     pub async fn distribute_task(&self, task: DistributionTask) -> Result<()> {
         let task_id = task.task_id.clone();
         let correlation_id = task.correlation_id.clone();
@@ -163,14 +186,7 @@ impl TaskDistributor {
             "Distributing task to collectors"
         );
 
-        // Track timeout before consuming task
-        let timeout_at = SystemTime::now() + task.timeout;
-        {
-            let mut tracker = self.timeout_tracker.write().await;
-            tracker.insert(task_id.clone(), timeout_at);
-        }
-
-        // Add task to queue
+        // Add task to persistent queue first
         {
             let mut queue = self.task_queue.write().await;
             queue.push(task.clone());
@@ -180,33 +196,70 @@ impl TaskDistributor {
         let start_time = SystemTime::now();
         match self
             .broker
-            .publish(&target_topic, &correlation_id, task.payload)
+            .publish(&target_topic, &correlation_id, task.payload.clone())
             .await
         {
             Ok(()) => {
+                let published_at = SystemTime::now();
+
+                // Only start timeout tracking after successful publish
+                // This ensures the timeout period begins when the task is actually queued
+                let timeout_at = published_at + task.timeout;
+                {
+                    let mut tracker = self.timeout_tracker.write().await;
+                    tracker.insert(task_id.clone(), timeout_at);
+                }
+
+                // Remove task from queue since it's now published and in-flight
+                // This prevents duplicate publications while awaiting acknowledgment
+                {
+                    let mut queue = self.task_queue.write().await;
+                    let mut new_queue = PriorityTaskQueue::new();
+                    while let Some(queued_task) = queue.pop() {
+                        if queued_task.task_id != task_id {
+                            new_queue.push(queued_task);
+                        }
+                    }
+                    *queue = new_queue;
+                }
+
+                // Move task to in-flight tracking
+                // Task will be removed from in-flight only after explicit acknowledgment
+                {
+                    let mut in_flight = self.in_flight.write().await;
+                    in_flight.insert(
+                        task_id.clone(),
+                        InFlightTask {
+                            task: task.clone(),
+                            published_at,
+                            retry_count: 0,
+                        },
+                    );
+                }
+
                 // Update statistics
                 let mut stats = self.stats.write().await;
                 stats.tasks_distributed += 1;
                 stats.tasks_delivered += 1;
 
-                // Calculate distribution latency
+                // Calculate distribution latency using numerically stable incremental update
+                // Formula: new_avg = old_avg + (latency - old_avg) / n
+                // This prevents overflow and maintains precision for large task counts
                 if let Ok(elapsed) = start_time.elapsed() {
                     let latency_ms = elapsed.as_millis() as f64;
-                    stats.avg_distribution_latency_ms = (stats.avg_distribution_latency_ms
-                        * (stats.tasks_delivered - 1) as f64
-                        + latency_ms)
-                        / stats.tasks_delivered as f64;
+                    let n = stats.tasks_delivered as f64;
+                    if n > 0.0 {
+                        let old_avg = stats.avg_distribution_latency_ms;
+                        stats.avg_distribution_latency_ms = old_avg + (latency_ms - old_avg) / n;
+                    } else {
+                        stats.avg_distribution_latency_ms = latency_ms;
+                    }
                 }
-
-                // Remove from queue
-                let mut queue = self.task_queue.write().await;
-                // Simple removal - in production, would track by task_id
-                let _ = queue.pop();
 
                 info!(
                     task_id = %task_id,
                     target_topic = %target_topic,
-                    "Task distributed successfully"
+                    "Task published successfully, awaiting acknowledgment"
                 );
                 Ok(())
             }
@@ -217,11 +270,82 @@ impl TaskDistributor {
                     "Failed to distribute task"
                 );
 
+                // Remove task from queue since publish failed
+                // Task was never successfully delivered, so it shouldn't remain in queue
+                {
+                    let mut queue = self.task_queue.write().await;
+                    // Find and remove the task by task_id
+                    // Since we can't easily search the priority queue, we'll need to
+                    // reconstruct it without the failed task
+                    let mut new_queue = PriorityTaskQueue::new();
+                    while let Some(queued_task) = queue.pop() {
+                        if queued_task.task_id != task_id {
+                            new_queue.push(queued_task);
+                        }
+                    }
+                    // Restore queue without the failed task
+                    *queue = new_queue;
+                }
+
                 // Update failure statistics
                 let mut stats = self.stats.write().await;
                 stats.tasks_failed += 1;
 
                 Err(anyhow::anyhow!("Task distribution failed: {}", e))
+            }
+        }
+    }
+
+    /// Acknowledge successful processing of a task by the consumer
+    ///
+    /// This method removes the task from both in-flight tracking and the persistent queue,
+    /// completing the at-least-once delivery guarantee. Only tasks that have been successfully
+    /// published and are in the in-flight map can be acknowledged.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` if task was found and acknowledged
+    /// - `Ok(false)` if task was not found in in-flight tracking
+    pub async fn acknowledge_task(&self, task_id: &str) -> Result<bool> {
+        // Remove from in-flight tracking
+        let task_opt = {
+            let mut in_flight = self.in_flight.write().await;
+            in_flight.remove(task_id)
+        };
+
+        match task_opt {
+            Some(in_flight_task) => {
+                // Remove timeout tracking
+                {
+                    let mut tracker = self.timeout_tracker.write().await;
+                    tracker.remove(task_id);
+                }
+
+                // Remove from persistent queue
+                {
+                    let mut queue = self.task_queue.write().await;
+                    let mut new_queue = PriorityTaskQueue::new();
+                    while let Some(queued_task) = queue.pop() {
+                        if queued_task.task_id != task_id {
+                            new_queue.push(queued_task);
+                        }
+                    }
+                    *queue = new_queue;
+                }
+
+                debug!(
+                    task_id = %task_id,
+                    correlation_id = %in_flight_task.task.correlation_id,
+                    "Task acknowledged and removed from queue"
+                );
+                Ok(true)
+            }
+            None => {
+                warn!(
+                    task_id = %task_id,
+                    "Attempted to acknowledge task not in in-flight tracking"
+                );
+                Ok(false)
             }
         }
     }
@@ -303,17 +427,22 @@ impl TaskDistributor {
     }
 
     /// Check for timed out tasks and clean up
+    ///
+    /// When a task times out, it is moved from in-flight tracking back to the persistent
+    /// queue for retry. This ensures at-least-once delivery semantics even in the face
+    /// of consumer failures.
     pub async fn check_timeouts(&self) -> Result<Vec<String>> {
         let now = SystemTime::now();
 
         let mut tracker = self.timeout_tracker.write().await;
+        let mut in_flight = self.in_flight.write().await;
+        let mut queue = self.task_queue.write().await;
 
         // Collect timed out task IDs in single pass
         let timed_out_tasks: Vec<String> = tracker
             .iter()
             .filter_map(|(task_id, timeout_at)| {
                 if now >= *timeout_at {
-                    warn!(task_id = %task_id, "Task timed out");
                     Some(task_id.clone())
                 } else {
                     None
@@ -321,10 +450,36 @@ impl TaskDistributor {
             })
             .collect();
 
-        // Remove timed out tasks
+        // Process timed out tasks: move from in-flight back to queue for retry
         for task_id in &timed_out_tasks {
-            tracker.remove(task_id);
+            if let Some(in_flight_task) = in_flight.remove(task_id) {
+                let task = in_flight_task.task;
+                let retry_count = in_flight_task.retry_count;
+
+                warn!(
+                    task_id = %task_id,
+                    retry_count = retry_count,
+                    "Task timed out, moving back to queue for retry"
+                );
+
+                // Re-queue the task for retry
+                // This allows the task to be picked up and published again
+                queue.push(task);
+
+                // Remove from timeout tracker (will be re-added on next publish)
+                tracker.remove(task_id);
+            } else {
+                // Task was in timeout tracker but not in-flight (shouldn't happen)
+                warn!(
+                    task_id = %task_id,
+                    "Task in timeout tracker but not in-flight, cleaning up"
+                );
+                tracker.remove(task_id);
+            }
         }
+        drop(queue); // Release lock before updating stats
+        drop(in_flight); // Release lock before updating stats
+        drop(tracker); // Release lock before updating stats
 
         // Update statistics
         if !timed_out_tasks.is_empty() {

@@ -19,13 +19,12 @@ use daemoneye_lib::{storage, telemetry::PerformanceTimer};
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
 use tokio::{
     sync::{Mutex, RwLock, Semaphore, mpsc},
-    task::JoinHandle,
     time::{interval, timeout},
 };
 use tracing::{debug, error, info, instrument, warn};
@@ -75,8 +74,10 @@ pub struct ProcmondMonitorCollector {
     stats: Arc<MonitorCollectorStats>,
     /// Backpressure semaphore
     backpressure_semaphore: Arc<Semaphore>,
-    /// Background task handles
-    task_handles: Arc<Mutex<Vec<JoinHandle<anyhow::Result<()>>>>>,
+    /// Consecutive backpressure timeout counter for circuit breaker
+    consecutive_backpressure_timeouts: Arc<std::sync::atomic::AtomicUsize>,
+    /// Circuit breaker cooldown timestamp
+    circuit_breaker_until: Arc<std::sync::Mutex<Option<Instant>>>,
     /// Shutdown coordination
     shutdown_signal: Arc<AtomicBool>,
 }
@@ -118,6 +119,7 @@ impl ProcmondMonitorCollector {
             AnalysisChainCoordinator::new(config.base_config.analysis_config.clone());
 
         // Create event bus if event-driven architecture is enabled
+        // Note: LocalEventBus is ready to use immediately after new() - no start() method required
         let event_bus = if config.base_config.enable_event_driven {
             let bus_config = collector_core::EventBusConfig::default();
             let local_bus = LocalEventBus::new(bus_config);
@@ -142,7 +144,8 @@ impl ProcmondMonitorCollector {
             event_bus,
             stats: Arc::new(MonitorCollectorStats::default()),
             backpressure_semaphore,
-            task_handles: Arc::new(Mutex::new(Vec::new())),
+            consecutive_backpressure_timeouts: Arc::new(AtomicUsize::new(0)),
+            circuit_breaker_until: Arc::new(std::sync::Mutex::new(None)),
             shutdown_signal: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -246,14 +249,94 @@ impl ProcmondMonitorCollector {
         event: CollectionEvent,
         shutdown_signal: &Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
-        // Acquire backpressure permit with timeout
-        let permit = timeout(
-            Duration::from_secs(5),
-            self.backpressure_semaphore.acquire(),
-        )
-        .await
-        .with_context(|| "Backpressure timeout while acquiring permit")?
-        .with_context(|| "Failed to acquire backpressure permit")?;
+        const CIRCUIT_BREAKER_THRESHOLD: usize = 5;
+        const CIRCUIT_BREAKER_COOLDOWN_SECS: u64 = 10;
+
+        // Check circuit breaker state
+        {
+            let cooldown_guard = self.circuit_breaker_until.lock().unwrap();
+            if let Some(cooldown_until) = *cooldown_guard {
+                if Instant::now() < cooldown_until {
+                    // Circuit breaker is active, increment backpressure metric and return error
+                    self.stats
+                        .backpressure_events
+                        .fetch_add(1, Ordering::Relaxed);
+                    warn!(
+                        "Circuit breaker active, dropping event (cooldown until {:?})",
+                        cooldown_until
+                    );
+                    return Err(anyhow::anyhow!("Circuit breaker active, event dropped"));
+                } else {
+                    // Cooldown expired, reset circuit breaker
+                    drop(cooldown_guard);
+                    let mut guard = self.circuit_breaker_until.lock().unwrap();
+                    *guard = None;
+                    self.consecutive_backpressure_timeouts
+                        .store(0, Ordering::Relaxed);
+                }
+            }
+        }
+
+        // Try non-blocking acquire first
+        let permit = match self.backpressure_semaphore.try_acquire() {
+            Ok(permit) => {
+                // Successfully acquired, reset consecutive timeout counter
+                self.consecutive_backpressure_timeouts
+                    .store(0, Ordering::Relaxed);
+                permit
+            }
+            Err(_) => {
+                // No permit available, try blocking acquire with timeout
+                match timeout(
+                    Duration::from_secs(5),
+                    self.backpressure_semaphore.acquire(),
+                )
+                .await
+                {
+                    Ok(Ok(permit)) => {
+                        // Successfully acquired after waiting, reset counter
+                        self.consecutive_backpressure_timeouts
+                            .store(0, Ordering::Relaxed);
+                        permit
+                    }
+                    Ok(Err(_)) => {
+                        // Semaphore closed
+                        return Err(anyhow::anyhow!("Backpressure semaphore closed"));
+                    }
+                    Err(_) => {
+                        // Timeout acquiring permit
+                        let consecutive = self
+                            .consecutive_backpressure_timeouts
+                            .fetch_add(1, Ordering::Relaxed)
+                            + 1;
+
+                        self.stats
+                            .backpressure_events
+                            .fetch_add(1, Ordering::Relaxed);
+                        warn!(
+                            consecutive_timeouts = consecutive,
+                            "Backpressure timeout while acquiring permit"
+                        );
+
+                        // Activate circuit breaker if threshold reached
+                        if consecutive >= CIRCUIT_BREAKER_THRESHOLD {
+                            let cooldown_until =
+                                Instant::now() + Duration::from_secs(CIRCUIT_BREAKER_COOLDOWN_SECS);
+                            let mut guard = self.circuit_breaker_until.lock().unwrap();
+                            *guard = Some(cooldown_until);
+                            warn!(
+                                cooldown_seconds = CIRCUIT_BREAKER_COOLDOWN_SECS,
+                                "Circuit breaker activated due to consecutive backpressure timeouts"
+                            );
+                        }
+
+                        return Err(anyhow::anyhow!(
+                            "Backpressure timeout while acquiring permit"
+                        ));
+                    }
+                }
+            }
+        };
 
         // Update in-flight counter
         self.stats.events_in_flight.fetch_add(1, Ordering::Relaxed);
@@ -494,6 +577,7 @@ mod tests {
         assert_eq!(stats.collection_errors, 0);
         assert_eq!(stats.trigger_errors, 0);
         assert_eq!(stats.analysis_errors, 0);
+        assert_eq!(stats.backpressure_events, 0);
     }
 
     #[test]

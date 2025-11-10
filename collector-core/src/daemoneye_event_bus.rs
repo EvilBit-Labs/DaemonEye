@@ -7,6 +7,7 @@
 use crate::{
     event::CollectionEvent,
     event_bus::{BusEvent, EventBus, EventBusConfig, EventBusStatistics, EventSubscription},
+    source::SourceCaps as CollectorSourceCaps,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -20,8 +21,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
-use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, error, info};
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Comprehensive metrics for DaemonEye EventBus monitoring and observability.
@@ -180,8 +181,6 @@ pub struct DaemoneyeEventBus {
     broker: Arc<DaemoneyeBroker>,
     /// Start time for uptime calculation
     start_time: Instant,
-    /// Subscriber mapping for compatibility
-    subscriber_mapping: Arc<RwLock<HashMap<String, Uuid>>>,
 }
 
 impl DaemoneyeEventBus {
@@ -229,7 +228,6 @@ impl DaemoneyeEventBus {
             inner: Arc::new(Mutex::new(event_bus_impl)),
             broker: broker_ref,
             start_time: Instant::now(),
-            subscriber_mapping: Arc::new(RwLock::new(HashMap::new())),
         };
 
         info!("DaemoneyeEventBus created successfully");
@@ -263,7 +261,6 @@ impl DaemoneyeEventBus {
             inner: Arc::new(Mutex::new(event_bus_impl)),
             broker: broker_ref,
             start_time: Instant::now(),
-            subscriber_mapping: Arc::new(RwLock::new(HashMap::new())),
         };
 
         info!("DaemoneyeEventBus created from existing broker");
@@ -401,8 +398,7 @@ impl DaemoneyeEventBus {
     fn convert_subscription(
         subscription: &crate::event_bus::EventSubscription,
     ) -> daemoneye_eventbus::EventSubscription {
-        // Accept all event types by default to maximize compatibility with broker routing
-        let event_types: Vec<String> = Vec::new();
+        let event_types = Self::capability_event_types(subscription.capabilities);
 
         daemoneye_eventbus::EventSubscription {
             subscriber_id: subscription.subscriber_id.clone(),
@@ -441,6 +437,25 @@ impl DaemoneyeEventBus {
             topic_patterns: subscription.topic_patterns.clone(),
             enable_wildcards: subscription.enable_wildcards,
         }
+    }
+
+    fn capability_event_types(capabilities: CollectorSourceCaps) -> Vec<String> {
+        let mut event_types = Vec::with_capacity(4);
+
+        if capabilities.contains(CollectorSourceCaps::PROCESS) {
+            event_types.push("process".to_string());
+        }
+        if capabilities.contains(CollectorSourceCaps::NETWORK) {
+            event_types.push("network".to_string());
+        }
+        if capabilities.contains(CollectorSourceCaps::FILESYSTEM) {
+            event_types.push("filesystem".to_string());
+        }
+        if capabilities.contains(CollectorSourceCaps::PERFORMANCE) {
+            event_types.push("performance".to_string());
+        }
+
+        event_types
     }
 
     /// Convert daemoneye-eventbus BusEvent to collector-core BusEvent.
@@ -504,23 +519,53 @@ impl DaemoneyeEventBus {
             }
             daemoneye_eventbus::CollectionEvent::TriggerRequest(trigger_request) => {
                 // Try to reconstruct the original trigger request from payload
-                if let Ok(req) =
-                    serde_json::from_slice::<crate::event::TriggerRequest>(&trigger_request.payload)
-                {
-                    crate::event::CollectionEvent::TriggerRequest(req)
-                } else {
-                    // Fallback to minimal mapping if payload is unavailable
-                    crate::event::CollectionEvent::TriggerRequest(crate::event::TriggerRequest {
-                        trigger_id: trigger_request.request_id.clone(),
-                        target_collector: trigger_request.collector_type.clone(),
-                        analysis_type: crate::event::AnalysisType::YaraScan, // Default
-                        priority: crate::event::TriggerPriority::Normal,
-                        target_pid: None,
-                        target_path: None,
-                        correlation_id: "".to_string(),
-                        metadata: std::collections::HashMap::new(),
-                        timestamp: std::time::SystemTime::now(),
-                    })
+                let req_result = serde_json::from_slice::<crate::event::TriggerRequest>(
+                    &trigger_request.payload,
+                );
+                match req_result {
+                    Ok(req) => {
+                        // Validate the deserialized request
+                        if let Err(e) = req.validate() {
+                            warn!(
+                                error = %e,
+                                "Deserialized trigger request failed validation, using fallback"
+                            );
+                            // Fallback to minimal mapping if validation failed
+                            crate::event::CollectionEvent::TriggerRequest(
+                                crate::event::TriggerRequest {
+                                    trigger_id: trigger_request.request_id.clone(),
+                                    target_collector: trigger_request.collector_type.clone(),
+                                    analysis_type: crate::event::AnalysisType::YaraScan, // Default
+                                    priority: crate::event::TriggerPriority::Normal,
+                                    target_pid: None,
+                                    target_path: None,
+                                    correlation_id: "".to_string(),
+                                    metadata: std::collections::HashMap::new(),
+                                    timestamp: std::time::SystemTime::now(),
+                                },
+                            )
+                        } else {
+                            // Valid request, use it
+                            crate::event::CollectionEvent::TriggerRequest(req)
+                        }
+                    }
+                    Err(_) => {
+                        // Deserialization failed, use fallback
+                        // Note: Fallback request may not pass validation (empty correlation_id, no target)
+                        crate::event::CollectionEvent::TriggerRequest(
+                            crate::event::TriggerRequest {
+                                trigger_id: trigger_request.request_id.clone(),
+                                target_collector: trigger_request.collector_type.clone(),
+                                analysis_type: crate::event::AnalysisType::YaraScan, // Default
+                                priority: crate::event::TriggerPriority::Normal,
+                                target_pid: None,
+                                target_path: None,
+                                correlation_id: "".to_string(),
+                                metadata: std::collections::HashMap::new(),
+                                timestamp: std::time::SystemTime::now(),
+                            },
+                        )
+                    }
                 }
             }
         };
@@ -898,12 +943,6 @@ impl EventBus for DaemoneyeEventBus {
         // Create a new channel for collector-core compatibility
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
-        // Store subscriber mapping
-        {
-            let mut mapping = self.subscriber_mapping.write().await;
-            mapping.insert(subscriber_id.clone(), Uuid::new_v4());
-        }
-
         // Spawn a task to convert and forward events
         let subscriber_id_clone = subscriber_id.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
@@ -945,12 +984,6 @@ impl EventBus for DaemoneyeEventBus {
             .unsubscribe(subscriber_id)
             .await
             .context("Failed to unsubscribe from daemoneye-eventbus")?;
-
-        // Remove from subscriber mapping
-        {
-            let mut mapping = self.subscriber_mapping.write().await;
-            mapping.remove(subscriber_id);
-        }
 
         info!(
             subscriber_id = %subscriber_id,
@@ -994,10 +1027,30 @@ mod tests {
     use super::*;
     use crate::{
         event::{AnalysisType, ProcessEvent, TriggerPriority, TriggerRequest},
+        event_bus::EventSubscription,
         source::SourceCaps,
     };
     use std::time::SystemTime;
     use tokio::time::{Duration, timeout};
+
+    #[test]
+    fn convert_subscription_populates_event_types() {
+        let subscription = EventSubscription {
+            subscriber_id: "test".to_string(),
+            capabilities: SourceCaps::PROCESS | SourceCaps::NETWORK,
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: None,
+            enable_wildcards: true,
+            topic_filter: None,
+        };
+
+        let converted = DaemoneyeEventBus::convert_subscription(&subscription);
+        assert_eq!(
+            converted.capabilities.event_types,
+            vec!["process".to_string(), "network".to_string()]
+        );
+    }
 
     #[tokio::test]
     async fn test_daemoneye_event_bus_creation() {

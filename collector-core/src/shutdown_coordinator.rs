@@ -230,7 +230,10 @@ impl ShutdownCoordinator {
 
         // Register shutdown state
         {
-            let mut states = self.shutdown_states.write().unwrap();
+            let mut states = self
+                .shutdown_states
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             states.insert(request.collector_id.clone(), shutdown_state);
         }
 
@@ -252,7 +255,10 @@ impl ShutdownCoordinator {
 
         let duration = start_time.elapsed();
         let final_phase = {
-            let states = self.shutdown_states.read().unwrap();
+            let states = self
+                .shutdown_states
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
             states
                 .get(&request.collector_id)
                 .map(|s| s.phase.clone())
@@ -326,7 +332,10 @@ impl ShutdownCoordinator {
 
         // Get list of active collectors
         let collector_ids: Vec<String> = {
-            let states = self.shutdown_states.read().unwrap();
+            let states = self
+                .shutdown_states
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
             states.keys().cloned().collect()
         };
 
@@ -440,7 +449,10 @@ impl ShutdownCoordinator {
         new_phase: ShutdownPhase,
     ) -> Result<()> {
         let old_phase = {
-            let mut states = self.shutdown_states.write().unwrap();
+            let mut states = self
+                .shutdown_states
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(state) = states.get_mut(collector_id) {
                 let old_phase = state.phase.clone();
                 state.phase = new_phase.clone();
@@ -486,7 +498,10 @@ impl ShutdownCoordinator {
 
         // Mark cleanup as completed
         {
-            let mut states = self.shutdown_states.write().unwrap();
+            let mut states = self
+                .shutdown_states
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(state) = states.get_mut(collector_id) {
                 state.cleanup_completed = true;
             }
@@ -623,7 +638,10 @@ impl ShutdownCoordinator {
 
     /// Get shutdown status for a collector
     pub async fn get_shutdown_status(&self, collector_id: &str) -> Option<ShutdownPhase> {
-        let states = self.shutdown_states.read().unwrap();
+        let states = self
+            .shutdown_states
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         states.get(collector_id).map(|s| s.phase.clone())
     }
 

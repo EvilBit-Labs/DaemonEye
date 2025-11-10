@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
+use tokio::time::{Duration as TokioDuration, timeout};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -194,8 +195,13 @@ impl CollectorRpcServiceManager {
         // Spawn background task to handle RPC requests
         let handle = tokio::spawn(async move {
             while let Some(message) = message_receiver.recv().await {
-                // Skip response messages
-                if message.topic.contains("rpc.response") {
+                // Skip response messages - parse topic to check for rpc.response segment
+                // Check if topic contains "rpc.response" as adjacent dot-separated segments
+                let topic_parts: Vec<&str> = message.topic.split('.').collect();
+                let is_rpc_response = topic_parts
+                    .windows(2)
+                    .any(|window| window[0] == "rpc" && window[1] == "response");
+                if is_rpc_response {
                     continue;
                 }
 
@@ -249,17 +255,70 @@ impl CollectorRpcServiceManager {
                                 shutdown_signal.store(true, std::sync::atomic::Ordering::Relaxed);
                                 info!("Stop operation triggered via RPC");
                                 let start_time = SystemTime::now();
+
+                                // Wait for shutdown confirmation with bounded timeout
+                                // Check if runtime becomes unavailable (indicating shutdown progress)
+                                let shutdown_timeout = TokioDuration::from_secs(5);
+                                let runtime_clone = Arc::clone(&runtime_ref);
+
+                                let shutdown_confirmed = timeout(shutdown_timeout, async {
+                                    // Poll every 100ms to check if runtime is still available
+                                    // If runtime becomes None, shutdown has likely completed
+                                    let mut check_count = 0;
+                                    let max_checks = 50; // 5 seconds / 100ms
+
+                                    while check_count < max_checks {
+                                        tokio::time::sleep(TokioDuration::from_millis(100)).await;
+                                        let runtime_guard = runtime_clone.read().await;
+                                        if runtime_guard.is_none() {
+                                            // Runtime has been dropped, shutdown likely completed
+                                            return true;
+                                        }
+                                        // Check if shutdown signal is still set (it should be)
+                                        if !shutdown_signal
+                                            .load(std::sync::atomic::Ordering::Relaxed)
+                                        {
+                                            // Shutdown signal was cleared, something unexpected happened
+                                            return false;
+                                        }
+                                        check_count += 1;
+                                    }
+                                    false // Timeout - couldn't confirm shutdown completion
+                                })
+                                .await;
+
+                                let (status, error_details) = match shutdown_confirmed {
+                                    Ok(true) => {
+                                        // Shutdown confirmed
+                                        (daemoneye_eventbus::rpc::RpcStatus::Success, None)
+                                    }
+                                    Ok(false) | Err(_) => {
+                                        // Timeout or couldn't confirm - return InProgress status
+                                        // Clients should poll health or listen for completion events
+                                        (
+                                            daemoneye_eventbus::rpc::RpcStatus::InProgress,
+                                            Some(daemoneye_eventbus::rpc::RpcError {
+                                                code: "SHUTDOWN_INITIATED".to_string(),
+                                                message: "Shutdown signal set, but shutdown completion not confirmed within timeout. Client should poll health status or listen for completion events.".to_string(),
+                                                context: std::collections::HashMap::new(),
+                                                category: daemoneye_eventbus::rpc::ErrorCategory::Internal,
+                                            }),
+                                        )
+                                    }
+                                };
+
+                                let execution_time = start_time.elapsed().unwrap_or_default();
                                 daemoneye_eventbus::rpc::RpcResponse {
                                     request_id: request.request_id.clone(),
                                     service_id: config_collector_id.clone(),
                                     operation: RpcOperation::Stop,
-                                    status: daemoneye_eventbus::rpc::RpcStatus::Success,
+                                    status,
                                     payload: None,
-                                    error_details: None,
+                                    error_details,
                                     timestamp: start_time,
-                                    execution_time_ms: 0,
+                                    execution_time_ms: execution_time.as_millis() as u64,
                                     queue_time_ms: Some(0),
-                                    total_time_ms: 0,
+                                    total_time_ms: execution_time.as_millis() as u64,
                                     correlation_metadata: RpcCorrelationMetadata::default(),
                                 }
                             }
@@ -316,20 +375,79 @@ impl CollectorRpcServiceManager {
                 let response_topic = format!("control.rpc.response.{}", request.client_id);
 
                 // Serialize and publish response
-                let payload =
-                    match bincode::serde::encode_to_vec(&response, bincode::config::standard()) {
-                        Ok(data) => data,
-                        Err(e) => {
-                            error!("Failed to serialize RPC response: {}", e);
-                            continue;
+                let payload = match bincode::serde::encode_to_vec(
+                    &response,
+                    bincode::config::standard(),
+                ) {
+                    Ok(data) => data,
+                    Err(serialization_error) => {
+                        // Build minimal error response containing original request info and serialization error
+                        error!(
+                            request_id = %request.request_id,
+                            collector_id = %config_collector_id,
+                            operation = ?request.operation,
+                            error = %serialization_error,
+                            "Failed to serialize RPC response - attempting to send error response"
+                        );
+
+                        // Increment error metric (via logging - metrics system should pick this up)
+                        // Note: If a metrics system is available, increment a counter here
+
+                        let error_response = daemoneye_eventbus::rpc::RpcResponse {
+                            request_id: request.request_id.clone(),
+                            service_id: config_collector_id.clone(),
+                            operation: request.operation,
+                            status: daemoneye_eventbus::rpc::RpcStatus::Error,
+                            payload: None,
+                            error_details: Some(daemoneye_eventbus::rpc::RpcError {
+                                code: "SERIALIZATION_ERROR".to_string(),
+                                message: format!(
+                                    "Failed to serialize RPC response for request {}: {}",
+                                    request.request_id, serialization_error
+                                ),
+                                context: std::collections::HashMap::new(),
+                                category: daemoneye_eventbus::rpc::ErrorCategory::Internal,
+                            }),
+                            timestamp: SystemTime::now(),
+                            execution_time_ms: 0,
+                            queue_time_ms: Some(0),
+                            total_time_ms: 0,
+                            correlation_metadata: RpcCorrelationMetadata::default(),
+                        };
+
+                        // Attempt to serialize the error response
+                        match bincode::serde::encode_to_vec(
+                            &error_response,
+                            bincode::config::standard(),
+                        ) {
+                            Ok(error_payload) => error_payload,
+                            Err(error_serialization_error) => {
+                                // Even error response serialization failed - log and continue
+                                error!(
+                                    request_id = %request.request_id,
+                                    collector_id = %config_collector_id,
+                                    operation = ?request.operation,
+                                    original_error = %serialization_error,
+                                    error_response_error = %error_serialization_error,
+                                    "Failed to serialize error response - client will timeout"
+                                );
+                                // Cannot send response, client will timeout
+                                continue;
+                            }
                         }
-                    };
+                    }
+                };
 
                 if let Err(e) = broker_clone
                     .publish(&response_topic, &response.request_id, payload)
                     .await
                 {
-                    error!("Failed to publish RPC response: {}", e);
+                    error!(
+                        request_id = %response.request_id,
+                        topic = %response_topic,
+                        error = %e,
+                        "Failed to publish RPC response"
+                    );
                 }
             }
         });
@@ -592,5 +710,43 @@ impl RegistrationProvider for CollectorRegistrationProvider {
 
         // Heartbeat update is a no-op for this provider
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Helper function to check if a topic should be skipped (matches the logic in the handler)
+    fn is_rpc_response_topic(topic: &str) -> bool {
+        let topic_parts: Vec<&str> = topic.split('.').collect();
+        topic_parts
+            .windows(2)
+            .any(|window| window[0] == "rpc" && window[1] == "response")
+    }
+
+    #[test]
+    fn test_rpc_response_topic_parsing() {
+        // Topics that should be skipped (contain "rpc.response" as adjacent segments)
+        assert!(is_rpc_response_topic("control.rpc.response.client123"));
+        assert!(is_rpc_response_topic("rpc.response"));
+        assert!(is_rpc_response_topic("control.rpc.response"));
+        assert!(is_rpc_response_topic("a.b.rpc.response.c.d"));
+        assert!(is_rpc_response_topic("rpc.response.client"));
+
+        // Topics that should NOT be skipped (don't have "rpc.response" as adjacent segments)
+        assert!(!is_rpc_response_topic("control.rpc.other.response"));
+        assert!(!is_rpc_response_topic("control.response.rpc"));
+        assert!(!is_rpc_response_topic("rpc.other.response"));
+        assert!(!is_rpc_response_topic("response.rpc"));
+        assert!(!is_rpc_response_topic("control.collector.collector"));
+        assert!(!is_rpc_response_topic("rpc"));
+        assert!(!is_rpc_response_topic("response"));
+        assert!(!is_rpc_response_topic("rpc.other"));
+        assert!(!is_rpc_response_topic("other.response"));
+
+        // Edge cases
+        assert!(!is_rpc_response_topic(""));
+        assert!(!is_rpc_response_topic("."));
+        assert!(is_rpc_response_topic("rpc.response."));
+        assert!(is_rpc_response_topic(".rpc.response"));
     }
 }

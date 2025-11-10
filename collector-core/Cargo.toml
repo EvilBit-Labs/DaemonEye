@@ -40,6 +40,9 @@ crossbeam = { workspace = true }
 # Event bus integration
 daemoneye-eventbus = { workspace = true }
 
+# Hostname validation (RFC 1123)
+hostname-validator = { workspace = true }
+
 # IPC integration
 daemoneye-lib = { workspace = true }
 futures = { workspace = true }

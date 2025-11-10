@@ -77,7 +77,7 @@ pub enum PatternSegment {
 pub enum TopicError {
     #[error("Invalid topic format: {0}")]
     InvalidFormat(String),
-    #[error("Topic too deep: {0} levels (max 4)")]
+    #[error("Topic too deep: {0} levels (max 5)")]
     TooDeep(usize),
     #[error("Empty topic segment at position {0}")]
     EmptySegment(usize),
@@ -643,7 +643,7 @@ mod tests {
         assert!(Topic::new("events..lifecycle").is_err());
         assert!(Topic::new("events.Process.lifecycle").is_err()); // uppercase
         assert!(Topic::new("system.reserved").is_err()); // reserved prefix
-        assert!(Topic::new("events.process.lifecycle.too.deep").is_err()); // too deep
+        assert!(Topic::new("events.process.lifecycle.too.deep.extra").is_err()); // too deep (6 segments > 5 max)
     }
 
     #[test]

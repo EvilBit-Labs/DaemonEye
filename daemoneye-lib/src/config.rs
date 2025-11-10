@@ -16,6 +16,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{info, warn};
+use unidirs::Directories;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 /// Configuration loading and validation errors.
 #[derive(Debug, Error)]
@@ -212,9 +216,27 @@ pub struct ControlTopicsConfig {
 
 // Default implementation is now derived
 
-/// Default configuration directory for collector configs
+/// Default configuration directory for collector configs.
+///
+/// Returns system-wide configuration directory paths for system-level components
+/// (daemoneye-agent and collectors) using `unidirs::ServiceDirs`. User-level components
+/// (daemoneye-cli) should use user-specific directories instead.
+///
+/// Uses platform-aware system-wide directories via `unidirs::ServiceDirs`:
+/// - **Linux**: `/var/lib/evilbitlabs/daemoneye/configs` (via `ServiceDirs`)
+/// - **macOS**: `/Library/Application Support/evilbitlabs/daemoneye/configs` (via `ServiceDirs`)
+/// - **Windows**: `C:\ProgramData\evilbitlabs\daemoneye\configs` (via `ServiceDirs`)
+/// - **Other Unix**: Platform-appropriate system directory (via `ServiceDirs`)
 fn default_config_directory() -> PathBuf {
-    PathBuf::from("/var/lib/daemoneye/configs")
+    // Use ServiceDirs for system-wide directories (organization, application)
+    let service_dirs = unidirs::ServiceDirs::new("evilbitlabs", "daemoneye");
+
+    // Convert Utf8Path to PathBuf and append "configs"
+    service_dirs
+        .config_dir()
+        .to_path_buf()
+        .join("configs")
+        .into()
 }
 
 impl Default for AppConfig {
@@ -281,36 +303,7 @@ impl Default for LoggingConfig {
 
 impl Default for BrokerConfig {
     fn default() -> Self {
-        // Use platform-aware runtime directory instead of /tmp
-        let socket_path = std::env::var("XDG_RUNTIME_DIR").map_or_else(
-            |_| {
-                #[cfg(unix)]
-                {
-                    if std::path::Path::new("/run/daemoneye").exists() {
-                        "/run/daemoneye/daemoneye-eventbus.sock".to_owned()
-                    } else {
-                        "/var/run/daemoneye/daemoneye-eventbus.sock".to_owned()
-                    }
-                }
-                #[cfg(windows)]
-                {
-                    r"\\.\pipe\daemoneye-eventbus".to_owned()
-                }
-                #[cfg(all(not(unix), not(windows)))]
-                {
-                    // Just define the path without creating directories
-                    let base_dir = dirs::cache_dir()
-                        .or_else(|| dirs::data_local_dir())
-                        .unwrap_or_else(|| std::env::temp_dir());
-                    base_dir
-                        .join("daemoneye")
-                        .join("daemoneye-eventbus.sock")
-                        .display()
-                        .to_string()
-                }
-            },
-            |runtime_dir| format!("{runtime_dir}/daemoneye-eventbus.sock"),
-        );
+        let socket_path = default_socket_path();
 
         Self {
             socket_path,
@@ -327,9 +320,85 @@ impl Default for BrokerConfig {
     }
 }
 
+/// Determines the default socket path with platform-specific fallbacks.
+///
+/// Uses `unidirs::ServiceDirs` to access the system-wide data directory for
+/// system-level components (daemoneye-agent and collectors). The socket is placed
+/// in the data directory rather than runtime directory for persistence across
+/// system restarts.
+///
+/// Platform-specific paths (via `ServiceDirs` `data_dir`):
+/// - **Linux**: `/var/lib/evilbitlabs/daemoneye/daemoneye-eventbus.sock`
+/// - **macOS**: `/Library/Application Support/evilbitlabs/daemoneye/daemoneye-eventbus.sock`
+/// - **Windows**: Uses named pipes (`\\.\pipe\daemoneye-eventbus`) which don't
+///   require directory paths
+///
+/// The function validates path length against Unix domain socket limits
+/// (108 bytes including null terminator) and falls back to `/tmp/de.sock` if the
+/// computed path exceeds the limit.
+///
+/// # Platform Limitations
+///
+/// - **Unix**: Paths must be ≤ 107 characters (108 including null terminator)
+/// - **Windows**: Named pipes are used (no path length concerns)
+fn default_socket_path() -> String {
+    #[cfg(unix)]
+    {
+        // Unix domain sockets have a 108-byte limit (including null terminator)
+        // We check against 107 to leave room for the null terminator
+        const UNIX_SOCKET_MAX_LEN: usize = 107;
+
+        // Use ServiceDirs for system-wide data directory
+        let service_dirs = unidirs::ServiceDirs::new("evilbitlabs", "daemoneye");
+        let data_dir = service_dirs.data_dir();
+
+        // Build socket path
+        let socket_name = "daemoneye-eventbus.sock";
+        let socket_path = data_dir.join(socket_name);
+        let socket_path_str = socket_path.to_string();
+
+        if socket_path_str.len() <= UNIX_SOCKET_MAX_LEN {
+            socket_path_str
+        } else {
+            // Fallback to shorter path in /tmp
+            // Use a very short filename to ensure we stay under the limit
+            let short_path = "/tmp/de.sock".to_owned();
+            warn!(
+                original_path = %socket_path_str,
+                fallback_path = %short_path,
+                "Socket path exceeds Unix domain socket length limit ({} bytes), using fallback",
+                UNIX_SOCKET_MAX_LEN + 1
+            );
+            short_path
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        // Windows named pipes don't have the same path length restrictions
+        r"\\.\pipe\daemoneye-eventbus".to_owned()
+    }
+
+    #[cfg(all(not(unix), not(windows)))]
+    {
+        // For non-Unix, non-Windows platforms, document the limitation
+        // In practice, these platforms may need TCP loopback as a transport
+        // For now, we use a simple path that may not work on all platforms
+        warn!(
+            "Unsupported platform detected. Socket path may not function correctly. \
+            Consider using TCP loopback (127.0.0.1) as an alternative transport."
+        );
+        // Use a minimal path that's unlikely to cause issues
+        "/tmp/daemoneye-eventbus.sock".to_owned()
+    }
+}
+
 impl BrokerConfig {
-    /// Ensures the directory for the socket path exists.
+    /// Ensures the directory for the socket path exists with proper permissions.
+    ///
     /// This function performs filesystem operations and should be called during broker startup.
+    /// On Unix systems, it ensures the directory is owned by the current user and has
+    /// restrictive permissions (0700) to prevent unauthorized access.
     ///
     /// # Returns
     ///
@@ -337,7 +406,7 @@ impl BrokerConfig {
     ///
     /// # Errors
     ///
-    /// Returns an error if directory creation fails.
+    /// Returns an error if directory creation or permission setting fails.
     pub fn ensure_socket_directory(&self) -> anyhow::Result<std::path::PathBuf> {
         let socket_path = std::path::Path::new(&self.socket_path);
 
@@ -368,6 +437,19 @@ impl BrokerConfig {
                     "Created socket directory"
                 );
             }
+
+            // Set restrictive permissions (owner read/write/execute only)
+            #[cfg(unix)]
+            {
+                use std::fs;
+                let perms = fs::Permissions::from_mode(0o700);
+                fs::set_permissions(parent_dir, perms).with_context(|| {
+                    format!(
+                        "Failed to set permissions on socket directory: {}",
+                        parent_dir.display()
+                    )
+                })?;
+            };
 
             Ok(socket_path.to_path_buf())
         }

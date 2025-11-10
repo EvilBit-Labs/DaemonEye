@@ -7,11 +7,14 @@ use daemoneye_eventbus::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_result_aggregator_creation() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test-result-agg-create.sock");
     let broker = Arc::new(
-        DaemoneyeBroker::new("/tmp/test-result-agg-create.sock")
+        DaemoneyeBroker::new(socket_path.to_string_lossy().as_ref())
             .await
             .unwrap(),
     );
@@ -22,12 +25,15 @@ async fn test_result_aggregator_creation() {
     assert_eq!(stats.results_collected, 0);
     assert_eq!(stats.results_pending, 0);
     assert_eq!(stats.correlations_active, 0);
+    drop(temp_dir);
 }
 
 #[tokio::test]
 async fn test_result_collection() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test-result-collect.sock");
     let broker = Arc::new(
-        DaemoneyeBroker::new("/tmp/test-result-collect.sock")
+        DaemoneyeBroker::new(socket_path.to_string_lossy().as_ref())
             .await
             .unwrap(),
     );
@@ -55,12 +61,15 @@ async fn test_result_collection() {
     let stats = aggregator.get_stats().await;
     assert_eq!(stats.results_collected, 1);
     assert_eq!(stats.results_pending, 1);
+    drop(temp_dir);
 }
 
 #[tokio::test]
 async fn test_result_deduplication() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test-result-dedup.sock");
     let broker = Arc::new(
-        DaemoneyeBroker::new("/tmp/test-result-dedup.sock")
+        DaemoneyeBroker::new(socket_path.to_string_lossy().as_ref())
             .await
             .unwrap(),
     );
@@ -101,12 +110,15 @@ async fn test_result_deduplication() {
         stats.results_pending, 1,
         "Only one result should be pending"
     );
+    drop(temp_dir);
 }
 
 #[tokio::test]
 async fn test_collector_health_tracking() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test-health-track.sock");
     let broker = Arc::new(
-        DaemoneyeBroker::new("/tmp/test-health-track.sock")
+        DaemoneyeBroker::new(socket_path.to_string_lossy().as_ref())
             .await
             .unwrap(),
     );
@@ -141,12 +153,15 @@ async fn test_collector_health_tracking() {
         daemoneye_eventbus::CollectorHealth::Healthy,
         "Collector should be healthy after successful result"
     );
+    drop(temp_dir);
 }
 
 #[tokio::test]
 async fn test_backpressure_handling() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test-backpressure.sock");
     let broker = Arc::new(
-        DaemoneyeBroker::new("/tmp/test-backpressure.sock")
+        DaemoneyeBroker::new(socket_path.to_string_lossy().as_ref())
             .await
             .unwrap(),
     );
@@ -193,12 +208,15 @@ async fn test_backpressure_handling() {
         stats.backpressure_events > 0,
         "Backpressure should be triggered"
     );
+    drop(temp_dir);
 }
 
 #[tokio::test]
 async fn test_result_streaming() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test-result-stream.sock");
     let broker = Arc::new(
-        DaemoneyeBroker::new("/tmp/test-result-stream.sock")
+        DaemoneyeBroker::new(socket_path.to_string_lossy().as_ref())
             .await
             .unwrap(),
     );
@@ -250,12 +268,15 @@ async fn test_result_streaming() {
             // This is acceptable for this test
         }
     }
+    drop(temp_dir);
 }
 
 #[tokio::test]
 async fn test_correlation_tracking() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test-correlation.sock");
     let broker = Arc::new(
-        DaemoneyeBroker::new("/tmp/test-correlation.sock")
+        DaemoneyeBroker::new(socket_path.to_string_lossy().as_ref())
             .await
             .unwrap(),
     );
@@ -309,12 +330,15 @@ async fn test_correlation_tracking() {
     let stats = aggregator.get_stats().await;
     assert_eq!(stats.results_collected, 2);
     assert_eq!(stats.results_pending, 2);
+    drop(temp_dir);
 }
 
 #[tokio::test]
 async fn test_aggregator_statistics() {
+    let temp_dir = TempDir::new().unwrap();
+    let socket_path = temp_dir.path().join("test-agg-stats.sock");
     let broker = Arc::new(
-        DaemoneyeBroker::new("/tmp/test-agg-stats.sock")
+        DaemoneyeBroker::new(socket_path.to_string_lossy().as_ref())
             .await
             .unwrap(),
     );
@@ -356,4 +380,5 @@ async fn test_aggregator_statistics() {
     let stats = aggregator.get_stats().await;
     assert_eq!(stats.results_collected, 1);
     assert_eq!(stats.results_pending, 1);
+    drop(temp_dir);
 }

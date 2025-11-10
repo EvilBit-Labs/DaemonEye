@@ -173,7 +173,7 @@ async fn test_concurrent_source_registration() {
     let mut collector = Collector::new(config);
 
     // Create sources with different capabilities
-    let sources = vec![
+    let sources = Vec::from([
         LifecycleTestSource::new(
             "process-source",
             SourceCaps::PROCESS | SourceCaps::REALTIME,
@@ -190,7 +190,7 @@ async fn test_concurrent_source_registration() {
             20,
         ),
         LifecycleTestSource::new("performance-source", SourceCaps::PERFORMANCE, 25),
-    ];
+    ]);
 
     // Register all sources
     for source in sources.iter() {
@@ -230,7 +230,7 @@ async fn test_concurrent_lifecycle_management() {
     let source3 = LifecycleTestSource::new("slow-source", SourceCaps::FILESYSTEM, 12)
         .with_delays(Duration::from_millis(50), Duration::from_millis(20));
 
-    let sources = vec![source1.clone(), source2.clone(), source3.clone()];
+    let sources = Vec::from([source1.clone(), source2.clone(), source3.clone()]);
 
     // Register sources
     for source in sources.iter() {
@@ -285,12 +285,12 @@ async fn test_source_failure_isolation() {
     let failing_stop_source =
         LifecycleTestSource::new("fail-stop", SourceCaps::PERFORMANCE, 10).with_stop_failure();
 
-    let sources = vec![
+    let sources = Vec::from([
         healthy_source1.clone(),
         failing_start_source.clone(),
         healthy_source2.clone(),
         failing_stop_source.clone(),
-    ];
+    ]);
 
     // Register all sources
     for source in sources.iter() {
@@ -351,7 +351,7 @@ async fn test_graceful_shutdown_coordination() {
     let source3 = LifecycleTestSource::new("long-runner-3", SourceCaps::FILESYSTEM, 1000)
         .with_delays(Duration::from_millis(5), Duration::from_millis(20));
 
-    let sources = vec![source1.clone(), source2.clone(), source3.clone()];
+    let sources = Vec::from([source1.clone(), source2.clone(), source3.clone()]);
 
     // Register sources
     for source in sources.iter() {
@@ -449,12 +449,12 @@ async fn test_concurrent_event_generation() {
     let mut collector = Collector::new(config);
 
     // Create sources that generate events at different rates
-    let sources = vec![
+    let sources = Vec::from([
         LifecycleTestSource::new("fast-generator", SourceCaps::PROCESS, 50),
         LifecycleTestSource::new("medium-generator", SourceCaps::NETWORK, 30),
         LifecycleTestSource::new("slow-generator", SourceCaps::FILESYSTEM, 20),
         LifecycleTestSource::new("burst-generator", SourceCaps::PERFORMANCE, 100),
-    ];
+    ]);
 
     let total_expected_events: usize = sources.iter().map(|s| s.events_to_send).sum();
 

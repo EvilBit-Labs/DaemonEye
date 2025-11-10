@@ -879,7 +879,7 @@ impl LinuxProcessCollector {
                     None
                 },
                 if memory > 0 {
-                    Some(memory * 1024)
+                    Some(memory.saturating_mul(1024))
                 } else {
                     None
                 },

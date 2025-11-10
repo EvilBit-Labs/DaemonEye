@@ -359,16 +359,42 @@ impl LoadBalancer {
     }
 
     /// Trigger failover for a collector
+    ///
+    /// # Invariant
+    ///
+    /// The selected failover collector is guaranteed to be different from the failed collector.
+    /// The failed collector is pre-filtered from available_collectors before selection.
     pub async fn trigger_failover(
         &self,
         failed_collector_id: &str,
         available_collectors: &[CollectorCapability],
         required_caps: SourceCaps,
     ) -> Result<FailoverEvent> {
-        // Select a failover collector
+        // Pre-filter available collectors to exclude the failed one
+        // This ensures the selected failover collector is not the failed collector
+        let filtered_collectors: Vec<CollectorCapability> = available_collectors
+            .iter()
+            .filter(|cap| cap.collector_id != failed_collector_id)
+            .cloned()
+            .collect();
+
+        if filtered_collectors.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No available collectors for failover (all collectors filtered out)"
+            ));
+        }
+
+        // Select a failover collector from the filtered list
         let failover_collector_id = self
-            .select_collector(required_caps, available_collectors)
+            .select_collector(required_caps, &filtered_collectors)
             .await?;
+
+        // Validate that the selected collector is not the failed one (defensive check)
+        if failover_collector_id == failed_collector_id {
+            return Err(anyhow::anyhow!(
+                "Selected failover collector matches failed collector (this should not happen)"
+            ));
+        }
 
         // Get current task count for redistribution
         let tasks_to_redistribute = {

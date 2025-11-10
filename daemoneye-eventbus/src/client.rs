@@ -186,7 +186,7 @@ impl EventBusClient {
                                             // Handle different message types
                                             match message.message_type {
                                                 crate::message::MessageType::Event => {
-                                                    // Process event message
+                                                    // Process event message (stats incremented in handle_event_message_internal)
                                                     if let Err(e) = Self::handle_event_message_internal(
                                                         &subscriptions,
                                                         &stats,
@@ -197,12 +197,27 @@ impl EventBusClient {
                                                     }
                                                 }
                                                 crate::message::MessageType::Control => {
+                                                    // Update statistics for control messages
+                                                    {
+                                                        let mut stats_guard = stats.lock().await;
+                                                        stats_guard.messages_received += 1;
+                                                    }
                                                     debug!("Received control message for client: {}", client_id);
                                                 }
                                                 crate::message::MessageType::Heartbeat => {
+                                                    // Update statistics for heartbeat messages
+                                                    {
+                                                        let mut stats_guard = stats.lock().await;
+                                                        stats_guard.messages_received += 1;
+                                                    }
                                                     debug!("Received heartbeat for client: {}", client_id);
                                                 }
                                                 crate::message::MessageType::Shutdown => {
+                                                    // Update statistics before handling shutdown (to count shutdown messages)
+                                                    {
+                                                        let mut stats_guard = stats.lock().await;
+                                                        stats_guard.messages_received += 1;
+                                                    }
                                                     info!("Received shutdown message for client: {}", client_id);
                                                     break;
                                                 }
@@ -465,6 +480,12 @@ impl EventBusClient {
         // Deserialize message
         let message = Message::deserialize(&message_data)?;
 
+        // Update statistics before handling message (to count shutdown messages)
+        {
+            let mut stats = self.stats.lock().await;
+            stats.messages_received += 1;
+        }
+
         // Handle different message types
         match message.message_type {
             MessageType::Event => {
@@ -480,12 +501,6 @@ impl EventBusClient {
                 info!("Received shutdown message");
                 return Err(EventBusError::transport("Server shutdown"));
             }
-        }
-
-        // Update statistics
-        {
-            let mut stats = self.stats.lock().await;
-            stats.messages_received += 1;
         }
 
         Ok(())

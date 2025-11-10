@@ -460,7 +460,7 @@ impl EnhancedMacOSCollector {
             .collect::<Vec<_>>();
 
         // Check if this is a system process that should be skipped
-        if self.base_config.skip_system_processes && self.is_system_process(&name, pid_u32) {
+        if self.base_config.skip_system_processes && self.is_system_process(pid_u32, process) {
             return Err(ProcessCollectionError::ProcessAccessDenied {
                 pid: pid_u32,
                 message: "System process skipped by configuration".to_string(),
@@ -500,7 +500,7 @@ impl EnhancedMacOSCollector {
 
         // Compute executable hash if requested
         let executable_hash = if self.base_config.compute_executable_hashes {
-            // TODO: Implement executable hashing (issue #40)
+            // TODO: Implement executable hashing - compute SHA-256 hash of executable file
             None
         } else {
             None
@@ -690,7 +690,26 @@ impl EnhancedMacOSCollector {
         }
     }
 
-    /// Checks if a process has a valid code signature using Security framework.
+    /// Checks if a process has a valid code signature using heuristic/path-based checks.
+    ///
+    /// # Note
+    ///
+    /// This is a **heuristic/path-based approximation** and does not perform actual
+    /// Security framework signature verification. It uses path patterns to infer likely
+    /// signing status (system processes and app bundles are typically signed).
+    ///
+    /// For true code signature verification, this would need to call Security framework
+    /// APIs (e.g., `SecStaticCodeCheckValidity`, `SecCodeCopySigningInformation`) to
+    /// inspect actual code signatures and certificates.
+    ///
+    /// # Arguments
+    ///
+    /// * `pid` - The process ID
+    /// * `process` - The sysinfo Process object
+    ///
+    /// # Returns
+    ///
+    /// Returns approximate code signing information based on path heuristics.
     fn check_code_signature(
         &self,
         pid: u32,
@@ -701,7 +720,7 @@ impl EnhancedMacOSCollector {
         if let Some(exe_path) = process.exe() {
             let path_str = exe_path.to_string_lossy();
 
-            // Use heuristics to determine code signing status
+            // Use heuristic/path-based checks to approximate code signing status
             // System processes and app bundles are typically signed
             if path_str.starts_with("/System/")
                 || path_str.starts_with("/usr/")
@@ -713,7 +732,7 @@ impl EnhancedMacOSCollector {
                 code_signing.bundle_id = None;
                 code_signing.authority = Some("Apple".to_string()); // Assume Apple for system processes
 
-                debug!(pid = pid, path = %path_str, "Process likely has valid code signature (system/app)");
+                debug!(pid = pid, path = %path_str, "Process likely has valid code signature (heuristic: system/app)");
             } else {
                 // Other executables may or may not be signed
                 code_signing.signed = false;
@@ -722,7 +741,7 @@ impl EnhancedMacOSCollector {
                 code_signing.bundle_id = None;
                 code_signing.authority = None;
 
-                debug!(pid = pid, path = %path_str, "Process likely unsigned (non-system executable)");
+                debug!(pid = pid, path = %path_str, "Process likely unsigned (heuristic: non-system executable)");
             }
         }
 
@@ -731,7 +750,7 @@ impl EnhancedMacOSCollector {
             signed = code_signing.signed,
             team_id = ?code_signing.team_id,
             bundle_id = ?code_signing.bundle_id,
-            "Checked code signature using Security framework"
+            "Checked code signature using heuristic/path-based approximation"
         );
 
         Ok(code_signing)
@@ -803,9 +822,59 @@ impl EnhancedMacOSCollector {
         }
     }
 
-    /// Determines if a process is a system process based on name and PID.
-    fn is_system_process(&self, name: &str, pid: u32) -> bool {
-        // TODO: Find more reliable way to detect system processes, since hackers would obviously name their processes to look like system processes
+    /// Determines if a process is a system process using metadata validation and name heuristics.
+    ///
+    /// This function uses multiple validation strategies:
+    /// 1. Executable path validation (checks if exe is under /System or /usr)
+    /// 2. Parent process validation (checks if parent is launchd or other system processes)
+    /// 3. Name-based heuristics (fallback for cases where metadata is unavailable)
+    ///
+    /// # Arguments
+    ///
+    /// * `pid` - The process ID
+    /// * `process` - The sysinfo Process object containing process metadata
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the process is determined to be a system process, `false` otherwise.
+    fn is_system_process(&self, pid: u32, process: &sysinfo::Process) -> bool {
+        // Check executable path - most reliable indicator
+        if let Some(exe_path) = process.exe() {
+            let path_str = exe_path.to_string_lossy();
+            // System binaries are typically under /System or /usr
+            if path_str.starts_with("/System/") || path_str.starts_with("/usr/") {
+                return true;
+            }
+        }
+
+        // Check parent process - system processes are typically launched by launchd (PID 1)
+        if let Some(parent_pid) = process.parent() {
+            let parent_pid_u32 = parent_pid.as_u32();
+            // launchd is PID 1 and is the root system process
+            if parent_pid_u32 == 1 {
+                return true;
+            }
+            // Very low parent PIDs are typically system processes
+            if parent_pid_u32 < 10 {
+                return true;
+            }
+        }
+
+        // Fallback to name-based heuristics (less reliable, can be spoofed)
+        // TODO: Name-based checks are fallback only; consider removing if metadata validation is sufficient
+        let name = process.name().to_string_lossy();
+        let name_lower = name.to_lowercase();
+
+        // Very low PIDs are typically system processes
+        if pid < 10 {
+            return true;
+        }
+
+        // PID 1 is always launchd (system process)
+        if pid == 1 {
+            return true;
+        }
+
         // Common macOS system process patterns
         const SYSTEM_PROCESSES: &[&str] = &[
             "kernel_task",
@@ -842,19 +911,6 @@ impl EnhancedMacOSCollector {
             "SpringBoard", // iOS/iPadOS
         ];
 
-        // Very low PIDs are typically system processes
-        if pid < 10 {
-            return true;
-        }
-
-        // PID 1 is always launchd (system process)
-        if pid == 1 {
-            return true;
-        }
-
-        // Check against known system process names
-        let name_lower = name.to_lowercase();
-
         // Exact matches
         if SYSTEM_PROCESSES
             .iter()
@@ -883,32 +939,29 @@ impl EnhancedMacOSCollector {
         false
     }
 
-    /// Helper method to get sysinfo process information by PID.
+    /// Helper method to get sysinfo process information from an existing Process reference.
     ///
-    /// This method creates a fresh System instance and retrieves process information
-    /// for the specified PID.
+    /// This method extracts process information from an existing sysinfo Process object
+    /// to avoid expensive system refreshes.
     ///
     /// # Arguments
     ///
-    /// * `pid` - The process ID to look up
+    /// * `process` - The sysinfo Process object containing process information
     ///
     /// # Returns
     ///
     /// Returns a tuple containing (name, executable_path, memory_kb, virtual_memory_kb)
-    /// or None if the process is not found.
-    fn get_process_info(&self, pid: u32) -> Option<(String, Option<std::path::PathBuf>, u64, u64)> {
-        let mut system = System::new();
-        system.refresh_processes(ProcessesToUpdate::All, true);
-        let sysinfo_pid = Pid::from_u32(pid);
-
-        system.process(sysinfo_pid).map(|process| {
-            (
-                process.name().to_string_lossy().into_owned(),
-                process.exe().map(|p| p.to_path_buf()),
-                process.memory(),
-                process.virtual_memory(),
-            )
-        })
+    /// or None if the process information is unavailable.
+    fn get_process_info(
+        &self,
+        process: &sysinfo::Process,
+    ) -> Option<(String, Option<std::path::PathBuf>, u64, u64)> {
+        Some((
+            process.name().to_string_lossy().into_owned(),
+            process.exe().map(|p| p.to_path_buf()),
+            process.memory(),
+            process.virtual_memory(),
+        ))
     }
 
     /// Determines if a process is a kernel thread (not applicable on macOS).

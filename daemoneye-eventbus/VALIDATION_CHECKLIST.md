@@ -378,7 +378,7 @@ grep "#\[cfg(" daemoneye-eventbus/src/transport.rs
 
 ### Rust Standards Compliance
 
-- [x] Rust 2024 Edition (MSRV 1.90+)
+- [x] Rust 2024 Edition (MSRV 1.91+)
 - [x] Zero warnings with cargo clippy -- -D warnings
 - [x] No unsafe code (enforced with #![deny(unsafe_code)])
 - [x] Standard rustfmt formatting

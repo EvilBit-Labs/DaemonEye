@@ -166,7 +166,7 @@ The EventBus uses a hierarchical topic structure for efficient routing:
 ### Wildcard Matching
 
 - **Single-level wildcard** (`+`): Matches one topic level
-- **Multi-level wildcard** (`*`): Matches multiple topic levels
+- **Multi-level wildcard** (`#`): Matches multiple topic levels
 - **Pattern priority**: More specific patterns take precedence
 
 ## Message Versioning and Backward Compatibility
