@@ -117,7 +117,7 @@ message HashResult {
 
 The protobuf types are available in the `daemoneye_lib::proto` module:
 
-```rust
+```rust,ignore
 use daemoneye_lib::proto::{
     DetectionResult, DetectionTask, ProtoHashCheck, ProtoHashResult, ProtoProcessFilter,
     ProtoProcessRecord, ProtoTaskType,
@@ -128,7 +128,7 @@ use daemoneye_lib::proto::{
 
 Automatic conversions between native and protobuf types:
 
-```rust
+```rust,ignore
 use daemoneye_lib::models::process::ProcessRecord;
 use daemoneye_lib::proto::ProtoProcessRecord;
 
@@ -146,7 +146,7 @@ fn convert_process_record() {
 
 Convenient constructors for common operations:
 
-```rust
+```rust,ignore
 fn create_tasks_and_results() {
     // Create enumeration task
     let task = DetectionTask::new_enumerate_processes("task-123", None);
@@ -186,7 +186,7 @@ prost-build = "0.13.5"
 
 Automatic code generation via `build.rs`:
 
-```rust
+```rust,ignore
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     prost_build::Config::new()
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
@@ -229,7 +229,7 @@ The build system generates type-safe Rust structs with:
 
 ### Basic Process Enumeration
 
-```rust
+```rust,ignore
 fn basic_process_enumeration() -> Result<(), Box<dyn std::error::Error>> {
     // Create enumeration request
     let task = DetectionTask::new_enumerate_processes("enum-001", None);
@@ -272,7 +272,7 @@ fn basic_process_enumeration() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Filtered Process Collection
 
-```rust
+```rust,ignore
 use daemoneye_lib::proto::ProtoProcessFilter;
 
 fn filtered_process_collection() {
@@ -289,7 +289,7 @@ fn filtered_process_collection() {
 
 ### Hash Verification
 
-```rust
+```rust,ignore
 use daemoneye_lib::proto::ProtoHashCheck;
 
 fn hash_verification() {
@@ -309,7 +309,7 @@ fn hash_verification() {
 
 Error responses include specific error codes and messages:
 
-```rust
+```rust,ignore
 fn handle_error() {
     let result = DetectionResult::failure("task-123", "Permission denied accessing PID 1234");
 }
@@ -319,7 +319,7 @@ fn handle_error() {
 
 All messages are validated during deserialization:
 
-```rust
+```rust,ignore
 fn validate_message(bytes: &[u8]) -> Result<(), prost::DecodeError> {
     match DetectionTask::decode(bytes) {
         Ok(task) => {

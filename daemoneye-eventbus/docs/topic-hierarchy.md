@@ -160,7 +160,7 @@ Topics have three access levels that control who can publish and subscribe:
 
 ### Subscribing to Process Events
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{EventBus, EventSubscription, SourceCaps, process};
 
 // Subscribe to all process events
@@ -182,7 +182,7 @@ let mut receiver = event_bus.subscribe(subscription).await?;
 
 ### Publishing to a Specific Topic
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{EventBus, CollectionEvent, ProcessEvent, process};
 use std::collections::HashMap;
 
@@ -203,7 +203,7 @@ event_bus.publish(event, "correlation-id".to_string()).await?;
 
 ### Using the Topic Builder
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::TopicBuilder;
 
 // Build a topic programmatically
@@ -223,7 +223,7 @@ let validated_topic = TopicBuilder::control()
 
 ### Checking Access Levels
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{TopicHierarchy, TopicAccessLevel, process, collector};
 
 // Check access level for a topic

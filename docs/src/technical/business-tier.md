@@ -66,7 +66,7 @@ graph TB
 
 **Core Modules**:
 
-```rust
+```rust,ignore
 pub mod security_center {
     pub mod agent_registry; // Agent authentication and management
     pub mod data_aggregator; // Central data collection and storage
@@ -83,7 +83,7 @@ pub mod security_center {
 
 **Connection Pool**: sqlx::PgPool with configurable min/max connections
 
-```rust
+```rust,ignore
 pub struct SecurityCenterDatabase {
     pool: sqlx::PgPool,
     metrics: DatabaseMetrics,
@@ -169,7 +169,7 @@ CREATE TABLE rule_packs (
 3. Security Center validates certificate and registers agent
 4. Ongoing communication uses established mTLS session
 
-```rust
+```rust,ignore
 pub struct AgentRegistry {
     db: SecurityCenterDatabase,
     ca_cert: X509Certificate,
@@ -227,7 +227,7 @@ impl AgentRegistry {
 
 **Uplink Communication**: Secure connection to Security Center with fallback to standalone operation.
 
-```rust
+```rust,ignore
 pub struct EnhancedDaemoneyeAgent {
     base_agent: DaemoneyeAgent,
     security_center_client: Option<SecurityCenterClient>,
@@ -319,7 +319,7 @@ rules:
 
 **Cryptographic Signatures**: Ed25519 signatures for rule pack integrity.
 
-```rust
+```rust,ignore
 pub struct RulePackValidator {
     public_key: ed25519_dalek::PublicKey,
 }
@@ -355,7 +355,7 @@ impl RulePackValidator {
 
 **Automatic Distribution**: Agents automatically download and apply rule packs.
 
-```rust
+```rust,ignore
 pub struct RuleDistributor {
     db: SecurityCenterDatabase,
     rule_pack_storage: RulePackStorage,
@@ -401,7 +401,7 @@ impl RuleDistributor {
 
 **Splunk HTTP Event Collector** integration with authentication and batching.
 
-```rust
+```rust,ignore
 pub struct SplunkHecConnector {
     endpoint: Url,
     token: SecretString,
@@ -465,7 +465,7 @@ impl SplunkHecConnector {
 
 **Elasticsearch** bulk indexing with index pattern management.
 
-```rust
+```rust,ignore
 pub struct ElasticsearchConnector {
     client: elasticsearch::Elasticsearch,
     index_pattern: String,
@@ -507,7 +507,7 @@ impl ElasticsearchConnector {
 
 **Kafka** high-throughput message streaming with partitioning.
 
-```rust
+```rust,ignore
 pub struct KafkaConnector {
     producer: FutureProducer,
     topic: String,
@@ -545,7 +545,7 @@ impl KafkaConnector {
 
 **CEF Format** for SIEM compatibility.
 
-```rust
+```rust,ignore
 pub struct CefFormatter;
 
 impl CefFormatter {
@@ -586,7 +586,7 @@ impl CefFormatter {
 
 **STIX 2.1** structured threat information export.
 
-```rust
+```rust,ignore
 pub struct StixExporter;
 
 impl StixExporter {
@@ -839,7 +839,7 @@ spec:
 
 **Connection Pooling**: Efficient database connection management
 
-```rust
+```rust,ignore
 pub struct ConnectionPoolManager {
     pool: sqlx::PgPool,
     metrics: PoolMetrics,
@@ -858,7 +858,7 @@ impl ConnectionPoolManager {
 
 **Batch Processing**: Efficient alert processing and delivery
 
-```rust
+```rust,ignore
 pub struct BatchProcessor {
     batch_size: usize,
     batch_timeout: Duration,

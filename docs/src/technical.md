@@ -82,7 +82,7 @@ graph LR
 
 The process collection system uses the `sysinfo` crate for cross-platform process enumeration:
 
-```rust
+```rust,ignore
 use sysinfo::System;
 
 pub struct ProcessCollector {
@@ -115,7 +115,7 @@ impl ProcessCollector {
 
 DaemonEye uses redb for high-performance event storage:
 
-```rust
+```rust,ignore
 use redb::{Database, ReadableTable, WritableTable};
 
 pub struct EventStore {
@@ -146,7 +146,7 @@ impl EventStore {
 
 The alert system provides multi-channel alert delivery:
 
-```rust
+```rust,ignore
 use async_trait::async_trait;
 
 #[async_trait]
@@ -214,7 +214,7 @@ Storage requirements scale with data retention:
 
 All inputs are validated using the `validator` crate:
 
-```rust
+```rust,ignore
 use validator::{Validate, ValidationError};
 
 #[derive(Validate)]
@@ -250,7 +250,7 @@ Multiple layers of SQL injection prevention:
 
 BLAKE3 hashing and Ed25519 signatures ensure data integrity:
 
-```rust
+```rust,ignore
 use blake3::Hasher;
 use ed25519_dalek::{Keypair, Signature};
 
@@ -276,7 +276,7 @@ impl IntegrityChecker {
 
 Comprehensive unit testing with mocks and test doubles:
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,7 +311,7 @@ mod tests {
 
 Test component interactions and data flow:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_database_integration() {
     let temp_dir = TempDir::new().unwrap();
@@ -332,7 +332,7 @@ async fn test_database_integration() {
 
 Benchmark critical operations:
 
-```rust
+```rust,ignore
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn benchmark_process_collection(c: &mut Criterion) {

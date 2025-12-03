@@ -32,7 +32,7 @@ inclusion: always
 
 ### Core Types (Use Exactly)
 
-```rust
+```rust,ignore
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +61,7 @@ pub enum ProcessStatus {
 
 ### Error Handling (Mandatory Pattern)
 
-```rust
+```rust,ignore
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -79,7 +79,7 @@ pub enum CollectionError {
 
 ### Core Tables (Required)
 
-```rust
+```rust,ignore
 use redb::TableDefinition;
 
 // Event Store (events.redb)
@@ -104,7 +104,7 @@ const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::ne
 
 ### daemoneye-eventbus Integration (Required)
 
-```rust
+```rust,ignore
 // Embedded broker within daemoneye-agent
 let broker = DaemoneyeBroker::new(broker_config).await?;
 
@@ -154,7 +154,7 @@ alerting:
 
 ### AlertSink Trait (Do Not Modify)
 
-```rust
+```rust,ignore
 use async_trait::async_trait;
 
 #[async_trait]
@@ -174,7 +174,7 @@ pub trait AlertSink: Send + Sync {
 
 ## Metrics (Exact Names Required)
 
-```rust
+```rust,ignore
 // Do not modify these metric names
 // daemoneye_collection_duration_seconds{status="success|error"}
 // daemoneye_processes_collected_total

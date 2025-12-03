@@ -39,7 +39,7 @@ The framework separates collection methodology from operational infrastructure, 
 
 The `EventSource` trait abstracts collection methodology from operational infrastructure:
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait EventSource: Send + Sync {
     fn name(&self) -> &'static str;
@@ -60,7 +60,7 @@ pub trait EventSource: Send + Sync {
 
 The `SourceCaps` bitflags enable capability negotiation between components:
 
-```rust
+```rust,ignore
 bitflags! {
     pub struct SourceCaps: u32 {
         const PROCESS = 1 << 0;        // Process monitoring
@@ -78,7 +78,7 @@ bitflags! {
 
 The `CollectionEvent` enum provides unified event handling:
 
-```rust
+```rust,ignore
 pub enum CollectionEvent {
     Process(ProcessEvent),
     Network(NetworkEvent),
@@ -92,7 +92,7 @@ pub enum CollectionEvent {
 
 The `Collector` provides unified runtime for multiple event sources:
 
-```rust
+```rust,ignore
 pub struct Collector {
     config: CollectorConfig,
     sources: Vec<Box<dyn EventSource>>,
@@ -125,7 +125,7 @@ The framework includes sophisticated event processing with:
 - **Timeout Management**: Batch timeouts ensure timely processing
 - **Graceful Degradation**: System continues operation under load
 
-```rust
+```rust,ignore
 // Batch configuration
 fn create_batch_config() -> CollectorConfig {
     CollectorConfig::new()
@@ -149,7 +149,7 @@ The framework supports hierarchical configuration loading:
 
 ### Configuration Structure
 
-```rust
+```rust,ignore
 pub struct CollectorConfig {
     pub component_name: String,
     pub max_event_sources: usize,
@@ -177,7 +177,7 @@ The framework provides comprehensive health monitoring:
 
 ### Health Status Types
 
-```rust
+```rust,ignore
 pub enum HealthStatus {
     Healthy,
     Degraded,
@@ -191,7 +191,7 @@ pub enum HealthStatus {
 
 The framework includes IPC server capabilities for external communication:
 
-```rust
+```rust,ignore
 pub struct CollectorIpcServer {
     // IPC server implementation
 }
@@ -214,7 +214,7 @@ impl CollectorIpcServer {
 
 ### Process Event Source Example
 
-```rust
+```rust,ignore
 use async_trait::async_trait;
 use collector_core::{CollectionEvent, EventSource, ProcessEvent, SourceCaps};
 
@@ -278,7 +278,7 @@ impl EventSource for ProcessEventSource {
 
 The framework includes analysis chain coordination for complex workflows:
 
-```rust
+```rust,ignore
 pub struct AnalysisChainCoordinator {
     // Coordinates multi-stage analysis workflows
 }
@@ -294,7 +294,7 @@ pub struct AnalysisWorkflowDefinition {
 
 Sophisticated trigger management for event-driven analysis:
 
-```rust
+```rust,ignore
 pub struct TriggerManager {
     // Manages trigger conditions and priorities
 }
@@ -310,7 +310,7 @@ pub struct TriggerCondition {
 
 Optional pub/sub event distribution:
 
-```rust
+```rust,ignore
 pub struct EventBus {
     // Pub/sub event distribution system
 }
@@ -351,7 +351,7 @@ The framework includes comprehensive testing:
 
 ### Test Utilities
 
-```rust
+```rust,ignore
 // Test utilities for event source testing
 pub mod test_utils {
     pub struct MockEventSource;
@@ -364,7 +364,7 @@ pub mod test_utils {
 
 ### Basic Collector Setup
 
-```rust
+```rust,ignore
 use collector_core::{Collector, CollectorConfig};
 
 #[tokio::main]
@@ -387,7 +387,7 @@ async fn main() -> anyhow::Result<()> {
 
 ### Custom Event Source
 
-```rust
+```rust,ignore
 use async_trait::async_trait;
 use collector_core::{CollectionEvent, EventSource, SourceCaps};
 

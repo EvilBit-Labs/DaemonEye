@@ -82,7 +82,7 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
 ### Test Structure
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;

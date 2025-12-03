@@ -18,7 +18,7 @@ The Enterprise tier extends DaemonEye with advanced monitoring capabilities and 
 
 DaemonEye uses eBPF (Extended Berkeley Packet Filter) for low-level system monitoring:
 
-```rust
+```rust,ignore
 use aya::{
     Bpf,
     programs::{Xdp, XdpFlags},
@@ -45,7 +45,7 @@ impl EBPFMonitor {
 
 Windows Event Tracing for Windows (ETW) provides comprehensive system monitoring:
 
-```rust
+```rust,ignore
 use windows::{Win32::System::Diagnostics::Etw::*, core::PCWSTR};
 
 pub struct ETWMonitor {
@@ -87,7 +87,7 @@ impl ETWMonitor {
 
 macOS EndpointSecurity framework provides real-time security event monitoring:
 
-```rust
+```rust,ignore
 use endpoint_sec::{Client, ClientBuilder, Event, EventType, Process};
 
 pub struct EndpointSecurityMonitor {
@@ -128,7 +128,7 @@ impl EndpointSecurityMonitor {
 
 The Network Event Monitor provides real-time network traffic analysis:
 
-```rust
+```rust,ignore
 use pcap::{Capture, Device};
 
 pub struct NetworkMonitor {
@@ -162,7 +162,7 @@ impl NetworkMonitor {
 
 The Federated Security Center enables multi-site security center deployment:
 
-```rust
+```rust,ignore
 pub struct FederatedSecurityCenter {
     primary_center: SecurityCenter,
     regional_centers: Vec<RegionalSecurityCenter>,
@@ -187,7 +187,7 @@ pub enum ConflictResolution {
 
 DaemonEye integrates with STIX/TAXII for threat intelligence sharing:
 
-```rust
+```rust,ignore
 use stix::{
     objects::{Indicator, Malware, ThreatActor},
     taxii::client::TaxiiClient,
@@ -227,7 +227,7 @@ impl STIXTAXIIIntegration {
 
 Enterprise tier includes machine learning and behavioral analysis:
 
-```rust
+```rust,ignore
 pub struct BehavioralAnalyzer {
     models: Vec<BehavioralModel>,
     anomaly_threshold: f64,

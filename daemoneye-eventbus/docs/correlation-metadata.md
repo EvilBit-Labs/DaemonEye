@@ -10,7 +10,7 @@ This document describes the correlation metadata implementation in daemoneye-eve
 
 The `CorrelationMetadata` structure supports hierarchical event relationships:
 
-```rust
+```rust,ignore
 pub struct CorrelationMetadata {
     /// Primary correlation ID for tracking related events
     pub correlation_id: String,
@@ -33,7 +33,7 @@ pub struct CorrelationMetadata {
 
 Correlation metadata supports workflow stage tracking for complex multi-step operations:
 
-```rust
+```rust,ignore
 let metadata = CorrelationMetadata::new(correlation_id)
     .with_stage("collection".to_string())
     .with_tag("collector".to_string(), "procmond".to_string());
@@ -51,7 +51,7 @@ Stages can represent different phases of analysis:
 
 Flexible tagging system for grouping and filtering events:
 
-```rust
+```rust,ignore
 let metadata = CorrelationMetadata::new(correlation_id)
     .with_tag("investigation_id".to_string(), investigation_id)
     .with_tag("analyst".to_string(), "security_team".to_string())
@@ -63,7 +63,7 @@ let metadata = CorrelationMetadata::new(correlation_id)
 
 Automatic sequence numbering for ordering events within a correlation group:
 
-```rust
+```rust,ignore
 let mut metadata = CorrelationMetadata::new(correlation_id);
 metadata.increment_sequence(); // sequence_number = 1
 metadata.increment_sequence(); // sequence_number = 2
@@ -73,7 +73,7 @@ metadata.increment_sequence(); // sequence_number = 2
 
 Create child correlations that inherit properties from parent:
 
-```rust
+```rust,ignore
 let parent_metadata = CorrelationMetadata::new(parent_id)
     .with_stage("collection".to_string())
     .with_tag("workflow".to_string(), "threat_analysis".to_string());
@@ -90,7 +90,7 @@ let child_metadata = parent_metadata.create_child(child_id);
 
 Comprehensive filtering capabilities for correlation-based event routing:
 
-```rust
+```rust,ignore
 pub struct CorrelationFilter {
     /// Specific correlation IDs to include
     pub correlation_ids: Vec<String>,
@@ -119,7 +119,7 @@ pub struct CorrelationFilter {
 
 Track all events in a workflow:
 
-```rust
+```rust,ignore
 let filter = CorrelationFilter::new()
     .with_root_id(root_correlation_id);
 ```
@@ -128,7 +128,7 @@ let filter = CorrelationFilter::new()
 
 Get events from specific workflow stages:
 
-```rust
+```rust,ignore
 let filter = CorrelationFilter::new()
     .with_stage("analysis".to_string());
 ```
@@ -137,7 +137,7 @@ let filter = CorrelationFilter::new()
 
 All tags must match:
 
-```rust
+```rust,ignore
 let filter = CorrelationFilter::new()
     .with_required_tag("severity".to_string(), "critical".to_string())
     .with_required_tag("incident_type".to_string(), "malware".to_string());
@@ -147,7 +147,7 @@ let filter = CorrelationFilter::new()
 
 At least one tag must match:
 
-```rust
+```rust,ignore
 let filter = CorrelationFilter::new()
     .with_any_tag("collector".to_string(), "procmond".to_string())
     .with_any_tag("collector".to_string(), "netmond".to_string());
@@ -157,7 +157,7 @@ let filter = CorrelationFilter::new()
 
 Get events within a specific sequence range:
 
-```rust
+```rust,ignore
 let filter = CorrelationFilter::new()
     .with_sequence_range(Some(10), Some(100));
 ```
@@ -166,7 +166,7 @@ let filter = CorrelationFilter::new()
 
 Combine multiple filter criteria:
 
-```rust
+```rust,ignore
 let filter = CorrelationFilter::new()
     .with_root_id(root_id)
     .with_stage("analysis".to_string())
@@ -178,7 +178,7 @@ let filter = CorrelationFilter::new()
 
 Correlation metadata supports wildcard pattern matching:
 
-```rust
+```rust,ignore
 let metadata = CorrelationMetadata::new("test-correlation-123".to_string());
 
 // Exact match
@@ -196,7 +196,7 @@ assert!(metadata.matches_pattern("*-123"));
 
 Messages now include full correlation metadata:
 
-```rust
+```rust,ignore
 pub struct Message {
     pub id: Uuid,
     pub topic: String,
@@ -212,7 +212,7 @@ pub struct Message {
 
 Bus events received by subscribers include correlation metadata:
 
-```rust
+```rust,ignore
 pub struct BusEvent {
     pub event_id: String,
     pub event: CollectionEvent,
@@ -225,7 +225,7 @@ pub struct BusEvent {
 
 ### Publishing with Correlation Metadata
 
-```rust
+```rust,ignore
 // Create correlation metadata
 let correlation_metadata = CorrelationMetadata::new(correlation_id)
     .with_stage("collection".to_string())
@@ -242,7 +242,7 @@ let message = Message::event_with_metadata(
 
 ### Subscribing with Correlation Filter
 
-```rust
+```rust,ignore
 let subscription = EventSubscription {
     subscriber_id: "workflow-subscriber".to_string(),
     capabilities: SourceCaps {
@@ -269,7 +269,7 @@ let receiver = event_bus.subscribe(subscription).await?;
 
 Track events across multiple collectors in a cascading analysis workflow:
 
-```rust
+```rust,ignore
 // Root correlation for entire workflow
 let root_correlation = CorrelationMetadata::new(workflow_id)
     .with_stage("detection".to_string())
@@ -292,7 +292,7 @@ let alert_correlation = analysis_correlation.create_child(alert_id)
 
 Track all events related to a security investigation:
 
-```rust
+```rust,ignore
 let investigation_id = Uuid::new_v4().to_string();
 let forensic_metadata = CorrelationMetadata::new(investigation_id.clone())
     .with_stage("forensic_analysis".to_string())
@@ -311,7 +311,7 @@ let forensic_filter = CorrelationFilter::new()
 
 Track events across distributed system components:
 
-```rust
+```rust,ignore
 let trace_metadata = CorrelationMetadata::new(trace_id)
     .with_stage("distributed_collection".to_string())
     .with_tag("service".to_string(), "daemoneye-agent".to_string())
@@ -323,7 +323,7 @@ let trace_metadata = CorrelationMetadata::new(trace_id)
 
 Track performance metrics across workflow stages:
 
-```rust
+```rust,ignore
 let perf_metadata = CorrelationMetadata::new(perf_id)
     .with_stage("performance_monitoring".to_string())
     .with_tag("metric_type".to_string(), "latency".to_string())
@@ -343,7 +343,7 @@ The implementation maintains backward compatibility with existing code:
 
 For simple use cases, you can still use just a correlation ID string:
 
-```rust
+```rust,ignore
 // Old style (still works)
 let message = Message::event(topic, correlation_id, payload, sequence);
 
@@ -360,7 +360,7 @@ let message = Message::event_with_metadata(
 
 BusEvent provides a helper method for backward compatibility:
 
-```rust
+```rust,ignore
 // Get correlation ID from metadata
 let correlation_id = bus_event.correlation_id();
 ```

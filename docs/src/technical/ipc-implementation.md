@@ -48,7 +48,7 @@ Each IPC message uses a simple, robust framing protocol:
 
 The IPC system is configured through the `IpcConfig` structure:
 
-```rust
+```rust,ignore
 pub struct IpcConfig {
     pub endpoint_path: String,
     pub max_frame_bytes: usize,
@@ -107,7 +107,7 @@ ipc:
 
 The IPC layer provides detailed error information:
 
-```rust
+```rust,ignore
 use std::io;
 
 pub enum IpcError {

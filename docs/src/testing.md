@@ -49,7 +49,7 @@ DaemonEye follows a comprehensive testing strategy that ensures:
 
 DaemonEye uses a comprehensive unit testing framework:
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,7 +90,7 @@ mod tests {
 
 Use mocks for external dependencies:
 
-```rust
+```rust,ignore
 use mockall::mock;
 
 mock! {
@@ -122,7 +122,7 @@ async fn test_agent_with_mock_collector() {
 
 Use property-based testing for complex logic:
 
-```rust
+```rust,ignore
 use proptest::prelude::*;
 
 proptest! {
@@ -148,7 +148,7 @@ proptest! {
 
 Test database operations with real SQLite:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_database_integration() {
     let temp_dir = TempDir::new().unwrap();
@@ -192,7 +192,7 @@ async fn test_database_integration() {
 
 Test inter-process communication:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_ipc_communication() {
     let temp_dir = TempDir::new().unwrap();
@@ -223,7 +223,7 @@ async fn test_ipc_communication() {
 
 Test alert delivery mechanisms:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_alert_delivery() {
     let mut alert_manager = AlertManager::new();
@@ -258,7 +258,7 @@ async fn test_alert_delivery() {
 
 Test command-line interface:
 
-```rust
+```rust,ignore
 use insta::assert_snapshot;
 use std::process::Command;
 
@@ -292,7 +292,7 @@ fn test_cli_config() {
 
 Test complete system workflows:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_full_system_workflow() {
     let temp_dir = TempDir::new().unwrap();
@@ -340,7 +340,7 @@ async fn test_full_system_workflow() {
 
 Test system performance under load:
 
-```rust
+```rust,ignore
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn benchmark_process_collection(c: &mut Criterion) {
@@ -402,7 +402,7 @@ criterion_main!(benches);
 
 Test memory usage and leaks:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_memory_usage() {
     let initial_memory = get_memory_usage();
@@ -449,7 +449,7 @@ fn get_memory_usage() -> usize {
 
 Test system behavior under stress:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_stress_collection() {
     let collector = ProcessCollector::new();
@@ -478,7 +478,7 @@ async fn test_stress_collection() {
 
 Test with random inputs:
 
-```rust
+```rust,ignore
 use cargo_fuzz;
 
 #[no_mangle]
@@ -503,7 +503,7 @@ pub extern "C" fn fuzz_sql_query(data: &[u8]) {
 
 Test security boundaries:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_privilege_dropping() {
     let collector = ProcessCollector::new();
@@ -554,7 +554,7 @@ async fn test_sql_injection_prevention() {
 
 Test input validation:
 
-```rust
+```rust,ignore
 #[test]
 fn test_input_validation() {
     // Test valid inputs
@@ -619,7 +619,7 @@ testing:
 
 ### Test Data Management
 
-```rust
+```rust,ignore
 pub struct TestDataManager {
     temp_dir: TempDir,
     test_data: HashMap<String, Vec<u8>>,
@@ -708,7 +708,7 @@ jobs:
 
 ### Test Reporting
 
-```rust
+```rust,ignore
 use insta::assert_snapshot;
 
 #[test]
@@ -761,7 +761,7 @@ fn test_alert_format() {
 
 ### Test Utilities
 
-```rust
+```rust,ignore
 // tests/common/test_helpers.rs
 pub struct TestHelper {
     temp_dir: TempDir,

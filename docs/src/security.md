@@ -78,7 +78,7 @@ The three-component architecture provides defense in depth:
 
 DaemonEye is built in Rust with memory safety guarantees:
 
-```rust
+```rust,ignore
 // No unsafe code allowed
 #![forbid(unsafe_code)]
 
@@ -97,7 +97,7 @@ fn create_process_info(process: &Process) -> ProcessInfo {
 
 Comprehensive input validation prevents injection attacks:
 
-```rust
+```rust,ignore
 use validator::{Validate, ValidationError};
 
 #[derive(Validate)]
@@ -124,7 +124,7 @@ fn validate_sql(sql: &str) -> Result<(), ValidationError> {
 
 BLAKE3 hashing and Ed25519 signatures ensure data integrity:
 
-```rust
+```rust,ignore
 use blake3::Hasher;
 use ed25519_dalek::{Keypair, Signature};
 
@@ -157,7 +157,7 @@ Multiple layers of SQL injection prevention:
 3. **Sandboxed Execution**: Isolated query execution
 4. **Input Sanitization**: Clean and validate all inputs
 
-```rust
+```rust,ignore
 use rusqlite::Connection;
 use sqlparser::ast::Statement;
 

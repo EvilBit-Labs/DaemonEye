@@ -47,7 +47,7 @@ Handles topic-based task distribution with priority queuing.
 
 **Usage:**
 
-```rust
+```rust,ignore
 use collector_core::{TaskDistributor, TaskPriority, DistributionTask};
 use daemoneye_eventbus::DaemoneyeBroker;
 use std::sync::Arc;
@@ -78,7 +78,7 @@ Provides capability-based routing and dynamic collector discovery.
 
 **Usage:**
 
-```rust
+```rust,ignore
 use collector_core::{CapabilityRouter, CollectorCapability, SourceCaps};
 
 let router = CapabilityRouter::new(Duration::from_secs(30));
@@ -109,7 +109,7 @@ Aggregates results from multiple collectors with correlation tracking.
 
 **Usage:**
 
-```rust
+```rust,ignore
 use collector_core::{ResultAggregator, AggregationConfig, CollectorResult};
 
 let config = AggregationConfig::default();
@@ -139,7 +139,7 @@ Provides load balancing and failover for collector instances.
 
 **Usage:**
 
-```rust
+```rust,ignore
 use collector_core::{LoadBalancer, LoadBalancerConfig, LoadBalancingStrategy};
 
 let config = LoadBalancerConfig {
@@ -172,7 +172,7 @@ if balancer.record_failure("collector-1").await? {
 
 Complete multi-collector coordination workflow:
 
-```rust
+```rust,ignore
 use collector_core::*;
 use daemoneye_eventbus::DaemoneyeBroker;
 use std::sync::Arc;

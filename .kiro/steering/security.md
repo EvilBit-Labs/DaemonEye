@@ -47,7 +47,7 @@ overflow-checks = true
 
 **USE** checked arithmetic for untrusted data:
 
-```rust
+```rust,ignore
 // At trust boundaries - REQUIRED pattern
 let buffer_size = user_len
     .checked_mul(ENTRY_SIZE)
@@ -63,7 +63,7 @@ if index >= data.len() {
 
 **NEVER** await while holding locks - use this pattern:
 
-```rust
+```rust,ignore
 // CORRECT: Lock scope isolation
 {
     let _guard = shared_state.lock().await;
@@ -82,7 +82,7 @@ let permit = semaphore.acquire().await?;
 
 **USE** `secrecy` and `zeroize` for all sensitive data:
 
-```rust
+```rust,ignore
 use secrecy::SecretString;
 use zeroize::Zeroize;
 
@@ -109,7 +109,7 @@ impl Drop for ApiKey {
 
 **VALIDATE** all inputs with bounds and type safety:
 
-```rust
+```rust,ignore
 // CLI validation - REQUIRED pattern
 #[derive(Parser)]
 struct Args {
@@ -139,7 +139,7 @@ where
 
 **USE** newtypes with validation for domain constraints:
 
-```rust
+```rust,ignore
 // REQUIRED: Type-safe port with validation
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]

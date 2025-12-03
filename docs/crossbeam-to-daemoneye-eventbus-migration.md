@@ -10,7 +10,7 @@ This document outlines the migration strategy from the current crossbeam-based e
 
 The current collector-core uses crossbeam channels for high-performance in-process event distribution:
 
-```rust
+```rust,ignore
 // Current crossbeam-based implementation
 use crossbeam::{
     channel::{Receiver, Sender, bounded, unbounded},
@@ -66,7 +66,7 @@ graph LR
 
 ### Interface Compatibility
 
-```rust
+```rust,ignore
 // BEFORE: Crossbeam EventBus trait
 #[async_trait]
 pub trait EventBus: Send + Sync {
@@ -98,7 +98,7 @@ pub trait EventBus: Send + Sync {
 
 Create a compatibility wrapper that implements the existing EventBus trait using daemoneye-eventbus:
 
-```rust
+```rust,ignore
 // collector-core/src/event_bus.rs - Updated implementation
 use daemoneye_eventbus::{DaemoneyeBroker, DaemoneyeEventBus, EventBus as DaemoneyeEventBusTrait};
 
@@ -185,7 +185,7 @@ impl EventBus for DaemoneyeEventBusAdapter {
 
 Map collector-core events to daemoneye-eventbus events:
 
-```rust
+```rust,ignore
 impl DaemoneyeEventBusAdapter {
     fn convert_event(
         &self,
@@ -240,7 +240,7 @@ impl DaemoneyeEventBusAdapter {
 
 Map crossbeam routing to daemoneye-eventbus topics:
 
-```rust
+```rust,ignore
 impl DaemoneyeEventBusAdapter {
     fn convert_subscription(
         &self,
@@ -296,7 +296,7 @@ impl DaemoneyeEventBusAdapter {
 
 Update collector-core configuration to use daemoneye-eventbus:
 
-```rust
+```rust,ignore
 // collector-core/src/config.rs - Updated configuration
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct CollectorConfig {
@@ -341,7 +341,7 @@ impl Default for EventBusConfig {
 
 Create a factory to instantiate the appropriate event bus implementation:
 
-```rust
+```rust,ignore
 // collector-core/src/event_bus.rs - Factory implementation
 pub struct EventBusFactory;
 
@@ -392,7 +392,7 @@ impl Collector {
 
 ### Test Implementation
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod migration_tests {
     use super::*;

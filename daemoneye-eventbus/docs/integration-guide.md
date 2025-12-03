@@ -10,7 +10,7 @@ This guide explains how to integrate the new topic hierarchy design with existin
 
 The topic hierarchy is designed to work seamlessly with the collector-core framework:
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{DaemoneyeEventBus, TopicRegistry, Topic};
 use collector_core::{Collector, EventSource, CollectionEvent};
 
@@ -31,7 +31,7 @@ topic_registry.register_publisher("daemoneye-agent", "control.collector.lifecycl
 
 Components should publish events using structured topic names:
 
-```rust
+```rust,ignore
 // procmond publishing process events
 let event = CollectionEvent::Process(ProcessEvent {
     pid: 1234,
@@ -47,7 +47,7 @@ event_bus.publish_to_topic(event, "events.process.lifecycle", correlation_id).aw
 
 Components can subscribe using wildcard patterns for flexible event consumption:
 
-```rust
+```rust,ignore
 // daemoneye-agent subscribing to all events
 let subscription = EventSubscription {
     subscriber_id: "daemoneye-agent".to_string(),
@@ -106,7 +106,7 @@ control.health.status        # Component status updates
 
 ### Access Control Implementation
 
-```rust
+```rust,ignore
 // Check publishing permissions
 if !topic_registry.can_publish("procmond", "events.process.lifecycle") {
     return Err(EventBusError::topic("Publishing not allowed"));
@@ -140,7 +140,7 @@ match topic_registry.get_access_level("control.collector.lifecycle") {
 
 The TopicMatcher provides efficient routing:
 
-```rust
+```rust,ignore
 // O(1) exact match lookup
 let subscribers = topic_matcher.find_subscribers("events.process.lifecycle")?;
 
@@ -151,7 +151,7 @@ let matches = pattern.matches(&topic);
 
 ### Statistics and Monitoring
 
-```rust
+```rust,ignore
 // Track topic usage
 topic_matcher.record_publication("events.process.lifecycle");
 topic_matcher.record_delivery("events.process.lifecycle");
@@ -166,7 +166,7 @@ println!("Published: {}, Delivered: {}",
 
 ### Topic Validation
 
-```rust
+```rust,ignore
 // Validate topic format during registration
 match Topic::new("invalid..topic") {
     Ok(topic) => { /* use topic */ }
@@ -181,7 +181,7 @@ match Topic::new("invalid..topic") {
 
 ### Pattern Matching Errors
 
-```rust
+```rust,ignore
 // Handle pattern creation errors
 match TopicPattern::new("invalid.#.pattern") {
     Ok(pattern) => { /* use pattern */ }
@@ -198,7 +198,7 @@ match TopicPattern::new("invalid.#.pattern") {
 
 ### Unit Testing
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,7 +224,7 @@ mod tests {
 
 ### Integration Testing
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_end_to_end_topic_flow() {
     let broker = DaemoneyeBroker::new("/tmp/test.sock").await?;
@@ -255,7 +255,7 @@ async fn test_end_to_end_topic_flow() {
 
 ### Multi-Collector Coordination
 
-```rust
+```rust,ignore
 // Future: Network collector integration
 topic_registry.register_publisher("netmond", "events.network.connections")?;
 topic_registry.register_subscriber("daemoneye-agent", "events.network.#")?;
@@ -266,7 +266,7 @@ let correlation_pattern = TopicPattern::new("events.+.anomaly")?;
 
 ### External System Integration
 
-```rust
+```rust,ignore
 // SIEM connector with limited access
 topic_registry.register_subscriber("siem-connector", "events.+.security")?;
 topic_registry.register_subscriber("siem-connector", "events.+.anomaly")?;

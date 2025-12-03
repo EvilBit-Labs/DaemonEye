@@ -325,7 +325,7 @@ control.*.config                      # Configuration updates
 
 Components should register their topic usage during startup:
 
-```rust
+```rust,ignore
 // Example topic registration for procmond
 let topic_registry = TopicRegistry::new();
 topic_registry.register_publisher("events.process.lifecycle");

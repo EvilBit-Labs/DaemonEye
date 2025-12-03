@@ -100,7 +100,7 @@ Configuration for spawning a collector:
 
 ### Starting a Collector
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::process_manager::{
     CollectorConfig, CollectorProcessManager, ProcessManagerConfig,
 };
@@ -148,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Stopping a Collector
 
-```rust
+```rust,ignore
 // Graceful shutdown with 30 second timeout
 manager.stop_collector("procmond-1", true, Duration::from_secs(30)).await?;
 
@@ -158,7 +158,7 @@ manager.stop_collector("procmond-1", false, Duration::from_secs(5)).await?;
 
 ### Restarting a Collector
 
-```rust
+```rust,ignore
 // Restart with 40 second timeout (stop + start)
 let new_pid = manager.restart_collector("procmond-1", Duration::from_secs(40)).await?;
 println!("Restarted with new PID: {}", new_pid);
@@ -166,7 +166,7 @@ println!("Restarted with new PID: {}", new_pid);
 
 ### Pause and Resume (Unix Only)
 
-```rust
+```rust,ignore
 #[cfg(unix)]
 {
     // Pause collector (sends SIGSTOP)
@@ -181,7 +181,7 @@ println!("Restarted with new PID: {}", new_pid);
 
 ### Health Monitoring
 
-```rust
+```rust,ignore
 // Get collector status
 let status = manager.get_collector_status("procmond-1").await?;
 println!("State: {:?}", status.state);
@@ -258,7 +258,7 @@ The process manager resolves collector binary paths in the following order:
 
 ### Error Handling Pattern
 
-```rust
+```rust,ignore
 match manager.start_collector("test", "test", config).await {
     Ok(pid) => println!("Started with PID: {}", pid),
     Err(ProcessManagerError::AlreadyRunning(id)) => {
@@ -289,7 +289,7 @@ The test suite includes:
 
 ### Test Helpers
 
-```rust
+```rust,ignore
 // Create test configuration
 fn create_test_config() -> ProcessManagerConfig {
     ProcessManagerConfig {
@@ -315,7 +315,7 @@ fn create_mock_collector_binary(temp_dir: &TempDir, sleep_duration: u64) -> Path
 
 The RPC service delegates to the process manager for lifecycle operations:
 
-```rust
+```rust,ignore
 impl CollectorRpcService {
     async fn handle_start_request(&self, request: RpcRequest) -> RpcResponse {
         // Extract lifecycle request
@@ -354,7 +354,7 @@ Process manager errors are mapped to RPC errors:
 
 Always prefer graceful shutdown with appropriate timeouts:
 
-```rust
+```rust,ignore
 // Good: Graceful with fallback to force
 manager.stop_collector("collector", true, Duration::from_secs(30)).await?;
 
@@ -374,7 +374,7 @@ Configure timeouts based on collector shutdown behavior:
 
 Configure auto-restart carefully:
 
-```rust
+```rust,ignore
 let config = CollectorConfig {
     auto_restart: true,
     max_restarts: 3,  // Prevent infinite restart loops
@@ -386,7 +386,7 @@ let config = CollectorConfig {
 
 Always cleanup processes, especially in tests:
 
-```rust
+```rust,ignore
 // Ensure cleanup even on panic
 let result = std::panic::catch_unwind(|| {
     // Test code

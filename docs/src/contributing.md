@@ -375,7 +375,7 @@ All code must have comprehensive test coverage:
 
 ### Test Structure
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;

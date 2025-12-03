@@ -52,7 +52,7 @@ Pluggable routing algorithms:
 
 Tasks are distributed using daemoneye-eventbus topic publishing:
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::topics::collector;
 
 // Task is published to collector-specific topic using canonical namespace
@@ -65,7 +65,7 @@ broker.publish(&task_topic, &correlation_id, payload).await?;
 
 Tasks are routed based on collector capabilities:
 
-```rust
+```rust,ignore
 // Find collectors that support the operation
 let suitable_collectors = registry
     .values()
@@ -82,7 +82,7 @@ let suitable_collectors = registry
 
 Tasks are queued when no suitable collectors are available:
 
-```rust
+```rust,ignore
 // Priority queue with custom ordering
 impl Ord for QueuedTask {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -102,7 +102,7 @@ impl Ord for QueuedTask {
 
 Collectors register their capabilities:
 
-```rust
+```rust,ignore
 let capability = CollectorCapability {
     collector_id: "procmond-1".to_string(),
     collector_type: "procmond".to_string(),
@@ -119,7 +119,7 @@ distributor.register_collector(capability).await?;
 
 The system automatically updates routing when collectors join or leave:
 
-```rust
+```rust,ignore
 // Register new collector
 distributor.register_collector(capability).await?;
 
@@ -141,7 +141,7 @@ When collectors are unavailable:
 
 ## Usage Example
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{CollectorCapability, RoutingStrategy, TaskDistributor, TaskRequest};
 use std::sync::Arc;
 
@@ -194,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The TaskDistributor can be configured with:
 
-```rust
+```rust,ignore
 let distributor = TaskDistributor::with_config(
     broker,
     max_queue_size: 10000,        // Maximum queued tasks
@@ -208,7 +208,7 @@ let distributor = TaskDistributor::with_config(
 
 The system provides comprehensive statistics:
 
-```rust
+```rust,ignore
 let stats = distributor.get_stats().await;
 println!("Tasks distributed: {}", stats.tasks_distributed);
 println!("Tasks queued: {}", stats.tasks_queued);

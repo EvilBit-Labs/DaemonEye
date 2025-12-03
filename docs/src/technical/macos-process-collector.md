@@ -28,7 +28,7 @@ The macOS collector uses a carefully selected set of third-party crates instead 
 
 The collector provides comprehensive process enumeration with macOS-specific enhancements:
 
-```rust
+```rust,ignore
 use procmond::macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
 use procmond::process_collector::ProcessCollectionConfig;
 
@@ -104,7 +104,7 @@ Detects SIP status and identifies SIP-protected processes:
 
 ### MacOSCollectorConfig
 
-```rust
+```rust,ignore
 pub struct MacOSCollectorConfig {
     /// Whether to collect process entitlements information
     pub collect_entitlements: bool,
@@ -121,7 +121,7 @@ pub struct MacOSCollectorConfig {
 
 ### Default Configuration
 
-```rust
+```rust,ignore
 impl Default for MacOSCollectorConfig {
     fn default() -> Self {
         Self {
@@ -172,7 +172,7 @@ graph TD
 
 ### Structured Error Types
 
-```rust
+```rust,ignore
 #[derive(Debug, Error)]
 pub enum MacOSCollectionError {
     #[error("Security framework error: {0}")]
@@ -220,7 +220,7 @@ The collector handles various failure scenarios gracefully:
 
 The macOS collector implements the standard `ProcessCollector` trait:
 
-```rust
+```rust,ignore
 #[async_trait]
 impl ProcessCollector for EnhancedMacOSCollector {
     fn name(&self) -> &'static str {
@@ -250,7 +250,7 @@ impl ProcessCollector for EnhancedMacOSCollector {
 
 ProcessEvent objects include comprehensive macOS-specific information:
 
-```rust
+```rust,ignore
 use std::time::SystemTime;
 
 fn example_process_event() -> ProcessEvent {
@@ -301,7 +301,7 @@ The macOS collector includes extensive testing:
 
 ### Example Test
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_enhanced_macos_collector_collect_processes() {
     let base_config = ProcessCollectionConfig {
@@ -398,7 +398,7 @@ Error: Access denied for process 1234
 
 Enable detailed logging for troubleshooting:
 
-```rust
+```rust,ignore
 fn setup_debug_logging() -> Result<(), Box<dyn std::error::Error>> {
     let collector = EnhancedMacOSCollector::new(base_config, macos_config)?;
     // Enable debug logging

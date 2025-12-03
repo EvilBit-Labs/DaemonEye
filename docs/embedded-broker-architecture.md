@@ -45,7 +45,7 @@ graph TB
 
 The embedded broker runs as a component within the daemoneye-agent process:
 
-```rust
+```rust,ignore
 // daemoneye-agent startup sequence
 pub struct DaemoneyeAgent {
     // Embedded broker instance
@@ -126,7 +126,7 @@ impl DaemoneyeAgent {
 
 ### Configuration Structure
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct BrokerConfig {
     /// Socket path for IPC communication
@@ -207,7 +207,7 @@ sequenceDiagram
 
 ### Health Check Implementation
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct BrokerHealthStatus {
     /// Broker operational status
@@ -278,7 +278,7 @@ pub enum HealthStatus {
 
 ### Status Reporting Integration
 
-```rust
+```rust,ignore
 impl DaemoneyeAgent {
     pub async fn health_report(&self) -> AgentHealthReport {
         let broker_health = self.event_broker.health_status().await;
@@ -317,7 +317,7 @@ impl DaemoneyeAgent {
 
 ### Memory Management
 
-```rust
+```rust,ignore
 pub struct BrokerResourceLimits {
     /// Maximum memory usage in bytes
     pub max_memory_bytes: usize,
@@ -387,7 +387,7 @@ impl DaemoneyeBroker {
 
 ### Resource Monitoring
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct BrokerPerformanceMetrics {
     /// Messages processed per second
@@ -445,7 +445,7 @@ impl DaemoneyeBroker {
 
 ### Detection Engine Integration
 
-```rust
+```rust,ignore
 impl DetectionEngine {
     pub async fn new(config: DetectionConfig, broker: Arc<DaemoneyeBroker>) -> Result<Self> {
         let mut event_bus = DaemoneyeEventBus::from_broker((*broker).clone()).await?;
@@ -483,7 +483,7 @@ impl DetectionEngine {
 
 ### Collector Lifecycle Integration
 
-```rust
+```rust,ignore
 impl CollectorManager {
     pub async fn start_collector(&self, collector_type: &str) -> Result<()> {
         // Use RPC through the broker to start collector

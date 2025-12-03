@@ -91,7 +91,7 @@ graph TB
 
 **Key Interfaces**:
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait ProcessCollector {
     async fn enumerate_processes(&self) -> Result<Vec<ProcessRecord>>;
@@ -123,7 +123,7 @@ pub trait ProcessCollector {
 
 **Key Interfaces**:
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait DetectionEngine {
     async fn execute_rules(&self, scan_id: i64) -> Result<Vec<Alert>>;
@@ -158,7 +158,7 @@ pub trait AlertManager {
 
 **Key Interfaces**:
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait QueryExecutor {
     async fn execute_query(&self, query: &str, params: &[Value]) -> Result<QueryResult>;

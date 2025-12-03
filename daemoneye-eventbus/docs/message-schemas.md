@@ -283,7 +283,7 @@ message RpcAuthInfo {
 
 ### Basic Pub/Sub
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{EventBus, CollectionEvent, CorrelationMetadata};
 
 // Create correlation metadata
@@ -298,7 +298,7 @@ event_bus.publish_with_correlation(event, correlation).await?;
 
 ### RPC Call Pattern
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{CollectorRpcClient, CollectorOperation, RpcRequest};
 
 // Create RPC client
@@ -318,7 +318,7 @@ let response = rpc_client.call(request, Duration::from_secs(30)).await?;
 
 ### Version Negotiation
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{VersionNegotiator, VersionNegotiationRequest};
 
 // Negotiate version with server

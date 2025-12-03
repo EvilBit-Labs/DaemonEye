@@ -131,7 +131,7 @@ erDiagram
 
 **Purpose:** Compile and cache regex patterns with performance bounds and monitoring
 
-```rust
+```rust,ignore
 pub struct RegexCompiler {
     cache: Arc<RwLock<LruCache<String, CompiledRegex>>>,
     config: RegexConfig,
@@ -490,7 +490,7 @@ pub enum RegexError {
 
 **Purpose:** Parse SQL rules and extract collection requirements for pushdown optimization
 
-```rust
+```rust,ignore
 pub struct SqlAnalyzer {
     parser: sqlparser::Parser<SQLiteDialect>,
     validator: SqlValidator,
@@ -591,7 +591,7 @@ pub struct DetectionPlan {
 
 **Purpose:** Maintain catalog of collector capabilities for optimal query planning
 
-```rust
+```rust,ignore
 pub struct SchemaCatalog {
     collectors: HashMap<String, CollectorDescriptor>,
     tables: HashMap<String, TableSchema>,
@@ -679,7 +679,7 @@ impl SchemaCatalog {
 
 **Purpose:** Analyze SQL AST and determine optimal distribution between collectors and agent
 
-```rust
+```rust,ignore
 pub struct PushdownPlanner {
     catalog: Arc<SchemaCatalog>,
     cost_estimator: CostEstimator,
@@ -754,7 +754,7 @@ impl PushdownPlanner {
 
 **Purpose:** Execute complex SQL operations (joins, aggregations) over redb with bounded memory
 
-```rust
+```rust,ignore
 pub struct OperatorPipeline {
     storage: Arc<RedbStorage>,
     join_executor: JoinExecutor,
@@ -855,7 +855,7 @@ impl JoinExecutor {
 
 **Purpose:** Manage cascading analysis where collector results trigger additional collection
 
-```rust
+```rust,ignore
 pub struct ReactiveOrchestrator {
     collectors: HashMap<String, Box<dyn CollectorClient>>,
     trigger_rules: Vec<TriggerRule>,
@@ -989,7 +989,7 @@ impl ReactiveOrchestrator {
 
 **Purpose:** Implement automatic correlation where JOINs trigger collection of related data
 
-```rust
+```rust,ignore
 pub struct AutoJoinManager {
     auto_join_rules: Vec<AutoJoinRule>,
     active_collections: HashMap<String, Vec<CollectionTask>>,
@@ -1102,7 +1102,7 @@ pub enum ExtendedJoinType {
 
 ### Detection Plan Data Structures
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone)]
 pub struct DetectionPlan {
     pub rule_id: String,
@@ -1161,7 +1161,7 @@ pub enum SupplementalRuleData {
 
 ### Storage Schema for redb
 
-```rust
+```rust,ignore
 // Primary event tables with time-based partitioning
 const PROCESSES_EVENTS: TableDefinition<(u64, u32), ProcessRecord> =
     TableDefinition::new("processes.events");
@@ -1219,7 +1219,7 @@ pub struct RecordReference {
 
 ### Comprehensive Error Recovery
 
-```rust
+```rust,ignore
 #[derive(Debug, Error)]
 pub enum DetectionEngineError {
     #[error("SQL parsing failed: {0}")]
@@ -1305,7 +1305,7 @@ impl ErrorRecoveryManager {
 
 ### Comprehensive Testing Approach
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -31,7 +31,7 @@ DaemonEye provides APIs for each component:
 
 ### Process Collection
 
-```rust
+```rust,ignore
 use daemoneye_lib::collector::ProcessCollector;
 
 async fn collect_processes() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,7 +43,7 @@ async fn collect_processes() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Database Operations
 
-```rust
+```rust,ignore
 use daemoneye_lib::storage::Database;
 
 async fn database_operations() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,7 +58,7 @@ async fn database_operations() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Alert Management
 
-```rust
+```rust,ignore
 use daemoneye_lib::alerting::{Alert, AlertManager, AlertSeverity};
 use daemoneye_lib::models::ProcessInfo;
 
@@ -86,7 +86,7 @@ async fn alert_management() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Configuration Management
 
-```rust
+```rust,ignore
 use daemoneye_lib::config::Config;
 
 async fn configuration_management() -> Result<(), Box<dyn std::error::Error>> {
@@ -100,7 +100,7 @@ async fn configuration_management() -> Result<(), Box<dyn std::error::Error>> {
 
 ### ProcessInfo
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProcessInfo {
     pub pid: u32,
@@ -118,7 +118,7 @@ pub struct ProcessInfo {
 
 ### Alert
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Alert {
     pub id: Uuid,
@@ -133,7 +133,7 @@ pub struct Alert {
 
 ### DetectionRule
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DetectionRule {
     pub name: String,
@@ -150,7 +150,7 @@ pub struct DetectionRule {
 
 ### CollectionError
 
-```rust
+```rust,ignore
 #[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("Permission denied accessing process {pid}")]
@@ -169,7 +169,7 @@ pub enum CollectionError {
 
 ### DatabaseError
 
-```rust
+```rust,ignore
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     #[error("Database connection failed: {0}")]
@@ -188,7 +188,7 @@ pub enum DatabaseError {
 
 ### AlertError
 
-```rust
+```rust,ignore
 #[derive(Debug, Error)]
 pub enum AlertError {
     #[error("Alert delivery failed: {0}")]
@@ -209,7 +209,7 @@ pub enum AlertError {
 
 ### ProcessCollectionService
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait ProcessCollectionService: Send + Sync {
     async fn collect_processes(&self) -> Result<CollectionResult, CollectionError>;
@@ -220,7 +220,7 @@ pub trait ProcessCollectionService: Send + Sync {
 
 ### DetectionService
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait DetectionService: Send + Sync {
     async fn execute_rules(&self, scan_context: &ScanContext)
@@ -233,7 +233,7 @@ pub trait DetectionService: Send + Sync {
 
 ### AlertSink
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait AlertSink: Send + Sync {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, DeliveryError>;
@@ -246,7 +246,7 @@ pub trait AlertSink: Send + Sync {
 
 ### Config
 
-```rust
+```rust,ignore
 pub struct Config {
     app: AppConfig,
     database: DatabaseConfig,
@@ -269,7 +269,7 @@ impl Config {
 
 ### AppConfig
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
     pub scan_interval_ms: u64,
@@ -289,7 +289,7 @@ pub struct AppConfig {
 
 ### Database
 
-```rust
+```rust,ignore
 pub struct Database {
     conn: Connection,
 }
@@ -314,7 +314,7 @@ impl Database {
 
 ### AlertManager
 
-```rust
+```rust,ignore
 pub struct AlertManager {
     sinks: Vec<Box<dyn AlertSink>>,
     queue: Arc<Mutex<VecDeque<Alert>>>,
@@ -335,7 +335,7 @@ impl AlertManager {
 
 #### SyslogSink
 
-```rust
+```rust,ignore
 pub struct SyslogSink {
     facility: String,
     priority: String,
@@ -351,7 +351,7 @@ impl SyslogSink {
 
 #### WebhookSink
 
-```rust
+```rust,ignore
 pub struct WebhookSink {
     url: String,
     method: String,
@@ -371,7 +371,7 @@ impl WebhookSink {
 
 #### FileSink
 
-```rust
+```rust,ignore
 pub struct FileSink {
     path: PathBuf,
     format: OutputFormat,
@@ -391,7 +391,7 @@ impl FileSink {
 
 ### Cli
 
-```rust
+```rust,ignore
 pub struct Cli {
     pub command: Commands,
     pub config: Option<PathBuf>,
@@ -418,7 +418,7 @@ impl Cli {
 
 #### RunCommand
 
-```rust
+```rust,ignore
 #[derive(Args)]
 pub struct RunCommand {
     #[arg(short, long)]
@@ -431,7 +431,7 @@ pub struct RunCommand {
 
 #### ConfigCommand
 
-```rust
+```rust,ignore
 #[derive(Subcommand)]
 pub enum ConfigCommand {
     Show(ConfigShowCommand),
@@ -453,7 +453,7 @@ pub struct ConfigShowCommand {
 
 #### RulesCommand
 
-```rust
+```rust,ignore
 #[derive(Subcommand)]
 pub enum RulesCommand {
     List(RulesListCommand),
@@ -471,7 +471,7 @@ pub enum RulesCommand {
 
 ### IpcServer
 
-```rust
+```rust,ignore
 pub struct IpcServer {
     socket_path: PathBuf,
     handlers: HashMap<String, Box<dyn IpcHandler>>,
@@ -486,7 +486,7 @@ impl IpcServer {
 
 ### IpcClient
 
-```rust
+```rust,ignore
 pub struct IpcClient {
     socket_path: PathBuf,
     connection: Option<Connection>,
@@ -501,7 +501,7 @@ impl IpcClient {
 
 ### IPC Messages
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IpcRequest {
     CollectProcesses,
@@ -528,7 +528,7 @@ pub enum IpcResponse {
 
 ### Logger
 
-```rust
+```rust,ignore
 pub struct Logger {
     level: Level,
     format: LogFormat,
@@ -546,7 +546,7 @@ impl Logger {
 
 ### Metrics
 
-```rust
+```rust,ignore
 pub struct Metrics {
     registry: Registry,
 }
@@ -566,7 +566,7 @@ impl Metrics {
 
 All APIs use structured error types:
 
-```rust
+```rust,ignore
 #[derive(Debug, Error)]
 pub enum DaemonEyeError {
     #[error("Collection error: {0}")]
@@ -593,7 +593,7 @@ pub enum DaemonEyeError {
 
 Use `anyhow` for error context:
 
-```rust
+```rust,ignore
 use anyhow::{Context, Result};
 
 pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
@@ -611,7 +611,7 @@ pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
 
 ### Basic Process Monitoring
 
-```rust
+```rust,ignore
 use daemoneye_lib::alerting::AlertManager;
 use daemoneye_lib::collector::ProcessCollector;
 use daemoneye_lib::storage::Database;
@@ -654,7 +654,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Custom Alert Sink
 
-```rust
+```rust,ignore
 use async_trait::async_trait;
 use daemoneye_lib::alerting::{Alert, AlertSink, DeliveryError, DeliveryResult};
 

@@ -14,7 +14,7 @@ DaemonEye uses a layered approach to process enumeration, providing a unified in
 
 **Primary Interface**: The `sysinfo` crate provides cross-platform process enumeration with consistent data structures.
 
-```rust
+```rust,ignore
 use sysinfo::{Pid, ProcessExt, System, SystemExt};
 
 pub struct ProcessCollector {
@@ -65,7 +65,7 @@ impl ProcessCollector {
 
 **Linux eBPF Integration (Enterprise Tier)**:
 
-```rust
+```rust,ignore
 #[cfg(target_os = "linux")]
 pub struct EbpfProcessCollector {
     base_collector: ProcessCollector,
@@ -87,7 +87,7 @@ impl EbpfProcessCollector {
 
 **Windows ETW Integration (Enterprise Tier)**:
 
-```rust
+```rust,ignore
 #[cfg(target_os = "windows")]
 pub struct EtwProcessCollector {
     base_collector: ProcessCollector,
@@ -109,7 +109,7 @@ impl EtwProcessCollector {
 
 **macOS EndpointSecurity Integration (Enterprise Tier)**:
 
-```rust
+```rust,ignore
 #[cfg(target_os = "macos")]
 pub struct EndpointSecurityProcessCollector {
     base_collector: ProcessCollector,
@@ -133,7 +133,7 @@ impl EndpointSecurityProcessCollector {
 
 **Hash Computation**: SHA-256 hashing of executable files for integrity verification.
 
-```rust
+```rust,ignore
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::Path;
@@ -194,7 +194,7 @@ impl HashComputer for Sha256HashComputer {
 
 **Performance Optimization**: Asynchronous hash computation with configurable buffer sizes.
 
-```rust
+```rust,ignore
 impl ProcessCollector {
     async fn compute_executable_hash(&self, path: Option<&Path>) -> Result<Option<String>> {
         let path = match path {
@@ -231,7 +231,7 @@ impl ProcessCollector {
 
 **AST Validation**: Comprehensive SQL parsing and validation to prevent injection attacks.
 
-```rust
+```rust,ignore
 use sqlparser::{ast::*, dialect::SQLiteDialect, parser::Parser};
 
 pub struct SqlValidator {
@@ -378,7 +378,7 @@ impl SqlValidator {
 
 **Sandboxed Execution**: Safe execution of detection rules with resource limits.
 
-```rust
+```rust,ignore
 pub struct DetectionEngine {
     db: redb::Database,
     sql_validator: SqlValidator,
@@ -460,7 +460,7 @@ impl DetectionEngine {
 
 **Structured Alerts**: Comprehensive alert structure with full context.
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
     pub id: Uuid,
@@ -527,7 +527,7 @@ impl Alert {
 
 **Intelligent Deduplication**: Prevent alert spam while maintaining security visibility.
 
-```rust
+```rust,ignore
 pub struct AlertManager {
     db: redb::Database,
     dedupe_cache: Arc<Mutex<HashMap<String, Instant>>>,
@@ -583,7 +583,7 @@ impl AlertManager {
 
 **Pluggable Sinks**: Flexible alert delivery through multiple channels.
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait AlertSink: Send + Sync {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult>;
@@ -659,7 +659,7 @@ impl AlertDeliveryManager {
 
 **Stdout Sink**:
 
-```rust
+```rust,ignore
 pub struct StdoutSink {
     format: OutputFormat,
 }
@@ -689,7 +689,7 @@ impl AlertSink for StdoutSink {
 
 **Syslog Sink**:
 
-```rust
+```rust,ignore
 pub struct SyslogSink {
     facility: SyslogFacility,
     tag: String,
@@ -723,7 +723,7 @@ impl AlertSink for SyslogSink {
 
 **Webhook Sink**:
 
-```rust
+```rust,ignore
 pub struct WebhookSink {
     url: Url,
     client: reqwest::Client,
@@ -785,7 +785,7 @@ impl AlertSink for WebhookSink {
 
 **Optimization Strategies**:
 
-```rust
+```rust,ignore
 impl ProcessCollector {
     async fn enumerate_processes_optimized(&self) -> Result<Vec<ProcessRecord>> {
         let start_time = Instant::now();
@@ -827,7 +827,7 @@ impl ProcessCollector {
 
 **Optimization Strategies**:
 
-```rust
+```rust,ignore
 impl DetectionEngine {
     async fn execute_rules_optimized(&self, scan_id: i64) -> Result<Vec<Alert>> {
         let rules = self.rule_manager.load_enabled_rules().await?;
@@ -868,7 +868,7 @@ impl DetectionEngine {
 
 **Process Collection Failures**:
 
-```rust
+```rust,ignore
 impl ProcessCollector {
     async fn enumerate_processes_with_fallback(&self) -> Result<Vec<ProcessRecord>> {
         match self.enumerate_processes_enhanced().await {
@@ -884,7 +884,7 @@ impl ProcessCollector {
 
 **Detection Engine Failures**:
 
-```rust
+```rust,ignore
 impl DetectionEngine {
     async fn execute_rule_with_recovery(
         &self,
@@ -913,7 +913,7 @@ impl DetectionEngine {
 
 **Memory Pressure Handling**:
 
-```rust
+```rust,ignore
 const MIN_HASH_BUFFER_SIZE: usize = 4 * 1024;
 
 impl ProcessCollector {

@@ -78,7 +78,7 @@ RPC calls use a structured topic hierarchy for routing. The canonical pattern us
 
 **Request**:
 
-```rust
+```rust,ignore
 RpcRequest {
     operation: CollectorOperation::Start,
     payload: RpcPayload::Lifecycle(CollectorLifecycleRequest {
@@ -94,7 +94,7 @@ RpcRequest {
 
 **Response**:
 
-```rust
+```rust,ignore
 RpcResponse {
     status: RpcStatus::Success,
     payload: None,
@@ -108,7 +108,7 @@ RpcResponse {
 
 **Request**:
 
-```rust
+```rust,ignore
 RpcRequest {
     operation: CollectorOperation::Stop,
     payload: RpcPayload::Lifecycle(CollectorLifecycleRequest {
@@ -125,7 +125,7 @@ RpcRequest {
 
 **Request**:
 
-```rust
+```rust,ignore
 RpcRequest {
     operation: CollectorOperation::Restart,
     payload: RpcPayload::Lifecycle(CollectorLifecycleRequest {
@@ -145,7 +145,7 @@ RpcRequest {
 
 **Request**:
 
-```rust
+```rust,ignore
 RpcRequest {
     operation: CollectorOperation::HealthCheck,
     payload: RpcPayload::Empty,
@@ -154,7 +154,7 @@ RpcRequest {
 
 **Response**:
 
-```rust
+```rust,ignore
 RpcResponse {
     status: RpcStatus::Success,
     payload: Some(RpcPayload::HealthCheck(HealthCheckData {
@@ -197,7 +197,7 @@ RpcResponse {
 
 **Heartbeat Message**:
 
-```rust
+```rust,ignore
 Message {
     topic: "control.health.heartbeat.procmond",
     message_type: MessageType::Heartbeat,
@@ -218,7 +218,7 @@ Message {
 
 **Request**:
 
-```rust
+```rust,ignore
 RpcRequest {
     operation: CollectorOperation::UpdateConfig,
     payload: RpcPayload::ConfigUpdate(ConfigUpdateRequest {
@@ -237,7 +237,7 @@ RpcRequest {
 
 **Response**:
 
-```rust
+```rust,ignore
 RpcResponse {
     status: RpcStatus::Success,
     payload: Some(RpcPayload::Generic({
@@ -265,7 +265,7 @@ RpcResponse {
 
 **Request**:
 
-```rust
+```rust,ignore
 RpcRequest {
     operation: CollectorOperation::GracefulShutdown,
     payload: RpcPayload::Shutdown(ShutdownRequest {
@@ -280,7 +280,7 @@ RpcRequest {
 
 **Response**:
 
-```rust
+```rust,ignore
 RpcResponse {
     status: RpcStatus::Success,
     payload: Some(RpcPayload::Generic({
@@ -297,7 +297,7 @@ RpcResponse {
 
 **Request**:
 
-```rust
+```rust,ignore
 RpcRequest {
     operation: CollectorOperation::ForceShutdown,
     payload: RpcPayload::Shutdown(ShutdownRequest {
@@ -318,7 +318,7 @@ RpcRequest {
 
 **Request**:
 
-```rust
+```rust,ignore
 RpcRequest {
     operation: CollectorOperation::GetCapabilities,
     payload: RpcPayload::Empty,
@@ -327,7 +327,7 @@ RpcRequest {
 
 **Response**:
 
-```rust
+```rust,ignore
 RpcResponse {
     status: RpcStatus::Success,
     payload: Some(RpcPayload::Capabilities(CapabilitiesData {
@@ -366,7 +366,7 @@ RpcResponse {
 
 All RPC errors follow a consistent structure:
 
-```rust
+```rust,ignore
 RpcResponse {
     status: RpcStatus::Error,
     error_details: Some(RpcError {
@@ -395,7 +395,7 @@ RpcResponse {
 
 RPC clients implement retry logic with exponential backoff:
 
-```rust
+```rust,ignore
 // Retry configuration
 let retry_config = RetryConfig {
     max_attempts: 3,
@@ -427,7 +427,7 @@ Different operations have different timeout characteristics:
 
 ### Timeout Handling
 
-```rust
+```rust,ignore
 // Client-side timeout handling
 match tokio::time::timeout(request_timeout, rpc_call).await {
     Ok(Ok(response)) => handle_success(response),
@@ -465,7 +465,7 @@ match tokio::time::timeout(service_timeout, operation_future).await {
 
 All RPC operations are logged for security audit:
 
-```rust
+```rust,ignore
 audit_log.record(AuditEvent {
     timestamp: SystemTime::now(),
     actor: request.client_id,
@@ -501,7 +501,7 @@ audit_log.record(AuditEvent {
 
 ### daemoneye-agent Integration
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::rpc::{CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient};
 
 pub struct CollectorManager {
@@ -571,7 +571,7 @@ impl CollectorManager {
 
 ### collector-core Integration
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::rpc::{CollectorOperation, CollectorRpcService, ServiceCapabilities};
 
 pub struct ProcessCollectorRpcService {

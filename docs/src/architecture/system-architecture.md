@@ -103,7 +103,7 @@ graph TB
 
 #### Key Interfaces
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait ProcessCollector: Send + Sync {
     async fn enumerate_processes(&self) -> Result<Vec<ProcessRecord>>;
@@ -126,7 +126,7 @@ pub trait AuditLogger: Send + Sync {
 
 #### Implementation Structure
 
-```rust
+```rust,ignore
 pub struct ProcessCollector {
     config: CollectorConfig,
     hash_computer: Box<dyn HashComputer>,
@@ -181,7 +181,7 @@ impl ProcessCollector {
 
 #### Key Interfaces
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait DetectionEngine: Send + Sync {
     async fn execute_rules(&self, scan_id: i64) -> Result<Vec<Alert>>;
@@ -207,7 +207,7 @@ pub trait ProcessManager: Send + Sync {
 
 #### Implementation Structure
 
-```rust
+```rust,ignore
 pub struct DetectionEngine {
     db: redb::Database,
     rule_manager: RuleManager,
@@ -267,7 +267,7 @@ impl DetectionEngine {
 
 #### Key Interfaces
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait QueryExecutor: Send + Sync {
     async fn execute_query(&self, query: &str, params: &[Value]) -> Result<QueryResult>;
@@ -311,7 +311,7 @@ pub trait DataManager: Send + Sync {
 
 #### Module Structure
 
-```rust
+```rust,ignore
 pub mod config {
     pub mod environment;
     pub mod hierarchical;
@@ -451,7 +451,7 @@ The event bus uses a hierarchical topic structure with up to 4 levels:
 
 The event bus supports comprehensive correlation tracking for multi-collector workflows:
 
-```rust
+```rust,ignore
 // Hierarchical correlation tracking
 let parent_metadata = CorrelationMetadata::new("workflow-id".to_string())
     .with_stage("detection".to_string())
@@ -555,7 +555,7 @@ message ProcessRecord {
 
 **Unix Domain Sockets (Linux/macOS)**:
 
-```rust
+```rust,ignore
 pub struct UnixSocketServer {
     path: PathBuf,
     listener: UnixListener,
@@ -584,7 +584,7 @@ impl IpcServer for UnixSocketServer {
 
 **Named Pipes (Windows)**:
 
-```rust
+```rust,ignore
 pub struct NamedPipeServer {
     pipe_name: String,
     server: NamedPipeServerStream,
@@ -609,7 +609,7 @@ impl IpcServer for NamedPipeServer {
 
 **Schema Design**:
 
-```rust
+```rust,ignore
 // Process snapshots table
 pub struct ProcessSnapshot {
     pub id: Uuid,
@@ -686,7 +686,7 @@ The audit ledger is implemented as a hash-chained log file, not a database table
 
 **Hash Chain Implementation**:
 
-```rust
+```rust,ignore
 pub struct AuditChain {
     hasher: blake3::Hasher,
     signer: Option<ed25519_dalek::Keypair>,
@@ -746,7 +746,7 @@ impl AuditChain {
 
 **Principle**: Each component operates with the minimum privileges required for its function.
 
-```rust
+```rust,ignore
 pub struct PrivilegeManager {
     initial_privileges: Privileges,
     current_privileges: Privileges,
@@ -782,7 +782,7 @@ impl PrivilegeManager {
 
 **AST Validation**: All user-provided SQL undergoes comprehensive validation.
 
-```rust
+```rust,ignore
 pub struct SqlValidator {
     parser: sqlparser::Parser<sqlparser::dialect::SQLiteDialect>,
     allowed_functions: HashSet<String>,
@@ -816,7 +816,7 @@ impl SqlValidator {
 
 **Bounded Channels**: Configurable capacity with backpressure policies.
 
-```rust
+```rust,ignore
 pub struct BoundedChannel<T> {
     sender: mpsc::Sender<T>,
     receiver: mpsc::Receiver<T>,

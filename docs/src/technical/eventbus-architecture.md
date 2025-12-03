@@ -80,7 +80,7 @@ The EventBus supports two types of wildcards for flexible subscriptions:
 
 Matches exactly one segment:
 
-```rust
+```rust,ignore
 // Subscribe to lifecycle events from all collector types
 let pattern = "events.+.lifecycle";
 // Matches: events.process.lifecycle, events.network.lifecycle
@@ -91,7 +91,7 @@ let pattern = "events.+.lifecycle";
 
 Matches zero or more segments (must be at the end):
 
-```rust
+```rust,ignore
 // Subscribe to all process events
 let pattern = "events.process.#";
 // Matches: events.process.lifecycle, events.process.metadata, events.process.tree
@@ -107,7 +107,7 @@ The EventBus supports comprehensive correlation tracking for multi-collector wor
 
 ### Basic Correlation
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::CorrelationMetadata;
 
 // Create correlation metadata
@@ -120,7 +120,7 @@ let metadata = CorrelationMetadata::new("workflow-123".to_string())
 
 Track events across multiple stages of analysis:
 
-```rust
+```rust,ignore
 // Root correlation for entire workflow
 let root_metadata = CorrelationMetadata::new("threat-analysis-001".to_string())
     .with_stage("detection".to_string())
@@ -143,7 +143,7 @@ let alert_metadata = analysis_metadata.create_child("alert-001".to_string())
 
 Filter events based on correlation metadata:
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{CorrelationFilter, EventSubscription};
 
 // Filter by root correlation ID (entire workflow)
@@ -168,7 +168,7 @@ let subscription = EventSubscription {
 
 Track events across multiple collectors in a cascading analysis workflow on the same system:
 
-```rust
+```rust,ignore
 // Root correlation for entire local workflow
 let root_correlation = CorrelationMetadata::new("workflow-id".to_string())
     .with_stage("detection".to_string())
@@ -192,7 +192,7 @@ let alert_correlation = analysis_correlation.create_child("alert-id".to_string()
 
 Track all events related to a security investigation on a single host:
 
-```rust
+```rust,ignore
 let investigation_id = "incident-2024-001";
 let forensic_metadata = CorrelationMetadata::new(investigation_id.to_string())
     .with_stage("forensic_analysis".to_string())
@@ -212,7 +212,7 @@ let forensic_filter = CorrelationFilter::new()
 
 Track events across local collector components on a single system:
 
-```rust
+```rust,ignore
 let trace_metadata = CorrelationMetadata::new("trace-id".to_string())
     .with_stage("local_collection".to_string())
     .with_tag("component".to_string(), "procmond".to_string())
@@ -320,7 +320,7 @@ The broker tracks the following statistics:
 
 ### Publishing Events
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{
     CollectionEvent, DaemoneyeEventBus, ProcessEvent, CorrelationMetadata,
 };
@@ -343,7 +343,7 @@ event_bus.publish(event, metadata.correlation_id.clone()).await?;
 
 ### Subscribing to Events
 
-```rust
+```rust,ignore
 use daemoneye_eventbus::{EventSubscription, SourceCaps, CorrelationFilter};
 
 // Create subscription with correlation filter

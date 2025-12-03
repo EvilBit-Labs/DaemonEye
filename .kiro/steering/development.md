@@ -42,7 +42,7 @@ inclusion: always
 
 ### Code Organization
 
-```rust
+```rust,ignore
 // Standard module structure
 pub mod alerting; // Multi-channel alert delivery
 pub mod config; // Configuration management
@@ -76,7 +76,7 @@ cargo bench --baseline previous
 
 ### Error Handling Patterns
 
-```rust
+```rust,ignore
 // Libraries: Use thiserror for structured errors
 #[derive(Debug, Error)]
 pub enum CollectionError {
@@ -96,7 +96,7 @@ fn main() -> Result<()> {
 
 ### Configuration Management
 
-```rust
+```rust,ignore
 // Hierarchical loading order (highest to lowest precedence):
 // 1. CLI flags  2. Environment vars  3. User config  4. System config  5. Defaults
 use figment::{
@@ -114,7 +114,7 @@ struct Config {
 
 ### Database Patterns
 
-```rust
+```rust,ignore
 // Use redb with strongly-typed tables
 use redb::TableDefinition;
 const PROCESSES_TABLE: TableDefinition<u64, ProcessInfo> =
@@ -133,7 +133,7 @@ write_txn.commit()?;
 
 ### Input Validation
 
-```rust
+```rust,ignore
 // Validate all external inputs at trust boundaries
 use clap::Parser;
 #[derive(Parser)]
@@ -162,7 +162,7 @@ fn validate_query(sql: &str) -> Result<(), SecurityError> {
 
 ### Cryptographic Standards
 
-```rust
+```rust,ignore
 // Use approved libraries only
 use blake3::Hasher; // Fast cryptographic hashing
 use ed25519_dalek::Keypair; // Digital signatures
@@ -174,7 +174,7 @@ use zeroize::Zeroize; // Memory zeroing
 
 ### Test Organization
 
-```rust
+```rust,ignore
 // Unit tests: Individual components only
 #[cfg(test)]
 mod tests {
@@ -218,7 +218,7 @@ cargo test --features proptest
 
 ### Optimization Patterns
 
-```rust
+```rust,ignore
 // Bounded channels with backpressure
 use tokio::sync::mpsc;
 let (tx, rx) = mpsc::channel(1000); // Configurable capacity
