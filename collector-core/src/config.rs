@@ -73,6 +73,9 @@ pub struct CollectorConfig {
     /// DaemoneyeEventBus socket path for embedded broker communication
     pub daemoneye_socket_path: Option<String>,
 
+    /// IPC endpoint path for direct communication (e.g., with procmond)
+    pub ipc_endpoint: Option<String>,
+
     /// Optional registration settings for broker auto-registration
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub registration: Option<CollectorRegistrationConfig>,
@@ -95,6 +98,7 @@ impl Default for CollectorConfig {
             telemetry_interval: Duration::from_secs(30),
             component_name: "collector-core".to_string(),
             daemoneye_socket_path: None,
+            ipc_endpoint: None,
             registration: None,
         }
     }
@@ -290,6 +294,12 @@ impl CollectorConfig {
         self
     }
 
+    /// Sets the IPC endpoint path.
+    pub fn with_ipc_endpoint(mut self, path: String) -> Self {
+        self.ipc_endpoint = Some(path);
+        self
+    }
+
     /// Sets the backpressure threshold.
     pub fn with_backpressure_threshold(mut self, threshold: usize) -> Self {
         self.backpressure_threshold = threshold;
@@ -426,6 +436,10 @@ impl CollectorConfig {
             && let Ok(enabled) = val.parse()
         {
             self.enable_debug_logging = enabled;
+        }
+
+        if let Ok(val) = std::env::var(format!("{prefix}_IPC_ENDPOINT")) {
+            self.ipc_endpoint = Some(val);
         }
 
         self

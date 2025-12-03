@@ -346,6 +346,8 @@ pub enum CollectorOperation {
     Pause,
     /// Resume collector operations
     Resume,
+    /// Execute a specific task (e.g. detection)
+    ExecuteTask,
 }
 
 /// RPC payload containing operation-specific data
@@ -367,6 +369,10 @@ pub enum RpcPayload {
     Capabilities(CapabilitiesData),
     /// Shutdown coordination request
     Shutdown(ShutdownRequest),
+    /// Generic task execution request
+    Task(serde_json::Value),
+    /// Generic task execution result
+    TaskResult(serde_json::Value),
     /// Generic key-value payload
     Generic(HashMap<String, serde_json::Value>),
     /// Empty payload
@@ -1000,6 +1006,20 @@ impl CollectorRpcService {
             CollectorOperation::Resume => {
                 self.handle_resume_request(request, start_time, deadline)
                     .await
+            }
+            CollectorOperation::ExecuteTask => {
+                // Base service does not handle generic tasks; they should be intercepted by the manager
+                // or implemented by a specific provider if we add one.
+                self.create_error_response(
+                    request,
+                    RpcError {
+                        code: "UNSUPPORTED_OPERATION".to_string(),
+                        message: "ExecuteTask operation not supported by base service".to_string(),
+                        context: HashMap::new(),
+                        category: ErrorCategory::Configuration,
+                    },
+                    start_time,
+                )
             }
         }
     }

@@ -7,11 +7,9 @@ use tracing::{debug, error, info, warn};
 
 mod broker_manager;
 mod collector_registry;
-mod ipc_client;
 mod ipc_server;
 
 use broker_manager::BrokerManager;
-use ipc_client::{IpcClientManager, create_default_ipc_config};
 use ipc_server::IpcServerManager;
 
 #[derive(Parser)]
@@ -114,21 +112,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "IPC server is healthy and ready for CLI communication"
     );
 
-    // Initialize IPC client for communication with procmond
-    let ipc_config = create_default_ipc_config();
-    let mut ipc_manager = IpcClientManager::new(ipc_config)?;
-
-    // Wait for procmond to become available
-    info!("Waiting for procmond to become available...");
-    if let Err(e) = ipc_manager.wait_for_procmond(Duration::from_secs(30)).await {
-        warn!(
-            "Procmond not available: {}. Continuing without process monitoring.",
-            e
-        );
-    } else {
-        info!("Connected to procmond successfully");
-    }
-
     // Initialize detection engine
     let mut detection_engine = detection::DetectionEngine::new();
 
@@ -160,7 +143,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let scan_interval = Duration::from_millis(config.app.scan_interval_ms);
     info!(
         interval_ms = config.app.scan_interval_ms,
-        "Entering main collection+detection loop with IPC client"
+        "Entering main collection+detection loop with RPC client"
     );
 
     // Graceful shutdown signal future
@@ -213,13 +196,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                // Request process enumeration from procmond via IPC
-                let processes = match ipc_manager.enumerate_processes().await {
+                // Request process enumeration from procmond via RPC
+                let task = daemoneye_lib::proto::DetectionTask::new_enumerate_processes(
+                    uuid::Uuid::new_v4().to_string(),
+                    None,
+                );
+
+                let processes = match broker_manager.execute_task_rpc("procmond", task).await {
                     Ok(result) => {
                         if result.success {
                             info!(
                                 process_count = result.processes.len(),
-                                "Successfully collected process data from procmond"
+                                "Successfully collected process data from procmond via RPC"
                             );
                             // Parse process data from DetectionResult.processes
                             result
@@ -230,20 +218,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             warn!(
                                 error = %result.error_message.as_deref().unwrap_or("Unknown error"),
-                                "Procmond returned error during process enumeration"
+                                "Procmond returned error during process enumeration via RPC"
                             );
                             Vec::new()
                         }
                     }
                     Err(e) => {
-                        warn!(error = %e, "Failed to collect processes from procmond");
-                        // Check if we should try to reconnect
-                        if !ipc_manager.is_healthy().await {
-                            warn!("IPC client is unhealthy, attempting reconnection");
-                            if let Err(reconnect_err) = ipc_manager.force_reconnect().await {
-                                error!(error = %reconnect_err, "Failed to reconnect to procmond");
-                            }
-                        }
+                        warn!(error = %e, "Failed to collect processes from procmond via RPC");
                         Vec::new()
                     }
                 };

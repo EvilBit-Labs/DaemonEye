@@ -98,6 +98,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create collector configuration
     let mut collector_config = CollectorConfig::new()
         .with_component_name("procmond".to_string())
+        .with_ipc_endpoint(daemoneye_lib::ipc::IpcConfig::default().endpoint_path)
         .with_max_event_sources(1)
         .with_event_buffer_size(1000)
         .with_shutdown_timeout(Duration::from_secs(30))

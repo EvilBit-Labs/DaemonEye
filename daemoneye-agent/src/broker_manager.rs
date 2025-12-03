@@ -595,6 +595,46 @@ impl BrokerManager {
         }
     }
 
+    /// Execute a task via RPC
+    pub async fn execute_task_rpc(
+        &self,
+        collector_id: &str,
+        task: daemoneye_lib::proto::DetectionTask,
+    ) -> Result<daemoneye_lib::proto::DetectionResult> {
+        let client = self.get_rpc_client(collector_id).await?;
+
+        let task_json =
+            serde_json::to_value(&task).context("Failed to serialize detection task")?;
+
+        let request = RpcRequest {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            client_id: client.client_id.clone(),
+            target: client.target_topic.clone(),
+            operation: CollectorOperation::ExecuteTask,
+            payload: RpcPayload::Task(task_json),
+            timestamp: std::time::SystemTime::now(),
+            deadline: std::time::SystemTime::now() + Duration::from_secs(30),
+            correlation_metadata: daemoneye_eventbus::rpc::RpcCorrelationMetadata::new(
+                uuid::Uuid::new_v4().to_string(),
+            ),
+        };
+
+        let response = client.call(request, Duration::from_secs(30)).await?;
+        if response.status != RpcStatus::Success {
+            anyhow::bail!("Execute task RPC failed: {:?}", response.error_details);
+        }
+
+        match response.payload {
+            Some(RpcPayload::TaskResult(value)) => {
+                let result: daemoneye_lib::proto::DetectionResult =
+                    serde_json::from_value(value)
+                        .context("Failed to deserialize detection result")?;
+                Ok(result)
+            }
+            _ => anyhow::bail!("Invalid task execution response payload"),
+        }
+    }
+
     /// Get or create an RPC client for a collector
     pub async fn get_rpc_client(&self, collector_id: &str) -> Result<Arc<CollectorRpcClient>> {
         // Check if client already exists

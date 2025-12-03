@@ -72,6 +72,7 @@ async fn test_process_event_source_with_collector_core() {
     let collector_config = CollectorConfig {
         component_name: "test-collector".to_string(),
         daemoneye_socket_path: Some(socket_path.to_string_lossy().into_owned()),
+        ipc_endpoint: None,
         max_event_sources: 5,
         event_buffer_size: 1000,
         startup_timeout: Duration::from_secs(10),

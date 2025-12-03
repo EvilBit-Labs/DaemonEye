@@ -1470,6 +1470,53 @@ impl CollectorRuntime {
         // Set runtime reference for health metrics
         rpc_manager.set_runtime(Arc::clone(&runtime_arc)).await;
 
+        // Set task handler
+        let event_tx = self.event_tx.clone();
+        let shutdown_signal = Arc::clone(&self.shutdown_signal);
+
+        rpc_manager.set_task_handler(move |task| {
+            let _tx = event_tx.clone();
+            let shutdown = Arc::clone(&shutdown_signal);
+
+            Box::pin(async move {
+                use daemoneye_lib::proto::{DetectionResult, TaskType};
+
+                // Check if we're shutting down
+                if shutdown.load(Ordering::Relaxed) {
+                    return Ok(DetectionResult::failure(
+                        &task.task_id,
+                        "Collector is shutting down",
+                    ));
+                }
+
+                // For now, we'll implement a basic task handler
+                // In a full implementation, this would route tasks to appropriate event sources
+                match TaskType::try_from(task.task_type) {
+                    Ok(TaskType::EnumerateProcesses) => {
+                        debug!(task_id = %task.task_id, "Processing enumerate processes task");
+
+                        // This is a placeholder - in the full implementation,
+                        // this would trigger process enumeration via event sources
+                        Ok(DetectionResult::success(&task.task_id, vec![]))
+                    }
+                    Ok(task_type) => {
+                        warn!(task_id = %task.task_id, ?task_type, "Task type not yet implemented");
+                        Ok(DetectionResult::failure(
+                            &task.task_id,
+                            format!("Task type {:?} not yet implemented", task_type),
+                        ))
+                    }
+                    Err(_) => {
+                        error!(task_id = %task.task_id, task_type = task.task_type, "Unknown task type");
+                        Ok(DetectionResult::failure(
+                            &task.task_id,
+                            format!("Unknown task type: {}", task.task_type),
+                        ))
+                    }
+                }
+            })
+        }).await;
+
         // Start the service
         rpc_manager
             .start()

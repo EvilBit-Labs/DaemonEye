@@ -23,6 +23,19 @@ use tokio::time::{Duration as TokioDuration, timeout};
 use tracing::{error, info};
 use uuid::Uuid;
 
+type TaskHandler = Box<
+    dyn Fn(
+            daemoneye_lib::proto::DetectionTask,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = anyhow::Result<daemoneye_lib::proto::DetectionResult>,
+                    > + Send,
+            >,
+        > + Send
+        + Sync,
+>;
+
 /// Configuration for the RPC service manager
 #[derive(Debug, Clone)]
 pub struct RpcServiceConfig {
@@ -66,6 +79,8 @@ pub struct CollectorRpcServiceManager {
     performance_monitor: Arc<RwLock<Option<Arc<PerformanceMonitor>>>>,
     /// Shutdown signal for triggering collector shutdown (shared with runtime)
     runtime_shutdown: Arc<RwLock<Arc<std::sync::atomic::AtomicBool>>>,
+    /// Task handler for executing detection tasks
+    task_handler: Arc<RwLock<Option<TaskHandler>>>,
 }
 
 impl CollectorRpcServiceManager {
@@ -89,6 +104,7 @@ impl CollectorRpcServiceManager {
                 RpcOperation::ForceShutdown,
                 RpcOperation::Pause,
                 RpcOperation::Resume,
+                RpcOperation::ExecuteTask,
             ],
             max_concurrent_requests: 10,
             timeout_limits: TimeoutLimits {
@@ -128,6 +144,7 @@ impl CollectorRpcServiceManager {
             runtime_shutdown: Arc::new(RwLock::new(Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )))),
+            task_handler: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -155,6 +172,25 @@ impl CollectorRpcServiceManager {
         // This ensures RPC-triggered shutdowns propagate to the runtime
         let mut guard = self.runtime_shutdown.write().await;
         *guard = signal;
+    }
+
+    /// Set the task handler
+    pub async fn set_task_handler<F>(&self, handler: F)
+    where
+        F: Fn(
+                daemoneye_lib::proto::DetectionTask,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = anyhow::Result<daemoneye_lib::proto::DetectionResult>,
+                        > + Send,
+                >,
+            > + Send
+            + Sync
+            + 'static,
+    {
+        let mut guard = self.task_handler.write().await;
+        *guard = Some(Box::new(handler));
     }
 
     /// Start the RPC service background task
@@ -191,6 +227,7 @@ impl CollectorRpcServiceManager {
         let config_collector_id = self.config.collector_id.clone();
         let rpc_service_clone = Arc::clone(&self.rpc_service);
         let broker_clone = Arc::clone(&self.broker);
+        let task_handler_clone = Arc::clone(&self.task_handler);
 
         // Spawn background task to handle RPC requests
         let handle = tokio::spawn(async move {
@@ -228,6 +265,7 @@ impl CollectorRpcServiceManager {
                     request.operation,
                     RpcOperation::Start | RpcOperation::Stop | RpcOperation::Restart
                 ) {
+                    // ... existing lifecycle logic ...
                     // Handle lifecycle operations via runtime instead of dummy ProcessManager
                     let runtime_guard = runtime_ref.read().await;
                     if let Some(runtime) = runtime_guard.as_ref() {
@@ -346,6 +384,82 @@ impl CollectorRpcServiceManager {
                     } else {
                         // Runtime not available, fall back to RPC service
                         rpc_service_clone.handle_request(request.clone()).await
+                    }
+                } else if request.operation == RpcOperation::ExecuteTask {
+                    let start_time = SystemTime::now();
+                    // Handle ExecuteTask
+                    let result = if let daemoneye_eventbus::rpc::RpcPayload::Task(value) =
+                        &request.payload
+                    {
+                        // Deserialize DetectionTask from JSON Value
+                        match serde_json::from_value::<daemoneye_lib::proto::DetectionTask>(
+                            value.clone(),
+                        ) {
+                            Ok(task) => {
+                                let handler_guard = task_handler_clone.read().await;
+                                if let Some(handler) = handler_guard.as_ref() {
+                                    // Execute handler
+                                    match handler(task).await {
+                                        Ok(detection_result) => {
+                                            // Serialize result to JSON Value
+                                            match serde_json::to_value(&detection_result) {
+                                                Ok(result_value) => Ok(
+                                                    daemoneye_eventbus::rpc::RpcPayload::TaskResult(
+                                                        result_value,
+                                                    ),
+                                                ),
+                                                Err(e) => Err(format!(
+                                                    "Failed to serialize result: {}",
+                                                    e
+                                                )),
+                                            }
+                                        }
+                                        Err(e) => Err(format!("Task execution failed: {}", e)),
+                                    }
+                                } else {
+                                    Err("No task handler registered".to_string())
+                                }
+                            }
+                            Err(e) => Err(format!("Failed to deserialize task: {}", e)),
+                        }
+                    } else {
+                        Err("Invalid payload for ExecuteTask".to_string())
+                    };
+
+                    let execution_time = start_time.elapsed().unwrap_or_default();
+
+                    match result {
+                        Ok(payload) => daemoneye_eventbus::rpc::RpcResponse {
+                            request_id: request.request_id.clone(),
+                            service_id: config_collector_id.clone(),
+                            operation: RpcOperation::ExecuteTask,
+                            status: daemoneye_eventbus::rpc::RpcStatus::Success,
+                            payload: Some(payload),
+                            error_details: None,
+                            timestamp: start_time,
+                            execution_time_ms: execution_time.as_millis() as u64,
+                            queue_time_ms: Some(0),
+                            total_time_ms: execution_time.as_millis() as u64,
+                            correlation_metadata: RpcCorrelationMetadata::default(),
+                        },
+                        Err(msg) => daemoneye_eventbus::rpc::RpcResponse {
+                            request_id: request.request_id.clone(),
+                            service_id: config_collector_id.clone(),
+                            operation: RpcOperation::ExecuteTask,
+                            status: daemoneye_eventbus::rpc::RpcStatus::Error,
+                            payload: None,
+                            error_details: Some(daemoneye_eventbus::rpc::RpcError {
+                                code: "EXECUTION_ERROR".to_string(),
+                                message: msg,
+                                context: std::collections::HashMap::new(),
+                                category: daemoneye_eventbus::rpc::ErrorCategory::Internal,
+                            }),
+                            timestamp: start_time,
+                            execution_time_ms: execution_time.as_millis() as u64,
+                            queue_time_ms: Some(0),
+                            total_time_ms: execution_time.as_millis() as u64,
+                            correlation_metadata: RpcCorrelationMetadata::default(),
+                        },
                     }
                 } else if is_shutdown {
                     // Trigger shutdown signal for collector runtime
