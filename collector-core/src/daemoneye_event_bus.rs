@@ -539,7 +539,7 @@ impl DaemoneyeEventBus {
                                     priority: crate::event::TriggerPriority::Normal,
                                     target_pid: None,
                                     target_path: None,
-                                    correlation_id: "".to_string(),
+                                    correlation_id: trigger_request.request_id.clone(),
                                     metadata: std::collections::HashMap::new(),
                                     timestamp: std::time::SystemTime::now(),
                                 },
@@ -551,7 +551,7 @@ impl DaemoneyeEventBus {
                     }
                     Err(_) => {
                         // Deserialization failed, use fallback
-                        // Note: Fallback request may not pass validation (empty correlation_id, no target)
+                        // Note: Fallback uses request_id as correlation_id to ensure validation passes
                         crate::event::CollectionEvent::TriggerRequest(
                             crate::event::TriggerRequest {
                                 trigger_id: trigger_request.request_id.clone(),
@@ -560,7 +560,7 @@ impl DaemoneyeEventBus {
                                 priority: crate::event::TriggerPriority::Normal,
                                 target_pid: None,
                                 target_path: None,
-                                correlation_id: "".to_string(),
+                                correlation_id: trigger_request.request_id.clone(),
                                 metadata: std::collections::HashMap::new(),
                                 timestamp: std::time::SystemTime::now(),
                             },
@@ -1031,7 +1031,7 @@ mod tests {
         source::SourceCaps,
     };
     use std::time::SystemTime;
-    use tokio::time::{Duration, timeout};
+    use tokio::time::{timeout, Duration};
 
     #[test]
     fn convert_subscription_populates_event_types() {
