@@ -64,7 +64,13 @@ DaemonEye implements a **three-component security architecture** with strict pri
 - **Purpose**: User-space detection rule execution and alert management
 - **Security**: Minimal privileges, outbound-only network connections
 - **Database**: Read/write access to event store
-- **Features**: SQL-based detection engine, multi-channel alerting, procmond lifecycle management
+- **Features**:
+  - SQL-based detection engine with AST validation
+  - Multi-channel alerting with reliability guarantees
+  - Embedded EventBus broker for collector coordination
+  - RPC service for collector lifecycle management (start/stop/restart/health checks)
+  - Multi-collector task distribution and result aggregation
+  - Correlation tracking for distributed operations
 
 ### 3. **daemoneye-cli** (Operator Interface)
 

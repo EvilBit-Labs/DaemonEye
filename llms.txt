@@ -14,13 +14,17 @@ DaemonEye implements a three-component architecture (procmond, daemoneye-agent, 
 
 - [Architecture](docs/src/architecture/system-architecture.md): Core system architecture, data flows, and component responsibilities
 - [Collector-Core Framework](docs/src/architecture/collector-core-framework.md): Collector-core architecture and implementation patterns
+- [Core Monitoring](docs/src/technical/core-monitoring.md): Process collection, enumeration, and monitoring implementation
 - [Development Guidelines](.kiro/steering/development.md): Development workflows, commands, and coding conventions
 - [EventBus Architecture](docs/src/technical/eventbus-architecture.md): Topic hierarchy, correlation metadata, and pub/sub patterns
 - [Feature Tiers](docs/src/architecture/feature-tiers.md): Feature differentiation across Free/Business/Enterprise tiers
 - [IPC Implementation](docs/src/technical/ipc-implementation.md): IPC protocol details, transport layer, and message framing
 - [Performance Standards](.kiro/steering/performance.md): Performance targets, resource management, and optimization requirements
 - [Product](.kiro/steering/product.md): Product features, value propositions, and tier definitions
+- [Query Pipeline](docs/src/technical/query-pipeline.md): SQL-to-IPC translation, dialect restrictions, and execution model
+- [RPC EventBus Architecture](docs/src/technical/rpc-eventbus-architecture.md): RPC patterns, multi-collector coordination, and lifecycle management
 - [Security Standards](.kiro/steering/security.md): Security guidelines, cryptographic standards, and threat model
+- [SQL Detection Architecture](spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md): SQL rule translation, virtual schema, and detection flow
 - [Structure](.kiro/steering/structure.md): Workspace organization, component structure, and architectural boundaries
 - [Tech Stack](.kiro/steering/tech.md): Technology stack decisions, dependencies, and enforced requirements
 - [Testing Standards](.kiro/steering/testing.md): Testing strategy, quality gates, and coverage requirements
@@ -39,20 +43,31 @@ DaemonEye implements a three-component architecture (procmond, daemoneye-agent, 
 
 ## Optional
 
+- [ADR IPC Interprocess](spec/adr-ipc-interprocess.md): Architecture decision record for IPC transport migration
 - [Async Patterns](.cursor/rules/rust/async-patterns.mdc): Rust async/await patterns and tokio usage guidelines
+- [Business Tier](docs/src/technical/business-tier.md): Business tier features and capabilities
 - [Cargo.toml Standards](.cursor/rules/rust/cargo-toml.mdc): Cargo.toml configuration and dependency management
 - [CLI Design](.cursor/rules/deployment/cli-design.mdc): CLI design principles and clap patterns
 - [Collector-Core Standards](.cursor/rules/rust/collector-core.mdc): Collector-core implementation rules and EventSource patterns
 - [Configuration Management](.cursor/rules/rust/configuration-management.mdc): Hierarchical configuration and validation patterns
 - [Container Security](.cursor/rules/docker/container-security.mdc): Docker container security best practices
+- [Contributing](docs/src/contributing.md): Contribution guidelines and development process
 - [Database Operations](.cursor/rules/rust/database-operations.mdc): Database patterns with redb and transaction handling
 - [Database Standards](.cursor/rules/deployment/database-standards.mdc): Database design, schema, and access patterns
 - [Documentation Standards](.cursor/rules/project/documentation-standards.mdc): Documentation writing and rustdoc standards
+- [Enterprise Tier](docs/src/technical/enterprise-tier.md): Enterprise tier features and kernel-level monitoring
 - [Error Handling](.cursor/rules/rust/error-handling.mdc): Error handling with thiserror and anyhow
+- [Getting Started](docs/src/getting-started.md): Quick start guide and initial setup
 - [IPC Communication](.cursor/rules/rust/ipc-communication.mdc): IPC patterns with interprocess and protobuf
 - [Justfile Standards](.cursor/rules/project/justfile-standards.mdc): Justfile task runner patterns and DRY principles
 - [Linting Rules](.cursor/rules/rust/linting-rules.mdc): Clippy and rustfmt configuration
+- [macOS Process Collector](docs/src/technical/macos-process-collector.md): macOS-specific process collection implementation
+- [Operator Guide](docs/src/user-guides/operator-guide.md): Operational procedures and troubleshooting
 - [Performance Optimization](.cursor/rules/rust/performance-optimization.mdc): Rust performance optimization techniques
+- [Product Strategy](spec/product_strategy.md): Product roadmap and strategic direction
 - [Rust Standards](.cursor/rules/rust/rust-standards.mdc): Rust coding standards and idioms
+- [Security Design Overview](docs/src/technical/security_design_overview.md): Security architecture and design principles
 - [Security Standards Rules](.cursor/rules/security/security-standards.mdc): Security implementation patterns and cryptography
+- [SQL Dialect Reference](docs/src/technical/sql-dialect-reference.md): Supported SQL syntax and limitations
 - [Testing Standards Rules](.cursor/rules/testing/testing-standards.mdc): Testing implementation with insta and criterion
+- [Windows Process Collector](docs/src/technical/windows-process-collector.md): Windows-specific process collection implementation

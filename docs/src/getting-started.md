@@ -147,6 +147,21 @@ database:
 broker:
   socket_path: /tmp/daemoneye-eventbus.sock
   startup_timeout_seconds: 30
+  max_subscribers: 100
+  message_buffer_size: 10000
+
+# RPC service configuration
+rpc:
+  default_timeout_seconds: 30
+  health_check_interval_seconds: 60
+  enable_correlation_tracking: true
+
+# Process manager configuration (for collector lifecycle)
+process_manager:
+  graceful_shutdown_timeout_seconds: 60
+  force_shutdown_timeout_seconds: 5
+  health_check_interval_seconds: 120
+  enable_auto_restart: true
 
 # Platform-specific settings
 platform:
@@ -174,13 +189,20 @@ mkdir C:\ProgramData\DaemonEye\data
 #### Option A: Manual Start (Testing)
 
 ```bash
-# Terminal 1: Start daemoneye-agent (includes embedded EventBus broker and IPC server)
+# Terminal 1: Start daemoneye-agent (includes embedded EventBus broker, RPC service, and IPC server)
 daemoneye-agent --database /var/lib/daemoneye/events.redb --log-level info
+
+# The agent will:
+# - Start the embedded EventBus broker for collector coordination
+# - Initialize RPC service for collector lifecycle management
+# - Start IPC server for CLI communication
+# - Begin health monitoring and metrics collection
 
 # Terminal 2: Use CLI for database queries and health checks
 daemoneye-cli --database /var/lib/daemoneye/events.redb --format json
 
 # Terminal 3: Run procmond directly for testing (uses collector-core framework)
+# Note: In production, procmond is managed by daemoneye-agent via RPC
 procmond --database /var/lib/daemoneye/events.redb --interval 30 --enhanced-metadata
 ```
 

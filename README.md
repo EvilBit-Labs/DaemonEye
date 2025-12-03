@@ -8,12 +8,12 @@ Badges: CI, coverage, and maintainability are configured in the repo. See the ba
 
 DaemonEye is a Rust workspace with multiple components for collecting process information, orchestrating detections, and interacting via a CLI. The repository contains:
 
-- **procmond**: Privileged process monitoring daemon (binary + library)
-- **daemoneye-agent**: User-space orchestrator with embedded EventBus broker (binary)
-- **daemoneye-cli**: Command-line interface (binary)
-- **daemoneye-lib**: Shared library (no binary)
-- **collector-core**: Extensible collection framework (library)
-- **daemoneye-eventbus**: Cross-platform IPC event bus (library)
+- **procmond**: Privileged process monitoring daemon built on collector-core framework (binary + library)
+- **daemoneye-agent**: User-space orchestrator with embedded EventBus broker and RPC service (binary)
+- **daemoneye-cli**: Command-line interface for queries and management (binary)
+- **daemoneye-lib**: Shared library with protobuf IPC and data models (library)
+- **collector-core**: Extensible collection framework with EventSource trait (library)
+- **daemoneye-eventbus**: Cross-platform IPC event bus with embedded broker and RPC patterns (library)
 
 Security and reliability are emphasized via strict linting, no unsafe code, and comprehensive tests and benches.
 
@@ -166,6 +166,8 @@ Additional OS/environment variables may be referenced in tests for compatibility
 - **Windows**: IPC uses named pipes through interprocess crate with protobuf messaging
 - **Event Bus**: daemoneye-eventbus provides local IPC pub/sub messaging between collectors and agent on the same system with hierarchical topic routing and correlation metadata
 - **Embedded Broker**: daemoneye-agent runs an embedded EventBus broker for local collector coordination with support for workflow tracking and forensic analysis
+- **RPC Services**: Collector lifecycle management (start/stop/restart/health checks) via RPC patterns over the EventBus with timeout handling and correlation tracking
+- **Multi-Collector Coordination**: Topic-based task distribution and result aggregation across multiple collector types with capability-based routing
 
 ## Documentation
 

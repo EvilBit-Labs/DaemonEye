@@ -11,6 +11,8 @@
 - [Technical Documentation](./technical.md)
   - [Core Monitoring](./technical/core-monitoring.md)
   - [EventBus Architecture](./technical/eventbus-architecture.md)
+  - [RPC and EventBus Architecture](./technical/rpc-eventbus-architecture.md)
+  - [IPC Implementation](./technical/ipc-implementation.md)
   - [Business Tier Features](./technical/business-tier.md)
   - [Enterprise Tier Features](./technical/enterprise-tier.md)
   - [macOS Process Collector](./technical/macos-process-collector.md)
