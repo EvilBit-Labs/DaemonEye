@@ -283,7 +283,7 @@ The following foundational components have been successfully implemented:
   - _Requirements: 15.2_
   - **Implementation**: Complete RPC infrastructure in `daemoneye-eventbus/src/rpc.rs` with 1,800+ lines of RPC client/server code.
 
-- [ ] 2.5.2 Integrate RPC patterns with daemoneye-agent and collector processes
+- [x] 2.5.2 Integrate RPC patterns with daemoneye-agent and collector processes
 
   - Integrate CollectorRpcClient into daemoneye-agent for collector lifecycle management
   - Implement RPC server integration in collector-core components

@@ -728,13 +728,29 @@ async fn test_auto_restart_disabled() {
         .start_collector("fail-collector", "test", collector_config)
         .await;
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    let status = manager.get_collector_status("fail-collector").await;
-    assert!(matches!(
-        status,
-        Err(ProcessManagerError::ProcessNotFound(_))
-    ));
+    // The collector exits almost immediately, but the monitor task that
+    // removes it from the process map runs on a 500ms interval. Under
+    // heavy instrumentation (e.g., llvm-cov) scheduling can be delayed,
+    // so we poll for removal up to a reasonable deadline instead of
+    // relying on a single fixed sleep.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match manager.get_collector_status("fail-collector").await {
+            Err(ProcessManagerError::ProcessNotFound(_)) => break,
+            Ok(status) => {
+                if std::time::Instant::now() > deadline {
+                    panic!(
+                        "Collector should have been removed from map, last state: {:?}",
+                        status.state
+                    );
+                }
+            }
+            Err(e) => {
+                panic!("Unexpected error while checking collector status: {}", e);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 #[tokio::test]
@@ -760,13 +776,29 @@ async fn test_auto_restart_max_attempts() {
         .start_collector("max-collector", "test", collector_config)
         .await;
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    let status = manager.get_collector_status("max-collector").await;
-    assert!(matches!(
-        status,
-        Err(ProcessManagerError::ProcessNotFound(_))
-    ));
+    // After the first crash the collector should be auto-restarted once.
+    // When that restart also fails, it should be removed from the process
+    // map so that operators can start it again explicitly. As with the
+    // disabled case, we poll until the monitor has had a chance to clean
+    // up the entry rather than relying on a fixed sleep.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        match manager.get_collector_status("max-collector").await {
+            Err(ProcessManagerError::ProcessNotFound(_)) => break,
+            Ok(status) => {
+                if std::time::Instant::now() > deadline {
+                    panic!(
+                        "Collector should have been removed after max restarts, last state: {:?}",
+                        status.state
+                    );
+                }
+            }
+            Err(e) => {
+                panic!("Unexpected error while checking collector status: {}", e);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 #[tokio::test]

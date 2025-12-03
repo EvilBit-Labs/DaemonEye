@@ -217,7 +217,7 @@ The collector-core framework will wrap and extend existing proven components:
 
 **Core Implementation**:
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait EventSource: Send + Sync {
     fn name(&self) -> &'static str;
@@ -276,7 +276,7 @@ bitflags! {
 
 **Integration with Existing Components**:
 
-```rust
+```rust,ignore
 // Refactored procmond using collector-core + existing components + daemoneye-eventbus
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -378,7 +378,7 @@ impl EventSource for ProcessEventSource {
 
 **Multi-Component Support**:
 
-```rust
+```rust,ignore
 // Example: Future network monitoring component
 fn main() -> anyhow::Result<()> {
     let config = collector_core::config::load()?;
@@ -408,7 +408,7 @@ fn main() -> anyhow::Result<()> {
 
 **Core Implementation**:
 
-```rust
+```rust,ignore
 pub struct ProcessEventSource {
     collector: Box<dyn ProcessCollector>,
     hash_computer: Box<dyn HashComputer>,
@@ -477,7 +477,7 @@ fn main() -> anyhow::Result<()> {
 
 **Core Implementation**:
 
-```rust
+```rust,ignore
 pub struct DaemoneyeAgent {
     // Embedded broker instance
     event_broker: Arc<DaemoneyeBroker>,
@@ -544,7 +544,7 @@ pub trait DetectionEngine {
 
 **Core Implementation**:
 
-```rust
+```rust,ignore
 pub struct QueryExecutor {
     db: redb::Database,
     sql_validator: SqlValidator,
@@ -599,7 +599,7 @@ events.performance.*         # Performance monitoring events (perfmond)
 
 **Message Schema Structure**:
 
-```rust
+```rust,ignore
 // Core EventBus message envelope
 pub struct EventBusMessage {
     pub metadata: MessageMetadata,
@@ -705,7 +705,7 @@ sequenceDiagram
 
 **Subscription Patterns**:
 
-```rust
+```rust,ignore
 // daemoneye-agent: Subscribe to all events for correlation
 let subscription = EventSubscription {
     subscriber_id: "daemoneye-agent".to_string(),
@@ -732,7 +732,7 @@ let subscription = EventSubscription {
 
 **Publishing Patterns**:
 
-```rust
+```rust,ignore
 // Publish process events with correlation
 let correlation = CorrelationMetadata::new()
     .with_stage("process_analysis".to_string())
@@ -931,7 +931,7 @@ flowchart TD
 
 **ProcessRecord**: Represents a single process snapshot (existing implementation in daemoneye-lib/src/models/process.rs)
 
-```rust
+```rust,ignore
 // Existing ProcessRecord structure (from protobuf and Rust models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRecord {
@@ -957,7 +957,7 @@ pub struct ProcessRecord {
 
 **Alert**: Represents a detection result with full context (existing implementation in daemoneye-lib/src/models/alert.rs)
 
-```rust
+```rust,ignore
 // Existing Alert structure (from daemoneye-lib models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
@@ -987,7 +987,7 @@ pub enum AlertSeverity {
 
 **DetectionRule**: SQL-based detection rule with metadata (existing implementation in daemoneye-lib/src/models/rule.rs)
 
-```rust
+```rust,ignore
 // Existing DetectionRule structure (from daemoneye-lib models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionRule {
@@ -1049,7 +1049,7 @@ redb Logical Layout (conceptual):
 
 Simplified Data Structures (illustrative):
 
-```rust
+```rust,ignore
 #[derive(Serialize, Deserialize, Clone)]
 struct AuditEntry {
     id: u64,    // monotonic
@@ -1075,7 +1075,7 @@ struct Checkpoint {
 
 rs-merkle Integration (minimal sketch):
 
-```rust
+```rust,ignore
 use blake3;
 use rs_merkle::{Hasher, MerkleProof, MerkleTree};
 
@@ -1155,7 +1155,7 @@ The system implements a layered error handling approach using Rust's type system
 
 **Library Errors** (using `thiserror`):
 
-```rust
+```rust,ignore
 #[derive(Error, Debug)]
 pub enum CollectionError {
     #[error("Process enumeration failed: {source}")]
@@ -1253,7 +1253,7 @@ The system implements comprehensive testing across multiple levels:
 
 **Synthetic Data Generation**:
 
-```rust
+```rust,ignore
 use proptest::prelude::*;
 
 prop_compose! {
@@ -1310,7 +1310,7 @@ prop_compose! {
 
 **Unsafe Code Isolation** (if absolutely required):
 
-```rust
+```rust,ignore
 // Only in procmond, highly structured and isolated
 mod unsafe_platform_specific {
     use std::ffi::c_void;
@@ -1348,7 +1348,7 @@ impl SafeProcessMemoryReader {
 
 **AST Validation**: All user-provided SQL undergoes comprehensive validation:
 
-```rust
+```rust,ignore
 pub struct SqlValidator {
     parser: sqlparser::Parser<sqlparser::dialect::SQLiteDialect>,
     allowed_functions: HashSet<String>,
@@ -1386,7 +1386,7 @@ impl SqlValidator {
 
 **Capability-Based Security**:
 
-```rust
+```rust,ignore
 pub struct PrivilegeManager {
     initial_privileges: Privileges,
     current_privileges: Privileges,

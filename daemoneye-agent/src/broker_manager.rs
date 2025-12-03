@@ -518,7 +518,7 @@ impl BrokerManager {
             let shutdown_request = ShutdownRequest {
                 collector_id: collector_id.to_string(),
                 shutdown_type: ShutdownType::Graceful,
-                graceful_timeout_ms: 30000,
+                graceful_timeout_ms: 5000,
                 force_after_timeout: true,
                 reason: Some("Agent-initiated graceful shutdown".to_string()),
             };
@@ -526,10 +526,10 @@ impl BrokerManager {
                 client.client_id.clone(),
                 client.target_topic.clone(),
                 shutdown_request,
-                Duration::from_secs(30),
+                Duration::from_secs(5),
             );
 
-            let response = client.call(request, Duration::from_secs(30)).await?;
+            let response = client.call(request, Duration::from_secs(5)).await?;
             if response.status != RpcStatus::Success {
                 anyhow::bail!("Graceful shutdown RPC failed: {:?}", response.error_details);
             }
@@ -540,10 +540,10 @@ impl BrokerManager {
                 client.target_topic.clone(),
                 CollectorOperation::Stop,
                 lifecycle_request,
-                Duration::from_secs(30),
+                Duration::from_secs(5),
             );
 
-            let response = client.call(request, Duration::from_secs(30)).await?;
+            let response = client.call(request, Duration::from_secs(5)).await?;
             if response.status != RpcStatus::Success {
                 anyhow::bail!("Stop RPC failed: {:?}", response.error_details);
             }
