@@ -165,9 +165,7 @@ pub struct HighPerformanceEventBusImpl {
     statistics: Arc<parking_lot::RwLock<EventBusStatistics>>,
     shutdown_signal: Arc<AtomicBool>,
     event_counter: Arc<AtomicU64>,
-    #[allow(dead_code)]
     delivery_counter: Arc<AtomicU64>,
-    #[allow(dead_code)]
     drop_counter: Arc<AtomicU64>,
     routing_handle: Option<thread::JoinHandle<()>>,
     routing_finished: Arc<AtomicBool>,
