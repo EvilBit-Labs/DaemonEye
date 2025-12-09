@@ -9,15 +9,15 @@ use crate::{event::CollectionEvent, source::SourceCaps};
 use anyhow::Result;
 use async_trait::async_trait;
 use crossbeam::{
-    channel::{Receiver, Sender, TrySendError, bounded},
+    channel::{bounded, Receiver, Sender, TrySendError},
     utils::Backoff,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{
-        Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
     },
     thread,
     time::{Duration, Instant, SystemTime},
@@ -165,9 +165,7 @@ pub struct HighPerformanceEventBusImpl {
     statistics: Arc<parking_lot::RwLock<EventBusStatistics>>,
     shutdown_signal: Arc<AtomicBool>,
     event_counter: Arc<AtomicU64>,
-    #[allow(dead_code)]
     delivery_counter: Arc<AtomicU64>,
-    #[allow(dead_code)]
     drop_counter: Arc<AtomicU64>,
     routing_handle: Option<thread::JoinHandle<()>>,
     routing_finished: Arc<AtomicBool>,
@@ -479,7 +477,8 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
                         ));
                     }
                     tokio::time::sleep(backoff_delay).await;
-                    backoff_delay = (backoff_delay * 2).min(self.config.publish_timeout / 4); // Cap backoff
+                    backoff_delay = (backoff_delay * 2).min(self.config.publish_timeout / 4);
+                    // Cap backoff
                 }
                 Err(TrySendError::Disconnected(_)) => {
                     return Err(anyhow::anyhow!(
