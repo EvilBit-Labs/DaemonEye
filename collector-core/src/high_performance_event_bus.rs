@@ -9,15 +9,15 @@ use crate::{event::CollectionEvent, source::SourceCaps};
 use anyhow::Result;
 use async_trait::async_trait;
 use crossbeam::{
-    channel::{bounded, Receiver, Sender, TrySendError},
+    channel::{Receiver, Sender, TrySendError, bounded},
     utils::Backoff,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant, SystemTime},

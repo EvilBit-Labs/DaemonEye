@@ -75,10 +75,10 @@ impl OSEnvironment {
                 }
             }
 
-            if let Ok(content) = std::fs::read_to_string("/etc/lsb-release") {
-                if let Some(description) = Self::extract_field(&content, "DISTRIB_DESCRIPTION") {
-                    return description;
-                }
+            if let Ok(content) = std::fs::read_to_string("/etc/lsb-release")
+                && let Some(description) = Self::extract_field(&content, "DISTRIB_DESCRIPTION")
+            {
+                return description;
             }
 
             // Fallback to uname
