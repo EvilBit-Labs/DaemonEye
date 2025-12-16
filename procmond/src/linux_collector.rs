@@ -253,17 +253,17 @@ impl LinuxProcessCollector {
 
         // Look for CapEff line and check if CAP_SYS_PTRACE (bit 19) is set
         for line in content.lines() {
-            if let Some(caps_str) = line.strip_prefix("CapEff:\t") {
-                if let Ok(caps) = u64::from_str_radix(caps_str, 16) {
-                    // CAP_SYS_PTRACE is bit 19 (0x80000)
-                    let has_ptrace = (caps & 0x80000) != 0;
-                    debug!(
-                        caps_effective = format!("0x{:x}", caps),
-                        has_cap_sys_ptrace = has_ptrace,
-                        "Detected process capabilities"
-                    );
-                    return Ok(has_ptrace);
-                }
+            if let Some(caps_str) = line.strip_prefix("CapEff:\t")
+                && let Ok(caps) = u64::from_str_radix(caps_str, 16)
+            {
+                // CAP_SYS_PTRACE is bit 19 (0x80000)
+                let has_ptrace = (caps & 0x80000) != 0;
+                debug!(
+                    caps_effective = format!("0x{:x}", caps),
+                    has_cap_sys_ptrace = has_ptrace,
+                    "Detected process capabilities"
+                );
+                return Ok(has_ptrace);
             }
         }
 
@@ -420,11 +420,11 @@ impl LinuxProcessCollector {
         // containerd cgroup pattern: /system.slice/containerd.service/[container_id]
         if line.contains("containerd.service") {
             let parts: Vec<&str> = line.split('/').collect();
-            if let Some(container_part) = parts.last() {
-                if container_part.len() >= 12 {
-                    let _id = &container_part[..12];
-                    return Some(_id.to_string());
-                }
+            if let Some(container_part) = parts.last()
+                && container_part.len() >= 12
+            {
+                let _id = &container_part[..12];
+                return Some(_id.to_string());
             }
         }
         None
@@ -612,10 +612,10 @@ impl LinuxProcessCollector {
         })?;
 
         for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if let Ok(pid) = name.parse::<u32>() {
-                    pids.push(pid);
-                }
+            if let Some(name) = entry.file_name().to_str()
+                && let Ok(pid) = name.parse::<u32>()
+            {
+                pids.push(pid);
             }
         }
 

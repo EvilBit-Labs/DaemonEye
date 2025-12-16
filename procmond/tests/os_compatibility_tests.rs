@@ -57,11 +57,11 @@ fn gather_system_info() -> SystemInfo {
     // Platform-specific information
     #[cfg(target_os = "linux")]
     {
-        if let Ok(distro) = std::fs::read_to_string("/etc/os-release") {
-            if let Some(name_line) = distro.lines().find(|line| line.starts_with("NAME=")) {
-                let name = name_line.trim_start_matches("NAME=").trim_matches('"');
-                additional_info.insert("distribution".to_string(), name.to_string());
-            }
+        if let Ok(distro) = std::fs::read_to_string("/etc/os-release")
+            && let Some(name_line) = distro.lines().find(|line| line.starts_with("NAME="))
+        {
+            let name = name_line.trim_start_matches("NAME=").trim_matches('"');
+            additional_info.insert("distribution".to_string(), name.to_string());
         }
 
         // Check for container environment

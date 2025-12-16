@@ -1031,7 +1031,7 @@ mod tests {
         source::SourceCaps,
     };
     use std::time::SystemTime;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     #[test]
     fn convert_subscription_populates_event_types() {
