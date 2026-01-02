@@ -1594,7 +1594,10 @@ mod tests {
                 Err(ProcessManagerError::SpawnFailed(msg)) => {
                     assert!(msg.contains("freebsd feature"));
                 }
-                _ => panic!("Expected ProcessNotFound or SpawnFailed error for pause without freebsd feature"),
+                Err(ProcessManagerError::PlatformNotSupported(_)) => {
+                    // Expected on Windows: platform not supported
+                }
+                _ => panic!("Expected ProcessNotFound, SpawnFailed, or PlatformNotSupported error for pause without freebsd feature"),
             }
 
             let resume_result = manager.resume_collector("test-collector").await;
@@ -1607,7 +1610,10 @@ mod tests {
                 Err(ProcessManagerError::SpawnFailed(msg)) => {
                     assert!(msg.contains("freebsd feature"));
                 }
-                _ => panic!("Expected ProcessNotFound or SpawnFailed error for resume without freebsd feature"),
+                Err(ProcessManagerError::PlatformNotSupported(_)) => {
+                    // Expected on Windows: platform not supported
+                }
+                _ => panic!("Expected ProcessNotFound, SpawnFailed, or PlatformNotSupported error for resume without freebsd feature"),
             }
         });
     }

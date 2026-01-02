@@ -1022,16 +1022,11 @@ impl EventBus for DaemoneyeEventBus {
     }
 }
 
+// Cross-platform unit tests that don't require Unix sockets.
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use super::*;
-    use crate::{
-        event::{AnalysisType, ProcessEvent, TriggerPriority, TriggerRequest},
-        event_bus::EventSubscription,
-        source::SourceCaps,
-    };
-    use std::time::SystemTime;
-    use tokio::time::{Duration, timeout};
+    use crate::{event_bus::EventSubscription, source::SourceCaps};
 
     #[test]
     fn convert_subscription_populates_event_types() {
@@ -1051,6 +1046,20 @@ mod tests {
             vec!["process".to_string(), "network".to_string()]
         );
     }
+}
+
+// Integration tests in this module use Unix domain sockets and are only run on Unix platforms.
+// Windows uses named pipes which require different test infrastructure.
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::{
+        event::{AnalysisType, ProcessEvent, TriggerPriority, TriggerRequest},
+        event_bus::EventSubscription,
+        source::SourceCaps,
+    };
+    use std::time::SystemTime;
+    use tokio::time::{Duration, timeout};
 
     #[tokio::test]
     async fn test_daemoneye_event_bus_creation() {
