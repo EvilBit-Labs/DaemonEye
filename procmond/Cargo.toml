@@ -98,8 +98,11 @@ predicates = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 tracing-test = { workspace = true }
-uzers = { workspace = true }
 whoami = { workspace = true }
+
+# Unix-only dev dependencies
+[target.'cfg(unix)'.dev-dependencies]
+uzers = { workspace = true }
 
 [[bench]]
 name = "process_collector_benchmarks"

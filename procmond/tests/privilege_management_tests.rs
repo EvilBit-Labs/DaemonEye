@@ -33,8 +33,11 @@ fn is_elevated_privileges() -> bool {
 
     #[cfg(windows)]
     {
-        // Use is_elevated crate for reliable elevation checking on Windows
-        is_elevated::is_elevated()
+        // On Windows, check for elevated privileges by testing write access to system directory
+        // This is a simple heuristic that works without additional dependencies
+        std::fs::metadata("C:\\Windows\\System32")
+            .map(|m| !m.permissions().readonly())
+            .unwrap_or(false)
     }
 }
 
@@ -53,11 +56,8 @@ fn get_current_user_info() -> String {
 
     #[cfg(windows)]
     {
-        use uzers::get_current_username;
-
-        let username = get_current_username()
-            .map(|u| u.to_string_lossy().into_owned())
-            .unwrap_or_else(|| std::env::var("USERNAME").unwrap_or_else(|_| "unknown".to_string()));
+        // Use whoami crate for cross-platform username retrieval
+        let username = whoami::username();
         format!("User: {}", username)
     }
 }

@@ -35,9 +35,6 @@ use crate::process_collector::{
 
 use sysinfo::{Pid, System};
 
-/// Maximum valid PID on Windows (u32::MAX for modern Windows)
-const MAX_VALID_PID: u32 = u32::MAX;
-
 /// Windows-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
 pub enum WindowsCollectionError {
@@ -628,10 +625,10 @@ impl WindowsProcessCollector {
             return;
         }
 
-        if pid == 0 || pid > MAX_VALID_PID {
+        if pid == 0 {
             warn!(
                 pid = pid,
-                "Process ID outside reasonable bounds, applying default security settings"
+                "Process ID is zero, applying default security settings"
             );
             return;
         }
@@ -855,10 +852,10 @@ impl WindowsProcessCollector {
     /// Gets Windows-specific performance counters for a process using sysinfo.
     fn get_performance_counters(&self, pid: u32, system: &System) -> Option<(u64, u64, u64)> {
         // Validate PID to prevent overflow and invalid values
-        if pid == 0 || pid > MAX_VALID_PID {
+        if pid == 0 {
             debug!(
                 pid = pid,
-                "Invalid PID provided for performance counter collection"
+                "Zero PID provided for performance counter collection"
             );
             return None;
         }

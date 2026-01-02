@@ -70,7 +70,6 @@ exit 0
 
 #[cfg(windows)]
 fn create_mock_collector_binary(temp_dir: &TempDir, sleep_duration: u64) -> PathBuf {
-    use std::fs;
     use std::fs::OpenOptions;
     use std::io::Write;
 
@@ -133,7 +132,6 @@ exit 1
 
 #[cfg(windows)]
 fn create_failing_collector_binary(temp_dir: &TempDir) -> PathBuf {
-    use std::fs;
     use std::fs::OpenOptions;
     use std::io::Write;
 

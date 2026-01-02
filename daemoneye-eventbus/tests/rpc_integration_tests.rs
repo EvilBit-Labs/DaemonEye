@@ -1995,17 +1995,22 @@ async fn test_rpc_pause_not_supported_windows() -> Result<()> {
     let lifecycle_req = CollectorLifecycleRequest {
         collector_id: "test-1".to_string(),
         collector_type: "test-collector".to_string(),
-        config: HashMap::new(),
+        config_overrides: None,
+        environment: None,
+        working_directory: None,
+        resource_limits: None,
+        startup_timeout_ms: None,
     };
 
     let request = RpcRequest {
         request_id: Uuid::new_v4().to_string(),
         client_id: "test-client".to_string(),
+        target: "control.collector.test".to_string(),
         operation: CollectorOperation::Pause,
-        destination: "control.collector.test".to_string(),
         payload: RpcPayload::Lifecycle(lifecycle_req),
         timestamp: SystemTime::now(),
-        timeout: Duration::from_secs(5),
+        deadline: SystemTime::now() + Duration::from_secs(5),
+        correlation_metadata: RpcCorrelationMetadata::default(),
     };
 
     // Pause collector - should fail on Windows
