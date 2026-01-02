@@ -172,7 +172,7 @@ fix:
 check: pre-commit-run lint
 
 pre-commit-run:
-    pre-commit run -a
+    uv run pre-commit run -a
 
 # Format a single file (for pre-commit hooks)
 format-files +FILES:
@@ -302,16 +302,12 @@ deny-deps:
     cargo deny check
 
 # Composed security scan
-security-scan:
-    @just audit-deps
-    @just deny-deps
+security-scan: audit-deps deny-deps
 
 # Legacy aliases (backward compatibility)
-audit:
-    @just audit-deps
+audit: audit-deps
 
-deny:
-    @just deny-deps
+deny: deny-deps
 
 # =============================================================================
 # CI AND QUALITY ASSURANCE
@@ -482,10 +478,7 @@ goreleaser-test-windows:
     @echo "⚠️  Skipping Windows test (not on Windows)"
 
 # Test all platform configurations (skips incompatible platforms)
-goreleaser-test-all:
-    @just goreleaser-test-macos
-    @just goreleaser-test-linux
-    @just goreleaser-test-windows
+goreleaser-test-all: goreleaser-test-macos goreleaser-test-linux goreleaser-test-windows
     @echo "🎉 All platform tests completed!"
 
 # Test specific platform configuration
