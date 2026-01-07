@@ -293,20 +293,29 @@ impl DaemoneyeEventBus {
     ///
     /// This method performs a graceful shutdown of the EventBus and
     /// its embedded broker, ensuring all pending messages are processed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error encountered during shutdown. Both inner EventBus
+    /// and broker shutdown are attempted even if one fails.
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down DaemoneyeEventBus");
+        let mut first_error: Option<anyhow::Error> = None;
 
-        // Shutdown the inner EventBus implementation
-        {
-            let mut inner = self.inner.lock().await;
-            if let Err(e) = inner.shutdown().await {
-                error!(error = %e, "Failed to shutdown inner EventBus");
-            }
+        // Shutdown inner EventBus
+        if let Err(e) = self.inner.lock().await.shutdown().await {
+            error!(error = %e, "Failed to shutdown inner EventBus");
+            first_error = Some(e.into());
         }
 
-        // Shutdown the broker
+        // Shutdown broker (attempt even if inner failed)
         if let Err(e) = self.broker.shutdown().await {
             error!(error = %e, "Failed to shutdown broker");
+            first_error.get_or_insert(e.into());
+        }
+
+        if let Some(err) = first_error {
+            return Err(err);
         }
 
         info!("DaemoneyeEventBus shutdown completed");
@@ -459,7 +468,14 @@ impl DaemoneyeEventBus {
     }
 
     /// Convert daemoneye-eventbus BusEvent to collector-core BusEvent.
-    fn convert_bus_event(event: &daemoneye_eventbus::BusEvent) -> crate::event_bus::BusEvent {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if TriggerRequest deserialization or validation fails.
+    /// This prevents silent data corruption from masking protocol issues.
+    fn convert_bus_event(
+        event: &daemoneye_eventbus::BusEvent,
+    ) -> Result<crate::event_bus::BusEvent, anyhow::Error> {
         // Convert daemoneye-eventbus CollectionEvent to collector-core CollectionEvent
         let collection_event = match &event.event {
             daemoneye_eventbus::CollectionEvent::Process(process_event) => {
@@ -518,59 +534,33 @@ impl DaemoneyeEventBus {
                 })
             }
             daemoneye_eventbus::CollectionEvent::TriggerRequest(trigger_request) => {
-                // Try to reconstruct the original trigger request from payload
-                let req_result = serde_json::from_slice::<crate::event::TriggerRequest>(
+                let req = serde_json::from_slice::<crate::event::TriggerRequest>(
                     &trigger_request.payload,
-                );
-                match req_result {
-                    Ok(req) => {
-                        // Validate the deserialized request
-                        if let Err(e) = req.validate() {
-                            warn!(
-                                error = %e,
-                                "Deserialized trigger request failed validation, using fallback"
-                            );
-                            // Fallback to minimal mapping if validation failed
-                            crate::event::CollectionEvent::TriggerRequest(
-                                crate::event::TriggerRequest {
-                                    trigger_id: trigger_request.request_id.clone(),
-                                    target_collector: trigger_request.collector_type.clone(),
-                                    analysis_type: crate::event::AnalysisType::YaraScan, // Default
-                                    priority: crate::event::TriggerPriority::Normal,
-                                    target_pid: None,
-                                    target_path: None,
-                                    correlation_id: trigger_request.request_id.clone(),
-                                    metadata: std::collections::HashMap::new(),
-                                    timestamp: std::time::SystemTime::now(),
-                                },
-                            )
-                        } else {
-                            // Valid request, use it
-                            crate::event::CollectionEvent::TriggerRequest(req)
-                        }
-                    }
-                    Err(_) => {
-                        // Deserialization failed, use fallback
-                        // Note: Fallback uses request_id as correlation_id to ensure validation passes
-                        crate::event::CollectionEvent::TriggerRequest(
-                            crate::event::TriggerRequest {
-                                trigger_id: trigger_request.request_id.clone(),
-                                target_collector: trigger_request.collector_type.clone(),
-                                analysis_type: crate::event::AnalysisType::YaraScan, // Default
-                                priority: crate::event::TriggerPriority::Normal,
-                                target_pid: None,
-                                target_path: None,
-                                correlation_id: trigger_request.request_id.clone(),
-                                metadata: std::collections::HashMap::new(),
-                                timestamp: std::time::SystemTime::now(),
-                            },
-                        )
-                    }
-                }
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "TriggerRequest deser failed: request_id={}, collector={}, len={}: {}",
+                        trigger_request.request_id,
+                        trigger_request.collector_type,
+                        trigger_request.payload.len(),
+                        e
+                    )
+                })?;
+
+                req.validate().map_err(|e| {
+                    anyhow::anyhow!(
+                        "TriggerRequest validation failed: request_id={}, collector={}: {}",
+                        trigger_request.request_id,
+                        trigger_request.collector_type,
+                        e
+                    )
+                })?;
+
+                crate::event::CollectionEvent::TriggerRequest(req)
             }
         };
 
-        crate::event_bus::BusEvent {
+        Ok(crate::event_bus::BusEvent {
             id: event.event_id.parse().unwrap_or_else(|_| Uuid::new_v4()),
             timestamp: event
                 .bus_timestamp
@@ -582,7 +572,7 @@ impl DaemoneyeEventBus {
                 event.correlation_id().to_string(),
             ),
             routing_metadata: std::collections::HashMap::new(),
-        }
+        })
     }
 
     /// Convert daemoneye-eventbus statistics to collector-core statistics.
@@ -951,9 +941,23 @@ impl EventBus for DaemoneyeEventBus {
             let _ = ready_tx.send(());
             let mut daemoneye_rx = daemoneye_receiver;
             while let Some(daemoneye_event) = daemoneye_rx.recv().await {
-                let collector_event = Self::convert_bus_event(&daemoneye_event);
+                // Convert the event, handling errors explicitly
+                let collector_event = match Self::convert_bus_event(&daemoneye_event) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        // Log error at appropriate level - this is a protocol/data issue
+                        error!(
+                            subscriber_id = %subscriber_id_clone,
+                            event_id = %daemoneye_event.event_id,
+                            error = %e,
+                            "Failed to convert bus event - skipping event"
+                        );
+                        // Continue processing other events
+                        continue;
+                    }
+                };
                 if tx.send(collector_event).is_err() {
-                    debug!(
+                    warn!(
                         subscriber_id = %subscriber_id_clone,
                         "Subscriber channel closed, stopping event forwarding"
                     );

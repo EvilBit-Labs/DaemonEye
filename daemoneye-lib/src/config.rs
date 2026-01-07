@@ -7,6 +7,7 @@
 //! 4. System configuration file (/etc/daemoneye/config.toml)
 //! 5. Embedded defaults (lowest precedence)
 
+use anyhow::Context;
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Toml},
