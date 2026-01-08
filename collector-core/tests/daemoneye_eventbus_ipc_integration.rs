@@ -28,6 +28,7 @@ fn temp_socket_path(name: &str) -> (tempfile::TempDir, String) {
     (dir, socket_path_str)
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_daemoneye_eventbus_vs_local_eventbus_performance() {
     // Test DaemoneyeEventBus performance
@@ -185,6 +186,7 @@ async fn test_daemoneye_eventbus_vs_local_eventbus_performance() {
         .expect("Failed to shutdown DaemoneyeEventBus");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_ipc_server_capability_integration() {
     // Create DaemoneyeEventBus
@@ -261,6 +263,7 @@ async fn test_ipc_server_capability_integration() {
         .expect("Failed to shutdown EventBus");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_eventbus_broker_access_integration() {
     // Create DaemoneyeEventBus
@@ -319,6 +322,7 @@ async fn test_eventbus_broker_access_integration() {
         .expect("Failed to shutdown EventBus");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_eventbus_seamless_migration_compatibility() {
     // This test verifies that DaemoneyeEventBus can be used as a drop-in replacement

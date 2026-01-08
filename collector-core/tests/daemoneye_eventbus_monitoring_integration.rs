@@ -17,6 +17,7 @@ use std::time::{Duration, SystemTime};
 use tokio::time::timeout;
 
 /// Test that DaemonEye EventBus monitoring integrates correctly with collector-core.
+#[cfg(unix)]
 #[tokio::test]
 async fn test_daemoneye_eventbus_monitoring_integration() {
     // Create a DaemonEye EventBus with monitoring enabled
@@ -126,6 +127,7 @@ async fn test_monitoring_with_collector_integration() {
 }
 
 /// Test monitoring metrics persistence across EventBus operations.
+#[cfg(unix)]
 #[tokio::test]
 async fn test_monitoring_metrics_persistence() {
     let temp_dir = tempfile::tempdir().unwrap();

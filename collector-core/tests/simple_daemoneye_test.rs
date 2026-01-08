@@ -9,6 +9,7 @@ use collector_core::{
 };
 use std::time::SystemTime;
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_daemoneye_eventbus_creation_and_startup() {
     let config = EventBusConfig::default();
@@ -40,6 +41,7 @@ async fn test_daemoneye_eventbus_creation_and_startup() {
         .expect("Failed to shutdown EventBus");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_daemoneye_eventbus_subscription_only() {
     let config = EventBusConfig::default();
@@ -86,6 +88,7 @@ async fn test_daemoneye_eventbus_subscription_only() {
     event_bus.shutdown().await.expect("Failed to shutdown");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_daemoneye_eventbus_publish_only() {
     let config = EventBusConfig::default();
