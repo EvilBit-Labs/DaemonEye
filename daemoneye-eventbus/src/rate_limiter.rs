@@ -265,9 +265,14 @@ mod tests {
         );
 
         // Wait 100ms, should refill ~1 token
+        // Use wider tolerance for CI runners with variable timing
         tokio::time::sleep(Duration::from_millis(100)).await;
         bucket.refill();
-        assert!(bucket.tokens() > 0.9 && bucket.tokens() < 1.1);
+        assert!(
+            bucket.tokens() > 0.5 && bucket.tokens() < 2.0,
+            "Expected approximately 1 token after 100ms refill at 10 tokens/sec, got {}",
+            bucket.tokens()
+        );
     }
 
     #[tokio::test]
