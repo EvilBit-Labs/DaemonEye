@@ -669,22 +669,27 @@ impl Collector {
         // Start event processing
         runtime_guard.start_event_processing().await;
 
-        // Release the guard before running
+        // Get the shutdown signal before releasing the lock
+        let shutdown_signal = Arc::clone(&runtime_guard.shutdown_signal);
+
+        // Release the guard before waiting for shutdown
+        // IMPORTANT: This allows the RPC service to access the runtime while the collector runs
         drop(runtime_guard);
 
-        // Run until shutdown
-        let run_result = {
+        // Wait for shutdown signal WITHOUT holding the runtime lock
+        CollectorRuntime::wait_for_shutdown(shutdown_signal).await;
+
+        // Reacquire the lock for graceful shutdown
+        {
             let mut runtime_guard = runtime_arc.write().await;
-            runtime_guard.run_until_shutdown().await
-        };
+            runtime_guard.shutdown_gracefully().await?;
+        }
 
         if let Some(session) = registration_session
             && let Err(err) = Collector::deregister_from_broker(session).await
         {
             warn!(error = %err, "Failed to deregister collector from broker");
         }
-
-        run_result?;
 
         // Ensure the configured EventBus is shut down gracefully
         {
@@ -859,7 +864,7 @@ impl CollectorRuntime {
         let performance_monitor = Arc::clone(&self.performance_monitor);
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
         let telemetry_collector = Arc::clone(&self.telemetry_collector);
-        let collection_interval = Duration::from_secs(10); // Default collection interval
+        let collection_interval = self.config.telemetry_interval;
 
         let handle = tokio::spawn(async move {
             let mut monitoring_interval = interval(collection_interval);
@@ -1289,11 +1294,11 @@ impl CollectorRuntime {
         Ok(())
     }
 
-    /// Runs the runtime until shutdown is signaled.
-    async fn run_until_shutdown(&mut self) -> Result<()> {
-        // Set up signal handling
-        let shutdown_signal = Arc::clone(&self.shutdown_signal);
-
+    /// Waits until shutdown is signaled (without holding any locks).
+    ///
+    /// This is a static function that only needs the shutdown signal Arc,
+    /// allowing the runtime lock to be released while waiting.
+    async fn wait_for_shutdown(shutdown_signal: Arc<AtomicBool>) {
         // Create a future that polls the shutdown signal
         let shutdown_poll = async {
             while !shutdown_signal.load(Ordering::Relaxed) {
@@ -1405,11 +1410,6 @@ impl CollectorRuntime {
 
         // Signal shutdown to all tasks
         shutdown_signal.store(true, Ordering::Relaxed);
-
-        // Wait for all tasks to complete with timeout
-        self.shutdown_gracefully().await?;
-
-        Ok(())
     }
 
     /// Start the RPC service with a runtime reference

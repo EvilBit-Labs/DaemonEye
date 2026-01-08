@@ -6,20 +6,127 @@
 use collector_core::{Collector, CollectorConfig};
 use daemoneye_eventbus::{
     DaemoneyeBroker,
-    rpc::{CollectorOperation, CollectorRpcClient, RpcRequest, RpcStatus},
+    process_manager::{CollectorProcessManager, ProcessManagerConfig},
+    rpc::{
+        CollectorOperation, CollectorRpcClient, CollectorRpcService, RpcRequest, RpcStatus,
+        ServiceCapabilities, TimeoutLimits,
+    },
 };
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
+use tokio::sync::oneshot;
 use tokio::time::timeout;
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
-/// Setup test broker and collector
-async fn setup_test_broker_and_collector()
--> anyhow::Result<(TempDir, Arc<DaemoneyeBroker>, Collector)> {
+/// Initialize tracing for tests
+fn init_tracing() {
+    // Initialize tracing subscriber - ignore errors if already initialized
+    let _ = tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
+        .with(fmt::layer().with_test_writer())
+        .try_init();
+}
+
+/// Spawn a registration handler that auto-accepts registration requests.
+/// Returns a shutdown sender to stop the handler.
+async fn spawn_registration_handler(
+    broker: Arc<DaemoneyeBroker>,
+    registration_topic: &str,
+) -> anyhow::Result<oneshot::Sender<()>> {
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+    let topic = registration_topic.to_string();
+
+    // Create a simple RPC service to handle registration requests
+    let capabilities = ServiceCapabilities {
+        operations: vec![CollectorOperation::Register, CollectorOperation::Deregister],
+        max_concurrent_requests: 10,
+        timeout_limits: TimeoutLimits {
+            min_timeout_ms: 1000,
+            max_timeout_ms: 300000,
+            default_timeout_ms: 30000,
+        },
+        supported_collectors: vec!["test".to_string()],
+    };
+    let process_manager = CollectorProcessManager::new(ProcessManagerConfig::default());
+    let rpc_service = Arc::new(CollectorRpcService::new(
+        "registration-handler".to_string(),
+        capabilities,
+        process_manager,
+    ));
+
+    // Subscribe to registration topic
+    let subscriber_id = Uuid::new_v4();
+    let mut receiver = broker.subscribe_raw(&topic, subscriber_id).await?;
+
+    // Spawn handler task
+    let broker_clone = Arc::clone(&broker);
+    eprintln!(
+        "REG_HANDLER: Starting registration handler on topic: {}",
+        topic
+    );
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => {
+                    eprintln!("REG_HANDLER: Shutdown signal received");
+                    break;
+                }
+                msg = receiver.recv() => {
+                    let Some(message) = msg else {
+                        eprintln!("REG_HANDLER: Channel closed");
+                        break;
+                    };
+                    eprintln!("REG_HANDLER: Received message, payload size: {}", message.payload.len());
+
+                    // Deserialize RPC request
+                    let request: RpcRequest = match bincode::serde::decode_from_slice(
+                        &message.payload,
+                        bincode::config::standard(),
+                    ) {
+                        Ok((req, _)) => req,
+                        Err(e) => {
+                            eprintln!("REG_HANDLER: Failed to deserialize request: {:?}", e);
+                            continue;
+                        }
+                    };
+                    eprintln!("REG_HANDLER: Received request: operation={:?}, client_id={}", request.operation, request.client_id);
+
+                    // Handle the request
+                    let response = rpc_service.handle_request(request.clone()).await;
+                    eprintln!("REG_HANDLER: Response status: {:?}", response.status);
+
+                    // Serialize and publish response to the client's response topic
+                    let response_topic = format!("control.rpc.response.{}", request.client_id);
+                    eprintln!("REG_HANDLER: Publishing response to topic: {}", response_topic);
+                    if let Ok(payload) = bincode::serde::encode_to_vec(&response, bincode::config::standard()) {
+                        let result = broker_clone.publish(&response_topic, &response.request_id, payload).await;
+                        eprintln!("REG_HANDLER: Publish result: {:?}", result.is_ok());
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(shutdown_tx)
+}
+
+/// Setup test broker and collector with registration handler
+async fn setup_test_broker_and_collector() -> anyhow::Result<(
+    TempDir,
+    Arc<DaemoneyeBroker>,
+    Collector,
+    oneshot::Sender<()>,
+)> {
     let temp_dir = TempDir::new()?;
     let socket_path = temp_dir.path().join("test-broker.sock");
 
     let broker = Arc::new(DaemoneyeBroker::new(&socket_path.to_string_lossy()).await?);
+
+    // Start registration handler BEFORE creating collector
+    let registration_topic = "control.collector.registration";
+    let shutdown_tx = spawn_registration_handler(Arc::clone(&broker), registration_topic).await?;
 
     let config = CollectorConfig {
         registration: Some(collector_core::CollectorRegistrationConfig {
@@ -27,7 +134,7 @@ async fn setup_test_broker_and_collector()
             broker: Some(Arc::clone(&broker)),
             collector_id: Some("test-collector".to_string()),
             collector_type: Some("test".to_string()),
-            topic: "control.collector.registration".to_string(),
+            topic: registration_topic.to_string(),
             timeout: Duration::from_secs(10),
             retry_attempts: 3,
             heartbeat_interval: Duration::from_secs(5),
@@ -38,12 +145,12 @@ async fn setup_test_broker_and_collector()
 
     let collector = Collector::new(config);
 
-    Ok((temp_dir, broker, collector))
+    Ok((temp_dir, broker, collector, shutdown_tx))
 }
 
 #[tokio::test]
 async fn test_rpc_service_initialization() -> anyhow::Result<()> {
-    let (_temp_dir, _broker, _collector) = setup_test_broker_and_collector().await?;
+    let (_temp_dir, _broker, _collector, _shutdown_tx) = setup_test_broker_and_collector().await?;
 
     // Test that collector can be created with RPC service configuration
     // The RPC service will be started automatically during collector.run()
@@ -53,38 +160,57 @@ async fn test_rpc_service_initialization() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore] // TODO: Fix RPC communication issue - RPC service not receiving/responding to requests
 async fn test_health_check_response() -> anyhow::Result<()> {
-    let (temp_dir, broker, collector) = setup_test_broker_and_collector().await?;
+    init_tracing();
+    eprintln!("TEST: Starting test_health_check_response");
+
+    let (temp_dir, broker, collector, reg_shutdown_tx) = setup_test_broker_and_collector().await?;
+    eprintln!("TEST: Setup complete");
     let collector_id = "test-collector";
 
     // Start collector in background task
+    eprintln!("TEST: Starting collector");
     let collector_handle = tokio::spawn(async move {
-        let _ = collector.run().await;
+        eprintln!("TEST: collector.run() starting");
+        let result = collector.run().await;
+        eprintln!("TEST: collector.run() completed with {:?}", result.is_ok());
     });
 
-    // Wait for collector to start and register
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for collector to start, register, and RPC service to be ready
+    eprintln!("TEST: Waiting for collector to start (2 seconds)");
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+    eprintln!("TEST: Done waiting");
 
     // Create RPC client
-    let rpc_client = CollectorRpcClient::new(
-        &format!("control.collector.{}", collector_id),
-        Arc::clone(&broker),
-    )
-    .await?;
+    let target_topic = format!("control.collector.{}", collector_id);
+    eprintln!("TEST: Creating RPC client for topic: {}", target_topic);
+    let rpc_client = CollectorRpcClient::new(&target_topic, Arc::clone(&broker)).await?;
+    eprintln!(
+        "TEST: RPC client created, client_id: {}",
+        rpc_client.client_id
+    );
 
     // Send health check RPC
+    eprintln!(
+        "TEST: Sending health check to topic: {}",
+        rpc_client.target_topic
+    );
     let request = RpcRequest::health_check(
         rpc_client.client_id.clone(),
         rpc_client.target_topic.clone(),
         Duration::from_secs(10),
     );
+    eprintln!("TEST: Request id: {}", request.request_id);
 
     let response = timeout(
         Duration::from_secs(5),
         rpc_client.call(request, Duration::from_secs(10)),
     )
     .await??;
+
+    eprintln!("TEST: Response status: {:?}", response.status);
+    eprintln!("TEST: Response error_details: {:?}", response.error_details);
+    eprintln!("TEST: Response payload: {:?}", response.payload);
 
     // Assert response
     assert_eq!(
@@ -94,16 +220,17 @@ async fn test_health_check_response() -> anyhow::Result<()> {
     );
 
     // Cleanup
+    eprintln!("TEST: Cleaning up");
     collector_handle.abort();
+    let _ = reg_shutdown_tx.send(());
     drop(temp_dir);
 
     Ok(())
 }
 
 #[tokio::test]
-#[ignore] // TODO: Fix RPC communication issue - RPC service not receiving/responding to requests
 async fn test_lifecycle_operation_handling() -> anyhow::Result<()> {
-    let (temp_dir, broker, collector) = setup_test_broker_and_collector().await?;
+    let (temp_dir, broker, collector, reg_shutdown_tx) = setup_test_broker_and_collector().await?;
     let collector_id = "test-collector";
 
     // Start collector in background task
@@ -111,8 +238,8 @@ async fn test_lifecycle_operation_handling() -> anyhow::Result<()> {
         let _ = collector.run().await;
     });
 
-    // Wait for collector to start and register
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for collector to start, register, and RPC service to be ready
+    tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Create RPC client
     let rpc_client = CollectorRpcClient::new(
@@ -165,15 +292,15 @@ async fn test_lifecycle_operation_handling() -> anyhow::Result<()> {
 
     // Wait for collector to shut down
     let _ = timeout(Duration::from_secs(2), collector_handle).await;
+    let _ = reg_shutdown_tx.send(());
     drop(temp_dir);
 
     Ok(())
 }
 
 #[tokio::test]
-#[ignore] // TODO: Fix RPC communication issue - RPC service not receiving/responding to requests
 async fn test_graceful_shutdown_via_rpc() -> anyhow::Result<()> {
-    let (temp_dir, broker, collector) = setup_test_broker_and_collector().await?;
+    let (temp_dir, broker, collector, reg_shutdown_tx) = setup_test_broker_and_collector().await?;
     let collector_id = "test-collector";
 
     // Start collector in background task
@@ -182,8 +309,7 @@ async fn test_graceful_shutdown_via_rpc() -> anyhow::Result<()> {
     });
 
     // Wait for collector to start, register, and RPC service to be ready
-    // Give enough time for: registration -> RPC service start -> subscription setup
-    tokio::time::sleep(Duration::from_millis(2000)).await;
+    tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Create RPC client
     let rpc_client = CollectorRpcClient::new(
@@ -191,9 +317,6 @@ async fn test_graceful_shutdown_via_rpc() -> anyhow::Result<()> {
         Arc::clone(&broker),
     )
     .await?;
-
-    // Give the RPC client subscription time to be established
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Send graceful shutdown RPC
     let shutdown_request = RpcRequest::shutdown(
@@ -221,8 +344,9 @@ async fn test_graceful_shutdown_via_rpc() -> anyhow::Result<()> {
         "Graceful shutdown should succeed"
     );
 
-    // Wait for collector to shut down - give it more time
+    // Wait for collector to shut down
     let _ = timeout(Duration::from_secs(5), collector_handle).await;
+    let _ = reg_shutdown_tx.send(());
     drop(temp_dir);
 
     Ok(())
@@ -230,7 +354,7 @@ async fn test_graceful_shutdown_via_rpc() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_rpc_service_error_handling() -> anyhow::Result<()> {
-    let (temp_dir, broker, _collector) = setup_test_broker_and_collector().await?;
+    let (temp_dir, broker, _collector, reg_shutdown_tx) = setup_test_broker_and_collector().await?;
     let collector_id = "nonexistent-collector";
 
     // Create RPC client for non-existent collector
@@ -260,6 +384,7 @@ async fn test_rpc_service_error_handling() -> anyhow::Result<()> {
         "RPC to non-existent collector should fail or timeout"
     );
 
+    let _ = reg_shutdown_tx.send(());
     drop(temp_dir);
     Ok(())
 }

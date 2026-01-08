@@ -1409,7 +1409,7 @@ impl CollectorRpcService {
         start_time: SystemTime,
         deadline: SystemTime,
     ) -> RpcResponse {
-        // Extract collector_id from payload
+        // Extract collector_id from payload, or use service_id as fallback for empty payloads
         let collector_id = match &request.payload {
             RpcPayload::Lifecycle(req) => req.collector_id.clone(),
             RpcPayload::Generic(map) => {
@@ -1428,6 +1428,9 @@ impl CollectorRpcService {
                     );
                 }
             }
+            // Accept empty payload and use the service's own ID
+            // This is useful when the health check is sent to a specific collector's topic
+            RpcPayload::Empty => self.service_id.clone(),
             _ => {
                 return self.create_error_response(
                     request,
@@ -2567,6 +2570,15 @@ impl RpcRequest {
     }
 
     /// Create a health check request
+    ///
+    /// # Arguments
+    ///
+    /// * `client_id` - The client identifier making the request
+    /// * `target` - The target topic (e.g., "control.collector.test-collector")
+    /// * `timeout` - Request timeout duration
+    ///
+    /// Note: The collector_id is inferred from the service handling the request.
+    /// When sending to a specific collector's topic, the collector will use its own ID.
     pub fn health_check(client_id: String, target: String, timeout: Duration) -> Self {
         Self::new(
             client_id,

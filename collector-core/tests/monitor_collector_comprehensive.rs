@@ -862,7 +862,6 @@ async fn test_chaos_startup_failures() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: Fix flaky test - SIGABRT when run in full test suite, passes individually
 async fn test_chaos_event_generation_failures() {
     let config = CollectorConfig::default()
         .with_max_event_sources(2)

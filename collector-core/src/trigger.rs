@@ -5,6 +5,22 @@
 //! It implements trigger condition evaluation, deduplication, rate limiting, and
 //! metadata tracking for forensic analysis.
 
+/// Macro to acquire a std::sync::Mutex lock and convert poison errors to TriggerError.
+///
+/// This reduces boilerplate when locking mutexes that need error handling.
+///
+/// # Usage
+/// ```ignore
+/// let guard = lock_or_err!(self.conditions, "conditions")?;
+/// ```
+macro_rules! lock_or_err {
+    ($mutex:expr, $name:literal) => {
+        $mutex
+            .lock()
+            .map_err(|_| TriggerError::LockError($name.to_string()))
+    };
+}
+
 use crate::event::{AnalysisType, CollectionEvent, TriggerPriority, TriggerRequest};
 use crate::event_bus::EventBus;
 use serde::{Deserialize, Serialize};
@@ -37,6 +53,9 @@ pub struct TriggerConfig {
 
     /// Enable trigger metadata collection for debugging
     pub enable_metadata_tracking: bool,
+
+    /// Default timeout for trigger requests (in seconds)
+    pub default_timeout_secs: u64,
 }
 
 impl Default for TriggerConfig {
@@ -47,6 +66,7 @@ impl Default for TriggerConfig {
             deduplication_window_secs: 300, // 5 minutes
             max_pending_triggers: 1000,
             enable_metadata_tracking: true,
+            default_timeout_secs: 30,
         }
     }
 }
@@ -275,10 +295,7 @@ impl TriggerManager {
         // Register with SQL evaluator
         if let Ok(mut evaluator) = self.sql_evaluator.lock() {
             // Extract conditions that this collector can handle
-            let conditions = self
-                .conditions
-                .lock()
-                .map_err(|_| TriggerError::LockError("conditions".to_string()))?;
+            let conditions = lock_or_err!(self.conditions, "conditions")?;
             let collector_conditions: Vec<TriggerCondition> = conditions
                 .iter()
                 .filter(|condition| {
@@ -357,10 +374,7 @@ impl TriggerManager {
         &self,
         condition: &TriggerCondition,
     ) -> Result<(), TriggerError> {
-        let capabilities = self
-            .collector_capabilities
-            .lock()
-            .map_err(|_| TriggerError::LockError("collector_capabilities".to_string()))?;
+        let capabilities = lock_or_err!(self.collector_capabilities, "collector_capabilities")?;
 
         let collector_caps = capabilities
             .get(&condition.target_collector)
@@ -437,25 +451,16 @@ impl TriggerManager {
 
         // Add condition to the list
         {
-            let mut conditions = self
-                .conditions
-                .lock()
-                .map_err(|_| TriggerError::LockError("conditions".to_string()))?;
+            let mut conditions = lock_or_err!(self.conditions, "conditions")?;
             conditions.push(condition);
         }
 
         // Get evaluator lock and register conditions
-        let mut evaluator = self
-            .sql_evaluator
-            .lock()
-            .map_err(|_| TriggerError::LockError("sql_evaluator".to_string()))?;
+        let mut evaluator = lock_or_err!(self.sql_evaluator, "sql_evaluator")?;
 
         // Get conditions for this collector
         let collector_conditions: Vec<_> = {
-            let conditions = self
-                .conditions
-                .lock()
-                .map_err(|_| TriggerError::LockError("conditions".to_string()))?;
+            let conditions = lock_or_err!(self.conditions, "conditions")?;
             conditions
                 .iter()
                 .filter(|c| c.target_collector == collector_id)
@@ -490,18 +495,12 @@ impl TriggerManager {
         collector_id: &str,
         process_data: &ProcessTriggerData,
     ) -> Result<Vec<TriggerRequest>, TriggerError> {
-        let mut evaluator = self
-            .sql_evaluator
-            .lock()
-            .map_err(|_| TriggerError::LockError("sql_evaluator".to_string()))?;
+        let mut evaluator = lock_or_err!(self.sql_evaluator, "sql_evaluator")?;
 
         let triggers = evaluator.evaluate_sql_triggers(collector_id, process_data)?;
 
         // Enqueue triggers with priority handling
-        let mut queue = self
-            .trigger_queue
-            .lock()
-            .map_err(|_| TriggerError::LockError("trigger_queue".to_string()))?;
+        let mut queue = lock_or_err!(self.trigger_queue, "trigger_queue")?;
 
         let mut successful_triggers = Vec::with_capacity(triggers.len());
 
@@ -603,10 +602,7 @@ impl TriggerManager {
         &self,
         process_data: &ProcessTriggerData,
     ) -> Result<Vec<TriggerRequest>, TriggerError> {
-        let conditions = self
-            .conditions
-            .lock()
-            .map_err(|_| TriggerError::LockError("conditions".to_string()))?;
+        let conditions = lock_or_err!(self.conditions, "conditions")?;
         let mut triggers = Vec::with_capacity(conditions.len());
 
         // Evaluate each registered condition
@@ -749,10 +745,7 @@ impl TriggerManager {
             target_path: trigger.target_path.clone(),
         };
 
-        let mut cache = self
-            .deduplication_cache
-            .lock()
-            .map_err(|_| TriggerError::LockError("deduplication_cache".to_string()))?;
+        let mut cache = lock_or_err!(self.deduplication_cache, "deduplication_cache")?;
 
         let now = SystemTime::now();
         let dedup_window = Duration::from_secs(self.config.deduplication_window_secs);
@@ -779,10 +772,7 @@ impl TriggerManager {
 
     /// Checks if a trigger should be rate limited.
     fn should_rate_limit(&self, trigger: &TriggerRequest) -> Result<bool, TriggerError> {
-        let mut rate_limits = self
-            .rate_limits
-            .lock()
-            .map_err(|_| TriggerError::LockError("rate_limits".to_string()))?;
+        let mut rate_limits = lock_or_err!(self.rate_limits, "rate_limits")?;
 
         let now = SystemTime::now();
         let rate_window = Duration::from_secs(self.config.rate_limit_window_secs);
@@ -961,10 +951,7 @@ impl TriggerManager {
         // Lock is dropped here
 
         if let Err(err) = publish_result {
-            let mut stats = self
-                .emission_stats
-                .lock()
-                .map_err(|_| TriggerError::LockError("emission_stats".to_string()))?;
+            let mut stats = lock_or_err!(self.emission_stats, "emission_stats")?;
             stats.event_bus_failures += 1;
             return Err(TriggerError::EventBusError(err.to_string()));
         }
@@ -974,10 +961,7 @@ impl TriggerManager {
 
         // Update emission statistics in a single lock acquisition
         {
-            let mut stats = self
-                .emission_stats
-                .lock()
-                .map_err(|_| TriggerError::LockError("emission_stats".to_string()))?;
+            let mut stats = lock_or_err!(self.emission_stats, "emission_stats")?;
 
             stats.total_emitted += 1;
             stats.pending_responses += 1;
@@ -1013,10 +997,7 @@ impl TriggerManager {
         &self,
         trigger: &TriggerRequest,
     ) -> Result<(), TriggerError> {
-        let capabilities = self
-            .collector_capabilities
-            .lock()
-            .map_err(|_| TriggerError::LockError("collector_capabilities".to_string()))?;
+        let capabilities = lock_or_err!(self.collector_capabilities, "collector_capabilities")?;
 
         // Check if target collector is registered
         let collector_caps = capabilities.get(&trigger.target_collector).ok_or_else(|| {
@@ -1081,7 +1062,7 @@ impl TriggerManager {
         &self,
         trigger: &TriggerRequest,
     ) -> Result<(), TriggerError> {
-        let timeout_duration = Duration::from_secs(30); // Default 30-second timeout
+        let timeout_duration = Duration::from_secs(self.config.default_timeout_secs);
 
         let timeout_info = TriggerTimeout {
             target_collector: trigger.target_collector.clone(),
@@ -1090,10 +1071,7 @@ impl TriggerManager {
             correlation_id: trigger.correlation_id.clone(),
         };
 
-        let mut tracker = self
-            .timeout_tracker
-            .lock()
-            .map_err(|_| TriggerError::LockError("timeout_tracker".to_string()))?;
+        let mut tracker = lock_or_err!(self.timeout_tracker, "timeout_tracker")?;
 
         tracker.insert(trigger.trigger_id.clone(), timeout_info);
 
@@ -1115,10 +1093,7 @@ impl TriggerManager {
         let now = SystemTime::now();
 
         {
-            let mut tracker = self
-                .timeout_tracker
-                .lock()
-                .map_err(|_| TriggerError::LockError("timeout_tracker".to_string()))?;
+            let mut tracker = lock_or_err!(self.timeout_tracker, "timeout_tracker")?;
 
             let mut expired_triggers = Vec::new();
 
@@ -1147,10 +1122,7 @@ impl TriggerManager {
 
         // Update statistics
         if !timed_out_triggers.is_empty() {
-            let mut stats = self
-                .emission_stats
-                .lock()
-                .map_err(|_| TriggerError::LockError("emission_stats".to_string()))?;
+            let mut stats = lock_or_err!(self.emission_stats, "emission_stats")?;
 
             stats.timeouts += timed_out_triggers.len() as u64;
             stats.pending_responses = stats
@@ -1166,17 +1138,11 @@ impl TriggerManager {
     /// This method should be called when a trigger request receives a response
     /// from the analysis collector to clean up tracking state.
     pub async fn complete_trigger_request(&self, trigger_id: &str) -> Result<(), TriggerError> {
-        let mut tracker = self
-            .timeout_tracker
-            .lock()
-            .map_err(|_| TriggerError::LockError("timeout_tracker".to_string()))?;
+        let mut tracker = lock_or_err!(self.timeout_tracker, "timeout_tracker")?;
 
         if tracker.remove(trigger_id).is_some() {
             // Update statistics
-            let mut stats = self
-                .emission_stats
-                .lock()
-                .map_err(|_| TriggerError::LockError("emission_stats".to_string()))?;
+            let mut stats = lock_or_err!(self.emission_stats, "emission_stats")?;
 
             stats.pending_responses = stats.pending_responses.saturating_sub(1);
 
@@ -1243,11 +1209,7 @@ impl TriggerManager {
             )
         };
 
-        let conditions_len = self
-            .conditions
-            .lock()
-            .map_err(|_| TriggerError::LockError("conditions".to_string()))?
-            .len();
+        let conditions_len = lock_or_err!(self.conditions, "conditions")?.len();
 
         Ok(TriggerStatistics {
             registered_conditions: conditions_len,

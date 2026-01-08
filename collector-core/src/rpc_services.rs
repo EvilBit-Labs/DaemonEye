@@ -19,7 +19,6 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
-use tokio::time::{Duration as TokioDuration, timeout};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -229,9 +228,26 @@ impl CollectorRpcServiceManager {
         let broker_clone = Arc::clone(&self.broker);
         let task_handler_clone = Arc::clone(&self.task_handler);
 
+        // Create oneshot channel to signal when the service is ready to receive messages
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+
         // Spawn background task to handle RPC requests
         let handle = tokio::spawn(async move {
+            // Signal readiness before entering the message processing loop
+            // This ensures callers know the service is subscribed and ready
+            eprintln!(
+                "RPC_SERVICE_LOOP: Ready signal sent, entering message loop for collector: {}",
+                config_collector_id
+            );
+            let _ = ready_tx.send(());
+
             while let Some(message) = message_receiver.recv().await {
+                eprintln!(
+                    "RPC_SERVICE_LOOP: Received message on topic: {} (payload size: {} bytes)",
+                    message.topic,
+                    message.payload.len()
+                );
+
                 // Skip response messages - parse topic to check for rpc.response segment
                 // Check if topic contains "rpc.response" as adjacent dot-separated segments
                 let topic_parts: Vec<&str> = message.topic.split('.').collect();
@@ -239,6 +255,7 @@ impl CollectorRpcServiceManager {
                     .windows(2)
                     .any(|window| window[0] == "rpc" && window[1] == "response");
                 if is_rpc_response {
+                    eprintln!("RPC_SERVICE_LOOP: Skipping response message");
                     continue;
                 }
 
@@ -247,8 +264,15 @@ impl CollectorRpcServiceManager {
                     &message.payload,
                     bincode::config::standard(),
                 ) {
-                    Ok((req, _)) => req,
+                    Ok((req, _)) => {
+                        eprintln!(
+                            "RPC_SERVICE_LOOP: Deserialized request: operation={:?}, client_id={}, request_id={}",
+                            req.operation, req.client_id, req.request_id
+                        );
+                        req
+                    }
                     Err(e) => {
+                        eprintln!("RPC_SERVICE_LOOP: Failed to deserialize RPC request: {}", e);
                         error!("Failed to deserialize RPC request: {}", e);
                         continue;
                     }
@@ -289,74 +313,26 @@ impl CollectorRpcServiceManager {
                                 }
                             }
                             RpcOperation::Stop => {
-                                // Trigger shutdown signal
+                                // Trigger shutdown signal and return immediately
+                                // Note: We return success immediately rather than waiting for shutdown
+                                // confirmation, because the graceful shutdown process will stop the
+                                // RPC service before we could send the response otherwise.
+                                // Clients can poll health status or listen for completion events
+                                // if they need to confirm shutdown completion.
                                 shutdown_signal.store(true, std::sync::atomic::Ordering::Relaxed);
-                                info!("Stop operation triggered via RPC");
+                                info!("Stop operation triggered via RPC (shutdown signal set)");
                                 let start_time = SystemTime::now();
-
-                                // Wait for shutdown confirmation with bounded timeout
-                                // Check if runtime becomes unavailable (indicating shutdown progress)
-                                let shutdown_timeout = TokioDuration::from_secs(5);
-                                let runtime_clone = Arc::clone(&runtime_ref);
-
-                                let shutdown_confirmed = timeout(shutdown_timeout, async {
-                                    // Poll every 100ms to check if runtime is still available
-                                    // If runtime becomes None, shutdown has likely completed
-                                    let mut check_count = 0;
-                                    let max_checks = 50; // 5 seconds / 100ms
-
-                                    while check_count < max_checks {
-                                        tokio::time::sleep(TokioDuration::from_millis(100)).await;
-                                        let runtime_guard = runtime_clone.read().await;
-                                        if runtime_guard.is_none() {
-                                            // Runtime has been dropped, shutdown likely completed
-                                            return true;
-                                        }
-                                        // Check if shutdown signal is still set (it should be)
-                                        if !shutdown_signal
-                                            .load(std::sync::atomic::Ordering::Relaxed)
-                                        {
-                                            // Shutdown signal was cleared, something unexpected happened
-                                            return false;
-                                        }
-                                        check_count += 1;
-                                    }
-                                    false // Timeout - couldn't confirm shutdown completion
-                                })
-                                .await;
-
-                                let (status, error_details) = match shutdown_confirmed {
-                                    Ok(true) => {
-                                        // Shutdown confirmed
-                                        (daemoneye_eventbus::rpc::RpcStatus::Success, None)
-                                    }
-                                    Ok(false) | Err(_) => {
-                                        // Timeout or couldn't confirm - return InProgress status
-                                        // Clients should poll health or listen for completion events
-                                        (
-                                            daemoneye_eventbus::rpc::RpcStatus::InProgress,
-                                            Some(daemoneye_eventbus::rpc::RpcError {
-                                                code: "SHUTDOWN_INITIATED".to_string(),
-                                                message: "Shutdown signal set, but shutdown completion not confirmed within timeout. Client should poll health status or listen for completion events.".to_string(),
-                                                context: std::collections::HashMap::new(),
-                                                category: daemoneye_eventbus::rpc::ErrorCategory::Internal,
-                                            }),
-                                        )
-                                    }
-                                };
-
-                                let execution_time = start_time.elapsed().unwrap_or_default();
                                 daemoneye_eventbus::rpc::RpcResponse {
                                     request_id: request.request_id.clone(),
                                     service_id: config_collector_id.clone(),
                                     operation: RpcOperation::Stop,
-                                    status,
+                                    status: daemoneye_eventbus::rpc::RpcStatus::Success,
                                     payload: None,
-                                    error_details,
+                                    error_details: None,
                                     timestamp: start_time,
-                                    execution_time_ms: execution_time.as_millis() as u64,
+                                    execution_time_ms: 0,
                                     queue_time_ms: Some(0),
-                                    total_time_ms: execution_time.as_millis() as u64,
+                                    total_time_ms: 0,
                                     correlation_metadata: RpcCorrelationMetadata::default(),
                                 }
                             }
@@ -482,11 +458,24 @@ impl CollectorRpcServiceManager {
                     }
                 } else {
                     // Handle other requests via RPC service
-                    rpc_service_clone.handle_request(request.clone()).await
+                    eprintln!(
+                        "RPC_SERVICE_LOOP: Routing to rpc_service.handle_request() for operation: {:?}",
+                        request.operation
+                    );
+                    let resp = rpc_service_clone.handle_request(request.clone()).await;
+                    eprintln!(
+                        "RPC_SERVICE_LOOP: Got response from handle_request: status={:?}, request_id={}",
+                        resp.status, resp.request_id
+                    );
+                    resp
                 };
 
                 // Determine response topic
                 let response_topic = format!("control.rpc.response.{}", request.client_id);
+                eprintln!(
+                    "RPC_SERVICE_LOOP: Will publish response to topic: {}",
+                    response_topic
+                );
 
                 // Serialize and publish response
                 let payload = match bincode::serde::encode_to_vec(
@@ -552,19 +541,37 @@ impl CollectorRpcServiceManager {
                     }
                 };
 
-                if let Err(e) = broker_clone
+                eprintln!(
+                    "RPC_SERVICE_LOOP: Publishing response (size: {} bytes) to topic: {}",
+                    payload.len(),
+                    response_topic
+                );
+                match broker_clone
                     .publish(&response_topic, &response.request_id, payload)
                     .await
                 {
-                    error!(
-                        request_id = %response.request_id,
-                        topic = %response_topic,
-                        error = %e,
-                        "Failed to publish RPC response"
-                    );
+                    Ok(_) => {
+                        eprintln!(
+                            "RPC_SERVICE_LOOP: Successfully published response to topic: {}",
+                            response_topic
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("RPC_SERVICE_LOOP: Failed to publish response: {}", e);
+                        error!(
+                            request_id = %response.request_id,
+                            topic = %response_topic,
+                            error = %e,
+                            "Failed to publish RPC response"
+                        );
+                    }
                 }
             }
         });
+
+        // Wait for the service to signal readiness before returning
+        // This ensures the caller knows the service is actually receiving messages
+        let _ = ready_rx.await;
 
         *handle_guard = Some(handle);
         Ok(())
@@ -595,7 +602,16 @@ impl HealthProvider for CollectorHealthProvider {
         &self,
         collector_id: &str,
     ) -> std::result::Result<HealthCheckData, daemoneye_eventbus::ProcessManagerError> {
+        eprintln!(
+            "HEALTH_PROVIDER: get_collector_health called for collector_id={}",
+            collector_id
+        );
+
         if collector_id != self.collector_id {
+            eprintln!(
+                "HEALTH_PROVIDER: collector_id mismatch: {} != {}",
+                collector_id, self.collector_id
+            );
             return Err(daemoneye_eventbus::ProcessManagerError::ProcessNotFound(
                 collector_id.to_string(),
             ));
@@ -605,8 +621,11 @@ impl HealthProvider for CollectorHealthProvider {
         let mut metrics = HashMap::new();
 
         // Get telemetry health
+        eprintln!("HEALTH_PROVIDER: Acquiring outer telemetry lock...");
         if let Some(telemetry) = self.telemetry.read().await.as_ref() {
+            eprintln!("HEALTH_PROVIDER: Got outer telemetry lock, acquiring inner lock...");
             let telemetry_guard = telemetry.read().await;
+            eprintln!("HEALTH_PROVIDER: Got inner telemetry lock");
             let health_check = telemetry_guard.health_check();
             let telemetry_status = match health_check.status {
                 TelemetryHealthStatus::Healthy => HealthStatus::Healthy,
@@ -644,8 +663,11 @@ impl HealthProvider for CollectorHealthProvider {
         }
 
         // Get performance monitor metrics
+        eprintln!("HEALTH_PROVIDER: Acquiring performance_monitor lock...");
         if let Some(perf_monitor) = self.performance_monitor.read().await.as_ref() {
+            eprintln!("HEALTH_PROVIDER: Got performance_monitor lock, collecting metrics...");
             let perf_metrics = perf_monitor.collect_resource_metrics().await;
+            eprintln!("HEALTH_PROVIDER: Got performance metrics");
             metrics.insert(
                 "cpu_percent".to_string(),
                 perf_metrics.cpu.current_cpu_percent,
@@ -661,8 +683,11 @@ impl HealthProvider for CollectorHealthProvider {
         }
 
         // Get runtime stats if available
+        eprintln!("HEALTH_PROVIDER: Acquiring outer runtime lock...");
         if let Some(runtime) = self.runtime.read().await.as_ref() {
+            eprintln!("HEALTH_PROVIDER: Got outer runtime lock, acquiring inner lock...");
             let runtime_guard = runtime.read().await;
+            eprintln!("HEALTH_PROVIDER: Got inner runtime lock");
             let stats = runtime_guard.get_runtime_stats();
             metrics.insert(
                 "events_processed".to_string(),
@@ -676,12 +701,17 @@ impl HealthProvider for CollectorHealthProvider {
         }
 
         // Aggregate overall health
+        eprintln!("HEALTH_PROVIDER: Aggregating overall health...");
         let overall_status = components
             .values()
             .map(|c| c.status)
             .min()
             .unwrap_or(HealthStatus::Unknown);
 
+        eprintln!(
+            "HEALTH_PROVIDER: Returning health data with status={:?}",
+            overall_status
+        );
         Ok(HealthCheckData {
             collector_id: collector_id.to_string(),
             status: overall_status,
