@@ -5,6 +5,7 @@ use collector_core::event_bus::EventBus;
 use collector_core::{Collector, CollectorConfig, DaemoneyeEventBus, event_bus::EventBusConfig};
 use std::time::Duration;
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_collector_with_daemoneye_eventbus() {
     let config = CollectorConfig::default()
@@ -21,6 +22,7 @@ async fn test_collector_with_daemoneye_eventbus() {
     assert_eq!(collector.source_count(), 0);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_daemoneye_eventbus_broker_access() {
     let config = EventBusConfig::default();
@@ -44,6 +46,7 @@ async fn test_daemoneye_eventbus_broker_access() {
         .expect("Failed to shutdown EventBus");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_eventbus_statistics_conversion() {
     let config = EventBusConfig::default();
