@@ -50,7 +50,7 @@ jobs:
               uses: cargo-bins/cargo-binstall@main
 
             - name: Install mdbook plugins
-              run: cargo binstall mdbook-tabs mdbook-i18n-helpers mdbook-alerts mdbook-yml-header mdbook-image-size --no-confirm
+              run: cargo binstall mdbook-tabs mdbook-i18n-helpers mdbook-yml-header mdbook-image-size --no-confirm
 
             - name: Build rustdoc
               run: |

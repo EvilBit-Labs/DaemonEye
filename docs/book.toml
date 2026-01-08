@@ -24,9 +24,6 @@ level = 1
 [output.html.playground]
 runnable = false
 
-[preprocessor.alerts]
-command = "mdbook-alerts"
-
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
 
