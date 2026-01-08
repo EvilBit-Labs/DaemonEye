@@ -17,6 +17,7 @@ fn temp_socket_path(name: &str) -> (tempfile::TempDir, String) {
     (dir, socket_path_str)
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_daemoneye_eventbus_integration() {
     let config = EventBusConfig::default();
@@ -109,6 +110,7 @@ async fn test_daemoneye_eventbus_integration() {
         .expect("Failed to shutdown EventBus");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 #[ignore = "Flaky test - needs investigation (same issue as test_trigger_request_conversion)"]
 async fn test_daemoneye_eventbus_trigger_requests() {
@@ -178,6 +180,7 @@ async fn test_daemoneye_eventbus_trigger_requests() {
     event_bus.shutdown().await.expect("Failed to shutdown");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_daemoneye_eventbus_multiple_subscribers() {
     let config = EventBusConfig::default();
@@ -286,6 +289,7 @@ async fn test_daemoneye_eventbus_multiple_subscribers() {
     event_bus.shutdown().await.expect("Failed to shutdown");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_daemoneye_eventbus_performance_comparison() {
     use collector_core::event_bus::LocalEventBus;
