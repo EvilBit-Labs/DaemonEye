@@ -25,6 +25,7 @@ level = 1
 runnable = false
 
 [preprocessor.alerts]
+command = "mdbook-alerts"
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
