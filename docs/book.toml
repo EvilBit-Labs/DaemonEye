@@ -1,7 +1,6 @@
 [book]
 authors = ["EvilBit-Labs"]
 language = "en"
-multilingual = false
 src = "src"
 title = "DaemonEye Documentation"
 description = "DaemonEye User Documentation"
