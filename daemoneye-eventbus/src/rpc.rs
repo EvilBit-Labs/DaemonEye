@@ -52,7 +52,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::broker::DaemoneyeBroker;
@@ -2364,10 +2364,27 @@ impl ConfigProvider for DefaultConfigProvider {
                     .unwrap_or_default()
                     .as_secs(),
             };
-            if let Ok(payload) = serde_json::to_vec(&notification) {
-                let _ = broker
-                    .publish(&topic, &format!("config-change-{}", collector_id), payload)
-                    .await;
+            match serde_json::to_vec(&notification) {
+                Ok(payload) => {
+                    if let Err(e) = broker
+                        .publish(&topic, &format!("config-change-{}", collector_id), payload)
+                        .await
+                    {
+                        warn!(
+                            collector_id = %collector_id,
+                            topic = %topic,
+                            error = %e,
+                            "Failed to publish config change notification - collector may not hot-reload"
+                        );
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        collector_id = %collector_id,
+                        error = %e,
+                        "Failed to serialize config change notification"
+                    );
+                }
             }
         }
 

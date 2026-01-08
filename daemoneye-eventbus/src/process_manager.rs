@@ -908,7 +908,12 @@ impl CollectorProcessManager {
             let collector_id_owned = collector_id.to_string();
 
             // Extract child and RPC client, leaving None in their places
-            let child = proc.child.take().expect("invariant: child exists");
+            let child = proc.child.take().ok_or_else(|| {
+                ProcessManagerError::InvalidState(format!(
+                    "Collector {} has no child process to stop (may have already been stopped)",
+                    collector_id
+                ))
+            })?;
             let rpc_client = proc.rpc_client.take();
 
             (child, pid, collector_id_owned, rpc_client)
@@ -1470,7 +1475,11 @@ impl CollectorProcessManager {
         info!("Shutting down all collectors");
 
         // Send shutdown signal
-        let _ = self.shutdown_tx.send(());
+        if self.shutdown_tx.send(()).is_err() {
+            warn!(
+                "Shutdown signal channel closed - some collectors may not receive shutdown notification"
+            );
+        }
 
         // Get list of collector IDs
         let collector_ids: Vec<String> = {

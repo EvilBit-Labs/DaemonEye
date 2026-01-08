@@ -838,10 +838,27 @@ impl ConfigProvider for BrokerManager {
                         .unwrap_or_default()
                         .as_secs(),
                 };
-                if let Ok(payload) = serde_json::to_vec(&notification) {
-                    let _ = broker
-                        .publish(&topic, &format!("config-change-{}", collector_id), payload)
-                        .await;
+                match serde_json::to_vec(&notification) {
+                    Ok(payload) => {
+                        if let Err(e) = broker
+                            .publish(&topic, &format!("config-change-{}", collector_id), payload)
+                            .await
+                        {
+                            tracing::warn!(
+                                collector_id = %collector_id,
+                                topic = %topic,
+                                error = %e,
+                                "Failed to publish config change notification - collector may not hot-reload"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            collector_id = %collector_id,
+                            error = %e,
+                            "Failed to serialize config change notification"
+                        );
+                    }
                 }
             }
         }
