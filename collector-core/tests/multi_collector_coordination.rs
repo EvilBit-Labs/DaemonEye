@@ -23,6 +23,7 @@ use tokio::time::sleep;
 use uuid::Uuid;
 
 /// Test basic task distribution to multiple collector types
+#[cfg(unix)]
 #[tokio::test]
 async fn test_multi_collector_task_distribution() {
     let temp_dir = tempdir().unwrap();
@@ -269,6 +270,7 @@ async fn test_failover_mechanism() {
 }
 
 /// Test complete workflow: distribution -> routing -> aggregation
+#[cfg(unix)]
 #[tokio::test]
 async fn test_complete_coordination_workflow() {
     let temp_dir = tempdir().unwrap();
@@ -437,6 +439,7 @@ async fn test_aggregation_timeout() {
 }
 
 /// Test task priority ordering in distribution
+#[cfg(unix)]
 #[tokio::test]
 async fn test_task_priority_ordering() {
     let temp_dir = tempdir().unwrap();

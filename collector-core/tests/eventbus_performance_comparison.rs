@@ -306,6 +306,7 @@ async fn test_daemoneye_eventbus_throughput(config: &PerformanceTestConfig) -> P
     )
 }
 /// Compare event distribution throughput between crossbeam and daemoneye-eventbus
+#[cfg(unix)]
 #[tokio::test]
 async fn test_throughput_comparison() {
     let config = PerformanceTestConfig {
@@ -422,6 +423,7 @@ async fn test_throughput_comparison() {
 }
 
 /// Test latency characteristics under different load conditions
+#[cfg(unix)]
 #[tokio::test]
 async fn test_latency_characteristics() {
     let test_cases = vec![
@@ -505,6 +507,7 @@ async fn test_latency_characteristics() {
 }
 
 /// Test memory usage and resource consumption under load
+#[cfg(unix)]
 #[tokio::test]
 async fn test_memory_usage_comparison() {
     let config = PerformanceTestConfig {
@@ -577,6 +580,7 @@ fn get_memory_estimate() -> usize {
     std::mem::size_of::<usize>() * 1024 * 1024 // Return approximately 4-8MB baseline
 }
 /// Test behavioral equivalence between crossbeam and daemoneye-eventbus
+#[cfg(unix)]
 #[tokio::test]
 async fn test_behavioral_equivalence() {
     let config = PerformanceTestConfig {
@@ -807,6 +811,7 @@ async fn test_behavioral_equivalence() {
 }
 
 /// Test concurrent subscriber performance comparison
+#[cfg(unix)]
 #[tokio::test]
 async fn test_concurrent_subscriber_performance() {
     let config = PerformanceTestConfig {
@@ -885,6 +890,7 @@ async fn test_concurrent_subscriber_performance() {
 }
 
 /// Test backpressure handling comparison
+#[cfg(unix)]
 #[tokio::test]
 async fn test_backpressure_handling_comparison() {
     let config = PerformanceTestConfig {

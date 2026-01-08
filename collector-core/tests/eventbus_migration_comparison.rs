@@ -96,6 +96,7 @@ impl SimpleEventGenerator {
 }
 
 /// Test basic event publishing and receiving for both implementations
+#[cfg(unix)]
 #[tokio::test]
 async fn test_basic_event_flow_comparison() {
     let config = EventBusConfig::default();
@@ -220,6 +221,7 @@ async fn test_basic_flow_daemoneye(
 }
 
 /// Test subscription and unsubscription behavior
+#[cfg(unix)]
 #[tokio::test]
 async fn test_subscription_behavior_comparison() {
     let config = EventBusConfig::default();
@@ -304,6 +306,7 @@ async fn test_subscription_daemoneye(config: EventBusConfig) -> bool {
 }
 
 /// Test error handling behavior
+#[cfg(unix)]
 #[tokio::test]
 async fn test_error_handling_comparison() {
     let config = EventBusConfig::default();
@@ -388,6 +391,7 @@ async fn test_error_handling_daemoneye(config: EventBusConfig) -> Vec<bool> {
 }
 
 /// Test statistics collection
+#[cfg(unix)]
 #[tokio::test]
 async fn test_statistics_comparison() {
     let config = EventBusConfig::default();

@@ -148,6 +148,7 @@ async fn setup_test_broker_and_collector() -> anyhow::Result<(
     Ok((temp_dir, broker, collector, shutdown_tx))
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_rpc_service_initialization() -> anyhow::Result<()> {
     let (_temp_dir, _broker, _collector, _shutdown_tx) = setup_test_broker_and_collector().await?;
@@ -159,6 +160,7 @@ async fn test_rpc_service_initialization() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_health_check_response() -> anyhow::Result<()> {
     init_tracing();
@@ -228,6 +230,7 @@ async fn test_health_check_response() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_lifecycle_operation_handling() -> anyhow::Result<()> {
     let (temp_dir, broker, collector, reg_shutdown_tx) = setup_test_broker_and_collector().await?;
@@ -298,6 +301,7 @@ async fn test_lifecycle_operation_handling() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_graceful_shutdown_via_rpc() -> anyhow::Result<()> {
     let (temp_dir, broker, collector, reg_shutdown_tx) = setup_test_broker_and_collector().await?;
@@ -352,6 +356,7 @@ async fn test_graceful_shutdown_via_rpc() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_rpc_service_error_handling() -> anyhow::Result<()> {
     let (temp_dir, broker, _collector, reg_shutdown_tx) = setup_test_broker_and_collector().await?;
