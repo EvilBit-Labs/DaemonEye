@@ -271,7 +271,7 @@ impl LinuxProcessCollector {
         Ok(false)
     }
 
-    /// Reads process namespace information from /proc/[pid]/ns/.
+    /// Reads process namespace information from /proc/\[pid\]/ns/.
     fn read_process_namespaces(pid: u32) -> ProcessCollectionResult<ProcessNamespaces> {
         let ns_dir = format!("/proc/{}/ns", pid);
         let mut namespaces = ProcessNamespaces::default();
@@ -299,7 +299,7 @@ impl LinuxProcessCollector {
         Ok(namespaces)
     }
 
-    /// Reads enhanced process metadata from /proc/[pid]/ files.
+    /// Reads enhanced process metadata from /proc/\[pid\]/ files.
     fn read_enhanced_metadata(&self, pid: u32) -> LinuxProcessMetadata {
         let mut metadata = LinuxProcessMetadata::default();
 
@@ -328,13 +328,13 @@ impl LinuxProcessCollector {
             metadata.container_id = self.detect_container_id(pid, &metadata.namespaces);
         }
 
-        // Read /proc/[pid]/stat for additional metadata
+        // Read /proc/\[pid\]/stat for additional metadata
         if let Ok(stat_data) = self.read_proc_stat(pid) {
             metadata.state = stat_data.get("state").and_then(|s| s.chars().next());
             metadata.threads = stat_data.get("num_threads").and_then(|s| s.parse().ok());
         }
 
-        // Read /proc/[pid]/status for memory information
+        // Read /proc/\[pid\]/status for memory information
         if let Ok(status_data) = self.read_proc_status(pid) {
             metadata.vm_size = status_data
                 .get("VmSize")
@@ -350,7 +350,7 @@ impl LinuxProcessCollector {
         metadata
     }
 
-    /// Counts memory maps from /proc/[pid]/maps.
+    /// Counts memory maps from /proc/\[pid\]/maps.
     fn count_memory_maps(&self, pid: u32) -> Option<usize> {
         let maps_path = format!("/proc/{}/maps", pid);
         fs::read_to_string(&maps_path)
@@ -358,7 +358,7 @@ impl LinuxProcessCollector {
             .map(|content| content.lines().count())
     }
 
-    /// Counts open file descriptors from /proc/[pid]/fd/.
+    /// Counts open file descriptors from /proc/\[pid\]/fd/.
     fn count_file_descriptors(&self, pid: u32) -> Option<usize> {
         let fd_dir = format!("/proc/{}/fd", pid);
         fs::read_dir(&fd_dir).ok().map(|entries| entries.count())
@@ -368,7 +368,7 @@ impl LinuxProcessCollector {
     fn count_network_connections(&self, _pid: u32) -> Option<usize> {
         // This is a simplified implementation. A full implementation would
         // parse /proc/net/tcp, /proc/net/udp, etc. and match by inode
-        // to file descriptors in /proc/[pid]/fd/
+        // to file descriptors in /proc/\[pid\]/fd/
         None
     }
 
@@ -430,7 +430,7 @@ impl LinuxProcessCollector {
         None
     }
 
-    /// Reads and parses /proc/[pid]/stat file.
+    /// Reads and parses /proc/\[pid\]/stat file.
     fn read_proc_stat(&self, pid: u32) -> io::Result<HashMap<String, String>> {
         let stat_path = format!("/proc/{}/stat", pid);
         let content = fs::read_to_string(&stat_path)?;
@@ -448,7 +448,7 @@ impl LinuxProcessCollector {
         Ok(data)
     }
 
-    /// Reads and parses /proc/[pid]/status file.
+    /// Reads and parses /proc/\[pid\]/status file.
     fn read_proc_status(&self, pid: u32) -> io::Result<HashMap<String, String>> {
         let status_path = format!("/proc/{}/status", pid);
         let content = fs::read_to_string(&status_path)?;
@@ -472,7 +472,7 @@ impl LinuxProcessCollector {
             .and_then(|kb| kb.checked_mul(1024)) // Convert KB to bytes with overflow check
     }
 
-    /// Reads basic process information from /proc/[pid]/ files.
+    /// Reads basic process information from /proc/\[pid\]/ files.
     fn read_process_info(&self, pid: u32) -> ProcessCollectionResult<ProcessEvent> {
         let proc_dir = format!("/proc/{}", pid);
 
@@ -482,7 +482,7 @@ impl LinuxProcessCollector {
             return Err(ProcessCollectionError::ProcessNotFound { pid });
         }
 
-        // Additional check: try to read /proc/[pid]/stat to verify the process exists
+        // Additional check: try to read /proc/\[pid\]/stat to verify the process exists
         let stat_path = format!("{}/stat", proc_dir);
         if !Path::new(&stat_path).exists() {
             return Err(ProcessCollectionError::ProcessNotFound { pid });
@@ -542,7 +542,7 @@ impl LinuxProcessCollector {
         let (cpu_usage, memory_usage) = if self.base_config.collect_enhanced_metadata {
             let memory = enhanced_metadata.as_ref().and_then(|m| m.vm_rss);
 
-            // CPU usage calculation would require reading /proc/stat and /proc/[pid]/stat
+            // CPU usage calculation would require reading /proc/stat and /proc/\[pid\]/stat
             // over time intervals. For now, we'll leave it as None.
             (None, memory)
         } else {
@@ -551,7 +551,7 @@ impl LinuxProcessCollector {
 
         // Determine start time
         let start_time = if self.base_config.collect_enhanced_metadata {
-            // This would require parsing the start time from /proc/[pid]/stat
+            // This would require parsing the start time from /proc/\[pid\]/stat
             // and converting from jiffies to SystemTime. For now, we'll use None.
             None
         } else {

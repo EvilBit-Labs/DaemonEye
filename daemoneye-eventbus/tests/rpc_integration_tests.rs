@@ -1777,9 +1777,17 @@ async fn test_rpc_health_check_with_stopped_collector() -> Result<()> {
         correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
-    // Check health - should return error status
+    // Check health - should return success status with unhealthy health data
+    // The RPC call itself succeeds, but the health status indicates the collector is unhealthy
     let response = service.handle_request(request).await;
-    assert_eq!(response.status, RpcStatus::Error);
+    assert_eq!(response.status, RpcStatus::Success);
+
+    // Verify the health data shows unhealthy status
+    if let Some(RpcPayload::HealthCheck(health_data)) = response.payload {
+        assert_eq!(health_data.status, HealthStatus::Unhealthy);
+    } else {
+        panic!("Expected HealthCheck payload");
+    }
 
     Ok(())
 }
