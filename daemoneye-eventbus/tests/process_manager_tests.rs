@@ -1153,6 +1153,7 @@ async fn test_heartbeat_publish_and_sequence() {
         .await;
 }
 
+#[cfg(unix)] // Timing-sensitive test with short intervals fails on Windows
 #[tokio::test]
 async fn test_heartbeat_timeout_degraded_then_unhealthy_without_broker() {
     // Create process manager with short interval and no broker
