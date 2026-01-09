@@ -569,6 +569,7 @@ async fn test_config_validate_only_via_rpc() {
     assert_eq!(resp.status, RpcStatus::Success);
 }
 
+#[cfg(unix)] // Uses Unix socket for broker
 #[tokio::test]
 async fn test_hot_reload_notification_published() {
     use daemoneye_eventbus::broker::DaemoneyeBroker;
@@ -2149,6 +2150,7 @@ async fn test_restart_required_changes_pid() -> Result<()> {
 }
 
 /// Test that hot-reload publishes notification and PID remains same
+#[cfg(unix)] // Uses Unix socket for broker
 #[tokio::test]
 async fn test_hot_reload_notification_and_pid_stable() -> Result<()> {
     use daemoneye_eventbus::broker::DaemoneyeBroker;
@@ -2287,6 +2289,7 @@ async fn test_hot_reload_notification_and_pid_stable() -> Result<()> {
 }
 
 /// Test config update rollback on validation failure
+#[cfg(unix)] // Uses Unix shell scripts for mock collectors
 #[tokio::test]
 async fn test_config_update_rollback_on_failure() -> Result<()> {
     use daemoneye_eventbus::process_manager::{
