@@ -1082,6 +1082,7 @@ async fn test_shutdown_all() {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_heartbeat_publish_and_sequence() {
     use daemoneye_eventbus::broker::DaemoneyeBroker;
