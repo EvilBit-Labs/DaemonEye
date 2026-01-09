@@ -501,6 +501,7 @@ async fn test_health_check_nonexistent_returns_success_unhealthy() {
     }
 }
 
+#[cfg(unix)] // Uses Unix executable permissions without proper Windows extension
 #[tokio::test]
 async fn test_config_validate_only_via_rpc() {
     use daemoneye_eventbus::process_manager::{
