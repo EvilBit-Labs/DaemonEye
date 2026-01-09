@@ -76,7 +76,7 @@ jobs:
 
     test:
         runs-on: ubuntu-latest
-        needs: changes
+        needs: [changes, quality]
         if: needs.changes.outputs.rust == 'true'
         steps:
             - uses: actions/checkout@v5
@@ -131,7 +131,7 @@ jobs:
                     # Note: macOS 12 (Monterey) testing would require custom runners
 
         runs-on: ${{ matrix.os }}
-        needs: changes
+        needs: [changes, quality]
         if: needs.changes.outputs.rust == 'true'
         steps:
             - uses: actions/checkout@v5
@@ -156,7 +156,7 @@ jobs:
     # Generate coverage for TLS-enabled builds - only run when Rust code changes
     coverage:
         runs-on: ubuntu-latest
-        needs: [changes, test, test-cross-platform]
+        needs: [changes, test, test-cross-platform, quality]
         if: needs.changes.outputs.rust == 'true'
         steps:
             - uses: actions/checkout@v5
