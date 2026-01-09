@@ -126,6 +126,16 @@ We follow responsible disclosure practices:
 4. **Credit**: Provide appropriate credit to security researchers
 5. **No Retaliation**: We will not pursue legal action against good-faith security research
 
+## Accepted Risks (Dependencies)
+
+As of 2025-10-11 we have **no** outstanding accepted risks. The previous RUSTSEC exemptions for `instant` (RUSTSEC-2024-0384) and `paste` (RUSTSEC-2024-0436) were tied to the third-party `busrt` broker. With the introduction of our in-house `daemoneye-eventbus` crate that dependency has been removed from the workspace, eliminating both advisories.
+
+### Operational Controls
+
+- CI continues to enforce `cargo audit` and `cargo deny check` with zero allow-listed advisories.
+- We maintain a strict posture for all vulnerabilities and unsound advisories and will fail CI on new issues.
+- Tracking issues document any future exceptions should they become necessary.
+
 ## Security Contact
 
 For general security questions or concerns:

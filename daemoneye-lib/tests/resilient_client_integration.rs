@@ -14,6 +14,7 @@
 //! - Force reconnection scenarios
 //! - Client statistics and metrics collection
 
+#![allow(clippy::print_stdout)] // Test output is intentional
 #![allow(
     clippy::expect_used,
     clippy::str_to_string,

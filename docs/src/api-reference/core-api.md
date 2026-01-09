@@ -19,7 +19,7 @@ This document provides comprehensive API reference for the DaemonEye core librar
 
 Represents a single process snapshot with comprehensive metadata.
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProcessRecord {
     /// Unique identifier for this process record
@@ -77,39 +77,46 @@ pub struct ProcessRecord {
 
 **Example Usage**:
 
-```rust
+```rust,ignore
 use daemoneye_lib::models::ProcessRecord;
 use uuid::Uuid;
 
-let process = ProcessRecord {
-    id: Uuid::new_v4(),
-    scan_id: 12345,
-    collection_time: 1640995200000, // 2022-01-01 00:00:00 UTC
-    pid: 1234,
-    ppid: Some(1),
-    name: "chrome".to_string(),
-    executable_path: Some("/usr/bin/chrome".into()),
-    command_line: vec!["chrome".to_string(), "--no-sandbox".to_string()],
-    start_time: Some(1640995100000),
-    cpu_usage: Some(15.5),
-    memory_usage: Some(1073741824), // 1GB
-    executable_hash: Some("a1b2c3d4e5f6...".to_string()),
-    hash_algorithm: Some("sha256".to_string()),
-    user_id: Some("1000".to_string()),
-    accessible: true,
-    file_exists: true,
-    platform_data: Some(serde_json::json!({
-        "thread_count": 25,
-        "priority": "normal"
-    })),
-};
+fn create_process_record() -> ProcessRecord {
+    ProcessRecord {
+        id: Uuid::new_v4(),
+        scan_id: 12345,
+        collection_time: 1640995200000, // 2022-01-01 00:00:00 UTC
+        pid: 1234,
+        ppid: Some(1),
+        name: "chrome".to_string(),
+        executable_path: Some("/usr/bin/chrome".into()),
+        command_line: vec!["chrome".to_string(), "--no-sandbox".to_string()],
+        start_time: Some(1640995100000),
+        cpu_usage: Some(15.5),
+        memory_usage: Some(1073741824), // 1GB
+        executable_hash: Some("a1b2c3d4e5f6...".to_string()),
+        hash_algorithm: Some("sha256".to_string()),
+        user_id: Some("1000".to_string()),
+        accessible: true,
+        file_exists: true,
+        platform_data: Some(serde_json::json!({
+            "thread_count": 25,
+            "priority": "normal"
+        })),
+    }
+}
+
+// Usage example
+let record = create_process_record();
+println!("Process {} (PID: {}) is using {:.1}% CPU",
+         record.name, record.pid, record.cpu_usage.unwrap_or(0.0));
 ```
 
 ### Alert
 
 Represents a detection result with full context and metadata.
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Alert {
     /// Unique alert identifier
@@ -160,7 +167,7 @@ pub enum AlertSeverity {
 
 **Example Usage**:
 
-```rust
+```rust,ignore
 use daemoneye_lib::models::{Alert, AlertSeverity};
 use uuid::Uuid;
 
@@ -189,7 +196,7 @@ let alert = Alert {
 
 Represents a SQL-based detection rule with metadata and versioning.
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DetectionRule {
     /// Unique rule identifier
@@ -249,7 +256,7 @@ pub enum RuleSourceType {
 
 The configuration system supports hierarchical loading with environment variable substitution.
 
-```rust
+```rust,ignore
 use daemoneye_lib::config::{Config, ConfigBuilder, ConfigError};
 
 // Create configuration builder
@@ -273,7 +280,7 @@ let log_level = config.get::<String>("app.log_level")?;
 
 ### Configuration Validation
 
-```rust
+```rust,ignore
 use daemoneye_lib::config::{ConfigValidator, ValidationResult};
 
 let validator = ConfigValidator::new();
@@ -288,7 +295,7 @@ if !result.is_valid() {
 
 ### Environment Variable Substitution
 
-```rust
+```rust,ignore
 use daemoneye_lib::config::EnvironmentSubstitutor;
 
 let substitutor = EnvironmentSubstitutor::new();
@@ -301,7 +308,7 @@ let config_with_env = substitutor.substitute(config)?;
 
 High-performance embedded database for process data storage.
 
-```rust
+```rust,ignore
 use daemoneye_lib::storage::{EventStore, EventStoreConfig, ProcessQuery};
 
 // Create event store
@@ -340,7 +347,7 @@ event_store.export_data(&export_config).await?;
 
 Tamper-evident audit trail with cryptographic integrity.
 
-```rust
+```rust,ignore
 use daemoneye_lib::storage::{AuditLedger, AuditEntry, AuditRecord};
 
 // Create audit ledger
@@ -371,7 +378,7 @@ if !verification_result.is_valid() {
 
 Comprehensive SQL validation to prevent injection attacks.
 
-```rust
+```rust,ignore
 use daemoneye_lib::detection::{SqlValidator, ValidationResult, ValidationError};
 
 // Create SQL validator
@@ -402,7 +409,7 @@ match result {
 
 SQL-based detection rule execution with security validation.
 
-```rust
+```rust,ignore
 use daemoneye_lib::detection::{DetectionEngine, DetectionResult, RuleExecutionConfig};
 
 // Create detection engine
@@ -438,7 +445,7 @@ for result in results {
 
 Detection rule management with hot-reloading support.
 
-```rust
+```rust,ignore
 use daemoneye_lib::detection::{RuleManager, RuleManagerConfig};
 
 // Create rule manager
@@ -470,7 +477,7 @@ let test_result = rule_manager.test_rule("suspicious-processes", test_data).awai
 
 Alert generation, deduplication, and delivery management.
 
-```rust
+```rust,ignore
 use daemoneye_lib::alerting::{AlertManager, AlertManagerConfig, DeduplicationConfig};
 
 // Create alert manager
@@ -503,7 +510,7 @@ if let Some(alert) = alert {
 
 Pluggable alert delivery channels.
 
-```rust
+```rust,ignore
 use daemoneye_lib::alerting::sinks::{AlertSink, StdoutSink, SyslogSink, WebhookSink};
 
 // Create alert sinks
@@ -543,7 +550,7 @@ for sink in sinks {
 
 Cryptographic hash chain for audit trail integrity.
 
-```rust
+```rust,ignore
 use daemoneye_lib::crypto::{HashChain, HashChainConfig, ChainVerificationResult};
 
 // Create hash chain
@@ -578,7 +585,7 @@ if verification_result.is_valid() {
 
 Ed25519 digital signatures for enhanced integrity.
 
-```rust
+```rust,ignore
 use daemoneye_lib::crypto::{SignatureManager, SignatureConfig};
 
 // Create signature manager
@@ -604,7 +611,7 @@ println!("Signature valid: {}", is_valid);
 
 Prometheus-compatible metrics collection.
 
-```rust
+```rust,ignore
 use daemoneye_lib::telemetry::{MetricsCollector, MetricType, MetricValue};
 
 // Create metrics collector
@@ -624,7 +631,7 @@ println!("Metrics: {}", metrics_data);
 
 System health monitoring and status reporting.
 
-```rust
+```rust,ignore
 use daemoneye_lib::telemetry::{HealthMonitor, HealthStatus, ComponentHealth};
 
 // Create health monitor
@@ -647,7 +654,7 @@ println!("Database Health: {:?}", db_health);
 
 ### Core Error Types
 
-```rust
+```rust,ignore
 use daemoneye_lib::errors::{DaemonEyeError, DaemonEyeErrorKind};
 
 // Error handling example

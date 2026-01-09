@@ -135,7 +135,7 @@ This specification covers the core monitoring functionality including the collec
 #### Acceptance Criteria
 
 1. WHEN creating collection components THEN the system SHALL provide a universal EventSource trait that abstracts collection methodology from operational infrastructure
-2. WHEN registering event sources THEN the collector-core SHALL support multiple concurrent sources with unified event processing and IPC communication
+2. WHEN registering event sources THEN the collector-core SHALL support multiple concurrent sources with unified event processing and daemoneye-eventbus communication
 3. WHEN handling different event types THEN the system SHALL support extensible CollectionEvent enum covering process, network, filesystem, and performance domains
 4. WHEN managing component lifecycle THEN the collector-core SHALL provide consistent start/stop, health checks, and graceful shutdown across all registered sources
 5. WHEN configuring components THEN the system SHALL share common configuration loading, validation, and environment handling across all collection types
@@ -163,3 +163,39 @@ This specification covers the core monitoring functionality including the collec
 3. WHEN extending capabilities THEN the system SHALL support capability negotiation that indicates available monitoring features without exposing implementation details
 4. WHEN managing licensing THEN the collector-core SHALL remain Apache-2.0 licensed while enabling proprietary EventSource implementations
 5. WHEN operating in production THEN both OSS and enterprise versions SHALL provide identical operational characteristics and management interfaces
+
+### Requirement 14
+
+**User Story:** As a system architect, I want to migrate from crossbeam-based event bus to daemoneye-eventbus message broker, so that I can leverage industrial-grade IPC capabilities for multi-process communication and future scalability.
+
+#### Acceptance Criteria
+
+1. WHEN migrating event bus infrastructure THEN the system SHALL replace crossbeam channels with daemoneye-eventbus crate for inter-component communication
+2. WHEN implementing daemoneye-eventbus integration THEN the system SHALL support embedded broker deployment within daemoneye-agent
+3. WHEN establishing message broker capabilities THEN the system SHALL provide pub/sub patterns for event distribution and RPC patterns for control messages
+4. WHEN implementing the migration THEN the system SHALL enhance multi-process communication with improved pub/sub and RPC capabilities
+5. WHEN operating the message broker THEN the system SHALL support multiple transport layers including in-process channels, UNIX sockets, and TCP sockets
+
+### Requirement 15
+
+**User Story:** As a security operations engineer, I want daemoneye-eventbus-based message broker to coordinate between multiple collector processes and the agent, so that I can scale monitoring capabilities across different domains while maintaining centralized control.
+
+#### Acceptance Criteria
+
+1. WHEN coordinating multiple collectors THEN the message broker SHALL route events between procmond, future netmond, fsmond, and perfmond processes via pub/sub topics
+2. WHEN managing collector lifecycle THEN daemoneye-agent SHALL use RPC calls through the message broker to start, stop, and monitor collector processes
+3. WHEN distributing detection tasks THEN the system SHALL publish tasks to appropriate collector topics based on capability negotiation
+4. WHEN aggregating results THEN collectors SHALL publish events to domain-specific topics (events.process.*, events.network.*, etc.) for agent consumption
+5. WHEN handling control messages THEN the system SHALL use RPC patterns for health checks, configuration updates, and graceful shutdown coordination
+
+### Requirement 16
+
+**User Story:** As a platform developer, I want the daemoneye-eventbus message broker to enable easy expansion to additional monitoring and triggered collectors, so that I can build comprehensive behavioral analysis capabilities with minimal integration complexity.
+
+#### Acceptance Criteria
+
+1. WHEN adding new monitoring collectors THEN the daemoneye-eventbus broker SHALL provide standardized pub/sub patterns for seamless integration without modifying existing components
+2. WHEN implementing triggered collectors THEN the system SHALL support event-driven activation where monitoring events automatically trigger specialized analysis collectors (YARA, PE analysis, memory inspection)
+3. WHEN coordinating multiple collector types THEN the daemoneye-eventbus broker SHALL enable complex workflows where one collector's results can trigger cascading analysis by other collectors
+4. WHEN scaling collector capabilities THEN the message broker SHALL support dynamic collector registration and capability advertisement without system restart
+5. WHEN managing collector dependencies THEN the system SHALL provide topic-based coordination that allows collectors to subscribe to relevant event streams and publish results for downstream processing

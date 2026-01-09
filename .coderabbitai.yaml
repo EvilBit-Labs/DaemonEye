@@ -103,11 +103,13 @@ reviews:
             "daemoneye-agent/**",
             "daemoneye-cli/**",
             "daemoneye-lib/**",
+            "collector-core/**",
             "docs/src/**",
             "spec/**",
-            ".kiro/**",
-            ".cursor/**",
-            ".github/workflows/release.yml",
+            ".kiro/**/*.md",
+            ".cursor/**/*.mdc",
+            ".github/**",
+            "!.github/workflows/release.yml",
             "*.md",
             "*.toml",
             "*.yaml",
@@ -129,10 +131,11 @@ reviews:
             "!*.ico",
             "!*.wxs",
         ]
-    path_instructions: [
+    path_instructions:
+        [
             {
                 "path": "procmond/**",
-                "instructions": "CRITICAL: Privileged process collector with minimal attack surface. Enforce principle of least privilege, immediate privilege dropping after init, no network access, write-only access to audit ledger. Flag any unsafe code, privilege escalation risks, or attack surface expansions. Focus on security, performance, and minimal dependencies.",
+                "instructions": "CRITICAL: Privileged process collector with minimal attack surface. Enforce principle of least privilege, immediate privilege dropping after init, no network access, write-only access to audit ledger. Flag any unsafe code, privilege escalation risks, or attack surface expansions. Focus on security, performance, and minimal dependencies. Does not expose any shared code, so any reusable code should be in daemoneye-lib or collector-core.",
             },
             {
                 "path": "daemoneye-agent/**",
@@ -144,17 +147,15 @@ reviews:
             },
             {
                 "path": "daemoneye-lib/**",
-                "instructions": "Shared library providing common functionality across all components. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments.",
+                "instructions": "Shared library providing common functionality across all components. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments. Stability and performance of the library is critical.",
             },
-            # Not yet implemented
             {
-                "path": "security-center/**",
-                "instructions": "Business tier Security Center server. Enforce PostgreSQL database management, mTLS agent authentication, centralized data aggregation, rule pack distribution, and external SIEM integrations. Focus on scalability, security, and enterprise-grade reliability.",
+                "path": "collector-core/**",
+                "instructions": "Shared framework library providing common functionality for collectors, such as procmond. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments. Stability and performance of the library is critical.",
             },
-            # Not yet implemented
             {
-                "path": "gui/**",
-                "instructions": "Business tier web GUI frontend. Enforce React/TypeScript best practices, JWT authentication, responsive design, and real-time data visualization. Focus on user experience for security operations teams and fleet management.",
+                "path": "daemoneye-eventbus/**",
+                "instructions": "Cross-platform IPC event bus for DaemonEye monitoring system. Enforce cross-platform compatibility: PRIMARY platforms (Linux Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Alma/Rocky Linux 8+, Debian 11+ LTS, macOS 14.0+, Windows 10+, Windows Server 2019+, Windows Server 2022, Windows 11) and SECONDARY platforms (Alpine 3.16+, Amazon Linux 2+, Ubuntu 18.04, RHEL 7, macOS 12.0+, FreeBSD 13.0+). Use Windows named pipes and Unix domain sockets. Focus on performance (10k+ messages/sec), security (local IPC only), and reliability (at-most-once delivery). Flag any network exposure, privilege escalation, or performance regressions. Ensure proper error handling and resource cleanup.",
             },
             {
                 "path": "docs/src/**",

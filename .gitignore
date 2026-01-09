@@ -125,3 +125,5 @@ megalinter-reports/
 
 # Override global gitignore
 !bin/
+# Added by goreleaser init:
+.intentionally-empty-file.o

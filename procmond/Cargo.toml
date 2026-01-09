@@ -1,6 +1,6 @@
 [package]
 name = "procmond"
-edition = "2024"
+edition.workspace = true
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -9,6 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 description = "DaemonEye Process Monitoring Daemon"
 publish = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+readme.workspace = true
 
 [package.metadata.wix]
 upgrade-guid = "C3B17B71-0443-4060-A962-D4D4F88CC2A2"
@@ -33,9 +37,13 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 
+# Internal libraries
+collector-core = { workspace = true }
+crc32c = { workspace = true }
+daemoneye-lib = { workspace = true }
+
 # IPC communication
 interprocess = { workspace = true }
-crc32c = { workspace = true }
 
 # Protocol Buffers
 prost = { workspace = true }
@@ -43,11 +51,11 @@ prost-types = { workspace = true }
 
 # Database
 redb = { workspace = true }
-
-# Internal libraries
-collector-core = { workspace = true }
-daemoneye-lib = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Cryptographic hashing
+sha2 = { workspace = true }
 
 # System information
 sysinfo = { workspace = true }
@@ -56,14 +64,49 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# UUID generation
+uuid = { workspace = true }
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS Security Framework
+security-framework = { workspace = true }
+# Note: procfs removed as it's Linux-specific and not compatible with macOS
+# Using sysinfo for cross-platform process information instead
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows-specific dependencies using third-party crates
+# Enhanced sysinfo is already included in main dependencies
+# windows-rs for safe Windows API bindings
+windows = { workspace = true }
+# windows-service for Windows service detection and management
+windows-service = { workspace = true }
+# winreg for safe Windows registry access
+winreg = { workspace = true }
+# Additional process utilities for Windows
+# Note: psutil-rs and perfmon-rs would be added here when available
+# For now, we use sysinfo + windows-rs for comprehensive Windows process monitoring
+
 [build-dependencies]
 prost-build = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+criterion = { workspace = true, features = ["html_reports"] }
 insta = { workspace = true }
 predicates = { workspace = true }
+proptest = { workspace = true }
 tempfile = { workspace = true }
+tracing-test = { workspace = true }
+whoami = { workspace = true }
+
+# Unix-only dev dependencies
+[target.'cfg(unix)'.dev-dependencies]
+uzers = { workspace = true }
+
+[[bench]]
+name = "process_collector_benchmarks"
+harness = false
 
 [lints.rust]
 unsafe_code = "forbid"

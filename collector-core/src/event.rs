@@ -4,6 +4,7 @@
 //! domains while maintaining type safety and extensibility.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::SystemTime;
 
 /// Unified collection event enum supporting multiple monitoring domains.
@@ -39,6 +40,7 @@ use std::time::SystemTime;
 ///     accessible: true,
 ///     file_exists: true,
 ///     timestamp: SystemTime::now(),
+///     platform_metadata: None,
 /// });
 ///
 /// match event {
@@ -48,7 +50,7 @@ use std::time::SystemTime;
 ///     _ => {}
 /// }
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CollectionEvent {
     /// Process monitoring events
     Process(ProcessEvent),
@@ -61,13 +63,16 @@ pub enum CollectionEvent {
 
     /// Performance monitoring events (future extension)
     Performance(PerformanceEvent),
+
+    /// Analysis collector trigger requests for coordinated analysis
+    TriggerRequest(TriggerRequest),
 }
 
 /// Process monitoring event data.
 ///
 /// Contains information about process lifecycle, metadata, and security-relevant
 /// attributes collected during process enumeration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProcessEvent {
     /// Process identifier
     pub pid: u32,
@@ -107,13 +112,16 @@ pub struct ProcessEvent {
 
     /// Event collection timestamp
     pub timestamp: SystemTime,
+
+    /// Platform-specific metadata (Windows, macOS, Linux)
+    pub platform_metadata: Option<serde_json::Value>,
 }
 
 /// Network monitoring event data (future extension).
 ///
 /// Will contain information about network connections, traffic patterns,
 /// and security-relevant network activity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NetworkEvent {
     /// Connection identifier
     pub connection_id: String,
@@ -145,7 +153,7 @@ pub struct NetworkEvent {
 ///
 /// Will contain information about file operations, access patterns,
 /// and security-relevant filesystem activity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FilesystemEvent {
     /// File path
     pub path: String,
@@ -173,7 +181,7 @@ pub struct FilesystemEvent {
 ///
 /// Will contain system resource utilization, performance metrics,
 /// and anomaly detection data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PerformanceEvent {
     /// Metric name
     pub metric_name: String,
@@ -194,6 +202,160 @@ pub struct PerformanceEvent {
     pub timestamp: SystemTime,
 }
 
+/// Analysis collector trigger request for coordinated analysis.
+///
+/// This event type enables process monitoring collectors to trigger analysis
+/// collectors (like Binary Hasher, Memory Analyzer, etc.) when suspicious
+/// behavior is detected. The trigger system provides coordination between
+/// different collection components while maintaining loose coupling.
+///
+/// # Design Principles
+///
+/// - **Deduplication**: Prevents redundant analysis requests for the same target
+/// - **Rate Limiting**: Protects analysis collectors from overload
+/// - **Priority-based**: Enables urgent analysis for critical threats
+/// - **Correlation**: Maintains metadata for debugging and forensic analysis
+///
+/// # Examples
+///
+/// ```rust
+/// use collector_core::{TriggerRequest, AnalysisType, TriggerPriority};
+/// use std::time::SystemTime;
+/// use std::collections::HashMap;
+///
+/// let trigger = TriggerRequest {
+///     trigger_id: "trigger_123".to_string(),
+///     target_collector: "binary-hasher".to_string(),
+///     analysis_type: AnalysisType::BinaryHash,
+///     priority: TriggerPriority::High,
+///     target_pid: Some(1234),
+///     target_path: Some("/usr/bin/suspicious".to_string()),
+///     correlation_id: "corr_456".to_string(),
+///     metadata: HashMap::new(),
+///     timestamp: SystemTime::now(),
+/// };
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TriggerRequest {
+    /// Unique identifier for this trigger request
+    pub trigger_id: String,
+
+    /// Target analysis collector name
+    pub target_collector: String,
+
+    /// Type of analysis to perform
+    pub analysis_type: AnalysisType,
+
+    /// Priority level for this analysis request
+    pub priority: TriggerPriority,
+
+    /// Process ID to analyze (if applicable)
+    pub target_pid: Option<u32>,
+
+    /// File path to analyze (if applicable)
+    pub target_path: Option<String>,
+
+    /// Correlation ID for tracking related events
+    pub correlation_id: String,
+
+    /// Additional metadata for the analysis request
+    pub metadata: HashMap<String, String>,
+
+    /// Trigger generation timestamp
+    pub timestamp: SystemTime,
+}
+
+impl TriggerRequest {
+    /// Validates the trigger request and returns an error if invalid.
+    ///
+    /// # Validation Rules
+    ///
+    /// - `trigger_id` and `correlation_id` must be non-empty strings
+    /// - `target_collector` must be non-empty
+    /// - At least one of `target_pid` or `target_path` must be present
+    /// - `metadata` must have at most 100 entries
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if valid, or an error message describing the validation failure.
+    pub fn validate(&self) -> Result<(), String> {
+        // Validate trigger_id
+        if self.trigger_id.is_empty() {
+            return Err("trigger_id must be non-empty".to_string());
+        }
+
+        // Validate correlation_id
+        if self.correlation_id.is_empty() {
+            return Err("correlation_id must be non-empty".to_string());
+        }
+
+        // Validate target_collector
+        if self.target_collector.is_empty() {
+            return Err("target_collector must be non-empty".to_string());
+        }
+
+        // Validate at least one target is present
+        if self.target_pid.is_none() && self.target_path.is_none() {
+            return Err("at least one of target_pid or target_path must be present".to_string());
+        }
+
+        // Validate metadata size
+        if self.metadata.len() > 100 {
+            return Err(format!(
+                "metadata exceeds maximum size of 100 entries (found {})",
+                self.metadata.len()
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+/// Types of analysis that can be triggered.
+///
+/// This enum defines the different types of analysis that can be requested
+/// from analysis collectors. Each type corresponds to a specific collector
+/// capability and analysis methodology.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum AnalysisType {
+    /// Binary hash computation and integrity verification
+    BinaryHash,
+
+    /// Memory analysis and process inspection
+    MemoryAnalysis,
+
+    /// YARA rule scanning
+    YaraScan,
+
+    /// Network traffic analysis
+    NetworkAnalysis,
+
+    /// Behavioral analysis and anomaly detection
+    BehavioralAnalysis,
+
+    /// Custom analysis type (extensible)
+    Custom(String),
+}
+
+/// Priority levels for trigger requests.
+///
+/// Priority determines the urgency of analysis and affects queue ordering
+/// and resource allocation in analysis collectors.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TriggerPriority {
+    /// Low priority - routine analysis
+    Low,
+
+    /// Normal priority - standard analysis
+    Normal,
+
+    /// High priority - suspicious activity detected
+    High,
+
+    /// Critical priority - immediate threat response required
+    Critical,
+}
+
 impl CollectionEvent {
     /// Returns the timestamp of the event regardless of type.
     pub fn timestamp(&self) -> SystemTime {
@@ -202,6 +364,7 @@ impl CollectionEvent {
             CollectionEvent::Network(event) => event.timestamp,
             CollectionEvent::Filesystem(event) => event.timestamp,
             CollectionEvent::Performance(event) => event.timestamp,
+            CollectionEvent::TriggerRequest(event) => event.timestamp,
         }
     }
 
@@ -212,6 +375,7 @@ impl CollectionEvent {
             CollectionEvent::Network(_) => "network",
             CollectionEvent::Filesystem(_) => "filesystem",
             CollectionEvent::Performance(_) => "performance",
+            CollectionEvent::TriggerRequest(_) => "trigger_request",
         }
     }
 
@@ -222,6 +386,7 @@ impl CollectionEvent {
             CollectionEvent::Network(event) => event.pid,
             CollectionEvent::Filesystem(event) => event.pid,
             CollectionEvent::Performance(event) => event.pid,
+            CollectionEvent::TriggerRequest(event) => event.target_pid,
         }
     }
 }
@@ -229,6 +394,7 @@ impl CollectionEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::time::SystemTime;
 
     #[test]
@@ -248,6 +414,7 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp,
+            platform_metadata: None,
         };
 
         assert_eq!(event.pid, 1234);
@@ -274,6 +441,7 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp,
+            platform_metadata: None,
         };
 
         let collection_event = CollectionEvent::Process(process_event);
@@ -303,6 +471,69 @@ mod tests {
     }
 
     #[test]
+    fn test_trigger_request_creation() {
+        let timestamp = SystemTime::now();
+        let mut metadata = HashMap::new();
+        metadata.insert("test_key".to_string(), "test_value".to_string());
+
+        let trigger = TriggerRequest {
+            trigger_id: "trigger_123".to_string(),
+            target_collector: "binary-hasher".to_string(),
+            analysis_type: AnalysisType::BinaryHash,
+            priority: TriggerPriority::High,
+            target_pid: Some(1234),
+            target_path: Some("/usr/bin/suspicious".to_string()),
+            correlation_id: "corr_456".to_string(),
+            metadata,
+            timestamp,
+        };
+
+        let collection_event = CollectionEvent::TriggerRequest(trigger);
+        assert_eq!(collection_event.event_type(), "trigger_request");
+        assert_eq!(collection_event.pid(), Some(1234));
+        assert_eq!(collection_event.timestamp(), timestamp);
+    }
+
+    #[test]
+    fn test_analysis_type_equality() {
+        assert_eq!(AnalysisType::BinaryHash, AnalysisType::BinaryHash);
+        assert_ne!(AnalysisType::BinaryHash, AnalysisType::MemoryAnalysis);
+
+        let custom1 = AnalysisType::Custom("test".to_string());
+        let custom2 = AnalysisType::Custom("test".to_string());
+        let custom3 = AnalysisType::Custom("other".to_string());
+
+        assert_eq!(custom1, custom2);
+        assert_ne!(custom1, custom3);
+    }
+
+    #[test]
+    fn test_trigger_priority_ordering() {
+        assert!(TriggerPriority::Critical > TriggerPriority::High);
+        assert!(TriggerPriority::High > TriggerPriority::Normal);
+        assert!(TriggerPriority::Normal > TriggerPriority::Low);
+
+        let mut priorities = vec![
+            TriggerPriority::Low,
+            TriggerPriority::Critical,
+            TriggerPriority::Normal,
+            TriggerPriority::High,
+        ];
+
+        priorities.sort();
+
+        assert_eq!(
+            priorities,
+            vec![
+                TriggerPriority::Low,
+                TriggerPriority::Normal,
+                TriggerPriority::High,
+                TriggerPriority::Critical,
+            ]
+        );
+    }
+
+    #[test]
     fn test_event_serialization() {
         let timestamp = SystemTime::now();
         let process_event = ProcessEvent {
@@ -319,6 +550,7 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp,
+            platform_metadata: None,
         };
 
         let collection_event = CollectionEvent::Process(process_event);

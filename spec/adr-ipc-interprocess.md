@@ -48,7 +48,7 @@ Evaluate and potentially migrate to `interprocess::local_socket` for true cross-
 
 ### 1. Transport Layer
 
-```rust
+```rust,ignore
 // New unified config
 pub struct IpcConfig {
     pub transport: TransportType,

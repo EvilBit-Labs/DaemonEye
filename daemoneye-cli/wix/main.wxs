@@ -62,7 +62,7 @@
         Id='*'
         Name='daemoneye-cli'
         UpgradeCode='9821CB9C-4F06-4EF8-9763-2434C2D7D175'
-        Manufacturer='UncleSp1d3r; Krypdo3'
+        Manufacturer='UncleSp1d3r; KryptoKat'
         Language='1033'
         Codepage='1252'
         Version='$(var.Version)'>
@@ -70,7 +70,7 @@
         <Package Id='*'
             Keywords='Installer'
             Description='DaemonEye Command Line Interface'
-            Manufacturer='UncleSp1d3r; Krypdo3'
+            Manufacturer='UncleSp1d3r; KryptoKat'
             InstallerVersion='450'
             Languages='1033'
             Compressed='yes'
@@ -173,7 +173,7 @@
         <!--<Icon Id='ProductICO' SourceFile='wix\Product.ico'/>-->
         <!--<Property Id='ARPPRODUCTICON' Value='ProductICO' />-->
 
-        <Property Id='ARPHELPLINK' Value='https://evilbitlabs.io/daemoneye'/>
+        <Property Id='ARPHELPLINK' Value='https://evilbitlabs.io/DaemonEye'/>
         
         <UI>
             <UIRef Id='WixUI_FeatureTree'/>

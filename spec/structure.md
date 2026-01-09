@@ -61,14 +61,14 @@ DaemonEye/
 
 ### Workspace Configuration
 
-- **Edition**: Rust 2024 (MSRV: 1.85+)
+- **Edition**: Rust 2024 (MSRV: 1.91+)
 - **Resolver**: Version 3 for enhanced dependency resolution
 - **Lints**: `unsafe_code = "forbid"`, `warnings = "deny"`
 - **Quality**: Zero-warnings policy enforced by CI
 
 ### Module Organization
 
-```rust
+```rust,ignore
 // Library structure pattern
 pub mod alerting; // Multi-channel alert delivery
 pub mod config; // Configuration management

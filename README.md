@@ -1,183 +1,187 @@
-# :shield: DaemonEye — High-Performance Security Process Monitoring
+# DaemonEye
 
-[![CI](https://github.com/EvilBit-Labs/DaemonEye/actions/workflows/ci.yml/badge.svg)](https://github.com/EvilBit-Labs/DaemonEye/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/EvilBit-Labs/DaemonEye/graph/badge.svg?token=1SE3lJ84Cj)](https://codecov.io/gh/EvilBit-Labs/DaemonEye) [![wakatime](https://wakatime.com/badge/user/2d2fbc27-e3f7-4ec1-b2a7-935e48bad498/project/92ea48dd-4de1-4e17-9b61-7b6450f27963.svg)](https://wakatime.com/badge/user/2d2fbc27-e3f7-4ec1-b2a7-935e48bad498/project/92ea48dd-4de1-4e17-9b61-7b6450f27963) [![Maintainability](https://qlty.sh/gh/EvilBit-Labs/projects/DaemonEye/maintainability.svg)](https://qlty.sh/gh/EvilBit-Labs/projects/DaemonEye)
+Security-focused, high-performance process monitoring — implemented in Rust.
 
-**DaemonEye** is a security-focused, high-performance process monitoring system built for cybersecurity professionals, threat hunters, and security operations centers. This is a complete **Rust rewrite** of the proven Python prototype, delivering enterprise-grade performance with **audit-grade integrity**.
+Badges: CI, coverage, and maintainability are configured in the repo. See the badges at the top of this file when viewed on GitHub.
 
-## :classical_building: Architecture Overview
+## Overview
 
-**DaemonEye** is a three-component security package designed for robust, secure, and auditable system monitoring:
+DaemonEye is a Rust workspace with multiple components for collecting process information, orchestrating detections, and interacting via a CLI. The repository contains:
 
-```text
+- **procmond**: Privileged process monitoring daemon built on collector-core framework (binary + library)
+- **daemoneye-agent**: User-space orchestrator with embedded EventBus broker and RPC service (binary)
+- **daemoneye-cli**: Command-line interface for queries and management (binary)
+- **daemoneye-lib**: Shared library with protobuf IPC and data models (library)
+- **collector-core**: Extensible collection framework with EventSource trait (library)
+- **daemoneye-eventbus**: Cross-platform IPC event bus with embedded broker and RPC patterns (library)
+
+Security and reliability are emphasized via strict linting, no unsafe code, and comprehensive tests and benches.
+
+## Technology stack
+
+- Language: Rust 2024 Edition (MSRV 1.91)
+- Package manager/build: Cargo (workspace)
+- Async runtime: tokio
+- IPC: interprocess (cross-platform) with protobuf messaging
+- Event Bus: daemoneye-eventbus (embedded broker for multi-collector coordination)
+- CLI: clap v4
+- Database: redb (embedded)
+- Logging/telemetry: tracing, tracing-subscriber
+- Config: figment (YAML/TOML/JSON + env vars)
+- System info: sysinfo
+- Benchmarks: criterion
+- Testing: cargo-nextest, proptest, insta
+
+## Project structure
+
+```
 DaemonEye/
-├── procmond/         # :lock: Privileged Process Collector
-├── daemoneye-cli/    # :computer: Command-Line Interface
-├── daemoneye-agent/  # :satellite: User-Space Orchestrator
-└── daemoneye-lib/    # :gear: Shared Library Components
+├─ procmond/           # Process monitoring daemon (bin: procmond)
+├─ daemoneye-agent/    # Orchestrator (bin: daemoneye-agent)
+├─ daemoneye-cli/      # Command-line interface (bin: daemoneye-cli)
+├─ daemoneye-lib/      # Shared library code (no bin)
+├─ collector-core/     # Collection framework (library)
+├─ daemoneye-eventbus/ # Cross-platform IPC event bus (library)
+├─ justfile            # Developer tasks and scripts
+├─ docs/               # Documentation sources (mdBook)
+├─ spec/               # Specifications and design notes
+└─ Cargo.toml          # Workspace manifest
 ```
 
-### Component Roles
+## Requirements
 
-- **:lock: ProcMonD (Collector):** Runs with elevated privileges, focused solely on process monitoring with minimal attack surface. Writes to Certificate Transparency-style audit ledger and communicates via protobuf IPC with daemoneye-agent.
-- **:satellite: DaemonEye Agent (Orchestrator):** Operates in user space with minimal privileges. Manages procmond lifecycle, executes SQL detection rules, and handles alert delivery. Translates complex SQL rules into simple protobuf tasks for procmond.
-- **:computer: DaemonEye CLI:** Local command-line interface for data queries, result exports, and service configuration. Communicates with daemoneye-agent for all operations.
+- Rust toolchain 1.91+ (edition = 2024)
+- Cargo (bundled with Rust)
+- just task runner (optional but recommended)
+- Optional developer tools: cargo-nextest, cargo-llvm-cov, cargo-audit, cargo-deny, cargo-dist, cargo-release, mdbook (install via `just install-tools` and `just docs-install`)
 
-This separation ensures **robust security**: ProcMonD remains isolated and hardened, while orchestration/network tasks are delegated to low-privilege processes.
+## Setup
 
-## :dart: Key Features
+- Install Rust: <https://rustup.rs>
+- (Optional) Install just: <https://github.com/casey/just>
+- Initialize developer tools:
+  - Windows: `just setup && just install-tools`
+  - Unix: `just setup && just install-tools`
 
-| Feature                                             | Description                                                      |
-| --------------------------------------------------- | ---------------------------------------------------------------- |
-| :crab: **Rust Performance**                         | Memory-safe, high-performance rewrite with \<5% CPU overhead     |
-| :mag: **Cross-Platform**                            | Linux, macOS, and Windows support with native OS integration     |
-| :chart_with_upwards_trend: **SQL Detection Engine** | Flexible anomaly detection using standard SQL queries            |
-| :file_cabinet: **Audit-Grade Integrity**            | Certificate Transparency-style Merkle tree with inclusion proofs |
-| :satellite: **Multi-Channel Alerting**              | stdout, syslog, webhooks, email with delivery guarantees         |
-| :zap: **High-Performance**                          | Handle 10k+ processes with bounded queues and backpressure       |
-| :lock: **Security-First Design**                    | Principle of least privilege, sandboxed rule execution           |
-| :globe_with_meridians: **Offline-Capable**          | No external dependencies for core functionality                  |
+If you don’t use just, you can run the equivalent cargo commands shown below.
 
-## :gift: Free Forever
+## Commit signing
 
-The **Free Tier** of DaemonEye is completely free forever with no time limits or feature restrictions. This includes:
+The workspace enables mandatory signed commits and a rebase-first sync strategy via VS Code settings. Follow the step-by-step instructions in [`docs/src/contributing.md`](docs/src/contributing.md#commit-signing-and-gpg-setup) to configure GPG, export your public key, and set up git before contributing.
 
-- Full process monitoring and detection capabilities
-- All built-in detection rules and SQL-based custom rules
-- Complete alerting system (stdout, syslog, webhooks, email)
-- Local data storage and querying
-- Cross-platform support (Linux, macOS, Windows)
-- Offline operation with no external dependencies
+## Build and run
 
-**Future Business and Enterprise tiers** will add centralized management, advanced integrations, and kernel-level monitoring for organizations that need these capabilities, but the core functionality will always remain free.
+With just:
 
-## :rocket: Getting Started
+- Build all: `just build`
+- Build release: `just build-release`
+- Run procmond: `just run-procmond -- --help`
+- Run agent: `just run-daemoneye-agent -- --help`
+- Run CLI: `just run-daemoneye-cli -- --help`
 
-### Prerequisites
+With cargo (no just):
 
-- Rust 1.85+ (2024 Edition support)
-- Just task runner
+- Build all: `cargo build --workspace`
+- Build release: `cargo build --workspace --release`
+- Run procmond: `cargo run -p procmond -- --help`
+- Run agent: `cargo run -p daemoneye-agent -- --help`
+- Run CLI: `cargo run -p daemoneye-cli -- --help`
 
-### Quick Start
+Notes:
 
-```bash
-# Build all components
-just build
+- Binaries produced: procmond, daemoneye-agent, daemoneye-cli
+- Distribution helpers exist via cargo-dist and GoReleaser (see justfile: `dist`, `goreleaser-*`).
 
-# Run linting and tests
-just lint && just test
+## Configuration
 
-# Start orchestrator agent (manages procmond automatically)
-just run-daemoneye-agent
+Configuration is provided by daemoneye-lib using Figment with this precedence (highest to lowest):
 
-# Launch CLI interface
-just run-daemoneye-cli --help
+1. Command-line flags (component binaries)
+2. Environment variables with component prefix
+3. User config file: ~/.config/daemoneye/config.yaml
+4. System config file: /etc/daemoneye/config.yaml
+5. Built-in defaults
 
-# Run single-shot collection (for testing)
-just run-daemoneye-agent --once
-```
+Environment variable prefixes by component (replace dashes with underscores and uppercase):
 
-### Example Usage
+- PROCMOND\_\*
+- DAEMONEYE_AGENT\_\*
+- DAEMONEYE_CLI\_\*
 
-```bash
-# Start the orchestrator (manages procmond automatically)
-daemoneye-agent --config /etc/daemoneye/config.yaml
+Nested keys can be provided using double underscores. Example: `PROCMOND_APP__SCAN_INTERVAL_MS=15000`.
 
-# Query historical process data through orchestrator
-daemoneye-cli query --sql "SELECT * FROM processes WHERE name = 'suspicious_proc'"
+Collector-specific environment overrides (used by collector-core) are additionally supported using a component-scoped prefix of the form "{COMPONENT}_COLLECTOR_...". Examples:
 
-# Test alert delivery
-daemoneye-cli alerts send-test
+- PROCMOND_COLLECTOR_MAX_EVENT_SOURCES
+- PROCMOND_COLLECTOR_EVENT_BUFFER_SIZE
+- PROCMOND_COLLECTOR_ENABLE_TELEMETRY
+- PROCMOND_COLLECTOR_DEBUG_LOGGING
 
-# Check system health
-daemoneye-cli health-check --verbose
+Agent-specific environment toggle (used in tests/dev):
 
-# Export data for analysis
-daemoneye-cli export --format json --output /tmp/process_data.json
-```
+- DAEMONEYE_AGENT_TEST_MODE=1 — enables test mode paths in the agent
 
-## :brain: Detection Capabilities
+Default configuration values are defined in code. See daemoneye-lib/src/config.rs and collector-core/src/config.rs for details and additional fields (database path, logging level/format, alert sinks, etc.).
 
-**Built-in Detection Rules:**
+## Scripts and developer tasks
 
-- Process hollowing detection (processes without executables)
-- Executable integrity violations (file modifications during runtime)
-- Suspicious process name duplications
-- Unusual parent-child process relationships
-- Anomalous resource consumption patterns
+Common tasks (from justfile):
 
-**Custom Rule Support:**
+- Format: `just fmt` (Rust), `just format-docs` (Markdown)
+- Lint: `just lint` (clippy, docs, justfile), `just lint-rust-min`
+- Tests: `just test` (nextest), `just test-all`, `just test-fast`
+- Coverage: `just coverage`, `just coverage-check`
+- Benches: `just bench`, plus component-specific bench tasks
+- Run bins: `just run-procmond`, `just run-daemoneye-agent`, `just run-daemoneye-cli`
+- Security: `just security-scan` (cargo-audit and cargo-deny)
+- Dist/release: `just dist`, `just dist-plan`, `just release-*`
 
-- SQL-based detection logic with sandboxed execution
-- Hot-reloadable rules with metadata and versioning
-- Performance monitoring and optimization hints
+## Testing
 
-## :outbox_tray: Alert Integration
+- Runner: cargo-nextest (used by just tasks)
+- Property-based tests: proptest
+- Snapshot tests: insta
+- Coverage: cargo-llvm-cov (generates lcov.info)
 
-| Channel           | Format           | Use Case                  |
-| ----------------- | ---------------- | ------------------------- |
-| **stdout/stderr** | JSON, Plain Text | Development, debugging    |
-| **Syslog**        | RFC5424, JSON    | SIEM integration          |
-| **Webhooks**      | JSON POST        | Security orchestration    |
-| **Email**         | HTML, Plain Text | Incident notifications    |
-| **File Output**   | JSON, CEF        | Log aggregation, archival |
+Run tests:
 
-## :gear: Technology Stack
+- With just: `just test` or `just test-all`
+- With cargo-nextest directly: `cargo nextest run --workspace`
 
-- **Language:** Rust 2024 Edition (MSRV: 1.70+)
-- **Async Runtime:** Tokio for I/O and task management
-- **Database:** redb pure Rust embedded database for optimal performance and security
-- **CLI Framework:** clap v4 with derive macros and shell completions
-- **Process Enumeration:** sysinfo crate with platform-specific optimizations
-- **Logging:** tracing ecosystem with structured JSON output
+Benchmarks use criterion. Run via `just bench` or `cargo bench`.
 
-## :wrench: Development
+## Environment variables
 
-This project follows strict Rust coding standards:
+Summary of notable env vars:
 
-- **Linting:** `cargo clippy -- -D warnings` (zero warnings policy)
-- **Formatting:** `rustfmt` with consistent code style
-- **Testing:** Comprehensive unit and integration test coverage
-- **Safety:** `unsafe_code = "forbid"` in workspace lints
-- **Performance:** \<100MB memory, \<5% CPU, \<5s for 10k+ processes
+- PROCMOND\_\* / DAEMONEYE_AGENT\_\* / DAEMONEYE_CLI\_\* — general config via Figment (use `__` for nested keys)
+- PROCMOND_COLLECTOR_MAX_EVENT_SOURCES, PROCMOND_COLLECTOR_EVENT_BUFFER_SIZE, PROCMOND_COLLECTOR_ENABLE_TELEMETRY, PROCMOND_COLLECTOR_DEBUG_LOGGING — collector-core overrides
+- DAEMONEYE_AGENT_TEST_MODE — agent test mode
 
-### Available Commands
+Additional OS/environment variables may be referenced in tests for compatibility checks (e.g., HOSTNAME, USER, OS), but they are not required for normal operation.
 
-```bash
-# Development workflow
-just fmt          # Format code
-just lint         # Run clippy with strict warnings
-just test         # Run all tests
-just build        # Build workspace
+## Platform notes
 
-# Component execution
-just run-procmond --once --verbose      # Run process monitor with flags
-just run-daemoneye-cli --help             # Run CLI interface
-just run-daemoneye-agent --config /path   # Run orchestrator agent
-```
+- **Unix**: IPC is provided via Unix domain sockets using interprocess crate with protobuf messaging
+- **Windows**: IPC uses named pipes through interprocess crate with protobuf messaging
+- **Event Bus**: daemoneye-eventbus provides local IPC pub/sub messaging between collectors and agent on the same system with hierarchical topic routing and correlation metadata
+- **Embedded Broker**: daemoneye-agent runs an embedded EventBus broker for local collector coordination with support for workflow tracking and forensic analysis
+- **RPC Services**: Collector lifecycle management (start/stop/restart/health checks) via RPC patterns over the EventBus with timeout handling and correlation tracking
+- **Multi-Collector Coordination**: Topic-based task distribution and result aggregation across multiple collector types with capability-based routing
 
-## :busts_in_silhouette: Target Users
+## Documentation
 
-- **SOC Analysts** monitoring fleet infrastructure for process anomalies
-- **Incident Responders** investigating compromised systems
-- **Red Team Operators** detecting defensive monitoring
-- **Security Engineers** integrating with SIEM platforms
-- **System Administrators** maintaining security visibility
-- **DevSecOps Teams** embedding security monitoring in deployments
+- Docs sources live under ./docs (mdBook). Building locally: `just docs-install` then `mdbook build docs`.
+- Some deep links in older README versions may not exist yet. TODO: Audit and update docs links once the book structure stabilizes.
 
-## :books: Documentation
+## License
 
-For comprehensive documentation, see:
+Apache License 2.0. See LICENSE for full text.
 
-- [Project Overview](docs/book/project-overview.html) - High-level overview and getting started
-- [System Architecture](docs/book/architecture/system-architecture.html) - Three-component architecture details
-- [User Guides](docs/book/user-guides.html) - Configuration and operator guides
-- [API Reference](docs/book/api-reference.html) - Core API documentation
-- [Deployment Guide](docs/book/deployment.html) - Installation and deployment options
+## Roadmap and status
 
-## :page_facing_up: License
+This README reflects the current repository configuration (workspace crates, tasks, and configs). Some features described in earlier drafts (e.g., certain alerting sinks or centralized management) may be in-progress.
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
-
----
-
-**DaemonEye** — When your process monitoring actually matters. :shield:
+- TODO: Document concrete command-line flags for each binary (once stabilized)
+- TODO: Add end-to-end quickstart with example config and sample output
+- TODO: Publish prebuilt binaries via cargo-dist/GoReleaser and link here

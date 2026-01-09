@@ -1358,7 +1358,7 @@ docker push daemoneye/procmond:1.0.0
 
 ```dockerfile
 # Multi-stage build for smaller attack surface
-FROM rust:1.85-alpine AS builder
+FROM rust:1.91-alpine AS builder
 WORKDIR /app
 COPY . .
 RUN cargo build --release

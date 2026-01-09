@@ -3,8 +3,8 @@
 //! This module provides client and server implementations using
 //! `interprocess::local_socket` for true cross-platform compatibility.
 
+use crate::ipc::IpcConfig;
 use crate::ipc::codec::{IpcCodec, IpcError, IpcResult};
-use crate::ipc::{IpcConfig, PanicStrategy};
 use crate::proto::{DetectionResult, DetectionTask};
 #[cfg(unix)]
 use interprocess::local_socket::{GenericFilePath, ToFsName};
@@ -69,19 +69,14 @@ impl InterprocessServer {
     /// # }
     /// ```
     pub fn new(config: IpcConfig) -> Self {
-        // Configure panic strategy for production environments
-        match config.panic_strategy {
-            PanicStrategy::Abort => {
-                // Set panic hook to abort on panic for production
-                std::panic::set_hook(Box::new(|_| {
-                    eprintln!("Fatal error: process aborting due to panic");
-                    std::process::abort();
-                }));
-            }
-            PanicStrategy::Unwind => {
-                // Use default unwind behavior for development
-            }
-        }
+        // Note: Panic strategy is stored in config but not applied as a global hook.
+        // Setting global panic hooks from library code is problematic because:
+        // 1. It affects the entire process, not just IPC operations
+        // 2. Multiple libraries could conflict over panic handling
+        // 3. Tests running in the same process would be affected
+        //
+        // Applications that want abort-on-panic behavior should set their own
+        // panic hook at the application level, e.g. in main() or a top-level init.
 
         Self {
             config,
@@ -237,16 +232,16 @@ impl InterprocessServer {
         {
             // Unix domain socket - use filesystem path
             let path = Path::new(&self.config.endpoint_path);
-            if let Some(parent) = path.parent() {
-                if !parent.exists() {
-                    std::fs::create_dir_all(parent).map_err(IpcError::Io)?;
-                    // Set directory permissions to 0700 (owner only)
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let perms = std::fs::Permissions::from_mode(0o700);
-                        std::fs::set_permissions(parent, perms).map_err(IpcError::Io)?;
-                    }
+            if let Some(parent) = path.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent).map_err(IpcError::Io)?;
+                // Set directory permissions to 0700 (owner only)
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let perms = std::fs::Permissions::from_mode(0o700);
+                    std::fs::set_permissions(parent, perms).map_err(IpcError::Io)?;
                 }
             }
 

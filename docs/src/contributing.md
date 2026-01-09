@@ -16,7 +16,7 @@ Thank you for your interest in contributing to DaemonEye! This guide will help y
 
 Before contributing to DaemonEye, ensure you have:
 
-- **Rust 1.85+**: Latest stable Rust toolchain
+- **Rust 1.91+**: Latest stable Rust toolchain
 - **Git**: Version control system
 - **Docker**: For containerized testing (optional)
 - **Just**: Task runner (install with `cargo install just`)
@@ -132,6 +132,74 @@ just docs
 just clean
 ```
 
+### Commit Signing and GPG Setup
+
+Workspace tooling enforces signed commits (`git.enableCommitSigning`) and a rebase-first sync strategy. Configure GPG before making changes to avoid commit failures.
+
+1. **Install GnuPG**
+
+   - macOS: `brew install gnupg pinentry-mac`
+   - Linux: install `gnupg` and an appropriate `pinentry` package via your package manager
+   - Windows: install [Gpg4win](https://www.gpg4win.org/) and enable the GPG Agent during setup
+
+2. **Generate a signing key (4096-bit RSA recommended)**
+
+   ```bash
+   gpg --full-generate-key
+   ```
+
+   Choose `RSA and RSA`, key size `4096`, set an expiration (or none), and provide your name and email that matches the `user.email` configured for Git.
+
+3. **Locate the long key ID**
+
+   ```bash
+   gpg --list-secret-keys --keyid-format=long
+   ```
+
+   Copy the 16-character key ID that appears after `sec rsa4096/`.
+
+4. **Export the public key for review systems**
+
+   ```bash
+   gpg --armor --export <KEY_ID> > ~/.gnupg/daemoneye.pub
+   ```
+
+   Upload this armored key to GitHub (Settings → SSH and GPG keys) and any internal key servers used by your organization.
+
+5. **Configure Git to sign by default**
+
+   ```bash
+   git config --global user.signingkey <KEY_ID>
+   git config --global commit.gpgsign true
+   git config --global tag.gpgsign true
+   git config --global gpg.program $(command -v gpg)
+   ```
+
+   If the workspace settings conflict with per-repo preferences, create a project-local override via `.git/config` after following the required steps.
+
+6. **Ensure the GPG agent is active**
+
+   - macOS: add `pinentry-program /opt/homebrew/bin/pinentry-mac` to `~/.gnupg/gpg-agent.conf`, then run `gpgconf --kill gpg-agent`
+   - Windows: restart the "GnuPG Agent" service from the Gpg4win config utility
+   - Linux: ensure `gpg-agent` starts from your desktop session (`eval "$(gpg-agent --daemon)"` in shell profile if necessary)
+
+7. **Verify signing works**
+
+   ```bash
+   echo "test" | gpg --clearsign
+   git commit --allow-empty -S -m "test: verify signing"
+   ```
+
+   If prompted for a passphrase, select "save in keychain/keyring" so future commits succeed from VS Code as well as the CLI.
+
+#### Troubleshooting
+
+- `gpg: signing failed: No secret key` — confirm the key ID in `git config` matches `gpg --list-secret-keys`
+- `gpg: signing failed: Inappropriate ioctl for device` — configure an appropriate `pinentry` program and restart `gpg-agent`
+- Emergency opt-out (e.g., broken key) — run `git config commit.gpgsign false` *locally* and notify the maintainers; automated pipelines still require signatures for merged commits.
+
+These steps ensure developers understand the enforced workflow before VS Code rejects unsigned commits. Refer back to this section any time a workstation is rebuilt.
+
 ## Code Standards
 
 ### Rust Standards
@@ -158,20 +226,39 @@ pub enum CollectionError {
 
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
+
+    #[error("No processes were collected")]
+    NoProcessesCollected,
 }
 
 // Use anyhow for application error context
 use anyhow::{Context, Result};
 
-pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
-    let processes = sysinfo::System::new_all()
+// Helper function to validate collected process data
+fn validate_process_data(processes: &[ProcessInfo]) -> Result<(), CollectionError> {
+    if processes.is_empty() {
+        return Err(CollectionError::NoProcessesCollected);
+    }
+
+    // Additional validation logic could go here
+    // For example: checking for required fields, data integrity, etc.
+    Ok(())
+}
+
+pub async fn collect_processes() -> Result<Vec<ProcessInfo>, CollectionError> {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_all();
+
+    let processes = system
         .processes()
         .values()
         .map(|p| ProcessInfo::from(p))
         .collect::<Vec<_>>();
 
+    // Validate collected data before returning
+    validate_process_data(&processes)?;
+
     Ok(processes)
-        .context("Failed to collect process information")
 }
 
 // Document all public APIs
@@ -186,6 +273,7 @@ pub async fn collect_processes() -> Result<Vec<ProcessInfo>> {
 /// This function will return an error if:
 /// - System information cannot be accessed
 /// - Process enumeration fails
+/// - No processes could be collected from the system
 /// - Memory allocation fails
 ///
 /// # Examples
@@ -287,7 +375,7 @@ All code must have comprehensive test coverage:
 
 ### Test Structure
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,7 +459,7 @@ cargo fuzz run process_info
 
 Use conventional commits format:
 
-```
+```text
 <type>[optional scope]: <description>
 
 [optional body]
@@ -379,7 +467,7 @@ Use conventional commits format:
 [optional footer(s)]
 ```
 
-**Types**:
+#### Types
 
 - `feat`: New feature
 - `fix`: Bug fix
@@ -389,7 +477,7 @@ Use conventional commits format:
 - `test`: Test changes
 - `chore`: Build process or auxiliary tool changes
 
-**Examples**:
+#### Examples
 
 ```text
 feat(collector): add process filtering by name

@@ -447,7 +447,7 @@ WHERE y.rule_name = 'suspicious_behavior'
 
 #### Storage Strategy
 
-```rust
+```rust,ignore
 // YARA results stored efficiently in redb
 struct YaraScanResult {
     file_path: String,
@@ -619,7 +619,7 @@ The collector-core framework needs to support:
 
 #### 1. Rule Data Parsing
 
-```rust
+```rust,ignore
 pub enum SupplementalRuleData {
     YaraRules {
         version: String,
@@ -643,7 +643,7 @@ pub enum SupplementalRuleData {
 
 #### 2. Rule Execution Engine
 
-```rust
+```rust,ignore
 pub trait SpecialtyRuleEngine {
     type RuleData;
     type ExecutionResult;
@@ -869,7 +869,7 @@ The agent implements **reactive orchestration** to manage cascading analysis:
 
 #### 1. Trigger Detection
 
-```rust
+```rust,ignore
 pub struct ReactiveOrchestrator {
     collectors: HashMap<String, Box<dyn Collector>>,
     trigger_rules: Vec<TriggerRule>,
@@ -904,7 +904,7 @@ pub enum AnalysisType {
 
 #### 2. Cascading Analysis
 
-```rust
+```rust,ignore
 impl ReactiveOrchestrator {
     async fn process_event(&mut self, event: StreamRecord) -> Result<(), OrchestrationError> {
         // Store initial event
@@ -931,7 +931,7 @@ impl ReactiveOrchestrator {
 
 #### 3. Dynamic JOIN Resolution
 
-```rust
+```rust,ignore
 pub struct DynamicJoinResolver {
     base_tables: HashMap<String, TableSchema>,
     analysis_results: HashMap<String, Vec<AnalysisResult>>,
@@ -1052,7 +1052,7 @@ The agent maintains **auto-JOIN trigger rules** that define when to automaticall
 
 #### 1. Process → Network Auto-JOIN
 
-```rust
+```rust,ignore
 pub struct AutoJoinRule {
     pub source_table: String,
     pub target_table: String,
@@ -1062,47 +1062,56 @@ pub struct AutoJoinRule {
 }
 
 // Example: Always collect network data for processes
-let process_network_rule = AutoJoinRule {
-    source_table: "processes.snapshots".to_string(),
-    target_table: "network.connections".to_string(),
-    join_condition: JoinCondition::EquiJoin("pid".to_string(), "pid".to_string()),
-    trigger_conditions: vec![
-        Condition::Always, // Always trigger for processes
-    ],
-    priority: 1,
-};
+fn create_process_network_rule() -> AutoJoinRule {
+    AutoJoinRule {
+        source_table: "processes.snapshots".to_string(),
+        target_table: "network.connections".to_string(),
+        join_condition: JoinCondition::EquiJoin("pid".to_string(), "pid".to_string()),
+        trigger_conditions: vec![
+            Condition::Always, // Always trigger for processes
+        ],
+        priority: 1,
+    }
+}
 ```
 
 #### 2. Network → Process Auto-JOIN
 
-```rust
+```rust,ignore
 // Example: Always collect process data for network connections
-let network_process_rule = AutoJoinRule {
-    source_table: "network.connections".to_string(),
-    target_table: "processes.snapshots".to_string(),
-    join_condition: JoinCondition::EquiJoin("pid".to_string(), "pid".to_string()),
-    trigger_conditions: vec![
-        Condition::Always, // Always trigger for network connections
-    ],
-    priority: 1,
-};
+fn create_network_process_rule() -> AutoJoinRule {
+    AutoJoinRule {
+        source_table: "network.connections".to_string(),
+        target_table: "processes.snapshots".to_string(),
+        join_condition: JoinCondition::EquiJoin("pid".to_string(), "pid".to_string()),
+        trigger_conditions: vec![
+            Condition::Always, // Always trigger for network connections
+        ],
+        priority: 1,
+    }
+}
 ```
 
 #### 3. Conditional Auto-JOIN Rules
 
-```rust
+```rust,ignore
 // Example: Only collect PE analysis for suspicious processes
-let pe_analysis_rule = AutoJoinRule {
-    source_table: "processes.snapshots".to_string(),
-    target_table: "pe.analysis_results".to_string(),
-    join_condition: JoinCondition::EquiJoin("executable_path".to_string(), "file_path".to_string()),
-    trigger_conditions: vec![
-        Condition::ColumnLike("name".to_string(), "%suspicious%".to_string()),
-        Condition::ColumnGt("cpu_usage".to_string(), 80.0),
-        Condition::ColumnLike("executable_path".to_string(), "%.exe".to_string()),
-    ],
-    priority: 2,
-};
+fn create_pe_analysis_rule() -> AutoJoinRule {
+    AutoJoinRule {
+        source_table: "processes.snapshots".to_string(),
+        target_table: "pe.analysis_results".to_string(),
+        join_condition: JoinCondition::EquiJoin(
+            "executable_path".to_string(),
+            "file_path".to_string(),
+        ),
+        trigger_conditions: vec![
+            Condition::ColumnLike("name".to_string(), "%suspicious%".to_string()),
+            Condition::ColumnGt("cpu_usage".to_string(), 80.0),
+            Condition::ColumnLike("executable_path".to_string(), "%.exe".to_string()),
+        ],
+        priority: 2,
+    }
+}
 ```
 
 ### Agent Auto-JOIN Orchestration
@@ -1111,7 +1120,7 @@ The agent implements **automatic JOIN orchestration** to manage auto-JOIN trigge
 
 #### 1. Auto-JOIN Detection
 
-```rust
+```rust,ignore
 pub struct AutoJoinOrchestrator {
     auto_join_rules: Vec<AutoJoinRule>,
     active_collections: HashMap<String, Vec<CollectionTask>>,
@@ -1141,9 +1150,12 @@ impl AutoJoinOrchestrator {
 
 #### 2. Auto-JOIN Result Integration
 
-```rust
+```rust,ignore
 impl AutoJoinOrchestrator {
-    async fn integrate_auto_join_results(&mut self, base_event: &StreamRecord) -> Result<(), OrchestrationError> {
+    async fn integrate_auto_join_results(
+        &mut self,
+        base_event: &StreamRecord,
+    ) -> Result<(), OrchestrationError> {
         // Find all auto-JOIN results for this base event
         let auto_join_results = self.get_auto_join_results(base_event).await?;
 
@@ -1221,7 +1233,7 @@ WHERE p.name = 'malware.exe'
 
 The `sqlparser` crate can be extended to support custom predicates like `AUTO JOIN` and `WHEN` clauses by implementing a custom SQL dialect that extends the standard SQLite dialect:
 
-```rust
+```rust,ignore
 pub struct DaemonEyeDialect {
     base: SQLiteDialect,
     extensions: DaemonEyeExtensions,
@@ -1535,7 +1547,7 @@ Partition by time, use fixed-width keys, build selective secondary indexes, and 
 
 #### 5.7.8 Key Encoding (Concrete)
 
-```rust
+```rust,ignore
 // Primary key: 16 bytes
 #[repr(C, packed)]
 struct RowKey {

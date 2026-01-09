@@ -66,7 +66,7 @@ graph TB
 
 **Core Modules**:
 
-```rust
+```rust,ignore
 pub mod security_center {
     pub mod agent_registry; // Agent authentication and management
     pub mod data_aggregator; // Central data collection and storage
@@ -83,7 +83,7 @@ pub mod security_center {
 
 **Connection Pool**: sqlx::PgPool with configurable min/max connections
 
-```rust
+```rust,ignore
 pub struct SecurityCenterDatabase {
     pool: sqlx::PgPool,
     metrics: DatabaseMetrics,
@@ -169,7 +169,7 @@ CREATE TABLE rule_packs (
 3. Security Center validates certificate and registers agent
 4. Ongoing communication uses established mTLS session
 
-```rust
+```rust,ignore
 pub struct AgentRegistry {
     db: SecurityCenterDatabase,
     ca_cert: X509Certificate,
@@ -199,7 +199,10 @@ impl AgentRegistry {
         };
 
         self.db.insert_agent(&agent).await?;
-        self.agent_certs.lock().await.insert(fingerprint, cert.clone());
+        self.agent_certs
+            .lock()
+            .await
+            .insert(fingerprint, cert.clone());
 
         Ok(agent)
     }
@@ -224,16 +227,16 @@ impl AgentRegistry {
 
 **Uplink Communication**: Secure connection to Security Center with fallback to standalone operation.
 
-```rust
-pub struct Enhanceddaemoneye-agent {
-    base_agent: daemoneye-agent,
+```rust,ignore
+pub struct EnhancedDaemoneyeAgent {
+    base_agent: DaemoneyeAgent,
     security_center_client: Option<SecurityCenterClient>,
     uplink_config: UplinkConfig,
 }
 
-impl Enhanceddaemoneye-agent {
+impl EnhancedDaemoneyeAgent {
     pub async fn new(config: AgentConfig) -> Result<Self> {
-        let base_agent = daemoneye-agent::new(config.clone()).await?;
+        let base_agent = DaemoneyeAgent::new(config.clone()).await?;
 
         let security_center_client = if config.uplink.enabled {
             Some(SecurityCenterClient::new(&config.uplink).await?)
@@ -316,7 +319,7 @@ rules:
 
 **Cryptographic Signatures**: Ed25519 signatures for rule pack integrity.
 
-```rust
+```rust,ignore
 pub struct RulePackValidator {
     public_key: ed25519_dalek::PublicKey,
 }
@@ -352,7 +355,7 @@ impl RulePackValidator {
 
 **Automatic Distribution**: Agents automatically download and apply rule packs.
 
-```rust
+```rust,ignore
 pub struct RuleDistributor {
     db: SecurityCenterDatabase,
     rule_pack_storage: RulePackStorage,
@@ -369,7 +372,9 @@ impl RuleDistributor {
         let pack_id = self.rule_pack_storage.store(&pack).await?;
 
         // Schedule distribution to agents
-        self.distribution_scheduler.schedule_distribution(pack_id).await?;
+        self.distribution_scheduler
+            .schedule_distribution(pack_id)
+            .await?;
 
         Ok(DeploymentResult::Success)
     }
@@ -396,7 +401,7 @@ impl RuleDistributor {
 
 **Splunk HTTP Event Collector** integration with authentication and batching.
 
-```rust
+```rust,ignore
 pub struct SplunkHecConnector {
     endpoint: Url,
     token: SecretString,
@@ -418,9 +423,13 @@ impl SplunkHecConnector {
             event: serde_json::to_value(event)?,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.endpoint)
-            .header("Authorization", format!("Splunk {}", self.token.expose_secret()))
+            .header(
+                "Authorization",
+                format!("Splunk {}", self.token.expose_secret()),
+            )
             .json(&hec_event)
             .send()
             .await?;
@@ -430,13 +439,18 @@ impl SplunkHecConnector {
     }
 
     pub async fn send_batch(&self, events: &[ProcessAlert]) -> Result<(), ConnectorError> {
-        let hec_events: Vec<HecEvent> = events.iter()
+        let hec_events: Vec<HecEvent> = events
+            .iter()
             .map(|event| self.convert_to_hec_event(event))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.endpoint)
-            .header("Authorization", format!("Splunk {}", self.token.expose_secret()))
+            .header(
+                "Authorization",
+                format!("Splunk {}", self.token.expose_secret()),
+            )
             .json(&hec_events)
             .send()
             .await?;
@@ -451,7 +465,7 @@ impl SplunkHecConnector {
 
 **Elasticsearch** bulk indexing with index pattern management.
 
-```rust
+```rust,ignore
 pub struct ElasticsearchConnector {
     client: elasticsearch::Elasticsearch,
     index_pattern: String,
@@ -475,11 +489,7 @@ impl ElasticsearchConnector {
             body.push(serde_json::to_value(event)?);
         }
 
-        let response = self.client
-            .bulk(BulkParts::None)
-            .body(body)
-            .send()
-            .await?;
+        let response = self.client.bulk(BulkParts::None).body(body).send().await?;
 
         self.handle_bulk_response(response).await
     }
@@ -497,7 +507,7 @@ impl ElasticsearchConnector {
 
 **Kafka** high-throughput message streaming with partitioning.
 
-```rust
+```rust,ignore
 pub struct KafkaConnector {
     producer: FutureProducer,
     topic: String,
@@ -535,7 +545,7 @@ impl KafkaConnector {
 
 **CEF Format** for SIEM compatibility.
 
-```rust
+```rust,ignore
 pub struct CefFormatter;
 
 impl CefFormatter {
@@ -576,7 +586,7 @@ impl CefFormatter {
 
 **STIX 2.1** structured threat information export.
 
-```rust
+```rust,ignore
 pub struct StixExporter;
 
 impl StixExporter {
@@ -738,7 +748,7 @@ alerting:
 
 ```dockerfile
 # Build stage
-FROM rust:1.85 as builder
+FROM rust:1.91 as builder
 WORKDIR /app
 COPY . .
 RUN cargo build --release
@@ -829,7 +839,7 @@ spec:
 
 **Connection Pooling**: Efficient database connection management
 
-```rust
+```rust,ignore
 pub struct ConnectionPoolManager {
     pool: sqlx::PgPool,
     metrics: PoolMetrics,
@@ -848,7 +858,7 @@ impl ConnectionPoolManager {
 
 **Batch Processing**: Efficient alert processing and delivery
 
-```rust
+```rust,ignore
 pub struct BatchProcessor {
     batch_size: usize,
     batch_timeout: Duration,

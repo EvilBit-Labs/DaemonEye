@@ -3,10 +3,14 @@
 use clap::Parser;
 use daemoneye_lib::{alerting, config, detection, models, storage, telemetry};
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
-mod ipc_client;
-use ipc_client::{IpcClientManager, create_default_ipc_config};
+mod broker_manager;
+mod collector_registry;
+mod ipc_server;
+
+use broker_manager::BrokerManager;
+use ipc_server::IpcServerManager;
 
 #[derive(Parser)]
 #[command(name = "daemoneye-agent")]
@@ -59,20 +63,54 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize database
     let _db_manager = storage::DatabaseManager::new(&config.database.path)?;
 
-    // Initialize IPC client for communication with procmond
-    let ipc_config = create_default_ipc_config();
-    let mut ipc_manager = IpcClientManager::new(ipc_config)?;
+    // Initialize embedded EventBus broker
+    let broker_manager = BrokerManager::new(config.broker.clone());
 
-    // Wait for procmond to become available
-    info!("Waiting for procmond to become available...");
-    if let Err(e) = ipc_manager.wait_for_procmond(Duration::from_secs(30)).await {
-        warn!(
-            "Procmond not available: {}. Continuing without process monitoring.",
-            e
-        );
-    } else {
-        info!("Connected to procmond successfully");
+    // Start the embedded broker
+    if let Err(e) = broker_manager.start().await {
+        error!(error = %e, "Failed to start embedded EventBus broker");
+        return Err(e.into());
     }
+
+    // Wait for broker to become healthy
+    let broker_startup_timeout = Duration::from_secs(config.broker.startup_timeout_seconds);
+    if let Err(e) = broker_manager
+        .wait_for_healthy(broker_startup_timeout)
+        .await
+    {
+        error!(error = %e, "Embedded broker failed to become healthy");
+        return Err(e.into());
+    }
+
+    info!(
+        socket_path = %broker_manager.socket_path(),
+        "Embedded EventBus broker is healthy and ready"
+    );
+
+    // Initialize IPC server for CLI communication
+    let cli_ipc_config = ipc_server::create_cli_ipc_config();
+    let ipc_server_manager = IpcServerManager::new(cli_ipc_config);
+
+    // Start the IPC server
+    if let Err(e) = ipc_server_manager.start().await {
+        error!(error = %e, "Failed to start IPC server for CLI communication");
+        return Err(e.into());
+    }
+
+    // Wait for IPC server to become healthy
+    let ipc_startup_timeout = Duration::from_secs(10); // 10 second timeout for IPC server
+    if let Err(e) = ipc_server_manager
+        .wait_for_healthy(ipc_startup_timeout)
+        .await
+    {
+        error!(error = %e, "IPC server failed to become healthy");
+        return Err(e.into());
+    }
+
+    info!(
+        endpoint_path = %ipc_server_manager.endpoint_path(),
+        "IPC server is healthy and ready for CLI communication"
+    );
 
     // Initialize detection engine
     let mut detection_engine = detection::DetectionEngine::new();
@@ -105,7 +143,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let scan_interval = Duration::from_millis(config.app.scan_interval_ms);
     info!(
         interval_ms = config.app.scan_interval_ms,
-        "Entering main collection+detection loop with IPC client"
+        "Entering main collection+detection loop with RPC client"
     );
 
     // Graceful shutdown signal future
@@ -133,13 +171,43 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 iteration += 1;
                 let loop_start = Instant::now();
 
-                // Request process enumeration from procmond via IPC
-                let processes = match ipc_manager.enumerate_processes().await {
+                // Periodic RPC health checks (every 10 iterations)
+                if iteration.is_multiple_of(10) {
+                    // Get list of registered collectors from RPC clients
+                    let collector_ids = broker_manager.list_registered_collector_ids().await;
+
+                    for collector_id in collector_ids {
+                        match broker_manager.health_check_rpc(&collector_id).await {
+                            Ok(health_data) => {
+                                info!(
+                                    collector_id = %collector_id,
+                                    status = ?health_data.status,
+                                    "RPC health check completed"
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    collector_id = %collector_id,
+                                    error = %e,
+                                    "RPC health check failed"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Request process enumeration from procmond via RPC
+                let task = daemoneye_lib::proto::DetectionTask::new_enumerate_processes(
+                    uuid::Uuid::new_v4().to_string(),
+                    None,
+                );
+
+                let processes = match broker_manager.execute_task_rpc("procmond", task).await {
                     Ok(result) => {
                         if result.success {
                             info!(
                                 process_count = result.processes.len(),
-                                "Successfully collected process data from procmond"
+                                "Successfully collected process data from procmond via RPC"
                             );
                             // Parse process data from DetectionResult.processes
                             result
@@ -150,20 +218,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             warn!(
                                 error = %result.error_message.as_deref().unwrap_or("Unknown error"),
-                                "Procmond returned error during process enumeration"
+                                "Procmond returned error during process enumeration via RPC"
                             );
                             Vec::new()
                         }
                     }
                     Err(e) => {
-                        warn!(error = %e, "Failed to collect processes from procmond");
-                        // Check if we should try to reconnect
-                        if !ipc_manager.is_healthy().await {
-                            warn!("IPC client is unhealthy, attempting reconnection");
-                            if let Err(reconnect_err) = ipc_manager.force_reconnect().await {
-                                error!(error = %reconnect_err, "Failed to reconnect to procmond");
-                            }
-                        }
+                        warn!(error = %e, "Failed to collect processes from procmond via RPC");
                         Vec::new()
                     }
                 };
@@ -191,14 +252,64 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Update telemetry with rough resource usage snapshot (placeholder zeros for now)
                 telemetry.update_resource_usage(0.0, 0);
-                if iteration % 10 == 0 { // periodic health check every 10 iterations
+                if iteration.is_multiple_of(10) { // periodic health check every 10 iterations
                     let h = telemetry.health_check();
                     info!(status=%h.status, "Telemetry health check");
+
+                    // Check broker health
+                    let broker_health = broker_manager.health_check().await;
+                    match broker_health {
+                        broker_manager::BrokerHealth::Healthy => {
+                            if let Some(stats) = broker_manager.statistics().await {
+                                debug!(
+                                    messages_published = stats.messages_published,
+                                    messages_delivered = stats.messages_delivered,
+                                    active_subscribers = stats.active_subscribers,
+                                    uptime_seconds = stats.uptime_seconds,
+                                    "Broker health check passed"
+                                );
+                            }
+                        }
+                        broker_manager::BrokerHealth::Unhealthy(ref error) => {
+                            warn!(error = %error, "Broker health check failed");
+                        }
+                        other => {
+                            debug!(status = ?other, "Broker health status");
+                        }
+                    }
+
+                    // Check IPC server health
+                    let ipc_health = ipc_server_manager.health_check().await;
+                    match ipc_health {
+                        ipc_server::IpcServerHealth::Healthy => {
+                            debug!("IPC server health check passed");
+                        }
+                        ipc_server::IpcServerHealth::Unhealthy(ref error) => {
+                            warn!(error = %error, "IPC server health check failed");
+                        }
+                        other => {
+                            debug!(status = ?other, "IPC server health status");
+                        }
+                    }
                 }
                 let loop_elapsed = loop_start.elapsed();
                 if loop_elapsed > scan_interval { warn!(elapsed_ms = loop_elapsed.as_millis() as u64, "Loop overran scan interval"); }
             }
         }
+    }
+
+    // Gracefully shutdown both services in parallel
+    info!("Shutting down IPC server and embedded EventBus broker");
+
+    let (ipc_result, broker_result) =
+        tokio::join!(ipc_server_manager.shutdown(), broker_manager.shutdown());
+
+    if let Err(e) = ipc_result {
+        error!(error = %e, "Failed to shutdown IPC server gracefully");
+    }
+
+    if let Err(e) = broker_result {
+        error!(error = %e, "Failed to shutdown embedded broker gracefully");
     }
 
     println!("daemoneye-agent shutdown complete.");

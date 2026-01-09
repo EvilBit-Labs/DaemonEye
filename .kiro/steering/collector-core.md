@@ -1,6 +1,9 @@
 ---
-
-## inclusion: fileMatch fileMatchPattern: \['collector-core/**/\*', '**/collector\*'\]
+inclusion: fileMatch
+fileMatchPattern:
+  - collector-core/**/*
+  - '**/collector*'
+---
 
 # Collector-Core Framework Standards
 
@@ -17,9 +20,9 @@ The `collector-core` framework provides unified collection infrastructure with t
 
 When implementing EventSource, follow this exact pattern:
 
-```rust
+```rust,ignore
 use async_trait::async_trait;
-use collector_core::{EventSource, CollectionEvent, SourceCaps};
+use collector_core::{CollectionEvent, EventSource, SourceCaps};
 use tokio::sync::mpsc;
 
 #[async_trait]
@@ -53,8 +56,8 @@ impl EventSource for MySource {
 
 Use strongly-typed events with consistent field naming:
 
-```rust
-use collector_core::CollectionEvent;
+```rust,ignore
+use collector_core::{CollectionEvent, ProcessEvent};
 use std::time::SystemTime;
 
 // Always include timestamp and use SystemTime
@@ -74,7 +77,7 @@ let event = CollectionEvent::Process(ProcessEvent {
 - Check capabilities with `.contains()` method
 - Never assume capabilities without verification
 
-```rust
+```rust,ignore
 use collector_core::SourceCaps;
 
 // Correct capability combination
@@ -90,7 +93,7 @@ if caps.contains(SourceCaps::KERNEL_LEVEL) {
 
 MUST use builder pattern for all configuration:
 
-```rust
+```rust,ignore
 use collector_core::CollectorConfig;
 use std::time::Duration;
 

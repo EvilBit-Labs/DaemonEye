@@ -30,7 +30,7 @@ bitflags! {
     /// assert!(process_caps.contains(SourceCaps::PROCESS));
     /// assert!(!process_caps.contains(SourceCaps::NETWORK));
     /// ```
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
     pub struct SourceCaps: u32 {
         /// Process monitoring capabilities
         const PROCESS = 1 << 0;

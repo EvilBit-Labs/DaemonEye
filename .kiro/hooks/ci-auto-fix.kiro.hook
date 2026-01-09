@@ -4,15 +4,7 @@
   "description": "Automatically runs CI checks when source files change and fixes any failures including formatting, linting, compilation errors, test failures, security audits, and license compliance issues",
   "version": "1",
   "when": {
-    "type": "userTriggered",
-    "patterns": [
-      "**/*.rs",
-      "**/Cargo.toml",
-      "**/Cargo.lock",
-      "justfile",
-      "deny.toml",
-      "rust-toolchain.toml"
-    ]
+    "type": "userTriggered"
   },
   "then": {
     "type": "askAgent",

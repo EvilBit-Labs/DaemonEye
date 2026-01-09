@@ -1,0 +1,11 @@
+# DaemonEye Security Audit Configuration
+# 
+# This file configures cargo-audit to ignore specific advisories that we have
+# explicitly accepted after risk assessment. See SECURITY.md for full rationale.
+
+[advisories]
+ignore = []
+
+# Keep default output settings for transparency
+[output]
+quiet = false

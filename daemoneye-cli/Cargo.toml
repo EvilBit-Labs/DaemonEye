@@ -1,6 +1,6 @@
 [package]
 name = "daemoneye-cli"
-edition = "2024"
+edition.workspace = true
 version.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -9,6 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 description = "DaemonEye Command Line Interface"
 publish = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+readme.workspace = true
 
 [package.metadata.wix]
 upgrade-guid = "9821CB9C-4F06-4EF8-9763-2434C2D7D175"
@@ -22,11 +26,11 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 
-# Database
-redb = { workspace = true }
-
 # Internal library
 daemoneye-lib = { workspace = true }
+
+# Database
+redb = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -36,7 +36,9 @@ DaemonEye requires elevated privileges for process monitoring. The system is des
 2. **Drop privileges immediately** after initialization
 3. **Continue operating** with standard user privileges
 
-**Linux**: Requires `CAP_SYS_PTRACE` capability (or root) **Windows**: Requires `SeDebugPrivilege` (or Administrator) **macOS**: Requires appropriate entitlements (or root)
+- **Linux**: Requires `CAP_SYS_PTRACE` capability (or root)
+- **Windows**: Requires `SeDebugPrivilege` (or Administrator)
+- **macOS**: Requires appropriate entitlements (or root)
 
 ## Installation
 
@@ -69,7 +71,7 @@ DaemonEye requires elevated privileges for process monitoring. The system is des
 
 ### Option 2: From Source
 
-1. **Install Rust** (1.85+):
+1. **Install Rust** (1.91+):
 
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -126,14 +128,9 @@ sudo chown $USER:$USER /etc/daemoneye
 mkdir C:\ProgramData\DaemonEye
 ```
 
-### 2. Generate Initial Configuration
+### 2. Create Basic Configuration
 
-```bash
-# Generate default configuration
-daemoneye-cli config init --output /etc/daemoneye/config.yaml
-```
-
-This creates a basic configuration file:
+Create a basic configuration file at `/etc/daemoneye/config.yaml`:
 
 ```yaml
 # DaemonEye Configuration
@@ -143,21 +140,28 @@ app:
   log_level: info
 
 database:
-  event_store_path: /var/lib/daemoneye/events.redb
-  audit_ledger_path: /var/lib/daemoneye/audit.sqlite
+  path: /var/lib/daemoneye/events.redb
   retention_days: 30
 
-detection:
-  rules_path: /etc/daemoneye/rules
-  enabled_rules: ['*']
+# EventBus broker configuration
+broker:
+  socket_path: /tmp/daemoneye-eventbus.sock
+  startup_timeout_seconds: 30
+  max_subscribers: 100
+  message_buffer_size: 10000
 
-alerting:
-  sinks:
-    - type: stdout
-      enabled: true
-    - type: syslog
-      enabled: true
-      facility: daemon
+# RPC service configuration
+rpc:
+  default_timeout_seconds: 30
+  health_check_interval_seconds: 60
+  enable_correlation_tracking: true
+
+# Process manager configuration (for collector lifecycle)
+process_manager:
+  graceful_shutdown_timeout_seconds: 60
+  force_shutdown_timeout_seconds: 5
+  health_check_interval_seconds: 120
+  enable_auto_restart: true
 
 # Platform-specific settings
 platform:
@@ -182,17 +186,27 @@ mkdir C:\ProgramData\DaemonEye\data
 
 ### 4. Start the Services
 
-**Option A: Manual Start (Testing)**
+#### Option A: Manual Start (Testing)
 
 ```bash
-# Terminal 1: Start daemoneye-agent (manages procmond)
-daemoneye-agent --config /etc/daemoneye/config.yaml
+# Terminal 1: Start daemoneye-agent (includes embedded EventBus broker, RPC service, and IPC server)
+daemoneye-agent --database /var/lib/daemoneye/events.redb --log-level info
 
-# Terminal 2: Use CLI for queries
-daemoneye-cli --config /etc/daemoneye/config.yaml query "SELECT * FROM processes LIMIT 10"
+# The agent will:
+# - Start the embedded EventBus broker for collector coordination
+# - Initialize RPC service for collector lifecycle management
+# - Start IPC server for CLI communication
+# - Begin health monitoring and metrics collection
+
+# Terminal 2: Use CLI for database queries and health checks
+daemoneye-cli --database /var/lib/daemoneye/events.redb --format json
+
+# Terminal 3: Run procmond directly for testing (uses collector-core framework)
+# Note: In production, procmond is managed by daemoneye-agent via RPC
+procmond --database /var/lib/daemoneye/events.redb --interval 30 --enhanced-metadata
 ```
 
-**Option B: System Service (Production)**
+#### Option B: System Service (Production)
 
 ```bash
 # Linux (systemd)
@@ -214,17 +228,19 @@ sc start "DaemonEye Agent"
 ### 5. Verify Installation
 
 ```bash
-# Check service status
-daemoneye-cli health
+# Check database statistics and health
+daemoneye-cli --database /var/lib/daemoneye/events.redb --format human
 
-# View recent processes
-daemoneye-cli query "SELECT pid, name, executable_path FROM processes ORDER BY collection_time DESC LIMIT 10"
+# View database statistics in JSON format
+daemoneye-cli --database /var/lib/daemoneye/events.redb --format json
 
-# Check alerts
-daemoneye-cli alerts list
+# Test procmond collection with enhanced metadata and hashing
+procmond --database /var/lib/daemoneye/events.redb --interval 30 --enhanced-metadata --compute-hashes
 
-# View system metrics
-daemoneye-cli metrics
+# Check component help
+daemoneye-agent --help
+daemoneye-cli --help
+procmond --help
 ```
 
 ## Basic Configuration

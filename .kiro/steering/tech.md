@@ -25,6 +25,23 @@
 - **Protocol**: Custom protobuf over Unix sockets (Linux/macOS) and named pipes (Windows)
 - **Features**: Async message handling, automatic reconnection with exponential backoff
 - **Security**: Connection authentication and optional encryption
+- **Scope**: CLI-to-agent communication (daemoneye-cli ↔ daemoneye-agent)
+
+### Event Bus (daemoneye-eventbus)
+
+- **Foundation**: Cross-platform IPC with embedded broker architecture
+- **Transport**: Unix domain sockets (Linux/macOS) and named pipes (Windows)
+- **Features**: Topic-based pub/sub messaging, wildcard subscriptions, backpressure handling
+- **Performance**: 10,000+ messages/second throughput, sub-millisecond latency
+- **Scope**: Multi-process coordination (daemoneye-agent ↔ collector-core components)
+- **Location**: Embedded broker runs within daemoneye-agent, clients connect from collector-core components
+
+### Internal Event Distribution (collector-core)
+
+- **Foundation**: `crossbeam` crate for high-performance concurrent event distribution
+- **Features**: Lock-free channels, efficient backoff strategies, bounded concurrency
+- **Performance**: Optimized for high-throughput event processing with minimal contention
+- **Scope**: Internal in-process message distribution within collector-core components
 
 ### Configuration Management
 
