@@ -304,8 +304,7 @@ async fn test_eventbus_broker_access_integration() {
         platform_metadata: None,
     });
 
-    let test_payload = bincode::serde::encode_to_vec(&test_event, bincode::config::standard())
-        .expect("Failed to serialize test event");
+    let test_payload = postcard::to_allocvec(&test_event).expect("Failed to serialize test event");
 
     broker
         .publish("events.process.new", "test-correlation", test_payload)

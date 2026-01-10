@@ -1,8 +1,43 @@
-//! Criterion benchmarks for ProcessCollector implementations.
+//! Criterion benchmarks for `ProcessCollector` implementations.
 //!
-//! This benchmark suite measures performance characteristics of all ProcessCollector
+//! This benchmark suite measures performance characteristics of all `ProcessCollector`
 //! implementations under various load conditions, including high process counts
 //! (10,000+ processes) to establish baseline performance metrics.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::unreadable_literal,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::str_to_string,
+    clippy::arithmetic_side_effects,
+    clippy::missing_const_for_fn,
+    clippy::uninlined_format_args,
+    clippy::print_stdout,
+    clippy::map_unwrap_or,
+    clippy::non_ascii_literal,
+    clippy::use_debug,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::needless_pass_by_value,
+    clippy::redundant_clone,
+    clippy::as_conversions,
+    clippy::panic,
+    clippy::option_if_let_else,
+    clippy::wildcard_enum_match_arm,
+    clippy::large_enum_variant,
+    clippy::integer_division,
+    clippy::clone_on_ref_ptr,
+    clippy::unused_self,
+    clippy::modulo_arithmetic,
+    clippy::explicit_iter_loop,
+    clippy::semicolon_if_nothing_returned,
+    clippy::missing_assert_message,
+    clippy::pattern_type_mismatch,
+    clippy::significant_drop_tightening,
+    clippy::significant_drop_in_scrutinee,
+    clippy::if_not_else
+)]
 
 use async_trait::async_trait;
 use collector_core::ProcessEvent;

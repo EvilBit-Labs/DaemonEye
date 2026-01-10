@@ -777,15 +777,11 @@ async fn test_rpc_request_serialization() {
     );
 
     // Test serialization
-    let serialized = bincode::serde::encode_to_vec(&request, bincode::config::standard());
+    let serialized = postcard::to_allocvec(&request);
     assert!(serialized.is_ok());
 
     // Test deserialization
-    let deserialized =
-        bincode::serde::decode_from_slice(&serialized.unwrap(), bincode::config::standard());
-    assert!(deserialized.is_ok());
-
-    let (deserialized_request, _): (RpcRequest, _) = deserialized.unwrap();
+    let deserialized_request: RpcRequest = postcard::from_bytes(&serialized.unwrap()).unwrap();
     assert_eq!(deserialized_request.client_id, "test-client");
     assert_eq!(deserialized_request.operation, CollectorOperation::Start);
 }
@@ -817,15 +813,11 @@ async fn test_rpc_response_serialization() {
     };
 
     // Test serialization
-    let serialized = bincode::serde::encode_to_vec(&response, bincode::config::standard());
+    let serialized = postcard::to_allocvec(&response);
     assert!(serialized.is_ok());
 
     // Test deserialization
-    let deserialized =
-        bincode::serde::decode_from_slice(&serialized.unwrap(), bincode::config::standard());
-    assert!(deserialized.is_ok());
-
-    let (deserialized_response, _): (RpcResponse, _) = deserialized.unwrap();
+    let deserialized_response: RpcResponse = postcard::from_bytes(&serialized.unwrap()).unwrap();
     assert_eq!(deserialized_response.service_id, "test-service");
     assert_eq!(deserialized_response.status, RpcStatus::Success);
 
@@ -989,11 +981,8 @@ async fn setup_test_service_handler(
             );
 
             // Deserialize RPC request
-            let request: RpcRequest = match bincode::serde::decode_from_slice::<RpcRequest, _>(
-                &message.payload,
-                bincode::config::standard(),
-            ) {
-                Ok((req, _)) => {
+            let request: RpcRequest = match postcard::from_bytes::<RpcRequest>(&message.payload) {
+                Ok(req) => {
                     println!(
                         "DEBUG: Successfully deserialized RPC request: {:?}",
                         req.operation
@@ -1019,17 +1008,16 @@ async fn setup_test_service_handler(
             );
 
             // Serialize and publish response
-            let payload =
-                match bincode::serde::encode_to_vec(&response, bincode::config::standard()) {
-                    Ok(data) => {
-                        println!("DEBUG: Serialized response payload length: {}", data.len());
-                        data
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to serialize RPC response: {}", e);
-                        continue;
-                    }
-                };
+            let payload = match postcard::to_allocvec(&response) {
+                Ok(data) => {
+                    println!("DEBUG: Serialized response payload length: {}", data.len());
+                    data
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize RPC response: {}", e);
+                    continue;
+                }
+            };
 
             match broker
                 .publish(&response_topic, &response.request_id, payload)
@@ -1071,11 +1059,10 @@ async fn test_rpc_call_through_broker() -> Result<()> {
     );
 
     // Test serialization/deserialization locally first
-    let serialized = bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+    let serialized = postcard::to_allocvec(&request).unwrap();
     println!("DEBUG: Serialized length: {}", serialized.len());
 
-    let (deserialized, _): (RpcRequest, _) =
-        bincode::serde::decode_from_slice(&serialized, bincode::config::standard()).unwrap();
+    let deserialized: RpcRequest = postcard::from_bytes(&serialized).unwrap();
     println!(
         "DEBUG: Deserialized successfully: {:?}",
         deserialized.operation

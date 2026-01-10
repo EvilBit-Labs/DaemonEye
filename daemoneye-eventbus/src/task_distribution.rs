@@ -507,8 +507,8 @@ impl TaskDistributor {
         collector: &CollectorRegistration,
     ) -> Result<()> {
         // Serialize task
-        let payload = bincode::serde::encode_to_vec(task, bincode::config::standard())
-            .map_err(|e| EventBusError::serialization(e.to_string()))?;
+        let payload =
+            postcard::to_allocvec(task).map_err(|e| EventBusError::serialization(e.to_string()))?;
 
         // Publish to collector's task topic
         let correlation_id = task

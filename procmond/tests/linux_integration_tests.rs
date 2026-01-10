@@ -1,4 +1,4 @@
-//! Linux-specific integration tests for the LinuxProcessCollector.
+//! Linux-specific integration tests for the `LinuxProcessCollector`.
 //!
 //! These tests verify the Linux-specific functionality including /proc filesystem
 //! access, capability detection, namespace handling, and container detection.
@@ -11,6 +11,7 @@
 //! - Performance and concurrency validation
 
 #![cfg(target_os = "linux")]
+#![allow(clippy::doc_markdown, clippy::expect_used, clippy::unwrap_used)]
 
 use procmond::linux_collector::{LinuxCollectorConfig, LinuxProcessCollector};
 use procmond::process_collector::{

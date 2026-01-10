@@ -279,7 +279,7 @@ impl EventBusClient {
         };
 
         // Serialize event
-        let payload = bincode::serde::encode_to_vec(&event, bincode::config::standard())
+        let payload = postcard::to_allocvec(&event)
             .map_err(|e| EventBusError::serialization(e.to_string()))?;
 
         // Validate payload size
@@ -514,10 +514,8 @@ impl EventBusClient {
         _client_id: &str,
     ) -> Result<()> {
         // Deserialize event
-        let event: CollectionEvent =
-            bincode::serde::decode_from_slice(&message.payload, bincode::config::standard())
-                .map_err(|e| EventBusError::serialization(e.to_string()))?
-                .0;
+        let event: CollectionEvent = postcard::from_bytes(&message.payload)
+            .map_err(|e| EventBusError::serialization(e.to_string()))?;
 
         // Create bus event
         let bus_event = BusEvent {

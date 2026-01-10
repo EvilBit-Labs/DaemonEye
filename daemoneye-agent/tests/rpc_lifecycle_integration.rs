@@ -3,6 +3,15 @@
 //! These tests validate the complete RPC workflow across process boundaries,
 //! including registration, lifecycle operations, health checks, and graceful shutdown.
 
+#![allow(
+    clippy::str_to_string,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::uninlined_format_args,
+    clippy::let_underscore_must_use,
+    clippy::print_stdout
+)]
+
 use daemoneye_agent::broker_manager::BrokerManager;
 use daemoneye_lib::config::BrokerConfig;
 use std::sync::Arc;

@@ -33,29 +33,16 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
-bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+crc32c = { workspace = true }
 
 # Internal libraries
 collector-core = { workspace = true }
-crc32c = { workspace = true }
 daemoneye-lib = { workspace = true }
 
-# IPC communication
-interprocess = { workspace = true }
-
-# Protocol Buffers
-prost = { workspace = true }
-prost-types = { workspace = true }
-
-# Database
-redb = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-# Cryptographic hashing
-sha2 = { workspace = true }
 
 # System information
 sysinfo = { workspace = true }
@@ -63,9 +50,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-
-# UUID generation
-uuid = { workspace = true }
 
 # Platform-specific dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -108,6 +92,5 @@ uzers = { workspace = true }
 name = "process_collector_benchmarks"
 harness = false
 
-[lints.rust]
-unsafe_code = "forbid"
-warnings = "deny"
+[lints]
+workspace = true
