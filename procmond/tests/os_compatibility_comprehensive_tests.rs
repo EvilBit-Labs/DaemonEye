@@ -1,7 +1,32 @@
-//! Comprehensive OS compatibility tests for ProcessCollector implementations.
+//! Comprehensive OS compatibility tests for `ProcessCollector` implementations.
 //!
 //! This module tests compatibility across different OS versions, configurations,
 //! and environments to ensure robust cross-platform behavior.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::uninlined_format_args,
+    clippy::print_stdout,
+    clippy::str_to_string,
+    clippy::map_unwrap_or,
+    clippy::non_ascii_literal,
+    clippy::use_debug,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::needless_pass_by_value,
+    clippy::redundant_clone,
+    clippy::as_conversions,
+    clippy::arithmetic_side_effects,
+    clippy::if_not_else,
+    clippy::option_if_let_else,
+    clippy::panic,
+    clippy::wildcard_enum_match_arm,
+    clippy::missing_const_for_fn,
+    clippy::bool_comparison,
+    clippy::pattern_type_mismatch
+)]
 
 use procmond::process_collector::{
     FallbackProcessCollector, ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,

@@ -410,8 +410,7 @@ impl TaskDistributor {
         };
 
         // Serialize event as payload
-        let payload = bincode::serde::encode_to_vec(event, bincode::config::standard())
-            .context("Failed to serialize event")?;
+        let payload = postcard::to_allocvec(event).context("Failed to serialize event")?;
 
         Ok(DistributionTask {
             task_id,

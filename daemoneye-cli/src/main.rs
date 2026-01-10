@@ -1,9 +1,10 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::print_stdout)] // CLI output to user is intentional
 
 use clap::Parser;
 use daemoneye_lib::{config, storage, telemetry};
 
-/// DaemonEye CLI interface
+/// `DaemonEye` CLI interface
 #[derive(Parser)]
 #[command(name = "daemoneye-cli")]
 #[command(about = "DaemonEye CLI interface")]

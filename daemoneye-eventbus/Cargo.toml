@@ -21,9 +21,8 @@ path = "src/lib.rs"
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-bincode = { workspace = true, features = ["serde"] }
+postcard = { workspace = true }
 blake3 = { workspace = true }
-chrono = { workspace = true }
 interprocess = { workspace = true, optional = true }
 rand = { workspace = true }
 serde = { workspace = true }

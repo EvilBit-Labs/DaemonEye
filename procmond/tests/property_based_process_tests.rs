@@ -1,8 +1,19 @@
 //! Property-based tests for process enumeration edge cases.
 //!
 //! This module uses proptest to generate test cases that explore edge cases
-//! and boundary conditions in process enumeration across different ProcessCollector
+//! and boundary conditions in process enumeration across different `ProcessCollector`
 //! implementations, ensuring robust behavior under various scenarios.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::unseparated_literal_suffix,
+    clippy::uninlined_format_args,
+    clippy::arithmetic_side_effects,
+    clippy::needless_pass_by_value,
+    clippy::redundant_clone
+)]
 
 use procmond::process_collector::{
     FallbackProcessCollector, ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,

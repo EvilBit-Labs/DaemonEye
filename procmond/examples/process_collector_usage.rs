@@ -1,7 +1,22 @@
-//! Example demonstrating the ProcessCollector trait usage in ProcessMessageHandler.
+//! Example demonstrating the `ProcessCollector` trait usage in `ProcessMessageHandler`.
 //!
-//! This example shows how the refactored ProcessMessageHandler uses the ProcessCollector
+//! This example shows how the refactored `ProcessMessageHandler` uses the `ProcessCollector`
 //! trait for platform-agnostic process enumeration with proper error handling.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::str_to_string,
+    clippy::missing_const_for_fn,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::uninlined_format_args,
+    clippy::arithmetic_side_effects,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::panic
+)]
 
 use async_trait::async_trait;
 use collector_core::ProcessEvent;

@@ -1,7 +1,7 @@
-//! DaemonEye Agent Library
+//! `DaemonEye` Agent Library
 //!
-//! This library provides the core functionality for the DaemonEye detection orchestrator,
-//! including embedded EventBus broker management, IPC client functionality, and IPC server
+//! This library provides the core functionality for the `DaemonEye` detection orchestrator,
+//! including embedded `EventBus` broker management, IPC client functionality, and IPC server
 //! management for CLI communication.
 
 #![forbid(unsafe_code)]

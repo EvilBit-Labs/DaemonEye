@@ -6,6 +6,15 @@
 //!
 //! Both services coexist without interference.
 
+#![allow(
+    clippy::uninlined_format_args,
+    clippy::print_stdout,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::doc_markdown,
+    clippy::str_to_string
+)]
+
 use daemoneye_agent::{BrokerManager, IpcServerManager, create_cli_ipc_config};
 use daemoneye_lib::config::BrokerConfig;
 use std::time::Duration;

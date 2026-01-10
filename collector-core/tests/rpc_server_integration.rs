@@ -81,11 +81,8 @@ async fn spawn_registration_handler(
                     eprintln!("REG_HANDLER: Received message, payload size: {}", message.payload.len());
 
                     // Deserialize RPC request
-                    let request: RpcRequest = match bincode::serde::decode_from_slice(
-                        &message.payload,
-                        bincode::config::standard(),
-                    ) {
-                        Ok((req, _)) => req,
+                    let request: RpcRequest = match postcard::from_bytes(&message.payload) {
+                        Ok(req) => req,
                         Err(e) => {
                             eprintln!("REG_HANDLER: Failed to deserialize request: {:?}", e);
                             continue;
@@ -100,7 +97,7 @@ async fn spawn_registration_handler(
                     // Serialize and publish response to the client's response topic
                     let response_topic = format!("control.rpc.response.{}", request.client_id);
                     eprintln!("REG_HANDLER: Publishing response to topic: {}", response_topic);
-                    if let Ok(payload) = bincode::serde::encode_to_vec(&response, bincode::config::standard()) {
+                    if let Ok(payload) = postcard::to_allocvec(&response) {
                         let result = broker_clone.publish(&response_topic, &response.request_id, payload).await;
                         eprintln!("REG_HANDLER: Publish result: {:?}", result.is_ok());
                     }

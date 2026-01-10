@@ -46,8 +46,7 @@ impl CollectorRegistry {
         let now = SystemTime::now();
         let heartbeat_interval = request
             .heartbeat_interval_ms
-            .map(Duration::from_millis)
-            .unwrap_or(self.default_heartbeat);
+            .map_or(self.default_heartbeat, Duration::from_millis);
 
         let record = CollectorRecord {
             registration: request,
@@ -56,6 +55,7 @@ impl CollectorRegistry {
             heartbeat_interval,
         };
         records.insert(collector_id.clone(), record);
+        drop(records);
 
         let assigned_topics = vec![
             format!("control.collector.{}", collector_id),
@@ -91,7 +91,7 @@ impl CollectorRegistry {
                 record.last_heartbeat = SystemTime::now();
                 Ok(())
             }
-            None => Err(RegistryError::NotFound(collector_id.to_string())),
+            None => Err(RegistryError::NotFound(collector_id.to_owned())),
         }
     }
 
@@ -139,6 +139,7 @@ pub struct CollectorRecord {
 
 /// Errors that can occur when interacting with the collector registry.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RegistryError {
     /// Collector is already registered.
     #[error("collector `{0}` is already registered")]
@@ -154,19 +155,19 @@ pub enum RegistryError {
 fn validate_registration(request: &RegistrationRequest) -> Result<(), RegistryError> {
     if request.collector_id.trim().is_empty() {
         return Err(RegistryError::Validation(
-            "collector_id cannot be empty".to_string(),
+            "collector_id cannot be empty".to_owned(),
         ));
     }
 
     if request.collector_type.trim().is_empty() {
         return Err(RegistryError::Validation(
-            "collector_type cannot be empty".to_string(),
+            "collector_type cannot be empty".to_owned(),
         ));
     }
 
     if request.hostname.trim().is_empty() {
         return Err(RegistryError::Validation(
-            "hostname cannot be empty".to_string(),
+            "hostname cannot be empty".to_owned(),
         ));
     }
 
@@ -174,6 +175,12 @@ fn validate_registration(request: &RegistrationRequest) -> Result<(), RegistryEr
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::str_to_string,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
