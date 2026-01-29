@@ -688,7 +688,7 @@ impl ProcessCollector for LinuxProcessCollector {
         let mut processed_count = 0;
 
         // Process each process with individual error handling
-        for (sysinfo_pid, process) in system.processes().iter() {
+        for (sysinfo_pid, process) in system.processes() {
             let pid = sysinfo_pid.as_u32();
 
             // Check if we've hit the maximum process limit
@@ -702,49 +702,37 @@ impl ProcessCollector for LinuxProcessCollector {
                 break;
             }
 
-            processed_count += 1;
+            processed_count = processed_count.saturating_add(1);
 
-            match self.convert_sysinfo_to_event(pid, process) {
-                Ok(event) => {
-                    // Apply filtering based on configuration
-                    let should_skip = if self.base_config.skip_system_processes
-                        && Self::is_system_process(&event.name, pid)
-                    {
-                        true
-                    } else {
-                        self.base_config.skip_kernel_threads
-                            && Self::is_kernel_thread(&event.name, &event.command_line)
-                    };
+            // convert_sysinfo_to_event doesn't return errors, so wrap in Ok for match
+            let event = self.convert_sysinfo_to_event(pid, process);
 
-                    if should_skip {
-                        debug!(
-                            pid = pid,
-                            name = %event.name,
-                            "Skipping process due to configuration"
-                        );
-                        stats.inaccessible_processes += 1;
-                    } else {
-                        events.push(event);
-                        stats.successful_collections += 1;
-                    }
-                }
-                Err(ProcessCollectionError::ProcessAccessDenied { pid, message }) => {
-                    debug!(pid = pid, reason = %message, "Process access denied");
-                    stats.inaccessible_processes += 1;
-                }
-                Err(ProcessCollectionError::ProcessNotFound { pid }) => {
-                    debug!(pid = pid, "Process no longer exists");
-                    stats.inaccessible_processes += 1;
-                }
-                Err(e) => {
-                    warn!(pid = pid, error = %e, "Error reading process information");
-                    stats.invalid_processes += 1;
-                }
+            // Apply filtering based on configuration
+            let should_skip = if self.base_config.skip_system_processes
+                && Self::is_system_process(&event.name, pid)
+            {
+                true
+            } else {
+                self.base_config.skip_kernel_threads
+                    && Self::is_kernel_thread(&event.name, &event.command_line)
+            };
+
+            if should_skip {
+                debug!(
+                    pid = pid,
+                    name = %event.name,
+                    "Skipping process due to configuration"
+                );
+                stats.inaccessible_processes = stats.inaccessible_processes.saturating_add(1);
+            } else {
+                events.push(event);
+                stats.successful_collections = stats.successful_collections.saturating_add(1);
             }
         }
 
         stats.total_processes = processed_count;
-        stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
+        stats.collection_duration_ms =
+            u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         debug!(
             collector = self.name(),
@@ -791,12 +779,10 @@ impl ProcessCollector for LinuxProcessCollector {
         let system = sysinfo_result;
         let sysinfo_pid = sysinfo::Pid::from_u32(pid);
 
-        if let Some(process) = system.process(sysinfo_pid) {
-            // Convert sysinfo process to ProcessEvent and add Linux-specific enhancements
-            self.convert_sysinfo_to_event(pid, process)
-        } else {
-            Err(ProcessCollectionError::ProcessNotFound { pid })
-        }
+        system.process(sysinfo_pid).map_or(
+            Err(ProcessCollectionError::ProcessNotFound { pid }),
+            |process| Ok(self.convert_sysinfo_to_event(pid, process)),
+        )
     }
 
     async fn health_check(&self) -> ProcessCollectionResult<()> {
@@ -818,10 +804,10 @@ impl ProcessCollector for LinuxProcessCollector {
         }
 
         // Try to read information for the first few processes
-        let mut successful_reads = 0;
-        for &pid in pids.iter().take(5) {
+        let mut successful_reads: usize = 0;
+        for &pid in &pids[..pids.len().min(5)] {
             if self.read_process_info(pid).is_ok() {
-                successful_reads += 1;
+                successful_reads = successful_reads.saturating_add(1);
             }
         }
 
@@ -845,11 +831,7 @@ impl ProcessCollector for LinuxProcessCollector {
 
 impl LinuxProcessCollector {
     /// Converts a sysinfo process to a ProcessEvent with Linux-specific enhancements.
-    fn convert_sysinfo_to_event(
-        &self,
-        pid: u32,
-        process: &Process,
-    ) -> ProcessCollectionResult<ProcessEvent> {
+    fn convert_sysinfo_to_event(&self, pid: u32, process: &Process) -> ProcessEvent {
         // Get basic information from sysinfo
         let ppid = process.parent().map(|p| p.as_u32());
 
@@ -913,7 +895,7 @@ impl LinuxProcessCollector {
             None
         };
 
-        Ok(ProcessEvent {
+        ProcessEvent {
             pid,
             ppid,
             name,
@@ -928,7 +910,7 @@ impl LinuxProcessCollector {
             file_exists,
             timestamp: SystemTime::now(),
             platform_metadata,
-        })
+        }
     }
 
     /// Determines if a process is a system process based on name and PID.
