@@ -543,11 +543,10 @@ impl LinuxProcessCollector {
             .and_then(|uid_line| uid_line.split_whitespace().next().map(ToOwned::to_owned));
 
         // Enhanced metadata collection
-        let enhanced_metadata = if self.base_config.collect_enhanced_metadata {
-            Some(self.read_enhanced_metadata(pid))
-        } else {
-            None
-        };
+        let enhanced_metadata = self
+            .base_config
+            .collect_enhanced_metadata
+            .then(|| self.read_enhanced_metadata(pid));
 
         // Calculate CPU and memory usage if enhanced metadata is enabled
         let (cpu_usage, memory_usage) = if self.base_config.collect_enhanced_metadata {
@@ -561,21 +560,12 @@ impl LinuxProcessCollector {
         };
 
         // Determine start time
-        let start_time = if self.base_config.collect_enhanced_metadata {
-            // This would require parsing the start time from /proc/\[pid\]/stat
-            // and converting from jiffies to SystemTime. For now, we'll use None.
-            None
-        } else {
-            None
-        };
+        // TODO: Implement start time parsing from /proc/[pid]/stat jiffies
+        let start_time: Option<SystemTime> = None;
 
         // Compute executable hash if requested
-        let executable_hash = if self.base_config.compute_executable_hashes {
-            // TODO: Implement executable hashing (issue #40)
-            None
-        } else {
-            None
-        };
+        // TODO: Implement executable hashing (issue #40)
+        let executable_hash: Option<String> = None;
 
         // Serialize enhanced metadata for platform_metadata field
         let platform_metadata = if self.base_config.collect_enhanced_metadata {
@@ -884,44 +874,27 @@ impl LinuxProcessCollector {
             let start = process.start_time();
 
             (
-                if cpu.is_finite() && cpu >= 0.0 {
-                    Some(cpu as f64)
-                } else {
-                    None
-                },
-                if memory > 0 {
-                    Some(memory.saturating_mul(1024))
-                } else {
-                    None
-                },
-                if start > 0 {
-                    Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(start))
-                } else {
-                    None
-                },
+                (cpu.is_finite() && cpu >= 0.0).then(|| cpu as f64),
+                (memory > 0).then(|| memory.saturating_mul(1024)),
+                (start > 0).then(|| SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(start)),
             )
         } else {
             (None, None, None)
         };
 
         // Compute executable hash if requested
-        let executable_hash = if self.base_config.compute_executable_hashes {
-            // TODO: Implement executable hashing (issue #40)
-            None
-        } else {
-            None
-        };
+        // TODO: Implement executable hashing (issue #40)
+        let executable_hash: Option<String> = None;
 
         let user_id = process.user_id().map(|uid| uid.to_string());
         let accessible = true;
         let file_exists = executable_path.is_some();
 
         // Add Linux-specific enhancements
-        let enhanced_metadata = if self.base_config.collect_enhanced_metadata {
-            Some(self.read_enhanced_metadata(pid))
-        } else {
-            None
-        };
+        let enhanced_metadata = self
+            .base_config
+            .collect_enhanced_metadata
+            .then(|| self.read_enhanced_metadata(pid));
 
         // Serialize enhanced metadata for platform_metadata field
         let platform_metadata = if self.base_config.collect_enhanced_metadata {
