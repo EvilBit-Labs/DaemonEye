@@ -8,8 +8,8 @@ set ignore-comments := true
 
 # Use mise to manage all dev tools (go, pre-commit, uv, etc.)
 # See mise.toml for tool versions
-mise_exec := "mise exec --"
 
+mise_exec := "mise exec --"
 root := justfile_dir()
 
 # =============================================================================
@@ -23,19 +23,23 @@ default:
 # CROSS-PLATFORM HELPERS (private)
 # =============================================================================
 
-[private, windows]
+[private]
+[windows]
 ensure-dir dir:
     New-Item -ItemType Directory -Force -Path "{{ dir }}" | Out-Null
 
-[private, unix]
+[private]
+[unix]
 ensure-dir dir:
     /bin/mkdir -p "{{ dir }}"
 
-[private, windows]
+[private]
+[windows]
 rmrf path:
     if (Test-Path "{{ path }}") { Remove-Item "{{ path }}" -Recurse -Force }
 
-[private, unix]
+[private]
+[unix]
 rmrf path:
     /bin/rm -rf "{{ path }}"
 
@@ -82,6 +86,7 @@ lint-docs:
 [unix]
 lint-docs:
     RUSTDOCFLAGS='-D warnings' {{ mise_exec }} cargo doc --no-deps --document-private-items
+
 # Format justfile
 fmt-justfile:
     @{{ mise_exec }} just --fmt --unstable

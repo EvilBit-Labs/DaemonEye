@@ -377,7 +377,8 @@ impl EventBusConnector {
     /// use std::path::PathBuf;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// std::env::set_var("DAEMONEYE_BROKER_SOCKET", "/tmp/daemoneye-broker.sock");
+    /// // SAFETY: Single-threaded example before any concurrent operations
+    /// unsafe { std::env::set_var("DAEMONEYE_BROKER_SOCKET", "/tmp/daemoneye-broker.sock") };
     /// let mut connector = EventBusConnector::new(PathBuf::from("/tmp/wal")).await?;
     /// connector.connect().await?;
     /// assert!(connector.is_connected());
@@ -617,58 +618,62 @@ impl EventBusConnector {
             "Event written to WAL"
         );
 
-        // Step 2: Try to publish if connected
+        // Step 2: Ensure connected (attempt reconnection if needed)
+        if !self.connected {
+            // Ignore reconnection result - we'll buffer if still disconnected
+            drop(self.try_reconnect().await);
+        }
+
+        // Step 3: Try to publish or buffer
         if self.connected {
-            if let Err(e) = self.publish_to_broker(&event, &topic).await {
-                // Publish failed - mark as disconnected and buffer
+            self.try_publish_or_buffer(sequence, event, topic).await?;
+        } else {
+            self.buffer_event(sequence, event, topic)?;
+        }
+
+        Ok(sequence)
+    }
+
+    /// Attempt to publish an event to the broker, buffering on failure.
+    ///
+    /// If publish succeeds, marks the event as published in WAL.
+    /// If publish fails, disconnects and buffers the event.
+    async fn try_publish_or_buffer(
+        &mut self,
+        sequence: u64,
+        event: ProcessEvent,
+        topic: String,
+    ) -> EventBusConnectorResult<()> {
+        match self.publish_to_broker(&event, &topic).await {
+            Ok(()) => {
+                // Successfully published - mark as published in WAL
+                self.mark_published_with_warning(sequence).await;
+                Ok(())
+            }
+            Err(e) => {
+                // Publish failed - disconnect and buffer
                 warn!(
                     sequence = sequence,
                     error = %e,
                     "Failed to publish event, buffering"
                 );
                 self.connected = false;
-                self.buffer_event(sequence, event, topic)?;
-            } else {
-                // Successfully published - mark as published in WAL
-                if let Err(e) = self.wal.mark_published(sequence).await {
-                    // Non-fatal: WAL cleanup will happen eventually
-                    warn!(
-                        sequence = sequence,
-                        error = %e,
-                        "Failed to mark event as published in WAL"
-                    );
-                }
-            }
-        } else {
-            // Not connected - attempt reconnection before buffering
-            let reconnected = matches!(self.try_reconnect().await, Ok(true));
-            if reconnected {
-                // Reconnected successfully - try to publish
-                if let Err(e) = self.publish_to_broker(&event, &topic).await {
-                    warn!(
-                        sequence = sequence,
-                        error = %e,
-                        "Failed to publish after reconnection, buffering"
-                    );
-                    self.connected = false;
-                    self.buffer_event(sequence, event, topic)?;
-                } else {
-                    // Successfully published after reconnection
-                    if let Err(e) = self.wal.mark_published(sequence).await {
-                        warn!(
-                            sequence = sequence,
-                            error = %e,
-                            "Failed to mark event as published in WAL"
-                        );
-                    }
-                }
-            } else {
-                // Still disconnected - buffer the event
-                self.buffer_event(sequence, event, topic)?;
+                self.buffer_event(sequence, event, topic)
             }
         }
+    }
 
-        Ok(sequence)
+    /// Mark an event as published in WAL, logging warnings on failure.
+    ///
+    /// Failures are non-fatal since WAL cleanup will happen eventually.
+    async fn mark_published_with_warning(&self, sequence: u64) {
+        if let Err(e) = self.wal.mark_published(sequence).await {
+            warn!(
+                sequence = sequence,
+                error = %e,
+                "Failed to mark event as published in WAL"
+            );
+        }
     }
 
     /// Take ownership of the backpressure signal receiver.
@@ -698,6 +703,7 @@ impl EventBusConnector {
     ///         match signal {
     ///             BackpressureSignal::Activated => println!("Slow down!"),
     ///             BackpressureSignal::Released => println!("Resume normal rate"),
+    ///             _ => {} // Handle future variants
     ///         }
     ///     }
     /// });

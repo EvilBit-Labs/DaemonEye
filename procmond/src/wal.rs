@@ -108,6 +108,16 @@ pub enum WalError {
 /// Result type for WAL operations.
 pub type WalResult<T> = Result<T, WalError>;
 
+/// Internal result type for file read operations.
+///
+/// Used by helper functions to signal EOF vs I/O errors.
+enum ReadResult {
+    /// End of file reached (expected during normal replay)
+    Eof,
+    /// I/O error occurred
+    Io(std::io::Error),
+}
+
 /// A single entry in the WAL.
 ///
 /// Each entry contains a process event with a monotonically increasing sequence
@@ -390,6 +400,8 @@ impl WriteAheadLog {
     }
 
     /// Scan a single WAL file to extract metadata about event sequences.
+    ///
+    /// Uses helper functions to reduce nesting depth.
     async fn scan_file_metadata(path: &Path) -> WalResult<WalFileMetadata> {
         let mut file = fs::File::open(path)
             .await
@@ -400,42 +412,28 @@ impl WriteAheadLog {
         let mut first_entry = true;
 
         loop {
-            // Read length prefix
-            match file.read_exact(&mut buffer).await {
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    break;
-                }
-                Ok(_) => {
-                    #[allow(clippy::indexing_slicing)] // Safe: buffer is exactly 4 bytes
-                    let length_bytes: [u8; 4] = [buffer[0], buffer[1], buffer[2], buffer[3]];
-                    #[allow(clippy::as_conversions)] // Safe: u32 length fits in usize
-                    let length = u32::from_le_bytes(length_bytes) as usize;
+            // Read length prefix - handle EOF
+            let length = match Self::read_length_prefix(&mut file, &mut buffer).await {
+                Ok(len) => len,
+                Err(ReadResult::Eof) => break,
+                Err(ReadResult::Io(e)) => return Err(WalError::Io(e)),
+            };
 
-                    let mut entry_data = vec![0_u8; length];
-                    match file.read_exact(&mut entry_data).await {
-                        Ok(_) => {
-                            if let Ok(entry) = postcard::from_bytes::<WalEntry>(&entry_data)
-                                && entry.verify()
-                            {
-                                if first_entry {
-                                    metadata.min_sequence = entry.sequence;
-                                    first_entry = false;
-                                }
-                                metadata.max_sequence = entry.sequence;
-                                metadata.entry_count = metadata.entry_count.saturating_add(1);
-                            }
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                            break;
-                        }
-                        Err(e) => {
-                            return Err(WalError::Io(e));
-                        }
-                    }
+            // Read entry data - handle EOF/errors
+            let entry_data = match Self::read_entry_data(&mut file, length).await {
+                Ok(data) => data,
+                Err(ReadResult::Eof) => break,
+                Err(ReadResult::Io(e)) => return Err(WalError::Io(e)),
+            };
+
+            // Try to deserialize and verify; update metadata if valid
+            if let Some(entry) = Self::deserialize_and_verify_entry(&entry_data) {
+                if first_entry {
+                    metadata.min_sequence = entry.sequence;
+                    first_entry = false;
                 }
-                Err(e) => {
-                    return Err(WalError::Io(e));
-                }
+                metadata.max_sequence = entry.sequence;
+                metadata.entry_count = metadata.entry_count.saturating_add(1);
             }
         }
 
@@ -722,75 +720,16 @@ impl WriteAheadLog {
     }
 
     /// Replay a single WAL file.
+    ///
+    /// Delegates to [`Self::replay_file_entries`] and extracts just the events.
     async fn replay_file(&self, path: &Path) -> WalResult<Vec<ProcessEvent>> {
-        let mut file = fs::File::open(path)
-            .await
-            .map_err(|e| WalError::Replay(format!("Failed to open file: {e}")))?;
-
-        let mut events = Vec::new();
-        let mut buffer = vec![0_u8; 4];
-
-        loop {
-            // Read length prefix
-            match file.read_exact(&mut buffer).await {
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    // EOF reached
-                    break;
-                }
-                Ok(_) => {
-                    // Got length prefix - buffer is guaranteed to be 4 bytes
-                    #[allow(clippy::indexing_slicing)] // Safe: buffer is exactly 4 bytes
-                    let length_bytes: [u8; 4] = [buffer[0], buffer[1], buffer[2], buffer[3]];
-                    #[allow(clippy::as_conversions)] // Safe: u32 length fits in usize
-                    let length = u32::from_le_bytes(length_bytes) as usize;
-
-                    // Allocate and read entry data
-                    let mut entry_data = vec![0_u8; length];
-                    match file.read_exact(&mut entry_data).await {
-                        Ok(_) => {
-                            // Deserialize entry
-                            match postcard::from_bytes::<WalEntry>(&entry_data) {
-                                Ok(entry) => {
-                                    // Verify checksum
-                                    if entry.verify() {
-                                        events.push(entry.event);
-                                    } else {
-                                        warn!(
-                                            sequence = entry.sequence,
-                                            "Skipping corrupted WAL entry (checksum mismatch)"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        error = %e,
-                                        "Skipping corrupted WAL entry (deserialization failed)"
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                            // Partial write detected
-                            warn!("Skipping partial WAL entry (truncated data)");
-                            break;
-                        }
-                        Err(e) => {
-                            return Err(WalError::Io(e));
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(WalError::Io(e));
-                }
-            }
-        }
-
-        Ok(events)
+        let entries = self.replay_file_entries(path).await?;
+        Ok(entries.into_iter().map(|entry| entry.event).collect())
     }
 
     /// Replay WAL entries with full metadata for crash recovery.
     ///
-    /// Similar to [`replay`], but returns complete `WalEntry` objects including
+    /// Similar to [`Self::replay`], but returns complete `WalEntry` objects including
     /// sequence numbers and event types. Use this when you need to track which
     /// events have been published or need event type information for topic routing.
     ///
@@ -832,6 +771,8 @@ impl WriteAheadLog {
     }
 
     /// Replay a single WAL file returning full entries.
+    ///
+    /// Uses early-continue pattern to reduce nesting depth.
     async fn replay_file_entries(&self, path: &Path) -> WalResult<Vec<WalEntry>> {
         let mut file = fs::File::open(path)
             .await
@@ -841,61 +782,83 @@ impl WriteAheadLog {
         let mut buffer = vec![0_u8; 4];
 
         loop {
-            // Read length prefix
-            match file.read_exact(&mut buffer).await {
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    // EOF reached
+            // Read length prefix - handle EOF
+            let length = match Self::read_length_prefix(&mut file, &mut buffer).await {
+                Ok(len) => len,
+                Err(ReadResult::Eof) => break,
+                Err(ReadResult::Io(e)) => return Err(WalError::Io(e)),
+            };
+
+            // Read entry data - handle EOF/errors
+            let entry_data = match Self::read_entry_data(&mut file, length).await {
+                Ok(data) => data,
+                Err(ReadResult::Eof) => {
+                    warn!("Skipping partial WAL entry (truncated data)");
                     break;
                 }
-                Ok(_) => {
-                    // Got length prefix - buffer is guaranteed to be 4 bytes
-                    #[allow(clippy::indexing_slicing)] // Safe: buffer is exactly 4 bytes
-                    let length_bytes: [u8; 4] = [buffer[0], buffer[1], buffer[2], buffer[3]];
-                    #[allow(clippy::as_conversions)] // Safe: u32 length fits in usize
-                    let length = u32::from_le_bytes(length_bytes) as usize;
+                Err(ReadResult::Io(e)) => return Err(WalError::Io(e)),
+            };
 
-                    // Allocate and read entry data
-                    let mut entry_data = vec![0_u8; length];
-                    match file.read_exact(&mut entry_data).await {
-                        Ok(_) => {
-                            // Deserialize entry
-                            match postcard::from_bytes::<WalEntry>(&entry_data) {
-                                Ok(entry) => {
-                                    // Verify checksum
-                                    if entry.verify() {
-                                        entries.push(entry);
-                                    } else {
-                                        warn!(
-                                            sequence = entry.sequence,
-                                            "Skipping corrupted WAL entry (checksum mismatch)"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        error = %e,
-                                        "Skipping corrupted WAL entry (deserialization failed)"
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                            // Partial write detected
-                            warn!("Skipping partial WAL entry (truncated data)");
-                            break;
-                        }
-                        Err(e) => {
-                            return Err(WalError::Io(e));
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(WalError::Io(e));
-                }
+            // Deserialize and verify entry
+            if let Some(entry) = Self::deserialize_and_verify_entry(&entry_data) {
+                entries.push(entry);
             }
         }
 
         Ok(entries)
+    }
+
+    /// Read a 4-byte length prefix from the file.
+    async fn read_length_prefix(
+        file: &mut fs::File,
+        buffer: &mut [u8],
+    ) -> Result<usize, ReadResult> {
+        match file.read_exact(buffer).await {
+            Ok(_) => {
+                #[allow(clippy::indexing_slicing)] // Safe: buffer is exactly 4 bytes
+                let length_bytes: [u8; 4] = [buffer[0], buffer[1], buffer[2], buffer[3]];
+                #[allow(clippy::as_conversions)] // Safe: u32 length fits in usize
+                Ok(u32::from_le_bytes(length_bytes) as usize)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Err(ReadResult::Eof),
+            Err(e) => Err(ReadResult::Io(e)),
+        }
+    }
+
+    /// Read entry data of the specified length from the file.
+    async fn read_entry_data(file: &mut fs::File, length: usize) -> Result<Vec<u8>, ReadResult> {
+        let mut entry_data = vec![0_u8; length];
+        match file.read_exact(&mut entry_data).await {
+            Ok(_) => Ok(entry_data),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Err(ReadResult::Eof),
+            Err(e) => Err(ReadResult::Io(e)),
+        }
+    }
+
+    /// Deserialize entry data and verify checksum.
+    ///
+    /// Returns `Some(entry)` if valid, `None` if corrupted (with warning logged).
+    fn deserialize_and_verify_entry(entry_data: &[u8]) -> Option<WalEntry> {
+        match postcard::from_bytes::<WalEntry>(entry_data) {
+            Ok(entry) => {
+                if entry.verify() {
+                    Some(entry)
+                } else {
+                    warn!(
+                        sequence = entry.sequence,
+                        "Skipping corrupted WAL entry (checksum mismatch)"
+                    );
+                    None
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Skipping corrupted WAL entry (deserialization failed)"
+                );
+                None
+            }
+        }
     }
 
     /// Mark events as published up to a given sequence number.

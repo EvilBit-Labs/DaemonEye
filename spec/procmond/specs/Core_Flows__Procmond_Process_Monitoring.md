@@ -107,7 +107,7 @@ sequenceDiagram
 
 ---
 
-## Flow 2: Continuous Process Monitoring
+## Flow 3: Continuous Process Monitoring
 
 **Description:** The ongoing cycle of collecting process data and publishing events to the event bus
 
@@ -166,7 +166,7 @@ sequenceDiagram
 
 ---
 
-## Flow 3: Suspicious Process Detection and Triggering
+## Flow 4: Suspicious Process Detection and Triggering
 
 **Description:** How procmond identifies suspicious processes and triggers deeper analysis by other collectors
 
@@ -300,7 +300,7 @@ sequenceDiagram
 
 **Description:** How procmond handles failures and recovers gracefully
 
-### 6.1: Event Bus Connection Failure
+### 7.1: Event Bus Connection Failure
 
 **Trigger:** procmond loses connection to daemoneye-agent's event bus broker
 
@@ -316,7 +316,7 @@ sequenceDiagram
 8. **Recovery:** When connection restored, procmond publishes buffered events
 9. Operator sees "procmond: reconnected" status update
 
-### 6.2: Permission/Privilege Failure
+### 7.2: Permission/Privilege Failure
 
 **Trigger:** procmond cannot access process information due to insufficient privileges
 
@@ -331,7 +331,7 @@ sequenceDiagram
 7. Operator sees warning in health report: "Limited process visibility due to permissions"
 8. Operator can review logs to identify privilege requirements
 
-### 6.3: Performance Degradation and Backpressure
+### 7.3: Performance Degradation and Backpressure
 
 **Trigger:** Collection takes too long or event bus cannot keep up with event volume
 
@@ -347,7 +347,7 @@ sequenceDiagram
 8. Operator sees "procmond: degraded (performance)" in health status
 9. Operator can review performance metrics and adjust configuration
 
-### 6.4: Platform-Specific Enumeration Failure
+### 7.4: Platform-Specific Enumeration Failure
 
 **Trigger:** Platform-specific collector fails (e.g., procfs unavailable on Linux, WinAPI error on Windows)
 
@@ -362,7 +362,7 @@ sequenceDiagram
 7. Operator sees "procmond: degraded (limited metadata)" in health report
 8. Operator can investigate platform-specific issues (missing kernel modules, security policies)
 
-### 6.5: Resource Exhaustion
+### 7.5: Resource Exhaustion
 
 **Trigger:** procmond approaches memory or CPU limits
 

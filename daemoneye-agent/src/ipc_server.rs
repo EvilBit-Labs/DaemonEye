@@ -29,6 +29,31 @@ pub enum IpcServerHealth {
     Stopped,
 }
 
+impl super::health::HealthState for IpcServerHealth {
+    fn is_healthy(&self) -> bool {
+        matches!(self, Self::Healthy)
+    }
+
+    fn is_starting(&self) -> bool {
+        matches!(self, Self::Starting)
+    }
+
+    fn unhealthy_message(&self) -> Option<&str> {
+        match *self {
+            Self::Unhealthy(ref msg) => Some(msg),
+            Self::Healthy | Self::Starting | Self::ShuttingDown | Self::Stopped => None,
+        }
+    }
+
+    fn is_stopped_or_shutting_down(&self) -> bool {
+        matches!(self, Self::ShuttingDown | Self::Stopped)
+    }
+
+    fn service_name() -> &'static str {
+        "IPC server"
+    }
+}
+
 /// IPC server manager that coordinates the `InterprocessServer` lifecycle
 /// within the daemoneye-agent process architecture for CLI communication.
 pub struct IpcServerManager {

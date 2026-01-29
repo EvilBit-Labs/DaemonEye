@@ -7,6 +7,7 @@ use tracing::{debug, error, info, warn};
 
 mod broker_manager;
 mod collector_registry;
+mod health;
 mod ipc_server;
 
 use broker_manager::BrokerManager;

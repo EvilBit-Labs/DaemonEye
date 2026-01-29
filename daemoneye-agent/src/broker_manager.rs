@@ -6,6 +6,7 @@
 //! for collector-core component coordination.
 
 use crate::collector_registry::{CollectorRegistry, RegistryError};
+use crate::health::{self, HealthState};
 use anyhow::{Context, Result};
 use daemoneye_eventbus::ConfigManager;
 use daemoneye_eventbus::rpc::{
@@ -38,6 +39,31 @@ pub enum BrokerHealth {
     Unhealthy(String),
     /// Broker is stopped
     Stopped,
+}
+
+impl HealthState for BrokerHealth {
+    fn is_healthy(&self) -> bool {
+        matches!(self, Self::Healthy)
+    }
+
+    fn is_starting(&self) -> bool {
+        matches!(self, Self::Starting)
+    }
+
+    fn unhealthy_message(&self) -> Option<&str> {
+        match *self {
+            Self::Unhealthy(ref msg) => Some(msg),
+            Self::Healthy | Self::Starting | Self::ShuttingDown | Self::Stopped => None,
+        }
+    }
+
+    fn is_stopped_or_shutting_down(&self) -> bool {
+        matches!(self, Self::ShuttingDown | Self::Stopped)
+    }
+
+    fn service_name() -> &'static str {
+        "Broker"
+    }
 }
 
 /// Embedded broker manager that coordinates the `DaemoneyeBroker` lifecycle
@@ -406,31 +432,8 @@ impl BrokerManager {
 
     /// Wait for the broker to become healthy with a timeout
     pub async fn wait_for_healthy(&self, timeout: Duration) -> Result<()> {
-        let start = std::time::Instant::now();
-
-        while start.elapsed() < timeout {
-            let health = self.health_status().await;
-            match health {
-                BrokerHealth::Healthy => {
-                    debug!("Broker is healthy");
-                    return Ok(());
-                }
-                BrokerHealth::Starting => {
-                    debug!("Broker is still starting, waiting...");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                BrokerHealth::Unhealthy(ref error) => {
-                    return Err(anyhow::anyhow!("Broker is unhealthy: {error}"));
-                }
-                BrokerHealth::ShuttingDown | BrokerHealth::Stopped => {
-                    return Err(anyhow::anyhow!("Broker is not running"));
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Timeout waiting for broker to become healthy after {timeout:?}"
-        ))
+        let health_status = Arc::clone(&self.health_status);
+        health::wait_for_healthy(timeout, || async { health_status.read().await.clone() }).await
     }
 
     /// Create an RPC client for a collector
