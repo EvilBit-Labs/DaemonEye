@@ -549,9 +549,7 @@ impl DaemoneyeBroker {
 
         // Attempt to decode CollectionEvent for internal subscribers
         let collection_event_result: Result<CollectionEvent> =
-            bincode::serde::decode_from_slice(&payload, bincode::config::standard())
-                .map(|(event, _)| event)
-                .map_err(|e| EventBusError::serialization(e.to_string()));
+            postcard::from_bytes(&payload).map_err(|e| EventBusError::serialization(e.to_string()));
 
         for subscriber_id in &subscribers {
             if let Some(sender) = senders_guard.get(subscriber_id) {
@@ -955,7 +953,7 @@ impl EventBus for DaemoneyeEventBus {
         };
 
         // Serialize event to payload
-        let payload = bincode::serde::encode_to_vec(&event, bincode::config::standard())
+        let payload = postcard::to_allocvec(&event)
             .map_err(|e| EventBusError::serialization(e.to_string()))?;
 
         self.broker.publish(topic, &correlation_id, payload).await

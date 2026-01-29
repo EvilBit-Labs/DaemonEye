@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use insta::assert_snapshot;
 use std::process::Command;
 use tempfile::TempDir;

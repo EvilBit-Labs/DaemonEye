@@ -379,7 +379,7 @@ impl Message {
         topic: String,
         request: &crate::rpc::RpcRequest,
     ) -> Result<Self, crate::error::EventBusError> {
-        let payload = bincode::serde::encode_to_vec(request, bincode::config::standard())
+        let payload = postcard::to_allocvec(request)
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))?;
 
         // Convert RpcCorrelationMetadata to CorrelationMetadata
@@ -406,7 +406,7 @@ impl Message {
         topic: String,
         response: &crate::rpc::RpcResponse,
     ) -> Result<Self, crate::error::EventBusError> {
-        let payload = bincode::serde::encode_to_vec(response, bincode::config::standard())
+        let payload = postcard::to_allocvec(response)
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))?;
 
         // Convert RpcCorrelationMetadata to CorrelationMetadata
@@ -430,15 +430,14 @@ impl Message {
 
     /// Serialize message to bytes
     pub fn serialize(&self) -> Result<Vec<u8>, crate::error::EventBusError> {
-        bincode::serde::encode_to_vec(self, bincode::config::standard())
+        postcard::to_allocvec(self)
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))
     }
 
     /// Deserialize message from bytes
     pub fn deserialize(data: &[u8]) -> Result<Self, crate::error::EventBusError> {
-        bincode::serde::decode_from_slice(data, bincode::config::standard())
+        postcard::from_bytes(data)
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))
-            .map(|(result, _)| result)
     }
 }
 

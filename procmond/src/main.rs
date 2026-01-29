@@ -17,17 +17,15 @@ use tracing::info;
 fn parse_interval(s: &str) -> Result<u64, String> {
     let interval: u64 = s
         .parse()
-        .map_err(|_| format!("Invalid interval '{}': must be a number", s))?;
+        .map_err(|_parse_err| format!("Invalid interval '{s}': must be a number"))?;
 
     if interval < 5 {
         Err(format!(
-            "Interval too small: {} seconds. Minimum allowed is 5 seconds",
-            interval
+            "Interval too small: {interval} seconds. Minimum allowed is 5 seconds"
         ))
     } else if interval > 3600 {
         Err(format!(
-            "Interval too large: {} seconds. Maximum allowed is 3600 seconds (1 hour)",
-            interval
+            "Interval too large: {interval} seconds. Maximum allowed is 3600 seconds (1 hour)"
         ))
     } else {
         Ok(interval)
@@ -77,27 +75,32 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _config = config_loader.load()?;
 
     // Initialize telemetry
-    let mut telemetry = telemetry::TelemetryCollector::new("procmond".to_string());
+    let mut telemetry = telemetry::TelemetryCollector::new("procmond".to_owned());
 
     // Initialize database
     let db_manager = Arc::new(Mutex::new(storage::DatabaseManager::new(&cli.database)?));
 
     // Record operation in telemetry
-    let timer = telemetry::PerformanceTimer::start("process_collection".to_string());
+    let timer = telemetry::PerformanceTimer::start("process_collection".to_owned());
     let duration = timer.finish();
     telemetry.record_operation(duration);
 
     // Perform health check
     let health_check = telemetry.health_check();
-    println!("Health status: {}", health_check.status);
+    info!(status = %health_check.status, "Health check completed");
 
     // Get database statistics
     let stats = db_manager.lock().await.get_stats()?;
-    println!("Database stats: {:?}", stats);
+    info!(
+        processes = stats.processes,
+        rules = stats.rules,
+        alerts = stats.alerts,
+        "Database stats retrieved"
+    );
 
     // Create collector configuration
     let mut collector_config = CollectorConfig::new()
-        .with_component_name("procmond".to_string())
+        .with_component_name("procmond".to_owned())
         .with_ipc_endpoint(daemoneye_lib::ipc::IpcConfig::default().endpoint_path)
         .with_max_event_sources(1)
         .with_event_buffer_size(1000)
@@ -112,9 +115,9 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     collector_config.registration = Some(CollectorRegistrationConfig {
         enabled: true,
         broker: None, // Will be set if broker is available via environment/config
-        collector_id: Some("procmond".to_string()),
-        collector_type: Some("procmond".to_string()),
-        topic: "control.collector.registration".to_string(),
+        collector_id: Some("procmond".to_owned()),
+        collector_type: Some("procmond".to_owned()),
+        topic: "control.collector.registration".to_owned(),
         timeout: Duration::from_secs(10),
         retry_attempts: 3,
         heartbeat_interval: Duration::from_secs(30),
@@ -138,8 +141,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registration_enabled = collector_config
         .registration
         .as_ref()
-        .map(|r| r.enabled)
-        .unwrap_or(false);
+        .is_some_and(|r| r.enabled);
     let collector_id_str = collector_config
         .registration
         .as_ref()

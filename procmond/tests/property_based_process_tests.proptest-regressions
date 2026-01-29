@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 792fa891f3b044d1bfb53ff0e919fd7df451f91526da0814727ec7d8fc5c754c # shrinks to max_processes = 50
+cc 62dde4ca87a425ea4e3bb5d96b72118e3cf2cccec4701863f8689ac0a38c9ae3 # shrinks to max_processes = 39, collect_enhanced_metadata = false

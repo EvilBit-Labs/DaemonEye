@@ -14,6 +14,7 @@ use tracing::{debug, error, warn};
 
 /// Errors that can occur during process collection.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ProcessCollectionError {
     /// System-level enumeration failed
     #[error("System process enumeration failed: {message}")]
@@ -78,6 +79,7 @@ pub struct CollectionStats {
 /// };
 /// ```
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)] // Config structs naturally have boolean flags
 pub struct ProcessCollectionConfig {
     /// Whether to collect enhanced metadata (CPU, memory, etc.)
     ///
@@ -206,6 +208,7 @@ pub trait ProcessCollector: Send + Sync {
 
 /// Capabilities that a process collector can provide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)] // Capability flags are naturally boolean
 pub struct ProcessCollectorCapabilities {
     /// Can collect basic process information (PID, name, etc.)
     pub basic_info: bool,
@@ -241,11 +244,12 @@ pub struct SysinfoProcessCollector {
 
 impl SysinfoProcessCollector {
     /// Creates a new sysinfo-based process collector with the specified configuration.
-    pub fn new(config: ProcessCollectionConfig) -> Self {
+    pub const fn new(config: ProcessCollectionConfig) -> Self {
         Self { config }
     }
 
-    /// Converts a sysinfo process to a ProcessEvent with comprehensive error handling.
+    /// Converts a sysinfo process to a `ProcessEvent` with comprehensive error handling.
+    #[allow(clippy::trivially_copy_pass_by_ref)] // Pid reference matches sysinfo API patterns
     fn convert_process_to_event(
         &self,
         pid: &Pid,
@@ -257,15 +261,15 @@ impl SysinfoProcessCollector {
         if pid_u32 == 0 {
             return Err(ProcessCollectionError::InvalidProcessData {
                 pid: pid_u32,
-                message: "Invalid PID: 0".to_string(),
+                message: "Invalid PID: 0".to_owned(),
             });
         }
 
-        let ppid = process.parent().map(|p| p.as_u32());
+        let ppid = process.parent().map(sysinfo::Pid::as_u32);
 
         // Get process name with fallback
         let name = if process.name().is_empty() {
-            format!("<unknown-{}>", pid_u32)
+            format!("<unknown-{pid_u32}>")
         } else {
             process.name().to_string_lossy().to_string()
         };
@@ -274,7 +278,7 @@ impl SysinfoProcessCollector {
         if self.config.skip_system_processes && self.is_system_process(&name, pid_u32) {
             return Err(ProcessCollectionError::ProcessAccessDenied {
                 pid: pid_u32,
-                message: "System process skipped by configuration".to_string(),
+                message: "System process skipped by configuration".to_owned(),
             });
         }
 
@@ -282,7 +286,7 @@ impl SysinfoProcessCollector {
         if self.config.skip_kernel_threads && self.is_kernel_thread(&name, process) {
             return Err(ProcessCollectionError::ProcessAccessDenied {
                 pid: pid_u32,
-                message: "Kernel thread skipped by configuration".to_string(),
+                message: "Kernel thread skipped by configuration".to_owned(),
             });
         }
 
@@ -299,7 +303,8 @@ impl SysinfoProcessCollector {
         let start_time = if self.config.collect_enhanced_metadata {
             let start_time_secs = process.start_time();
             if start_time_secs > 0 {
-                Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(start_time_secs))
+                // Safe: checked_add handles potential overflow
+                SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(start_time_secs))
             } else {
                 None
             }
@@ -313,18 +318,10 @@ impl SysinfoProcessCollector {
             let memory = process.memory();
 
             // Validate CPU usage (should be between 0 and 100 * num_cpus)
-            let cpu_usage = if cpu.is_finite() && cpu >= 0.0 {
-                Some(cpu as f64)
-            } else {
-                None
-            };
+            let cpu_usage = (cpu.is_finite() && cpu >= 0.0).then(|| f64::from(cpu));
 
             // Memory usage should be reasonable (convert from KB to bytes)
-            let memory_usage = if memory > 0 {
-                Some(memory.saturating_mul(1024))
-            } else {
-                None
-            };
+            let memory_usage = (memory > 0).then(|| memory.saturating_mul(1024));
 
             (cpu_usage, memory_usage)
         } else {
@@ -332,13 +329,9 @@ impl SysinfoProcessCollector {
         };
 
         // Compute executable hash if requested
-        let executable_hash = if self.config.compute_executable_hashes {
-            // TODO: Implement executable hashing (issue #40)
-            // For now, we'll leave this as None until the hashing implementation is added
-            None
-        } else {
-            None
-        };
+        // TODO: Implement executable hashing (issue #40)
+        // For now, we'll leave this as None until the hashing implementation is added
+        let executable_hash: Option<String> = None;
 
         let user_id = process.user_id().map(|uid| uid.to_string());
         let accessible = true; // Process is accessible if we can enumerate it
@@ -363,6 +356,7 @@ impl SysinfoProcessCollector {
     }
 
     /// Determines if a process is a system process based on name and PID.
+    #[allow(clippy::unused_self)] // May use self for configuration in future
     fn is_system_process(&self, name: &str, pid: u32) -> bool {
         // Common system process patterns
         const SYSTEM_PROCESSES: &[&str] = &[
@@ -391,17 +385,8 @@ impl SysinfoProcessCollector {
     }
 
     /// Determines if a process is a kernel thread.
+    #[allow(clippy::unused_self)] // May use self for configuration in future
     fn is_kernel_thread(&self, name: &str, process: &Process) -> bool {
-        // Kernel threads typically have no command line arguments
-        if !process.cmd().is_empty() {
-            return false;
-        }
-
-        // Kernel threads often have names in brackets
-        if name.starts_with('[') && name.ends_with(']') {
-            return true;
-        }
-
         // Common kernel thread patterns
         const KERNEL_THREAD_PATTERNS: &[&str] = &[
             "kworker",
@@ -414,6 +399,16 @@ impl SysinfoProcessCollector {
             "kthreadd",
             "kauditd",
         ];
+
+        // Kernel threads typically have no command line arguments
+        if !process.cmd().is_empty() {
+            return false;
+        }
+
+        // Kernel threads often have names in brackets
+        if name.starts_with('[') && name.ends_with(']') {
+            return true;
+        }
 
         let name_lower = name.to_lowercase();
         KERNEL_THREAD_PATTERNS
@@ -468,7 +463,7 @@ impl ProcessCollector for SysinfoProcessCollector {
 
             if system.processes().is_empty() {
                 return Err(ProcessCollectionError::SystemEnumerationFailed {
-                    message: "No processes found during enumeration".to_string(),
+                    message: "No processes found during enumeration".to_owned(),
                 });
             }
 
@@ -476,17 +471,17 @@ impl ProcessCollector for SysinfoProcessCollector {
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
-            message: format!("Process enumeration task failed: {}", e),
+            message: format!("Process enumeration task failed: {e}"),
         })?;
 
         let system = enumeration_result?;
 
         let mut events = Vec::new();
         let mut stats = CollectionStats::default();
-        let mut processed_count = 0;
+        let mut processed_count: usize = 0;
 
         // Process each process with individual error handling
-        for (pid, process) in system.processes().iter() {
+        for (pid, process) in system.processes() {
             // Check if we've hit the maximum process limit
             if self.config.max_processes > 0 && events.len() >= self.config.max_processes {
                 debug!(
@@ -497,20 +492,26 @@ impl ProcessCollector for SysinfoProcessCollector {
                 break;
             }
 
-            processed_count += 1;
+            processed_count = processed_count.saturating_add(1);
 
             match self.convert_process_to_event(pid, process) {
                 Ok(event) => {
                     events.push(event);
-                    stats.successful_collections += 1;
+                    stats.successful_collections = stats.successful_collections.saturating_add(1);
                 }
-                Err(ProcessCollectionError::ProcessAccessDenied { pid, message }) => {
-                    debug!(pid = pid, reason = %message, "Process access denied");
-                    stats.inaccessible_processes += 1;
+                Err(ProcessCollectionError::ProcessAccessDenied {
+                    pid: denied_pid,
+                    message,
+                }) => {
+                    debug!(pid = denied_pid, reason = %message, "Process access denied");
+                    stats.inaccessible_processes = stats.inaccessible_processes.saturating_add(1);
                 }
-                Err(ProcessCollectionError::InvalidProcessData { pid, message }) => {
-                    warn!(pid = pid, reason = %message, "Invalid process data");
-                    stats.invalid_processes += 1;
+                Err(ProcessCollectionError::InvalidProcessData {
+                    pid: invalid_pid,
+                    message,
+                }) => {
+                    warn!(pid = invalid_pid, reason = %message, "Invalid process data");
+                    stats.invalid_processes = stats.invalid_processes.saturating_add(1);
                 }
                 Err(e) => {
                     error!(
@@ -518,13 +519,17 @@ impl ProcessCollector for SysinfoProcessCollector {
                         error = %e,
                         "Unexpected error during process conversion"
                     );
-                    stats.invalid_processes += 1;
+                    stats.invalid_processes = stats.invalid_processes.saturating_add(1);
                 }
             }
         }
 
         stats.total_processes = processed_count;
-        stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
+        #[allow(clippy::as_conversions, clippy::semicolon_outside_block)]
+        {
+            // Safe: elapsed milliseconds fit in u64
+            stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
+        }
 
         debug!(
             collector = self.name(),
@@ -570,16 +575,15 @@ impl ProcessCollector for SysinfoProcessCollector {
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
-            message: format!("Single process lookup task failed: {}", e),
+            message: format!("Single process lookup task failed: {e}"),
         })?;
 
         let system = lookup_result?;
         let sysinfo_pid = Pid::from_u32(pid);
-        if let Some(process) = system.process(sysinfo_pid) {
-            self.convert_process_to_event(&sysinfo_pid, process)
-        } else {
-            Err(ProcessCollectionError::ProcessNotFound { pid })
-        }
+        system.process(sysinfo_pid).map_or(
+            Err(ProcessCollectionError::ProcessNotFound { pid }),
+            |process| self.convert_process_to_event(&sysinfo_pid, process),
+        )
     }
 
     async fn health_check(&self) -> ProcessCollectionResult<()> {
@@ -597,7 +601,7 @@ impl ProcessCollector for SysinfoProcessCollector {
             let process_count = system.processes().len();
             if process_count == 0 {
                 return Err(ProcessCollectionError::SystemEnumerationFailed {
-                    message: "No processes found during health check".to_string(),
+                    message: "No processes found during health check".to_owned(),
                 });
             }
 
@@ -605,7 +609,7 @@ impl ProcessCollector for SysinfoProcessCollector {
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
-            message: format!("Health check task failed: {}", e),
+            message: format!("Health check task failed: {e}"),
         })?;
 
         let process_count = health_result?;
@@ -652,7 +656,7 @@ impl FallbackProcessCollector {
     }
 
     /// Detects the current platform name for logging and diagnostics.
-    fn detect_platform() -> &'static str {
+    const fn detect_platform() -> &'static str {
         if cfg!(target_os = "freebsd") {
             "freebsd"
         } else if cfg!(target_os = "openbsd") {
@@ -724,7 +728,7 @@ impl FallbackProcessCollector {
     }
 
     /// Checks if the platform supports kernel thread enumeration.
-    fn supports_kernel_threads() -> bool {
+    const fn supports_kernel_threads() -> bool {
         // Most BSD variants support kernel threads, but with limitations
         cfg!(any(
             target_os = "freebsd",
@@ -734,7 +738,8 @@ impl FallbackProcessCollector {
         ))
     }
 
-    /// Converts a sysinfo process to a ProcessEvent with platform-specific handling.
+    /// Converts a sysinfo process to a `ProcessEvent` with platform-specific handling.
+    #[allow(clippy::trivially_copy_pass_by_ref)] // Pid reference matches sysinfo API patterns
     fn convert_process_to_event(
         &self,
         pid: &Pid,
@@ -746,15 +751,15 @@ impl FallbackProcessCollector {
         if pid_u32 == 0 {
             return Err(ProcessCollectionError::InvalidProcessData {
                 pid: pid_u32,
-                message: "Invalid PID: 0".to_string(),
+                message: "Invalid PID: 0".to_owned(),
             });
         }
 
-        let ppid = process.parent().map(|p| p.as_u32());
+        let ppid = process.parent().map(sysinfo::Pid::as_u32);
 
         // Get process name with fallback
         let name = if process.name().is_empty() {
-            format!("<unknown-{}>", pid_u32)
+            format!("<unknown-{pid_u32}>")
         } else {
             process.name().to_string_lossy().to_string()
         };
@@ -763,7 +768,7 @@ impl FallbackProcessCollector {
         if self.config.skip_system_processes && self.is_system_process(&name, pid_u32) {
             return Err(ProcessCollectionError::ProcessAccessDenied {
                 pid: pid_u32,
-                message: "System process skipped by configuration".to_string(),
+                message: "System process skipped by configuration".to_owned(),
             });
         }
 
@@ -771,7 +776,7 @@ impl FallbackProcessCollector {
         if self.config.skip_kernel_threads && self.is_kernel_thread(&name, pid_u32) {
             return Err(ProcessCollectionError::ProcessAccessDenied {
                 pid: pid_u32,
-                message: "Kernel thread skipped by configuration".to_string(),
+                message: "Kernel thread skipped by configuration".to_owned(),
             });
         }
 
@@ -792,8 +797,14 @@ impl FallbackProcessCollector {
             let memory = process.memory();
             let start = process.start_time();
 
+            let start_time_opt = if start > 0 {
+                // Safe: checked_add handles potential overflow
+                SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(start))
+            } else {
+                None
+            };
             (
-                if cpu > 0.0 { Some(cpu as f64) } else { None },
+                (cpu > 0.0).then(|| f64::from(cpu)),
                 if memory > 0 {
                     // Convert from KiB to bytes, handling potential overflow
                     memory.checked_mul(1024).or_else(|| {
@@ -806,24 +817,16 @@ impl FallbackProcessCollector {
                 } else {
                     None
                 },
-                if start > 0 {
-                    Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(start))
-                } else {
-                    None
-                },
+                start_time_opt,
             )
         } else {
             (None, None, None)
         };
 
         // Compute executable hash if configured and path is available
-        let executable_hash = if self.config.compute_executable_hashes {
-            // TODO: Implement executable hashing (issue #40)
-            // For now, we'll leave this as None until the hashing implementation is added
-            None
-        } else {
-            None
-        };
+        // TODO: Implement executable hashing (issue #40)
+        // For now, we'll leave this as None until the hashing implementation is added
+        let executable_hash: Option<String> = None;
 
         let user_id = process.user_id().map(|uid| uid.to_string());
         let accessible = true; // Process is accessible if we can enumerate it
@@ -851,6 +854,7 @@ impl FallbackProcessCollector {
     }
 
     /// Determines if a process is a system process based on name and PID.
+    #[allow(clippy::unused_self)] // May use self for configuration in future
     fn is_system_process(&self, name: &str, pid: u32) -> bool {
         // Common system process patterns across BSD variants
         const SYSTEM_PROCESSES: &[&str] = &[
@@ -886,17 +890,8 @@ impl FallbackProcessCollector {
     }
 
     /// Determines if a process is a kernel thread (platform-specific logic).
+    #[allow(clippy::unused_self)] // May use self for configuration in future
     fn is_kernel_thread(&self, name: &str, pid: u32) -> bool {
-        // Kernel threads typically have very low PIDs on BSD systems
-        if pid < 5 {
-            return true;
-        }
-
-        // Kernel threads often have names in brackets or specific patterns
-        if name.starts_with('[') && name.ends_with(']') {
-            return true;
-        }
-
         // BSD-specific kernel thread patterns
         const KERNEL_THREAD_PATTERNS: &[&str] = &[
             "kworker",
@@ -919,6 +914,16 @@ impl FallbackProcessCollector {
             "geom",
             "usb",
         ];
+
+        // Kernel threads typically have very low PIDs on BSD systems
+        if pid < 5 {
+            return true;
+        }
+
+        // Kernel threads often have names in brackets or specific patterns
+        if name.starts_with('[') && name.ends_with(']') {
+            return true;
+        }
 
         let name_lower = name.to_lowercase();
         KERNEL_THREAD_PATTERNS
@@ -970,8 +975,7 @@ impl ProcessCollector for FallbackProcessCollector {
             if system.processes().is_empty() {
                 return Err(ProcessCollectionError::SystemEnumerationFailed {
                     message: format!(
-                        "No processes found during enumeration on platform: {}",
-                        platform_name
+                        "No processes found during enumeration on platform: {platform_name}"
                     ),
                 });
             }
@@ -980,17 +984,17 @@ impl ProcessCollector for FallbackProcessCollector {
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
-            message: format!("Process enumeration task failed: {}", e),
+            message: format!("Process enumeration task failed: {e}"),
         })?;
 
         let system = enumeration_result?;
 
         let mut events = Vec::new();
         let mut stats = CollectionStats::default();
-        let mut processed_count = 0;
+        let mut processed_count: usize = 0;
 
         // Process each process with individual error handling
-        for (pid, process) in system.processes().iter() {
+        for (pid, process) in system.processes() {
             // Check if we've hit the maximum process limit
             if self.config.max_processes > 0 && events.len() >= self.config.max_processes {
                 debug!(
@@ -1002,29 +1006,35 @@ impl ProcessCollector for FallbackProcessCollector {
                 break;
             }
 
-            processed_count += 1;
+            processed_count = processed_count.saturating_add(1);
             match self.convert_process_to_event(pid, process) {
                 Ok(event) => {
                     events.push(event);
-                    stats.successful_collections += 1;
+                    stats.successful_collections = stats.successful_collections.saturating_add(1);
                 }
-                Err(ProcessCollectionError::ProcessAccessDenied { pid, message }) => {
+                Err(ProcessCollectionError::ProcessAccessDenied {
+                    pid: denied_pid,
+                    message,
+                }) => {
                     debug!(
-                        pid = pid,
+                        pid = denied_pid,
                         reason = %message,
                         platform = self.platform_name,
                         "Process access denied"
                     );
-                    stats.inaccessible_processes += 1;
+                    stats.inaccessible_processes = stats.inaccessible_processes.saturating_add(1);
                 }
-                Err(ProcessCollectionError::InvalidProcessData { pid, message }) => {
+                Err(ProcessCollectionError::InvalidProcessData {
+                    pid: invalid_pid,
+                    message,
+                }) => {
                     warn!(
-                        pid = pid,
+                        pid = invalid_pid,
                         reason = %message,
                         platform = self.platform_name,
                         "Invalid process data"
                     );
-                    stats.invalid_processes += 1;
+                    stats.invalid_processes = stats.invalid_processes.saturating_add(1);
                 }
                 Err(e) => {
                     error!(
@@ -1033,13 +1043,17 @@ impl ProcessCollector for FallbackProcessCollector {
                         platform = self.platform_name,
                         "Unexpected error during process conversion"
                     );
-                    stats.invalid_processes += 1;
+                    stats.invalid_processes = stats.invalid_processes.saturating_add(1);
                 }
             }
         }
 
         stats.total_processes = processed_count;
-        stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
+        #[allow(clippy::as_conversions, clippy::semicolon_outside_block)]
+        {
+            // Safe: elapsed milliseconds fit in u64
+            stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
+        }
 
         debug!(
             collector = self.name(),
@@ -1088,16 +1102,15 @@ impl ProcessCollector for FallbackProcessCollector {
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
-            message: format!("Single process lookup task failed: {}", e),
+            message: format!("Single process lookup task failed: {e}"),
         })?;
 
         let system = lookup_result?;
         let sysinfo_pid = Pid::from_u32(pid);
-        if let Some(process) = system.process(sysinfo_pid) {
-            self.convert_process_to_event(&sysinfo_pid, process)
-        } else {
-            Err(ProcessCollectionError::ProcessNotFound { pid })
-        }
+        system.process(sysinfo_pid).map_or(
+            Err(ProcessCollectionError::ProcessNotFound { pid }),
+            |process| self.convert_process_to_event(&sysinfo_pid, process),
+        )
     }
 
     async fn health_check(&self) -> ProcessCollectionResult<()> {
@@ -1121,8 +1134,7 @@ impl ProcessCollector for FallbackProcessCollector {
             if process_count == 0 {
                 return Err(ProcessCollectionError::SystemEnumerationFailed {
                     message: format!(
-                        "No processes found during health check on platform: {}",
-                        platform_name
+                        "No processes found during health check on platform: {platform_name}"
                     ),
                 });
             }
@@ -1131,7 +1143,7 @@ impl ProcessCollector for FallbackProcessCollector {
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
-            message: format!("Health check task failed: {}", e),
+            message: format!("Health check task failed: {e}"),
         })?;
 
         let process_count = health_result?;
@@ -1192,6 +1204,11 @@ pub fn create_process_collector(config: ProcessCollectionConfig) -> Box<dyn Proc
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::uninlined_format_args
+)]
 mod tests {
     use super::*;
 

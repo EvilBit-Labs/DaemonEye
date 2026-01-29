@@ -1,4 +1,4 @@
-//! Embedded EventBus broker management for daemoneye-agent
+//! Embedded `EventBus` broker management for daemoneye-agent
 //!
 //! This module provides the `BrokerManager` which embeds a `DaemoneyeBroker` instance
 //! within the daemoneye-agent process architecture. The broker operates independently
@@ -6,6 +6,7 @@
 //! for collector-core component coordination.
 
 use crate::collector_registry::{CollectorRegistry, RegistryError};
+use crate::health::{self, HealthState};
 use anyhow::{Context, Result};
 use daemoneye_eventbus::ConfigManager;
 use daemoneye_eventbus::rpc::{
@@ -26,6 +27,7 @@ use tracing::{debug, error, info, warn};
 
 /// Health status of the embedded broker
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BrokerHealth {
     /// Broker is healthy and operational
     Healthy,
@@ -39,14 +41,39 @@ pub enum BrokerHealth {
     Stopped,
 }
 
-/// Embedded broker manager that coordinates the DaemoneyeBroker lifecycle
+impl HealthState for BrokerHealth {
+    fn is_healthy(&self) -> bool {
+        matches!(self, Self::Healthy)
+    }
+
+    fn is_starting(&self) -> bool {
+        matches!(self, Self::Starting)
+    }
+
+    fn unhealthy_message(&self) -> Option<&str> {
+        match *self {
+            Self::Unhealthy(ref msg) => Some(msg),
+            Self::Healthy | Self::Starting | Self::ShuttingDown | Self::Stopped => None,
+        }
+    }
+
+    fn is_stopped_or_shutting_down(&self) -> bool {
+        matches!(self, Self::ShuttingDown | Self::Stopped)
+    }
+
+    fn service_name() -> &'static str {
+        "Broker"
+    }
+}
+
+/// Embedded broker manager that coordinates the `DaemoneyeBroker` lifecycle
 /// within the daemoneye-agent process architecture.
 pub struct BrokerManager {
     /// Configuration for the broker
     config: BrokerConfig,
     /// The embedded broker instance
     broker: Arc<RwLock<Option<Arc<DaemoneyeBroker>>>>,
-    /// EventBus client for agent-side operations
+    /// `EventBus` client for agent-side operations
     event_bus: Arc<Mutex<Option<DaemoneyeEventBus>>>,
     /// Current health status
     health_status: Arc<RwLock<BrokerHealth>>,
@@ -107,10 +134,7 @@ impl BrokerManager {
         }
 
         // Update health status to starting
-        {
-            let mut health = self.health_status.write().await;
-            *health = BrokerHealth::Starting;
-        }
+        *self.health_status.write().await = BrokerHealth::Starting;
 
         info!(
             socket_path = %self.config.socket_path,
@@ -152,28 +176,14 @@ impl BrokerManager {
         let broker_arc = Arc::clone(event_bus.broker());
 
         // Store the broker and event bus
-        {
-            let mut broker_guard = self.broker.write().await;
-            *broker_guard = Some(Arc::clone(&broker_arc));
-        }
-
-        {
-            let mut event_bus_guard = self.event_bus.lock().await;
-            *event_bus_guard = Some(event_bus);
-        }
+        *self.broker.write().await = Some(Arc::clone(&broker_arc));
+        *self.event_bus.lock().await = Some(event_bus);
 
         // Initialize collector registry
-        {
-            let registry = Arc::new(CollectorRegistry::default());
-            let mut registry_guard = self.collector_registry.write().await;
-            *registry_guard = Some(registry);
-        }
+        *self.collector_registry.write().await = Some(Arc::new(CollectorRegistry::default()));
 
         // Update health status to healthy
-        {
-            let mut health = self.health_status.write().await;
-            *health = BrokerHealth::Healthy;
-        }
+        *self.health_status.write().await = BrokerHealth::Healthy;
 
         info!("Embedded DaemonEye EventBus broker started successfully");
         Ok(())
@@ -184,10 +194,7 @@ impl BrokerManager {
         info!("Initiating graceful shutdown of embedded broker");
 
         // Update health status to shutting down
-        {
-            let mut health = self.health_status.write().await;
-            *health = BrokerHealth::ShuttingDown;
-        }
+        *self.health_status.write().await = BrokerHealth::ShuttingDown;
 
         // Send graceful shutdown RPC to all collectors first
         info!("Sending graceful shutdown RPC to all collectors");
@@ -281,22 +288,13 @@ impl BrokerManager {
         }
 
         // Clear the broker reference
-        {
-            let mut broker_guard = self.broker.write().await;
-            *broker_guard = None;
-        }
+        *self.broker.write().await = None;
 
         // Clear collector registry
-        {
-            let mut registry_guard = self.collector_registry.write().await;
-            registry_guard.take();
-        }
+        self.collector_registry.write().await.take();
 
         // Update health status to stopped
-        {
-            let mut health = self.health_status.write().await;
-            *health = BrokerHealth::Stopped;
-        }
+        *self.health_status.write().await = BrokerHealth::Stopped;
 
         info!("Embedded broker shutdown complete");
         Ok(())
@@ -321,7 +319,7 @@ impl BrokerManager {
     async fn registry(&self) -> std::result::Result<Arc<CollectorRegistry>, RegistrationError> {
         let guard = self.collector_registry.read().await;
         guard.as_ref().cloned().ok_or_else(|| {
-            RegistrationError::Internal("collector registry not initialized".to_string())
+            RegistrationError::Internal("collector registry not initialized".to_owned())
         })
     }
 
@@ -333,7 +331,7 @@ impl BrokerManager {
         }
     }
 
-    /// Get a reference to the EventBus client for agent operations
+    /// Get a reference to the `EventBus` client for agent operations
     #[allow(dead_code)]
     pub fn event_bus(&self) -> Arc<Mutex<Option<DaemoneyeEventBus>>> {
         Arc::clone(&self.event_bus)
@@ -353,7 +351,7 @@ impl BrokerManager {
 
     /// Get a reference to the process manager
     #[allow(dead_code)] // Public accessor for future use
-    pub fn process_manager(&self) -> &Arc<CollectorProcessManager> {
+    pub const fn process_manager(&self) -> &Arc<CollectorProcessManager> {
         &self.process_manager
     }
 
@@ -400,7 +398,7 @@ impl BrokerManager {
 
                     if any_unhealthy {
                         let unhealthy_status = BrokerHealth::Unhealthy(
-                            "One or more collectors are unhealthy".to_string(),
+                            "One or more collectors are unhealthy".to_owned(),
                         );
                         let mut health = self.health_status.write().await;
                         *health = unhealthy_status.clone();
@@ -408,7 +406,7 @@ impl BrokerManager {
                     } else if any_degraded {
                         // Represent degraded collector state as Unhealthy with reason
                         let degraded_status = BrokerHealth::Unhealthy(
-                            "One or more collectors are degraded".to_string(),
+                            "One or more collectors are degraded".to_owned(),
                         );
                         let mut health = self.health_status.write().await;
                         *health = degraded_status.clone();
@@ -419,65 +417,48 @@ impl BrokerManager {
                 } else {
                     warn!("Broker health check failed - unable to get statistics");
                     let unhealthy_status =
-                        BrokerHealth::Unhealthy("Unable to get statistics".to_string());
+                        BrokerHealth::Unhealthy("Unable to get statistics".to_owned());
                     let mut health = self.health_status.write().await;
                     *health = unhealthy_status.clone();
                     unhealthy_status
                 }
             }
-            other => other,
+            BrokerHealth::Starting
+            | BrokerHealth::ShuttingDown
+            | BrokerHealth::Unhealthy(_)
+            | BrokerHealth::Stopped => current_health,
         }
     }
 
     /// Wait for the broker to become healthy with a timeout
     pub async fn wait_for_healthy(&self, timeout: Duration) -> Result<()> {
-        let start = std::time::Instant::now();
-
-        while start.elapsed() < timeout {
-            let health = self.health_status().await;
-            match health {
-                BrokerHealth::Healthy => {
-                    debug!("Broker is healthy");
-                    return Ok(());
-                }
-                BrokerHealth::Starting => {
-                    debug!("Broker is still starting, waiting...");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                BrokerHealth::Unhealthy(ref error) => {
-                    return Err(anyhow::anyhow!("Broker is unhealthy: {}", error));
-                }
-                BrokerHealth::ShuttingDown | BrokerHealth::Stopped => {
-                    return Err(anyhow::anyhow!("Broker is not running"));
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Timeout waiting for broker to become healthy after {:?}",
-            timeout
-        ))
+        let health_status = Arc::clone(&self.health_status);
+        health::wait_for_healthy(timeout, || async { health_status.read().await.clone() }).await
     }
 
     /// Create an RPC client for a collector
     pub async fn create_rpc_client(&self, collector_id: &str) -> Result<Arc<CollectorRpcClient>> {
-        let broker_guard = self.broker.read().await;
-        let broker = broker_guard
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Broker not available"))?;
+        let broker = {
+            let broker_guard = self.broker.read().await;
+            Arc::clone(
+                broker_guard
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Broker not available"))?,
+            )
+        };
 
-        let target_topic = format!("control.collector.{}", collector_id);
+        let target_topic = format!("control.collector.{collector_id}");
         let client = Arc::new(
-            CollectorRpcClient::new(&target_topic, Arc::clone(broker))
+            CollectorRpcClient::new(&target_topic, broker)
                 .await
                 .context("Failed to create RPC client")?,
         );
 
         // Store the client
-        {
-            let mut clients = self.rpc_clients.write().await;
-            clients.insert(collector_id.to_string(), Arc::clone(&client));
-        }
+        self.rpc_clients
+            .write()
+            .await
+            .insert(collector_id.to_owned(), Arc::clone(&client));
 
         info!(
             collector_id = %collector_id,
@@ -516,11 +497,11 @@ impl BrokerManager {
 
         if graceful {
             let shutdown_request = ShutdownRequest {
-                collector_id: collector_id.to_string(),
+                collector_id: collector_id.to_owned(),
                 shutdown_type: ShutdownType::Graceful,
                 graceful_timeout_ms: 5000,
                 force_after_timeout: true,
-                reason: Some("Agent-initiated graceful shutdown".to_string()),
+                reason: Some("Agent-initiated graceful shutdown".to_owned()),
             };
             let request = RpcRequest::shutdown(
                 client.client_id.clone(),
@@ -606,6 +587,8 @@ impl BrokerManager {
         let task_json =
             serde_json::to_value(&task).context("Failed to serialize detection task")?;
 
+        #[allow(clippy::arithmetic_side_effects)] // Safe: SystemTime + Duration is well-defined
+        let deadline = std::time::SystemTime::now() + Duration::from_secs(30);
         let request = RpcRequest {
             request_id: uuid::Uuid::new_v4().to_string(),
             client_id: client.client_id.clone(),
@@ -613,7 +596,7 @@ impl BrokerManager {
             operation: CollectorOperation::ExecuteTask,
             payload: RpcPayload::Task(task_json),
             timestamp: std::time::SystemTime::now(),
-            deadline: std::time::SystemTime::now() + Duration::from_secs(30),
+            deadline,
             correlation_metadata: daemoneye_eventbus::rpc::RpcCorrelationMetadata::new(
                 uuid::Uuid::new_v4().to_string(),
             ),
@@ -638,11 +621,8 @@ impl BrokerManager {
     /// Get or create an RPC client for a collector
     pub async fn get_rpc_client(&self, collector_id: &str) -> Result<Arc<CollectorRpcClient>> {
         // Check if client already exists
-        {
-            let clients = self.rpc_clients.read().await;
-            if let Some(client) = clients.get(collector_id) {
-                return Ok(Arc::clone(client));
-            }
+        if let Some(client) = self.rpc_clients.read().await.get(collector_id) {
+            return Ok(Arc::clone(client));
         }
 
         // Create new client
@@ -678,9 +658,9 @@ impl HealthProvider for BrokerManager {
         // Build component details
         let mut components = std::collections::HashMap::new();
         components.insert(
-            "process".to_string(),
+            "process".to_owned(),
             ComponentHealth {
-                name: "process".to_string(),
+                name: "process".to_owned(),
                 status: match health {
                     daemoneye_eventbus::process_manager::HealthStatus::Healthy => {
                         HealthStatus::Healthy
@@ -715,9 +695,9 @@ impl HealthProvider for BrokerManager {
             .as_secs();
 
         components.insert(
-            "heartbeat".to_string(),
+            "heartbeat".to_owned(),
             ComponentHealth {
-                name: "heartbeat".to_string(),
+                name: "heartbeat".to_owned(),
                 status: hb_status,
                 message: Some(format!(
                     "Last heartbeat: {}s ago, Missed: {}",
@@ -730,11 +710,11 @@ impl HealthProvider for BrokerManager {
 
         // Event sources health is not yet implemented
         components.insert(
-            "event_sources".to_string(),
+            "event_sources".to_owned(),
             ComponentHealth {
-                name: "event_sources".to_string(),
+                name: "event_sources".to_owned(),
                 status: HealthStatus::Unknown,
-                message: Some("Event sources health monitoring not yet implemented".to_string()),
+                message: Some("Event sources health monitoring not yet implemented".to_owned()),
                 last_check: std::time::SystemTime::now(),
                 check_interval_seconds: 60,
             },
@@ -743,22 +723,25 @@ impl HealthProvider for BrokerManager {
         // Compute overall health using worst-of aggregation
         let overall = aggregate_worst_of(components.values().map(|c| c.status));
 
+        #[allow(clippy::as_conversions)]
+        // Safe: uptime_seconds and heartbeat_age are small u64 values
+        let uptime_seconds_f64 = status.uptime.as_secs() as f64;
+        #[allow(clippy::as_conversions)]
+        let heartbeat_age_f64 = heartbeat_age as f64;
+
         let mut metrics = std::collections::HashMap::new();
-        metrics.insert("pid".to_string(), status.pid as f64);
-        metrics.insert("restart_count".to_string(), status.restart_count as f64);
-        metrics.insert("uptime_seconds".to_string(), status.uptime.as_secs() as f64);
+        metrics.insert("pid".to_owned(), f64::from(status.pid));
+        metrics.insert("restart_count".to_owned(), f64::from(status.restart_count));
+        metrics.insert("uptime_seconds".to_owned(), uptime_seconds_f64);
         metrics.insert(
-            "missed_heartbeats".to_string(),
-            status.missed_heartbeats as f64,
+            "missed_heartbeats".to_owned(),
+            f64::from(status.missed_heartbeats),
         );
-        metrics.insert(
-            "last_heartbeat_age_seconds".to_string(),
-            heartbeat_age as f64,
-        );
-        metrics.insert("error_count".to_string(), 0.0);
+        metrics.insert("last_heartbeat_age_seconds".to_owned(), heartbeat_age_f64);
+        metrics.insert("error_count".to_owned(), 0.0);
 
         Ok(HealthCheckData {
-            collector_id: collector_id.to_string(),
+            collector_id: collector_id.to_owned(),
             status: overall,
             components,
             metrics,
@@ -820,17 +803,16 @@ impl ConfigProvider for BrokerManager {
                 .await
                 .map_err(|e| {
                     daemoneye_eventbus::ConfigManagerError::PersistenceFailed(format!(
-                        "Failed to restart collector after config update: {}",
-                        e
+                        "Failed to restart collector after config update: {e}"
                     ))
                 })?;
         } else {
             // Publish hot-reload notification if broker is present
             let broker_guard = self.broker.read().await;
             if let Some(broker) = broker_guard.as_ref() {
-                let topic = format!("control.collector.config.{}", collector_id);
+                let topic = format!("control.collector.config.{collector_id}");
                 let notification = daemoneye_eventbus::rpc::ConfigChangeNotification {
-                    collector_id: collector_id.to_string(),
+                    collector_id: collector_id.to_owned(),
                     changed_fields: changed_fields.clone(),
                     version: snapshot.version,
                     timestamp: std::time::SystemTime::now()
@@ -841,7 +823,7 @@ impl ConfigProvider for BrokerManager {
                 match serde_json::to_vec(&notification) {
                     Ok(payload) => {
                         if let Err(e) = broker
-                            .publish(&topic, &format!("config-change-{}", collector_id), payload)
+                            .publish(&topic, &format!("config-change-{collector_id}"), payload)
                             .await
                         {
                             tracing::warn!(
@@ -894,7 +876,7 @@ impl RegistrationProvider for BrokerManager {
         let response = registry
             .register(request.clone())
             .await
-            .map_err(BrokerManager::map_registry_error)?;
+            .map_err(Self::map_registry_error)?;
 
         // Create RPC client after successful registration
         if response.accepted
@@ -918,11 +900,11 @@ impl RegistrationProvider for BrokerManager {
         registry
             .deregister(request.clone())
             .await
-            .map_err(BrokerManager::map_registry_error)?;
+            .map_err(Self::map_registry_error)?;
 
         // Remove RPC client and shut it down
-        let mut clients = self.rpc_clients.write().await;
-        if let Some(client) = clients.remove(&request.collector_id)
+        let removed_client = self.rpc_clients.write().await.remove(&request.collector_id);
+        if let Some(client) = removed_client
             && let Err(e) = client.shutdown().await
         {
             warn!(
@@ -943,7 +925,7 @@ impl RegistrationProvider for BrokerManager {
         registry
             .update_heartbeat(collector_id)
             .await
-            .map_err(BrokerManager::map_registry_error)
+            .map_err(Self::map_registry_error)
     }
 }
 
@@ -982,18 +964,26 @@ fn aggregate_worst_of<I: Iterator<Item = HealthStatus>>(iter: I) -> HealthStatus
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::str_to_string,
+    clippy::semicolon_outside_block,
+    clippy::semicolon_inside_block,
+    clippy::semicolon_if_nothing_returned
+)]
 mod tests {
     use super::*;
     use daemoneye_lib::config::BrokerConfig;
 
     fn sample_registration_request() -> RegistrationRequest {
         RegistrationRequest {
-            collector_id: "test-collector".to_string(),
-            collector_type: "test-collector".to_string(),
-            hostname: "localhost".to_string(),
-            version: Some("1.0.0".to_string()),
+            collector_id: "test-collector".to_owned(),
+            collector_type: "test-collector".to_owned(),
+            hostname: "localhost".to_owned(),
+            version: Some("1.0.0".to_owned()),
             pid: Some(1234),
-            capabilities: vec!["process".to_string()],
+            capabilities: vec!["process".to_owned()],
             attributes: std::collections::HashMap::new(),
             heartbeat_interval_ms: Some(5_000),
         }
@@ -1027,7 +1017,7 @@ mod tests {
     #[tokio::test]
     async fn test_broker_manager_socket_path() {
         let config = BrokerConfig {
-            socket_path: "/tmp/test-broker.sock".to_string(),
+            socket_path: "/tmp/test-broker.sock".to_owned(),
             ..Default::default()
         };
 
@@ -1050,8 +1040,8 @@ mod tests {
 
         {
             let mut guard = manager.collector_registry.write().await;
-            *guard = Some(Arc::new(CollectorRegistry::default()));
-        }
+            *guard = Some(Arc::new(CollectorRegistry::default()))
+        };
 
         let request = sample_registration_request();
         let response = manager
@@ -1069,7 +1059,7 @@ mod tests {
         manager
             .deregister_collector(DeregistrationRequest {
                 collector_id: request.collector_id,
-                reason: Some("test".to_string()),
+                reason: Some("test".to_owned()),
                 force: false,
             })
             .await

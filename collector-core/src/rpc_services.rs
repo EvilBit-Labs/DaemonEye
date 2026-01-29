@@ -260,11 +260,9 @@ impl CollectorRpcServiceManager {
                 }
 
                 // Deserialize RPC request
-                let request: RpcRequest = match bincode::serde::decode_from_slice::<RpcRequest, _>(
-                    &message.payload,
-                    bincode::config::standard(),
-                ) {
-                    Ok((req, _)) => {
+                let request: RpcRequest = match postcard::from_bytes::<RpcRequest>(&message.payload)
+                {
+                    Ok(req) => {
                         eprintln!(
                             "RPC_SERVICE_LOOP: Deserialized request: operation={:?}, client_id={}, request_id={}",
                             req.operation, req.client_id, req.request_id
@@ -478,10 +476,7 @@ impl CollectorRpcServiceManager {
                 );
 
                 // Serialize and publish response
-                let payload = match bincode::serde::encode_to_vec(
-                    &response,
-                    bincode::config::standard(),
-                ) {
+                let payload = match postcard::to_allocvec(&response) {
                     Ok(data) => data,
                     Err(serialization_error) => {
                         // Build minimal error response containing original request info and serialization error
@@ -519,10 +514,7 @@ impl CollectorRpcServiceManager {
                         };
 
                         // Attempt to serialize the error response
-                        match bincode::serde::encode_to_vec(
-                            &error_response,
-                            bincode::config::standard(),
-                        ) {
+                        match postcard::to_allocvec(&error_response) {
                             Ok(error_payload) => error_payload,
                             Err(error_serialization_error) => {
                                 // Even error response serialization failed - log and continue

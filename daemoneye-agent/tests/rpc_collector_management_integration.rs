@@ -7,6 +7,16 @@
 //! - Graceful shutdown coordination
 //! - Error handling and timeout scenarios
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::let_underscore_must_use,
+    clippy::shadow_reuse,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::unused_async
+)]
+
 use anyhow::Result;
 use daemoneye_agent::broker_manager::BrokerManager;
 use daemoneye_lib::config::BrokerConfig;

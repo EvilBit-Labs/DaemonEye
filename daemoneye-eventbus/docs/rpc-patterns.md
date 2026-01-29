@@ -201,7 +201,7 @@ RpcResponse {
 Message {
     topic: "control.health.heartbeat.procmond",
     message_type: MessageType::Heartbeat,
-    payload: bincode::encode(HeartbeatData {
+    payload: postcard::to_allocvec(&HeartbeatData {
         collector_id: "procmond",
         timestamp: SystemTime::now(),
         sequence: 12345,
@@ -609,15 +609,13 @@ impl ProcessCollectorRpcService {
 
     pub async fn handle_rpc_message(&self, message: Message) -> Result<Message> {
         // Deserialize RPC request
-        let request: RpcRequest =
-            bincode::serde::decode_from_slice(&message.payload, bincode::config::standard())?.0;
+        let request: RpcRequest = postcard::from_bytes(&message.payload)?;
 
         // Handle request
         let response = self.rpc_service.handle_request(request).await;
 
         // Serialize response
-        let response_payload =
-            bincode::serde::encode_to_vec(&response, bincode::config::standard())?;
+        let response_payload = postcard::to_allocvec(&response)?;
 
         Ok(Message::new(
             format!("response.{}", message.correlation_id),

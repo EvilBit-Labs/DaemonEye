@@ -2,7 +2,7 @@
 //!
 //! This module provides a concrete implementation of the Monitor Collector framework
 //! specifically for procmond, integrating process lifecycle tracking with the
-//! collector-core EventSource trait.
+//! collector-core `EventSource` trait.
 
 use crate::{
     lifecycle::{LifecycleTrackingConfig, ProcessLifecycleTracker},
@@ -31,7 +31,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 /// Procmond-specific Monitor Collector configuration.
 ///
-/// This extends the base MonitorCollectorConfig with procmond-specific
+/// This extends the base `MonitorCollectorConfig` with procmond-specific
 /// configuration for process collection and lifecycle tracking.
 #[derive(Debug, Clone, Default)]
 pub struct ProcmondMonitorConfig {
@@ -84,7 +84,7 @@ pub struct ProcmondMonitorCollector {
 
 impl ProcmondMonitorCollector {
     /// Creates a new Procmond Monitor Collector.
-    pub async fn new(
+    pub fn new(
         database: Arc<Mutex<storage::DatabaseManager>>,
         config: ProcmondMonitorConfig,
     ) -> anyhow::Result<Self> {
@@ -123,9 +123,8 @@ impl ProcmondMonitorCollector {
         let event_bus = if config.base_config.enable_event_driven {
             let bus_config = collector_core::EventBusConfig::default();
             let local_bus = LocalEventBus::new(bus_config);
-            Arc::new(RwLock::new(Some(
-                Arc::new(local_bus) as Arc<dyn EventBus + Send + Sync>
-            )))
+            let bus_arc: Arc<dyn EventBus + Send + Sync> = Arc::new(local_bus);
+            Arc::new(RwLock::new(Some(bus_arc)))
         } else {
             Arc::new(RwLock::new(None))
         };
@@ -160,7 +159,7 @@ impl ProcmondMonitorCollector {
         tx: &mpsc::Sender<CollectionEvent>,
         shutdown_signal: &Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
-        let timer = PerformanceTimer::start("procmond_monitor_collection".to_string());
+        let timer = PerformanceTimer::start("procmond_monitor_collection".to_owned());
         let collection_start = Instant::now();
 
         // Check for shutdown before starting
@@ -205,9 +204,11 @@ impl ProcmondMonitorCollector {
 
         // Update statistics
         self.stats.collection_cycles.fetch_add(1, Ordering::Relaxed);
+        #[allow(clippy::as_conversions)] // Safe: usize to u64 for counter
+        let event_count = lifecycle_events.len() as u64;
         self.stats
             .lifecycle_events
-            .fetch_add(lifecycle_events.len() as u64, Ordering::Relaxed);
+            .fetch_add(event_count, Ordering::Relaxed);
 
         // Send process events with backpressure handling
         for process_event in process_events {
@@ -253,9 +254,16 @@ impl ProcmondMonitorCollector {
         const CIRCUIT_BREAKER_COOLDOWN_SECS: u64 = 10;
 
         // Check circuit breaker state
+        #[allow(clippy::expect_used)] // Mutex poisoning indicates a panic - propagate it
         {
-            let cooldown_guard = self.circuit_breaker_until.lock().unwrap();
-            if let Some(cooldown_until) = *cooldown_guard {
+            let cooldown_until_opt = {
+                let cooldown_guard = self
+                    .circuit_breaker_until
+                    .lock()
+                    .expect("circuit_breaker_until mutex poisoned");
+                *cooldown_guard
+            };
+            if let Some(cooldown_until) = cooldown_until_opt {
                 if Instant::now() < cooldown_until {
                     // Circuit breaker is active, increment backpressure metric and return error
                     self.stats
@@ -266,14 +274,14 @@ impl ProcmondMonitorCollector {
                         cooldown_until
                     );
                     return Err(anyhow::anyhow!("Circuit breaker active, event dropped"));
-                } else {
-                    // Cooldown expired, reset circuit breaker
-                    drop(cooldown_guard);
-                    let mut guard = self.circuit_breaker_until.lock().unwrap();
-                    *guard = None;
-                    self.consecutive_backpressure_timeouts
-                        .store(0, Ordering::Relaxed);
                 }
+                // Cooldown expired, reset circuit breaker
+                *self
+                    .circuit_breaker_until
+                    .lock()
+                    .expect("circuit_breaker_until mutex poisoned") = None;
+                self.consecutive_backpressure_timeouts
+                    .store(0, Ordering::Relaxed);
             }
         }
 
@@ -305,10 +313,10 @@ impl ProcmondMonitorCollector {
                     }
                     Err(_) => {
                         // Timeout acquiring permit
-                        let consecutive = self
+                        let previous = self
                             .consecutive_backpressure_timeouts
-                            .fetch_add(1, Ordering::Relaxed)
-                            + 1;
+                            .fetch_add(1, Ordering::Relaxed);
+                        let consecutive = previous.saturating_add(1);
 
                         self.stats
                             .backpressure_events
@@ -320,9 +328,15 @@ impl ProcmondMonitorCollector {
 
                         // Activate circuit breaker if threshold reached
                         if consecutive >= CIRCUIT_BREAKER_THRESHOLD {
+                            #[allow(clippy::arithmetic_side_effects)] // Safe: Instant + Duration
                             let cooldown_until =
                                 Instant::now() + Duration::from_secs(CIRCUIT_BREAKER_COOLDOWN_SECS);
-                            let mut guard = self.circuit_breaker_until.lock().unwrap();
+                            #[allow(clippy::expect_used)]
+                            // Mutex poisoning indicates a panic - propagate it
+                            let mut guard = self
+                                .circuit_breaker_until
+                                .lock()
+                                .expect("circuit_breaker_until mutex poisoned");
                             *guard = Some(cooldown_until);
                             warn!(
                                 cooldown_seconds = CIRCUIT_BREAKER_COOLDOWN_SECS,
@@ -387,6 +401,8 @@ impl EventSource for ProcmondMonitorCollector {
         tx: mpsc::Sender<CollectionEvent>,
         _shutdown_signal: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
+        const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+
         info!(
             collection_interval_secs = self.config.base_config.collection_interval.as_secs(),
             max_events_in_flight = self.config.base_config.max_events_in_flight,
@@ -396,8 +412,7 @@ impl EventSource for ProcmondMonitorCollector {
 
         // Main collection loop
         let mut collection_interval = interval(self.config.base_config.collection_interval);
-        let mut consecutive_failures = 0u32;
-        const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+        let mut consecutive_failures = 0_u32;
 
         // Skip first tick to avoid immediate collection
         collection_interval.tick().await;
@@ -418,7 +433,7 @@ impl EventSource for ProcmondMonitorCollector {
                         }
                         Err(e) => {
                             error!(error = %e, "Procmond monitor collection failed");
-                            consecutive_failures += 1;
+                            consecutive_failures = consecutive_failures.saturating_add(1);
 
                             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                                 error!(
@@ -426,8 +441,7 @@ impl EventSource for ProcmondMonitorCollector {
                                     "Too many consecutive failures, stopping Procmond Monitor Collector"
                                 );
                                 return Err(anyhow::anyhow!(
-                                    "Procmond Monitor Collector failed {} consecutive times",
-                                    consecutive_failures
+                                    "Procmond Monitor Collector failed {consecutive_failures} consecutive times"
                                 ));
                             }
 
@@ -442,7 +456,7 @@ impl EventSource for ProcmondMonitorCollector {
                     }
                 }
 
-                _ = async {
+                () = async {
                     while !self.shutdown_signal.load(Ordering::Relaxed) {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
@@ -479,6 +493,14 @@ impl MonitorCollectorTrait for ProcmondMonitorCollector {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::unused_async,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::clone_on_ref_ptr
+)]
 mod tests {
     use super::*;
     use daemoneye_lib::storage::DatabaseManager;
@@ -498,7 +520,7 @@ mod tests {
         let db_manager = create_test_database().await;
         let config = ProcmondMonitorConfig::default();
 
-        let collector = ProcmondMonitorCollector::new(db_manager, config).await;
+        let collector = ProcmondMonitorCollector::new(db_manager, config);
         assert!(collector.is_ok());
 
         let collector = collector.unwrap();
@@ -522,9 +544,7 @@ mod tests {
             ..Default::default()
         };
 
-        let collector = ProcmondMonitorCollector::new(db_manager.clone(), fast_config)
-            .await
-            .unwrap();
+        let collector = ProcmondMonitorCollector::new(db_manager.clone(), fast_config).unwrap();
         let caps = collector.capabilities();
         assert!(caps.contains(SourceCaps::REALTIME));
 
@@ -537,9 +557,7 @@ mod tests {
             ..Default::default()
         };
 
-        let collector = ProcmondMonitorCollector::new(db_manager, slow_config)
-            .await
-            .unwrap();
+        let collector = ProcmondMonitorCollector::new(db_manager, slow_config).unwrap();
         let caps = collector.capabilities();
         assert!(!caps.contains(SourceCaps::REALTIME));
     }
@@ -549,9 +567,7 @@ mod tests {
         let db_manager = create_test_database().await;
         let config = ProcmondMonitorConfig::default();
 
-        let collector = ProcmondMonitorCollector::new(db_manager, config)
-            .await
-            .unwrap();
+        let collector = ProcmondMonitorCollector::new(db_manager, config).unwrap();
 
         // Initial health check should pass
         let health_result = collector.health_check().await;
@@ -563,9 +579,7 @@ mod tests {
         let db_manager = create_test_database().await;
         let config = ProcmondMonitorConfig::default();
 
-        let collector = ProcmondMonitorCollector::new(db_manager, config)
-            .await
-            .unwrap();
+        let collector = ProcmondMonitorCollector::new(db_manager, config).unwrap();
 
         // Initial statistics should be zero
         let stats = collector.stats();

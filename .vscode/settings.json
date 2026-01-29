@@ -21,5 +21,12 @@
     "git.rebaseWhenSync": true,
     "git.replaceTagsWhenPull": true,
     "githubPullRequests.codingAgent.uiIntegration": true,
-    "kiroAgent.configureMCP": "Enabled"
+    "kiroAgent.configureMCP": "Enabled",
+    "ruff.path": [
+        "${workspaceFolder}/.vscode/mise-tools/ruff"
+    ],
+    "ruff.interpreter": [
+        "${workspaceFolder}/.vscode/mise-tools/python"
+    ],
+    "python.defaultInterpreterPath": "${workspaceFolder}/.vscode/mise-tools/python"
 }

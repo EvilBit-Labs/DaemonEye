@@ -1,7 +1,25 @@
 //! Edge case tests for process enumeration.
 //!
 //! This module tests edge cases and boundary conditions in process enumeration
-//! across different ProcessCollector implementations without using property-based testing.
+//! across different `ProcessCollector` implementations without using property-based testing.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::unseparated_literal_suffix,
+    clippy::unreadable_literal,
+    clippy::uninlined_format_args,
+    clippy::print_stdout,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::wildcard_enum_match_arm,
+    clippy::use_debug,
+    clippy::needless_pass_by_value,
+    clippy::redundant_clone
+)]
 
 use procmond::process_collector::{
     FallbackProcessCollector, ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,
