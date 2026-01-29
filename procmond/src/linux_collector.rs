@@ -602,7 +602,7 @@ impl LinuxProcessCollector {
     }
 
     /// Enumerates all processes by reading /proc directory.
-    fn enumerate_proc_pids(&self) -> ProcessCollectionResult<Vec<u32>> {
+    fn enumerate_proc_pids() -> ProcessCollectionResult<Vec<u32>> {
         let proc_dir = Path::new("/proc");
         let mut pids = Vec::new();
 
@@ -796,7 +796,7 @@ impl ProcessCollector for LinuxProcessCollector {
         }
 
         // Try to read a few processes
-        let pids = self.enumerate_proc_pids()?;
+        let pids = Self::enumerate_proc_pids()?;
         if pids.is_empty() {
             return Err(ProcessCollectionError::SystemEnumerationFailed {
                 message: "No processes found in /proc".to_owned(),
@@ -805,7 +805,7 @@ impl ProcessCollector for LinuxProcessCollector {
 
         // Try to read information for the first few processes
         let mut successful_reads: usize = 0;
-        for &pid in &pids[..pids.len().min(5)] {
+        for &pid in pids.iter().take(5) {
             if self.read_process_info(pid).is_ok() {
                 successful_reads = successful_reads.saturating_add(1);
             }
@@ -833,7 +833,7 @@ impl LinuxProcessCollector {
     /// Converts a sysinfo process to a ProcessEvent with Linux-specific enhancements.
     fn convert_sysinfo_to_event(&self, pid: u32, process: &Process) -> ProcessEvent {
         // Get basic information from sysinfo
-        let ppid = process.parent().map(|p| p.as_u32());
+        let ppid = process.parent().map(sysinfo::Pid::as_u32);
 
         let name = if process.name().is_empty() {
             format!("<unknown-{pid}>")
