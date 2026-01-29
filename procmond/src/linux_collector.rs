@@ -685,7 +685,7 @@ impl ProcessCollector for LinuxProcessCollector {
 
         let mut events = Vec::new();
         let mut stats = CollectionStats::default();
-        let mut processed_count = 0;
+        let mut processed_count: usize = 0;
 
         // Process each process with individual error handling
         for (sysinfo_pid, process) in system.processes() {
