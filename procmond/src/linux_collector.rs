@@ -1123,11 +1123,11 @@ mod tests {
         // Test memory parsing (static method)
         assert_eq!(
             LinuxProcessCollector::parse_memory_kb("1024 kB"),
-            Some(1048576)
+            Some(1_048_576)
         );
         assert_eq!(
             LinuxProcessCollector::parse_memory_kb("512 kB"),
-            Some(524288)
+            Some(524_288)
         );
         assert_eq!(LinuxProcessCollector::parse_memory_kb("0 kB"), Some(0));
         assert_eq!(LinuxProcessCollector::parse_memory_kb("invalid"), None);
