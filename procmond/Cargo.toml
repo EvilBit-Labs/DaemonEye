@@ -32,7 +32,7 @@ path = "src/main.rs"
 # Core dependencies
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-bincode = { workspace = true }
+postcard = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 crc32c = { workspace = true }

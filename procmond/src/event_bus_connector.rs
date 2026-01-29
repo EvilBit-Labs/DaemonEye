@@ -1088,7 +1088,11 @@ impl EventBusConnector {
     clippy::panic,
     clippy::indexing_slicing,
     clippy::str_to_string,
-    clippy::arithmetic_side_effects
+    clippy::arithmetic_side_effects,
+    clippy::wildcard_enum_match_arm,
+    clippy::equatable_if_let,
+    clippy::integer_division,
+    clippy::as_conversions
 )]
 mod tests {
     use super::*;

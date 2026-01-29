@@ -6,7 +6,7 @@
 //!
 //! # Overview
 //!
-//! The WAL stores events as length-delimited, bincode-serialized `WalEntry` structures
+//! The WAL stores events as length-delimited, postcard-serialized `WalEntry` structures
 //! with CRC32 checksums for corruption detection. Files are automatically rotated when
 //! reaching a configurable threshold (default 80MB) to maintain manageable file sizes
 //! and enable efficient cleanup of published events.
@@ -15,7 +15,7 @@
 //!
 //! Each WAL file contains a sequence of entries in the following format:
 //! ```text
-//! [u32 length prefix (little-endian)][bincode-serialized WalEntry]...
+//! [u32 length prefix (little-endian)][postcard-serialized WalEntry]...
 //! ```
 //!
 //! WAL files are named: `procmond-{sequence:05}.wal` where sequence is a zero-padded
@@ -174,7 +174,7 @@ impl WalEntry {
     /// Compute CRC32 checksum of the event's serialized form.
     fn compute_checksum(event: &ProcessEvent) -> u32 {
         use std::hash::Hasher;
-        bincode::serialize(event).map_or(0, |serialized| {
+        postcard::to_allocvec(event).map_or(0, |serialized| {
             let mut crc = crc32c::Crc32cHasher::new(0);
             for chunk in serialized.chunks(8192) {
                 crc.write(chunk);
@@ -414,7 +414,7 @@ impl WriteAheadLog {
                     let mut entry_data = vec![0_u8; length];
                     match file.read_exact(&mut entry_data).await {
                         Ok(_) => {
-                            if let Ok(entry) = bincode::deserialize::<WalEntry>(&entry_data)
+                            if let Ok(entry) = postcard::from_bytes::<WalEntry>(&entry_data)
                                 && entry.verify()
                             {
                                 if first_entry {
@@ -512,7 +512,7 @@ impl WriteAheadLog {
 
         // Serialize the entry
         let serialized =
-            bincode::serialize(&entry).map_err(|e| WalError::Serialization(e.to_string()))?;
+            postcard::to_allocvec(&entry).map_err(|e| WalError::Serialization(e.to_string()))?;
 
         // Prepare length prefix (little-endian u32)
         #[allow(clippy::as_conversions)] // Safe: serialized len is bounded by frame size
@@ -593,7 +593,7 @@ impl WriteAheadLog {
 
         // Serialize the entry
         let serialized =
-            bincode::serialize(&entry).map_err(|e| WalError::Serialization(e.to_string()))?;
+            postcard::to_allocvec(&entry).map_err(|e| WalError::Serialization(e.to_string()))?;
 
         // Prepare length prefix (little-endian u32)
         #[allow(clippy::as_conversions)] // Safe: serialized len is bounded by frame size
@@ -749,7 +749,7 @@ impl WriteAheadLog {
                     match file.read_exact(&mut entry_data).await {
                         Ok(_) => {
                             // Deserialize entry
-                            match bincode::deserialize::<WalEntry>(&entry_data) {
+                            match postcard::from_bytes::<WalEntry>(&entry_data) {
                                 Ok(entry) => {
                                     // Verify checksum
                                     if entry.verify() {
@@ -859,7 +859,7 @@ impl WriteAheadLog {
                     match file.read_exact(&mut entry_data).await {
                         Ok(_) => {
                             // Deserialize entry
-                            match bincode::deserialize::<WalEntry>(&entry_data) {
+                            match postcard::from_bytes::<WalEntry>(&entry_data) {
                                 Ok(entry) => {
                                     // Verify checksum
                                     if entry.verify() {
@@ -980,6 +980,21 @@ impl WriteAheadLog {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::str_to_string,
+    clippy::arithmetic_side_effects,
+    clippy::redundant_closure_for_method_calls,
+    clippy::cast_lossless,
+    clippy::as_conversions,
+    clippy::let_underscore_must_use,
+    clippy::uninlined_format_args,
+    clippy::len_zero,
+    clippy::semicolon_outside_block
+)]
 mod tests {
     use super::*;
     use collector_core::event::ProcessEvent;
@@ -1548,7 +1563,7 @@ mod tests {
             wal.write(event).await.expect("Failed to write event");
         }
 
-        // Append garbage data that looks like a valid length but contains invalid bincode
+        // Append garbage data that looks like a valid length but contains invalid postcard
         let wal_file_path = wal_path.join("procmond-00001.wal");
         let mut file = tokio::fs::OpenOptions::new()
             .append(true)
@@ -1556,7 +1571,7 @@ mod tests {
             .await
             .expect("Failed to open WAL file");
 
-        // Write a length prefix followed by garbage (invalid bincode)
+        // Write a length prefix followed by garbage (invalid postcard)
         let garbage_len: u32 = 50;
         file.write_all(&garbage_len.to_le_bytes())
             .await

@@ -222,8 +222,9 @@ fn test_process_data_validity_properties() {
                         );
 
                         for arg in &event.command_line {
+                            // Some processes (language servers, Java, etc.) have very long args
                             assert!(
-                                arg.len() <= 4096,
+                                arg.len() <= 8192,
                                 "Command line argument should be reasonable length for {}: {}",
                                 name,
                                 arg.len()
