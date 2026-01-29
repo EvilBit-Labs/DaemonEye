@@ -24,18 +24,12 @@ jobs:
     build:
         runs-on: ubuntu-latest
         steps:
-            - name: Checkout
-              uses: actions/checkout@v5
-
-            - name: Setup Rust
-              uses: dtolnay/rust-toolchain@1.90
+            - uses: actions/checkout@v6
+            - uses: jdx/mise-action@v3
               with:
-                  components: rustfmt, clippy
-
-            - name: Install protobuf
-              uses: arduino/setup-protoc@v3
-              with:
-                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Setup mdBook
               uses: jontze/action-mdbook@v4
