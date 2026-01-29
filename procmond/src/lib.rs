@@ -1,6 +1,7 @@
 //! Library module for procmond to enable unit testing
 #![allow(clippy::doc_markdown)] // Many docs reference code identifiers without backticks
 
+pub mod event_bus_connector;
 pub mod event_source;
 pub mod lifecycle;
 pub mod monitor_collector;
@@ -16,6 +17,10 @@ pub mod macos_collector;
 #[cfg(target_os = "windows")]
 pub mod windows_collector;
 
+pub use event_bus_connector::{
+    BackpressureSignal, EventBusConnector, EventBusConnectorError, EventBusConnectorResult,
+    ProcessEventType,
+};
 pub use event_source::{ProcessEventSource, ProcessSourceConfig};
 pub use lifecycle::{
     LifecycleTrackingConfig, LifecycleTrackingError, LifecycleTrackingResult,

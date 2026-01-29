@@ -122,6 +122,11 @@ pub struct WalEntry {
 
     /// CRC32 checksum of the serialized event for corruption detection
     pub checksum: u32,
+
+    /// Optional event type for topic routing (e.g., "start", "stop", "modify").
+    /// Added for backward compatibility - older WAL files will deserialize with None.
+    #[serde(default)]
+    pub event_type: Option<String>,
 }
 
 impl WalEntry {
@@ -141,6 +146,28 @@ impl WalEntry {
             sequence,
             event,
             checksum,
+            event_type: None,
+        }
+    }
+
+    /// Create a new WAL entry with event type for topic routing.
+    ///
+    /// # Arguments
+    ///
+    /// * `sequence` - Monotonically increasing sequence number
+    /// * `event` - Process event to persist
+    /// * `event_type` - Event type string (e.g., "start", "stop", "modify")
+    ///
+    /// # Returns
+    ///
+    /// A new `WalEntry` with checksum and event type
+    pub fn with_event_type(sequence: u64, event: ProcessEvent, event_type: String) -> Self {
+        let checksum = Self::compute_checksum(&event);
+        Self {
+            sequence,
+            event,
+            checksum,
+            event_type: Some(event_type),
         }
     }
 
@@ -537,6 +564,87 @@ impl WriteAheadLog {
         Ok(sequence)
     }
 
+    /// Write an event to the WAL with event type metadata for topic routing.
+    ///
+    /// Similar to [`write`], but includes an event type string that can be used
+    /// during replay to determine the correct topic for republishing.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - Process event to persist
+    /// * `event_type` - Event type string (e.g., "start", "stop", "modify")
+    ///
+    /// # Returns
+    ///
+    /// The sequence number assigned to this event
+    ///
+    /// # Errors
+    ///
+    /// Returns `WalError` if serialization, file I/O, or rotation fails
+    #[allow(clippy::significant_drop_tightening)] // Lock is intentionally held throughout for atomic rotation
+    pub async fn write_with_type(&self, event: ProcessEvent, event_type: String) -> WalResult<u64> {
+        use tokio::io::AsyncWriteExt;
+
+        // Get the next event sequence number
+        let sequence = self.current_event_sequence.fetch_add(1, Ordering::SeqCst);
+
+        // Create WAL entry with event type
+        let entry = WalEntry::with_event_type(sequence, event, event_type);
+
+        // Serialize the entry
+        let serialized =
+            bincode::serialize(&entry).map_err(|e| WalError::Serialization(e.to_string()))?;
+
+        // Prepare length prefix (little-endian u32)
+        #[allow(clippy::as_conversions)] // Safe: serialized len is bounded by frame size
+        let length = serialized.len() as u32;
+        let length_bytes = length.to_le_bytes();
+
+        // Calculate size increment safely
+        let size_increment = length_bytes.len().saturating_add(serialized.len());
+        #[allow(clippy::as_conversions)] // Safe: total size is bounded by max frame size
+        let size_increment_u64 = size_increment as u64;
+
+        // Write to current file - hold lock for entire operation including rotation
+        let mut state = self.file_state.lock().await;
+
+        // Write length prefix
+        state
+            .file
+            .write_all(&length_bytes)
+            .await
+            .map_err(WalError::Io)?;
+
+        // Write serialized entry
+        state
+            .file
+            .write_all(&serialized)
+            .await
+            .map_err(WalError::Io)?;
+
+        // Update file size and sequence tracking
+        state.size = state.size.saturating_add(size_increment_u64);
+
+        // Track min/max sequences for this file
+        if state.min_sequence == 0 {
+            state.min_sequence = sequence;
+        }
+        state.max_sequence = sequence;
+
+        debug!(
+            sequence = sequence,
+            file_size = state.size,
+            "WAL entry written with event type"
+        );
+
+        // Check if rotation is needed - perform atomically within the same lock
+        if state.size >= self.rotation_threshold {
+            self.rotate_file_internal(&mut state).await?;
+        }
+
+        Ok(sequence)
+    }
+
     /// Rotate to the next WAL file (internal implementation holding the lock).
     ///
     /// This method performs rotation atomically by:
@@ -678,6 +786,116 @@ impl WriteAheadLog {
         }
 
         Ok(events)
+    }
+
+    /// Replay WAL entries with full metadata for crash recovery.
+    ///
+    /// Similar to [`replay`], but returns complete `WalEntry` objects including
+    /// sequence numbers and event types. Use this when you need to track which
+    /// events have been published or need event type information for topic routing.
+    ///
+    /// # Returns
+    ///
+    /// A vector of recovered WAL entries in chronological order
+    ///
+    /// # Errors
+    ///
+    /// Returns `WalError` if directory scanning or fundamental I/O fails
+    pub async fn replay_entries(&self) -> WalResult<Vec<WalEntry>> {
+        let mut all_entries = Vec::new();
+        let files = self.list_wal_files().await?;
+
+        debug!(file_count = files.len(), "Starting WAL entry replay");
+
+        for (_sequence, path) in files {
+            match self.replay_file_entries(&path).await {
+                Ok(entries) => {
+                    debug!(
+                        file = ?path,
+                        entry_count = entries.len(),
+                        "Replayed WAL file entries"
+                    );
+                    all_entries.extend(entries);
+                }
+                Err(e) => {
+                    warn!("Error replaying WAL file {path:?}: {e}");
+                }
+            }
+        }
+
+        info!(
+            total_entries = all_entries.len(),
+            "WAL entry replay complete"
+        );
+
+        Ok(all_entries)
+    }
+
+    /// Replay a single WAL file returning full entries.
+    async fn replay_file_entries(&self, path: &Path) -> WalResult<Vec<WalEntry>> {
+        let mut file = fs::File::open(path)
+            .await
+            .map_err(|e| WalError::Replay(format!("Failed to open file: {e}")))?;
+
+        let mut entries = Vec::new();
+        let mut buffer = vec![0_u8; 4];
+
+        loop {
+            // Read length prefix
+            match file.read_exact(&mut buffer).await {
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    // EOF reached
+                    break;
+                }
+                Ok(_) => {
+                    // Got length prefix - buffer is guaranteed to be 4 bytes
+                    #[allow(clippy::indexing_slicing)] // Safe: buffer is exactly 4 bytes
+                    let length_bytes: [u8; 4] = [buffer[0], buffer[1], buffer[2], buffer[3]];
+                    #[allow(clippy::as_conversions)] // Safe: u32 length fits in usize
+                    let length = u32::from_le_bytes(length_bytes) as usize;
+
+                    // Allocate and read entry data
+                    let mut entry_data = vec![0_u8; length];
+                    match file.read_exact(&mut entry_data).await {
+                        Ok(_) => {
+                            // Deserialize entry
+                            match bincode::deserialize::<WalEntry>(&entry_data) {
+                                Ok(entry) => {
+                                    // Verify checksum
+                                    if entry.verify() {
+                                        entries.push(entry);
+                                    } else {
+                                        warn!(
+                                            sequence = entry.sequence,
+                                            "Skipping corrupted WAL entry (checksum mismatch)"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        error = %e,
+                                        "Skipping corrupted WAL entry (deserialization failed)"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                            // Partial write detected
+                            warn!("Skipping partial WAL entry (truncated data)");
+                            break;
+                        }
+                        Err(e) => {
+                            return Err(WalError::Io(e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(WalError::Io(e));
+                }
+            }
+        }
+
+        Ok(entries)
     }
 
     /// Mark events as published up to a given sequence number.
