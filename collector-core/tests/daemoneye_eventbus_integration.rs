@@ -1,4 +1,5 @@
 #![cfg(feature = "eventbus-integration")]
+#![allow(dead_code, unused_imports)]
 //! Integration tests for DaemoneyeEventBus with collector-core framework.
 
 use collector_core::{

@@ -78,7 +78,7 @@ fn get_current_user_info() -> String {
     #[cfg(windows)]
     {
         // Use whoami crate for cross-platform username retrieval
-        let username = whoami::username();
+        let username = whoami::username().unwrap_or_else(|_| String::from("unknown"));
         format!("User: {}", username)
     }
 }
