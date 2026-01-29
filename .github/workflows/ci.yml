@@ -95,8 +95,9 @@ jobs:
                     # Primary Support - Linux
                     # - os: ubuntu-24.04
                     #   platform: "Linux"
-                    - os: ubuntu-24.04-arm
-                      platform: "Linux"
+                    # Disabled: ARM runners are flaky on GitHub Actions
+                    # - os: ubuntu-24.04-arm
+                    #   platform: "Linux"
                     # Primary Support - macOS (using available runners)
                     - os: macos-15
                       platform: "macOS"
