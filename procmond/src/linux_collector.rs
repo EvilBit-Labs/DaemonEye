@@ -410,7 +410,8 @@ impl LinuxProcessCollector {
         if let Some(docker_part) = line.split("/docker/").nth(1) {
             let container_id = docker_part.split('/').next()?;
             if container_id.len() >= 12 {
-                return Some(container_id[..12].to_owned());
+                // Container IDs are hex strings (ASCII), so char iteration is safe
+                return Some(container_id.chars().take(12).collect());
             }
         }
         None
@@ -424,7 +425,8 @@ impl LinuxProcessCollector {
             if let Some(container_part) = parts.last()
                 && container_part.len() >= 12
             {
-                return Some(container_part[..12].to_owned());
+                // Container IDs are hex strings (ASCII), so char iteration is safe
+                return Some(container_part.chars().take(12).collect());
             }
         }
         None
@@ -499,8 +501,9 @@ impl LinuxProcessCollector {
 
         // Read command line
         let cmdline_path = format!("{proc_dir}/cmdline");
-        let command_line = match fs::read(&cmdline_path) {
-            Ok(bytes) => {
+        let command_line = fs::read(&cmdline_path).map_or_else(
+            |_| vec![],
+            |bytes| {
                 if bytes.is_empty() {
                     vec![]
                 } else {
@@ -510,9 +513,8 @@ impl LinuxProcessCollector {
                         .map(|arg| String::from_utf8_lossy(arg).into_owned())
                         .collect()
                 }
-            }
-            Err(_) => vec![],
-        };
+            },
+        );
 
         // Read executable path
         let exe_path = format!("{proc_dir}/exe");
