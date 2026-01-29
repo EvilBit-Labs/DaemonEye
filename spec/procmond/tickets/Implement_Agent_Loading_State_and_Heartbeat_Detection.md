@@ -7,6 +7,7 @@ Implement loading state management and heartbeat failure detection in daemoneye-
 ## Scope
 
 **In Scope:**
+
 - Collector configuration file format (`/etc/daemoneye/agent.yaml`)
 - Configuration loading and validation on agent startup
 - Loading state machine: Loading → Ready → Steady State
@@ -17,6 +18,7 @@ Implement loading state management and heartbeat failure detection in daemoneye-
 - Integration tests for loading state and heartbeat detection
 
 **Out of Scope:**
+
 - procmond-side changes (Tickets 1-3)
 - Comprehensive testing across all collectors (Ticket 5)
 - Security hardening (Ticket 6)
@@ -28,6 +30,7 @@ Implement loading state management and heartbeat failure detection in daemoneye-
 **Location:** `/etc/daemoneye/agent.yaml`
 
 **Schema:**
+
 ```yaml
 collectors:
   - id: procmond
@@ -43,6 +46,7 @@ collectors:
 ```
 
 **Configuration Loading:**
+
 - Load on agent startup
 - Validate collector binary paths exist and are executable
 - Parse collector-specific configuration
@@ -51,16 +55,19 @@ collectors:
 ### Loading State Machine
 
 **States:**
+
 1. **Loading**: Agent starting, broker initializing, spawning collectors
 2. **Ready**: All collectors registered and reported "ready", privileges dropped
 3. **Steady State**: Normal operation, collectors monitoring
 
 **Transitions:**
+
 - Loading → Ready: All collectors report "ready" within timeout (60s default)
 - Ready → Steady State: Agent broadcasts "begin monitoring" command
 - Any → Loading: Agent restart
 
 **Timeout Handling:**
+
 - If collectors don't report "ready" within timeout, fail startup with error
 - Log which collectors failed to report ready
 - Exit with non-zero status code
@@ -70,27 +77,33 @@ collectors:
 **Strategy:** Escalating recovery actions
 
 **Detection:**
+
 - Track missed heartbeat count per collector (threshold: 3 consecutive)
 - Heartbeat expected every 30 seconds (allow 90 seconds before action)
 
 **Escalating Actions:**
+
 1. **Health Check RPC** (timeout: 5 seconds)
+
    - Send health check RPC to collector
    - If response received, reset missed heartbeat count
    - If timeout, proceed to action 2
 
 2. **Graceful Shutdown RPC** (timeout: 60 seconds)
+
    - Send graceful shutdown RPC to collector
    - Wait for completion or timeout
    - If successful, proceed to action 4 (restart)
    - If timeout, proceed to action 3
 
 3. **Force Kill** (via CollectorProcessManager)
+
    - Kill collector process (SIGKILL on Unix, TerminateProcess on Windows)
    - Log forced termination
    - Proceed to action 4
 
 4. **Automatic Restart** (if auto_restart enabled)
+
    - Restart collector via CollectorProcessManager
    - Reset missed heartbeat count
    - Log restart event
@@ -121,18 +134,21 @@ stateDiagram-v2
 ### Component Changes
 
 **Modified:** `file:daemoneye-agent/src/broker_manager.rs`
+
 - Add loading state management
 - Track collector readiness
 - Implement privilege dropping after all collectors ready
 - Broadcast "begin monitoring" command
 
 **Modified:** `file:daemoneye-agent/src/collector_registry.rs`
+
 - Track heartbeat timestamps per collector
 - Detect missed heartbeats (3+ consecutive)
 - Implement escalating recovery actions
 - Log all recovery actions
 
 **New:** `file:daemoneye-agent/src/config.rs`
+
 - Load collector configuration from YAML file
 - Validate configuration
 - Provide configuration to BrokerManager
@@ -140,21 +156,25 @@ stateDiagram-v2
 ## Dependencies
 
 **Requires:**
+
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 2] - procmond must wait for "begin monitoring"
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 3] - procmond must publish registration and heartbeat
 
 **Blocks:**
+
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 5] - Integration tests need complete startup flow
 
 ## Acceptance Criteria
 
 ### Configuration Loading
+
 - [ ] Agent loads collector configuration from `/etc/daemoneye/agent.yaml`
 - [ ] Configuration validation checks binary paths exist and are executable
 - [ ] Collector-specific configuration parsed correctly
 - [ ] Invalid configuration causes agent startup failure with clear error message
 
 ### Loading State Management
+
 - [ ] Agent implements state machine: Loading → Ready → Steady State
 - [ ] Agent spawns collectors in order defined in configuration
 - [ ] Agent tracks collector readiness (waits for "ready" status from all collectors)
@@ -164,6 +184,7 @@ stateDiagram-v2
 - [ ] Startup failure logs which collectors failed to report ready
 
 ### Heartbeat Failure Detection
+
 - [ ] Agent tracks heartbeat timestamps per collector
 - [ ] Agent detects 3 consecutive missed heartbeats (90 seconds without heartbeat)
 - [ ] Escalating actions implemented:
@@ -175,6 +196,7 @@ stateDiagram-v2
 - [ ] Missed heartbeat count reset on successful health check or restart
 
 ### Integration Tests
+
 - [ ] Test: Agent waits for collector "ready" before dropping privileges
 - [ ] Test: Agent broadcasts "begin monitoring" after all collectors ready
 - [ ] Test: Agent fails startup if collector doesn't report ready within timeout
@@ -185,6 +207,7 @@ stateDiagram-v2
 - [ ] Test: Automatic restart restores collector after failure
 
 ### Documentation
+
 - [ ] Configuration file format documented
 - [ ] Loading state machine documented with state diagram
 - [ ] Heartbeat failure detection documented with escalating actions

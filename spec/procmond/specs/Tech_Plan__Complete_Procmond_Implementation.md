@@ -76,10 +76,10 @@
 
 **Phase 6: Performance Validation**
 
-- Benchmark process enumeration (target: 1,000 processes in <100ms)
+- Benchmark process enumeration (target: 1,000 processes in \<100ms)
 - Load testing with 10,000+ processes
-- Memory profiling (target: <100MB sustained)
-- CPU monitoring (target: <5% sustained)
+- Memory profiling (target: \<100MB sustained)
+- CPU monitoring (target: \<5% sustained)
 - Regression testing to prevent performance degradation
 
 ### 3. Key Trade-offs and Rationale
@@ -119,9 +119,9 @@
 
 **Performance Constraints**
 
-- CPU usage <5% sustained during continuous monitoring
-- Memory usage <100MB during normal operation
-- Process enumeration <100ms for 1,000 processes (average)
+- CPU usage \<5% sustained during continuous monitoring
+- Memory usage \<100MB during normal operation
+- Process enumeration \<100ms for 1,000 processes (average)
 - Event publishing must handle backpressure gracefully
 
 **Security Constraints**
@@ -284,15 +284,15 @@ pub struct ProcessSnapshot {
 ```rust
 // Configuration for event bus connection
 pub struct EventBusConfig {
-    pub broker_socket_path: String,           // From DAEMONEYE_BROKER_SOCKET env var
-    pub connection_timeout: Duration,          // Default: 10 seconds
-    pub event_buffer_size_bytes: usize,        // Default: 10MB
-    pub heartbeat_interval: Duration,          // Default: 30 seconds
-    pub enable_event_buffering: bool,          // Default: true
-    pub wal_directory: PathBuf,                // Write-ahead log directory
-    pub wal_max_size_bytes: usize,             // Default: 100MB (10x buffer)
-    pub wal_rotation_threshold: f64,           // Default: 0.8 (80% full)
-    pub backpressure_buffer_threshold: f64,    // Default: 0.7 (70% full triggers backpressure)
+    pub broker_socket_path: String, // From DAEMONEYE_BROKER_SOCKET env var
+    pub connection_timeout: Duration, // Default: 10 seconds
+    pub event_buffer_size_bytes: usize, // Default: 10MB
+    pub heartbeat_interval: Duration, // Default: 30 seconds
+    pub enable_event_buffering: bool, // Default: true
+    pub wal_directory: PathBuf,     // Write-ahead log directory
+    pub wal_max_size_bytes: usize,  // Default: 100MB (10x buffer)
+    pub wal_rotation_threshold: f64, // Default: 0.8 (80% full)
+    pub backpressure_buffer_threshold: f64, // Default: 0.7 (70% full triggers backpressure)
     pub backpressure_interval_multiplier: f64, // Default: 1.5 (increase interval by 50%)
 }
 ```
@@ -302,11 +302,11 @@ pub struct EventBusConfig {
 ```rust
 // Configuration for RPC service
 pub struct RpcServiceConfig {
-    pub collector_id: String,                  // Default: "procmond"
-    pub collector_type: String,                // Default: "process-monitor"
-    pub registration_timeout: Duration,        // Default: 10 seconds
-    pub health_check_timeout: Duration,        // Default: 5 seconds
-    pub graceful_shutdown_timeout: Duration,   // Default: 60 seconds
+    pub collector_id: String,                // Default: "procmond"
+    pub collector_type: String,              // Default: "process-monitor"
+    pub registration_timeout: Duration,      // Default: 10 seconds
+    pub health_check_timeout: Duration,      // Default: 5 seconds
+    pub graceful_shutdown_timeout: Duration, // Default: 60 seconds
 }
 ```
 
@@ -315,20 +315,20 @@ pub struct RpcServiceConfig {
 ```rust
 // Messages sent to ProcmondMonitorCollector actor
 pub enum ActorMessage {
-    HealthCheck { 
-        respond_to: oneshot::Sender<HealthCheckData> 
+    HealthCheck {
+        respond_to: oneshot::Sender<HealthCheckData>,
     },
-    UpdateConfig { 
-        config: ProcmondMonitorConfig, 
-        respond_to: oneshot::Sender<Result<()>> 
+    UpdateConfig {
+        config: ProcmondMonitorConfig,
+        respond_to: oneshot::Sender<Result<()>>,
     },
-    GracefulShutdown { 
-        respond_to: oneshot::Sender<Result<()>> 
+    GracefulShutdown {
+        respond_to: oneshot::Sender<Result<()>>,
     },
-    BeginMonitoring,  // From control.collector.lifecycle broadcast
-    AdjustInterval { 
-        new_interval: Duration,  // From EventBusConnector backpressure
-        reason: BackpressureReason,  // BufferFull, Reconnecting, etc.
+    BeginMonitoring, // From control.collector.lifecycle broadcast
+    AdjustInterval {
+        new_interval: Duration,     // From EventBusConnector backpressure
+        reason: BackpressureReason, // BufferFull, Reconnecting, etc.
     },
 }
 
@@ -344,10 +344,10 @@ pub enum BackpressureReason {
 ```rust
 // Entry in the write-ahead log (bincode serialization)
 pub struct WriteAheadLogEntry {
-    pub sequence: u64,                     // Monotonic sequence number
-    pub timestamp: SystemTime,             // When event was written
-    pub event: ProcessEvent,               // The actual event
-    pub checksum: u32,                     // CRC32 for corruption detection
+    pub sequence: u64,         // Monotonic sequence number
+    pub timestamp: SystemTime, // When event was written
+    pub event: ProcessEvent,   // The actual event
+    pub checksum: u32,         // CRC32 for corruption detection
 }
 ```
 
@@ -367,14 +367,14 @@ pub struct WriteAheadLogEntry {
 ```rust
 // Published to: control.collector.procmond (RPC)
 pub struct RegistrationRequest {
-    pub collector_id: String,              // "procmond"
-    pub collector_type: String,            // "process-monitor"
-    pub hostname: String,                  // System hostname
-    pub version: Option<String>,           // procmond version
-    pub pid: Option<u32>,                  // procmond PID
-    pub capabilities: Vec<String>,         // ["process"]
+    pub collector_id: String,                // "procmond"
+    pub collector_type: String,              // "process-monitor"
+    pub hostname: String,                    // System hostname
+    pub version: Option<String>,             // procmond version
+    pub pid: Option<u32>,                    // procmond PID
+    pub capabilities: Vec<String>,           // ["process"]
     pub attributes: HashMap<String, String>, // Platform-specific attributes
-    pub heartbeat_interval_ms: Option<u64>, // Requested heartbeat interval
+    pub heartbeat_interval_ms: Option<u64>,  // Requested heartbeat interval
 }
 ```
 
@@ -383,10 +383,10 @@ pub struct RegistrationRequest {
 ```rust
 // Published to: control.health.heartbeat.procmond
 pub struct HeartbeatData {
-    pub collector_id: String,              // "procmond"
-    pub timestamp: SystemTime,             // Current time
-    pub sequence: u64,                     // Monotonic sequence number
-    pub status: HealthStatus,              // Healthy/Degraded/Unhealthy
+    pub collector_id: String,  // "procmond"
+    pub timestamp: SystemTime, // Current time
+    pub sequence: u64,         // Monotonic sequence number
+    pub status: HealthStatus,  // Healthy/Degraded/Unhealthy
 }
 ```
 
@@ -632,11 +632,20 @@ sequenceDiagram
 
 ```rust
 enum ActorMessage {
-    HealthCheck { respond_to: oneshot::Sender<HealthCheckData> },
-    UpdateConfig { config: Config, respond_to: oneshot::Sender<Result<()>> },
-    GracefulShutdown { respond_to: oneshot::Sender<Result<()>> },
-    BeginMonitoring,  // From agent after loading state
-    AdjustInterval { new_interval: Duration },  // From EventBusConnector backpressure
+    HealthCheck {
+        respond_to: oneshot::Sender<HealthCheckData>,
+    },
+    UpdateConfig {
+        config: Config,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+    GracefulShutdown {
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+    BeginMonitoring, // From agent after loading state
+    AdjustInterval {
+        new_interval: Duration,
+    }, // From EventBusConnector backpressure
 }
 ```
 
@@ -662,7 +671,7 @@ enum ActorMessage {
 - **CollectorProcessManager**: Monitors procmond process health, handles restarts
 - **CollectorRegistry**: Tracks procmond registration and heartbeat status
 - **RPC Clients**: Sends lifecycle commands to procmond
-- **Loading State Management**: 
+- **Loading State Management**:
   - Agent initializes broker first (before spawning collectors)
   - Agent spawns all configured collectors with `DAEMONEYE_BROKER_SOCKET` env var
   - Agent waits for all collectors to register and report "ready" status
@@ -870,11 +879,13 @@ collectors:
 5. Implement privilege dropping after all collectors ready
 6. Add "begin monitoring" broadcast to `control.collector.lifecycle` topic
 7. Implement heartbeat failure detection with escalating actions:
-  - Track missed heartbeats per collector (threshold: 3 consecutive)
-    - Action 1: Health check RPC (timeout: 5s)
-    - Action 2: Graceful shutdown RPC (timeout: 60s)
-    - Action 3: Force kill via CollectorProcessManager
-    - Action 4: Automatic restart (if auto_restart enabled)
+
+- Track missed heartbeats per collector (threshold: 3 consecutive)
+  - Action 1: Health check RPC (timeout: 5s)
+  - Action 2: Graceful shutdown RPC (timeout: 60s)
+  - Action 3: Force kill via CollectorProcessManager
+  - Action 4: Automatic restart (if auto_restart enabled)
+
 8. Integration tests for RPC communication and loading state coordination
 
 **Success Criteria:**
@@ -954,19 +965,19 @@ collectors:
 
 **Tasks:**
 
-1. Benchmark process enumeration (1,000 processes target: <100ms)
+1. Benchmark process enumeration (1,000 processes target: \<100ms)
 2. Load testing with 10,000+ processes
-3. Memory profiling (target: <100MB sustained)
-4. CPU monitoring (target: <5% sustained)
+3. Memory profiling (target: \<100MB sustained)
+4. CPU monitoring (target: \<5% sustained)
 5. Regression testing to prevent degradation
 6. Performance optimization if targets not met
 
 **Success Criteria:**
 
-- Enumerate 1,000 processes in <100ms (average)
+- Enumerate 1,000 processes in \<100ms (average)
 - Support 10,000+ processes without degradation
-- Memory usage <100MB during normal operation
-- CPU usage <5% during continuous monitoring
+- Memory usage \<100MB during normal operation
+- CPU usage \<5% during continuous monitoring
 - No performance regressions
 
 ---
@@ -983,4 +994,3 @@ collectors:
 - Lifecycle Tracker: file:procmond/src/lifecycle.rs
 - Broker Manager: file:daemoneye-agent/src/broker_manager.rs
 - Collector Registry: file:daemoneye-agent/src/collector_registry.rs
-

@@ -7,6 +7,7 @@ Implement durable event persistence and broker connectivity for procmond. This t
 ## Scope
 
 **In Scope:**
+
 - WriteAheadLog component with bincode serialization
 - Sequence-numbered WAL files with rotation at 80% capacity
 - CRC32 corruption detection and recovery
@@ -17,6 +18,7 @@ Implement durable event persistence and broker connectivity for procmond. This t
 - Unit tests for WAL and EventBusConnector
 
 **Out of Scope:**
+
 - Actor pattern implementation (Ticket 2)
 - RPC service handling (Ticket 3)
 - Agent-side changes (Ticket 4)
@@ -29,6 +31,7 @@ Implement durable event persistence and broker connectivity for procmond. This t
 **Location:** `file:procmond/src/wal.rs`
 
 **Key Responsibilities:**
+
 - Persist events to disk before buffering (durability guarantee)
 - Use sequence-numbered files: `procmond-{sequence:05}.wal`
 - Rotate when file reaches 80MB (80% of 100MB max)
@@ -37,6 +40,7 @@ Implement durable event persistence and broker connectivity for procmond. This t
 - Handle corruption with CRC32 validation
 
 **File Format:**
+
 ```rust
 // Bincode-serialized records with CRC32 checksums
 struct WalEntry {
@@ -52,6 +56,7 @@ struct WalEntry {
 **Location:** `file:procmond/src/event_bus_connector.rs`
 
 **Key Responsibilities:**
+
 - Connect to daemoneye-agent's embedded broker
 - Integrate with WriteAheadLog for event persistence
 - Buffer events (10MB limit) when connection lost
@@ -61,6 +66,7 @@ struct WalEntry {
 - Provide shared channel reference for backpressure signaling
 
 **Backpressure Strategy:**
+
 - Trigger at 70% buffer capacity
 - Release at 50% buffer capacity
 - Signal via shared mpsc channel (to be used by Ticket 2)
@@ -99,16 +105,19 @@ sequenceDiagram
 ## Dependencies
 
 **Requires:**
+
 - daemoneye-eventbus client library
 - Existing ProcessEvent data model from `file:daemoneye-lib/src/models/process.rs`
 
 **Blocks:**
+
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 2] - Actor pattern needs EventBusConnector
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 3] - RPC service needs event bus connectivity
 
 ## Acceptance Criteria
 
 ### WriteAheadLog
+
 - [ ] Events persisted to disk using bincode serialization
 - [ ] Sequence-numbered files created: `procmond-00001.wal`, `procmond-00002.wal`, etc.
 - [ ] File rotation occurs at 80MB (80% of 100MB max)
@@ -118,6 +127,7 @@ sequenceDiagram
 - [ ] Unit tests cover: persistence, rotation, replay, corruption recovery
 
 ### EventBusConnector
+
 - [ ] Connects to broker using `DAEMONEYE_BROKER_SOCKET` environment variable
 - [ ] Events written to WAL before buffering
 - [ ] Events buffered (10MB limit) when connection lost
@@ -129,6 +139,7 @@ sequenceDiagram
 - [ ] Unit tests cover: connection, WAL integration, buffering, replay, backpressure
 
 ### Integration
+
 - [ ] EventBusConnector successfully integrates with WriteAheadLog
 - [ ] Events survive procmond crash and are replayed on restart
 - [ ] No data loss during connection failures

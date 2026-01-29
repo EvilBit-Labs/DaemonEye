@@ -44,14 +44,14 @@ DaemonEye requires a production-ready process monitoring daemon (procmond) that 
 
 **Performance Uncertainty**
 
-- Performance benchmarks haven't been validated against targets (e.g., enumerate 1,000 processes in <100ms)
+- Performance benchmarks haven't been validated against targets (e.g., enumerate 1,000 processes in \<100ms)
 - No load testing with 10,000+ processes to validate scalability claims
 - Memory usage and CPU overhead under sustained operation are unverified
 - No regression testing to prevent performance degradation
 
 **Testing Gaps**
 
-- Test coverage is below target thresholds (<80% unit, <90% critical paths)
+- Test coverage is below target thresholds (\<80% unit, \<90% critical paths)
 - Cross-platform integration tests are incomplete or missing
 - Security testing (privilege escalation, injection attacks, DoS) is insufficient
 - No chaos testing for resilience validation
@@ -152,9 +152,9 @@ The gap exists because:
 
 **Performance Validation**
 
-- Benchmark process enumeration against targets (1,000 processes in <100ms)
+- Benchmark process enumeration against targets (1,000 processes in \<100ms)
 - Load test with 10,000+ processes
-- Validate memory usage (<100MB) and CPU overhead (<5%)
+- Validate memory usage (\<100MB) and CPU overhead (\<5%)
 - Implement performance regression testing
 
 **Testing & Quality**
@@ -210,10 +210,10 @@ The gap exists because:
 
 **Performance Targets**
 
-- ✅ Enumerate 1,000 processes in <100ms (average, primary platforms)
+- ✅ Enumerate 1,000 processes in \<100ms (average, primary platforms)
 - ✅ Support 10,000+ processes without degradation
-- ✅ Memory usage <100MB during normal operation
-- ✅ CPU overhead <5% during continuous monitoring
+- ✅ Memory usage \<100MB during normal operation
+- ✅ CPU overhead \<5% during continuous monitoring
 
 **Quality Metrics**
 
@@ -279,4 +279,3 @@ The gap exists because:
 - Development Guide: file:AGENTS.md
 - Existing Implementation: file:procmond/src/
 - Data Models: file:daemoneye-lib/src/models/process.rs
-

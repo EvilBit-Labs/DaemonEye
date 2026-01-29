@@ -21,15 +21,15 @@ This document describes the core user flows for procmond, the process monitoring
 
 **Steps:**
 
-1. Operator installs DaemonEye package (deb, rpm, pkg, msi, or homebrew)
-2. Installation creates default configuration files in system location
-3. Operator reviews and adjusts configuration via `daemoneye-cli config show procmond`
-4. Operator sets collection interval, metadata options, and resource limits
-5. Operator validates configuration via `daemoneye-cli config validate`
-6. Operator starts daemoneye-agent service (systemd, launchd, Windows Service)
-7. daemoneye-agent starts embedded event bus broker
-8. daemoneye-agent spawns procmond with validated configuration
-9. procmond connects to event bus and registers capabilities
+01. Operator installs DaemonEye package (deb, rpm, pkg, msi, or homebrew)
+02. Installation creates default configuration files in system location
+03. Operator reviews and adjusts configuration via `daemoneye-cli config show procmond`
+04. Operator sets collection interval, metadata options, and resource limits
+05. Operator validates configuration via `daemoneye-cli config validate`
+06. Operator starts daemoneye-agent service (systemd, launchd, Windows Service)
+07. daemoneye-agent starts embedded event bus broker
+08. daemoneye-agent spawns procmond with validated configuration
+09. procmond connects to event bus and registers capabilities
 10. procmond performs initial process enumeration
 11. Operator runs `daemoneye-cli health procmond` to verify setup
 12. Operator sees "procmond: healthy" status confirming successful setup
@@ -58,15 +58,15 @@ This document describes the core user flows for procmond, the process monitoring
 
 **Steps:**
 
-1. daemoneye-agent starts its embedded event bus broker
-2. daemoneye-agent spawns procmond process with configuration
-3. procmond initializes logging and loads configuration from daemoneye-agent
-4. procmond validates configuration parameters (intervals, limits, metadata options)
-5. procmond attempts to connect to daemoneye-agent's event bus broker
-6. **Decision Point:** If connection fails, procmond retries with exponential backoff (up to 3 attempts)
-7. **Success Path:** procmond registers with broker, publishes registration message with capabilities
-8. procmond initializes platform-specific collector (Linux/macOS/Windows/FreeBSD)
-9. procmond performs initial health check and reports status to daemoneye-agent
+01. daemoneye-agent starts its embedded event bus broker
+02. daemoneye-agent spawns procmond process with configuration
+03. procmond initializes logging and loads configuration from daemoneye-agent
+04. procmond validates configuration parameters (intervals, limits, metadata options)
+05. procmond attempts to connect to daemoneye-agent's event bus broker
+06. **Decision Point:** If connection fails, procmond retries with exponential backoff (up to 3 attempts)
+07. **Success Path:** procmond registers with broker, publishes registration message with capabilities
+08. procmond initializes platform-specific collector (Linux/macOS/Windows/FreeBSD)
+09. procmond performs initial health check and reports status to daemoneye-agent
 10. procmond begins continuous monitoring loop
 11. Operator sees "procmond: healthy" status in daemoneye-agent health report
 
@@ -115,15 +115,15 @@ sequenceDiagram
 
 **Steps:**
 
-1. procmond waits for next collection interval tick
-2. procmond enumerates all running processes using platform-specific collector
-3. procmond collects basic metadata (PID, name, executable path, command line, resource usage)
-4. **Decision Point:** If enhanced metadata is enabled, collect platform-specific details (network connections, file descriptors, security contexts)
-5. procmond compares current process list with previous snapshot (lifecycle tracking)
-6. procmond identifies lifecycle events (process starts, stops, modifications)
-7. procmond publishes process events to event bus topic `events.process.batch`
-8. procmond publishes lifecycle events to topic `events.process.lifecycle`
-9. **Decision Point:** If backpressure detected (event bus queue full), procmond slows down event publishing
+01. procmond waits for next collection interval tick
+02. procmond enumerates all running processes using platform-specific collector
+03. procmond collects basic metadata (PID, name, executable path, command line, resource usage)
+04. **Decision Point:** If enhanced metadata is enabled, collect platform-specific details (network connections, file descriptors, security contexts)
+05. procmond compares current process list with previous snapshot (lifecycle tracking)
+06. procmond identifies lifecycle events (process starts, stops, modifications)
+07. procmond publishes process events to event bus topic `events.process.batch`
+08. procmond publishes lifecycle events to topic `events.process.lifecycle`
+09. **Decision Point:** If backpressure detected (event bus queue full), procmond slows down event publishing
 10. procmond updates internal statistics (processes collected, events published, errors)
 11. procmond stores audit trail in local database
 12. Cycle repeats on next interval
@@ -137,9 +137,9 @@ sequenceDiagram
 **Performance Expectations:**
 
 - Collection completes within interval (30 seconds default)
-- Enumerate 1,000 processes in <100ms
-- Memory usage stays <100MB
-- CPU usage <5% sustained
+- Enumerate 1,000 processes in \<100ms
+- Memory usage stays \<100MB
+- CPU usage \<5% sustained
 
 ```mermaid
 sequenceDiagram
@@ -226,15 +226,15 @@ sequenceDiagram
 
 **Steps:**
 
-1. Operator updates configuration via daemoneye-cli: `daemoneye-cli config update procmond --interval=60 --enhanced-metadata=true`
-2. daemoneye-agent validates new configuration parameters
-3. daemoneye-agent publishes configuration update to event bus topic `control.collector.config`
-4. procmond receives configuration update message
-5. procmond validates new configuration (intervals, limits, feature flags)
-6. **Decision Point:** If validation fails, procmond rejects update and reports error
-7. **Success Path:** procmond applies new configuration without restarting
-8. procmond adjusts monitoring behavior (new interval, metadata collection level)
-9. procmond publishes configuration acknowledgment to event bus
+01. Operator updates configuration via daemoneye-cli: `daemoneye-cli config update procmond --interval=60 --enhanced-metadata=true`
+02. daemoneye-agent validates new configuration parameters
+03. daemoneye-agent publishes configuration update to event bus topic `control.collector.config`
+04. procmond receives configuration update message
+05. procmond validates new configuration (intervals, limits, feature flags)
+06. **Decision Point:** If validation fails, procmond rejects update and reports error
+07. **Success Path:** procmond applies new configuration without restarting
+08. procmond adjusts monitoring behavior (new interval, metadata collection level)
+09. procmond publishes configuration acknowledgment to event bus
 10. daemoneye-agent confirms configuration applied successfully
 11. Operator sees "Configuration updated successfully" message
 
@@ -265,16 +265,19 @@ sequenceDiagram
 2. daemoneye-cli queries daemoneye-agent for component health
 3. daemoneye-agent requests health status from procmond via event bus
 4. procmond performs self-health check:
-  - Verify event bus connectivity
-  - Check collection cycle success rate
-  - Validate resource usage (memory, CPU)
-  - Check for consecutive failures
+
+- Verify event bus connectivity
+- Check collection cycle success rate
+- Validate resource usage (memory, CPU)
+- Check for consecutive failures
+
 5. procmond publishes health status to topic `control.health.status`
 6. daemoneye-agent aggregates health data and returns to CLI
 7. Operator sees health report with status indicators:
-  - **Healthy:** All checks passing, normal operation
-  - **Degraded:** Some issues but still functional (e.g., enhanced metadata unavailable)
-  - **Unhealthy:** Critical issues requiring intervention (e.g., event bus disconnected)
+
+- **Healthy:** All checks passing, normal operation
+- **Degraded:** Some issues but still functional (e.g., enhanced metadata unavailable)
+- **Unhealthy:** Critical issues requiring intervention (e.g., event bus disconnected)
 
 **Health Indicators:**
 
@@ -379,42 +382,42 @@ sequenceDiagram
 flowchart TD
     Start[Collection Cycle Start] --> Enumerate[Enumerate Processes]
     Enumerate --> CheckSuccess{Collection<br/>Successful?}
-    
+
     CheckSuccess -->|Yes| Lifecycle[Lifecycle Analysis]
     CheckSuccess -->|No| CheckError{Error Type?}
-    
+
     CheckError -->|Permission| PartialResults[Publish Partial Results]
     CheckError -->|Platform| Fallback[Fall Back to Basic Collection]
     CheckError -->|Timeout| Retry[Retry with Backoff]
-    
+
     PartialResults --> ReportDegraded[Report Degraded Status]
     Fallback --> ReportDegraded
     Retry --> CheckRetries{Retries<br/>Exhausted?}
-    
+
     CheckRetries -->|No| Enumerate
     CheckRetries -->|Yes| ReportUnhealthy[Report Unhealthy Status]
-    
+
     Lifecycle --> Publish[Publish Events to Bus]
     Publish --> CheckBackpressure{Backpressure<br/>Detected?}
-    
+
     CheckBackpressure -->|Yes| CircuitBreaker{Circuit Breaker<br/>Threshold?}
     CheckBackpressure -->|No| UpdateStats[Update Statistics]
-    
+
     CircuitBreaker -->|Activated| DropEvents[Drop Low-Priority Events]
     CircuitBreaker -->|Not Yet| SlowDown[Slow Publishing Rate]
-    
+
     DropEvents --> UpdateStats
     SlowDown --> UpdateStats
-    
+
     UpdateStats --> CheckResources{Resource Usage<br/>OK?}
-    
+
     CheckResources -->|Yes| WaitInterval[Wait for Next Interval]
     CheckResources -->|No| ReduceLoad[Reduce Memory/CPU Load]
-    
+
     ReduceLoad --> WaitInterval
     ReportDegraded --> WaitInterval
     ReportUnhealthy --> RequestRestart[Request Restart from Agent]
-    
+
     WaitInterval --> Start
 ```
 
@@ -428,15 +431,15 @@ flowchart TD
 
 **Steps:**
 
-1. daemoneye-agent publishes shutdown command to topic `control.collector.lifecycle`
-2. procmond receives shutdown signal
-3. procmond stops accepting new collection cycles
-4. procmond completes current collection cycle if in progress (with 30-second timeout)
-5. procmond publishes any buffered events to event bus
-6. procmond flushes audit trail to local database
-7. procmond publishes deregistration message to event bus
-8. procmond closes event bus connection
-9. procmond releases platform-specific resources (file handles, memory)
+01. daemoneye-agent publishes shutdown command to topic `control.collector.lifecycle`
+02. procmond receives shutdown signal
+03. procmond stops accepting new collection cycles
+04. procmond completes current collection cycle if in progress (with 30-second timeout)
+05. procmond publishes any buffered events to event bus
+06. procmond flushes audit trail to local database
+07. procmond publishes deregistration message to event bus
+08. procmond closes event bus connection
+09. procmond releases platform-specific resources (file handles, memory)
 10. procmond exits with success code
 11. daemoneye-agent confirms procmond stopped cleanly
 12. Operator sees "procmond: stopped" status
@@ -460,38 +463,42 @@ flowchart TD
 2. daemoneye-cli queries daemoneye-agent for procmond diagnostics
 3. daemoneye-agent requests detailed health report from procmond via event bus
 4. procmond gathers diagnostic information:
-  - Recent error messages and stack traces
-  - Collection cycle statistics (success rate, latency)
-  - Resource usage trends (memory, CPU over time)
-  - Event bus connectivity status
-  - Platform collector status and capabilities
+
+- Recent error messages and stack traces
+- Collection cycle statistics (success rate, latency)
+- Resource usage trends (memory, CPU over time)
+- Event bus connectivity status
+- Platform collector status and capabilities
+
 5. procmond publishes diagnostic report to topic `control.health.diagnostics`
 6. daemoneye-agent formats and returns diagnostic data to CLI
 7. Operator reviews diagnostic output showing:
-  - **Status:** Current health state with reason
-  - **Statistics:** Collection cycles, events published, errors
-  - **Resources:** Memory usage, CPU usage, buffer sizes
-  - **Connectivity:** Event bus connection status, last successful publish
-  - **Recent Errors:** Last 10 errors with timestamps and context
+
+- **Status:** Current health state with reason
+- **Statistics:** Collection cycles, events published, errors
+- **Resources:** Memory usage, CPU usage, buffer sizes
+- **Connectivity:** Event bus connection status, last successful publish
+- **Recent Errors:** Last 10 errors with timestamps and context
+
 8. **Decision Point:** Based on diagnostics, operator takes action:
-  - **Permission errors:** Adjust procmond privileges or security policies
-  - **Performance issues:** Increase collection interval or disable enhanced metadata
-  - **Connectivity issues:** Check daemoneye-agent status and event bus health
-  - **Resource exhaustion:** Increase resource limits or reduce collection scope
-9. Operator applies configuration changes through daemoneye-agent
+
+- **Permission errors:** Adjust procmond privileges or security policies
+- **Performance issues:** Increase collection interval or disable enhanced metadata
+- **Connectivity issues:** Check daemoneye-agent status and event bus health
+- **Resource exhaustion:** Increase resource limits or reduce collection scope
+
+09. Operator applies configuration changes through daemoneye-agent
 10. Operator monitors health status to confirm issue resolved
 
 **Common Troubleshooting Scenarios:**
 
-
 | Issue             | Diagnostic Indicator                | Operator Action                                 |
 | ----------------- | ----------------------------------- | ----------------------------------------------- |
-| High error rate   | Collection success rate <80%        | Review error logs, check permissions            |
+| High error rate   | Collection success rate \<80%       | Review error logs, check permissions            |
 | Backpressure      | Backpressure events >100/hour       | Increase interval, reduce metadata              |
 | Memory growth     | Memory usage trending upward        | Reduce max processes, disable enhanced metadata |
 | Missing events    | Events published but not received   | Check daemoneye-agent event bus health          |
 | Platform failures | Platform collector status: degraded | Check OS-specific requirements (procfs, WinAPI) |
-
 
 ---
 
@@ -503,15 +510,15 @@ flowchart TD
 
 **Steps:**
 
-1. Operator defines detection rule via daemoneye-cli: `daemoneye-cli rules add --name="unsigned-binary" --condition="code_signed=false" --trigger="binary_hasher" --priority=high`
-2. Rule specifies conditions (e.g., "unsigned binary", "network connection to suspicious IP", "privilege escalation")
-3. Rule specifies which collector to trigger (binary hasher, memory analyzer, network analyzer)
-4. Rule specifies priority level (Low/Normal/High/Critical)
-5. Operator saves rule configuration
-6. daemoneye-agent validates rule syntax and feasibility
-7. daemoneye-agent publishes rule update to procmond via topic `control.collector.config`
-8. procmond receives and validates rule update
-9. procmond applies new rules to lifecycle tracker
+01. Operator defines detection rule via daemoneye-cli: `daemoneye-cli rules add --name="unsigned-binary" --condition="code_signed=false" --trigger="binary_hasher" --priority=high`
+02. Rule specifies conditions (e.g., "unsigned binary", "network connection to suspicious IP", "privilege escalation")
+03. Rule specifies which collector to trigger (binary hasher, memory analyzer, network analyzer)
+04. Rule specifies priority level (Low/Normal/High/Critical)
+05. Operator saves rule configuration
+06. daemoneye-agent validates rule syntax and feasibility
+07. daemoneye-agent publishes rule update to procmond via topic `control.collector.config`
+08. procmond receives and validates rule update
+09. procmond applies new rules to lifecycle tracker
 10. procmond acknowledges rule update to daemoneye-agent
 11. Operator sees "Detection rules updated successfully" confirmation
 12. procmond begins applying new rules in next collection cycle
@@ -584,20 +591,26 @@ flowchart TD
 
 1. Operator reviews performance metrics via daemoneye-cli: `daemoneye-cli metrics procmond`
 2. daemoneye-cli displays performance dashboard:
-  - Collection latency (average, p95, p99)
-  - Memory usage trend
-  - CPU usage trend
-  - Event publishing rate
-  - Backpressure frequency
+
+- Collection latency (average, p95, p99)
+- Memory usage trend
+- CPU usage trend
+- Event publishing rate
+- Backpressure frequency
+
 3. Operator identifies performance bottleneck:
-  - **High latency:** Collection taking too long
-  - **High memory:** Too many processes or snapshots
-  - **Backpressure:** Event bus can't keep up
+
+- **High latency:** Collection taking too long
+- **High memory:** Too many processes or snapshots
+- **Backpressure:** Event bus can't keep up
+
 4. Operator adjusts configuration through daemoneye-agent:
-  - Increase collection interval (reduce frequency)
-  - Disable enhanced metadata (reduce per-process overhead)
-  - Reduce max processes per cycle (limit scope)
-  - Disable executable hashing (reduce CPU usage)
+
+- Increase collection interval (reduce frequency)
+- Disable enhanced metadata (reduce per-process overhead)
+- Reduce max processes per cycle (limit scope)
+- Disable executable hashing (reduce CPU usage)
+
 5. daemoneye-agent pushes configuration update to procmond
 6. procmond applies changes and adjusts behavior
 7. Operator monitors metrics to confirm improvement
@@ -606,15 +619,14 @@ flowchart TD
 
 **Performance Targets:**
 
-- Collection latency <100ms for 1,000 processes
-- Memory usage <100MB sustained
-- CPU usage <5% sustained
+- Collection latency \<100ms for 1,000 processes
+- Memory usage \<100MB sustained
+- CPU usage \<5% sustained
 - Zero backpressure events under normal load
 
 ---
 
 ## Summary of Key Flows
-
 
 | Flow                  | Operator Involvement                 | Frequency                | Criticality |
 | --------------------- | ------------------------------------ | ------------------------ | ----------- |
@@ -630,7 +642,6 @@ flowchart TD
 | Rule Configuration    | Direct (via daemoneye-agent)         | Occasional               | Medium      |
 | Cross-Platform        | None (automatic adaptation)          | Platform-dependent       | High        |
 | Performance Tuning    | Direct (via daemoneye-agent)         | Periodic                 | Medium      |
-
 
 ---
 
@@ -659,4 +670,3 @@ flowchart TD
 - Process Collector Implementation: file:procmond/src/process_collector.rs
 - Lifecycle Tracking: file:procmond/src/lifecycle.rs
 - Monitor Collector: file:procmond/src/monitor_collector.rs
-

@@ -7,6 +7,7 @@ Implement RPC service handling and collector registration for procmond. This tic
 ## Scope
 
 **In Scope:**
+
 - RpcServiceHandler component with actor coordination
 - RegistrationManager component for registration and heartbeat
 - RPC operation handling: HealthCheck, UpdateConfig, GracefulShutdown
@@ -18,6 +19,7 @@ Implement RPC service handling and collector registration for procmond. This tic
 - Unit tests for RPC and registration
 
 **Out of Scope:**
+
 - Agent-side loading state management (Ticket 4)
 - Agent-side heartbeat detection (Ticket 4)
 - Comprehensive integration testing (Ticket 5)
@@ -30,6 +32,7 @@ Implement RPC service handling and collector registration for procmond. This tic
 **Location:** `file:procmond/src/rpc_service.rs`
 
 **Key Responsibilities:**
+
 - Subscribe to `control.collector.procmond` topic for RPC requests
 - Parse incoming RPC requests
 - Send ActorMessage to ProcmondMonitorCollector via mpsc channel
@@ -39,6 +42,7 @@ Implement RPC service handling and collector registration for procmond. This tic
 - Serialize concurrent RPC requests (process one at a time)
 
 **Supported Operations:**
+
 - **HealthCheck**: Query collector health and status
 - **UpdateConfig**: Apply configuration changes at cycle boundary
 - **GracefulShutdown**: Initiate clean shutdown with event flush
@@ -48,6 +52,7 @@ Implement RPC service handling and collector registration for procmond. This tic
 **Location:** `file:procmond/src/registration.rs`
 
 **Key Responsibilities:**
+
 - Register with daemoneye-agent on startup via RPC
 - Report "ready" status after successful registration
 - Publish periodic heartbeats to `control.health.heartbeat.procmond` (every 30 seconds)
@@ -56,28 +61,30 @@ Implement RPC service handling and collector registration for procmond. This tic
 - Deregister on graceful shutdown
 
 **Registration Message Schema:**
+
 ```rust
 struct RegistrationRequest {
-    collector_id: String,  // "procmond"
-    collector_type: String,  // "process-monitor"
+    collector_id: String,   // "procmond"
+    collector_type: String, // "process-monitor"
     version: String,
     capabilities: Vec<String>,
     pid: u32,
 }
 
 struct RegistrationResponse {
-    status: RegistrationStatus,  // Accepted/Rejected
+    status: RegistrationStatus, // Accepted/Rejected
     message: Option<String>,
 }
 ```
 
 **Heartbeat Message Schema:**
+
 ```rust
 struct HeartbeatMessage {
     collector_id: String,
     sequence: u64,
     timestamp: DateTime<Utc>,
-    health_status: HealthStatus,  // Healthy/Degraded/Unhealthy
+    health_status: HealthStatus, // Healthy/Degraded/Unhealthy
     metrics: HeartbeatMetrics,
 }
 
@@ -149,15 +156,18 @@ sequenceDiagram
 ## Dependencies
 
 **Requires:**
+
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 2] - Actor pattern must exist for message coordination
 
 **Blocks:**
+
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 4] - Agent needs registration/heartbeat handling
 - ticket:54226c8a-719a-879a-863b-9c91f43717a9/[Ticket 5] - Integration tests need RPC functionality
 
 ## Acceptance Criteria
 
 ### RpcServiceHandler
+
 - [ ] Subscribes to `control.collector.procmond` topic on startup
 - [ ] Parses incoming RPC requests correctly
 - [ ] Sends ActorMessage to ProcmondMonitorCollector via mpsc channel
@@ -168,6 +178,7 @@ sequenceDiagram
 - [ ] Unit tests cover: request parsing, actor coordination, response handling, error cases
 
 ### RegistrationManager
+
 - [ ] Registers with daemoneye-agent on startup via RPC
 - [ ] Reports "ready" status after successful registration
 - [ ] Publishes heartbeats every 30 seconds to `control.health.heartbeat.procmond`
@@ -178,17 +189,20 @@ sequenceDiagram
 - [ ] Unit tests cover: registration, heartbeat publishing, deregistration, state tracking
 
 ### RPC Operations
+
 - [ ] **HealthCheck**: Returns accurate health data including event bus connectivity
 - [ ] **UpdateConfig**: Validates config, sends to actor, returns success/failure
 - [ ] **GracefulShutdown**: Coordinates with actor, waits for completion, signals main
 
 ### Integration with Actor
+
 - [ ] RPC operations correctly coordinate with actor via messages
 - [ ] Oneshot channels used for request/response patterns
 - [ ] No race conditions or deadlocks
 - [ ] Graceful handling of actor channel full errors
 
 ### main.rs Updates
+
 - [ ] RpcServiceHandler initialized and started
 - [ ] RegistrationManager initialized and started
 - [ ] Graceful shutdown coordination includes RPC and registration cleanup

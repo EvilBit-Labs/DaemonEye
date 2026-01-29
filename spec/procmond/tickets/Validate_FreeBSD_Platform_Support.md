@@ -7,6 +7,7 @@ Validate basic process enumeration on FreeBSD and document platform limitations.
 ## Scope
 
 **In Scope:**
+
 - Test FallbackProcessCollector on FreeBSD 13+
 - Document FreeBSD limitations (basic metadata only, no enhanced features)
 - Add platform detection and capability reporting
@@ -14,6 +15,7 @@ Validate basic process enumeration on FreeBSD and document platform limitations.
 - Update documentation with FreeBSD support status
 
 **Out of Scope:**
+
 - Enhanced metadata collection for FreeBSD (deferred to future work)
 - FreeBSD-specific privilege management (basic only)
 - Performance optimization for FreeBSD
@@ -23,16 +25,19 @@ Validate basic process enumeration on FreeBSD and document platform limitations.
 ### FreeBSD Support Status
 
 **Current State:**
+
 - FallbackProcessCollector uses sysinfo crate for basic enumeration
 - Basic metadata: PID, PPID, name, executable path, CPU usage, memory usage
 - No enhanced metadata: network connections, file descriptors, security contexts
 
 **Limitations:**
+
 - No platform-specific collector (unlike Linux, macOS, Windows)
 - Limited metadata compared to primary platforms
 - Performance may be lower than platform-specific collectors
 
 **Acceptance:**
+
 - FreeBSD support is "best-effort" with documented limitations
 - Basic enumeration is sufficient for FreeBSD use cases
 - Enhanced features deferred to future work
@@ -40,6 +45,7 @@ Validate basic process enumeration on FreeBSD and document platform limitations.
 ### Platform Detection
 
 **Implementation:**
+
 ```rust
 #[cfg(target_os = "freebsd")]
 fn detect_platform_capabilities() -> PlatformCapabilities {
@@ -55,6 +61,7 @@ fn detect_platform_capabilities() -> PlatformCapabilities {
 ```
 
 **Capability Reporting:**
+
 - Report platform capabilities at startup
 - Log degraded status for FreeBSD (INFO level)
 - Include capabilities in registration message to agent
@@ -62,6 +69,7 @@ fn detect_platform_capabilities() -> PlatformCapabilities {
 ### FreeBSD-Specific Tests
 
 **Test Coverage:**
+
 - Basic process enumeration works
 - PID, PPID, name, executable path collected correctly
 - CPU usage and memory usage collected correctly
@@ -70,6 +78,7 @@ fn detect_platform_capabilities() -> PlatformCapabilities {
 - No crashes or panics on FreeBSD
 
 **Test Environment:**
+
 - FreeBSD 13.0+ (latest stable)
 - x86_64 and ARM64 architectures
 - CI/CD integration (if FreeBSD runner available)
@@ -110,14 +119,17 @@ graph TD
 ## Dependencies
 
 **Requires:**
+
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 5] - Test framework must exist
 
 **Blocks:**
+
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 8] - Performance validation includes FreeBSD
 
 ## Acceptance Criteria
 
 ### Platform Detection
+
 - [ ] FreeBSD detected correctly at runtime
 - [ ] FallbackProcessCollector used on FreeBSD
 - [ ] Platform capabilities reported at startup
@@ -125,6 +137,7 @@ graph TD
 - [ ] Capabilities included in registration message
 
 ### Basic Enumeration
+
 - [ ] Process enumeration works on FreeBSD 13+
 - [ ] PID collected correctly
 - [ ] PPID collected correctly
@@ -134,12 +147,14 @@ graph TD
 - [ ] Memory usage collected correctly
 
 ### Lifecycle Detection
+
 - [ ] Process start events detected
 - [ ] Process stop events detected
 - [ ] Process modification events detected
 - [ ] Events published to event bus correctly
 
 ### FreeBSD-Specific Tests
+
 - [ ] Basic enumeration tests pass on FreeBSD
 - [ ] Lifecycle detection tests pass on FreeBSD
 - [ ] Event publishing tests pass on FreeBSD
@@ -147,6 +162,7 @@ graph TD
 - [ ] Tests run on x86_64 and ARM64 (if available)
 
 ### Documentation
+
 - [ ] FreeBSD support status documented (best-effort, basic metadata only)
 - [ ] Limitations documented clearly:
   - No enhanced metadata
@@ -157,6 +173,7 @@ graph TD
 - [ ] Future work documented (enhanced FreeBSD support)
 
 ### CI/CD Integration
+
 - [ ] FreeBSD tests added to CI/CD pipeline (if runner available)
 - [ ] FreeBSD tests run on pull requests
 - [ ] FreeBSD test failures reported clearly

@@ -7,6 +7,7 @@ Refactor ProcmondMonitorCollector to use actor pattern for coordinated state man
 ## Scope
 
 **In Scope:**
+
 - Actor pattern implementation in ProcmondMonitorCollector
 - ActorMessage enum for message-based coordination
 - Bounded mpsc channel (capacity: 100) for actor messages
@@ -18,6 +19,7 @@ Refactor ProcmondMonitorCollector to use actor pattern for coordinated state man
 - Update main.rs for actor initialization
 
 **Out of Scope:**
+
 - RPC service handler implementation (Ticket 3)
 - Registration and heartbeat (Ticket 3)
 - Agent-side loading state (Ticket 4)
@@ -30,6 +32,7 @@ Refactor ProcmondMonitorCollector to use actor pattern for coordinated state man
 **Modified Component:** `file:procmond/src/monitor_collector.rs`
 
 **Key Changes:**
+
 - Run in dedicated task with message processing loop
 - Receive messages via bounded mpsc channel (capacity: 100)
 - Process messages sequentially (no concurrent state mutations)
@@ -37,28 +40,30 @@ Refactor ProcmondMonitorCollector to use actor pattern for coordinated state man
 - Maintain collection state without complex locking
 
 **ActorMessage Enum:**
+
 ```rust
 enum ActorMessage {
-    HealthCheck { 
-        respond_to: oneshot::Sender<HealthCheckData> 
+    HealthCheck {
+        respond_to: oneshot::Sender<HealthCheckData>,
     },
-    UpdateConfig { 
-        config: Config, 
-        respond_to: oneshot::Sender<Result<()>> 
+    UpdateConfig {
+        config: Config,
+        respond_to: oneshot::Sender<Result<()>>,
     },
-    GracefulShutdown { 
-        respond_to: oneshot::Sender<Result<()>> 
+    GracefulShutdown {
+        respond_to: oneshot::Sender<Result<()>>,
     },
-    BeginMonitoring,  // From agent after loading state
-    AdjustInterval { 
-        new_interval: Duration 
-    },  // From EventBusConnector backpressure
+    BeginMonitoring, // From agent after loading state
+    AdjustInterval {
+        new_interval: Duration,
+    }, // From EventBusConnector backpressure
 }
 ```
 
 ### Startup Coordination
 
 **Flow:**
+
 1. procmond starts and connects to broker
 2. procmond subscribes to `control.collector.lifecycle` topic
 3. procmond waits for "begin monitoring" broadcast from agent
@@ -71,6 +76,7 @@ enum ActorMessage {
 **Strategy:** Apply configuration changes at cycle boundaries (atomic)
 
 **Implementation:**
+
 - Config update message queued in actor's channel
 - Actor processes message at start of next collection cycle
 - Ensures no mid-cycle configuration changes
@@ -133,15 +139,18 @@ sequenceDiagram
 ## Dependencies
 
 **Requires:**
+
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 1] - EventBusConnector and WAL must exist
 
 **Blocks:**
+
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 3] - RPC service needs actor pattern
 - ticket:54226c8a-719a-479a-863b-9c91f43717a9/[Ticket 4] - Agent needs "begin monitoring" subscription
 
 ## Acceptance Criteria
 
 ### Actor Pattern
+
 - [ ] ProcmondMonitorCollector runs in dedicated task with message loop
 - [ ] Bounded mpsc channel (capacity: 100) created for actor messages
 - [ ] ActorMessage enum defined with all message types
@@ -150,24 +159,28 @@ sequenceDiagram
 - [ ] Channel full errors handled gracefully (log warning, return error)
 
 ### Event Bus Integration
+
 - [ ] LocalEventBus completely replaced with EventBusConnector
 - [ ] Events published via EventBusConnector to `events.process.*` topics
 - [ ] EventBusConnector integrated with actor pattern
 - [ ] No compilation errors or warnings
 
 ### Startup Coordination
+
 - [ ] procmond subscribes to `control.collector.lifecycle` topic
 - [ ] procmond waits for "begin monitoring" broadcast before starting collection
 - [ ] BeginMonitoring message triggers collection loop start
 - [ ] Startup sequence documented in code comments
 
 ### Dynamic Interval Adjustment
+
 - [ ] Actor receives AdjustInterval messages from EventBusConnector
 - [ ] Collection interval increases by 50% (1.5x) when backpressure triggered
 - [ ] Collection interval restored to original when backpressure released
 - [ ] Interval adjustment logged at INFO level
 
 ### Configuration Hot-Reload
+
 - [ ] UpdateConfig message queued in actor channel
 - [ ] Config applied at start of next collection cycle (atomic)
 - [ ] Config validation performed before application
@@ -175,11 +188,13 @@ sequenceDiagram
 - [ ] Documentation lists which configs are hot-reloadable vs. require restart
 
 ### Health Check Enhancement
+
 - [ ] HealthCheck message returns event bus connectivity status
 - [ ] Health data includes: collection state, buffer level, connection status
 - [ ] Response sent via oneshot channel
 
 ### main.rs Updates
+
 - [ ] Bounded mpsc channel created (capacity: 100)
 - [ ] EventBusConnector initialized with WAL
 - [ ] ProcmondMonitorCollector initialized as actor with channel receiver
