@@ -39,7 +39,9 @@
     clippy::unreadable_literal,
     clippy::separated_literal_suffix,
     clippy::panic_in_result_fn,
-    clippy::match_same_arms
+    clippy::match_same_arms,
+    clippy::unseparated_literal_suffix,
+    clippy::pattern_type_mismatch
 )]
 
 use procmond::linux_collector::{LinuxCollectorConfig, LinuxProcessCollector};

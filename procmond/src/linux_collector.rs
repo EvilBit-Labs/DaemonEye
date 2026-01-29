@@ -986,6 +986,7 @@ impl Clone for LinuxProcessCollector {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::uninlined_format_args)]
 mod tests {
     use super::*;
     use crate::process_collector::ProcessCollectionConfig;
