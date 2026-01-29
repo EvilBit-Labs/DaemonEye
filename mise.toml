@@ -1,0 +1,7 @@
+[tools]
+cargo-insta = "latest"
+goreleaser = "latest"
+just = "latest"
+mdbook = "latest"
+protoc = "33.4"
+rust = "1.91.0"
