@@ -10,7 +10,7 @@ use collector_core::ProcessEvent;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self};
+use std::io;
 use std::path::Path;
 use std::time::SystemTime;
 use sysinfo::{Process, System};
@@ -24,6 +24,7 @@ use crate::process_collector::{
 
 /// Linux-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum LinuxCollectionError {
     /// Failed to read /proc filesystem
     #[error("Failed to read /proc filesystem: {message}")]
@@ -144,6 +145,7 @@ pub struct LinuxProcessCollector {
 
 /// Configuration for Linux-specific process collection features.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)] // These are independent feature flags
 pub struct LinuxCollectorConfig {
     /// Whether to collect process namespace information
     pub collect_namespaces: bool,
@@ -216,7 +218,7 @@ impl LinuxProcessCollector {
 
         // Cache host namespace IDs for container detection
         let host_namespaces = if linux_config.detect_containers {
-            Self::read_process_namespaces(1).unwrap_or_default()
+            Self::read_process_namespaces(1)
         } else {
             ProcessNamespaces::default()
         };
@@ -248,7 +250,7 @@ impl LinuxProcessCollector {
         let status_path = "/proc/self/status";
         let content =
             fs::read_to_string(status_path).map_err(|e| ProcessCollectionError::PlatformError {
-                message: format!("Failed to read {}: {}", status_path, e),
+                message: format!("Failed to read {status_path}: {e}"),
             })?;
 
         // Look for CapEff line and check if CAP_SYS_PTRACE (bit 19) is set
@@ -272,17 +274,17 @@ impl LinuxProcessCollector {
     }
 
     /// Reads process namespace information from /proc/\[pid\]/ns/.
-    fn read_process_namespaces(pid: u32) -> ProcessCollectionResult<ProcessNamespaces> {
-        let ns_dir = format!("/proc/{}/ns", pid);
+    fn read_process_namespaces(pid: u32) -> ProcessNamespaces {
+        let ns_dir = format!("/proc/{pid}/ns");
         let mut namespaces = ProcessNamespaces::default();
 
         // Helper function to read namespace ID from symlink
         let read_ns_id = |ns_name: &str| -> Option<u64> {
-            let ns_path = format!("{}/{}", ns_dir, ns_name);
+            let ns_path = format!("{ns_dir}/{ns_name}");
             fs::read_link(&ns_path).ok().and_then(|target| {
                 target
                     .to_string_lossy()
-                    .strip_prefix(&format!("{}:[", ns_name))
+                    .strip_prefix(&format!("{ns_name}:["))
                     .and_then(|s| s.strip_suffix(']'))
                     .and_then(|s| s.parse().ok())
             })
@@ -296,7 +298,7 @@ impl LinuxProcessCollector {
         namespaces.uts_ns = read_ns_id("uts");
         namespaces.cgroup_ns = read_ns_id("cgroup");
 
-        Ok(namespaces)
+        namespaces
     }
 
     /// Reads enhanced process metadata from /proc/\[pid\]/ files.
@@ -305,22 +307,22 @@ impl LinuxProcessCollector {
 
         // Read namespaces if configured
         if self.linux_config.collect_namespaces {
-            metadata.namespaces = Self::read_process_namespaces(pid).unwrap_or_default();
+            metadata.namespaces = Self::read_process_namespaces(pid);
         }
 
         // Read memory maps count if configured
         if self.linux_config.collect_memory_maps {
-            metadata.memory_maps_count = self.count_memory_maps(pid);
+            metadata.memory_maps_count = Self::count_memory_maps(pid);
         }
 
         // Read file descriptors count if configured
         if self.linux_config.collect_file_descriptors {
-            metadata.open_fds_count = self.count_file_descriptors(pid);
+            metadata.open_fds_count = Self::count_file_descriptors(pid);
         }
 
         // Read network connections count if configured
         if self.linux_config.collect_network_connections {
-            metadata.network_connections_count = self.count_network_connections(pid);
+            metadata.network_connections_count = Self::count_network_connections(pid);
         }
 
         // Detect container if configured
@@ -329,43 +331,43 @@ impl LinuxProcessCollector {
         }
 
         // Read /proc/\[pid\]/stat for additional metadata
-        if let Ok(stat_data) = self.read_proc_stat(pid) {
+        if let Ok(stat_data) = Self::read_proc_stat(pid) {
             metadata.state = stat_data.get("state").and_then(|s| s.chars().next());
             metadata.threads = stat_data.get("num_threads").and_then(|s| s.parse().ok());
         }
 
         // Read /proc/\[pid\]/status for memory information
-        if let Ok(status_data) = self.read_proc_status(pid) {
+        if let Ok(status_data) = Self::read_proc_status(pid) {
             metadata.vm_size = status_data
                 .get("VmSize")
-                .and_then(|s| self.parse_memory_kb(s));
+                .and_then(|s| Self::parse_memory_kb(s));
             metadata.vm_rss = status_data
                 .get("VmRSS")
-                .and_then(|s| self.parse_memory_kb(s));
+                .and_then(|s| Self::parse_memory_kb(s));
             metadata.vm_peak = status_data
                 .get("VmPeak")
-                .and_then(|s| self.parse_memory_kb(s));
+                .and_then(|s| Self::parse_memory_kb(s));
         }
 
         metadata
     }
 
     /// Counts memory maps from /proc/\[pid\]/maps.
-    fn count_memory_maps(&self, pid: u32) -> Option<usize> {
-        let maps_path = format!("/proc/{}/maps", pid);
-        fs::read_to_string(&maps_path)
+    fn count_memory_maps(pid: u32) -> Option<usize> {
+        let maps_path = format!("/proc/{pid}/maps");
+        fs::read_to_string(maps_path)
             .ok()
             .map(|content| content.lines().count())
     }
 
     /// Counts open file descriptors from /proc/\[pid\]/fd/.
-    fn count_file_descriptors(&self, pid: u32) -> Option<usize> {
-        let fd_dir = format!("/proc/{}/fd", pid);
-        fs::read_dir(&fd_dir).ok().map(|entries| entries.count())
+    fn count_file_descriptors(pid: u32) -> Option<usize> {
+        let fd_dir = format!("/proc/{pid}/fd");
+        fs::read_dir(fd_dir).ok().map(Iterator::count)
     }
 
     /// Counts network connections for a process (simplified implementation).
-    fn count_network_connections(&self, _pid: u32) -> Option<usize> {
+    const fn count_network_connections(_pid: u32) -> Option<usize> {
         // This is a simplified implementation. A full implementation would
         // parse /proc/net/tcp, /proc/net/udp, etc. and match by inode
         // to file descriptors in /proc/\[pid\]/fd/
@@ -384,79 +386,86 @@ impl LinuxProcessCollector {
         }
 
         // Try to extract container ID from cgroup
-        let cgroup_path = format!("/proc/{}/cgroup", pid);
-        if let Ok(content) = fs::read_to_string(&cgroup_path) {
+        let cgroup_path = format!("/proc/{pid}/cgroup");
+        if let Ok(content) = fs::read_to_string(cgroup_path) {
             for line in content.lines() {
                 // Look for Docker container ID pattern
-                if let Some(docker_id) = self.extract_docker_id(line) {
-                    return Some(format!("docker:{}", docker_id));
+                if let Some(docker_id) = Self::extract_docker_id(line) {
+                    return Some(format!("docker:{docker_id}"));
                 }
                 // Look for containerd container ID pattern
-                if let Some(containerd_id) = self.extract_containerd_id(line) {
-                    return Some(format!("containerd:{}", containerd_id));
+                if let Some(containerd_id) = Self::extract_containerd_id(line) {
+                    return Some(format!("containerd:{containerd_id}"));
                 }
             }
         }
 
         // Generic container detection
-        Some("container:unknown".to_string())
+        Some("container:unknown".to_owned())
     }
 
     /// Extracts Docker container ID from cgroup line.
-    fn extract_docker_id(&self, line: &str) -> Option<String> {
+    fn extract_docker_id(line: &str) -> Option<String> {
         // Docker cgroup pattern: /docker/[container_id]
         if let Some(docker_part) = line.split("/docker/").nth(1) {
             let container_id = docker_part.split('/').next()?;
             if container_id.len() >= 12 {
-                let _id = &container_id[..12];
-                return Some(_id.to_string());
+                return Some(container_id[..12].to_owned());
             }
         }
         None
     }
 
     /// Extracts containerd container ID from cgroup line.
-    fn extract_containerd_id(&self, line: &str) -> Option<String> {
+    fn extract_containerd_id(line: &str) -> Option<String> {
         // containerd cgroup pattern: /system.slice/containerd.service/[container_id]
         if line.contains("containerd.service") {
             let parts: Vec<&str> = line.split('/').collect();
             if let Some(container_part) = parts.last()
                 && container_part.len() >= 12
             {
-                let _id = &container_part[..12];
-                return Some(_id.to_string());
+                return Some(container_part[..12].to_owned());
             }
         }
         None
     }
 
     /// Reads and parses /proc/\[pid\]/stat file.
-    fn read_proc_stat(&self, pid: u32) -> io::Result<HashMap<String, String>> {
-        let stat_path = format!("/proc/{}/stat", pid);
-        let content = fs::read_to_string(&stat_path)?;
+    fn read_proc_stat(pid: u32) -> io::Result<HashMap<String, String>> {
+        let stat_path = format!("/proc/{pid}/stat");
+        let content = fs::read_to_string(stat_path)?;
         let mut data = HashMap::new();
 
         // Parse stat file (space-separated values)
         let fields: Vec<&str> = content.split_whitespace().collect();
         if fields.len() >= 20 {
             // Field 3 is state, field 4 is ppid, field 20 is num_threads
-            data.insert("state".to_string(), fields[2].to_string());
-            data.insert("ppid".to_string(), fields[3].to_string());
-            data.insert("num_threads".to_string(), fields[19].to_string());
+            data.insert(
+                "state".to_owned(),
+                (*fields.get(2).unwrap_or(&"")).to_owned(),
+            );
+            data.insert(
+                "ppid".to_owned(),
+                (*fields.get(3).unwrap_or(&"")).to_owned(),
+            );
+            data.insert(
+                "num_threads".to_owned(),
+                (*fields.get(19).unwrap_or(&"")).to_owned(),
+            );
         }
 
         Ok(data)
     }
 
     /// Reads and parses /proc/\[pid\]/status file.
-    fn read_proc_status(&self, pid: u32) -> io::Result<HashMap<String, String>> {
-        let status_path = format!("/proc/{}/status", pid);
-        let content = fs::read_to_string(&status_path)?;
+    fn read_proc_status(pid: u32) -> io::Result<HashMap<String, String>> {
+        let status_path = format!("/proc/{pid}/status");
+        let content = fs::read_to_string(status_path)?;
         let mut data = HashMap::new();
 
         for line in content.lines() {
             if let Some((key, value)) = line.split_once(':') {
-                data.insert(key.trim().to_string(), value.trim().to_string());
+                data.insert(key.trim().to_owned(), value.trim().to_owned());
             }
         }
 
@@ -464,7 +473,7 @@ impl LinuxProcessCollector {
     }
 
     /// Parses memory value from /proc/status (e.g., "1024 kB" -> Some(1048576)).
-    fn parse_memory_kb(&self, value: &str) -> Option<u64> {
+    fn parse_memory_kb(value: &str) -> Option<u64> {
         value
             .split_whitespace()
             .next()
@@ -474,7 +483,7 @@ impl LinuxProcessCollector {
 
     /// Reads basic process information from /proc/\[pid\]/ files.
     fn read_process_info(&self, pid: u32) -> ProcessCollectionResult<ProcessEvent> {
-        let proc_dir = format!("/proc/{}", pid);
+        let proc_dir = format!("/proc/{pid}");
 
         // Check if the process directory exists and is actually a directory
         let proc_path = Path::new(&proc_dir);
@@ -483,13 +492,13 @@ impl LinuxProcessCollector {
         }
 
         // Additional check: try to read /proc/\[pid\]/stat to verify the process exists
-        let stat_path = format!("{}/stat", proc_dir);
+        let stat_path = format!("{proc_dir}/stat");
         if !Path::new(&stat_path).exists() {
             return Err(ProcessCollectionError::ProcessNotFound { pid });
         }
 
         // Read command line
-        let cmdline_path = format!("{}/cmdline", proc_dir);
+        let cmdline_path = format!("{proc_dir}/cmdline");
         let command_line = match fs::read(&cmdline_path) {
             Ok(bytes) => {
                 if bytes.is_empty() {
@@ -498,7 +507,7 @@ impl LinuxProcessCollector {
                     bytes
                         .split(|&b| b == 0)
                         .filter(|arg| !arg.is_empty())
-                        .map(|arg| String::from_utf8_lossy(arg).to_string())
+                        .map(|arg| String::from_utf8_lossy(arg).into_owned())
                         .collect()
                 }
             }
@@ -506,30 +515,30 @@ impl LinuxProcessCollector {
         };
 
         // Read executable path
-        let exe_path = format!("{}/exe", proc_dir);
+        let exe_path = format!("{proc_dir}/exe");
         let executable_path = fs::read_link(&exe_path)
             .ok()
-            .map(|path| path.to_string_lossy().to_string());
+            .map(|path| path.to_string_lossy().into_owned());
 
         // Read comm (process name)
-        let comm_path = format!("{}/comm", proc_dir);
+        let comm_path = format!("{proc_dir}/comm");
         let name = fs::read_to_string(&comm_path)
-            .unwrap_or_else(|_| format!("<unknown-{}>", pid))
+            .unwrap_or_else(|_| format!("<unknown-{pid}>"))
             .trim()
-            .to_string();
+            .to_owned();
 
         // Read stat for basic info
-        let stat_data = self.read_proc_stat(pid).unwrap_or_default();
+        let stat_data = Self::read_proc_stat(pid).unwrap_or_default();
         let ppid = stat_data
             .get("ppid")
             .and_then(|s| s.parse::<u32>().ok())
             .filter(|&p| p != 0);
 
         // Read status for additional info
-        let status_data = self.read_proc_status(pid).unwrap_or_default();
+        let status_data = Self::read_proc_status(pid).unwrap_or_default();
         let user_id = status_data
             .get("Uid")
-            .and_then(|uid_line| uid_line.split_whitespace().next().map(|s| s.to_string()));
+            .and_then(|uid_line| uid_line.split_whitespace().next().map(ToOwned::to_owned));
 
         // Enhanced metadata collection
         let enhanced_metadata = if self.base_config.collect_enhanced_metadata {
@@ -571,7 +580,7 @@ impl LinuxProcessCollector {
             enhanced_metadata.and_then(|metadata| {
                 serde_json::to_value(metadata)
                     .map_err(|e| {
-                        warn!("Failed to serialize Linux process metadata: {}", e);
+                        warn!("Failed to serialize Linux process metadata: {e}");
                     })
                     .ok()
             })
@@ -607,7 +616,7 @@ impl LinuxProcessCollector {
 
         let entries = fs::read_dir(proc_dir).map_err(|e| {
             ProcessCollectionError::SystemEnumerationFailed {
-                message: format!("Failed to read /proc directory: {}", e),
+                message: format!("Failed to read /proc directory: {e}"),
             }
         })?;
 
@@ -621,7 +630,7 @@ impl LinuxProcessCollector {
 
         if pids.is_empty() {
             return Err(ProcessCollectionError::SystemEnumerationFailed {
-                message: "No process PIDs found in /proc".to_string(),
+                message: "No process PIDs found in /proc".to_owned(),
             });
         }
 
@@ -679,7 +688,7 @@ impl ProcessCollector for LinuxProcessCollector {
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
-            message: format!("Process enumeration task failed: {}", e),
+            message: format!("Process enumeration task failed: {e}"),
         })?;
 
         let mut events = Vec::new();
@@ -784,7 +793,7 @@ impl ProcessCollector for LinuxProcessCollector {
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
-            message: format!("Process lookup task failed: {}", e),
+            message: format!("Process lookup task failed: {e}"),
         })?;
 
         let system = sysinfo_result;
@@ -804,7 +813,7 @@ impl ProcessCollector for LinuxProcessCollector {
         // Check if /proc is accessible
         if !Path::new("/proc").exists() {
             return Err(ProcessCollectionError::SystemEnumerationFailed {
-                message: "/proc filesystem not available".to_string(),
+                message: "/proc filesystem not available".to_owned(),
             });
         }
 
@@ -812,7 +821,7 @@ impl ProcessCollector for LinuxProcessCollector {
         let pids = self.enumerate_proc_pids()?;
         if pids.is_empty() {
             return Err(ProcessCollectionError::SystemEnumerationFailed {
-                message: "No processes found in /proc".to_string(),
+                message: "No processes found in /proc".to_owned(),
             });
         }
 
@@ -826,7 +835,7 @@ impl ProcessCollector for LinuxProcessCollector {
 
         if successful_reads == 0 {
             return Err(ProcessCollectionError::SystemEnumerationFailed {
-                message: "Could not read any process information".to_string(),
+                message: "Could not read any process information".to_owned(),
             });
         }
 
@@ -853,7 +862,7 @@ impl LinuxProcessCollector {
         let ppid = process.parent().map(|p| p.as_u32());
 
         let name = if process.name().is_empty() {
-            format!("<unknown-{}>", pid)
+            format!("<unknown-{pid}>")
         } else {
             process.name().to_string_lossy().to_string()
         };
@@ -917,7 +926,7 @@ impl LinuxProcessCollector {
             enhanced_metadata.and_then(|metadata| {
                 serde_json::to_value(metadata)
                     .map_err(|e| {
-                        warn!("Failed to serialize Linux process metadata: {}", e);
+                        warn!("Failed to serialize Linux process metadata: {e}");
                     })
                     .ok()
             })
@@ -1114,14 +1123,10 @@ mod tests {
         }
 
         // Try to read namespaces for init process (PID 1)
-        let result = LinuxProcessCollector::read_process_namespaces(1);
-        // Since this test runs in different environments where permissions and
-        // namespace availability can vary, we'll just verify the function runs
-        // without panicking and returns a result
-        assert!(
-            result.is_ok() || result.is_err(),
-            "Function should complete without panicking"
-        );
+        // The function returns ProcessNamespaces directly (not Result)
+        // Just verify it completes without panicking
+        let _namespaces = LinuxProcessCollector::read_process_namespaces(1);
+        // Success - function completed without panicking
     }
 
     #[test]
@@ -1153,48 +1158,48 @@ mod tests {
 
     #[test]
     fn test_memory_parsing() {
-        let base_config = ProcessCollectionConfig::default();
-        let linux_config = LinuxCollectorConfig::default();
-        let collector = LinuxProcessCollector::new(base_config, linux_config).unwrap();
-
-        // Test memory parsing
-        assert_eq!(collector.parse_memory_kb("1024 kB"), Some(1048576));
-        assert_eq!(collector.parse_memory_kb("512 kB"), Some(524288));
-        assert_eq!(collector.parse_memory_kb("0 kB"), Some(0));
-        assert_eq!(collector.parse_memory_kb("invalid"), None);
+        // Test memory parsing (static method)
+        assert_eq!(
+            LinuxProcessCollector::parse_memory_kb("1024 kB"),
+            Some(1048576)
+        );
+        assert_eq!(
+            LinuxProcessCollector::parse_memory_kb("512 kB"),
+            Some(524288)
+        );
+        assert_eq!(LinuxProcessCollector::parse_memory_kb("0 kB"), Some(0));
+        assert_eq!(LinuxProcessCollector::parse_memory_kb("invalid"), None);
     }
 
     #[test]
     fn test_docker_id_extraction() {
-        let base_config = ProcessCollectionConfig::default();
-        let linux_config = LinuxCollectorConfig::default();
-        let collector = LinuxProcessCollector::new(base_config, linux_config).unwrap();
-
-        // Test Docker ID extraction
+        // Test Docker ID extraction (static method)
         let docker_line = "1:name=systemd:/docker/1234567890ab";
         assert_eq!(
-            collector.extract_docker_id(docker_line),
-            Some("1234567890ab".to_string())
+            LinuxProcessCollector::extract_docker_id(docker_line),
+            Some("1234567890ab".to_owned())
         );
 
         let non_docker_line = "1:name=systemd:/system.slice/ssh.service";
-        assert_eq!(collector.extract_docker_id(non_docker_line), None);
+        assert_eq!(
+            LinuxProcessCollector::extract_docker_id(non_docker_line),
+            None
+        );
     }
 
     #[test]
     fn test_containerd_id_extraction() {
-        let base_config = ProcessCollectionConfig::default();
-        let linux_config = LinuxCollectorConfig::default();
-        let collector = LinuxProcessCollector::new(base_config, linux_config).unwrap();
-
-        // Test containerd ID extraction
+        // Test containerd ID extraction (static method)
         let containerd_line = "1:name=systemd:/system.slice/containerd.service/1234567890ab";
         assert_eq!(
-            collector.extract_containerd_id(containerd_line),
-            Some("1234567890ab".to_string())
+            LinuxProcessCollector::extract_containerd_id(containerd_line),
+            Some("1234567890ab".to_owned())
         );
 
         let non_containerd_line = "1:name=systemd:/system.slice/ssh.service";
-        assert_eq!(collector.extract_containerd_id(non_containerd_line), None);
+        assert_eq!(
+            LinuxProcessCollector::extract_containerd_id(non_containerd_line),
+            None
+        );
     }
 }
