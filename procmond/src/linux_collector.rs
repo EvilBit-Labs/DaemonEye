@@ -704,16 +704,16 @@ impl ProcessCollector for LinuxProcessCollector {
 
             processed_count += 1;
 
-            match self.convert_sysinfo_to_event(pid, process).await {
+            match self.convert_sysinfo_to_event(pid, process) {
                 Ok(event) => {
                     // Apply filtering based on configuration
                     let should_skip = if self.base_config.skip_system_processes
-                        && self.is_system_process(&event.name, pid)
+                        && Self::is_system_process(&event.name, pid)
                     {
                         true
                     } else {
                         self.base_config.skip_kernel_threads
-                            && self.is_kernel_thread(&event.name, &event.command_line)
+                            && Self::is_kernel_thread(&event.name, &event.command_line)
                     };
 
                     if should_skip {
@@ -793,7 +793,7 @@ impl ProcessCollector for LinuxProcessCollector {
 
         if let Some(process) = system.process(sysinfo_pid) {
             // Convert sysinfo process to ProcessEvent and add Linux-specific enhancements
-            self.convert_sysinfo_to_event(pid, process).await
+            self.convert_sysinfo_to_event(pid, process)
         } else {
             Err(ProcessCollectionError::ProcessNotFound { pid })
         }
@@ -845,7 +845,7 @@ impl ProcessCollector for LinuxProcessCollector {
 
 impl LinuxProcessCollector {
     /// Converts a sysinfo process to a ProcessEvent with Linux-specific enhancements.
-    async fn convert_sysinfo_to_event(
+    fn convert_sysinfo_to_event(
         &self,
         pid: u32,
         process: &Process,
@@ -874,9 +874,13 @@ impl LinuxProcessCollector {
             let start = process.start_time();
 
             (
-                (cpu.is_finite() && cpu >= 0.0).then(|| cpu as f64),
-                (memory > 0).then(|| memory.saturating_mul(1024)),
-                (start > 0).then(|| SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(start)),
+                (cpu.is_finite() && cpu >= 0.0).then_some(f64::from(cpu)),
+                (memory > 0).then_some(memory.saturating_mul(1024)),
+                (start > 0).then(|| {
+                    SystemTime::UNIX_EPOCH
+                        .checked_add(std::time::Duration::from_secs(start))
+                        .unwrap_or(SystemTime::UNIX_EPOCH)
+                }),
             )
         } else {
             (None, None, None)
@@ -928,7 +932,7 @@ impl LinuxProcessCollector {
     }
 
     /// Determines if a process is a system process based on name and PID.
-    fn is_system_process(&self, name: &str, pid: u32) -> bool {
+    fn is_system_process(name: &str, pid: u32) -> bool {
         // Common system process patterns
         const SYSTEM_PROCESSES: &[&str] = &[
             "kernel",
@@ -956,17 +960,7 @@ impl LinuxProcessCollector {
     }
 
     /// Determines if a process is a kernel thread.
-    fn is_kernel_thread(&self, name: &str, command_line: &[String]) -> bool {
-        // Kernel threads typically have no command line arguments
-        if !command_line.is_empty() {
-            return false;
-        }
-
-        // Kernel threads often have names in brackets
-        if name.starts_with('[') && name.ends_with(']') {
-            return true;
-        }
-
+    fn is_kernel_thread(name: &str, command_line: &[String]) -> bool {
         // Common kernel thread patterns
         const KERNEL_THREAD_PATTERNS: &[&str] = &[
             "kworker",
@@ -979,6 +973,16 @@ impl LinuxProcessCollector {
             "kthreadd",
             "kauditd",
         ];
+
+        // Kernel threads typically have no command line arguments
+        if !command_line.is_empty() {
+            return false;
+        }
+
+        // Kernel threads often have names in brackets
+        if name.starts_with('[') && name.ends_with(']') {
+            return true;
+        }
 
         let name_lower = name.to_lowercase();
         KERNEL_THREAD_PATTERNS
@@ -1106,29 +1110,30 @@ mod tests {
 
     #[test]
     fn test_system_process_detection() {
-        let base_config = ProcessCollectionConfig::default();
-        let linux_config = LinuxCollectorConfig::default();
-        let collector = LinuxProcessCollector::new(base_config, linux_config).unwrap();
-
-        // Test system process detection
-        assert!(collector.is_system_process("init", 1));
-        assert!(collector.is_system_process("kernel", 2));
-        assert!(collector.is_system_process("kthreadd", 3));
-        assert!(!collector.is_system_process("bash", 1000));
-        assert!(!collector.is_system_process("firefox", 2000));
+        // Test system process detection (static method)
+        assert!(LinuxProcessCollector::is_system_process("init", 1));
+        assert!(LinuxProcessCollector::is_system_process("kernel", 2));
+        assert!(LinuxProcessCollector::is_system_process("kthreadd", 3));
+        assert!(!LinuxProcessCollector::is_system_process("bash", 1000));
+        assert!(!LinuxProcessCollector::is_system_process("firefox", 2000));
     }
 
     #[test]
     fn test_kernel_thread_detection() {
-        let base_config = ProcessCollectionConfig::default();
-        let linux_config = LinuxCollectorConfig::default();
-        let collector = LinuxProcessCollector::new(base_config, linux_config).unwrap();
-
-        // Test kernel thread detection
-        assert!(collector.is_kernel_thread("[kworker/0:0]", &[]));
-        assert!(collector.is_kernel_thread("ksoftirqd/0", &[]));
-        assert!(!collector.is_kernel_thread("bash", &["/bin/bash".to_string()]));
-        assert!(!collector.is_kernel_thread("kworker", &["some".to_string(), "args".to_string()]));
+        // Test kernel thread detection (static method)
+        assert!(LinuxProcessCollector::is_kernel_thread(
+            "[kworker/0:0]",
+            &[]
+        ));
+        assert!(LinuxProcessCollector::is_kernel_thread("ksoftirqd/0", &[]));
+        assert!(!LinuxProcessCollector::is_kernel_thread(
+            "bash",
+            &["/bin/bash".to_owned()]
+        ));
+        assert!(!LinuxProcessCollector::is_kernel_thread(
+            "kworker",
+            &["some".to_owned(), "args".to_owned()]
+        ));
     }
 
     #[test]
