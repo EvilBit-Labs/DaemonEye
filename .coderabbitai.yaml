@@ -399,3 +399,36 @@ code_generation:
                     "instructions": "Generate React/TypeScript unit tests using Jest and React Testing Library. Test component rendering, user interactions, state management, and API integration. Focus on accessibility and responsive design testing.",
                 },
             ]
+issue_enrichment:
+    auto_enrich:
+        enabled: true
+
+    planning:
+        enabled: true
+        auto_planning:
+            enabled: false
+            labels:
+                - "enhancement"
+                - "bug"
+
+    labeling:
+        auto_apply_labels: true
+        labeling_instructions:
+            - label: "bug"
+              instructions: "Apply when the issue reports something that isn't working correctly. Look for error messages, unexpected behavior, crashes, or regressions in existing functionality."
+            - label: "enhancement"
+              instructions: "Apply when the issue requests new features or improvements. This includes new CLI options, new LLM providers, new output formats, performance improvements, or usability enhancements."
+            - label: "documentation"
+              instructions: "Apply when the issue is about missing, incorrect, or unclear documentation. This includes README updates, API documentation, examples, or inline code comments."
+            - label: "good first issue"
+              instructions: "Apply when the issue is well-scoped, has clear requirements, and doesn't require deep knowledge of the codebase. Good for newcomers to contribute."
+            - label: "help wanted"
+              instructions: "Apply when the issue needs community input, additional expertise, or the maintainers explicitly request assistance."
+            - label: "question"
+              instructions: "Apply when the issue is asking for clarification, guidance, or discussion rather than reporting a bug or requesting a feature."
+            - label: "duplicate"
+              instructions: "Apply when this issue duplicates an existing open or recently closed issue. Reference the original issue."
+            - label: "invalid"
+              instructions: "Apply when the issue doesn't provide enough information, is not related to this project, or cannot be reproduced."
+            - label: "wontfix"
+              instructions: "Apply when the issue describes behavior that is working as intended, is out of scope for the project, or conflicts with project goals."
