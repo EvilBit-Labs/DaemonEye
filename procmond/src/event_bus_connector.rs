@@ -619,9 +619,13 @@ impl EventBusConnector {
         );
 
         // Step 2: Ensure connected (attempt reconnection if needed)
-        if !self.connected {
-            // Ignore reconnection result - we'll buffer if still disconnected
-            drop(self.try_reconnect().await);
+        if !self.connected
+            && let Err(e) = self.try_reconnect().await
+        {
+            debug!(
+                error = %e,
+                "Reconnection attempt failed, will buffer event"
+            );
         }
 
         // Step 3: Try to publish or buffer
@@ -837,9 +841,11 @@ impl EventBusConnector {
     /// This attempts to flush any buffered events before closing the connection.
     /// The WAL is not affected and can be replayed on next startup.
     ///
-    /// # Errors
+    /// # Note
     ///
-    /// Returns `EventBusConnectorError::EventBus` if shutdown fails
+    /// Client shutdown errors are logged but not propagated, as shutdown is
+    /// best-effort. The connector will be marked as disconnected regardless
+    /// of whether the underlying client shutdown succeeds.
     ///
     /// # Examples
     ///
@@ -1066,22 +1072,34 @@ impl EventBusConnector {
     }
 
     /// Check and emit backpressure signals based on buffer usage.
-    #[allow(clippy::let_underscore_must_use)] // Intentionally ignoring send result
+    ///
+    /// Signals are best-effort - if the receiver is dropped or the channel is full,
+    /// the failure is logged at debug level and processing continues.
     fn check_backpressure(&self, previous_usage: u8, current_usage: u8) {
         const HIGH_WATER_MARK: u8 = 70;
         const LOW_WATER_MARK: u8 = 50;
 
         // Check for activation (crossing above high water mark)
         if previous_usage < HIGH_WATER_MARK && current_usage >= HIGH_WATER_MARK {
-            // Best-effort signal - ignore send failures (receiver may be dropped)
-            let _ = self.backpressure_tx.try_send(BackpressureSignal::Activated);
+            if let Err(e) = self.backpressure_tx.try_send(BackpressureSignal::Activated) {
+                debug!(
+                    error = %e,
+                    usage = current_usage,
+                    "Failed to send backpressure activation signal (receiver may be dropped)"
+                );
+            }
             info!(usage = current_usage, "Backpressure activated");
         }
 
         // Check for release (crossing below low water mark)
         if previous_usage >= LOW_WATER_MARK && current_usage < LOW_WATER_MARK {
-            // Best-effort signal - ignore send failures (receiver may be dropped)
-            let _ = self.backpressure_tx.try_send(BackpressureSignal::Released);
+            if let Err(e) = self.backpressure_tx.try_send(BackpressureSignal::Released) {
+                debug!(
+                    error = %e,
+                    usage = current_usage,
+                    "Failed to send backpressure release signal (receiver may be dropped)"
+                );
+            }
             info!(usage = current_usage, "Backpressure released");
         }
     }

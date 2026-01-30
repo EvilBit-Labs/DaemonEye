@@ -37,6 +37,7 @@ use sysinfo::{Pid, System};
 
 /// Windows-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum WindowsCollectionError {
     /// Windows API error
     #[error("Windows API error: {0}")]

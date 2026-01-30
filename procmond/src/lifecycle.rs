@@ -308,6 +308,9 @@ pub struct LifecycleTrackingStats {
     /// Number of timestamp anomalies detected
     pub timestamp_anomalies: u64,
 
+    /// Number of invalid start events that failed validation
+    pub invalid_start_events: u64,
+
     /// Average number of processes tracked per update
     pub avg_processes_tracked: f64,
 }
@@ -436,7 +439,7 @@ impl ProcessLifecycleTracker {
     /// Detects process start events by finding PIDs in current but not in previous.
     #[allow(clippy::unnecessary_wraps)] // Result type for consistency with other detection methods
     fn detect_start_events(
-        &self,
+        &mut self,
         update_time: &SystemTime,
     ) -> LifecycleTrackingResult<Vec<ProcessLifecycleEvent>> {
         let mut events = Vec::with_capacity(self.current_snapshots.len());
@@ -445,7 +448,9 @@ impl ProcessLifecycleTracker {
             if !self.previous_snapshots.contains_key(pid) {
                 // Validate that this is a legitimate start event
                 if let Err(e) = self.validate_start_event(snapshot) {
-                    warn!("Invalid start event for PID {}: {}", pid, e);
+                    warn!(pid = pid, error = %e, "Invalid start event, skipping");
+                    self.stats.invalid_start_events =
+                        self.stats.invalid_start_events.saturating_add(1);
                     continue;
                 }
 

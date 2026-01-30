@@ -40,20 +40,23 @@
 //!
 //! ```rust,ignore
 //! use procmond::wal::{WriteAheadLog, WalResult};
-//! use collector_core::event::ProcessEvent;
+//! use collector_core::ProcessEvent;
 //! use std::path::PathBuf;
 //!
-//! // Create or open WAL
-//! let wal = WriteAheadLog::new(PathBuf::from("/var/lib/procmond/wal")).await?;
+//! async fn example() -> WalResult<()> {
+//!     // Create or open WAL
+//!     let wal = WriteAheadLog::new(PathBuf::from("/var/lib/procmond/wal")).await?;
 //!
-//! // Write an event and get its sequence number
-//! let sequence = wal.write(process_event).await?;
+//!     // Write an event and get its sequence number
+//!     let sequence = wal.write(process_event).await?;
 //!
-//! // Replay on startup to recover unpublished events
-//! let events = wal.replay().await?;
+//!     // Replay on startup to recover unpublished events
+//!     let events = wal.replay().await?;
 //!
-//! // Mark events as published to enable cleanup
-//! wal.mark_published(sequence).await?;
+//!     // Mark events as published to enable cleanup
+//!     wal.mark_published(sequence).await?;
+//!     Ok(())
+//! }
 //! ```
 
 use collector_core::event::ProcessEvent;
@@ -82,7 +85,7 @@ pub enum WalError {
     #[error("Corruption detected in WAL entry (sequence: {sequence}): {message}")]
     Corruption {
         /// Sequence number of the corrupted entry
-        sequence: u32,
+        sequence: u64,
         /// Description of corruption
         message: String,
     },
@@ -91,9 +94,9 @@ pub enum WalError {
     #[error("Invalid sequence during replay: expected {expected}, found {found}")]
     InvalidSequence {
         /// Expected sequence number
-        expected: u32,
+        expected: u64,
         /// Actual sequence number found
-        found: u32,
+        found: u64,
     },
 
     /// File rotation operation failed.
@@ -357,31 +360,50 @@ impl WriteAheadLog {
         let mut highest_event_sequence = 0_u64;
         let mut current_file_metadata = None;
 
-        if let Ok(mut dir) = fs::read_dir(wal_dir).await {
-            let mut files = Vec::new();
-            while let Ok(Some(entry)) = dir.next_entry().await {
-                let path = entry.path();
-                if let Some(filename) = path.file_name().and_then(|n| n.to_str())
-                    && let Some(sequence) = Self::parse_wal_filename(filename)
-                {
-                    files.push((sequence, path));
-                    max_file_sequence = max_file_sequence.max(u64::from(sequence));
-                }
-            }
-
-            // Sort files by sequence
-            files.sort_by_key(|f| f.0);
-
-            // Scan each file to find the highest event sequence
-            for &(file_seq, ref path) in &files {
-                if let Ok(metadata) = Self::scan_file_metadata(path).await {
-                    highest_event_sequence = highest_event_sequence.max(metadata.max_sequence);
-
-                    // Track metadata for the current (highest sequence) file
-                    if u64::from(file_seq) == max_file_sequence {
-                        current_file_metadata = Some(metadata);
+        match fs::read_dir(wal_dir).await {
+            Ok(mut dir) => {
+                let mut files = Vec::new();
+                while let Ok(Some(entry)) = dir.next_entry().await {
+                    let path = entry.path();
+                    if let Some(filename) = path.file_name().and_then(|n| n.to_str())
+                        && let Some(sequence) = Self::parse_wal_filename(filename)
+                    {
+                        files.push((sequence, path));
+                        max_file_sequence = max_file_sequence.max(u64::from(sequence));
                     }
                 }
+
+                // Sort files by sequence
+                files.sort_by_key(|f| f.0);
+
+                // Scan each file to find the highest event sequence
+                for &(file_seq, ref path) in &files {
+                    match Self::scan_file_metadata(path).await {
+                        Ok(metadata) => {
+                            highest_event_sequence =
+                                highest_event_sequence.max(metadata.max_sequence);
+
+                            // Track metadata for the current (highest sequence) file
+                            if u64::from(file_seq) == max_file_sequence {
+                                current_file_metadata = Some(metadata);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                path = ?path,
+                                error = %e,
+                                "Failed to scan WAL file metadata, skipping file"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                debug!(
+                    wal_dir = ?wal_dir,
+                    error = %e,
+                    "WAL directory not readable or does not exist, starting fresh"
+                );
             }
         }
 
@@ -695,8 +717,10 @@ impl WriteAheadLog {
     pub async fn replay(&self) -> WalResult<Vec<ProcessEvent>> {
         let mut all_events = Vec::new();
         let files = self.list_wal_files().await?;
+        let total_files = files.len();
+        let mut failed_files = 0_usize;
 
-        debug!(file_count = files.len(), "Starting WAL replay");
+        debug!(file_count = total_files, "Starting WAL replay");
 
         for (_sequence, path) in files {
             match self.replay_file(&path).await {
@@ -709,12 +733,25 @@ impl WriteAheadLog {
                     all_events.extend(events);
                 }
                 Err(e) => {
-                    warn!("Error replaying WAL file {path:?}: {e}");
+                    warn!(file = ?path, error = %e, "Error replaying WAL file");
+                    failed_files = failed_files.saturating_add(1);
                 }
             }
         }
 
-        info!(total_events = all_events.len(), "WAL replay complete");
+        if failed_files > 0 {
+            warn!(
+                failed_files = failed_files,
+                total_files = total_files,
+                "WAL replay completed with errors - some events may not have been recovered"
+            );
+        }
+
+        info!(
+            total_events = all_events.len(),
+            failed_files = failed_files,
+            "WAL replay complete"
+        );
 
         Ok(all_events)
     }

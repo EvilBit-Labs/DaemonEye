@@ -1059,6 +1059,8 @@ impl Clone for LinuxProcessCollector {
             linux_config: self.linux_config.clone(),
             has_cap_sys_ptrace: self.has_cap_sys_ptrace,
             host_namespaces: self.host_namespaces.clone(),
+            boot_time_secs: self.boot_time_secs,
+            clock_ticks_per_sec: self.clock_ticks_per_sec,
         }
     }
 }
