@@ -1,7 +1,24 @@
-//! Integration tests for process lifecycle tracking with ProcessEventSource.
+//! Integration tests for process lifecycle tracking with `ProcessEventSource`.
 //!
-//! These tests verify that the ProcessLifecycleTracker properly integrates with
-//! the ProcessEventSource and can detect lifecycle events in realistic scenarios.
+//! These tests verify that the `ProcessLifecycleTracker` properly integrates with
+//! the `ProcessEventSource` and can detect lifecycle events in realistic scenarios.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::str_to_string,
+    clippy::arithmetic_side_effects,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls,
+    clippy::inefficient_to_string,
+    clippy::shadow_unrelated,
+    clippy::wildcard_enum_match_arm,
+    clippy::pattern_type_mismatch,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::needless_collect
+)]
 
 use collector_core::ProcessEvent;
 use procmond::lifecycle::{

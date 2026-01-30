@@ -1,5 +1,16 @@
 //! Integration tests for embedded broker functionality
 
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::str_to_string,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::ignore_without_reason,
+    clippy::print_stdout,
+    clippy::uninlined_format_args
+)]
+
 use daemoneye_agent::BrokerManager;
 use daemoneye_lib::config::BrokerConfig;
 use std::time::Duration;

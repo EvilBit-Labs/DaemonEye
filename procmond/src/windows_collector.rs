@@ -37,6 +37,7 @@ use sysinfo::{Pid, System};
 
 /// Windows-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum WindowsCollectionError {
     /// Windows API error
     #[error("Windows API error: {0}")]
@@ -1282,7 +1283,8 @@ impl ProcessCollector for WindowsProcessCollector {
         }
 
         stats.total_processes = processed_count;
-        stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
+        stats.collection_duration_ms =
+            u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         debug!(
             collector = self.name(),

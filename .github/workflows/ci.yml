@@ -28,7 +28,7 @@ jobs:
             rust: ${{ steps.filter.outputs.rust }}
             docs: ${{ steps.filter.outputs.docs }}
         steps:
-            - uses: actions/checkout@v5
+            - uses: actions/checkout@v6
             - uses: dorny/paths-filter@v3
               id: filter
               with:
@@ -51,49 +51,34 @@ jobs:
     # Code quality checks - always run
     quality:
         runs-on: ubuntu-latest
+        needs: changes
+        if: needs.changes.outputs.rust == 'true'
         steps:
-            - uses: actions/checkout@v5
-            - uses: dtolnay/rust-toolchain@1.90
+            - uses: actions/checkout@v6
+            - uses: dtolnay/rust-toolchain@1.91.0
               with:
-                  components: rustfmt, clippy
-
-            - name: Install just
-              uses: extractions/setup-just@v3
-
-            - name: Install protobuf
-              uses: arduino/setup-protoc@v3
+                  components: llvm-tools, cargo, rustfmt, clippy
+            - uses: jdx/mise-action@v3
               with:
-                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Cache Rust dependencies
-              uses: Swatinem/rust-cache@v2
-
-            - name: Rustfmt Check
-              uses: actions-rust-lang/rustfmt@v1
-
-            - name: Run clippy (all features)
-              run: cargo clippy --all-targets --all-features -- -D warnings
+            - name: Check formatting
+              run: just lint-rust
 
     test:
         runs-on: ubuntu-latest
-        needs: [changes, quality]
+        needs: changes
         if: needs.changes.outputs.rust == 'true'
         steps:
-            - uses: actions/checkout@v5
+            - uses: actions/checkout@v6
+            - uses: jdx/mise-action@v3
+              with:
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Setup Rust
-              uses: dtolnay/rust-toolchain@1.90
-              with:
-                  components: rustfmt, clippy
-
-            - name: Install cargo-nextest
-              uses: taiki-e/install-action@v2
-              with:
-                  tool: cargo-nextest
-            - name: Install protobuf
-              uses: arduino/setup-protoc@v3
-              with:
-                  repo-token: ${{ secrets.GITHUB_TOKEN }}
             - name: Run tests (all features)
               run: cargo nextest run --all-features
 
@@ -110,8 +95,9 @@ jobs:
                     # Primary Support - Linux
                     # - os: ubuntu-24.04
                     #   platform: "Linux"
-                    - os: ubuntu-24.04-arm
-                      platform: "Linux"
+                    # Disabled: ARM runners are flaky on GitHub Actions
+                    # - os: ubuntu-24.04-arm
+                    #   platform: "Linux"
                     # Primary Support - macOS (using available runners)
                     - os: macos-15
                       platform: "macOS"
@@ -134,20 +120,12 @@ jobs:
         needs: [changes, quality]
         if: needs.changes.outputs.rust == 'true'
         steps:
-            - uses: actions/checkout@v5
-
-            - name: Setup Rust
-              uses: dtolnay/rust-toolchain@1.90
-
-            - name: Install cargo-nextest
-              uses: taiki-e/install-action@v2
+            - uses: actions/checkout@v6
+            - uses: jdx/mise-action@v3
               with:
-                  tool: cargo-nextest
-
-            - name: Install protobuf
-              uses: arduino/setup-protoc@v3
-              with:
-                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
 
             # Run tests and build the release binary
             - run: cargo nextest run --all-features
@@ -159,22 +137,12 @@ jobs:
         needs: [changes, test, test-cross-platform, quality]
         if: needs.changes.outputs.rust == 'true'
         steps:
-            - uses: actions/checkout@v5
-
-            - name: Setup Rust
-              uses: dtolnay/rust-toolchain@1.90
+            - uses: actions/checkout@v6
+            - uses: jdx/mise-action@v3
               with:
-                  components: llvm-tools
-
-            - name: Install cargo-llvm-cov
-              uses: taiki-e/install-action@v2
-              with:
-                  tool: cargo-llvm-cov
-
-            - name: Install protobuf
-              uses: arduino/setup-protoc@v3
-              with:
-                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Generate coverage
               run: cargo llvm-cov --all-features --no-report

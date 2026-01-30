@@ -406,126 +406,15 @@ impl DetectionRule {
         }
 
         // Ensure it's a SELECT statement - we checked length above so this is safe
+        #[allow(clippy::wildcard_enum_match_arm)]
         match &statements[0] {
             Statement::Query(query) => {
                 // Basic validation - ensure it's a SELECT query
                 Self::validate_query_basic(query)?;
             }
-            Statement::Analyze { .. }
-            | Statement::Set(_)
-            | Statement::Truncate { .. }
-            | Statement::Msck { .. }
-            | Statement::Insert(_)
-            | Statement::Install { .. }
-            | Statement::Load { .. }
-            | Statement::Directory { .. }
-            | Statement::Case(_)
-            | Statement::If(_)
-            | Statement::While(_)
-            | Statement::Raise(_)
-            | Statement::Call(_)
-            | Statement::Copy { .. }
-            | Statement::CopyIntoSnowflake { .. }
-            | Statement::Open(_)
-            | Statement::Close { .. }
-            | Statement::Update { .. }
-            | Statement::Delete(_)
-            | Statement::CreateView { .. }
-            | Statement::CreateTable(_)
-            | Statement::CreateVirtualTable { .. }
-            | Statement::CreateIndex(_)
-            | Statement::CreateRole { .. }
-            | Statement::CreateSecret { .. }
-            | Statement::CreateServer(_)
-            | Statement::CreatePolicy { .. }
-            | Statement::CreateConnector(_)
-            | Statement::AlterTable { .. }
-            | Statement::AlterIndex { .. }
-            | Statement::AlterView { .. }
-            | Statement::AlterType(_)
-            | Statement::AlterRole { .. }
-            | Statement::AlterPolicy { .. }
-            | Statement::AlterConnector { .. }
-            | Statement::AlterSession { .. }
-            | Statement::AttachDatabase { .. }
-            | Statement::AttachDuckDBDatabase { .. }
-            | Statement::DetachDuckDBDatabase { .. }
-            | Statement::Drop { .. }
-            | Statement::DropFunction { .. }
-            | Statement::DropDomain(_)
-            | Statement::DropProcedure { .. }
-            | Statement::DropSecret { .. }
-            | Statement::DropPolicy { .. }
-            | Statement::DropConnector { .. }
-            | Statement::Declare { .. }
-            | Statement::CreateExtension { .. }
-            | Statement::DropExtension { .. }
-            | Statement::Fetch { .. }
-            | Statement::Flush { .. }
-            | Statement::Discard { .. }
-            | Statement::ShowFunctions { .. }
-            | Statement::ShowVariable { .. }
-            | Statement::ShowStatus { .. }
-            | Statement::ShowVariables { .. }
-            | Statement::ShowCreate { .. }
-            | Statement::ShowColumns { .. }
-            | Statement::ShowDatabases { .. }
-            | Statement::ShowSchemas { .. }
-            | Statement::ShowObjects(_)
-            | Statement::ShowTables { .. }
-            | Statement::ShowViews { .. }
-            | Statement::ShowCollation { .. }
-            | Statement::Use(_)
-            | Statement::StartTransaction { .. }
-            | Statement::Comment { .. }
-            | Statement::Commit { .. }
-            | Statement::Rollback { .. }
-            | Statement::CreateSchema { .. }
-            | Statement::CreateDatabase { .. }
-            | Statement::CreateFunction(_)
-            | Statement::CreateTrigger { .. }
-            | Statement::DropTrigger { .. }
-            | Statement::CreateProcedure { .. }
-            | Statement::CreateMacro { .. }
-            | Statement::CreateStage { .. }
-            | Statement::Assert { .. }
-            | Statement::Grant { .. }
-            | Statement::Deny(_)
-            | Statement::Revoke { .. }
-            | Statement::Deallocate { .. }
-            | Statement::Execute { .. }
-            | Statement::Prepare { .. }
-            | Statement::Kill { .. }
-            | Statement::ExplainTable { .. }
-            | Statement::Explain { .. }
-            | Statement::Savepoint { .. }
-            | Statement::ReleaseSavepoint { .. }
-            | Statement::Merge { .. }
-            | Statement::Cache { .. }
-            | Statement::UNCache { .. }
-            | Statement::CreateSequence { .. }
-            | Statement::CreateDomain(_)
-            | Statement::CreateType { .. }
-            | Statement::Pragma { .. }
-            | Statement::LockTables { .. }
-            | Statement::UnlockTables
-            | Statement::Unload { .. }
-            | Statement::OptimizeTable { .. }
-            | Statement::LISTEN { .. }
-            | Statement::UNLISTEN { .. }
-            | Statement::NOTIFY { .. }
-            | Statement::LoadData { .. }
-            | Statement::RenameTable(_)
-            | Statement::List(_)
-            | Statement::Remove(_)
-            | Statement::RaisError { .. }
-            | Statement::Print(_)
-            | Statement::Return(_)
-            | Statement::AlterSchema(_)
-            | Statement::ShowCharset(_)
-            | Statement::ExportData(_)
-            | Statement::CreateUser(_)
-            | Statement::Vacuum(_) => {
+            // Only SELECT statements are allowed; reject all other statement types
+            // including any new variants added in future sqlparser versions
+            _ => {
                 return Err(RuleError::InvalidSql(
                     "Only SELECT statements are allowed".to_owned(),
                 ));

@@ -1,7 +1,28 @@
-//! Privilege management tests for ProcessCollector implementations.
+//! Privilege management tests for `ProcessCollector` implementations.
 //!
 //! This module tests privilege escalation and dropping behavior across all platforms,
 //! ensuring that collectors handle privilege boundaries correctly and securely.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::uninlined_format_args,
+    clippy::print_stdout,
+    clippy::map_unwrap_or,
+    clippy::non_ascii_literal,
+    clippy::unused_async,
+    clippy::arithmetic_side_effects,
+    clippy::panic,
+    clippy::single_char_pattern,
+    clippy::as_conversions,
+    clippy::if_not_else,
+    clippy::use_debug,
+    clippy::needless_pass_by_value,
+    clippy::redundant_clone,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated
+)]
 
 use procmond::process_collector::{
     FallbackProcessCollector, ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,
@@ -28,7 +49,7 @@ fn is_elevated_privileges() -> bool {
     {
         // Use whoami crate to check if running as root
         // This is completely safe and doesn't require unsafe code
-        whoami::username() == "root"
+        whoami::username().map(|u| u == "root").unwrap_or(false)
     }
 
     #[cfg(windows)]
@@ -57,7 +78,7 @@ fn get_current_user_info() -> String {
     #[cfg(windows)]
     {
         // Use whoami crate for cross-platform username retrieval
-        let username = whoami::username();
+        let username = whoami::username().unwrap_or_else(|_| String::from("unknown"));
         format!("User: {}", username)
     }
 }

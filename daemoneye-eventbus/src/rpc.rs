@@ -709,7 +709,7 @@ impl CollectorRpcClient {
         }
 
         // Serialize RPC request
-        let payload = bincode::serde::encode_to_vec(&request, bincode::config::standard())
+        let payload = postcard::to_allocvec(&request)
             .map_err(|e| EventBusError::serialization(e.to_string()))?;
 
         // Publish request to broker using the target from the request
@@ -774,11 +774,8 @@ impl CollectorRpcClient {
                 }
 
                 // Deserialize response from message payload
-                let response: RpcResponse = match bincode::serde::decode_from_slice::<RpcResponse, _>(
-                    &message.payload,
-                    bincode::config::standard(),
-                ) {
-                    Ok((resp, _)) => resp,
+                let response: RpcResponse = match postcard::from_bytes(&message.payload) {
+                    Ok(resp) => resp,
                     Err(e) => {
                         tracing::error!("Failed to deserialize RPC response: {}", e);
                         continue;
@@ -2702,13 +2699,10 @@ mod tests {
             correlation_metadata: RpcCorrelationMetadata::default(),
         };
 
-        let serialized = bincode::serde::encode_to_vec(&response, bincode::config::standard());
-        assert!(serialized.is_ok());
+        let serialized = postcard::to_allocvec(&response).expect("serialization should succeed");
 
-        let deserialized =
-            bincode::serde::decode_from_slice(&serialized.unwrap(), bincode::config::standard());
-        assert!(deserialized.is_ok());
-        let (deserialized_response, _): (RpcResponse, _) = deserialized.unwrap();
+        let deserialized_response: RpcResponse =
+            postcard::from_bytes(&serialized).expect("deserialization should succeed");
         assert_eq!(deserialized_response.service_id, "test-service");
         assert_eq!(deserialized_response.status, RpcStatus::Success);
     }

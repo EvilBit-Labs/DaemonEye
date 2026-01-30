@@ -1,9 +1,12 @@
 //! Library module for procmond to enable unit testing
+#![allow(clippy::doc_markdown)] // Many docs reference code identifiers without backticks
 
+pub mod event_bus_connector;
 pub mod event_source;
 pub mod lifecycle;
 pub mod monitor_collector;
 pub mod process_collector;
+pub mod wal;
 
 #[cfg(target_os = "linux")]
 pub mod linux_collector;
@@ -14,6 +17,10 @@ pub mod macos_collector;
 #[cfg(target_os = "windows")]
 pub mod windows_collector;
 
+pub use event_bus_connector::{
+    BackpressureSignal, EventBusConnector, EventBusConnectorError, EventBusConnectorResult,
+    ProcessEventType,
+};
 pub use event_source::{ProcessEventSource, ProcessSourceConfig};
 pub use lifecycle::{
     LifecycleTrackingConfig, LifecycleTrackingError, LifecycleTrackingResult,
@@ -202,8 +209,10 @@ impl ProcessMessageHandler {
     ) -> Result<DetectionResult, IpcError> {
         tracing::info!("Received detection task: {}", task.task_id);
 
+        #[allow(clippy::as_conversions)] // Necessary for protobuf enum comparison
+        let enumerate_processes_type = ProtoTaskType::EnumerateProcesses as i32;
         match task.task_type {
-            task_type if task_type == ProtoTaskType::EnumerateProcesses as i32 => {
+            task_type if task_type == enumerate_processes_type => {
                 self.enumerate_processes(&task).await
             }
             _ => {
@@ -290,15 +299,20 @@ impl ProcessMessageHandler {
                 // Convert ProcessCollectionError to appropriate IPC error
                 let error_message = match e {
                     ProcessCollectionError::SystemEnumerationFailed { message } => {
-                        format!("System enumeration failed: {}", message)
+                        format!("System enumeration failed: {message}")
                     }
                     ProcessCollectionError::CollectionTimeout { timeout_ms } => {
-                        format!("Process collection timed out after {}ms", timeout_ms)
+                        format!("Process collection timed out after {timeout_ms}ms")
                     }
                     ProcessCollectionError::PlatformError { message } => {
-                        format!("Platform-specific error: {}", message)
+                        format!("Platform-specific error: {message}")
                     }
-                    _ => format!("Process collection error: {}", e),
+                    // Explicitly handle remaining variants + catch-all for new variants
+                    ProcessCollectionError::ProcessAccessDenied { .. }
+                    | ProcessCollectionError::ProcessNotFound { .. }
+                    | ProcessCollectionError::InvalidProcessData { .. } => {
+                        format!("Process collection error: {e}")
+                    }
                 };
 
                 Ok(DetectionResult::failure(&task.task_id, &error_message))
@@ -354,43 +368,46 @@ impl ProcessMessageHandler {
         use std::time::UNIX_EPOCH;
 
         // Convert SystemTime to timestamp with proper error handling
-        let start_time = event
-            .start_time
-            .and_then(|st| match st.duration_since(UNIX_EPOCH) {
-                Ok(duration) => Some(duration.as_secs() as i64),
-                Err(_) => {
-                    tracing::warn!(
-                        pid = event.pid,
-                        name = %event.name,
-                        "Process start time is before Unix epoch, skipping"
-                    );
-                    None
-                }
-            });
-
-        let collection_time = match event.timestamp.duration_since(UNIX_EPOCH) {
-            Ok(duration) => {
-                // Use checked arithmetic to prevent overflow
-                let millis = duration.as_millis();
-                if millis > i64::MAX as u128 {
-                    tracing::warn!(
-                        pid = event.pid,
-                        name = %event.name,
-                        "Collection time overflow, clamping to i64::MAX"
-                    );
-                    i64::MAX
-                } else {
-                    millis as i64
-                }
-            }
-            Err(_) => {
+        let start_time = event.start_time.and_then(|st| {
+            if let Ok(duration) = st.duration_since(UNIX_EPOCH) {
+                #[allow(clippy::as_conversions, clippy::cast_possible_wrap)]
+                // Safe: process start times won't overflow i64 (max year ~292 billion)
+                Some(duration.as_secs() as i64)
+            } else {
                 tracing::warn!(
                     pid = event.pid,
                     name = %event.name,
-                    "Collection time is before Unix epoch, using 0"
+                    "Process start time is before Unix epoch, skipping"
                 );
-                0
+                None
             }
+        });
+
+        let collection_time = if let Ok(duration) = event.timestamp.duration_since(UNIX_EPOCH) {
+            // Use checked arithmetic to prevent overflow
+            let millis = duration.as_millis();
+            #[allow(clippy::as_conversions)] // Safe: i64::MAX is a compile-time constant
+            let max_millis = i64::MAX as u128;
+            if millis > max_millis {
+                tracing::warn!(
+                    pid = event.pid,
+                    name = %event.name,
+                    "Collection time overflow, clamping to i64::MAX"
+                );
+                i64::MAX
+            } else {
+                #[allow(clippy::as_conversions)] // Safe: checked above that millis fits in i64
+                {
+                    millis as i64
+                }
+            }
+        } else {
+            tracing::warn!(
+                pid = event.pid,
+                name = %event.name,
+                "Collection time is before Unix epoch, using 0"
+            );
+            0
         };
 
         // Check if executable hash exists before moving the value
@@ -406,11 +423,7 @@ impl ProcessMessageHandler {
             cpu_usage: event.cpu_usage,
             memory_usage: event.memory_usage,
             executable_hash: event.executable_hash,
-            hash_algorithm: if has_executable_hash {
-                Some("sha256".to_string())
-            } else {
-                None
-            },
+            hash_algorithm: has_executable_hash.then(|| "sha256".to_owned()),
             user_id: event.user_id,
             accessible: event.accessible,
             file_exists: event.file_exists,
@@ -437,7 +450,7 @@ impl ProcessMessageHandler {
         process: &sysinfo::Process,
     ) -> ProtoProcessRecord {
         let pid_u32 = pid.as_u32();
-        let ppid = process.parent().map(|p| p.as_u32());
+        let ppid = process.parent().map(sysinfo::Pid::as_u32);
         let name = process.name().to_string_lossy().to_string();
         let executable_path = process.exe().map(|path| path.to_string_lossy().to_string());
         let command_line = process
@@ -445,9 +458,11 @@ impl ProcessMessageHandler {
             .iter()
             .map(|s| s.to_string_lossy().to_string())
             .collect();
+        #[allow(clippy::as_conversions, clippy::cast_possible_wrap)]
+        // Safe: process start times won't overflow i64
         let start_time = Some(process.start_time() as i64);
-        let cpu_usage = Some(process.cpu_usage() as f64);
-        let memory_usage = Some(process.memory() * 1024);
+        let cpu_usage = Some(f64::from(process.cpu_usage()));
+        let memory_usage = Some(process.memory().saturating_mul(1024));
         let executable_hash = None; // Would need file hashing implementation
         let hash_algorithm = None;
         let user_id = process.user_id().map(|uid| uid.to_string());
@@ -475,6 +490,17 @@ impl ProcessMessageHandler {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::uninlined_format_args,
+    clippy::shadow_unrelated,
+    clippy::wildcard_enum_match_arm,
+    clippy::str_to_string,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use collector_core::ProcessEvent;

@@ -7,6 +7,7 @@ use tracing::{debug, error, info, warn};
 
 mod broker_manager;
 mod collector_registry;
+mod health;
 mod ipc_server;
 
 use broker_manager::BrokerManager;
@@ -29,7 +30,7 @@ struct Cli {
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = run().await {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         std::process::exit(1);
     }
     Ok(())
@@ -46,7 +47,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map(|v| v == "1")
         .unwrap_or(false)
     {
-        println!("daemoneye-agent started successfully");
+        #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
+        {
+            println!("daemoneye-agent started successfully")
+        };
         return Ok(());
     }
 
@@ -58,7 +62,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     config.database.path = cli.database.into();
 
     // Initialize telemetry
-    let mut telemetry = telemetry::TelemetryCollector::new("daemoneye-agent".to_string());
+    let mut telemetry = telemetry::TelemetryCollector::new("daemoneye-agent".to_owned());
 
     // Initialize database
     let _db_manager = storage::DatabaseManager::new(&config.database.path)?;
@@ -117,11 +121,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a sample detection rule
     let rule = models::DetectionRule::new(
-        "rule-1".to_string(),
-        "Test Rule".to_string(),
-        "Test detection rule".to_string(),
-        "SELECT * FROM processes WHERE name = 'test'".to_string(),
-        "test".to_string(),
+        "rule-1".to_owned(),
+        "Test Rule".to_owned(),
+        "Test detection rule".to_owned(),
+        "SELECT * FROM processes WHERE name = 'test'".to_owned(),
+        "test".to_owned(),
         models::AlertSeverity::Medium,
     );
 
@@ -131,13 +135,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize alert manager
     let mut alert_manager = alerting::AlertManager::new();
     let stdout_sink = Box::new(alerting::StdoutSink::new(
-        "stdout".to_string(),
+        "stdout".to_owned(),
         alerting::OutputFormat::Json,
     ));
     alert_manager.add_sink(stdout_sink);
 
     // Indicate startup success before entering main loop
-    println!("daemoneye-agent started successfully");
+    #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
+    {
+        println!("daemoneye-agent started successfully")
+    };
 
     // Main collection loop using IPC client
     let scan_interval = Duration::from_millis(config.app.scan_interval_ms);
@@ -156,19 +163,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Main loop task
     // detection_engine already mutable above; reuse directly
-    let mut alert_manager = alert_manager; // mutable for sink operations
     let mut iteration: u64 = 0;
 
     tokio::pin!(shutdown_signal);
 
     loop {
         tokio::select! {
-            _ = &mut shutdown_signal => {
+            () = &mut shutdown_signal => {
                 info!("Shutdown signal received; commencing graceful shutdown");
                 break;
             }
-            _ = tokio::time::sleep(scan_interval) => {
-                iteration += 1;
+            () = tokio::time::sleep(scan_interval) => {
+                iteration = iteration.saturating_add(1);
                 let loop_start = Instant::now();
 
                 // Periodic RPC health checks (every 10 iterations)
@@ -230,7 +236,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 // Execute detection rules against collected processes
-                let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_string());
+                let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_owned());
                 let alerts = detection_engine.execute_rules(&processes);
 
                 if !alerts.is_empty() {
@@ -273,8 +279,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         broker_manager::BrokerHealth::Unhealthy(ref error) => {
                             warn!(error = %error, "Broker health check failed");
                         }
-                        other => {
-                            debug!(status = ?other, "Broker health status");
+                        broker_manager::BrokerHealth::Starting
+                        | broker_manager::BrokerHealth::ShuttingDown
+                        | broker_manager::BrokerHealth::Stopped => {
+                            debug!(status = ?broker_health, "Broker health status");
                         }
                     }
 
@@ -287,13 +295,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         ipc_server::IpcServerHealth::Unhealthy(ref error) => {
                             warn!(error = %error, "IPC server health check failed");
                         }
-                        other => {
-                            debug!(status = ?other, "IPC server health status");
+                        ipc_server::IpcServerHealth::Starting
+                        | ipc_server::IpcServerHealth::ShuttingDown
+                        | ipc_server::IpcServerHealth::Stopped => {
+                            debug!(status = ?ipc_health, "IPC server health status");
                         }
                     }
                 }
                 let loop_elapsed = loop_start.elapsed();
-                if loop_elapsed > scan_interval { warn!(elapsed_ms = loop_elapsed.as_millis() as u64, "Loop overran scan interval"); }
+                #[allow(clippy::as_conversions)] // Safe: loop elapsed will not overflow u64
+                let elapsed_ms = loop_elapsed.as_millis() as u64;
+                if loop_elapsed > scan_interval { warn!(elapsed_ms = elapsed_ms, "Loop overran scan interval"); }
             }
         }
     }
@@ -312,6 +324,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         error!(error = %e, "Failed to shutdown embedded broker gracefully");
     }
 
-    println!("daemoneye-agent shutdown complete.");
+    #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
+    {
+        println!("daemoneye-agent shutdown complete.")
+    };
     Ok(())
 }

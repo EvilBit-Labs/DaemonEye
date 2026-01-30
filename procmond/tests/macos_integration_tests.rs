@@ -4,6 +4,29 @@
 //! process collector functionality, including libproc and sysctl API usage,
 //! entitlements detection, SIP awareness, and sandboxed process handling.
 
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::unseparated_literal_suffix,
+    clippy::unreadable_literal,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::print_stdout,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::match_same_arms,
+    clippy::wildcard_enum_match_arm,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::non_ascii_literal,
+    clippy::unused_async,
+    clippy::missing_const_for_fn,
+    clippy::map_unwrap_or,
+    clippy::needless_pass_by_value,
+    clippy::as_conversions
+)]
+
 #[cfg(target_os = "macos")]
 mod macos_tests {
     use procmond::macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};

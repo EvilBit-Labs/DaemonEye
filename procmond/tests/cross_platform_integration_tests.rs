@@ -1,8 +1,35 @@
-//! Cross-platform integration tests for all ProcessCollector implementations.
+//! Cross-platform integration tests for all `ProcessCollector` implementations.
 //!
-//! This test suite verifies that all ProcessCollector implementations work correctly
+//! This test suite verifies that all `ProcessCollector` implementations work correctly
 //! across different platforms and configurations, including privilege escalation/dropping
 //! tests and compatibility tests for different OS versions.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::unseparated_literal_suffix,
+    clippy::unreadable_literal,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::print_stdout,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::match_same_arms,
+    clippy::wildcard_enum_match_arm,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::non_ascii_literal,
+    clippy::unused_async,
+    clippy::missing_const_for_fn,
+    clippy::map_unwrap_or,
+    clippy::needless_pass_by_value,
+    clippy::needless_collect,
+    clippy::clone_on_ref_ptr,
+    clippy::as_conversions,
+    clippy::redundant_clone,
+    clippy::str_to_string
+)]
 
 use procmond::process_collector::{
     FallbackProcessCollector, ProcessCollectionConfig, ProcessCollectionError, ProcessCollector,

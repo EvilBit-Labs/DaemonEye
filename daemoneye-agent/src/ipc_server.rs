@@ -2,7 +2,7 @@
 //!
 //! This module provides the `IpcServerManager` which manages an IPC server
 //! for communication with daemoneye-cli using protobuf + CRC32 framing.
-//! This operates alongside the embedded EventBus broker for collector-core
+//! This operates alongside the embedded `EventBus` broker for collector-core
 //! component communication, implementing the dual-protocol architecture.
 
 use anyhow::{Context, Result};
@@ -15,6 +15,7 @@ use tracing::{debug, error, info, warn};
 
 /// Health status of the IPC server
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IpcServerHealth {
     /// Server is healthy and operational
     Healthy,
@@ -28,7 +29,32 @@ pub enum IpcServerHealth {
     Stopped,
 }
 
-/// IPC server manager that coordinates the InterprocessServer lifecycle
+impl super::health::HealthState for IpcServerHealth {
+    fn is_healthy(&self) -> bool {
+        matches!(self, Self::Healthy)
+    }
+
+    fn is_starting(&self) -> bool {
+        matches!(self, Self::Starting)
+    }
+
+    fn unhealthy_message(&self) -> Option<&str> {
+        match *self {
+            Self::Unhealthy(ref msg) => Some(msg),
+            Self::Healthy | Self::Starting | Self::ShuttingDown | Self::Stopped => None,
+        }
+    }
+
+    fn is_stopped_or_shutting_down(&self) -> bool {
+        matches!(self, Self::ShuttingDown | Self::Stopped)
+    }
+
+    fn service_name() -> &'static str {
+        "IPC server"
+    }
+}
+
+/// IPC server manager that coordinates the `InterprocessServer` lifecycle
 /// within the daemoneye-agent process architecture for CLI communication.
 pub struct IpcServerManager {
     /// Configuration for the IPC server
@@ -55,10 +81,7 @@ impl IpcServerManager {
     /// Initialize and start the IPC server
     pub async fn start(&self) -> Result<()> {
         // Update health status to starting
-        {
-            let mut health = self.health_status.write().await;
-            *health = IpcServerHealth::Starting;
-        }
+        *self.health_status.write().await = IpcServerHealth::Starting;
 
         info!(
             endpoint_path = %self.config.endpoint_path,
@@ -95,16 +118,10 @@ impl IpcServerManager {
         server.start().await.context("Failed to start IPC server")?;
 
         // Store the server instance
-        {
-            let mut server_guard = self.server.write().await;
-            *server_guard = Some(server);
-        }
+        *self.server.write().await = Some(server);
 
         // Update health status to healthy
-        {
-            let mut health = self.health_status.write().await;
-            *health = IpcServerHealth::Healthy;
-        }
+        *self.health_status.write().await = IpcServerHealth::Healthy;
 
         info!("IPC server started successfully for CLI communication");
         Ok(())
@@ -115,10 +132,7 @@ impl IpcServerManager {
         info!("Initiating graceful shutdown of IPC server");
 
         // Update health status to shutting down
-        {
-            let mut health = self.health_status.write().await;
-            *health = IpcServerHealth::ShuttingDown;
-        }
+        *self.health_status.write().await = IpcServerHealth::ShuttingDown;
 
         // Send shutdown signal if available
         {
@@ -164,10 +178,7 @@ impl IpcServerManager {
         }
 
         // Update health status to stopped
-        {
-            let mut health = self.health_status.write().await;
-            *health = IpcServerHealth::Stopped;
-        }
+        *self.health_status.write().await = IpcServerHealth::Stopped;
 
         info!("IPC server shutdown complete");
         Ok(())
@@ -204,43 +215,24 @@ impl IpcServerManager {
                     IpcServerHealth::Healthy
                 } else {
                     warn!("IPC server health check failed - server instance not found");
-                    let mut health = self.health_status.write().await;
-                    *health = IpcServerHealth::Unhealthy("Server instance not found".to_string());
-                    IpcServerHealth::Unhealthy("Server instance not found".to_string())
+                    let unhealthy_status =
+                        IpcServerHealth::Unhealthy("Server instance not found".to_owned());
+                    *self.health_status.write().await = unhealthy_status.clone();
+                    unhealthy_status
                 }
             }
-            other => other,
+            IpcServerHealth::Starting
+            | IpcServerHealth::ShuttingDown
+            | IpcServerHealth::Unhealthy(_)
+            | IpcServerHealth::Stopped => current_health,
         }
     }
 
     /// Wait for the IPC server to become healthy with a timeout
     pub async fn wait_for_healthy(&self, timeout: Duration) -> Result<()> {
-        let start = std::time::Instant::now();
-
-        while start.elapsed() < timeout {
-            let health = self.health_status().await;
-            match health {
-                IpcServerHealth::Healthy => {
-                    debug!("IPC server is healthy");
-                    return Ok(());
-                }
-                IpcServerHealth::Starting => {
-                    debug!("IPC server is still starting, waiting...");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                IpcServerHealth::Unhealthy(ref error) => {
-                    return Err(anyhow::anyhow!("IPC server is unhealthy: {}", error));
-                }
-                IpcServerHealth::ShuttingDown | IpcServerHealth::Stopped => {
-                    return Err(anyhow::anyhow!("IPC server is not running"));
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Timeout waiting for IPC server to become healthy after {:?}",
-            timeout
-        ))
+        let health_status = Arc::clone(&self.health_status);
+        super::health::wait_for_healthy(timeout, || async { health_status.read().await.clone() })
+            .await
     }
 }
 

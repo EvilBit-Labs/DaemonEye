@@ -2,6 +2,17 @@
 //!
 //! Tests the coexistence of EventBus broker and IPC server within daemoneye-agent
 
+#![allow(
+    clippy::str_to_string,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::uninlined_format_args,
+    clippy::let_underscore_must_use,
+    clippy::print_stdout,
+    clippy::ignored_unit_patterns,
+    clippy::doc_markdown
+)]
+
 use anyhow::Result;
 use daemoneye_agent::{BrokerManager, IpcServerManager, create_cli_ipc_config};
 use daemoneye_lib::config::BrokerConfig;

@@ -1,3 +1,7 @@
+// Module-level clippy allows for patterns common in this platform-specific collector
+#![allow(clippy::unnecessary_wraps)] // Many methods return Result for future error paths
+#![allow(clippy::unused_self)] // Methods may use self in future enhancements
+
 //! Enhanced macOS-specific process collector using third-party crates.
 //!
 //! This module provides a macOS-optimized process collector that uses well-maintained
@@ -37,6 +41,7 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 
 /// macOS-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum MacOSCollectionError {
     /// Security framework error
     #[error("Security framework error: {0}")]
@@ -57,7 +62,7 @@ pub enum MacOSCollectionError {
 
 impl From<MacOSCollectionError> for ProcessCollectionError {
     fn from(err: MacOSCollectionError) -> Self {
-        ProcessCollectionError::PlatformError {
+        Self::PlatformError {
             message: err.to_string(),
         }
     }
@@ -65,6 +70,7 @@ impl From<MacOSCollectionError> for ProcessCollectionError {
 
 /// Enhanced macOS process entitlements information.
 #[derive(Debug, Clone, Default, serde::Serialize)]
+#[allow(clippy::struct_excessive_bools)] // Entitlements naturally have many boolean flags
 pub struct ProcessEntitlements {
     /// Process has debugging entitlements
     pub can_debug: bool,
@@ -117,7 +123,7 @@ pub struct MacOSProcessMetadata {
     pub entitlements: ProcessEntitlements,
     /// Process is under SIP protection
     pub sip_protected: bool,
-    /// Process architecture (x86_64, arm64, etc.)
+    /// Process architecture (`x86_64`, arm64, etc.)
     pub architecture: Option<String>,
     /// Code signing information
     pub code_signing: CodeSigningInfo,
@@ -190,6 +196,7 @@ pub struct EnhancedMacOSCollector {
 
 /// Configuration for macOS-specific process collection features.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)] // Configuration flags are naturally boolean
 pub struct MacOSCollectorConfig {
     /// Whether to collect process entitlements information
     pub collect_entitlements: bool,
@@ -275,7 +282,10 @@ impl EnhancedMacOSCollector {
     ///
     /// This method checks if the Security framework is available and can be used
     /// for entitlements detection by making a lightweight runtime API call.
+    #[allow(clippy::unnecessary_wraps)] // Result needed for future error propagation
     fn detect_entitlements_capability() -> ProcessCollectionResult<bool> {
+        const SECURITY_FRAMEWORK_PATH: &str = "/System/Library/Frameworks/Security.framework";
+
         // First try a lightweight runtime API call to verify Security framework availability
         match Self::test_security_framework_api() {
             Ok(available) => {
@@ -292,8 +302,6 @@ impl EnhancedMacOSCollector {
                     e
                 );
                 // Fallback to path check if API binding is unavailable
-                const SECURITY_FRAMEWORK_PATH: &str =
-                    "/System/Library/Frameworks/Security.framework";
                 if Path::new(SECURITY_FRAMEWORK_PATH).exists() {
                     debug!("Security framework capability detected via path check");
                     Ok(true)
@@ -313,6 +321,7 @@ impl EnhancedMacOSCollector {
     /// # Returns
     ///
     /// Returns `Ok(true)` if the Security framework is available, `Ok(false)` otherwise.
+    #[allow(clippy::unnecessary_wraps)] // Result needed for future error propagation
     fn test_security_framework_api() -> ProcessCollectionResult<bool> {
         const SECURITY_FRAMEWORK_PATH: &str = "/System/Library/Frameworks/Security.framework";
 
@@ -337,6 +346,7 @@ impl EnhancedMacOSCollector {
     ///
     /// Returns `Ok(true)` if SIP is enabled, `Ok(false)` if disabled, or defaults
     /// to `Ok(true)` for safety if the command fails.
+    #[allow(clippy::unnecessary_wraps)] // Result needed for future error propagation
     fn detect_sip_status() -> ProcessCollectionResult<bool> {
         // Use csrutil command to check SIP status
         match std::process::Command::new("/usr/bin/csrutil")
@@ -388,8 +398,8 @@ impl EnhancedMacOSCollector {
             system.refresh_all();
 
             let mut events = Vec::new();
-            let mut inaccessible_count = 0;
-            let mut processed_count = 0;
+            let mut inaccessible_count: usize = 0;
+            let mut processed_count: usize = 0;
             let max_processes = base_config.max_processes;
 
             for (pid, process) in system.processes() {
@@ -403,13 +413,13 @@ impl EnhancedMacOSCollector {
                     break;
                 }
 
-                processed_count += 1;
+                processed_count = processed_count.saturating_add(1);
 
                 match collector.enhance_process(*pid, process) {
                     Ok(event) => events.push(event),
                     Err(e) => {
                         debug!(pid = pid.as_u32(), error = %e, "Error enhancing process");
-                        inaccessible_count += 1;
+                        inaccessible_count = inaccessible_count.saturating_add(1);
                         // Continue with other processes
                     }
                 }
@@ -427,7 +437,7 @@ impl EnhancedMacOSCollector {
         })
         .await
         .map_err(|e| ProcessCollectionError::PlatformError {
-            message: format!("Blocking task failed: {}", e),
+            message: format!("Blocking task failed: {e}"),
         })?;
 
         Ok((events, stats))
@@ -435,7 +445,7 @@ impl EnhancedMacOSCollector {
 
     /// Enhances a process with macOS-specific metadata.
     ///
-    /// This method converts a sysinfo Process into a ProcessEvent with additional
+    /// This method converts a sysinfo Process into a `ProcessEvent` with additional
     /// metadata collection based on the collector's configuration.
     ///
     /// # Arguments
@@ -463,7 +473,7 @@ impl EnhancedMacOSCollector {
         if self.base_config.skip_system_processes && self.is_system_process(pid_u32, process) {
             return Err(ProcessCollectionError::ProcessAccessDenied {
                 pid: pid_u32,
-                message: "System process skipped by configuration".to_string(),
+                message: "System process skipped by configuration".to_owned(),
             });
         }
 
@@ -471,40 +481,31 @@ impl EnhancedMacOSCollector {
         if self.base_config.skip_kernel_threads && self.is_kernel_thread(&name, &command_line) {
             return Err(ProcessCollectionError::ProcessAccessDenied {
                 pid: pid_u32,
-                message: "Kernel thread skipped by configuration".to_string(),
+                message: "Kernel thread skipped by configuration".to_owned(),
             });
         }
 
-        let ppid = process.parent().map(|p| p.as_u32());
+        let ppid = process.parent().map(sysinfo::Pid::as_u32);
         let executable_path = process.exe().map(|p| p.to_string_lossy().to_string());
 
-        let start_time =
-            Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(process.start_time()));
+        let start_time = SystemTime::UNIX_EPOCH
+            .checked_add(std::time::Duration::from_secs(process.start_time()));
 
-        let cpu_usage = if self.base_config.collect_enhanced_metadata {
-            Some(process.cpu_usage() as f64)
-        } else {
-            None
-        };
+        let cpu_usage = self
+            .base_config
+            .collect_enhanced_metadata
+            .then(|| f64::from(process.cpu_usage()));
 
         let memory_usage = if self.base_config.collect_enhanced_metadata {
             let memory = process.memory();
-            if memory > 0 {
-                Some(memory.saturating_mul(1024))
-            } else {
-                None
-            }
+            (memory > 0).then(|| memory.saturating_mul(1024))
         } else {
             None
         };
 
         // Compute executable hash if requested
-        let executable_hash = if self.base_config.compute_executable_hashes {
-            // TODO: Implement executable hashing - compute SHA-256 hash of executable file
-            None
-        } else {
-            None
-        };
+        // TODO: Implement executable hashing - compute SHA-256 hash of executable file
+        let executable_hash: Option<String> = None;
 
         let user_id = process.user_id().map(|u| u.to_string());
         let accessible = true; // If we can read process info, it's accessible
@@ -605,9 +606,12 @@ impl EnhancedMacOSCollector {
             // Use heuristics to determine entitlements based on path and process characteristics
             let path_str = exe_path.to_string_lossy();
 
+            // All paths share setting can_debug = false at start
+            entitlements.can_debug = false;
+
             // Check if it's a system process (likely has system access)
             if path_str.starts_with("/System/") || path_str.starts_with("/usr/") {
-                entitlements.can_debug = false; // System processes typically can't be debugged
+                // System processes typically can't be debugged
                 entitlements.system_access = true; // System processes have system access
                 entitlements.sandboxed = false; // System processes are typically not sandboxed
                 entitlements.network_access = true;
@@ -616,7 +620,6 @@ impl EnhancedMacOSCollector {
                 entitlements.disable_library_validation = false;
             } else if path_str.contains(".app/") {
                 // App bundle - likely sandboxed
-                entitlements.can_debug = false;
                 entitlements.system_access = false;
                 entitlements.sandboxed = true; // Apps are typically sandboxed
                 entitlements.network_access = true; // Most apps have network access
@@ -625,7 +628,6 @@ impl EnhancedMacOSCollector {
                 entitlements.disable_library_validation = false;
             } else {
                 // Other executables - assume minimal entitlements
-                entitlements.can_debug = false;
                 entitlements.system_access = false;
                 entitlements.sandboxed = false;
                 entitlements.network_access = true;
@@ -660,7 +662,7 @@ impl EnhancedMacOSCollector {
         pid: u32,
         process: &sysinfo::Process,
     ) -> ProcessCollectionResult<bool> {
-        if let Some(exe_path) = process.exe() {
+        process.exe().map_or(Ok(false), |exe_path| {
             let path_str = exe_path.to_string_lossy();
 
             // Common SIP-protected paths on macOS
@@ -685,9 +687,7 @@ impl EnhancedMacOSCollector {
             );
 
             Ok(is_protected)
-        } else {
-            Ok(false)
-        }
+        })
     }
 
     /// Checks if a process has a valid code signature using heuristic/path-based checks.
@@ -730,7 +730,7 @@ impl EnhancedMacOSCollector {
                 code_signing.certificate_valid = true;
                 code_signing.team_id = None; // Would need Security framework API calls
                 code_signing.bundle_id = None;
-                code_signing.authority = Some("Apple".to_string()); // Assume Apple for system processes
+                code_signing.authority = Some("Apple".to_owned()); // Assume Apple for system processes
 
                 debug!(pid = pid, path = %path_str, "Process likely has valid code signature (heuristic: system/app)");
             } else {
@@ -769,12 +769,17 @@ impl EnhancedMacOSCollector {
 
             // Check if it's an app bundle
             if path_str.contains(".app/") {
-                // Extract bundle name from path
+                // Extract bundle name from path using safe string operations
+                #[allow(clippy::string_slice)]
+                // Safe: using byte indices from find operations on ASCII patterns
                 if let Some(app_start) = path_str.rfind('/')
-                    && let Some(app_end) = path_str[..app_start].rfind(".app")
-                    && let Some(name_start) = path_str[..app_end].rfind('/')
+                    && let Some(app_end) = path_str.get(..app_start).and_then(|s| s.rfind(".app"))
+                    && let Some(name_start) = path_str.get(..app_end).and_then(|s| s.rfind('/'))
                 {
-                    bundle_info.name = Some(path_str[name_start + 1..app_end].to_string());
+                    let start_idx = name_start.saturating_add(1);
+                    if let Some(name) = path_str.get(start_idx..app_end) {
+                        bundle_info.name = Some(name.to_owned());
+                    }
                 }
 
                 debug!(
@@ -813,7 +818,7 @@ impl EnhancedMacOSCollector {
             }
             #[cfg(target_arch = "aarch64")]
             {
-                Some("arm64".to_string())
+                Some("arm64".to_owned())
             }
             #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             {
@@ -838,6 +843,42 @@ impl EnhancedMacOSCollector {
     ///
     /// Returns `true` if the process is determined to be a system process, `false` otherwise.
     fn is_system_process(&self, pid: u32, process: &sysinfo::Process) -> bool {
+        // Common macOS system process patterns - declared at start of scope
+        const SYSTEM_PROCESSES: &[&str] = &[
+            "kernel_task",
+            "launchd",
+            "kextd",
+            "kernelmanagerd",
+            "UserEventAgent",
+            "cfprefsd",
+            "distnoted",
+            "syslogd",
+            "logd",
+            "systemstats",
+            "WindowServer",
+            "loginwindow",
+            "Dock",
+            "Finder",
+            "SystemUIServer",
+            "coreaudiod",
+            "bluetoothd",
+            "wifid",
+            "networkd",
+            "securityd",
+            "trustd",
+            "sandboxd",
+            "spindump",
+            "ReportCrash",
+            "crashreporterd",
+            "notifyd",
+            "powerd",
+            "thermald",
+            "hidd",
+            "locationd",
+            "CommCenter",
+            "SpringBoard", // iOS/iPadOS
+        ];
+
         // Check executable path - most reliable indicator
         if let Some(exe_path) = process.exe() {
             let path_str = exe_path.to_string_lossy();
@@ -874,42 +915,6 @@ impl EnhancedMacOSCollector {
         if pid == 1 {
             return true;
         }
-
-        // Common macOS system process patterns
-        const SYSTEM_PROCESSES: &[&str] = &[
-            "kernel_task",
-            "launchd",
-            "kextd",
-            "kernelmanagerd",
-            "UserEventAgent",
-            "cfprefsd",
-            "distnoted",
-            "syslogd",
-            "logd",
-            "systemstats",
-            "WindowServer",
-            "loginwindow",
-            "Dock",
-            "Finder",
-            "SystemUIServer",
-            "coreaudiod",
-            "bluetoothd",
-            "wifid",
-            "networkd",
-            "securityd",
-            "trustd",
-            "sandboxd",
-            "spindump",
-            "ReportCrash",
-            "crashreporterd",
-            "notifyd",
-            "powerd",
-            "thermald",
-            "hidd",
-            "locationd",
-            "CommCenter",
-            "SpringBoard", // iOS/iPadOS
-        ];
 
         // Exact matches
         if SYSTEM_PROCESSES
@@ -950,7 +955,7 @@ impl EnhancedMacOSCollector {
     ///
     /// # Returns
     ///
-    /// Returns a tuple containing (name, executable_path, memory_kb, virtual_memory_kb)
+    /// Returns a tuple containing (name, `executable_path`, `memory_kb`, `virtual_memory_kb`)
     /// or None if the process information is unavailable.
     fn get_process_info(
         &self,
@@ -958,7 +963,7 @@ impl EnhancedMacOSCollector {
     ) -> Option<(String, Option<std::path::PathBuf>, u64, u64)> {
         Some((
             process.name().to_string_lossy().into_owned(),
-            process.exe().map(|p| p.to_path_buf()),
+            process.exe().map(std::path::Path::to_path_buf),
             process.memory(),
             process.virtual_memory(),
         ))
@@ -977,7 +982,7 @@ impl EnhancedMacOSCollector {
     /// # Returns
     ///
     /// Always returns `false` as macOS doesn't expose kernel threads like Linux.
-    fn is_kernel_thread(&self, _name: &str, _command_line: &[String]) -> bool {
+    const fn is_kernel_thread(&self, _name: &str, _command_line: &[String]) -> bool {
         // macOS doesn't have kernel threads in the same way as Linux
         false
     }
@@ -1020,7 +1025,8 @@ impl ProcessCollector for EnhancedMacOSCollector {
         let (events, mut stats) = self.collect_processes_enhanced().await?;
 
         // Set the collection duration
-        stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
+        stats.collection_duration_ms =
+            u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         debug!(
             collector = self.name(),
@@ -1044,11 +1050,10 @@ impl ProcessCollector for EnhancedMacOSCollector {
         let mut system = System::new();
         system.refresh_processes(ProcessesToUpdate::All, true);
         let sysinfo_pid = Pid::from_u32(pid);
-        if let Some(process) = system.process(sysinfo_pid) {
-            self.enhance_process(sysinfo_pid, process)
-        } else {
-            Err(ProcessCollectionError::ProcessNotFound { pid })
-        }
+        system.process(sysinfo_pid).map_or(
+            Err(ProcessCollectionError::ProcessNotFound { pid }),
+            |process| self.enhance_process(sysinfo_pid, process),
+        )
     }
 
     async fn health_check(&self) -> ProcessCollectionResult<()> {
@@ -1064,7 +1069,7 @@ impl ProcessCollector for EnhancedMacOSCollector {
         let process_count = system.processes().len();
         if process_count == 0 {
             return Err(ProcessCollectionError::SystemEnumerationFailed {
-                message: "No processes found during health check".to_string(),
+                message: "No processes found during health check".to_owned(),
             });
         }
 

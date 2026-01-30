@@ -14,6 +14,7 @@ use tracing::{debug, warn};
 
 /// Errors that can occur during lifecycle tracking.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum LifecycleTrackingError {
     /// Invalid process data provided
     #[error("Invalid process data for PID {pid}: {message}")]
@@ -36,6 +37,7 @@ pub type LifecycleTrackingResult<T> = Result<T, LifecycleTrackingError>;
 /// These events represent different types of changes in the process landscape
 /// that can be detected by comparing process snapshots between enumeration cycles.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum ProcessLifecycleEvent {
     /// A new process has started
     Start {
@@ -82,6 +84,7 @@ pub enum ProcessLifecycleEvent {
 
 /// Severity levels for suspicious events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SuspiciousEventSeverity {
     /// Low severity - minor anomaly
     Low,
@@ -187,6 +190,7 @@ impl From<ProcessSnapshot> for ProcessEvent {
 
 /// Configuration for process lifecycle tracking.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)] // Configuration struct naturally has multiple boolean options
 pub struct LifecycleTrackingConfig {
     /// Maximum age of process snapshots before they're considered stale
     pub max_snapshot_age: Duration,
@@ -304,6 +308,9 @@ pub struct LifecycleTrackingStats {
     /// Number of timestamp anomalies detected
     pub timestamp_anomalies: u64,
 
+    /// Number of invalid start events that failed validation
+    pub invalid_start_events: u64,
+
     /// Average number of processes tracked per update
     pub avg_processes_tracked: f64,
 }
@@ -375,8 +382,10 @@ impl ProcessLifecycleTracker {
         if self.last_update.is_none() {
             self.current_snapshots = new_snapshots;
             self.last_update = Some(update_time);
-            self.stats.total_updates += 1;
-            self.stats.avg_processes_tracked = self.current_snapshots.len() as f64;
+            self.stats.total_updates = self.stats.total_updates.saturating_add(1);
+            #[allow(clippy::as_conversions)] // Safe: usize to f64 for statistics
+            let count = self.current_snapshots.len() as f64;
+            self.stats.avg_processes_tracked = count;
             return Ok(events);
         }
 
@@ -407,7 +416,7 @@ impl ProcessLifecycleTracker {
     }
 
     /// Returns current tracking statistics.
-    pub fn stats(&self) -> &LifecycleTrackingStats {
+    pub const fn stats(&self) -> &LifecycleTrackingStats {
         &self.stats
     }
 
@@ -428,8 +437,9 @@ impl ProcessLifecycleTracker {
 // Private implementation methods
 impl ProcessLifecycleTracker {
     /// Detects process start events by finding PIDs in current but not in previous.
+    #[allow(clippy::unnecessary_wraps)] // Result type for consistency with other detection methods
     fn detect_start_events(
-        &self,
+        &mut self,
         update_time: &SystemTime,
     ) -> LifecycleTrackingResult<Vec<ProcessLifecycleEvent>> {
         let mut events = Vec::with_capacity(self.current_snapshots.len());
@@ -438,7 +448,9 @@ impl ProcessLifecycleTracker {
             if !self.previous_snapshots.contains_key(pid) {
                 // Validate that this is a legitimate start event
                 if let Err(e) = self.validate_start_event(snapshot) {
-                    warn!("Invalid start event for PID {}: {}", pid, e);
+                    warn!(pid = pid, error = %e, "Invalid start event, skipping");
+                    self.stats.invalid_start_events =
+                        self.stats.invalid_start_events.saturating_add(1);
                     continue;
                 }
 
@@ -453,6 +465,7 @@ impl ProcessLifecycleTracker {
     }
 
     /// Detects process stop events by finding PIDs in previous but not in current.
+    #[allow(clippy::unnecessary_wraps)] // Result type for consistency with other detection methods
     fn detect_stop_events(
         &self,
         update_time: &SystemTime,
@@ -462,11 +475,9 @@ impl ProcessLifecycleTracker {
         for (pid, snapshot) in &self.previous_snapshots {
             if !self.current_snapshots.contains_key(pid) {
                 // Calculate runtime duration if possible
-                let runtime_duration = if let Some(start_time) = snapshot.start_time {
-                    update_time.duration_since(start_time).ok()
-                } else {
-                    None
-                };
+                let runtime_duration = snapshot
+                    .start_time
+                    .and_then(|start_time| update_time.duration_since(start_time).ok());
 
                 events.push(ProcessLifecycleEvent::Stop {
                     process: Box::new(snapshot.clone()),
@@ -480,6 +491,7 @@ impl ProcessLifecycleTracker {
     }
 
     /// Detects process modification events by comparing snapshots.
+    #[allow(clippy::unnecessary_wraps)] // Result type for consistency with other detection methods
     fn detect_modification_events(
         &self,
         update_time: &SystemTime,
@@ -540,18 +552,21 @@ impl ProcessLifecycleTracker {
     fn validate_start_event(&self, snapshot: &ProcessSnapshot) -> LifecycleTrackingResult<()> {
         // Check minimum process lifetime
         if let Some(start_time) = snapshot.start_time {
-            let lifetime = snapshot
-                .snapshot_time
-                .duration_since(start_time)
-                .map_err(|_| LifecycleTrackingError::TimestampValidationFailed {
-                    pid: snapshot.pid,
-                    message: "Process start time is in the future".to_string(),
-                })?;
+            let lifetime =
+                snapshot
+                    .snapshot_time
+                    .duration_since(start_time)
+                    .map_err(
+                        |_time_err| LifecycleTrackingError::TimestampValidationFailed {
+                            pid: snapshot.pid,
+                            message: "Process start time is in the future".to_owned(),
+                        },
+                    )?;
 
             if lifetime < self.config.min_process_lifetime {
                 return Err(LifecycleTrackingError::TimestampValidationFailed {
                     pid: snapshot.pid,
-                    message: format!("Process lifetime too short: {:?}", lifetime),
+                    message: format!("Process lifetime too short: {lifetime:?}"),
                 });
             }
         }
@@ -569,14 +584,14 @@ impl ProcessLifecycleTracker {
 
         // Check command line changes
         if self.config.track_command_line_changes && previous.command_line != current.command_line {
-            modified_fields.push("command_line".to_string());
+            modified_fields.push("command_line".to_owned());
         }
 
         // Check executable path changes
         if self.config.track_executable_changes
             && previous.executable_path != current.executable_path
         {
-            modified_fields.push("executable_path".to_string());
+            modified_fields.push("executable_path".to_owned());
         }
 
         // Check memory usage changes
@@ -585,13 +600,14 @@ impl ProcessLifecycleTracker {
         {
             if prev_mem == 0 {
                 if curr_mem > 0 {
-                    modified_fields.push("memory_usage".to_string());
+                    modified_fields.push("memory_usage".to_owned());
                 }
             } else {
+                #[allow(clippy::as_conversions)] // Safe: u64 to f64 for percentage calculation
                 let change_percent =
                     ((curr_mem as f64 - prev_mem as f64) / prev_mem as f64).abs() * 100.0;
                 if change_percent > self.config.memory_change_threshold {
-                    modified_fields.push("memory_usage".to_string());
+                    modified_fields.push("memory_usage".to_owned());
                 }
             }
         }
@@ -602,12 +618,12 @@ impl ProcessLifecycleTracker {
         {
             if prev_cpu == 0.0 {
                 if curr_cpu > 0.0 {
-                    modified_fields.push("cpu_usage".to_string());
+                    modified_fields.push("cpu_usage".to_owned());
                 }
             } else {
                 let change_percent = ((curr_cpu - prev_cpu) / prev_cpu).abs() * 100.0;
                 if change_percent > self.config.cpu_change_threshold {
-                    modified_fields.push("cpu_usage".to_string());
+                    modified_fields.push("cpu_usage".to_owned());
                 }
             }
         }
@@ -617,18 +633,19 @@ impl ProcessLifecycleTracker {
             && previous.executable_hash.is_some()
             && current.executable_hash.is_some()
         {
-            modified_fields.push("executable_hash".to_string());
+            modified_fields.push("executable_hash".to_owned());
         }
 
         // Check user ID changes (potential privilege escalation)
         if previous.user_id != current.user_id {
-            modified_fields.push("user_id".to_string());
+            modified_fields.push("user_id".to_owned());
         }
 
         modified_fields
     }
 
     /// Detects PID reuse scenarios.
+    #[allow(clippy::unnecessary_wraps, clippy::unused_self)] // Kept for API consistency and future use
     fn detect_pid_reuse(
         &self,
         previous: &ProcessSnapshot,
@@ -664,6 +681,7 @@ impl ProcessLifecycleTracker {
     }
 
     /// Detects timestamp anomalies.
+    #[allow(clippy::unused_self)] // Kept for API consistency and future use
     fn detect_timestamp_anomaly(
         &self,
         snapshot: &ProcessSnapshot,
@@ -675,18 +693,20 @@ impl ProcessLifecycleTracker {
                 return Ok(Some(ProcessLifecycleEvent::Suspicious {
                     process: Box::new(snapshot.clone()),
                     detected_at: *update_time,
-                    reason: "Process start time is in the future".to_string(),
+                    reason: "Process start time is in the future".to_owned(),
                     severity: SuspiciousEventSeverity::High,
                 }));
             }
 
             // Check if process is impossibly old (more than system uptime would allow)
-            let age = update_time.duration_since(start_time).map_err(|_| {
-                LifecycleTrackingError::TimestampValidationFailed {
-                    pid: snapshot.pid,
-                    message: "Failed to calculate process age".to_string(),
-                }
-            })?;
+            let age = update_time
+                .duration_since(start_time)
+                .map_err(
+                    |_time_err| LifecycleTrackingError::TimestampValidationFailed {
+                        pid: snapshot.pid,
+                        message: "Failed to calculate process age".to_owned(),
+                    },
+                )?;
 
             // This is a simple heuristic - in practice, you might want to check actual system uptime
             if age > Duration::from_secs(365 * 24 * 3600) {
@@ -694,7 +714,7 @@ impl ProcessLifecycleTracker {
                 return Ok(Some(ProcessLifecycleEvent::Suspicious {
                     process: Box::new(snapshot.clone()),
                     detected_at: *update_time,
-                    reason: format!("Process age seems unrealistic: {:?}", age),
+                    reason: format!("Process age seems unrealistic: {age:?}"),
                     severity: SuspiciousEventSeverity::Medium,
                 }));
             }
@@ -704,40 +724,67 @@ impl ProcessLifecycleTracker {
     }
 
     /// Updates tracking statistics based on detected events.
+    #[allow(clippy::pattern_type_mismatch)] // Matching on references is intentional here
     fn update_statistics(&mut self, events: &[ProcessLifecycleEvent]) {
-        self.stats.total_updates += 1;
+        self.stats.total_updates = self.stats.total_updates.saturating_add(1);
 
         for event in events {
             match event {
-                ProcessLifecycleEvent::Start { .. } => self.stats.start_events += 1,
-                ProcessLifecycleEvent::Stop { .. } => self.stats.stop_events += 1,
-                ProcessLifecycleEvent::Modified { .. } => self.stats.modification_events += 1,
+                ProcessLifecycleEvent::Start { .. } => {
+                    self.stats.start_events = self.stats.start_events.saturating_add(1);
+                }
+                ProcessLifecycleEvent::Stop { .. } => {
+                    self.stats.stop_events = self.stats.stop_events.saturating_add(1);
+                }
+                ProcessLifecycleEvent::Modified { .. } => {
+                    self.stats.modification_events =
+                        self.stats.modification_events.saturating_add(1);
+                }
                 ProcessLifecycleEvent::Suspicious { reason, .. } => {
-                    self.stats.suspicious_events += 1;
+                    self.stats.suspicious_events = self.stats.suspicious_events.saturating_add(1);
                     if reason.contains("PID reuse") {
-                        self.stats.pid_reuse_events += 1;
+                        self.stats.pid_reuse_events = self.stats.pid_reuse_events.saturating_add(1);
                     } else if reason.contains("timestamp") || reason.contains("time") {
-                        self.stats.timestamp_anomalies += 1;
+                        self.stats.timestamp_anomalies =
+                            self.stats.timestamp_anomalies.saturating_add(1);
                     }
                 }
             }
         }
 
         // Update average processes tracked
+        #[allow(clippy::as_conversions)] // Safe: usize/u64 to f64 for statistics
         let current_count = self.current_snapshots.len() as f64;
+        #[allow(clippy::as_conversions)] // Safe: u64 to f64 for statistics
         let total_updates = self.stats.total_updates as f64;
-        self.stats.avg_processes_tracked =
-            (self.stats.avg_processes_tracked * (total_updates - 1.0) + current_count)
-                / total_updates;
+        self.stats.avg_processes_tracked = self
+            .stats
+            .avg_processes_tracked
+            .mul_add(total_updates - 1.0, current_count)
+            / total_updates;
     }
 
     /// Cleans up old snapshots to prevent memory growth.
+    ///
+    /// This method enforces the `max_snapshots` limit on the previous snapshot
+    /// collection. When the current process count exceeds the limit, previous
+    /// snapshots are cleared to free memory while still tracking all current
+    /// processes. This design allows tracking all running processes while
+    /// limiting the memory used for historical comparison data.
+    ///
+    /// Note: If the system has more processes than `max_snapshots`, consider
+    /// increasing the limit to avoid repeated clearing of previous snapshots.
     fn cleanup_old_snapshots(&mut self) {
-        if self.current_snapshots.len() > self.config.max_snapshots {
+        let current_count = self.current_snapshots.len();
+        let previous_count = self.previous_snapshots.len();
+
+        // Clear previous snapshots if either collection exceeds limit
+        if current_count > self.config.max_snapshots || previous_count > self.config.max_snapshots {
             warn!(
-                "Process snapshot count ({}) exceeds maximum ({}), clearing previous snapshots",
-                self.current_snapshots.len(),
-                self.config.max_snapshots
+                "Process snapshot count (current: {}, previous: {}) exceeds maximum ({}), \
+                 clearing previous snapshots. Consider increasing max_snapshots if this \
+                 occurs frequently.",
+                current_count, previous_count, self.config.max_snapshots
             );
             self.previous_snapshots.clear();
         }
@@ -745,6 +792,17 @@ impl ProcessLifecycleTracker {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::wildcard_enum_match_arm,
+    clippy::pattern_type_mismatch,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod tests {
     use super::*;
     use std::time::{Duration, SystemTime};

@@ -5,6 +5,26 @@
 //! libc calls. Tests cover Security framework integration, entitlements detection,
 //! code signing, bundle information, and SIP awareness.
 
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::unseparated_literal_suffix,
+    clippy::unreadable_literal,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::arithmetic_side_effects,
+    clippy::print_stdout,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::match_same_arms,
+    clippy::wildcard_enum_match_arm,
+    clippy::panic,
+    clippy::non_ascii_literal,
+    clippy::unused_async,
+    clippy::as_conversions
+)]
+
 #[cfg(target_os = "macos")]
 mod macos_enhanced_tests {
     use procmond::macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};

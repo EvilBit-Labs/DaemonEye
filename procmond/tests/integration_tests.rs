@@ -1,7 +1,34 @@
-//! Integration tests for ProcessEventSource with collector-core runtime.
+//! Integration tests for `ProcessEventSource` with collector-core runtime.
 //!
-//! These tests verify that the ProcessEventSource properly integrates with the
+//! These tests verify that the `ProcessEventSource` properly integrates with the
 //! collector-core framework and behaves correctly in realistic scenarios.
+
+#![allow(
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::print_stdout,
+    clippy::map_unwrap_or,
+    clippy::non_ascii_literal,
+    clippy::use_debug,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::needless_pass_by_value,
+    clippy::redundant_clone,
+    clippy::as_conversions,
+    clippy::arithmetic_side_effects,
+    clippy::panic,
+    clippy::option_if_let_else,
+    clippy::wildcard_enum_match_arm,
+    clippy::missing_const_for_fn,
+    clippy::match_wild_err_arm,
+    clippy::single_match_else,
+    clippy::clone_on_ref_ptr,
+    clippy::let_underscore_must_use,
+    clippy::ignored_unit_patterns
+)]
 
 use collector_core::{CollectionEvent, Collector, CollectorConfig, EventSource, SourceCaps};
 use daemoneye_lib::storage::DatabaseManager;

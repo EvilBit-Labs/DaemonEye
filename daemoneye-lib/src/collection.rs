@@ -106,6 +106,7 @@ impl ProcessCollectionService for SysinfoProcessCollector {
                     | sysinfo::ProcessStatus::Parked
                     | sysinfo::ProcessStatus::LockBlocked
                     | sysinfo::ProcessStatus::UninterruptibleDiskSleep
+                    | sysinfo::ProcessStatus::Suspended
                     | sysinfo::ProcessStatus::Unknown(_) => {
                         ProcessStatus::Unknown(format!("{:?}", process.status()))
                     }

@@ -24,11 +24,11 @@ struct BatchOutcome {
 }
 
 impl BatchOutcome {
-    fn new(dead_letters: Vec<CollectionEvent>) -> Self {
+    const fn new(dead_letters: Vec<CollectionEvent>) -> Self {
         Self { dead_letters }
     }
 
-    fn empty() -> Self {
+    const fn empty() -> Self {
         Self {
             dead_letters: Vec::new(),
         }
@@ -41,7 +41,7 @@ impl BatchOutcome {
 
 type BatchResult = Result<BatchOutcome, (anyhow::Error, Vec<CollectionEvent>)>;
 
-/// Process event source that implements the EventSource trait.
+/// Process event source that implements the `EventSource` trait.
 ///
 /// This struct wraps the existing `ProcessMessageHandler` and provides a bridge
 /// between the collector-core framework and the existing process collection logic.
@@ -276,7 +276,7 @@ impl ProcessEventSource {
 
     /// Creates a new process event source with a custom collector and configuration.
     ///
-    /// This method allows for dependency injection of different ProcessCollector
+    /// This method allows for dependency injection of different `ProcessCollector`
     /// implementations, enabling platform-specific optimizations and testing.
     ///
     /// # Arguments
@@ -344,7 +344,7 @@ impl ProcessEventSource {
     ///
     /// # Returns
     ///
-    /// A boxed ProcessCollector implementation suitable for the current platform.
+    /// A boxed `ProcessCollector` implementation suitable for the current platform.
     fn create_platform_collector(config: &ProcessSourceConfig) -> Box<dyn ProcessCollector> {
         let base_collector_config = ProcessCollectionConfig {
             collect_enhanced_metadata: config.collect_enhanced_metadata,
@@ -424,13 +424,13 @@ impl ProcessEventSource {
     /// Determines if the current platform is a secondary/minimally supported platform.
     ///
     /// Secondary platforms are those that don't have dedicated optimized collectors
-    /// and should use the FallbackProcessCollector instead of SysinfoProcessCollector.
+    /// and should use the `FallbackProcessCollector` instead of `SysinfoProcessCollector`.
     /// This includes BSD variants and other Unix-like systems.
     ///
     /// # Returns
     ///
     /// `true` if the current platform is considered secondary, `false` otherwise.
-    fn is_secondary_platform() -> bool {
+    const fn is_secondary_platform() -> bool {
         cfg!(any(
             target_os = "freebsd",
             target_os = "openbsd",
@@ -465,7 +465,7 @@ impl ProcessEventSource {
         tx: &mpsc::Sender<CollectionEvent>,
         shutdown_signal: &Arc<AtomicBool>,
     ) -> BatchResult {
-        let timer = PerformanceTimer::start("process_collection".to_string());
+        let timer = PerformanceTimer::start("process_collection".to_owned());
         let collection_start = Instant::now();
 
         // Check for shutdown before starting collection
@@ -487,7 +487,7 @@ impl ProcessEventSource {
                 error!(error = %e, "Process enumeration failed");
                 self.stats.collection_errors.fetch_add(1, Ordering::Relaxed);
                 return Err((
-                    anyhow::anyhow!("Process collection failed: {}", e),
+                    anyhow::anyhow!("Process collection failed: {e}"),
                     Vec::new(),
                 ));
             }
@@ -512,8 +512,8 @@ impl ProcessEventSource {
 
         // Process events in batches with backpressure handling
         let mut event_batch = Vec::with_capacity(self.config.event_batch_size);
-        let mut collected_count = 0;
-        let mut batch_count = 0;
+        let mut collected_count: u64 = 0;
+        let mut batch_count: u64 = 0;
         let mut dead_letter_events = Vec::new();
 
         for process_event in process_events {
@@ -524,7 +524,7 @@ impl ProcessEventSource {
             }
 
             event_batch.push(CollectionEvent::Process(process_event));
-            collected_count += 1;
+            collected_count = collected_count.saturating_add(1);
 
             // Send batch when it's full
             if event_batch.len() >= self.config.event_batch_size {
@@ -539,7 +539,7 @@ impl ProcessEventSource {
                         return Err((e, dead_letter_events));
                     }
                 }
-                batch_count += 1;
+                batch_count = batch_count.saturating_add(1);
             }
         }
 
@@ -556,38 +556,41 @@ impl ProcessEventSource {
                     return Err((e, dead_letter_events));
                 }
             }
-            batch_count += 1;
+            batch_count = batch_count.saturating_add(1);
         }
 
         // Update statistics
         let collection_duration = collection_start.elapsed();
         self.stats.collection_cycles.fetch_add(1, Ordering::Relaxed);
+        #[allow(clippy::as_conversions)] // Safe: usize to u64 won't overflow on 64-bit systems
         self.stats.processes_collected.fetch_add(
             collection_stats.successful_collections as u64,
             Ordering::Relaxed,
         );
 
         // Update average collection duration
-        let duration_ms = collection_duration.as_millis() as u64;
+        let duration_ms = u64::try_from(collection_duration.as_millis()).unwrap_or(u64::MAX);
         let cycles = self.stats.collection_cycles.load(Ordering::Relaxed);
         let current_avg = self
             .stats
             .avg_collection_duration_ms
             .load(Ordering::Relaxed);
+        #[allow(clippy::integer_division, clippy::arithmetic_side_effects)]
+        // Intentional: running average calculation
         let new_avg = if cycles == 1 {
             duration_ms
         } else {
-            (current_avg * (cycles - 1) + duration_ms) / cycles
+            (current_avg
+                .saturating_mul(cycles.saturating_sub(1))
+                .saturating_add(duration_ms))
+                / cycles
         };
         self.stats
             .avg_collection_duration_ms
             .store(new_avg, Ordering::Relaxed);
 
         // Update last collection time
-        {
-            let mut last_time = self.stats.last_collection_time.lock().await;
-            *last_time = Some(Instant::now());
-        }
+        *self.stats.last_collection_time.lock().await = Some(Instant::now());
 
         // Record telemetry
         let _duration = timer.finish();
@@ -617,9 +620,9 @@ impl ProcessEventSource {
         let batch_size = event_batch.len();
         debug!(batch_size = batch_size, "Sending event batch");
 
-        let mut processed_count = 0;
+        let mut processed_count: usize = 0;
         let mut dead_letter_events: Vec<CollectionEvent> = Vec::new();
-        let max_retries = 3;
+        let max_retries: u32 = 3;
         let retry_delay = Duration::from_millis(10);
 
         while !event_batch.is_empty() {
@@ -630,7 +633,10 @@ impl ProcessEventSource {
             }
 
             // Peek at the first event without removing it
-            let event = event_batch[0].clone();
+            // Safety: we check !event_batch.is_empty() at the start of the while loop
+            let Some(event) = event_batch.first().cloned() else {
+                break;
+            };
 
             // Capture event details for potential error reporting
             let event_type = event.event_type();
@@ -642,14 +648,14 @@ impl ProcessEventSource {
                 self.backpressure_semaphore.acquire(),
             )
             .await
-            .map_err(|_| anyhow::anyhow!("Backpressure timeout exceeded"))?
-            .map_err(|e| anyhow::anyhow!("Failed to acquire backpressure permit: {}", e))?;
+            .map_err(|_timeout_err| anyhow::anyhow!("Backpressure timeout exceeded"))?
+            .map_err(|e| anyhow::anyhow!("Failed to acquire backpressure permit: {e}"))?;
 
             // Update in-flight counter
             self.stats.events_in_flight.fetch_add(1, Ordering::Relaxed);
 
             // Attempt to send the event with retry logic
-            let mut retry_count = 0;
+            let mut retry_count: u32 = 0;
             let mut send_successful = false;
 
             while retry_count < max_retries && !send_successful {
@@ -667,7 +673,7 @@ impl ProcessEventSource {
                     Ok(Ok(())) => {
                         // Event sent successfully
                         send_successful = true;
-                        processed_count += 1;
+                        processed_count = processed_count.saturating_add(1);
                     }
                     Ok(Err(_)) => {
                         warn!("Event channel closed during batch send");
@@ -678,7 +684,7 @@ impl ProcessEventSource {
                     }
                     Err(_) => {
                         // Timeout occurred during send
-                        retry_count += 1;
+                        retry_count = retry_count.saturating_add(1);
                         if retry_count < max_retries {
                             debug!(
                                 retry_count = retry_count,
@@ -686,6 +692,8 @@ impl ProcessEventSource {
                                 "Event send timed out, retrying with backoff"
                             );
                             // Small backoff before retry
+                            #[allow(clippy::arithmetic_side_effects)]
+                            // Safe: retry_count is bounded by max_retries
                             tokio::time::sleep(retry_delay * retry_count).await;
 
                             // Check for shutdown after backoff
@@ -732,7 +740,6 @@ impl ProcessEventSource {
                     );
                     break;
                 }
-                continue;
             }
         }
 
@@ -745,12 +752,13 @@ impl ProcessEventSource {
         Ok(dead_letter_events)
     }
 
+    #[allow(clippy::unused_self)] // Method on struct for future extensibility
     fn log_dead_letter_events(&self, events: &[CollectionEvent]) {
+        const MAX_DETAILED_EVENTS: usize = 5;
+
         if events.is_empty() {
             return;
         }
-
-        const MAX_DETAILED_EVENTS: usize = 5;
 
         warn!(
             failed = events.len(),
@@ -767,7 +775,7 @@ impl ProcessEventSource {
 
         if events.len() > MAX_DETAILED_EVENTS {
             debug!(
-                omitted = events.len() - MAX_DETAILED_EVENTS,
+                omitted = events.len().saturating_sub(MAX_DETAILED_EVENTS),
                 "Additional dead-letter events omitted from warn-level logging"
             );
         }
@@ -797,6 +805,9 @@ impl EventSource for ProcessEventSource {
         tx: mpsc::Sender<CollectionEvent>,
         shutdown_signal: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
+        const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+        const FAILURE_BACKOFF_BASE: Duration = Duration::from_secs(1);
+
         info!(
             collection_interval_secs = self.config.collection_interval.as_secs(),
             enhanced_metadata = self.config.collect_enhanced_metadata,
@@ -808,9 +819,7 @@ impl EventSource for ProcessEventSource {
 
         let mut collection_interval = interval(self.config.collection_interval);
         #[allow(unused_assignments)]
-        let mut consecutive_failures = 0u32;
-        const MAX_CONSECUTIVE_FAILURES: u32 = 5;
-        const FAILURE_BACKOFF_BASE: Duration = Duration::from_secs(1);
+        let mut consecutive_failures = 0_u32;
 
         // Skip the first tick to avoid immediate collection
         collection_interval.tick().await;
@@ -853,7 +862,7 @@ impl EventSource for ProcessEventSource {
                         }
                         Err((err, dead_letters)) => {
                             self.log_dead_letter_events(&dead_letters);
-                            consecutive_failures += 1;
+                            consecutive_failures = consecutive_failures.saturating_add(1);
                             error!(
                                 error = %err,
                                 consecutive_failures = consecutive_failures,
@@ -869,6 +878,7 @@ impl EventSource for ProcessEventSource {
                                 );
 
                                 // Wait longer before next attempt
+                                #[allow(clippy::arithmetic_side_effects)] // Safe: consecutive_failures is bounded
                                 let backoff_duration = FAILURE_BACKOFF_BASE * consecutive_failures;
                                 let max_backoff = Duration::from_secs(60);
                                 let actual_backoff = std::cmp::min(backoff_duration, max_backoff);
@@ -883,7 +893,7 @@ impl EventSource for ProcessEventSource {
                         }
                     }
                 }
-                _ = async {
+                () = async {
                     // More responsive shutdown checking
                     while !shutdown_signal.load(Ordering::Relaxed) {
                         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -934,7 +944,9 @@ impl EventSource for ProcessEventSource {
 
     #[instrument(skip(self), fields(source = "process-monitor"))]
     async fn health_check(&self) -> anyhow::Result<()> {
-        let timer = PerformanceTimer::start("health_check".to_string());
+        const MAX_ERROR_RATE: f64 = 0.5; // 50% error rate threshold
+
+        let timer = PerformanceTimer::start("health_check".to_owned());
         let health_check_start = Instant::now();
 
         // Get current statistics
@@ -962,13 +974,13 @@ impl EventSource for ProcessEventSource {
                 ));
             }
         } else if stats.collection_cycles > 0 {
-            health_issues.push("No successful collections recorded".to_string());
+            health_issues.push("No successful collections recorded".to_owned());
         }
 
         // 2. Check error rate
         if stats.collection_cycles > 0 {
+            #[allow(clippy::as_conversions)] // Safe: casting u64 to f64 for ratio calculation
             let error_rate = stats.collection_errors as f64 / stats.collection_cycles as f64;
-            const MAX_ERROR_RATE: f64 = 0.5; // 50% error rate threshold
 
             if error_rate > MAX_ERROR_RATE {
                 health_issues.push(format!(
@@ -991,16 +1003,17 @@ impl EventSource for ProcessEventSource {
                 debug!("Health check enumeration successful");
             }
             Ok(Err(e)) => {
-                health_issues.push(format!("Process collector health check failed: {}", e));
+                health_issues.push(format!("Process collector health check failed: {e}"));
             }
             Err(_) => {
-                health_issues.push("Process collector health check timed out".to_string());
+                health_issues.push("Process collector health check timed out".to_owned());
             }
         }
 
         // 4. Check backpressure semaphore availability
         let available_permits = self.backpressure_semaphore.available_permits();
         let total_permits = self.config.max_events_in_flight;
+        #[allow(clippy::as_conversions)] // Safe: casting counts to f64 for ratio calculation
         let permit_usage = 1.0 - (available_permits as f64 / total_permits as f64);
 
         if permit_usage > 0.9 {
@@ -1029,17 +1042,19 @@ impl EventSource for ProcessEventSource {
 
         // Report health status
         if health_issues.is_empty() {
+            #[allow(clippy::as_conversions)] // Safe: casting u64 to f64 for percentage
+            let error_rate_str = if stats.collection_cycles > 0 {
+                format!(
+                    "{:.1}%",
+                    (stats.collection_errors as f64 / stats.collection_cycles as f64) * 100.0
+                )
+            } else {
+                "N/A".to_owned()
+            };
             info!(
                 collection_cycles = stats.collection_cycles,
                 processes_collected = stats.processes_collected,
-                error_rate = if stats.collection_cycles > 0 {
-                    format!(
-                        "{:.1}%",
-                        (stats.collection_errors as f64 / stats.collection_cycles as f64) * 100.0
-                    )
-                } else {
-                    "N/A".to_string()
-                },
+                error_rate = %error_rate_str,
                 avg_duration_ms = stats.avg_collection_duration_ms,
                 events_in_flight = stats.events_in_flight,
                 available_permits = available_permits,
@@ -1058,12 +1073,25 @@ impl EventSource for ProcessEventSource {
                 health_check_duration_ms = health_check_duration.as_millis(),
                 "Process event source health check failed"
             );
-            Err(anyhow::anyhow!("Health check failed: {}", health_summary))
+            Err(anyhow::anyhow!("Health check failed: {health_summary}"))
         }
     }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::str_to_string,
+    clippy::redundant_clone,
+    clippy::missing_panics_doc,
+    clippy::uninlined_format_args,
+    clippy::semicolon_outside_block,
+    clippy::shadow_unrelated,
+    clippy::clone_on_ref_ptr,
+    clippy::single_match_else,
+    clippy::match_same_arms
+)]
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
