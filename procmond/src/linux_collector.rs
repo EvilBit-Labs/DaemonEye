@@ -544,7 +544,7 @@ impl LinuxProcessCollector {
 
     /// Calculates process start time from starttime jiffies.
     ///
-    /// The starttime value from /proc/[pid]/stat is in clock ticks since system boot.
+    /// The starttime value from `/proc/\[pid\]/stat` is in clock ticks since system boot.
     /// We convert this to an absolute SystemTime using the cached boot time.
     fn calculate_start_time(&self, starttime_jiffies: u64) -> Option<SystemTime> {
         let boot_time_secs = self.boot_time_secs?;
