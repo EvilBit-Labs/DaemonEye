@@ -230,31 +230,9 @@ impl IpcServerManager {
 
     /// Wait for the IPC server to become healthy with a timeout
     pub async fn wait_for_healthy(&self, timeout: Duration) -> Result<()> {
-        let start = std::time::Instant::now();
-
-        while start.elapsed() < timeout {
-            let health = self.health_status().await;
-            match health {
-                IpcServerHealth::Healthy => {
-                    debug!("IPC server is healthy");
-                    return Ok(());
-                }
-                IpcServerHealth::Starting => {
-                    debug!("IPC server is still starting, waiting...");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                IpcServerHealth::Unhealthy(ref error) => {
-                    return Err(anyhow::anyhow!("IPC server is unhealthy: {error}"));
-                }
-                IpcServerHealth::ShuttingDown | IpcServerHealth::Stopped => {
-                    return Err(anyhow::anyhow!("IPC server is not running"));
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Timeout waiting for IPC server to become healthy after {timeout:?}"
-        ))
+        let health_status = Arc::clone(&self.health_status);
+        super::health::wait_for_healthy(timeout, || async { health_status.read().await.clone() })
+            .await
     }
 }
 

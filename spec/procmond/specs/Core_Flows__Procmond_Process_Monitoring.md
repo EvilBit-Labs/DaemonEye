@@ -262,22 +262,27 @@ sequenceDiagram
 **Steps:**
 
 1. Operator runs health check command through daemoneye-cli
+
 2. daemoneye-cli queries daemoneye-agent for component health
+
 3. daemoneye-agent requests health status from procmond via event bus
+
 4. procmond performs self-health check:
 
-- Verify event bus connectivity
-- Check collection cycle success rate
-- Validate resource usage (memory, CPU)
-- Check for consecutive failures
+   - Verify event bus connectivity
+   - Check collection cycle success rate
+   - Validate resource usage (memory, CPU)
+   - Check for consecutive failures
 
 5. procmond publishes health status to topic `control.health.status`
+
 6. daemoneye-agent aggregates health data and returns to CLI
+
 7. Operator sees health report with status indicators:
 
-- **Healthy:** All checks passing, normal operation
-- **Degraded:** Some issues but still functional (e.g., enhanced metadata unavailable)
-- **Unhealthy:** Critical issues requiring intervention (e.g., event bus disconnected)
+   - **Healthy:** All checks passing, normal operation
+   - **Degraded:** Some issues but still functional (e.g., enhanced metadata unavailable)
+   - **Unhealthy:** Critical issues requiring intervention (e.g., event bus disconnected)
 
 **Health Indicators:**
 
@@ -460,30 +465,36 @@ flowchart TD
 **Steps:**
 
 1. Operator runs diagnostic command via daemoneye-cli: `daemoneye-cli health procmond --detailed`
+
 2. daemoneye-cli queries daemoneye-agent for procmond diagnostics
+
 3. daemoneye-agent requests detailed health report from procmond via event bus
+
 4. procmond gathers diagnostic information:
 
-- Recent error messages and stack traces
-- Collection cycle statistics (success rate, latency)
-- Resource usage trends (memory, CPU over time)
-- Event bus connectivity status
-- Platform collector status and capabilities
+   - Recent error messages and stack traces
+   - Collection cycle statistics (success rate, latency)
+   - Resource usage trends (memory, CPU over time)
+   - Event bus connectivity status
+   - Platform collector status and capabilities
 
 5. procmond publishes diagnostic report to topic `control.health.diagnostics`
+
 6. daemoneye-agent formats and returns diagnostic data to CLI
+
 7. Operator reviews diagnostic output showing:
 
-- **Status:** Current health state with reason
-- **Statistics:** Collection cycles, events published, errors
-- **Resources:** Memory usage, CPU usage, buffer sizes
-- **Connectivity:** Event bus connection status, last successful publish
-- **Recent Errors:** Last 10 errors with timestamps and context
+   - **Status:** Current health state with reason
+   - **Statistics:** Collection cycles, events published, errors
+   - **Resources:** Memory usage, CPU usage, buffer sizes
+   - **Connectivity:** Event bus connection status, last successful publish
+   - **Recent Errors:** Last 10 errors with timestamps and context
 
 8. **Decision Point:** Based on diagnostics, operator takes action:
 
-- **Permission errors:** Adjust procmond privileges or security policies
-- **Performance issues:** Increase collection interval or disable enhanced metadata
+   - **Permission errors:** Adjust procmond privileges or security policies
+   - **Performance issues:** Increase collection interval or disable enhanced metadata
+
 - **Connectivity issues:** Check daemoneye-agent status and event bus health
 - **Resource exhaustion:** Increase resource limits or reduce collection scope
 
