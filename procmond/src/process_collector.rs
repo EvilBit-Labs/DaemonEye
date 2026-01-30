@@ -525,11 +525,8 @@ impl ProcessCollector for SysinfoProcessCollector {
         }
 
         stats.total_processes = processed_count;
-        #[allow(clippy::as_conversions, clippy::semicolon_outside_block)]
-        {
-            // Safe: elapsed milliseconds fit in u64
-            stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
-        }
+        stats.collection_duration_ms =
+            u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         debug!(
             collector = self.name(),
@@ -1049,11 +1046,8 @@ impl ProcessCollector for FallbackProcessCollector {
         }
 
         stats.total_processes = processed_count;
-        #[allow(clippy::as_conversions, clippy::semicolon_outside_block)]
-        {
-            // Safe: elapsed milliseconds fit in u64
-            stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
-        }
+        stats.collection_duration_ms =
+            u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         debug!(
             collector = self.name(),
@@ -1079,7 +1073,6 @@ impl ProcessCollector for FallbackProcessCollector {
 
         // Perform single process lookup in a blocking task
         let config = self.config.clone();
-        let _platform_name = self.platform_name;
         let lookup_result = tokio::task::spawn_blocking(move || {
             let mut system = System::new();
 

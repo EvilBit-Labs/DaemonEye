@@ -1025,11 +1025,8 @@ impl ProcessCollector for EnhancedMacOSCollector {
         let (events, mut stats) = self.collect_processes_enhanced().await?;
 
         // Set the collection duration
-        #[allow(clippy::as_conversions, clippy::semicolon_outside_block)]
-        // Safe: collection duration won't exceed u64
-        {
-            stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
-        }
+        stats.collection_duration_ms =
+            u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         debug!(
             collector = self.name(),

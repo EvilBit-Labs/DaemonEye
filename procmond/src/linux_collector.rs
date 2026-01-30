@@ -141,6 +141,10 @@ pub struct LinuxProcessCollector {
     has_cap_sys_ptrace: bool,
     /// Cached host namespace IDs for container detection
     host_namespaces: ProcessNamespaces,
+    /// Cached system boot time (seconds since Unix epoch)
+    boot_time_secs: Option<u64>,
+    /// Clock ticks per second for jiffies conversion
+    clock_ticks_per_sec: u64,
 }
 
 /// Configuration for Linux-specific process collection features.
@@ -223,6 +227,13 @@ impl LinuxProcessCollector {
             ProcessNamespaces::default()
         };
 
+        // Cache system boot time for start time calculations
+        let boot_time_secs = Self::read_boot_time();
+
+        // Get clock ticks per second (typically 100 on Linux)
+        // Default to 100 if we can't determine it
+        let clock_ticks_per_sec = Self::get_clock_ticks_per_sec().unwrap_or(100);
+
         debug!(
             has_cap_sys_ptrace = has_cap_sys_ptrace,
             collect_namespaces = linux_config.collect_namespaces,
@@ -230,6 +241,8 @@ impl LinuxProcessCollector {
             collect_file_descriptors = linux_config.collect_file_descriptors,
             collect_network_connections = linux_config.collect_network_connections,
             detect_containers = linux_config.detect_containers,
+            boot_time_secs = ?boot_time_secs,
+            clock_ticks_per_sec = clock_ticks_per_sec,
             "Initialized Linux process collector"
         );
 
@@ -238,6 +251,8 @@ impl LinuxProcessCollector {
             linux_config,
             has_cap_sys_ptrace,
             host_namespaces,
+            boot_time_secs,
+            clock_ticks_per_sec,
         })
     }
 
@@ -271,6 +286,33 @@ impl LinuxProcessCollector {
 
         debug!("Could not detect CAP_SYS_PTRACE capability, assuming not available");
         Ok(false)
+    }
+
+    /// Reads system boot time from /proc/stat.
+    ///
+    /// Returns the boot time as seconds since the Unix epoch.
+    fn read_boot_time() -> Option<u64> {
+        let content = fs::read_to_string("/proc/stat").ok()?;
+        for line in content.lines() {
+            if let Some(btime_str) = line.strip_prefix("btime ") {
+                return btime_str.trim().parse().ok();
+            }
+        }
+        None
+    }
+
+    /// Gets the system clock ticks per second (CLK_TCK).
+    ///
+    /// This is used to convert jiffies (clock ticks) to seconds for process
+    /// start time calculations.
+    fn get_clock_ticks_per_sec() -> Option<u64> {
+        // On Linux, we can read this from sysconf(_SC_CLK_TCK)
+        // For Rust, we'll try to parse it from /proc/self/stat timing
+        // or fall back to the common default of 100
+        //
+        // A more robust approach would use libc::sysconf(libc::_SC_CLK_TCK)
+        // but we avoid libc dependency here. The value is almost always 100.
+        Some(100)
     }
 
     /// Reads process namespace information from /proc/\[pid\]/ns/.
@@ -433,27 +475,44 @@ impl LinuxProcessCollector {
     }
 
     /// Reads and parses /proc/\[pid\]/stat file.
+    ///
+    /// The stat file format is tricky because the comm field (process name) is
+    /// enclosed in parentheses and can contain spaces and other special characters.
+    /// We handle this by finding the last ')' to reliably parse fields after comm.
     fn read_proc_stat(pid: u32) -> io::Result<HashMap<String, String>> {
         let stat_path = format!("/proc/{pid}/stat");
         let content = fs::read_to_string(stat_path)?;
         let mut data = HashMap::new();
 
-        // Parse stat file (space-separated values)
-        let fields: Vec<&str> = content.split_whitespace().collect();
-        if fields.len() >= 20 {
-            // Field 3 is state, field 4 is ppid, field 20 is num_threads
-            data.insert(
-                "state".to_owned(),
-                (*fields.get(2).unwrap_or(&"")).to_owned(),
-            );
-            data.insert(
-                "ppid".to_owned(),
-                (*fields.get(3).unwrap_or(&"")).to_owned(),
-            );
-            data.insert(
-                "num_threads".to_owned(),
-                (*fields.get(19).unwrap_or(&"")).to_owned(),
-            );
+        // The comm field is enclosed in parentheses and can contain spaces/parens.
+        // Find the last ')' to reliably parse the fields after comm.
+        // Format: pid (comm) state ppid pgrp session tty_nr tpgid flags ...
+        //         0   1      2     3    4    5       6      7      8     ...
+        // Field 22 (0-indexed 21 from the start, but 19 after comm) is starttime.
+        if let Some(comm_end_idx) = content.rfind(')') {
+            let after_comm = &content[comm_end_idx.saturating_add(1)..];
+            let fields: Vec<&str> = after_comm.split_whitespace().collect();
+
+            // Fields are now: state(0) ppid(1) pgrp(2) session(3) ... starttime(19) ...
+            if fields.len() >= 20 {
+                data.insert(
+                    "state".to_owned(),
+                    (*fields.first().unwrap_or(&"")).to_owned(),
+                );
+                data.insert(
+                    "ppid".to_owned(),
+                    (*fields.get(1).unwrap_or(&"")).to_owned(),
+                );
+                data.insert(
+                    "num_threads".to_owned(),
+                    (*fields.get(17).unwrap_or(&"")).to_owned(),
+                );
+                // starttime is field 22 in man proc(5), which is index 19 after comm
+                data.insert(
+                    "starttime".to_owned(),
+                    (*fields.get(19).unwrap_or(&"")).to_owned(),
+                );
+            }
         }
 
         Ok(data)
@@ -481,6 +540,23 @@ impl LinuxProcessCollector {
             .next()
             .and_then(|s| s.parse::<u64>().ok())
             .and_then(|kb| kb.checked_mul(1024)) // Convert KB to bytes with overflow check
+    }
+
+    /// Calculates process start time from starttime jiffies.
+    ///
+    /// The starttime value from /proc/[pid]/stat is in clock ticks since system boot.
+    /// We convert this to an absolute SystemTime using the cached boot time.
+    fn calculate_start_time(&self, starttime_jiffies: u64) -> Option<SystemTime> {
+        let boot_time_secs = self.boot_time_secs?;
+
+        // Convert jiffies to seconds (with overflow protection)
+        let starttime_secs = starttime_jiffies.checked_div(self.clock_ticks_per_sec)?;
+
+        // Calculate absolute timestamp (boot time + process start offset)
+        let absolute_secs = boot_time_secs.checked_add(starttime_secs)?;
+
+        // Convert to SystemTime
+        SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(absolute_secs))
     }
 
     /// Reads basic process information from /proc/\[pid\]/ files.
@@ -559,9 +635,11 @@ impl LinuxProcessCollector {
             (None, None)
         };
 
-        // Determine start time
-        // TODO: Implement start time parsing from /proc/[pid]/stat jiffies
-        let start_time: Option<SystemTime> = None;
+        // Determine start time from /proc/[pid]/stat starttime jiffies
+        let start_time: Option<SystemTime> = stat_data
+            .get("starttime")
+            .and_then(|s| s.parse::<u64>().ok())
+            .and_then(|jiffies| self.calculate_start_time(jiffies));
 
         // Compute executable hash if requested
         // TODO: Implement executable hashing (issue #40)

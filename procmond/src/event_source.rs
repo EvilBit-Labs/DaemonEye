@@ -569,9 +569,7 @@ impl ProcessEventSource {
         );
 
         // Update average collection duration
-        #[allow(clippy::as_conversions)]
-        // Safe: collection duration will not exceed u64::MAX milliseconds
-        let duration_ms = collection_duration.as_millis() as u64;
+        let duration_ms = u64::try_from(collection_duration.as_millis()).unwrap_or(u64::MAX);
         let cycles = self.stats.collection_cycles.load(Ordering::Relaxed);
         let current_avg = self
             .stats

@@ -1282,7 +1282,8 @@ impl ProcessCollector for WindowsProcessCollector {
         }
 
         stats.total_processes = processed_count;
-        stats.collection_duration_ms = start_time.elapsed().as_millis() as u64;
+        stats.collection_duration_ms =
+            u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         debug!(
             collector = self.name(),

@@ -760,12 +760,26 @@ impl ProcessLifecycleTracker {
     }
 
     /// Cleans up old snapshots to prevent memory growth.
+    ///
+    /// This method enforces the `max_snapshots` limit on the previous snapshot
+    /// collection. When the current process count exceeds the limit, previous
+    /// snapshots are cleared to free memory while still tracking all current
+    /// processes. This design allows tracking all running processes while
+    /// limiting the memory used for historical comparison data.
+    ///
+    /// Note: If the system has more processes than `max_snapshots`, consider
+    /// increasing the limit to avoid repeated clearing of previous snapshots.
     fn cleanup_old_snapshots(&mut self) {
-        if self.current_snapshots.len() > self.config.max_snapshots {
+        let current_count = self.current_snapshots.len();
+        let previous_count = self.previous_snapshots.len();
+
+        // Clear previous snapshots if either collection exceeds limit
+        if current_count > self.config.max_snapshots || previous_count > self.config.max_snapshots {
             warn!(
-                "Process snapshot count ({}) exceeds maximum ({}), clearing previous snapshots",
-                self.current_snapshots.len(),
-                self.config.max_snapshots
+                "Process snapshot count (current: {}, previous: {}) exceeds maximum ({}), \
+                 clearing previous snapshots. Consider increasing max_snapshots if this \
+                 occurs frequently.",
+                current_count, previous_count, self.config.max_snapshots
             );
             self.previous_snapshots.clear();
         }
