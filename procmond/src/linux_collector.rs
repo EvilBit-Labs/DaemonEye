@@ -231,8 +231,7 @@ impl LinuxProcessCollector {
         let boot_time_secs = Self::read_boot_time();
 
         // Get clock ticks per second (typically 100 on Linux)
-        // Default to 100 if we can't determine it
-        let clock_ticks_per_sec = Self::get_clock_ticks_per_sec().unwrap_or(100);
+        let clock_ticks_per_sec = Self::get_clock_ticks_per_sec();
 
         debug!(
             has_cap_sys_ptrace = has_cap_sys_ptrace,
@@ -305,14 +304,14 @@ impl LinuxProcessCollector {
     ///
     /// This is used to convert jiffies (clock ticks) to seconds for process
     /// start time calculations.
-    fn get_clock_ticks_per_sec() -> Option<u64> {
+    const fn get_clock_ticks_per_sec() -> u64 {
         // On Linux, we can read this from sysconf(_SC_CLK_TCK)
         // For Rust, we'll try to parse it from /proc/self/stat timing
         // or fall back to the common default of 100
         //
         // A more robust approach would use libc::sysconf(libc::_SC_CLK_TCK)
         // but we avoid libc dependency here. The value is almost always 100.
-        Some(100)
+        100
     }
 
     /// Reads process namespace information from /proc/\[pid\]/ns/.
@@ -490,7 +489,9 @@ impl LinuxProcessCollector {
         //         0   1      2     3    4    5       6      7      8     ...
         // Field 22 (0-indexed 21 from the start, but 19 after comm) is starttime.
         if let Some(comm_end_idx) = content.rfind(')') {
-            let after_comm = &content[comm_end_idx.saturating_add(1)..];
+            let Some(after_comm) = content.get(comm_end_idx.saturating_add(1)..) else {
+                return Ok(data);
+            };
             let fields: Vec<&str> = after_comm.split_whitespace().collect();
 
             // Fields are now: state(0) ppid(1) pgrp(2) session(3) ... starttime(19) ...
