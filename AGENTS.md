@@ -31,6 +31,11 @@ cargo clippy --workspace -- -D warnings
 NO_COLOR=1 TERM=dumb cargo test --workspace  # Stable output
 cargo bench                                   # Criterion benchmarks
 cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+# GitHub CI monitoring
+gh run list --branch <branch> --limit 5       # Check CI status
+gh run view <run-id> --log-failed             # View failed job logs
+gh run view <run-id> --json status,jobs       # JSON status check
 ```
 
 Commit style: [.github/commit-instructions.md](.github/commit-instructions.md)
@@ -154,6 +159,7 @@ flowchart LR
 - **Linting**: `cargo clippy -- -D warnings` (zero warnings)
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Formatting**: `rustfmt` with 119 char line length
+- **Rustdoc**: Escape brackets in paths like `/proc/\[pid\]/stat` to avoid broken link warnings
 - **Errors**: `thiserror` for structured errors, `anyhow` for context
 - **Async**: Async-first with Tokio
 - **Logging**: Structured with `tracing`
