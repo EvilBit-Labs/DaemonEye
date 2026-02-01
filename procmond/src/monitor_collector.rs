@@ -531,15 +531,26 @@ impl ProcmondMonitorCollector {
             while let Some(signal) = backpressure_rx.recv().await {
                 match signal {
                     crate::event_bus_connector::BackpressureSignal::Activated => {
-                        // Increase interval by 1.5x (50% slower collection)
-                        let new_interval = Duration::from_millis(
-                            original_interval
-                                .as_millis()
-                                .saturating_mul(3)
-                                .saturating_div(2)
-                                .try_into()
-                                .unwrap_or(u64::MAX),
-                        );
+                        // Increase interval by 1.5x (50% slower collection), clamped to 1 hour max
+                        const MAX_INTERVAL_MS: u128 = 3_600_000; // 1 hour
+                        let scaled_ms = original_interval
+                            .as_millis()
+                            .saturating_mul(3)
+                            .saturating_div(2);
+                        let clamped_ms = if scaled_ms > MAX_INTERVAL_MS {
+                            warn!(
+                                original_interval_ms = original_interval.as_millis(),
+                                scaled_interval_ms = scaled_ms,
+                                max_interval_ms = MAX_INTERVAL_MS,
+                                "Backpressure-adjusted interval exceeds maximum; clamping to 1 hour"
+                            );
+                            MAX_INTERVAL_MS
+                        } else {
+                            scaled_ms
+                        };
+                        #[allow(clippy::as_conversions)]
+                        // Safe: clamped_ms <= 3_600_000 fits in u64
+                        let new_interval = Duration::from_millis(clamped_ms as u64);
                         info!(
                             original_interval_ms = original_interval.as_millis(),
                             new_interval_ms = new_interval.as_millis(),
@@ -764,15 +775,17 @@ impl ProcmondMonitorCollector {
 
     /// Applies a configuration update.
     fn apply_config_update(&mut self, new_config: ProcmondMonitorConfig) {
-        // Some configs require restart - document this
-        // Hot-reloadable:
+        // Hot-reloadable settings:
         // - collection_interval
-        // - max_events_in_flight
         // - lifecycle_config thresholds
         //
-        // Requires restart:
+        // Requires restart (changes have no effect until restart):
+        // - max_events_in_flight (semaphore capacity cannot be resized at runtime)
         // - process_config.excluded_pids (affects collector initialization)
         // - enable_event_driven (requires recreating event bus)
+
+        let old_max_in_flight = self.config.base_config.max_events_in_flight;
+        let new_max_in_flight = new_config.base_config.max_events_in_flight;
 
         info!(
             old_interval_secs = self.config.base_config.collection_interval.as_secs(),
@@ -780,12 +793,19 @@ impl ProcmondMonitorCollector {
             "Applying configuration update at cycle boundary"
         );
 
+        // Warn if max_events_in_flight changed (not hot-reloadable)
+        if old_max_in_flight != new_max_in_flight {
+            warn!(
+                old_max_events_in_flight = old_max_in_flight,
+                requested_max_events_in_flight = new_max_in_flight,
+                "max_events_in_flight is not hot-reloadable; \
+                 semaphore capacity will remain unchanged until restart"
+            );
+        }
+
         // Update config
         self.config = new_config;
 
-        // Update backpressure semaphore capacity if changed
-        // Note: Semaphore doesn't support dynamic resize, so we log a warning
-        // if max_events_in_flight changed
         debug!("Configuration update applied successfully");
     }
 

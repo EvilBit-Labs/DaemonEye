@@ -148,14 +148,15 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             |p| p.join("wal"),
         );
 
-        // Ensure WAL directory exists
-        if let Err(e) = std::fs::create_dir_all(&wal_dir) {
-            warn!(
+        // Ensure WAL directory exists (fail-fast to avoid confusing WAL init failures)
+        std::fs::create_dir_all(&wal_dir).map_err(|e| {
+            error!(
                 wal_dir = ?wal_dir,
                 error = %e,
-                "Failed to create WAL directory, continuing anyway"
+                "Failed to create WAL directory"
             );
-        }
+            e
+        })?;
 
         let mut event_bus_connector = EventBusConnector::new(wal_dir).await?;
 
@@ -196,7 +197,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Spawn backpressure monitor task if we have the receiver
         let original_interval = Duration::from_secs(cli.interval);
-        let _backpressure_task = backpressure_rx.map_or_else(
+        let backpressure_task = backpressure_rx.map_or_else(
             || {
                 warn!("Backpressure receiver not available, dynamic interval adjustment disabled");
                 None
@@ -232,17 +233,18 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        // Startup coordination: Wait for "begin monitoring" command from agent
-        // For now, if the broker is configured, we assume the agent will send
-        // the begin monitoring command. In a complete implementation, this would
-        // subscribe to control.collector.lifecycle topic.
+        // Startup behavior: begin monitoring immediately on launch.
         //
-        // TODO: Implement subscription to control.collector.lifecycle topic
-        // and wait for "begin monitoring" broadcast from agent.
+        // The collector currently does not wait for an explicit "begin monitoring"
+        // command from the agent. This makes procmond usable in isolation and in
+        // test environments without requiring the full agent/broker stack.
         //
-        // For now, send BeginMonitoring immediately to start collection.
-        // This allows testing without requiring the full agent infrastructure.
-        info!("Starting collection immediately (TODO: wait for agent 'begin monitoring' command)");
+        // If coordinated startup with the agent becomes a hard requirement in the
+        // future, this is the place to integrate a subscription to a
+        // `control.collector.lifecycle` (or similar) control topic and defer
+        // calling `begin_monitoring()` until the appropriate control message is
+        // received.
+        info!("Starting collection immediately on startup");
         if let Err(e) = actor_handle.begin_monitoring() {
             error!(error = %e, "Failed to send BeginMonitoring command");
         }
@@ -290,8 +292,21 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Clean up event consumer
-        event_consumer_task.abort();
+        // Clean up backpressure monitor task
+        if let Some(bp_task) = backpressure_task {
+            bp_task.abort();
+            info!("Backpressure monitor task aborted");
+        }
+
+        // Wait for event consumer to exit naturally (channel sender is dropped)
+        // Use a timeout to avoid hanging indefinitely
+        match tokio::time::timeout(Duration::from_secs(5), event_consumer_task).await {
+            Ok(Ok(())) => info!("Event consumer task completed successfully"),
+            Ok(Err(e)) => error!(error = %e, "Event consumer task join error"),
+            Err(_) => {
+                warn!("Event consumer task did not complete within timeout");
+            }
+        }
 
         info!("Procmond actor mode shutdown complete");
     } else {
