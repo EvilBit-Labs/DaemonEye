@@ -6,7 +6,7 @@
 
 use crate::{
     event_bus_connector::{EventBusConnector, ProcessEventType},
-    lifecycle::{LifecycleTrackingConfig, ProcessLifecycleTracker},
+    lifecycle::{LifecycleTrackingConfig, ProcessLifecycleEvent, ProcessLifecycleTracker},
     process_collector::{ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector},
 };
 use anyhow::Context;
@@ -365,6 +365,8 @@ pub struct ProcmondMonitorCollector {
     buffer_level_percent: Option<u8>,
     /// Pending graceful shutdown response channel
     pending_shutdown_response: Option<tokio::sync::oneshot::Sender<anyhow::Result<()>>>,
+    /// Pending interval update from backpressure (applied at next iteration)
+    pending_interval: Option<Duration>,
 
     // Event Bus Integration
     /// EventBusConnector for publishing events to the broker with WAL integration.
@@ -453,6 +455,7 @@ impl ProcmondMonitorCollector {
             event_bus_connected: false,
             buffer_level_percent: None,
             pending_shutdown_response: None,
+            pending_interval: None,
             // Event Bus Integration
             event_bus_connector: None,
         })
@@ -624,6 +627,22 @@ impl ProcmondMonitorCollector {
                 }
             }
 
+            // Check for pending interval adjustment (from backpressure)
+            if let Some(new_interval) = self.pending_interval.take()
+                && new_interval != self.current_interval
+            {
+                let old_interval = self.current_interval;
+                self.current_interval = new_interval;
+                collection_interval = interval(self.current_interval);
+                collection_interval.tick().await; // Reset interval
+                info!(
+                    old_interval_ms = old_interval.as_millis(),
+                    new_interval_ms = new_interval.as_millis(),
+                    is_backpressure = new_interval > self.original_interval,
+                    "Collection interval adjusted (timer recreated)"
+                );
+            }
+
             tokio::select! {
                 biased;
 
@@ -684,6 +703,16 @@ impl ProcmondMonitorCollector {
 
         // Final shutdown
         self.state = CollectorState::Stopped;
+
+        // Shutdown EventBusConnector (flushes buffer, closes connection)
+        if let Some(ref mut connector) = self.event_bus_connector {
+            if let Err(e) = connector.shutdown().await {
+                error!(error = %e, "EventBusConnector shutdown failed");
+            } else {
+                info!("EventBusConnector shutdown completed");
+            }
+        }
+
         info!("Procmond Monitor Collector actor stopped");
 
         // Send shutdown completion if there's a pending response
@@ -744,14 +773,15 @@ impl ProcmondMonitorCollector {
             }
 
             ActorMessage::AdjustInterval { new_interval } => {
-                let old_interval = self.current_interval;
-                self.current_interval = new_interval;
+                // Queue interval change for application at next loop iteration
+                // This ensures the tokio interval timer is properly recreated
                 info!(
-                    old_interval_ms = old_interval.as_millis(),
+                    current_interval_ms = self.current_interval.as_millis(),
                     new_interval_ms = new_interval.as_millis(),
                     is_backpressure = new_interval > self.original_interval,
-                    "Collection interval adjusted"
+                    "Interval adjustment queued"
                 );
+                self.pending_interval = Some(new_interval);
                 false
             }
         }
@@ -872,32 +902,56 @@ impl ProcmondMonitorCollector {
             .lifecycle_events
             .fetch_add(event_count, Ordering::Relaxed);
 
+        // Build a map from PID to event type from lifecycle analysis
+        // Only processes with lifecycle events (start, stop, modify) get published
+        use std::collections::HashMap;
+        let mut pid_to_event_type: HashMap<u32, ProcessEventType> = HashMap::new();
+        for lifecycle_event in &lifecycle_events {
+            #[allow(clippy::pattern_type_mismatch)] // Matching on &enum variant is idiomatic
+            match lifecycle_event {
+                ProcessLifecycleEvent::Start { process, .. } => {
+                    pid_to_event_type.insert(process.pid, ProcessEventType::Start);
+                }
+                ProcessLifecycleEvent::Stop { process, .. } => {
+                    pid_to_event_type.insert(process.pid, ProcessEventType::Stop);
+                }
+                ProcessLifecycleEvent::Modified { current, .. } => {
+                    pid_to_event_type.insert(current.pid, ProcessEventType::Modify);
+                }
+                ProcessLifecycleEvent::Suspicious { process, .. } => {
+                    // Suspicious events are also published as modifications
+                    pid_to_event_type.insert(process.pid, ProcessEventType::Modify);
+                }
+            }
+        }
+
         // Publish process events via EventBusConnector if configured
         // Events go to events.process.start, events.process.stop, or events.process.modify
+        // Only publish events that have a lifecycle change (skip unchanged processes)
         if let Some(ref mut connector) = self.event_bus_connector {
             // Update connection status
             self.event_bus_connected = connector.is_connected();
             self.buffer_level_percent = Some(connector.buffer_usage_percent());
 
             for process_event in &process_events {
-                // Determine event type from lifecycle analysis
-                // Default to Start for now; lifecycle events will refine this
-                let event_type = ProcessEventType::Start;
-
-                match connector.publish(process_event.clone(), event_type).await {
-                    Ok(sequence) => {
-                        debug!(
-                            pid = process_event.pid,
-                            sequence = sequence,
-                            "Published process event to EventBus"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            pid = process_event.pid,
-                            error = %e,
-                            "Failed to publish to EventBus (event buffered)"
-                        );
+                // Only publish if there's a corresponding lifecycle event
+                if let Some(&event_type) = pid_to_event_type.get(&process_event.pid) {
+                    match connector.publish(process_event.clone(), event_type).await {
+                        Ok(sequence) => {
+                            debug!(
+                                pid = process_event.pid,
+                                event_type = ?event_type,
+                                sequence = sequence,
+                                "Published process event to EventBus"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                pid = process_event.pid,
+                                error = %e,
+                                "Failed to publish to EventBus (event buffered)"
+                            );
+                        }
                     }
                 }
             }
