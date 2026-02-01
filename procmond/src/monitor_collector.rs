@@ -628,19 +628,24 @@ impl ProcmondMonitorCollector {
             }
 
             // Check for pending interval adjustment (from backpressure)
-            if let Some(new_interval) = self.pending_interval.take()
-                && new_interval != self.current_interval
-            {
-                let old_interval = self.current_interval;
-                self.current_interval = new_interval;
-                collection_interval = interval(self.current_interval);
-                collection_interval.tick().await; // Reset interval
-                info!(
-                    old_interval_ms = old_interval.as_millis(),
-                    new_interval_ms = new_interval.as_millis(),
-                    is_backpressure = new_interval > self.original_interval,
-                    "Collection interval adjusted (timer recreated)"
-                );
+            if let Some(new_interval) = self.pending_interval.take() {
+                if new_interval == self.current_interval {
+                    debug!(
+                        interval_ms = new_interval.as_millis(),
+                        "Interval adjustment skipped: already at requested interval"
+                    );
+                } else {
+                    let old_interval = self.current_interval;
+                    self.current_interval = new_interval;
+                    collection_interval = interval(self.current_interval);
+                    collection_interval.tick().await; // Reset interval
+                    info!(
+                        old_interval_ms = old_interval.as_millis(),
+                        new_interval_ms = new_interval.as_millis(),
+                        is_backpressure = new_interval > self.original_interval,
+                        "Collection interval adjusted (timer recreated)"
+                    );
+                }
             }
 
             tokio::select! {
