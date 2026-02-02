@@ -367,8 +367,8 @@ impl RpcServiceHandler {
             return Ok(Some(RpcPayload::Empty));
         }
 
-        // Build new configuration from changes
-        let new_config = Self::build_config_from_changes(config_request);
+        // Build new configuration from changes (validates inputs)
+        let new_config = Self::build_config_from_changes(config_request)?;
 
         let timeout = self.calculate_timeout(request);
 
@@ -538,17 +538,37 @@ impl RpcServiceHandler {
         }
     }
 
+    /// Maximum allowed value for max_events_in_flight to prevent resource exhaustion.
+    const MAX_EVENTS_IN_FLIGHT_LIMIT: u64 = 100_000;
+
+    /// Maximum allowed value for max_processes to prevent resource exhaustion.
+    const MAX_PROCESSES_LIMIT: u64 = 1_000_000;
+
     /// Builds a new configuration from the change request.
+    ///
+    /// # Limitations
+    ///
+    /// This method starts from the default configuration and applies changes.
+    /// This means partial updates will reset unspecified fields to defaults.
+    /// A future enhancement should fetch the current config from the actor
+    /// and overlay changes on top of it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidRequest` if any configuration value is out of bounds
+    /// or cannot be represented on this platform.
     #[allow(clippy::unused_self)] // Will use self when we fetch current config from actor
     fn build_config_from_changes(
         config_request: &ConfigUpdateRequest,
-    ) -> crate::monitor_collector::ProcmondMonitorConfig {
+    ) -> RpcServiceResult<crate::monitor_collector::ProcmondMonitorConfig> {
         use crate::monitor_collector::ProcmondMonitorConfig;
 
-        // Start with default config (in practice, we'd get current config from actor)
+        // Start with default config
+        // TODO: Fetch current config from actor to enable partial updates
+        // without resetting unspecified fields to defaults
         let mut config = ProcmondMonitorConfig::default();
 
-        // Apply changes from request
+        // Apply changes from request with validation
         for (key, value) in &config_request.config_changes {
             match key.as_str() {
                 "collection_interval_secs" => {
@@ -558,8 +578,18 @@ impl RpcServiceHandler {
                 }
                 "max_events_in_flight" => {
                     if let Some(max) = value.as_u64() {
+                        if max > Self::MAX_EVENTS_IN_FLIGHT_LIMIT {
+                            return Err(RpcServiceError::InvalidRequest(format!(
+                                "max_events_in_flight value {max} exceeds maximum allowed ({})",
+                                Self::MAX_EVENTS_IN_FLIGHT_LIMIT
+                            )));
+                        }
                         config.base_config.max_events_in_flight =
-                            usize::try_from(max).unwrap_or(usize::MAX);
+                            usize::try_from(max).map_err(|_overflow| {
+                                RpcServiceError::InvalidRequest(format!(
+                                    "max_events_in_flight value {max} cannot be represented on this platform"
+                                ))
+                            })?;
                     }
                 }
                 "collect_enhanced_metadata" => {
@@ -574,8 +604,19 @@ impl RpcServiceHandler {
                 }
                 "max_processes" => {
                     if let Some(max) = value.as_u64() {
-                        config.process_config.max_processes =
-                            usize::try_from(max).unwrap_or(usize::MAX);
+                        if max > Self::MAX_PROCESSES_LIMIT {
+                            return Err(RpcServiceError::InvalidRequest(format!(
+                                "max_processes value {max} exceeds maximum allowed ({})",
+                                Self::MAX_PROCESSES_LIMIT
+                            )));
+                        }
+                        config.process_config.max_processes = usize::try_from(max).map_err(
+                            |_overflow| {
+                                RpcServiceError::InvalidRequest(format!(
+                                    "max_processes value {max} cannot be represented on this platform"
+                                ))
+                            },
+                        )?;
                     }
                 }
                 _ => {
@@ -584,7 +625,7 @@ impl RpcServiceHandler {
             }
         }
 
-        config
+        Ok(config)
     }
 
     /// Creates a success response.
@@ -951,7 +992,8 @@ mod tests {
         };
 
         let _ = handler; // Silence unused warning
-        let config = RpcServiceHandler::build_config_from_changes(&config_request);
+        let config = RpcServiceHandler::build_config_from_changes(&config_request)
+            .expect("Config should be valid");
 
         assert_eq!(
             config.base_config.collection_interval,
@@ -959,6 +1001,43 @@ mod tests {
         );
         assert_eq!(config.process_config.max_processes, 500);
         assert!(config.process_config.compute_executable_hashes);
+    }
+
+    #[tokio::test]
+    async fn test_build_config_rejects_overflow_max_events_in_flight() {
+        let mut changes = HashMap::new();
+        changes.insert(
+            "max_events_in_flight".to_string(),
+            serde_json::json!(u64::MAX),
+        );
+
+        let config_request = ConfigUpdateRequest {
+            collector_id: "procmond".to_string(),
+            config_changes: changes,
+            validate_only: false,
+            restart_required: false,
+            rollback_on_failure: true,
+        };
+
+        let result = RpcServiceHandler::build_config_from_changes(&config_request);
+        assert!(result.is_err(), "Should reject overflow values");
+    }
+
+    #[tokio::test]
+    async fn test_build_config_rejects_overflow_max_processes() {
+        let mut changes = HashMap::new();
+        changes.insert("max_processes".to_string(), serde_json::json!(u64::MAX));
+
+        let config_request = ConfigUpdateRequest {
+            collector_id: "procmond".to_string(),
+            config_changes: changes,
+            validate_only: false,
+            restart_required: false,
+            rollback_on_failure: true,
+        };
+
+        let result = RpcServiceHandler::build_config_from_changes(&config_request);
+        assert!(result.is_err(), "Should reject overflow values");
     }
 
     #[tokio::test]

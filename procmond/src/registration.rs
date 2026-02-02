@@ -654,14 +654,15 @@ impl RegistrationManager {
         sequence: u64,
         health_status: HealthStatus,
     ) -> HeartbeatMessage {
-        // Get buffer usage percentage from connector (0-100)
+        // Get connection status and buffer usage from connector
         // Drop the lock immediately after reading
-        let buffer_level_percent = f64::from(self.event_bus.read().await.buffer_usage_percent());
+        let event_bus_guard = self.event_bus.read().await;
+        let is_connected = event_bus_guard.is_connected();
+        let buffer_level_percent = f64::from(event_bus_guard.buffer_usage_percent());
+        drop(event_bus_guard);
 
-        // Infer connection status from buffer usage:
-        // If buffer is not full, we're likely connected (or recently were)
-        // This is a heuristic until EventBusConnector exposes connection state
-        let connection_status = if buffer_level_percent < 100.0 {
+        // Use actual connection state from EventBusConnector
+        let connection_status = if is_connected {
             ConnectionStatus::Connected
         } else {
             ConnectionStatus::Disconnected
