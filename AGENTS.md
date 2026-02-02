@@ -157,6 +157,8 @@ flowchart LR
 
 - **Edition**: Rust 2024 (MSRV: 1.91+)
 - **Linting**: `cargo clippy -- -D warnings` (zero warnings)
+- **Format args**: Use `{variable}` inlined syntax in `format!`/`anyhow!` macros (`clippy::uninlined_format_args`)
+- **If-else ordering**: Clippy prefers `==` checks first in if-else (`clippy::unnecessary_negation`)
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Formatting**: `rustfmt` with 119 char line length
 - **Rustdoc**: Escape brackets in paths like `/proc/\[pid\]/stat` to avoid broken link warnings
