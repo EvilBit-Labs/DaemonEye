@@ -1,9 +1,19 @@
 //! RPC Service Handler for procmond.
 //!
 //! This module provides the `RpcServiceHandler` component that handles RPC requests
-//! from the daemoneye-agent via the event bus. It subscribes to the control topic
-//! `control.collector.procmond`, parses incoming RPC requests, and coordinates with
+//! from the daemoneye-agent. It parses incoming RPC requests and coordinates with
 //! the `ProcmondMonitorCollector` actor to execute operations.
+//!
+//! # Current Limitations
+//!
+//! This module is currently a **partial implementation**:
+//! - **No event bus subscription**: The handler does not yet subscribe to the control topic.
+//!   Integration requires extending `EventBusConnector` with subscription support.
+//! - **No response publishing**: The `publish_response` method only serializes and logs
+//!   responses. Actual publishing requires generic message support in `EventBusConnector`.
+//!
+//! The handler can be used directly by calling `handle_request()` with an `RpcRequest`,
+//! which will forward the operation to the actor and return an `RpcResponse`.
 //!
 //! # Supported Operations
 //!
@@ -11,7 +21,7 @@
 //! - `UpdateConfig` - Updates collector configuration at runtime
 //! - `GracefulShutdown` - Initiates graceful shutdown of the collector
 //!
-//! # Architecture
+//! # Architecture (Target Design)
 //!
 //! ```text
 //! ┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────────┐
@@ -280,6 +290,18 @@ impl RpcServiceHandler {
         response
     }
 
+    /// Calculates the effective timeout for an operation.
+    ///
+    /// Uses the minimum of the request deadline and the configured default timeout.
+    fn calculate_timeout(&self, request: &RpcRequest) -> Duration {
+        let now = SystemTime::now();
+        let deadline_duration = request
+            .deadline
+            .duration_since(now)
+            .unwrap_or(Duration::ZERO);
+        std::cmp::min(deadline_duration, self.config.default_timeout)
+    }
+
     /// Handles a health check request.
     async fn handle_health_check(
         &self,
@@ -290,11 +312,14 @@ impl RpcServiceHandler {
             "Processing health check request"
         );
 
-        // Forward to actor and get health data
-        let actor_health = self
-            .actor_handle
-            .health_check()
+        let timeout = self.calculate_timeout(request);
+
+        // Forward to actor and get health data with timeout
+        #[allow(clippy::as_conversions)] // Safe: timeout millis will be well under u64::MAX
+        let timeout_ms = timeout.as_millis() as u64;
+        let actor_health = tokio::time::timeout(timeout, self.actor_handle.health_check())
             .await
+            .map_err(|_elapsed| RpcServiceError::Timeout { timeout_ms })?
             .map_err(|e| RpcServiceError::ActorError(e.to_string()))?;
 
         // Convert actor health data to RPC health data
@@ -345,10 +370,14 @@ impl RpcServiceHandler {
         // Build new configuration from changes
         let new_config = Self::build_config_from_changes(config_request);
 
-        // Forward to actor
-        self.actor_handle
-            .update_config(new_config)
+        let timeout = self.calculate_timeout(request);
+
+        // Forward to actor with timeout
+        #[allow(clippy::as_conversions)] // Safe: timeout millis will be well under u64::MAX
+        let timeout_ms = timeout.as_millis() as u64;
+        tokio::time::timeout(timeout, self.actor_handle.update_config(new_config))
             .await
+            .map_err(|_elapsed| RpcServiceError::Timeout { timeout_ms })?
             .map_err(|e| RpcServiceError::ActorError(e.to_string()))?;
 
         info!(
@@ -392,10 +421,14 @@ impl RpcServiceHandler {
             "Initiating graceful shutdown"
         );
 
-        // Forward to actor
-        self.actor_handle
-            .graceful_shutdown()
+        let timeout = self.calculate_timeout(request);
+
+        // Forward to actor with timeout
+        #[allow(clippy::as_conversions)] // Safe: timeout millis will be well under u64::MAX
+        let timeout_ms = timeout.as_millis() as u64;
+        tokio::time::timeout(timeout, self.actor_handle.graceful_shutdown())
             .await
+            .map_err(|_elapsed| RpcServiceError::Timeout { timeout_ms })?
             .map_err(|e| RpcServiceError::ActorError(e.to_string()))?;
 
         // Mark service as not running
@@ -760,6 +793,15 @@ mod tests {
         (ActorHandle::new(tx), rx)
     }
 
+    /// Creates an EventBusConnector with a unique temp directory for test isolation.
+    async fn create_test_event_bus() -> (Arc<RwLock<EventBusConnector>>, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
+        let connector = EventBusConnector::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("Failed to create event bus connector");
+        (Arc::new(RwLock::new(connector)), temp_dir)
+    }
+
     #[tokio::test]
     async fn test_rpc_service_config_default() {
         let config = RpcServiceConfig::default();
@@ -772,11 +814,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_success_response() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         let request = RpcRequest {
@@ -804,11 +842,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_error_response() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         let request = RpcRequest {
@@ -836,11 +870,7 @@ mod tests {
     #[tokio::test]
     async fn test_convert_health_data() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         let actor_health = ActorHealthCheckData {
@@ -872,11 +902,7 @@ mod tests {
     #[tokio::test]
     async fn test_convert_health_data_degraded() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         let actor_health = ActorHealthCheckData {
@@ -902,11 +928,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_config_from_changes() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         let mut changes = HashMap::new();
@@ -942,11 +964,7 @@ mod tests {
     #[tokio::test]
     async fn test_stats_tracking() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         let stats = handler.stats().await;
@@ -958,11 +976,7 @@ mod tests {
     #[tokio::test]
     async fn test_expired_deadline_returns_timeout() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         // Create request with deadline in the past
@@ -989,11 +1003,7 @@ mod tests {
     #[tokio::test]
     async fn test_health_check_sends_message_to_actor() {
         let (actor_handle, mut rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         let request = RpcRequest {
@@ -1052,11 +1062,7 @@ mod tests {
     #[tokio::test]
     async fn test_config_update_invalid_payload() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         // Create config update request with wrong payload type (Empty instead of ConfigUpdate)
@@ -1082,11 +1088,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_timeout_response() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
 
         let request = RpcRequest {

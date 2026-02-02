@@ -569,9 +569,16 @@ impl RegistrationManager {
             return Ok(());
         }
 
-        // Get health data from actor
-        let health_status = match self.actor_handle.health_check().await {
-            Ok(health) => {
+        // Get health data from actor with timeout to prevent blocking indefinitely
+        // Use a timeout of 5 seconds - shorter than heartbeat interval
+        let health_check_timeout = Duration::from_secs(5);
+        let health_status = match tokio::time::timeout(
+            health_check_timeout,
+            self.actor_handle.health_check(),
+        )
+        .await
+        {
+            Ok(Ok(health)) => {
                 if health.event_bus_connected {
                     match health.state {
                         crate::monitor_collector::CollectorState::Running => HealthStatus::Healthy,
@@ -587,11 +594,18 @@ impl RegistrationManager {
                     HealthStatus::Degraded
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 warn!(
                     collector_id = %self.config.collector_id,
                     error = %e,
                     "Failed to get health check for heartbeat"
+                );
+                HealthStatus::Unknown
+            }
+            Err(_) => {
+                warn!(
+                    collector_id = %self.config.collector_id,
+                    "Health check timed out for heartbeat, actor may be stalled"
                 );
                 HealthStatus::Unknown
             }
@@ -628,7 +642,7 @@ impl RegistrationManager {
             collector_id = %self.config.collector_id,
             sequence = sequence,
             health_status = ?health_status,
-            "Heartbeat published"
+            "Heartbeat prepared (event bus publish pending connector extension)"
         );
 
         Ok(())
@@ -778,6 +792,15 @@ mod tests {
         (ActorHandle::new(tx), rx)
     }
 
+    /// Creates an EventBusConnector with a unique temp directory for test isolation.
+    async fn create_test_event_bus() -> (Arc<RwLock<EventBusConnector>>, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
+        let connector = EventBusConnector::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("Failed to create event bus connector");
+        (Arc::new(RwLock::new(connector)), temp_dir)
+    }
+
     #[tokio::test]
     async fn test_registration_config_default() {
         let config = RegistrationConfig::default();
@@ -830,11 +853,7 @@ mod tests {
     #[tokio::test]
     async fn test_initial_state() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         assert_eq!(manager.state().await, RegistrationState::Unregistered);
@@ -844,11 +863,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_registration_request() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         let request = manager.build_registration_request();
@@ -863,11 +878,7 @@ mod tests {
     #[tokio::test]
     async fn test_effective_heartbeat_interval() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         // Initially uses configured interval
@@ -886,11 +897,7 @@ mod tests {
     #[tokio::test]
     async fn test_stats_initial() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         let stats = manager.stats().await;
@@ -933,11 +940,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_state_transition() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         // Set state to Registered
@@ -965,11 +968,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_heartbeat_message() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         let heartbeat = manager
@@ -986,11 +985,7 @@ mod tests {
     #[tokio::test]
     async fn test_deregister_from_registered_state() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         // Set state to Registered
@@ -1008,11 +1003,7 @@ mod tests {
     #[tokio::test]
     async fn test_deregister_from_unregistered_state() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         // State is Unregistered by default
@@ -1029,11 +1020,7 @@ mod tests {
     #[tokio::test]
     async fn test_publish_heartbeat_skips_when_not_registered() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         // State is Unregistered by default
@@ -1050,11 +1037,7 @@ mod tests {
     #[tokio::test]
     async fn test_registration_stats_helpers() {
         let (actor_handle, _rx) = create_test_actor();
-        let event_bus = Arc::new(RwLock::new(
-            EventBusConnector::new(std::path::PathBuf::from("/tmp/test-wal"))
-                .await
-                .expect("Failed to create event bus connector"),
-        ));
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
         let manager = RegistrationManager::with_defaults(event_bus, actor_handle);
 
         // Test increment_registration_attempts

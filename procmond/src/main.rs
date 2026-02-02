@@ -191,10 +191,8 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Take the backpressure receiver before wrapping connector
-        let backpressure_rx = event_bus_connector.take_backpressure_receiver();
-
         // Wrap EventBusConnector in Arc<RwLock<>> for sharing between components
+        // Note: backpressure receiver is taken from collector_event_bus below, not here
         let event_bus = Arc::new(RwLock::new(event_bus_connector));
 
         // ========================================================================
@@ -265,12 +263,33 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             e
         })?;
-        let collector_event_bus = EventBusConnector::new(collector_wal_dir).await?;
+        let mut collector_event_bus = EventBusConnector::new(collector_wal_dir).await?;
+
+        // Connect collector's EventBusConnector and replay WAL (required for publishing)
+        match collector_event_bus.connect().await {
+            Ok(()) => {
+                info!("Collector EventBusConnector connected");
+                if let Err(e) = collector_event_bus.replay_wal().await {
+                    warn!(error = %e, "Failed to replay collector WAL");
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Collector EventBusConnector failed to connect, will buffer events"
+                );
+            }
+        }
+
+        // Take backpressure receiver from the collector's event bus (not the shared one)
+        // so the backpressure monitor listens to the correct connector
+        let collector_backpressure_rx = collector_event_bus.take_backpressure_receiver();
+
         collector.set_event_bus_connector(collector_event_bus);
 
         // Spawn backpressure monitor task if we have the receiver
         let original_interval = Duration::from_secs(cli.interval);
-        let backpressure_task = backpressure_rx.map_or_else(
+        let backpressure_task = collector_backpressure_rx.map_or_else(
             || {
                 warn!("Backpressure receiver not available, dynamic interval adjustment disabled");
                 None
