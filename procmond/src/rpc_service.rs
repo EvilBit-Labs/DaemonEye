@@ -1031,9 +1031,15 @@ mod tests {
                     collection_errors: 0,
                     backpressure_events: 0,
                 };
-                let _ = respond_to.send(health_data);
+                // Intentionally ignore send result - receiver may have been dropped
+                drop(respond_to.send(health_data));
             }
-            _ => panic!("Expected HealthCheck message"),
+            ActorMessage::UpdateConfig { .. }
+            | ActorMessage::GracefulShutdown { .. }
+            | ActorMessage::BeginMonitoring
+            | ActorMessage::AdjustInterval { .. } => {
+                panic!("Expected HealthCheck message")
+            }
         }
 
         // Wait for the response

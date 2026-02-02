@@ -848,7 +848,7 @@ mod tests {
         assert_eq!(request.collector_type, "process-monitor");
         assert!(request.pid.is_some());
         assert!(!request.capabilities.is_empty());
-        assert!(request.hostname.len() > 0);
+        assert!(!request.hostname.is_empty());
     }
 
     #[tokio::test]
@@ -870,8 +870,8 @@ mod tests {
 
         // After setting assigned interval, uses that instead
         *manager.assigned_heartbeat_interval.write().await = Some(Duration::from_secs(60));
-        let interval = manager.effective_heartbeat_interval().await;
-        assert_eq!(interval, Duration::from_secs(60));
+        let updated_interval = manager.effective_heartbeat_interval().await;
+        assert_eq!(updated_interval, Duration::from_secs(60));
     }
 
     #[tokio::test]
@@ -942,7 +942,14 @@ mod tests {
                 assert_eq!(from, RegistrationState::Registered);
                 assert_eq!(to, RegistrationState::Registering);
             }
-            _ => panic!("Expected InvalidStateTransition error"),
+            RegistrationError::RegistrationFailed(_)
+            | RegistrationError::RegistrationRejected(_)
+            | RegistrationError::Timeout { .. }
+            | RegistrationError::HeartbeatFailed(_)
+            | RegistrationError::DeregistrationFailed(_)
+            | RegistrationError::EventBusError(_) => {
+                panic!("Expected InvalidStateTransition error")
+            }
         }
     }
 
@@ -1043,29 +1050,29 @@ mod tests {
 
         // Test increment_registration_attempts
         manager.increment_registration_attempts().await;
-        let stats = manager.stats().await;
-        assert_eq!(stats.registration_attempts, 1);
+        let stats_after_attempt = manager.stats().await;
+        assert_eq!(stats_after_attempt.registration_attempts, 1);
 
         // Test record_successful_registration
         manager.record_successful_registration().await;
-        let stats = manager.stats().await;
-        assert_eq!(stats.successful_registrations, 1);
-        assert!(stats.last_registration.is_some());
+        let stats_after_success = manager.stats().await;
+        assert_eq!(stats_after_success.successful_registrations, 1);
+        assert!(stats_after_success.last_registration.is_some());
 
         // Test record_failed_registration
         manager.record_failed_registration().await;
-        let stats = manager.stats().await;
-        assert_eq!(stats.failed_registrations, 1);
+        let stats_after_failure = manager.stats().await;
+        assert_eq!(stats_after_failure.failed_registrations, 1);
 
         // Test record_heartbeat
         manager.record_heartbeat().await;
-        let stats = manager.stats().await;
-        assert_eq!(stats.heartbeats_sent, 1);
-        assert!(stats.last_heartbeat.is_some());
+        let stats_after_heartbeat = manager.stats().await;
+        assert_eq!(stats_after_heartbeat.heartbeats_sent, 1);
+        assert!(stats_after_heartbeat.last_heartbeat.is_some());
 
         // Test record_heartbeat_failure
         manager.record_heartbeat_failure().await;
-        let stats = manager.stats().await;
-        assert_eq!(stats.heartbeat_failures, 1);
+        let stats_after_hb_failure = manager.stats().await;
+        assert_eq!(stats_after_hb_failure.heartbeat_failures, 1);
     }
 }
