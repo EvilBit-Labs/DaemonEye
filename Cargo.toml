@@ -60,7 +60,7 @@ bytes = "1.11.0"
 chrono = { version = "0.4.43", features = ["serde"] }
 
 # CLI and configuration
-clap = { version = "4.5.55", features = ["derive"] }
+clap = { version = "4.5.56", features = ["derive"] }
 
 # Internal libraries
 collector-core = { path = "collector-core" }
@@ -80,12 +80,12 @@ futures-util = "0.3.31"
 
 # System information and IPC
 hostname-validator = "1.1.1"
-insta = { version = "1.46.1", features = ["filters"] }
+insta = { version = "1.46.2", features = ["filters"] }
 interprocess = { version = "2.2.3", features = ["tokio"] }
 parking_lot = "0.12.5"
 
 # Serialization
-postcard = { version = "1.1", features = ["alloc"] }
+postcard = { version = "1.1.3", features = ["alloc"] }
 
 # Testing utilities
 predicates = "3.1.3"

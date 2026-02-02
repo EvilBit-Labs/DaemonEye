@@ -7,13 +7,15 @@ use procmond::{
     ProcessEventSource, ProcessSourceConfig,
     event_bus_connector::EventBusConnector,
     monitor_collector::{ProcmondMonitorCollector, ProcmondMonitorConfig},
+    registration::{RegistrationConfig, RegistrationManager, RegistrationState},
+    rpc_service::{RpcServiceConfig, RpcServiceHandler},
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc};
-use tracing::{error, info, warn};
+use tokio::sync::{Mutex, RwLock, mpsc};
+use tracing::{debug, error, info, warn};
 
 /// Parse and validate the collection interval argument.
 ///
@@ -158,7 +160,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             e
         })?;
 
-        let mut event_bus_connector = EventBusConnector::new(wal_dir).await?;
+        let mut event_bus_connector = EventBusConnector::new(wal_dir.clone()).await?;
 
         // Attempt to connect to the broker
         match event_bus_connector.connect().await {
@@ -189,15 +191,105 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Take the backpressure receiver before moving connector to collector
-        let backpressure_rx = event_bus_connector.take_backpressure_receiver();
+        // Wrap EventBusConnector in Arc<RwLock<>> for sharing between components
+        // Note: backpressure receiver is taken from collector_event_bus below, not here
+        let event_bus = Arc::new(RwLock::new(event_bus_connector));
 
-        // Set the EventBusConnector on the collector
-        collector.set_event_bus_connector(event_bus_connector);
+        // ========================================================================
+        // Initialize Registration Manager
+        // ========================================================================
+        let registration_config = RegistrationConfig::default();
+        let registration_manager = Arc::new(RegistrationManager::new(
+            Arc::clone(&event_bus),
+            actor_handle.clone(),
+            registration_config,
+        ));
+
+        info!(
+            collector_id = %registration_manager.collector_id(),
+            "Registration manager initialized"
+        );
+
+        // Perform registration with daemoneye-agent
+        info!("Registering with daemoneye-agent");
+        match registration_manager.register().await {
+            Ok(response) => {
+                info!(
+                    collector_id = %response.collector_id,
+                    heartbeat_interval_ms = response.heartbeat_interval_ms,
+                    assigned_topics = ?response.assigned_topics,
+                    "Registration successful"
+                );
+            }
+            Err(e) => {
+                // Log warning but continue - procmond can operate without registration
+                // in standalone/development scenarios
+                warn!(
+                    error = %e,
+                    "Registration failed, continuing in standalone mode"
+                );
+            }
+        }
+
+        // Start heartbeat task (only publishes when registered)
+        let heartbeat_task =
+            RegistrationManager::spawn_heartbeat_task(Arc::clone(&registration_manager));
+        info!("Heartbeat task started");
+
+        // ========================================================================
+        // Initialize RPC Service Handler
+        // ========================================================================
+        let rpc_config = RpcServiceConfig::default();
+        let rpc_service =
+            RpcServiceHandler::new(actor_handle.clone(), Arc::clone(&event_bus), rpc_config);
+
+        info!(
+            control_topic = %rpc_service.config().control_topic,
+            "RPC service handler initialized"
+        );
+
+        // Create a separate EventBusConnector for the collector with its own WAL directory
+        // to avoid conflicts with the shared event_bus connector.
+        // Note: The collector takes ownership of its connector, while the registration
+        // and RPC services share a separate connector for control messages.
+        // TODO: Refactor to share the connector more elegantly when EventBusConnector
+        // supports both ProcessEvent and generic message publishing.
+        let collector_wal_dir = wal_dir.join("collector");
+        std::fs::create_dir_all(&collector_wal_dir).map_err(|e| {
+            error!(
+                wal_dir = ?collector_wal_dir,
+                error = %e,
+                "Failed to create collector WAL directory"
+            );
+            e
+        })?;
+        let mut collector_event_bus = EventBusConnector::new(collector_wal_dir).await?;
+
+        // Connect collector's EventBusConnector and replay WAL (required for publishing)
+        match collector_event_bus.connect().await {
+            Ok(()) => {
+                info!("Collector EventBusConnector connected");
+                if let Err(e) = collector_event_bus.replay_wal().await {
+                    warn!(error = %e, "Failed to replay collector WAL");
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Collector EventBusConnector failed to connect, will buffer events"
+                );
+            }
+        }
+
+        // Take backpressure receiver from the collector's event bus (not the shared one)
+        // so the backpressure monitor listens to the correct connector
+        let collector_backpressure_rx = collector_event_bus.take_backpressure_receiver();
+
+        collector.set_event_bus_connector(collector_event_bus);
 
         // Spawn backpressure monitor task if we have the receiver
         let original_interval = Duration::from_secs(cli.interval);
-        let backpressure_task = backpressure_rx.map_or_else(
+        let backpressure_task = collector_backpressure_rx.map_or_else(
             || {
                 warn!("Backpressure receiver not available, dynamic interval adjustment disabled");
                 None
@@ -214,8 +306,9 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Create event channel for the actor's output
         let (event_tx, mut event_rx) = mpsc::channel::<CollectionEvent>(1000);
 
-        // Clone handle for shutdown task
+        // Clone handles for shutdown task
         let shutdown_handle = actor_handle.clone();
+        let shutdown_registration = Arc::clone(&registration_manager);
 
         // Spawn task to handle graceful shutdown on Ctrl+C
         let shutdown_task = tokio::spawn(async move {
@@ -226,12 +319,27 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             info!("Received Ctrl+C, initiating graceful shutdown");
 
+            // Deregister from agent
+            if shutdown_registration.state().await == RegistrationState::Registered {
+                debug!("Deregistering from daemoneye-agent");
+                if let Err(e) = shutdown_registration
+                    .deregister(Some("Graceful shutdown".to_owned()))
+                    .await
+                {
+                    warn!(error = %e, "Deregistration failed");
+                }
+            }
+
             // Send graceful shutdown to actor
             match shutdown_handle.graceful_shutdown().await {
                 Ok(()) => info!("Actor shutdown completed successfully"),
                 Err(e) => error!(error = %e, "Actor shutdown failed"),
             }
         });
+
+        // Keep RPC service reference alive (it will be used for handling incoming requests)
+        // In a full implementation, we would spawn a task to process RPC requests from the event bus
+        let _rpc_service = rpc_service;
 
         // Startup behavior: begin monitoring immediately on launch.
         //
@@ -297,6 +405,10 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             bp_task.abort();
             info!("Backpressure monitor task aborted");
         }
+
+        // Clean up heartbeat task
+        heartbeat_task.abort();
+        info!("Heartbeat task aborted");
 
         // Wait for event consumer to exit naturally (channel sender is dropped)
         // Use a timeout to avoid hanging indefinitely
