@@ -161,6 +161,7 @@ flowchart LR
 - **If-else ordering**: Clippy prefers `==` checks first in if-else (`clippy::unnecessary_negation`)
 - **map_err_ignore**: Name ignored variables in closures (`|_elapsed|` not `|_|`)
 - **as_conversions**: Add `#[allow(clippy::as_conversions)]` with safety comment for intentional casts
+- **Async in tracing macros**: Never `.await` inside `info!`/`debug!`/`warn!`/`error!` - causes `future_not_send`. Extract value first.
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Formatting**: `rustfmt` with 119 char line length
 - **Rustdoc**: Escape brackets in paths like `/proc/\[pid\]/stat` to avoid broken link warnings
@@ -177,6 +178,8 @@ flowchart LR
 4. `just lint-just` (justfile syntax)
 5. No new `unsafe` without approval
 6. Benchmarks within acceptable ranges
+
+**Gotchas**: Pre-commit runs `cargo fmt` which modifies files. If unstaged changes exist, commit may fail with "Stashed changes conflicted". Run `cargo fmt --all` before staging or reset unrelated unstaged files.
 
 ---
 
@@ -332,6 +335,7 @@ pub trait AlertSink: Send + Sync {
 - **Property**: proptest for edge cases
 - **Fuzz**: Security-critical components
 - **Snapshot**: insta for CLI output
+- **Cross-crate traits**: Import traits for method access (e.g., `use daemoneye_eventbus::rpc::RegistrationProvider;`)
 
 ### Test Environment
 

@@ -53,6 +53,7 @@ impl CollectorRegistry {
             registered_at: now,
             last_heartbeat: now,
             heartbeat_interval,
+            missed_heartbeats: 0,
         };
         records.insert(collector_id.clone(), record);
         drop(records);
@@ -83,12 +84,119 @@ impl CollectorRegistry {
         }
     }
 
-    /// Update the heartbeat timestamp for a collector.
+    /// Update the heartbeat timestamp for a collector and reset missed count.
     pub async fn update_heartbeat(&self, collector_id: &str) -> Result<(), RegistryError> {
         let mut records = self.records.write().await;
         match records.get_mut(collector_id) {
             Some(record) => {
                 record.last_heartbeat = SystemTime::now();
+                record.missed_heartbeats = 0;
+                Ok(())
+            }
+            None => Err(RegistryError::NotFound(collector_id.to_owned())),
+        }
+    }
+
+    /// Check heartbeat status for all collectors and increment missed counts.
+    ///
+    /// This should be called periodically (e.g., every heartbeat interval) to
+    /// detect collectors that have stopped sending heartbeats.
+    ///
+    /// Returns a list of (`collector_id`, `HeartbeatStatus`) for collectors that
+    /// have missed at least one heartbeat.
+    #[allow(dead_code)]
+    #[allow(clippy::significant_drop_tightening)] // Lock must be held while iterating and mutating
+    pub async fn check_heartbeats(&self) -> Vec<(String, HeartbeatStatus)> {
+        let now = SystemTime::now();
+        let mut records = self.records.write().await;
+        let mut results = Vec::new();
+
+        for (collector_id, record) in records.iter_mut() {
+            let elapsed = now
+                .duration_since(record.last_heartbeat)
+                .unwrap_or(Duration::ZERO);
+
+            // Check if heartbeat is overdue (allow 10% grace period)
+            let expected_interval = record.heartbeat_interval;
+            // Use saturating_add to avoid overflow; division by 10 is always safe
+            #[allow(clippy::arithmetic_side_effects)]
+            let grace_period = expected_interval.saturating_add(expected_interval / 10);
+
+            if elapsed > grace_period {
+                record.missed_heartbeats = record.missed_heartbeats.saturating_add(1);
+
+                let status = if record.missed_heartbeats >= MAX_MISSED_HEARTBEATS {
+                    HeartbeatStatus::Failed {
+                        missed_count: record.missed_heartbeats,
+                        time_since_last: elapsed,
+                    }
+                } else {
+                    HeartbeatStatus::Degraded {
+                        missed_count: record.missed_heartbeats,
+                    }
+                };
+
+                results.push((collector_id.clone(), status));
+            }
+        }
+
+        results
+    }
+
+    /// Get collectors that need recovery action (missed >= `MAX_MISSED_HEARTBEATS`).
+    #[allow(dead_code)]
+    #[allow(clippy::pattern_type_mismatch)] // Conflicting lint with needless_borrowed_reference
+    pub async fn collectors_needing_recovery(&self) -> Vec<(String, HeartbeatStatus)> {
+        self.check_heartbeats()
+            .await
+            .into_iter()
+            .filter(|(_, status)| status.needs_recovery())
+            .collect()
+    }
+
+    /// Get the heartbeat status for a specific collector.
+    #[allow(dead_code)]
+    pub async fn heartbeat_status(&self, collector_id: &str) -> Option<HeartbeatStatus> {
+        let now = SystemTime::now();
+
+        // Clone record to release lock early
+        let record = {
+            let records = self.records.read().await;
+            records.get(collector_id).cloned()?
+        };
+
+        let elapsed = now
+            .duration_since(record.last_heartbeat)
+            .unwrap_or(Duration::ZERO);
+
+        let expected_interval = record.heartbeat_interval;
+        // Division by 10 is always safe
+        #[allow(clippy::arithmetic_side_effects)]
+        let grace_period = expected_interval.saturating_add(expected_interval / 10);
+
+        if elapsed <= grace_period && record.missed_heartbeats == 0 {
+            Some(HeartbeatStatus::Healthy)
+        } else if record.missed_heartbeats >= MAX_MISSED_HEARTBEATS {
+            Some(HeartbeatStatus::Failed {
+                missed_count: record.missed_heartbeats,
+                time_since_last: elapsed,
+            })
+        } else if record.missed_heartbeats > 0 {
+            Some(HeartbeatStatus::Degraded {
+                missed_count: record.missed_heartbeats,
+            })
+        } else {
+            Some(HeartbeatStatus::Healthy)
+        }
+    }
+
+    /// Reset missed heartbeat count for a collector (e.g., after successful recovery).
+    #[allow(dead_code)]
+    pub async fn reset_missed_heartbeats(&self, collector_id: &str) -> Result<(), RegistryError> {
+        let mut records = self.records.write().await;
+        match records.get_mut(collector_id) {
+            Some(record) => {
+                record.missed_heartbeats = 0;
                 Ok(())
             }
             None => Err(RegistryError::NotFound(collector_id.to_owned())),
@@ -135,6 +243,48 @@ pub struct CollectorRecord {
     pub last_heartbeat: SystemTime,
     /// Heartbeat interval assigned to the collector.
     pub heartbeat_interval: Duration,
+    /// Number of consecutive missed heartbeats.
+    pub missed_heartbeats: u32,
+}
+
+/// Maximum consecutive missed heartbeats before triggering recovery actions.
+#[allow(dead_code)]
+pub const MAX_MISSED_HEARTBEATS: u32 = 3;
+
+/// Status of a collector's heartbeat health.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+#[non_exhaustive]
+pub enum HeartbeatStatus {
+    /// Collector is healthy - heartbeat received within expected interval.
+    Healthy,
+    /// Collector missed one or more heartbeats but below threshold.
+    Degraded {
+        /// Number of consecutive missed heartbeats.
+        missed_count: u32,
+    },
+    /// Collector has missed too many heartbeats - recovery action needed.
+    Failed {
+        /// Number of consecutive missed heartbeats.
+        missed_count: u32,
+        /// Duration since last heartbeat.
+        time_since_last: Duration,
+    },
+}
+
+#[allow(dead_code)]
+impl HeartbeatStatus {
+    /// Returns true if the collector needs recovery action.
+    #[must_use]
+    pub const fn needs_recovery(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+
+    /// Returns true if the collector is healthy.
+    #[must_use]
+    pub const fn is_healthy(&self) -> bool {
+        matches!(self, Self::Healthy)
+    }
 }
 
 /// Errors that can occur when interacting with the collector registry.
