@@ -159,6 +159,8 @@ flowchart LR
 - **Linting**: `cargo clippy -- -D warnings` (zero warnings)
 - **Format args**: Use `{variable}` inlined syntax in `format!`/`anyhow!` macros (`clippy::uninlined_format_args`)
 - **If-else ordering**: Clippy prefers `==` checks first in if-else (`clippy::unnecessary_negation`)
+- **map_err_ignore**: Name ignored variables in closures (`|_elapsed|` not `|_|`)
+- **as_conversions**: Add `#[allow(clippy::as_conversions)]` with safety comment for intentional casts
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Formatting**: `rustfmt` with 119 char line length
 - **Rustdoc**: Escape brackets in paths like `/proc/\[pid\]/stat` to avoid broken link warnings
