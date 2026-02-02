@@ -321,12 +321,12 @@ impl RegistrationManager {
             .unwrap_or(self.config.heartbeat_interval)
     }
 
-    /// Registers with the daemoneye-agent.
+    /// Atomically transitions from Unregistered/Failed to Registering state.
     ///
-    /// This method attempts registration with retries and exponential backoff.
-    /// On success, it transitions to `Registered` state and returns the response.
-    pub async fn register(&self) -> RegistrationResult<RegistrationResponse> {
-        let current_state = self.state().await;
+    /// Returns Ok(()) if transition succeeded, Err with InvalidStateTransition otherwise.
+    async fn try_transition_to_registering(&self) -> RegistrationResult<()> {
+        let mut state_guard = self.state.write().await;
+        let current_state = *state_guard;
         if current_state != RegistrationState::Unregistered
             && current_state != RegistrationState::Failed
         {
@@ -335,9 +335,18 @@ impl RegistrationManager {
                 to: RegistrationState::Registering,
             });
         }
+        *state_guard = RegistrationState::Registering;
+        drop(state_guard);
+        Ok(())
+    }
 
-        // Transition to Registering state
-        *self.state.write().await = RegistrationState::Registering;
+    /// Registers with the daemoneye-agent.
+    ///
+    /// This method attempts registration with retries and exponential backoff.
+    /// On success, it transitions to `Registered` state and returns the response.
+    pub async fn register(&self) -> RegistrationResult<RegistrationResponse> {
+        // Atomic check-and-set to prevent TOCTOU race conditions
+        self.try_transition_to_registering().await?;
 
         info!(
             collector_id = %self.config.collector_id,

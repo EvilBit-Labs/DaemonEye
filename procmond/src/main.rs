@@ -250,13 +250,22 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "RPC service handler initialized"
         );
 
-        // Create a separate EventBusConnector for the collector
+        // Create a separate EventBusConnector for the collector with its own WAL directory
+        // to avoid conflicts with the shared event_bus connector.
         // Note: The collector takes ownership of its connector, while the registration
         // and RPC services share a separate connector for control messages.
         // TODO: Refactor to share the connector more elegantly when EventBusConnector
         // supports both ProcessEvent and generic message publishing.
-        // (since it takes ownership via set_event_bus_connector)
-        let collector_event_bus = EventBusConnector::new(wal_dir.clone()).await?;
+        let collector_wal_dir = wal_dir.join("collector");
+        std::fs::create_dir_all(&collector_wal_dir).map_err(|e| {
+            error!(
+                wal_dir = ?collector_wal_dir,
+                error = %e,
+                "Failed to create collector WAL directory"
+            );
+            e
+        })?;
+        let collector_event_bus = EventBusConnector::new(collector_wal_dir).await?;
         collector.set_event_bus_connector(collector_event_bus);
 
         // Spawn backpressure monitor task if we have the receiver

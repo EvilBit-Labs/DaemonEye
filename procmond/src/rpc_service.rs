@@ -130,6 +130,8 @@ pub struct RpcServiceHandler {
     running: Arc<std::sync::atomic::AtomicBool>,
     /// Statistics tracking.
     stats: Arc<RwLock<RpcServiceStats>>,
+    /// Service start time for uptime tracking.
+    start_time: std::time::Instant,
 }
 
 /// Statistics for the RPC service.
@@ -170,6 +172,7 @@ impl RpcServiceHandler {
             event_bus,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stats: Arc::new(RwLock::new(RpcServiceStats::default())),
+            start_time: std::time::Instant::now(),
         }
     }
 
@@ -488,10 +491,8 @@ impl RpcServiceHandler {
             final_metrics.insert("buffer_level_percent".to_owned(), f64::from(buffer_level));
         }
 
-        // Calculate uptime
-        let uptime_seconds = actor_health
-            .last_collection
-            .map_or(0, |last| last.elapsed().as_secs());
+        // Calculate uptime from service start time
+        let uptime_seconds = self.start_time.elapsed().as_secs();
 
         HealthCheckData {
             collector_id: self.config.collector_id.clone(),
