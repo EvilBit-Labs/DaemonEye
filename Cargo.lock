@@ -640,6 +640,7 @@ dependencies = [
  "figment",
  "futures",
  "futures-util",
+ "insta",
  "interprocess",
  "predicates",
  "proptest",
