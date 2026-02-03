@@ -464,10 +464,12 @@ mod tests {
 
     #[test]
     fn test_validation_duplicate_id() {
+        // Use enabled: false to skip binary path validation (which would fail on Windows
+        // since /bin/test doesn't exist there, but does on Unix as the test command)
         let json = r#"{
             "collectors": [
-                {"id": "test", "collector_type": "t1", "binary_path": "/bin/test"},
-                {"id": "test", "collector_type": "t2", "binary_path": "/bin/test2"}
+                {"id": "test", "collector_type": "t1", "binary_path": "/bin/test", "enabled": false},
+                {"id": "test", "collector_type": "t2", "binary_path": "/bin/test2", "enabled": false}
             ]
         }"#;
 
@@ -516,9 +518,10 @@ mod tests {
 
     #[test]
     fn test_validation_zero_timeout() {
+        // Use enabled: false to skip binary path validation (which would fail on Windows)
         let json = r#"{
             "collectors": [
-                {"id": "test", "collector_type": "test", "binary_path": "/bin/test", "startup_timeout_secs": 0}
+                {"id": "test", "collector_type": "test", "binary_path": "/bin/test", "startup_timeout_secs": 0, "enabled": false}
             ]
         }"#;
 
