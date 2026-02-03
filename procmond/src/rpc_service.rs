@@ -2370,4 +2370,107 @@ mod tests {
         assert!(response.execution_time_ms >= 10);
         assert_eq!(response.execution_time_ms, response.total_time_ms);
     }
+
+    /// Creates a test actor handle with a specified channel capacity.
+    fn create_test_actor_with_capacity(
+        capacity: usize,
+    ) -> (ActorHandle, mpsc::Receiver<ActorMessage>) {
+        let (tx, rx) = mpsc::channel(capacity);
+        (ActorHandle::new(tx), rx)
+    }
+
+    #[tokio::test]
+    async fn test_actor_channel_full_handled_gracefully() {
+        // Create an actor handle with minimal capacity (1)
+        let (actor_handle, _rx) = create_test_actor_with_capacity(1);
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
+        let handler = Arc::new(RpcServiceHandler::with_defaults(
+            actor_handle.clone(),
+            event_bus,
+        ));
+
+        // Fill the channel by sending a message without consuming it
+        // First request will succeed (fills the channel)
+        let first_request = RpcRequest {
+            request_id: "first-request".to_string(),
+            client_id: "client-1".to_string(),
+            target: "control.collector.procmond".to_string(),
+            operation: CollectorOperation::HealthCheck,
+            payload: RpcPayload::Empty,
+            timestamp: SystemTime::now(),
+            deadline: SystemTime::now() + Duration::from_secs(30),
+            correlation_metadata: RpcCorrelationMetadata::new("corr-first".to_string()),
+        };
+
+        // Spawn first request but don't await it - this will fill the channel
+        let handler_clone = Arc::clone(&handler);
+        let _first_handle =
+            tokio::spawn(async move { handler_clone.handle_request(first_request).await });
+
+        // Small delay to ensure first request has sent to the channel
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Second request should fail because the channel is full
+        let second_request = RpcRequest {
+            request_id: "second-request".to_string(),
+            client_id: "client-1".to_string(),
+            target: "control.collector.procmond".to_string(),
+            operation: CollectorOperation::HealthCheck,
+            payload: RpcPayload::Empty,
+            timestamp: SystemTime::now(),
+            deadline: SystemTime::now() + Duration::from_secs(30),
+            correlation_metadata: RpcCorrelationMetadata::new("corr-second".to_string()),
+        };
+
+        let response = handler.handle_request(second_request).await;
+
+        // The response should indicate an error due to channel full
+        assert_eq!(
+            response.status,
+            RpcStatus::Error,
+            "Expected Error status when channel is full"
+        );
+        let error = response
+            .error_details
+            .as_ref()
+            .expect("Should have error details");
+        assert_eq!(
+            error.code, "ACTOR_ERROR",
+            "Expected ACTOR_ERROR code for channel full"
+        );
+        assert!(
+            error.message.contains("full") || error.message.contains("capacity"),
+            "Error message should mention channel full: {}",
+            error.message
+        );
+        assert_eq!(error.category, ErrorCategory::Internal);
+    }
+
+    #[tokio::test]
+    async fn test_actor_handle_channel_full_error() {
+        // Test the ActorHandle directly to verify ChannelFull error
+        use crate::monitor_collector::ActorError;
+
+        // Create a channel with capacity 1
+        let (tx, _rx) = mpsc::channel::<ActorMessage>(1);
+        let actor_handle = ActorHandle::new(tx);
+
+        // Fill the channel with a message (we won't consume it)
+        actor_handle
+            .begin_monitoring()
+            .expect("First message should succeed");
+
+        // Now try to send another message - should fail with ChannelFull
+        let result = actor_handle.begin_monitoring();
+
+        match result {
+            Err(ActorError::ChannelFull { capacity }) => {
+                // Verify the error contains the capacity
+                assert_eq!(capacity, 100); // This is ACTOR_CHANNEL_CAPACITY constant
+            }
+            other => {
+                panic!("Expected ChannelFull error, got: {other:?}");
+            }
+        }
+    }
 }
