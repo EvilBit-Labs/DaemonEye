@@ -200,14 +200,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 warn!("Continuing with elevated privileges");
             }
 
-            // Broadcast "begin monitoring" to all collectors
-            if let Err(e) = broker_manager.broadcast_begin_monitoring().await {
-                error!(error = %e, "Failed to broadcast begin monitoring");
-                // Continue anyway - broadcast failure is not fatal for the main loop
-                warn!("Collectors may not have received begin monitoring signal");
-            }
-
-            // Transition to SteadyState
+            // Transition to SteadyState (this broadcasts "begin monitoring" internally)
             if let Err(e) = broker_manager.transition_to_steady_state().await {
                 error!(error = %e, "Failed to transition to SteadyState");
                 // This shouldn't happen if we're in Ready state, but log and continue

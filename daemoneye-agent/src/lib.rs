@@ -13,7 +13,7 @@ pub mod health;
 pub mod ipc_server;
 pub mod recovery;
 
-pub use broker_manager::{BrokerHealth, BrokerManager};
+pub use broker_manager::{AgentState, BrokerHealth, BrokerManager};
 pub use collector_config::{CollectorConfigError, CollectorEntry, CollectorsConfig};
 pub use collector_registry::{CollectorRegistry, HeartbeatStatus, RegistryError};
 pub use health::{HealthState, wait_for_healthy};

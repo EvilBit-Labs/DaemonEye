@@ -14,8 +14,8 @@
 //! ```
 //!
 //! - **Loading**: Agent starting, broker initializing, spawning collectors
-//! - **Ready**: All collectors registered and reported "ready", privileges dropped
-//! - **`SteadyState`**: Normal operation, collectors monitoring
+//! - **Ready**: All collectors registered and reported "ready"; caller should drop privileges
+//! - **`SteadyState`**: Normal operation, collectors monitoring (broadcasts "begin monitoring")
 
 use crate::collector_config::CollectorsConfig;
 use crate::collector_registry::{CollectorRegistry, RegistryError};
@@ -96,12 +96,11 @@ pub enum AgentState {
     Loading,
 
     /// All collectors have registered and reported "ready".
-    /// The agent has dropped privileges (if configured).
-    /// Waiting to broadcast "begin monitoring" to transition to steady state.
+    /// The caller should drop privileges (if configured) before transitioning to `SteadyState`.
     Ready,
 
     /// Normal operation. Collectors are actively monitoring.
-    /// The agent broadcasts "begin monitoring" when entering this state.
+    /// The "begin monitoring" message is broadcast during `transition_to_steady_state()`.
     SteadyState,
 
     /// Agent failed to start (collectors didn't report ready within timeout).

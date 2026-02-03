@@ -388,8 +388,9 @@ async fn execute_force_kill(
     let process_manager = manager.process_manager();
 
     let result = tokio::time::timeout(FORCE_KILL_TIMEOUT, async {
+        // graceful=false for force kill (send SIGKILL instead of SIGTERM)
         process_manager
-            .stop_collector(collector_id, true, FORCE_KILL_TIMEOUT)
+            .stop_collector(collector_id, false, FORCE_KILL_TIMEOUT)
             .await
     })
     .await;

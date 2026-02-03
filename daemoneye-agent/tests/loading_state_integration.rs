@@ -285,17 +285,14 @@ async fn test_full_loading_state_lifecycle() -> anyhow::Result<()> {
     // 5. Drop privileges (stub)
     manager.drop_privileges().await?;
 
-    // 6. Broadcast begin monitoring
-    manager.broadcast_begin_monitoring().await?;
-
-    // 7. Transition to SteadyState
+    // 6. Transition to SteadyState (broadcasts "begin monitoring" internally)
     manager.transition_to_steady_state().await?;
     assert!(matches!(
         manager.agent_state().await,
         AgentState::SteadyState
     ));
 
-    // 8. Transition to ShuttingDown for graceful shutdown
+    // 7. Transition to ShuttingDown for graceful shutdown
     manager.transition_to_shutting_down().await;
     assert!(matches!(
         manager.agent_state().await,
