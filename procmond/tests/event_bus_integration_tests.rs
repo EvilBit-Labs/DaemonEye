@@ -504,32 +504,52 @@ async fn test_event_type_stored_correctly_in_wal() {
 /// Test that events are buffered with correct topics.
 #[tokio::test]
 async fn test_buffered_events_have_correct_topics() {
-    let (mut connector, _temp_dir) = create_isolated_connector().await;
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let wal_path = temp_dir.path().to_path_buf();
 
     // Publish events of different types
-    let event1 = create_test_event(1);
-    connector
-        .publish(event1, ProcessEventType::Start)
+    {
+        let mut connector = EventBusConnector::new(wal_path.clone())
+            .await
+            .expect("Failed to create connector");
+
+        let event1 = create_test_event(1);
+        connector
+            .publish(event1, ProcessEventType::Start)
+            .await
+            .expect("Publish should succeed");
+
+        let event2 = create_test_event(2);
+        connector
+            .publish(event2, ProcessEventType::Stop)
+            .await
+            .expect("Publish should succeed");
+
+        let event3 = create_test_event(3);
+        connector
+            .publish(event3, ProcessEventType::Modify)
+            .await
+            .expect("Publish should succeed");
+
+        // Verify all events are buffered
+        assert_eq!(connector.buffered_event_count(), 3);
+    }
+
+    // Verify topics through WAL entries
+    let wal = WriteAheadLog::new(wal_path)
         .await
-        .expect("Publish should succeed");
+        .expect("Failed to open WAL");
 
-    let event2 = create_test_event(2);
-    connector
-        .publish(event2, ProcessEventType::Stop)
-        .await
-        .expect("Publish should succeed");
+    let entries = wal.replay_entries().await.expect("Failed to replay");
+    assert_eq!(entries.len(), 3);
 
-    let event3 = create_test_event(3);
-    connector
-        .publish(event3, ProcessEventType::Modify)
-        .await
-        .expect("Publish should succeed");
-
-    // Verify all events are buffered
-    assert_eq!(connector.buffered_event_count(), 3);
-
-    // Topics are verified through WAL entries (they're stored there)
-    // We can verify via replay_entries
+    // Event types map to topics:
+    // "start" -> "events.process.start"
+    // "stop" -> "events.process.stop"
+    // "modify" -> "events.process.modify"
+    assert_eq!(entries[0].event_type.as_deref(), Some("start"));
+    assert_eq!(entries[1].event_type.as_deref(), Some("stop"));
+    assert_eq!(entries[2].event_type.as_deref(), Some("modify"));
 }
 
 /// Test topic routing across connector restarts.
@@ -588,19 +608,51 @@ async fn test_topic_routing_preserved_across_restart() {
 /// Test that events maintain FIFO ordering in buffer.
 #[tokio::test]
 async fn test_event_ordering_in_buffer() {
-    let (mut connector, _temp_dir) = create_isolated_connector().await;
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let wal_path = temp_dir.path().to_path_buf();
 
     // Publish events with identifiable PIDs
-    for i in 1..=20 {
-        let event = create_test_event(i);
-        connector
-            .publish(event, ProcessEventType::Start)
+    {
+        let mut connector = EventBusConnector::new(wal_path.clone())
             .await
-            .expect("Publish should succeed");
+            .expect("Failed to create connector");
+
+        for i in 1..=20 {
+            let event = create_test_event(i);
+            connector
+                .publish(event, ProcessEventType::Start)
+                .await
+                .expect("Publish should succeed");
+        }
     }
 
-    // Verify order through WAL (buffer internal structure isn't directly accessible)
-    // But we can verify WAL entries maintain order
+    // Verify order through WAL entries
+    let wal = WriteAheadLog::new(wal_path)
+        .await
+        .expect("Failed to open WAL");
+
+    let entries = wal.replay_entries().await.expect("Failed to replay");
+    assert_eq!(entries.len(), 20);
+
+    // Verify FIFO ordering - PIDs should match publish order
+    for (i, entry) in entries.iter().enumerate() {
+        let expected_pid = (i + 1) as u32;
+        assert_eq!(
+            entry.event.pid, expected_pid,
+            "Event at position {} should have PID {}, got {}",
+            i, expected_pid, entry.event.pid
+        );
+    }
+
+    // Also verify sequence numbers are monotonically increasing
+    for (i, entry) in entries.iter().enumerate() {
+        let expected_seq = (i + 1) as u64;
+        assert_eq!(
+            entry.sequence, expected_seq,
+            "Event at position {} should have sequence {}, got {}",
+            i, expected_seq, entry.sequence
+        );
+    }
 }
 
 /// Test that sequence numbers are preserved across restarts.
