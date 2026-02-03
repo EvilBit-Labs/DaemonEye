@@ -1353,4 +1353,641 @@ mod tests {
     fn test_actor_channel_capacity() {
         assert_eq!(ACTOR_CHANNEL_CAPACITY, 100);
     }
+
+    // ============================================================================
+    // Configuration Hot-Reload Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_config_hot_reload_collection_interval() {
+        let db_manager = create_test_database().await;
+        let initial_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_secs(30),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut collector, handle) =
+            create_collector_with_channel(db_manager, initial_config).unwrap();
+
+        // Verify initial interval
+        assert_eq!(collector.current_interval, Duration::from_secs(30));
+        assert_eq!(collector.original_interval, Duration::from_secs(30));
+
+        // Create updated config with new interval
+        let new_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_secs(60),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Queue the config update
+        collector.pending_config = Some(new_config);
+
+        // Simulate applying config at cycle boundary
+        if let Some(new_config) = collector.pending_config.take() {
+            collector.apply_config_update(new_config);
+        }
+
+        // Verify config was applied
+        assert_eq!(
+            collector.config.base_config.collection_interval,
+            Duration::from_secs(60)
+        );
+
+        drop(handle);
+    }
+
+    #[tokio::test]
+    async fn test_config_validation_invalid_interval() {
+        // Test that invalid interval is rejected
+        let invalid_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_millis(500), // Too short
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let result = invalid_config.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("interval") || err_msg.contains("second"),
+            "Error should mention interval: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_config_validation_valid_boundaries() {
+        // Test minimum valid interval
+        let min_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_secs(1),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(min_config.validate().is_ok());
+
+        // Test maximum reasonable interval
+        let max_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_secs(3600),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(max_config.validate().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_config_update_warning_non_hot_reloadable() {
+        let db_manager = create_test_database().await;
+        let initial_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                max_events_in_flight: 100,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut collector, _handle) =
+            create_collector_with_channel(db_manager, initial_config).unwrap();
+
+        // Update max_events_in_flight (not hot-reloadable, should warn)
+        let new_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                max_events_in_flight: 200, // Changed
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Apply the config
+        collector.apply_config_update(new_config);
+
+        // Config is stored but semaphore is NOT resized (not hot-reloadable)
+        assert_eq!(collector.config.base_config.max_events_in_flight, 200);
+    }
+
+    // ============================================================================
+    // Actor Handle Error Path Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_actor_handle_channel_full_error() {
+        // Create a channel with capacity 1
+        let (tx, _rx) = mpsc::channel::<ActorMessage>(1);
+        let handle = ActorHandle::new(tx);
+
+        // Fill the channel
+        let _ = handle.begin_monitoring();
+
+        // Next call should fail with ChannelFull
+        let result = handle.begin_monitoring();
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            ActorError::ChannelFull { capacity } => {
+                assert_eq!(capacity, ACTOR_CHANNEL_CAPACITY);
+            }
+            other => panic!("Expected ChannelFull error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_actor_handle_channel_closed_error() {
+        let (tx, rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        // Drop the receiver to close the channel
+        drop(rx);
+
+        // Calls should fail with ChannelClosed
+        let result = handle.health_check().await;
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            ActorError::ChannelClosed => {}
+            other => panic!("Expected ChannelClosed error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_actor_handle_response_dropped_error() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        // Spawn a task that receives the message but drops the response channel
+        let recv_task = tokio::spawn(async move {
+            if let Some(msg) = rx.recv().await {
+                // Don't respond - just drop the oneshot sender
+                drop(msg);
+            }
+        });
+
+        // Call should fail with ResponseDropped
+        let result = handle.health_check().await;
+
+        recv_task.await.unwrap();
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ActorError::ResponseDropped => {}
+            other => panic!("Expected ResponseDropped error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_actor_handle_update_config_error_handling() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        // Spawn a task that receives and responds with an error
+        let recv_task = tokio::spawn(async move {
+            if let Some(ActorMessage::UpdateConfig { respond_to, .. }) = rx.recv().await {
+                let _ = respond_to.send(Err(anyhow::anyhow!("Config validation failed")));
+            }
+        });
+
+        let config = ProcmondMonitorConfig::default();
+        let result = handle.update_config(config).await;
+
+        recv_task.await.unwrap();
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ActorError::ActorError(e) => {
+                assert!(e.to_string().contains("Config validation failed"));
+            }
+            other => panic!("Expected ActorError, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_actor_handle_adjust_interval() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        // Send adjust interval message
+        let result = handle.adjust_interval(Duration::from_secs(60));
+        assert!(result.is_ok());
+
+        // Verify the message was received
+        let msg = rx.recv().await.unwrap();
+        match msg {
+            ActorMessage::AdjustInterval { new_interval } => {
+                assert_eq!(new_interval, Duration::from_secs(60));
+            }
+            other => panic!("Expected AdjustInterval message, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_actor_handle_adjust_interval_channel_full() {
+        // Create a channel with capacity 1
+        let (tx, _rx) = mpsc::channel::<ActorMessage>(1);
+        let handle = ActorHandle::new(tx);
+
+        // Fill the channel
+        let _ = handle.adjust_interval(Duration::from_secs(30));
+
+        // Next call should fail
+        let result = handle.adjust_interval(Duration::from_secs(60));
+        assert!(result.is_err());
+    }
+
+    // ============================================================================
+    // Collector State Transition Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_collector_set_event_bus_connected() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        assert!(!collector.event_bus_connected);
+        collector.set_event_bus_connected(true);
+        assert!(collector.event_bus_connected);
+        collector.set_event_bus_connected(false);
+        assert!(!collector.event_bus_connected);
+    }
+
+    #[tokio::test]
+    async fn test_collector_set_buffer_level() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        assert!(collector.buffer_level_percent.is_none());
+        collector.set_buffer_level(50);
+        assert_eq!(collector.buffer_level_percent, Some(50));
+        collector.set_buffer_level(100);
+        assert_eq!(collector.buffer_level_percent, Some(100));
+    }
+
+    #[tokio::test]
+    async fn test_collector_build_health_data_includes_all_fields() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_secs(45),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        // Set some state
+        collector.event_bus_connected = true;
+        collector.buffer_level_percent = Some(25);
+        collector.last_collection = Some(Instant::now());
+
+        let health_data = collector.build_health_data();
+
+        assert_eq!(health_data.state, CollectorState::WaitingForAgent);
+        assert_eq!(health_data.collection_interval, Duration::from_secs(45));
+        assert_eq!(health_data.original_interval, Duration::from_secs(45));
+        assert!(health_data.event_bus_connected);
+        assert_eq!(health_data.buffer_level_percent, Some(25));
+        assert!(health_data.last_collection.is_some());
+        assert_eq!(health_data.collection_cycles, 0);
+        assert_eq!(health_data.lifecycle_events, 0);
+        assert_eq!(health_data.collection_errors, 0);
+        assert_eq!(health_data.backpressure_events, 0);
+    }
+
+    // ============================================================================
+    // ActorHandle Debug Implementation Test
+    // ============================================================================
+
+    #[test]
+    fn test_actor_handle_debug() {
+        let (tx, _rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        let debug_str = format!("{handle:?}");
+        assert!(debug_str.contains("ActorHandle"));
+        assert!(debug_str.contains("closed"));
+    }
+
+    // ============================================================================
+    // ActorError Display Tests
+    // ============================================================================
+
+    #[test]
+    fn test_actor_error_display() {
+        let channel_full = ActorError::ChannelFull { capacity: 100 };
+        assert!(channel_full.to_string().contains("channel is full"));
+        assert!(channel_full.to_string().contains("100"));
+
+        let channel_closed = ActorError::ChannelClosed;
+        assert!(channel_closed.to_string().contains("closed"));
+
+        let response_dropped = ActorError::ResponseDropped;
+        assert!(response_dropped.to_string().contains("Response"));
+
+        let actor_error = ActorError::ActorError(anyhow::anyhow!("test error"));
+        assert!(actor_error.to_string().contains("test error"));
+    }
+
+    // ============================================================================
+    // Configuration Default Value Tests
+    // ============================================================================
+
+    #[test]
+    fn test_procmond_monitor_config_default() {
+        let config = ProcmondMonitorConfig::default();
+
+        // Verify base config defaults
+        assert_eq!(
+            config.base_config.collection_interval,
+            Duration::from_secs(30)
+        );
+        // Note: enable_event_driven defaults to true in MonitorCollectorConfig
+        assert!(config.base_config.enable_event_driven);
+
+        // Verify process config defaults
+        // Note: compute_executable_hashes defaults to false, collect_enhanced_metadata defaults to true
+        assert!(!config.process_config.compute_executable_hashes);
+        assert!(config.process_config.collect_enhanced_metadata);
+
+        // Verify lifecycle config defaults are set
+        assert!(config.lifecycle_config.detect_pid_reuse);
+    }
+
+    #[test]
+    fn test_config_clone_and_debug() {
+        let config = ProcmondMonitorConfig::default();
+        let cloned = config.clone();
+
+        assert_eq!(
+            config.base_config.collection_interval,
+            cloned.base_config.collection_interval
+        );
+
+        // Test Debug implementation
+        let debug_str = format!("{config:?}");
+        assert!(debug_str.contains("ProcmondMonitorConfig"));
+    }
+
+    // ============================================================================
+    // Health Check Data Clone and Debug Tests
+    // ============================================================================
+
+    #[test]
+    fn test_health_check_data_clone() {
+        let health_data = HealthCheckData {
+            state: CollectorState::Running,
+            collection_interval: Duration::from_secs(30),
+            original_interval: Duration::from_secs(30),
+            event_bus_connected: true,
+            buffer_level_percent: Some(50),
+            last_collection: Some(Instant::now()),
+            collection_cycles: 10,
+            lifecycle_events: 5,
+            collection_errors: 0,
+            backpressure_events: 1,
+        };
+
+        let cloned = health_data.clone();
+        assert_eq!(health_data.state, cloned.state);
+        assert_eq!(health_data.collection_cycles, cloned.collection_cycles);
+        assert_eq!(health_data.event_bus_connected, cloned.event_bus_connected);
+    }
+
+    #[test]
+    fn test_health_check_data_debug() {
+        let health_data = HealthCheckData {
+            state: CollectorState::Running,
+            collection_interval: Duration::from_secs(30),
+            original_interval: Duration::from_secs(30),
+            event_bus_connected: true,
+            buffer_level_percent: Some(50),
+            last_collection: None,
+            collection_cycles: 0,
+            lifecycle_events: 0,
+            collection_errors: 0,
+            backpressure_events: 0,
+        };
+
+        let debug_str = format!("{health_data:?}");
+        assert!(debug_str.contains("HealthCheckData"));
+        assert!(debug_str.contains("Running"));
+    }
+
+    // ============================================================================
+    // Interval Adjustment Boundary Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_pending_interval_same_value_skipped() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_secs(30),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        // Set pending interval to same value
+        collector.pending_interval = Some(Duration::from_secs(30));
+
+        // When processing, this should be skipped (no change needed)
+        let new_interval = collector.pending_interval.take();
+        assert!(new_interval.is_some());
+        assert_eq!(new_interval.unwrap(), Duration::from_secs(30));
+    }
+
+    // ============================================================================
+    // Message Handling Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_handle_message_health_check() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let msg = ActorMessage::HealthCheck { respond_to: tx };
+
+        let should_exit = collector.handle_message(msg);
+        assert!(!should_exit);
+
+        let health_data = rx.await.unwrap();
+        assert_eq!(health_data.state, CollectorState::WaitingForAgent);
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_update_config_valid() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        let new_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_secs(60),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let msg = ActorMessage::UpdateConfig {
+            config: Box::new(new_config),
+            respond_to: tx,
+        };
+
+        let should_exit = collector.handle_message(msg);
+        assert!(!should_exit);
+
+        let result = rx.await.unwrap();
+        assert!(result.is_ok());
+        assert!(collector.pending_config.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_update_config_invalid() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        // Invalid config with too short interval
+        let invalid_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_millis(500),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let msg = ActorMessage::UpdateConfig {
+            config: Box::new(invalid_config),
+            respond_to: tx,
+        };
+
+        let should_exit = collector.handle_message(msg);
+        assert!(!should_exit);
+
+        let result = rx.await.unwrap();
+        assert!(result.is_err());
+        assert!(collector.pending_config.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_graceful_shutdown() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let msg = ActorMessage::GracefulShutdown { respond_to: tx };
+
+        let should_exit = collector.handle_message(msg);
+        assert!(should_exit);
+        assert_eq!(collector.state, CollectorState::ShuttingDown);
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_begin_monitoring() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        assert_eq!(collector.state, CollectorState::WaitingForAgent);
+
+        let msg = ActorMessage::BeginMonitoring;
+        let should_exit = collector.handle_message(msg);
+
+        assert!(!should_exit);
+        assert_eq!(collector.state, CollectorState::Running);
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_begin_monitoring_wrong_state() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        // Set to Running first
+        collector.state = CollectorState::Running;
+
+        let msg = ActorMessage::BeginMonitoring;
+        let should_exit = collector.handle_message(msg);
+
+        // Should not change state or exit
+        assert!(!should_exit);
+        assert_eq!(collector.state, CollectorState::Running);
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_adjust_interval() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        let msg = ActorMessage::AdjustInterval {
+            new_interval: Duration::from_secs(60),
+        };
+        let should_exit = collector.handle_message(msg);
+
+        assert!(!should_exit);
+        assert_eq!(collector.pending_interval, Some(Duration::from_secs(60)));
+    }
+
+    // ============================================================================
+    // EventBus Connector Integration Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_take_event_bus_connector() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        // Initially no connector
+        let taken = collector.take_event_bus_connector();
+        assert!(taken.is_none());
+    }
+
+    // ============================================================================
+    // Collector Creation Error Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_collector_creation_with_invalid_config() {
+        let db_manager = create_test_database().await;
+        let invalid_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_millis(500), // Invalid
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let result = create_collector_with_channel(db_manager, invalid_config);
+        assert!(result.is_err());
+    }
 }

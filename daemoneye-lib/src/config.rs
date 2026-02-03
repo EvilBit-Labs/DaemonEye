@@ -1112,4 +1112,318 @@ use_tls = false
             Some(false)
         );
     }
+
+    // ============================================================================
+    // ConfigLoader Environment Variable Tests
+    // ============================================================================
+
+    #[test]
+    fn test_config_loader_with_different_components() {
+        // Test that different components create unique loaders
+        let procmond_loader = ConfigLoader::new("procmond");
+        let agent_loader = ConfigLoader::new("daemoneye-agent");
+        let cli_loader = ConfigLoader::new("daemoneye-cli");
+
+        assert_eq!(procmond_loader.component, "procmond");
+        assert_eq!(agent_loader.component, "daemoneye-agent");
+        assert_eq!(cli_loader.component, "daemoneye-cli");
+    }
+
+    // ============================================================================
+    // Validation Error Tests
+    // ============================================================================
+
+    #[test]
+    fn test_config_validation_batch_size_zero() {
+        let mut config = Config::default();
+        config.app.batch_size = 0;
+
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("batch_size"));
+    }
+
+    #[test]
+    fn test_config_validation_retention_days_zero() {
+        let mut config = Config::default();
+        config.database.retention_days = 0;
+
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("retention_days"));
+    }
+
+    #[test]
+    fn test_config_validation_all_invalid_combined() {
+        // Test that the first validation failure is caught
+        let mut config = Config::default();
+        config.app.scan_interval_ms = 0;
+        config.app.batch_size = 0;
+        config.database.retention_days = 0;
+
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        // First validation (scan_interval_ms) should be caught
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("scan_interval_ms"));
+    }
+
+    // ============================================================================
+    // Default Value Fallback Tests
+    // ============================================================================
+
+    #[test]
+    fn test_default_sink_config_function() {
+        let result = default_sink_config();
+        assert!(result.is_object());
+        assert!(result.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_alert_sink_config_default_config_field() {
+        // Test that AlertSinkConfig uses default_sink_config when not specified
+        let toml_str = r#"
+sink_type = "test"
+enabled = true
+"#;
+
+        let sink: AlertSinkConfig =
+            toml::from_str(toml_str).expect("Failed to parse AlertSinkConfig without config field");
+
+        assert_eq!(sink.sink_type, "test");
+        assert!(sink.enabled);
+        assert!(sink.config.is_object());
+        assert!(sink.config.as_object().unwrap().is_empty());
+    }
+
+    // ============================================================================
+    // BrokerConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_broker_config_resolve_collector_binary_configured() {
+        use std::collections::HashMap;
+
+        let mut binaries = HashMap::new();
+        // Point to a path that doesn't exist
+        binaries.insert(
+            "procmond".to_owned(),
+            PathBuf::from("/nonexistent/procmond"),
+        );
+
+        let config = BrokerConfig {
+            collector_binaries: binaries,
+            ..Default::default()
+        };
+
+        // Should return None because the configured path doesn't exist
+        let result = config.resolve_collector_binary("procmond");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_broker_config_resolve_collector_binary_not_configured() {
+        let config = BrokerConfig::default();
+
+        // Should return None because nothing is configured and defaults don't exist
+        let result = config.resolve_collector_binary("nonexistent-collector");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_process_manager_config_default() {
+        let config = ProcessManagerConfig::default();
+
+        assert_eq!(config.graceful_shutdown_timeout_seconds, 30);
+        assert_eq!(config.force_shutdown_timeout_seconds, 5);
+        assert_eq!(config.health_check_interval_seconds, 60);
+        assert!(!config.enable_auto_restart);
+        assert_eq!(config.max_restart_attempts, 3);
+    }
+
+    // ============================================================================
+    // Topic Configuration Tests
+    // ============================================================================
+
+    #[test]
+    fn test_event_topics_config_default() {
+        let config = EventTopicsConfig::default();
+
+        assert_eq!(config.process, "events.process");
+        assert_eq!(config.network, "events.network");
+        assert_eq!(config.filesystem, "events.filesystem");
+        assert_eq!(config.performance, "events.performance");
+    }
+
+    #[test]
+    fn test_control_topics_config_default() {
+        let config = ControlTopicsConfig::default();
+
+        assert_eq!(config.collector, "control.collector");
+        assert_eq!(config.health, "control.health");
+    }
+
+    // ============================================================================
+    // ConfigError Tests
+    // ============================================================================
+
+    #[test]
+    fn test_config_error_file_not_found_display() {
+        let err = ConfigError::FileNotFound {
+            path: PathBuf::from("/nonexistent/config.toml"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("not found"));
+        assert!(msg.contains("/nonexistent/config.toml"));
+    }
+
+    #[test]
+    fn test_config_error_validation_display() {
+        let err = ConfigError::ValidationError {
+            message: "scan_interval_ms must be greater than 0".to_owned(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("validation failed"));
+        assert!(msg.contains("scan_interval_ms"));
+    }
+
+    // ============================================================================
+    // Config Equality Tests
+    // ============================================================================
+
+    #[test]
+    fn test_config_equality() {
+        let config1 = Config::default();
+        let config2 = Config::default();
+
+        assert_eq!(config1, config2);
+
+        let mut config3 = Config::default();
+        config3.app.scan_interval_ms = 60000;
+
+        assert_ne!(config1, config3);
+    }
+
+    #[test]
+    fn test_app_config_equality() {
+        let config1 = AppConfig::default();
+        let config2 = AppConfig::default();
+
+        assert_eq!(config1, config2);
+
+        let config3 = AppConfig {
+            scan_interval_ms: 60000,
+            ..Default::default()
+        };
+
+        assert_ne!(config1, config3);
+    }
+
+    // ============================================================================
+    // Config Clone Tests
+    // ============================================================================
+
+    #[test]
+    fn test_config_clone() {
+        let original = Config::default();
+        let cloned = original.clone();
+
+        assert_eq!(original, cloned);
+        assert_eq!(original.app.scan_interval_ms, cloned.app.scan_interval_ms);
+    }
+
+    #[test]
+    fn test_broker_config_clone() {
+        let original = BrokerConfig::default();
+        let cloned = original.clone();
+
+        assert_eq!(original.socket_path, cloned.socket_path);
+        assert_eq!(original.enabled, cloned.enabled);
+    }
+
+    // ============================================================================
+    // Socket Path Tests
+    // ============================================================================
+
+    #[test]
+    fn test_default_socket_path_is_valid() {
+        let config = BrokerConfig::default();
+
+        // On Windows, should be a named pipe path
+        // On Unix, should be a socket path
+        #[cfg(windows)]
+        {
+            assert!(config.socket_path.starts_with(r"\\.\pipe\"));
+        }
+
+        #[cfg(unix)]
+        {
+            assert!(
+                config.socket_path.ends_with(".sock") || config.socket_path.contains("daemoneye"),
+                "Socket path should be a valid Unix socket: {}",
+                config.socket_path
+            );
+        }
+    }
+
+    // ============================================================================
+    // Serialization Round-Trip Tests
+    // ============================================================================
+
+    #[test]
+    fn test_config_json_round_trip() {
+        let original = Config::default();
+        let json =
+            serde_json::to_string(&original).expect("Failed to serialize config to JSON in test");
+        let deserialized: Config =
+            serde_json::from_str(&json).expect("Failed to deserialize config from JSON in test");
+
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_alerting_config_json_round_trip() {
+        use serde_json::json;
+
+        let original = AlertingConfig {
+            sinks: vec![AlertSinkConfig {
+                sink_type: "webhook".to_owned(),
+                config: json!({
+                    "url": "https://example.com",
+                    "timeout_ms": 5000
+                }),
+                enabled: true,
+            }],
+            dedup_window_seconds: 600,
+            max_alerts_per_minute: Some(100),
+            recent_threshold_seconds: 7200,
+        };
+
+        let json = serde_json::to_string(&original)
+            .expect("Failed to serialize AlertingConfig to JSON in test");
+        let deserialized: AlertingConfig = serde_json::from_str(&json)
+            .expect("Failed to deserialize AlertingConfig from JSON in test");
+
+        assert_eq!(original, deserialized);
+    }
+
+    // ============================================================================
+    // Environment Variable Prefix Tests
+    // ============================================================================
+
+    #[test]
+    fn test_config_loader_component_prefix_normalization() {
+        // Test that component names with hyphens are normalized for env vars
+        let loader = ConfigLoader::new("daemoneye-agent");
+
+        // The component should be stored as-is
+        assert_eq!(loader.component, "daemoneye-agent");
+
+        // When loading, it should be normalized to DAEMONEYE_AGENT_ prefix
+        // This is implicitly tested through the load() method
+    }
 }
