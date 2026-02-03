@@ -493,7 +493,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(CollectorConfigError::ValidationError { message }) if message.contains("ID cannot be empty")
+            Err(CollectorConfigError::ValidationError { message }) if message.contains("collector ID cannot be empty")
         ));
     }
 

@@ -948,7 +948,15 @@ impl BrokerManager {
 
                 // Broadcast "begin monitoring" to all collectors
                 drop(state); // Release lock before async operations
-                self.broadcast_begin_monitoring().await?;
+                if let Err(e) = self.broadcast_begin_monitoring().await {
+                    // Rollback state on broadcast failure
+                    warn!(
+                        error = %e,
+                        "Failed to broadcast 'begin monitoring', rolling back to Ready state"
+                    );
+                    *self.agent_state.write().await = AgentState::Ready;
+                    return Err(e);
+                }
 
                 Ok(())
             }
