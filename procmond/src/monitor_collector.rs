@@ -274,9 +274,9 @@ impl std::fmt::Debug for ActorHandle {
 /// These settings can be changed without restarting procmond:
 /// - `base_config.collection_interval` - Collection frequency
 /// - `base_config.max_events_in_flight` - Backpressure limit (note: semaphore not resized)
-/// - `lifecycle_config.start_threshold` - Process start detection threshold
-/// - `lifecycle_config.stop_threshold` - Process stop detection threshold
-/// - `lifecycle_config.modification_threshold` - Process modification detection threshold
+/// - `lifecycle_config.min_process_lifetime` - Minimum process lifetime for start detection
+/// - `lifecycle_config.memory_change_threshold` - Memory usage change threshold (percentage)
+/// - `lifecycle_config.cpu_change_threshold` - CPU usage change threshold (percentage)
 ///
 /// ## Requires Restart
 ///
@@ -1989,5 +1989,644 @@ mod tests {
 
         let result = create_collector_with_channel(db_manager, invalid_config);
         assert!(result.is_err());
+    }
+
+    // ============================================================================
+    // Actor Pattern - Sequential Message Processing Tests
+    // ============================================================================
+
+    /// Verifies that messages are processed sequentially (in order) by the actor.
+    #[tokio::test]
+    async fn test_actor_sequential_message_processing() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(ACTOR_CHANNEL_CAPACITY);
+        let handle = ActorHandle::new(tx);
+
+        // Track the order of message processing
+        let processing_order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let processing_order_clone = Arc::clone(&processing_order);
+
+        // Spawn a task that processes messages and records their order
+        let processor = tokio::spawn(async move {
+            let mut count = 0;
+            while let Some(msg) = rx.recv().await {
+                match msg {
+                    ActorMessage::AdjustInterval { new_interval } => {
+                        processing_order_clone
+                            .lock()
+                            .expect("Lock poisoned")
+                            .push(new_interval.as_secs());
+                        count += 1;
+                        if count >= 5 {
+                            break;
+                        }
+                    }
+                    ActorMessage::GracefulShutdown { respond_to } => {
+                        let _ = respond_to.send(Ok(()));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // Send messages in specific order: 1, 2, 3, 4, 5
+        for i in 1..=5 {
+            let _ = handle.adjust_interval(Duration::from_secs(i));
+        }
+
+        // Wait for processing
+        processor.await.unwrap();
+
+        // Verify messages were processed in order
+        let order = processing_order.lock().expect("Lock poisoned").clone();
+        assert_eq!(
+            order,
+            vec![1, 2, 3, 4, 5],
+            "Messages should be processed in order"
+        );
+    }
+
+    /// Verifies that messages sent rapidly are still processed in order.
+    #[tokio::test]
+    async fn test_actor_rapid_sequential_messages() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(ACTOR_CHANNEL_CAPACITY);
+        let handle = ActorHandle::new(tx);
+
+        let received_order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received_order_clone = Arc::clone(&received_order);
+
+        // Processor that records message receipt order
+        let processor = tokio::spawn(async move {
+            let mut count = 0;
+            while let Some(msg) = rx.recv().await {
+                if let ActorMessage::AdjustInterval { new_interval } = msg {
+                    received_order_clone
+                        .lock()
+                        .expect("Lock poisoned")
+                        .push(new_interval.as_millis());
+                    count += 1;
+                    if count >= 10 {
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Send 10 messages rapidly with different intervals
+        for i in 0..10 {
+            let _ = handle.adjust_interval(Duration::from_millis(i * 100 + 100));
+        }
+
+        processor.await.unwrap();
+
+        let order = received_order.lock().expect("Lock poisoned").clone();
+        // Verify sequential order: 100, 200, 300, ..., 1000
+        let expected: Vec<u128> = (1..=10).map(|i| i * 100).collect();
+        assert_eq!(
+            order, expected,
+            "Rapidly sent messages should maintain order"
+        );
+    }
+
+    // ============================================================================
+    // Actor Pattern - Channel Overflow Tests
+    // ============================================================================
+
+    /// Verifies that channel capacity is exactly 100 as specified.
+    #[test]
+    fn test_actor_channel_capacity_is_100() {
+        // Verify the constant matches the specification
+        assert_eq!(
+            ACTOR_CHANNEL_CAPACITY, 100,
+            "Actor channel capacity must be exactly 100"
+        );
+    }
+
+    /// Verifies that when channel is at capacity, further sends fail appropriately.
+    #[tokio::test]
+    async fn test_actor_channel_overflow_at_capacity_100() {
+        let (tx, _rx) = mpsc::channel::<ActorMessage>(ACTOR_CHANNEL_CAPACITY);
+        let handle = ActorHandle::new(tx);
+
+        // Fill the channel to capacity
+        for _ in 0..ACTOR_CHANNEL_CAPACITY {
+            let result = handle.begin_monitoring();
+            assert!(result.is_ok(), "Should succeed while under capacity");
+        }
+
+        // The 101st message should fail with ChannelFull
+        let overflow_result = handle.begin_monitoring();
+        assert!(overflow_result.is_err(), "Should fail when channel is full");
+
+        match overflow_result.unwrap_err() {
+            ActorError::ChannelFull { capacity } => {
+                assert_eq!(capacity, ACTOR_CHANNEL_CAPACITY);
+            }
+            other => panic!("Expected ChannelFull error, got: {other:?}"),
+        }
+    }
+
+    /// Verifies that all ActorHandle methods respect channel capacity.
+    #[tokio::test]
+    async fn test_actor_all_methods_respect_channel_capacity() {
+        let (tx, _rx) = mpsc::channel::<ActorMessage>(1); // Capacity of 1 for easy testing
+        let handle = ActorHandle::new(tx);
+
+        // Fill the single slot
+        let _ = handle.begin_monitoring();
+
+        // All methods should fail with ChannelFull
+        let health_result = handle.health_check().await;
+        assert!(matches!(
+            health_result.unwrap_err(),
+            ActorError::ChannelFull { .. }
+        ));
+
+        let config_result = handle.update_config(ProcmondMonitorConfig::default()).await;
+        assert!(matches!(
+            config_result.unwrap_err(),
+            ActorError::ChannelFull { .. }
+        ));
+
+        let shutdown_result = handle.graceful_shutdown().await;
+        assert!(matches!(
+            shutdown_result.unwrap_err(),
+            ActorError::ChannelFull { .. }
+        ));
+
+        let adjust_result = handle.adjust_interval(Duration::from_secs(30));
+        assert!(matches!(
+            adjust_result.unwrap_err(),
+            ActorError::ChannelFull { .. }
+        ));
+
+        let begin_result = handle.begin_monitoring();
+        assert!(matches!(
+            begin_result.unwrap_err(),
+            ActorError::ChannelFull { .. }
+        ));
+    }
+
+    /// Verifies backpressure behavior when channel drains.
+    #[tokio::test]
+    async fn test_actor_channel_drains_and_accepts_new_messages() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(5);
+        let handle = ActorHandle::new(tx);
+
+        // Fill the channel
+        for _ in 0..5 {
+            let _ = handle.begin_monitoring();
+        }
+
+        // Verify channel is full
+        let overflow_result = handle.begin_monitoring();
+        assert!(overflow_result.is_err());
+
+        // Drain some messages
+        for _ in 0..3 {
+            let _ = rx.recv().await;
+        }
+
+        // Now we should be able to send again
+        for _ in 0..3 {
+            let result = handle.begin_monitoring();
+            assert!(result.is_ok(), "Should succeed after draining");
+        }
+    }
+
+    // ============================================================================
+    // Actor Pattern - Oneshot Response Tests
+    // ============================================================================
+
+    /// Verifies that HealthCheck responses are sent via oneshot channels.
+    #[tokio::test]
+    async fn test_oneshot_health_check_response() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        // Spawn a responder
+        let responder = tokio::spawn(async move {
+            if let Some(ActorMessage::HealthCheck { respond_to }) = rx.recv().await {
+                // Respond via the oneshot channel
+                let health_data = HealthCheckData {
+                    state: CollectorState::Running,
+                    collection_interval: Duration::from_secs(30),
+                    original_interval: Duration::from_secs(30),
+                    event_bus_connected: true,
+                    buffer_level_percent: Some(50),
+                    last_collection: None,
+                    collection_cycles: 10,
+                    lifecycle_events: 5,
+                    collection_errors: 0,
+                    backpressure_events: 1,
+                };
+                let send_result = respond_to.send(health_data);
+                assert!(send_result.is_ok(), "Oneshot send should succeed");
+            }
+        });
+
+        // Request health check (which uses oneshot channel)
+        let result = handle.health_check().await;
+        assert!(result.is_ok());
+
+        let health_data = result.unwrap();
+        assert_eq!(health_data.state, CollectorState::Running);
+        assert_eq!(health_data.collection_cycles, 10);
+
+        responder.await.unwrap();
+    }
+
+    /// Verifies that UpdateConfig responses are sent via oneshot channels.
+    #[tokio::test]
+    async fn test_oneshot_update_config_response() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        let responder = tokio::spawn(async move {
+            if let Some(ActorMessage::UpdateConfig { respond_to, .. }) = rx.recv().await {
+                let send_result = respond_to.send(Ok(()));
+                assert!(send_result.is_ok(), "Oneshot send should succeed");
+            }
+        });
+
+        let config = ProcmondMonitorConfig::default();
+        let result = handle.update_config(config).await;
+        assert!(result.is_ok());
+
+        responder.await.unwrap();
+    }
+
+    /// Verifies that GracefulShutdown responses are sent via oneshot channels.
+    #[tokio::test]
+    async fn test_oneshot_graceful_shutdown_response() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        let responder = tokio::spawn(async move {
+            if let Some(ActorMessage::GracefulShutdown { respond_to }) = rx.recv().await {
+                let send_result = respond_to.send(Ok(()));
+                assert!(send_result.is_ok(), "Oneshot send should succeed");
+            }
+        });
+
+        let result = handle.graceful_shutdown().await;
+        assert!(result.is_ok());
+
+        responder.await.unwrap();
+    }
+
+    /// Verifies oneshot channel timing - response must arrive before receiver drops.
+    #[tokio::test]
+    async fn test_oneshot_response_timing() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        // Spawn a slow responder that delays the response
+        let responder = tokio::spawn(async move {
+            if let Some(ActorMessage::HealthCheck { respond_to }) = rx.recv().await {
+                // Small delay to simulate processing time
+                tokio::time::sleep(Duration::from_millis(10)).await;
+
+                let health_data = HealthCheckData {
+                    state: CollectorState::Running,
+                    collection_interval: Duration::from_secs(30),
+                    original_interval: Duration::from_secs(30),
+                    event_bus_connected: false,
+                    buffer_level_percent: None,
+                    last_collection: None,
+                    collection_cycles: 0,
+                    lifecycle_events: 0,
+                    collection_errors: 0,
+                    backpressure_events: 0,
+                };
+                let _ = respond_to.send(health_data);
+            }
+        });
+
+        // The caller should wait for the response
+        let start = std::time::Instant::now();
+        let result = handle.health_check().await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_ok());
+        assert!(
+            elapsed >= Duration::from_millis(10),
+            "Should have waited for response"
+        );
+
+        responder.await.unwrap();
+    }
+
+    /// Verifies that when oneshot sender is dropped, caller receives ResponseDropped error.
+    #[tokio::test]
+    async fn test_oneshot_response_dropped_on_sender_drop() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        // Spawn a task that drops the oneshot sender without responding
+        let dropper = tokio::spawn(async move {
+            if let Some(msg) = rx.recv().await {
+                // Explicitly drop the message (and thus the oneshot sender)
+                drop(msg);
+            }
+        });
+
+        let result = handle.health_check().await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ActorError::ResponseDropped));
+
+        dropper.await.unwrap();
+    }
+
+    // ============================================================================
+    // Actor Pattern - State Transition Tests
+    // ============================================================================
+
+    /// Verifies the complete state transition chain: WaitingForAgent -> Running -> ShuttingDown -> Stopped
+    #[tokio::test]
+    async fn test_collector_state_transition_chain() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        // Initial state: WaitingForAgent
+        assert_eq!(collector.state, CollectorState::WaitingForAgent);
+
+        // Transition to Running via BeginMonitoring
+        let should_exit = collector.handle_message(ActorMessage::BeginMonitoring);
+        assert!(!should_exit);
+        assert_eq!(collector.state, CollectorState::Running);
+
+        // Transition to ShuttingDown via GracefulShutdown
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::oneshot::channel();
+        let should_exit = collector.handle_message(ActorMessage::GracefulShutdown {
+            respond_to: shutdown_tx,
+        });
+        assert!(should_exit);
+        assert_eq!(collector.state, CollectorState::ShuttingDown);
+
+        // Stopped state is set by the run loop, simulate it
+        collector.state = CollectorState::Stopped;
+        assert_eq!(collector.state, CollectorState::Stopped);
+    }
+
+    /// Verifies that BeginMonitoring only transitions from WaitingForAgent state.
+    #[tokio::test]
+    async fn test_begin_monitoring_only_from_waiting_for_agent() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        // Test from WaitingForAgent (should succeed)
+        assert_eq!(collector.state, CollectorState::WaitingForAgent);
+        collector.handle_message(ActorMessage::BeginMonitoring);
+        assert_eq!(collector.state, CollectorState::Running);
+
+        // Test from Running (should NOT change state)
+        collector.handle_message(ActorMessage::BeginMonitoring);
+        assert_eq!(collector.state, CollectorState::Running);
+
+        // Test from ShuttingDown (should NOT change state)
+        collector.state = CollectorState::ShuttingDown;
+        collector.handle_message(ActorMessage::BeginMonitoring);
+        assert_eq!(collector.state, CollectorState::ShuttingDown);
+
+        // Test from Stopped (should NOT change state)
+        collector.state = CollectorState::Stopped;
+        collector.handle_message(ActorMessage::BeginMonitoring);
+        assert_eq!(collector.state, CollectorState::Stopped);
+    }
+
+    /// Verifies that GracefulShutdown can be called from any active state.
+    #[tokio::test]
+    async fn test_graceful_shutdown_from_any_state() {
+        let db_manager = create_test_database().await;
+
+        // Test from WaitingForAgent
+        let config = ProcmondMonitorConfig::default();
+        let (mut collector, _handle) =
+            create_collector_with_channel(db_manager.clone(), config).unwrap();
+        assert_eq!(collector.state, CollectorState::WaitingForAgent);
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let should_exit =
+            collector.handle_message(ActorMessage::GracefulShutdown { respond_to: tx });
+        assert!(should_exit);
+        assert_eq!(collector.state, CollectorState::ShuttingDown);
+
+        // Test from Running
+        let config = ProcmondMonitorConfig::default();
+        let (mut collector, _handle) =
+            create_collector_with_channel(db_manager.clone(), config).unwrap();
+        collector.state = CollectorState::Running;
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let should_exit =
+            collector.handle_message(ActorMessage::GracefulShutdown { respond_to: tx });
+        assert!(should_exit);
+        assert_eq!(collector.state, CollectorState::ShuttingDown);
+    }
+
+    /// Verifies CollectorState equality and copying.
+    #[test]
+    fn test_collector_state_eq_and_copy() {
+        let state1 = CollectorState::Running;
+        let state2 = CollectorState::Running;
+        let state3 = CollectorState::Stopped;
+
+        assert_eq!(state1, state2);
+        assert_ne!(state1, state3);
+
+        // Test Copy trait
+        let state_copy = state1;
+        assert_eq!(state_copy, CollectorState::Running);
+    }
+
+    // ============================================================================
+    // Actor Pattern - All Message Variants Handling Tests
+    // ============================================================================
+
+    /// Comprehensive test that all ActorMessage variants are handled correctly.
+    #[tokio::test]
+    async fn test_all_actor_message_variants() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig::default();
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        // Test HealthCheck variant
+        let (health_tx, health_rx) = tokio::sync::oneshot::channel();
+        let should_exit = collector.handle_message(ActorMessage::HealthCheck {
+            respond_to: health_tx,
+        });
+        assert!(!should_exit);
+        let health_data = health_rx.await.unwrap();
+        assert_eq!(health_data.state, CollectorState::WaitingForAgent);
+
+        // Test UpdateConfig variant with valid config
+        let new_config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_secs(60),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (config_tx, config_rx) = tokio::sync::oneshot::channel();
+        let should_exit = collector.handle_message(ActorMessage::UpdateConfig {
+            config: Box::new(new_config),
+            respond_to: config_tx,
+        });
+        assert!(!should_exit);
+        assert!(config_rx.await.unwrap().is_ok());
+        assert!(collector.pending_config.is_some());
+
+        // Test BeginMonitoring variant
+        let should_exit = collector.handle_message(ActorMessage::BeginMonitoring);
+        assert!(!should_exit);
+        assert_eq!(collector.state, CollectorState::Running);
+
+        // Test AdjustInterval variant
+        let should_exit = collector.handle_message(ActorMessage::AdjustInterval {
+            new_interval: Duration::from_secs(45),
+        });
+        assert!(!should_exit);
+        assert_eq!(collector.pending_interval, Some(Duration::from_secs(45)));
+
+        // Test GracefulShutdown variant (last, as it causes exit)
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::oneshot::channel();
+        let should_exit = collector.handle_message(ActorMessage::GracefulShutdown {
+            respond_to: shutdown_tx,
+        });
+        assert!(should_exit);
+        assert_eq!(collector.state, CollectorState::ShuttingDown);
+    }
+
+    // ============================================================================
+    // Actor Pattern - ActorHandle clone and is_closed Tests
+    // ============================================================================
+
+    /// Verifies that ActorHandle can be cloned and both handles work.
+    #[tokio::test]
+    async fn test_actor_handle_clone() {
+        let (tx, mut rx) = mpsc::channel::<ActorMessage>(10);
+        let handle1 = ActorHandle::new(tx);
+        let handle2 = handle1.clone();
+
+        // Both handles should be able to send messages
+        let _ = handle1.begin_monitoring();
+        let _ = handle2.begin_monitoring();
+
+        // Verify both messages arrived
+        assert!(rx.recv().await.is_some());
+        assert!(rx.recv().await.is_some());
+    }
+
+    /// Verifies is_closed() reflects channel state.
+    #[tokio::test]
+    async fn test_actor_handle_is_closed() {
+        let (tx, rx) = mpsc::channel::<ActorMessage>(10);
+        let handle = ActorHandle::new(tx);
+
+        // Initially not closed
+        assert!(!handle.is_closed());
+
+        // Drop the receiver
+        drop(rx);
+
+        // Now should be closed
+        assert!(handle.is_closed());
+    }
+
+    // ============================================================================
+    // Actor Pattern - Create Channel Helper Tests
+    // ============================================================================
+
+    /// Verifies that create_channel creates a working channel pair.
+    #[tokio::test]
+    async fn test_create_channel_helper() {
+        let (handle, mut rx) = ProcmondMonitorCollector::create_channel();
+
+        // Send a message via the handle
+        let result = handle.begin_monitoring();
+        assert!(result.is_ok());
+
+        // Verify the message arrived
+        let msg = rx.recv().await;
+        assert!(msg.is_some());
+        assert!(matches!(msg.unwrap(), ActorMessage::BeginMonitoring));
+    }
+
+    /// Verifies that create_channel uses the correct capacity (100).
+    #[tokio::test]
+    async fn test_create_channel_capacity() {
+        let (handle, _rx) = ProcmondMonitorCollector::create_channel();
+
+        // Should be able to send 100 messages
+        for _ in 0..100 {
+            assert!(handle.begin_monitoring().is_ok());
+        }
+
+        // The 101st should fail
+        let result = handle.begin_monitoring();
+        assert!(result.is_err());
+    }
+
+    // ============================================================================
+    // Actor Pattern - HealthCheckData Field Coverage Tests
+    // ============================================================================
+
+    /// Verifies all HealthCheckData fields are correctly populated.
+    #[tokio::test]
+    async fn test_health_check_data_all_fields() {
+        let db_manager = create_test_database().await;
+        let config = ProcmondMonitorConfig {
+            base_config: MonitorCollectorConfig {
+                collection_interval: Duration::from_secs(15),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
+
+        // Set up collector state for testing
+        collector.state = CollectorState::Running;
+        collector.current_interval = Duration::from_secs(20); // Different from original
+        collector.original_interval = Duration::from_secs(15);
+        collector.event_bus_connected = true;
+        collector.buffer_level_percent = Some(75);
+        collector.last_collection = Some(Instant::now());
+
+        // Simulate some stats
+        collector
+            .stats
+            .collection_cycles
+            .fetch_add(5, Ordering::Relaxed);
+        collector
+            .stats
+            .lifecycle_events
+            .fetch_add(3, Ordering::Relaxed);
+        collector
+            .stats
+            .collection_errors
+            .fetch_add(1, Ordering::Relaxed);
+        collector
+            .stats
+            .backpressure_events
+            .fetch_add(2, Ordering::Relaxed);
+
+        let health_data = collector.build_health_data();
+
+        // Verify all fields
+        assert_eq!(health_data.state, CollectorState::Running);
+        assert_eq!(health_data.collection_interval, Duration::from_secs(20));
+        assert_eq!(health_data.original_interval, Duration::from_secs(15));
+        assert!(health_data.event_bus_connected);
+        assert_eq!(health_data.buffer_level_percent, Some(75));
+        assert!(health_data.last_collection.is_some());
+        assert_eq!(health_data.collection_cycles, 5);
+        assert_eq!(health_data.lifecycle_events, 3);
+        assert_eq!(health_data.collection_errors, 1);
+        assert_eq!(health_data.backpressure_events, 2);
     }
 }
