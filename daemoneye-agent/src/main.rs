@@ -6,11 +6,13 @@ use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 mod broker_manager;
+mod collector_config;
 mod collector_registry;
 mod health;
 mod ipc_server;
 
 use broker_manager::BrokerManager;
+use collector_config::CollectorsConfig;
 use ipc_server::IpcServerManager;
 
 #[derive(Parser)]
@@ -115,6 +117,141 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         endpoint_path = %ipc_server_manager.endpoint_path(),
         "IPC server is healthy and ready for CLI communication"
     );
+
+    // =========================================================================
+    // Loading State Coordination
+    // =========================================================================
+    // The agent starts in Loading state. We load the collectors configuration,
+    // wait for all expected collectors to register, then transition through:
+    // Loading -> Ready -> SteadyState
+
+    // Load collectors configuration (defaults to empty if file doesn't exist)
+    let collectors_config_path = std::path::Path::new("/etc/daemoneye/collectors.json");
+    let collectors_config = match CollectorsConfig::load_from_file(collectors_config_path) {
+        Ok(loaded_config) => {
+            info!(
+                path = %collectors_config_path.display(),
+                "Loaded collectors configuration from file"
+            );
+            loaded_config
+        }
+        Err(e) => {
+            debug!(
+                path = %collectors_config_path.display(),
+                error = %e,
+                "No collectors config file found, using empty configuration"
+            );
+            CollectorsConfig::default()
+        }
+    };
+
+    let expected_count = collectors_config.enabled_collectors().count();
+
+    info!(
+        config_path = %collectors_config_path.display(),
+        total_collectors = collectors_config.collectors.len(),
+        enabled_collectors = expected_count,
+        "Loaded collectors configuration"
+    );
+
+    // Set the collectors configuration on the broker manager
+    broker_manager
+        .set_collectors_config(collectors_config.clone())
+        .await;
+
+    // Get the startup timeout from the collectors configuration
+    let startup_timeout = broker_manager.get_startup_timeout().await;
+
+    let current_agent_state = broker_manager.agent_state().await;
+    info!(
+        agent_state = %current_agent_state,
+        expected_collectors = expected_count,
+        startup_timeout_secs = startup_timeout.as_secs(),
+        "Waiting for collectors to register"
+    );
+
+    // Wait for all expected collectors to register
+    // If no collectors are expected, this will return immediately
+    // Poll every second for collector readiness
+    let poll_interval = Duration::from_secs(1);
+    match broker_manager
+        .wait_for_collectors_ready(startup_timeout, poll_interval)
+        .await
+    {
+        Ok(true) => {
+            info!("All expected collectors have registered");
+
+            // Transition to Ready state
+            if let Err(e) = broker_manager.transition_to_ready().await {
+                error!(error = %e, "Failed to transition to Ready state");
+                broker_manager
+                    .mark_startup_failed(format!("Failed to transition to Ready: {e}"))
+                    .await;
+                return Err(e.into());
+            }
+
+            let ready_state = broker_manager.agent_state().await;
+            info!(agent_state = %ready_state, "Agent is now Ready");
+
+            // Drop privileges (stub - not yet implemented)
+            if let Err(e) = broker_manager.drop_privileges().await {
+                error!(error = %e, "Failed to drop privileges");
+                // Continue anyway - privilege dropping failure is not fatal
+                warn!("Continuing with elevated privileges");
+            }
+
+            // Transition to SteadyState (this broadcasts "begin monitoring" internally)
+            if let Err(e) = broker_manager.transition_to_steady_state().await {
+                error!(error = %e, "Failed to transition to SteadyState");
+                // This shouldn't happen if we're in Ready state, but log and continue
+                warn!("Agent may not be in expected state");
+            }
+
+            let steady_state = broker_manager.agent_state().await;
+            info!(
+                agent_state = %steady_state,
+                "Agent startup complete, entering steady state operation"
+            );
+        }
+        Ok(false) => {
+            // Timeout - not all collectors registered in time
+            // The wait_for_collectors_ready function already marked startup as failed
+            error!(
+                expected = expected_count,
+                "Startup timeout: not all collectors registered in time"
+            );
+
+            let current_state = broker_manager.agent_state().await;
+            error!(
+                agent_state = %current_state,
+                "Agent startup failed due to timeout"
+            );
+
+            return Err(anyhow::anyhow!("Startup timeout: not all collectors registered").into());
+        }
+        Err(e) => {
+            error!(
+                error = %e,
+                expected = expected_count,
+                "Startup error while waiting for collectors"
+            );
+            broker_manager
+                .mark_startup_failed(format!("Startup error: {e}"))
+                .await;
+
+            let current_state = broker_manager.agent_state().await;
+            error!(
+                agent_state = %current_state,
+                "Agent startup failed"
+            );
+
+            return Err(e.into());
+        }
+    }
+
+    // =========================================================================
+    // Initialize Detection and Alerting
+    // =========================================================================
 
     // Initialize detection engine
     let mut detection_engine = detection::DetectionEngine::new();
