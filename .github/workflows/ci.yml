@@ -42,6 +42,7 @@ jobs:
                         - 'justfile'
                         - 'rust-toolchain.toml'
                         - 'deny.toml'
+                        - '.config/nextest.toml'
                       docs:
                         - 'docs/**'
                         - '*.md'
@@ -80,7 +81,7 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Run tests (all features)
-              run: cargo nextest run --all-features
+              run: cargo nextest run --profile ci --all-features
 
             - name: Build release
               run: cargo build --release --all-features
@@ -128,7 +129,7 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             # Run tests and build the release binary
-            - run: cargo nextest run --all-features
+            - run: cargo nextest run --profile ci --all-features
             - run: cargo build --release --all-features
 
     # Generate coverage for TLS-enabled builds - only run when Rust code changes
