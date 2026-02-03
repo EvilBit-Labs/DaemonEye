@@ -1,7 +1,7 @@
 //! Integration tests for agent loading state coordination.
 //!
 //! These tests validate the complete loading state machine workflow including:
-//! - State transitions (Loading → Ready → SteadyState)
+//! - State transitions (Loading → Ready → `SteadyState`)
 //! - Collector configuration loading
 //! - Collector readiness tracking
 //! - Startup timeout handling
@@ -13,7 +13,8 @@
     clippy::unwrap_used,
     clippy::uninlined_format_args,
     clippy::let_underscore_must_use,
-    clippy::print_stdout
+    clippy::print_stdout,
+    clippy::inefficient_to_string
 )]
 
 use daemoneye_agent::broker_manager::{AgentState, BrokerManager};

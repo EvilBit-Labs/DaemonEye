@@ -8,7 +8,11 @@
     clippy::unwrap_used,
     clippy::str_to_string,
     clippy::semicolon_outside_block,
-    clippy::semicolon_inside_block
+    clippy::semicolon_inside_block,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::inefficient_to_string,
+    clippy::panic
 )]
 
 use daemoneye_agent::collector_registry::{

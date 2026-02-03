@@ -1538,7 +1538,10 @@ fn aggregate_worst_of<I: Iterator<Item = HealthStatus>>(iter: I) -> HealthStatus
     clippy::str_to_string,
     clippy::semicolon_outside_block,
     clippy::semicolon_inside_block,
-    clippy::semicolon_if_nothing_returned
+    clippy::semicolon_if_nothing_returned,
+    clippy::shadow_unrelated,
+    clippy::wildcard_enum_match_arm,
+    clippy::panic
 )]
 mod tests {
     use super::*;
