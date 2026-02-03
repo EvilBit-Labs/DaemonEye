@@ -1902,4 +1902,70 @@ mod tests {
         assert_eq!(DEFAULT_REGISTRATION_TIMEOUT_SECS, 10);
         assert_eq!(MAX_REGISTRATION_RETRIES, 3);
     }
+
+    // ==================== Concurrent Heartbeat Tests ====================
+
+    #[tokio::test]
+    async fn test_concurrent_heartbeat_publishes() {
+        use tokio::sync::Barrier;
+
+        let (actor_handle, mut rx) = create_test_actor();
+        let (event_bus, _temp_dir) = create_test_event_bus().await;
+        let manager = Arc::new(RegistrationManager::with_defaults(event_bus, actor_handle));
+
+        // Set state to Registered
+        *manager.state.write().await = RegistrationState::Registered;
+
+        // Create barrier for synchronizing 10 concurrent tasks
+        let barrier = Arc::new(Barrier::new(10));
+
+        // Spawn a task to respond to health check actor messages
+        let health_responder = tokio::spawn(async move {
+            use crate::monitor_collector::ActorMessage;
+
+            // Respond to 10 health checks (one per concurrent heartbeat)
+            for _ in 0..10 {
+                if let Some(ActorMessage::HealthCheck { respond_to }) = rx.recv().await {
+                    let health = create_test_health_data(
+                        crate::monitor_collector::CollectorState::Running,
+                        true,
+                    );
+                    let _ = respond_to.send(health);
+                }
+            }
+        });
+
+        // Spawn 10 concurrent publish_heartbeat() calls
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let manager_clone = Arc::clone(&manager);
+            let barrier_clone = Arc::clone(&barrier);
+            handles.push(tokio::spawn(async move {
+                // Wait for all tasks to be ready
+                barrier_clone.wait().await;
+                // Now all 10 tasks will call publish_heartbeat concurrently
+                manager_clone.publish_heartbeat().await
+            }));
+        }
+
+        // Wait for all heartbeat tasks to complete
+        for handle in handles {
+            let result = handle.await.unwrap();
+            assert!(result.is_ok(), "Heartbeat publish should succeed");
+        }
+
+        // Wait for health responder to finish
+        health_responder.await.unwrap();
+
+        // Verify sequence numbers are properly incremented (final count should be 10)
+        let sequence = manager.heartbeat_sequence.load(Ordering::Relaxed);
+        assert_eq!(
+            sequence, 10,
+            "Sequence should be 10 after 10 concurrent heartbeats"
+        );
+
+        // Verify all heartbeats were recorded in stats
+        let stats = manager.stats().await;
+        assert_eq!(stats.heartbeats_sent, 10, "Should have sent 10 heartbeats");
+    }
 }
