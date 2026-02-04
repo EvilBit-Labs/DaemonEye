@@ -875,6 +875,7 @@ async fn test_platform_detection() {
 
     // Verify the platform matches compile-time constants
     #[cfg(target_os = "linux")]
+    #[allow(clippy::semicolon_outside_block)]
     {
         assert_eq!(os, "linux", "Should be running on Linux");
         println!("Linux platform confirmed");
@@ -888,6 +889,7 @@ async fn test_platform_detection() {
     }
 
     #[cfg(target_os = "windows")]
+    #[allow(clippy::semicolon_outside_block)]
     {
         assert_eq!(os, "windows", "Should be running on Windows");
         println!("Windows platform confirmed");
@@ -908,6 +910,7 @@ async fn test_platform_detection() {
 #[traced_test]
 async fn test_platform_collector_availability() {
     #[cfg(target_os = "linux")]
+    #[allow(clippy::semicolon_outside_block)]
     {
         let base_config = ProcessCollectionConfig::default();
         let linux_config = LinuxCollectorConfig::default();
@@ -933,6 +936,7 @@ async fn test_platform_collector_availability() {
     }
 
     #[cfg(target_os = "windows")]
+    #[allow(clippy::semicolon_outside_block)]
     {
         let base_config = ProcessCollectionConfig::default();
         let windows_config = WindowsCollectorConfig::default();
