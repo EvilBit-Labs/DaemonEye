@@ -1141,7 +1141,7 @@ use_tls = false
         let result = ConfigLoader::validate_config(&config);
         assert!(result.is_err());
 
-        let err = result.unwrap_err();
+        let err = result.expect_err("validation should fail for zero batch_size");
         assert!(err.to_string().contains("batch_size"));
     }
 
@@ -1153,7 +1153,7 @@ use_tls = false
         let result = ConfigLoader::validate_config(&config);
         assert!(result.is_err());
 
-        let err = result.unwrap_err();
+        let err = result.expect_err("validation should fail for zero retention_days");
         assert!(err.to_string().contains("retention_days"));
     }
 
@@ -1168,7 +1168,7 @@ use_tls = false
         let result = ConfigLoader::validate_config(&config);
         assert!(result.is_err());
         // First validation (scan_interval_ms) should be caught
-        let err = result.unwrap_err();
+        let err = result.expect_err("validation should fail for invalid config");
         assert!(err.to_string().contains("scan_interval_ms"));
     }
 
@@ -1180,7 +1180,12 @@ use_tls = false
     fn test_default_sink_config_function() {
         let result = default_sink_config();
         assert!(result.is_object());
-        assert!(result.as_object().unwrap().is_empty());
+        assert!(
+            result
+                .as_object()
+                .expect("default sink config should be an object")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1197,7 +1202,12 @@ enabled = true
         assert_eq!(sink.sink_type, "test");
         assert!(sink.enabled);
         assert!(sink.config.is_object());
-        assert!(sink.config.as_object().unwrap().is_empty());
+        assert!(
+            sink.config
+                .as_object()
+                .expect("sink config should be an object")
+                .is_empty()
+        );
     }
 
     // ============================================================================
@@ -1363,7 +1373,10 @@ enabled = true
         #[cfg(unix)]
         {
             assert!(
-                config.socket_path.ends_with(".sock") || config.socket_path.contains("daemoneye"),
+                std::path::Path::new(&config.socket_path)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
+                    || config.socket_path.contains("daemoneye"),
                 "Socket path should be a valid Unix socket: {}",
                 config.socket_path
             );

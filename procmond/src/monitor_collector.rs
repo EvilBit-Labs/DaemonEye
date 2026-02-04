@@ -1186,7 +1186,18 @@ impl MonitorCollectorTrait for ProcmondMonitorCollector {
     clippy::unused_async,
     clippy::shadow_reuse,
     clippy::shadow_unrelated,
-    clippy::clone_on_ref_ptr
+    clippy::clone_on_ref_ptr,
+    clippy::wildcard_enum_match_arm,
+    clippy::significant_drop_in_scrutinee,
+    clippy::uninlined_format_args,
+    clippy::needless_pass_by_value,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::str_to_string,
+    clippy::redundant_clone,
+    clippy::let_underscore_must_use
 )]
 mod tests {
     use super::*;

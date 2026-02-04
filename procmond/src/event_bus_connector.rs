@@ -1116,7 +1116,16 @@ impl EventBusConnector {
     clippy::wildcard_enum_match_arm,
     clippy::equatable_if_let,
     clippy::integer_division,
-    clippy::as_conversions
+    clippy::as_conversions,
+    clippy::uninlined_format_args,
+    clippy::collapsible_if,
+    clippy::significant_drop_in_scrutinee,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::needless_pass_by_value,
+    clippy::let_underscore_must_use,
+    clippy::semicolon_outside_block,
+    clippy::manual_string_new
 )]
 mod tests {
     use super::*;

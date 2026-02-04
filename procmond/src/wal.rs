@@ -993,7 +993,10 @@ impl WriteAheadLog {
     clippy::let_underscore_must_use,
     clippy::uninlined_format_args,
     clippy::len_zero,
-    clippy::semicolon_outside_block
+    clippy::semicolon_outside_block,
+    clippy::pattern_type_mismatch,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::redundant_clone
 )]
 mod tests {
     use super::*;

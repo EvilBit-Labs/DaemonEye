@@ -780,7 +780,17 @@ impl RegistrationManager {
     clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
-    clippy::str_to_string
+    clippy::str_to_string,
+    clippy::wildcard_enum_match_arm,
+    clippy::significant_drop_in_scrutinee,
+    clippy::uninlined_format_args,
+    clippy::needless_pass_by_value,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::let_underscore_must_use,
+    clippy::while_let_loop,
+    clippy::semicolon_outside_block,
+    clippy::significant_drop_tightening
 )]
 mod tests {
     use super::*;
