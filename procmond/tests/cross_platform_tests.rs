@@ -766,8 +766,16 @@ async fn test_nonexistent_process_error_handling() {
     let config = ProcessCollectionConfig::default();
     let collector = SysinfoProcessCollector::new(config);
 
-    // Use a PID that is extremely unlikely to exist
-    let nonexistent_pid = 999999u32;
+    // Find a PID that doesn't exist by probing
+    // Start from a high value and work down until we find one that fails
+    let mut nonexistent_pid = 4_000_000_000u32; // Start well above typical pid_max
+    for candidate in (1_000_000..4_000_000_000u32).rev().step_by(10000) {
+        let probe_result = collector.collect_process(candidate).await;
+        if probe_result.is_err() {
+            nonexistent_pid = candidate;
+            break;
+        }
+    }
 
     let result = timeout(
         Duration::from_secs(TEST_TIMEOUT_SECS),
@@ -790,12 +798,10 @@ async fn test_nonexistent_process_error_handling() {
     match collection_result.unwrap_err() {
         ProcessCollectionError::ProcessNotFound { pid } => {
             assert_eq!(pid, nonexistent_pid, "Error should contain the queried PID");
-            println!("Correct error returned for non-existent PID {}", pid);
         }
         ProcessCollectionError::ProcessAccessDenied { pid, .. } => {
             // Some systems may return access denied instead of not found
             assert_eq!(pid, nonexistent_pid, "Error should contain the queried PID");
-            println!("Access denied returned for PID {} (acceptable)", pid);
         }
         other => {
             panic!(

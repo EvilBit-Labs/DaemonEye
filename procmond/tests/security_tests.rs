@@ -798,10 +798,8 @@ async fn test_sanitization_secret_patterns_detected() {
         );
     }
 
-    println!(
-        "Verified {} secret patterns are detectable",
-        secret_patterns.len()
-    );
+    // All patterns verified - count check ensures completeness
+    assert_eq!(secret_patterns.len(), 24, "Expected 24 secret patterns");
 }
 
 /// Test that events with secret-like command line args can be created
@@ -923,10 +921,9 @@ async fn test_sanitization_user_id_patterns() {
         user_ids.len(),
         "All user ID events should be stored"
     );
-    println!(
-        "Verified {} user ID formats handled correctly",
-        user_ids.len()
-    );
+
+    // All user ID formats verified - count check ensures completeness
+    assert_eq!(user_ids.len(), 6, "Expected 6 user ID formats");
 }
 
 /// Test that platform metadata with secrets would be handled.
