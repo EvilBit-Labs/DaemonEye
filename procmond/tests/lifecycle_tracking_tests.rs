@@ -118,16 +118,12 @@ fn spawn_sleep_process(duration_secs: u64) -> Child {
 }
 
 /// Spawns a sleep process on Windows.
+/// Uses PowerShell Start-Sleep to avoid conflict with Unix timeout command
+/// that may be present in PATH from Git Bash or similar tools.
 #[cfg(windows)]
 fn spawn_sleep_process(duration_secs: u64) -> Child {
-    Command::new("cmd")
-        .args([
-            "/C",
-            "timeout",
-            "/t",
-            &duration_secs.to_string(),
-            "/nobreak",
-        ])
+    Command::new("powershell")
+        .args(["-Command", &format!("Start-Sleep -Seconds {duration_secs}")])
         .spawn()
         .expect("Failed to spawn sleep process")
 }
