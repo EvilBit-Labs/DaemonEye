@@ -34,7 +34,6 @@
     clippy::shadow_reuse,
     clippy::items_after_statements,
     clippy::wildcard_enum_match_arm,
-    clippy::let_underscore_must_use,
     clippy::collapsible_if,
     clippy::integer_division,
     clippy::map_unwrap_or,
@@ -121,7 +120,9 @@ fn spawn_health_responder(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         if let Some(ActorMessage::HealthCheck { respond_to }) = rx.recv().await {
-            let _ = respond_to.send(health_data);
+            respond_to
+                .send(health_data)
+                .expect("Health response receiver should be waiting");
         }
     })
 }
@@ -139,15 +140,21 @@ fn spawn_multi_responder(
             match actor_rx.recv().await {
                 Some(ActorMessage::HealthCheck { respond_to }) => {
                     received_ops.push("HealthCheck".to_string());
-                    let _ = respond_to.send(health_data.clone());
+                    respond_to
+                        .send(health_data.clone())
+                        .expect("Health response receiver should be waiting");
                 }
                 Some(ActorMessage::UpdateConfig { respond_to, .. }) => {
                     received_ops.push("UpdateConfig".to_string());
-                    let _ = respond_to.send(Ok(()));
+                    respond_to
+                        .send(Ok(()))
+                        .expect("Config update response receiver should be waiting");
                 }
                 Some(ActorMessage::GracefulShutdown { respond_to }) => {
                     received_ops.push("GracefulShutdown".to_string());
-                    let _ = respond_to.send(Ok(()));
+                    respond_to
+                        .send(Ok(()))
+                        .expect("Shutdown response receiver should be waiting");
                 }
                 Some(ActorMessage::BeginMonitoring) => {
                     received_ops.push("BeginMonitoring".to_string());
@@ -407,7 +414,9 @@ async fn test_config_update_applies_changes() {
             );
             assert_eq!(config.process_config.max_processes, 500);
             assert!(config.process_config.collect_enhanced_metadata);
-            let _ = respond_to.send(Ok(()));
+            respond_to
+                .send(Ok(()))
+                .expect("Config update response receiver should be waiting");
         }
         other => panic!("Expected UpdateConfig message, got {:?}", other),
     }
@@ -588,7 +597,9 @@ async fn test_config_update_ignores_unknown_keys() {
                 config.base_config.collection_interval,
                 Duration::from_secs(45)
             );
-            let _ = respond_to.send(Ok(()));
+            respond_to
+                .send(Ok(()))
+                .expect("Config update response receiver should be waiting");
         }
         other => panic!("Expected UpdateConfig, got {:?}", other),
     }
@@ -630,7 +641,9 @@ async fn test_graceful_shutdown_success() {
 
     match msg.unwrap() {
         ActorMessage::GracefulShutdown { respond_to } => {
-            let _ = respond_to.send(Ok(()));
+            respond_to
+                .send(Ok(()))
+                .expect("Shutdown response receiver should be waiting");
         }
         other => panic!("Expected GracefulShutdown, got {:?}", other),
     }
@@ -660,7 +673,9 @@ async fn test_graceful_shutdown_with_empty_payload() {
 
     match msg.unwrap() {
         ActorMessage::GracefulShutdown { respond_to } => {
-            let _ = respond_to.send(Ok(()));
+            respond_to
+                .send(Ok(()))
+                .expect("Shutdown response receiver should be waiting");
         }
         other => panic!("Expected GracefulShutdown, got {:?}", other),
     }
@@ -691,7 +706,9 @@ async fn test_graceful_shutdown_marks_not_running() {
 
     match msg.unwrap() {
         ActorMessage::GracefulShutdown { respond_to } => {
-            let _ = respond_to.send(Ok(()));
+            respond_to
+                .send(Ok(()))
+                .expect("Shutdown response receiver should be waiting");
         }
         _ => panic!("Expected GracefulShutdown"),
     }
@@ -726,7 +743,9 @@ async fn test_graceful_shutdown_within_timeout() {
 
     match msg.unwrap() {
         ActorMessage::GracefulShutdown { respond_to } => {
-            let _ = respond_to.send(Ok(()));
+            respond_to
+                .send(Ok(()))
+                .expect("Shutdown response receiver should be waiting");
         }
         _ => panic!("Expected GracefulShutdown"),
     }
@@ -765,7 +784,9 @@ async fn test_graceful_shutdown_actor_error() {
     match msg.unwrap() {
         ActorMessage::GracefulShutdown { respond_to } => {
             // Send error response
-            let _ = respond_to.send(Err(anyhow::anyhow!("Shutdown failed")));
+            respond_to
+                .send(Err(anyhow::anyhow!("Shutdown failed")))
+                .expect("Shutdown response receiver should be waiting");
         }
         _ => panic!("Expected GracefulShutdown"),
     }
@@ -867,7 +888,8 @@ async fn test_stats_tracking_for_requests() {
         CollectorOperation::HealthCheck,
         RpcPayload::Empty,
     );
-    let _ = handler_clone.handle_request(request).await;
+    // We don't care about response, just testing stats tracking
+    drop(handler_clone.handle_request(request).await);
 
     // Allow stats to update
     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -895,7 +917,8 @@ async fn test_health_check_counter() {
             CollectorOperation::HealthCheck,
             RpcPayload::Empty,
         );
-        let _ = handler_clone.handle_request(request).await;
+        // We don't care about response, just testing counter
+        drop(handler_clone.handle_request(request).await);
     }
 
     let stats = handler.stats().await;
@@ -948,7 +971,9 @@ async fn test_concurrent_health_checks() {
         for _ in 0..concurrent_count {
             if let Some(ActorMessage::HealthCheck { respond_to }) = rx.recv().await {
                 let health = create_test_health_data(CollectorState::Running, true);
-                let _ = respond_to.send(health);
+                respond_to
+                    .send(health)
+                    .expect("Health response receiver should be waiting");
             }
         }
     });

@@ -36,7 +36,6 @@
     clippy::as_conversions,
     clippy::print_stdout,
     clippy::use_debug,
-    clippy::let_underscore_must_use,
     unused_imports,
     dead_code
 )]
@@ -644,7 +643,7 @@ async fn test_stop_detection_with_real_subprocess() {
 
     // Kill the process
     child.kill().expect("Failed to kill child process");
-    let _ = child.wait(); // Reap the child
+    child.wait().expect("Failed to reap child process");
 
     // Give system time to clean up
     sleep(Duration::from_millis(200)).await;

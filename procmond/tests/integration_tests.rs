@@ -26,7 +26,6 @@
     clippy::match_wild_err_arm,
     clippy::single_match_else,
     clippy::clone_on_ref_ptr,
-    clippy::let_underscore_must_use,
     clippy::ignored_unit_patterns
 )]
 
@@ -275,7 +274,9 @@ async fn test_process_event_source_statistics_integration() {
     let source_clone = process_source;
     let shutdown_clone = Arc::clone(&shutdown_signal);
     let start_task = tokio::spawn(async move {
-        let _ = source_clone.start(tx, shutdown_clone).await;
+        if let Err(e) = source_clone.start(tx, shutdown_clone).await {
+            eprintln!("Background collection task exited with error: {e}");
+        }
     });
 
     // Note: We can't access source_clone here due to move, so we'll test differently
@@ -431,7 +432,9 @@ async fn test_process_event_source_health_monitoring_integration() {
     let source_clone = process_source;
     let shutdown_clone = Arc::clone(&shutdown_signal);
     let start_task = tokio::spawn(async move {
-        let _ = source_clone.start(tx, shutdown_clone).await;
+        if let Err(e) = source_clone.start(tx, shutdown_clone).await {
+            eprintln!("Background collection task exited with error: {e}");
+        }
     });
 
     // Wait a bit for collection to start

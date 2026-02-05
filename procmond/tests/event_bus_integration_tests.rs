@@ -36,7 +36,6 @@
     clippy::shadow_reuse,
     clippy::items_after_statements,
     clippy::wildcard_enum_match_arm,
-    clippy::let_underscore_must_use,
     clippy::collapsible_if,
     clippy::integer_division,
     clippy::map_unwrap_or,
@@ -231,8 +230,8 @@ async fn test_connect_fails_without_broker() {
 async fn test_publish_after_failed_connect() {
     let (mut connector, _temp_dir) = create_isolated_connector().await;
 
-    // Try to connect (will fail)
-    let _ = connector.connect().await;
+    // Try to connect - expected to fail in test context without broker
+    drop(connector.connect().await);
 
     // Should still be able to publish (to buffer)
     let event = create_test_event(1);

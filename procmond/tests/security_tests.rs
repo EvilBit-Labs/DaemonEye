@@ -8,10 +8,10 @@
 //!
 //! # Test Categories
 //!
-//! 1. **Privilege Escalation** (Task 16): Unauthorized access, privilege dropping
-//! 2. **Injection Attacks** (Task 17): Malicious process names, command lines
-//! 3. **DoS Attacks** (Task 18): Rate limiting, event flooding
-//! 4. **Data Sanitization** (Task 19): Secret masking in logs and events
+//! 1. **Privilege Escalation**: Unauthorized access, privilege dropping
+//! 2. **Injection Attacks**: Malicious process names, command lines
+//! 3. **DoS Attacks**: Rate limiting, event flooding
+//! 4. **Data Sanitization**: Secret masking in logs and events
 
 #![allow(
     clippy::doc_markdown,
@@ -27,7 +27,6 @@
     clippy::shadow_reuse,
     clippy::items_after_statements,
     clippy::wildcard_enum_match_arm,
-    clippy::let_underscore_must_use,
     clippy::collapsible_if,
     clippy::integer_division,
     clippy::map_unwrap_or,
@@ -273,7 +272,9 @@ async fn test_privilege_health_reflects_state() {
         if let Some(ActorMessage::HealthCheck { respond_to }) = rx.recv().await {
             let mut health = create_mock_health_data();
             health.state = CollectorState::WaitingForAgent; // Not yet fully privileged
-            let _ = respond_to.send(health);
+            respond_to
+                .send(health)
+                .expect("Health response receiver should be waiting");
         }
     });
 
@@ -511,7 +512,9 @@ async fn test_dos_excessive_rpc_requests() {
             if let ActorMessage::HealthCheck { respond_to } = msg {
                 // Simulate slow response
                 sleep(Duration::from_millis(10)).await;
-                let _ = respond_to.send(create_mock_health_data());
+                respond_to
+                    .send(create_mock_health_data())
+                    .expect("Response receiver should be waiting");
                 response_count_clone.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -705,7 +708,9 @@ async fn test_dos_system_responsiveness_under_load() {
         let mut count = 0_u32;
         while let Some(msg) = rx.recv().await {
             if let ActorMessage::HealthCheck { respond_to } = msg {
-                let _ = respond_to.send(create_mock_health_data());
+                respond_to
+                    .send(create_mock_health_data())
+                    .expect("Response receiver should be waiting");
                 count += 1;
                 if count >= 50 {
                     break;
@@ -722,7 +727,8 @@ async fn test_dos_system_responsiveness_under_load() {
         let handler_clone = Arc::clone(&handler);
         let start = std::time::Instant::now();
         let request = create_health_check_request(5);
-        let _ = handler_clone.handle_request(request).await;
+        // We don't care about response, just measuring timing
+        drop(handler_clone.handle_request(request).await);
         response_times.push(start.elapsed());
     }
 
@@ -1080,7 +1086,8 @@ async fn test_security_recovery_after_attacks() {
     for i in 0..10 {
         let mut event = create_test_event(i);
         event.name = "attack\x00pattern".to_string();
-        let _ = connector.publish(event, ProcessEventType::Start).await;
+        // We don't care about individual results here, just simulating attack attempts
+        drop(connector.publish(event, ProcessEventType::Start).await);
     }
 
     // Phase 2: Verify system still works with normal events

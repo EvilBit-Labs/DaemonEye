@@ -8,10 +8,10 @@
 //!
 //! # Test Categories
 //!
-//! 1. **Connection Failures** (Tasks 12): Broker unavailability, reconnection, event replay
-//! 2. **Backpressure** (Tasks 13): Buffer fill, adaptive interval, WAL persistence
-//! 3. **Resource Limits** (Tasks 14): Memory constraints, CPU limits, WAL rotation
-//! 4. **Concurrent Operations** (Tasks 15): Multiple RPC requests, shutdown during collection
+//! 1. **Connection Failures**: Broker unavailability, reconnection, event replay
+//! 2. **Backpressure**: Buffer fill, adaptive interval, WAL persistence
+//! 3. **Resource Limits**: Memory constraints, CPU limits, WAL rotation
+//! 4. **Concurrent Operations**: Multiple RPC requests, shutdown during collection
 
 #![allow(
     clippy::doc_markdown,
@@ -27,7 +27,6 @@
     clippy::shadow_reuse,
     clippy::items_after_statements,
     clippy::wildcard_enum_match_arm,
-    clippy::let_underscore_must_use,
     clippy::collapsible_if,
     clippy::integer_division,
     clippy::map_unwrap_or,
@@ -55,7 +54,6 @@ use procmond::event_bus_connector::{
 use procmond::monitor_collector::{
     ACTOR_CHANNEL_CAPACITY, ActorHandle, ActorMessage, CollectorState, HealthCheckData,
 };
-// Note: RegistrationManager tests are covered in actor_mode_integration_tests.rs
 use procmond::rpc_service::{RpcServiceConfig, RpcServiceHandler};
 use procmond::wal::WriteAheadLog;
 use std::sync::Arc;
@@ -252,15 +250,16 @@ async fn test_connection_failure_events_persisted_to_wal() {
 async fn test_connection_failure_reconnection_backoff() {
     let (mut connector, _temp_dir) = create_isolated_connector().await;
 
-    // First connection attempt
-    let _ = connector.connect().await;
+    // First connection attempt - expected to fail in test context without broker
+    drop(connector.connect().await);
 
     // Publish while disconnected - this should trigger reconnection attempts internally
     let start = std::time::Instant::now();
 
     for i in 1..=3 {
         let event = create_test_event(i);
-        let _ = connector.publish(event, ProcessEventType::Start).await;
+        // We don't care about individual publish results here, just testing reconnection behavior
+        drop(connector.publish(event, ProcessEventType::Start).await);
     }
 
     // Reconnection backoff should not block main operations significantly
@@ -514,7 +513,8 @@ async fn test_backpressure_release_when_buffer_drains() {
     // Publish a few events (not enough to trigger backpressure)
     for i in 1..=5 {
         let event = create_test_event(i);
-        let _ = connector.publish(event, ProcessEventType::Start).await;
+        // We don't care about individual publish results here, just testing backpressure signals
+        drop(connector.publish(event, ProcessEventType::Start).await);
     }
 
     // Verify no backpressure signals for small buffer usage
@@ -708,7 +708,9 @@ async fn test_concurrent_multiple_rpc_requests() {
         while let Some(msg) = rx.recv().await {
             match msg {
                 ActorMessage::HealthCheck { respond_to } => {
-                    let _ = respond_to.send(create_mock_health_data());
+                    respond_to
+                        .send(create_mock_health_data())
+                        .expect("Response receiver should be waiting");
                     response_count_clone.fetch_add(1, Ordering::Relaxed);
                 }
                 _ => {}
@@ -760,7 +762,9 @@ async fn test_concurrent_config_update_during_operation() {
             match msg {
                 ActorMessage::UpdateConfig { respond_to, .. } => {
                     // Simulate validation and acceptance
-                    let _ = respond_to.send(Ok(()));
+                    respond_to
+                        .send(Ok(()))
+                        .expect("Config update response receiver should be waiting");
                     println!("Config update received and validated");
                 }
                 _ => panic!("Expected UpdateConfig message"),
@@ -793,7 +797,9 @@ async fn test_concurrent_shutdown_during_operation() {
             match msg {
                 ActorMessage::GracefulShutdown { respond_to } => {
                     // Simulate graceful completion
-                    let _ = respond_to.send(Ok(()));
+                    respond_to
+                        .send(Ok(()))
+                        .expect("Shutdown response receiver should be waiting");
                     println!("Graceful shutdown processed");
                 }
                 _ => panic!("Expected GracefulShutdown message"),
@@ -920,7 +926,9 @@ async fn test_concurrent_rpc_stats_tracking() {
     let responder = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if let ActorMessage::HealthCheck { respond_to } = msg {
-                let _ = respond_to.send(create_mock_health_data());
+                respond_to
+                    .send(create_mock_health_data())
+                    .expect("Response receiver should be waiting");
             }
         }
     });
@@ -928,7 +936,8 @@ async fn test_concurrent_rpc_stats_tracking() {
     // Send multiple requests
     for _ in 0..5 {
         let request = create_health_check_request(5);
-        let _ = handler.handle_request(request).await;
+        // We don't care about response, just testing stats tracking
+        drop(handler.handle_request(request).await);
     }
 
     // Check stats
@@ -964,8 +973,8 @@ async fn test_integration_connection_failure_with_wal_persistence() {
             .await
             .expect("Failed to create connector");
 
-        // Attempt connection (will fail)
-        let _ = connector.connect().await;
+        // Attempt connection - expected to fail in test context without broker
+        drop(connector.connect().await);
 
         // Publish events
         for i in 1..=20 {

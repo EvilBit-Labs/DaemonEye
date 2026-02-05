@@ -31,7 +31,6 @@
     clippy::shadow_reuse,
     clippy::items_after_statements,
     clippy::wildcard_enum_match_arm,
-    clippy::let_underscore_must_use,
     clippy::collapsible_if
 )]
 
@@ -215,7 +214,9 @@ async fn test_backpressure_signals_to_correct_receiver() {
     // The connector has a 10MB buffer limit with high-water mark at 70%
     for i in 0..1000 {
         let event = create_test_process_event(i);
-        let _ = connector.publish(event, ProcessEventType::Start).await;
+        // Intentionally ignore publish result - we're just filling buffer to trigger backpressure
+        // Some publishes may fail when buffer is full, which is expected behavior
+        drop(connector.publish(event, ProcessEventType::Start).await);
 
         // Check if we've triggered backpressure
         if let Ok(Some(signal)) = timeout(Duration::from_millis(1), bp_rx.recv()).await {
@@ -304,7 +305,9 @@ async fn test_health_check_succeeds_with_responsive_actor() {
                         collection_errors: 0,
                         backpressure_events: 0,
                     };
-                    let _ = respond_to.send(health_data);
+                    respond_to
+                        .send(health_data)
+                        .expect("Health response receiver should be waiting");
                 }
                 _ => panic!("Expected HealthCheck message"),
             }

@@ -51,7 +51,6 @@
     clippy::indexing_slicing,
     clippy::cast_lossless,
     clippy::items_after_statements,
-    clippy::let_underscore_must_use,
     clippy::redundant_closure_for_method_calls
 )]
 
@@ -222,7 +221,7 @@ fn bench_wal_write_throughput(c: &mut Criterion) {
 
                         let rate = batch_size as f64 / duration.as_secs_f64();
                         if batch_size >= 1000 {
-                            println!(
+                            eprintln!(
                                 "WAL write throughput: {} events in {:.2}ms, rate: {:.1} events/sec",
                                 batch_size,
                                 duration.as_millis(),
@@ -282,7 +281,7 @@ fn bench_wal_replay(c: &mut Criterion) {
 
                         let rate = events.len() as f64 / duration.as_secs_f64();
                         if event_count >= 1000 {
-                            println!(
+                            eprintln!(
                                 "WAL replay: {} events in {:.2}ms, rate: {:.1} events/sec",
                                 events.len(),
                                 duration.as_millis(),
@@ -409,14 +408,14 @@ fn bench_eventbus_buffer_throughput(c: &mut Criterion) {
                         let start = std::time::Instant::now();
                         for i in 0..batch_size {
                             let event = create_test_event(i as u32);
-                            // Note: This will buffer events since we're not connected
-                            let _ = connector.publish(event, ProcessEventType::Start).await;
+                            // Benchmark: Measuring throughput, result not relevant for timing
+                            drop(connector.publish(event, ProcessEventType::Start).await);
                         }
                         let duration = start.elapsed();
 
                         let rate = batch_size as f64 / duration.as_secs_f64();
                         if batch_size >= 500 {
-                            println!(
+                            eprintln!(
                                 "EventBus buffer throughput: {} events in {:.2}ms, rate: {:.1} events/sec",
                                 batch_size,
                                 duration.as_millis(),
@@ -535,7 +534,7 @@ fn bench_process_collection_real(c: &mut Criterion) {
 
                     if let Ok((events, stats)) = result {
                         let rate = events.len() as f64 / duration.as_secs_f64();
-                        println!(
+                        eprintln!(
                             "Process collection ({}): {} processes in {:.2}ms, rate: {:.1} proc/sec",
                             config_name,
                             events.len(),
@@ -544,7 +543,7 @@ fn bench_process_collection_real(c: &mut Criterion) {
                         );
                         black_box((duration, events.len(), stats));
                     } else {
-                        println!("Process collection failed: {:?}", result.err());
+                        eprintln!("Process collection failed: {:?}", result.err());
                         black_box(duration);
                     }
                 })
@@ -776,7 +775,7 @@ fn bench_combined_workload(c: &mut Criterion) {
                         let rate = event_count as f64 / duration.as_secs_f64();
 
                         if event_count >= 500 {
-                            println!(
+                            eprintln!(
                                 "Combined workload: {} events in {:.2}ms, rate: {:.1} events/sec",
                                 event_count,
                                 duration.as_millis(),
@@ -785,7 +784,7 @@ fn bench_combined_workload(c: &mut Criterion) {
 
                             // Performance budget check: > 1000 records/sec
                             if rate < 1000.0 {
-                                println!(
+                                eprintln!(
                                     "WARNING: Combined workload rate {:.1}/sec is below 1000/sec budget",
                                     rate
                                 );
@@ -851,7 +850,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
                             0
                         };
 
-                        println!(
+                        eprintln!(
                             "Memory efficiency: {} events, {}KB total delta, {}B per event",
                             batch_size,
                             memory_delta / 1024,
