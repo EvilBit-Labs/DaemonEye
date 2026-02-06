@@ -7,6 +7,10 @@ on:
         branches: [main]
     workflow_dispatch:
 
+# Restrict permissions to minimum required (principle of least privilege)
+permissions:
+    contents: read
+
 defaults:
     run:
         shell: bash

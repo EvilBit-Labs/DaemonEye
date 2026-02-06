@@ -797,11 +797,7 @@ async fn test_sanitization_secret_patterns_detected() {
             || lower.contains("credential")
             || lower.contains("auth");
 
-        assert!(
-            is_secret,
-            "Pattern '{}' should be detected as secret-related",
-            pattern
-        );
+        assert!(is_secret, "Pattern should be detected as secret-related");
     }
 
     // All patterns verified - count check ensures completeness
@@ -919,7 +915,7 @@ async fn test_sanitization_user_id_patterns() {
         event.user_id = Some((*uid).to_string());
 
         let result = connector.publish(event, ProcessEventType::Start).await;
-        assert!(result.is_ok(), "Should accept event with user_id: {}", uid);
+        assert!(result.is_ok(), "Should accept event with user_id format");
     }
 
     assert_eq!(
