@@ -44,37 +44,29 @@
     clippy::ignored_unit_patterns
 )]
 
-use collector_core::event::ProcessEvent;
-use daemoneye_eventbus::rpc::{
-    CollectorOperation, RpcCorrelationMetadata, RpcPayload, RpcRequest, RpcStatus,
+mod common;
+
+use common::{
+    create_health_check_request, create_isolated_connector, create_large_event,
+    create_mock_health_data, create_test_actor_with_receiver, create_test_event,
 };
+use daemoneye_eventbus::rpc::RpcStatus;
 use procmond::event_bus_connector::{
     BackpressureSignal, EventBusConnector, EventBusConnectorError, ProcessEventType,
 };
-use procmond::monitor_collector::{
-    ACTOR_CHANNEL_CAPACITY, ActorHandle, ActorMessage, CollectorState, HealthCheckData,
-};
+use procmond::monitor_collector::{ACTOR_CHANNEL_CAPACITY, ActorMessage};
 use procmond::rpc_service::{RpcServiceConfig, RpcServiceHandler};
 use procmond::wal::WriteAheadLog;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tempfile::TempDir;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::RwLock;
 use tokio::time::{sleep, timeout};
 
 // ============================================================================
-// Test Helpers
+// Test Helpers (unique to chaos tests)
 // ============================================================================
-
-/// Creates a test EventBusConnector with an isolated temp directory.
-async fn create_isolated_connector() -> (EventBusConnector, TempDir) {
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let connector = EventBusConnector::new(temp_dir.path().to_path_buf())
-        .await
-        .expect("Failed to create connector");
-    (connector, temp_dir)
-}
 
 /// Creates a test WAL with a small rotation threshold for testing.
 async fn create_test_wal(rotation_threshold: u64) -> (WriteAheadLog, TempDir) {
@@ -84,96 +76,6 @@ async fn create_test_wal(rotation_threshold: u64) -> (WriteAheadLog, TempDir) {
             .await
             .expect("Failed to create WAL");
     (wal, temp_dir)
-}
-
-/// Creates a test actor handle with a receiver for inspecting messages.
-fn create_test_actor() -> (ActorHandle, mpsc::Receiver<ActorMessage>) {
-    let (tx, rx) = mpsc::channel(ACTOR_CHANNEL_CAPACITY);
-    (ActorHandle::new(tx), rx)
-}
-
-/// Creates a test process event with specified PID.
-fn create_test_event(pid: u32) -> ProcessEvent {
-    ProcessEvent {
-        pid,
-        ppid: Some(1),
-        name: format!("test-process-{pid}"),
-        executable_path: Some(format!("/usr/bin/test_{pid}")),
-        command_line: vec![
-            "test".to_string(),
-            "--flag".to_string(),
-            format!("--pid={pid}"),
-        ],
-        start_time: Some(SystemTime::now()),
-        cpu_usage: Some(5.0),
-        memory_usage: Some(1024 * 1024),
-        executable_hash: Some(format!("hash_{pid}")),
-        user_id: Some("1000".to_string()),
-        accessible: true,
-        file_exists: true,
-        timestamp: SystemTime::now(),
-        platform_metadata: None,
-    }
-}
-
-/// Creates a large test event to fill buffers quickly.
-fn create_large_event(pid: u32, arg_count: usize) -> ProcessEvent {
-    let command_line: Vec<String> = (0..arg_count)
-        .map(|i| format!("--arg{}=value{}", i, "x".repeat(100)))
-        .collect();
-
-    ProcessEvent {
-        pid,
-        ppid: Some(1),
-        name: format!("large-process-{pid}"),
-        executable_path: Some(format!("/usr/bin/large_{pid}")),
-        command_line,
-        start_time: Some(SystemTime::now()),
-        cpu_usage: Some(50.0),
-        memory_usage: Some(100 * 1024 * 1024),
-        executable_hash: Some("a".repeat(64)),
-        user_id: Some("root".to_string()),
-        accessible: true,
-        file_exists: true,
-        timestamp: SystemTime::now(),
-        platform_metadata: None,
-    }
-}
-
-/// Creates a test RPC request for health check.
-fn create_health_check_request(deadline_secs: u64) -> RpcRequest {
-    RpcRequest {
-        request_id: format!(
-            "chaos-test-{}",
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ),
-        client_id: "chaos-test-client".to_string(),
-        target: "control.collector.procmond".to_string(),
-        operation: CollectorOperation::HealthCheck,
-        payload: RpcPayload::Empty,
-        timestamp: SystemTime::now(),
-        deadline: SystemTime::now() + Duration::from_secs(deadline_secs),
-        correlation_metadata: RpcCorrelationMetadata::new("chaos-test".to_string()),
-    }
-}
-
-/// Creates mock health check data for actor responses.
-fn create_mock_health_data() -> HealthCheckData {
-    HealthCheckData {
-        state: CollectorState::Running,
-        collection_interval: Duration::from_secs(30),
-        original_interval: Duration::from_secs(30),
-        event_bus_connected: true,
-        buffer_level_percent: Some(10),
-        last_collection: Some(std::time::Instant::now()),
-        collection_cycles: 5,
-        lifecycle_events: 2,
-        collection_errors: 0,
-        backpressure_events: 0,
-    }
 }
 
 // ============================================================================
@@ -403,7 +305,7 @@ async fn test_backpressure_buffer_fill_triggers_activation() {
 /// Test that adaptive interval adjustment works with backpressure.
 #[tokio::test]
 async fn test_backpressure_adaptive_interval_adjustment() {
-    let (actor_handle, mut rx) = create_test_actor();
+    let (actor_handle, mut rx) = create_test_actor_with_receiver();
 
     let original_interval = Duration::from_secs(30);
 
@@ -682,7 +584,7 @@ async fn test_resource_limits_operation_timing() {
 /// Test multiple concurrent RPC requests are handled correctly.
 #[tokio::test]
 async fn test_concurrent_multiple_rpc_requests() {
-    let (actor_handle, mut rx) = create_test_actor();
+    let (actor_handle, mut rx) = create_test_actor_with_receiver();
     let (connector, _temp_dir) = create_isolated_connector().await;
     let event_bus = Arc::new(RwLock::new(connector));
 
@@ -754,7 +656,7 @@ async fn test_concurrent_multiple_rpc_requests() {
 /// Test that config updates during collection are applied at cycle boundary.
 #[tokio::test]
 async fn test_concurrent_config_update_during_operation() {
-    let (actor_handle, mut rx) = create_test_actor();
+    let (actor_handle, mut rx) = create_test_actor_with_receiver();
 
     // Spawn task to handle the actor message
     let responder = tokio::spawn(async move {
@@ -786,7 +688,7 @@ async fn test_concurrent_config_update_during_operation() {
 /// Test graceful shutdown waits for current operation to complete.
 #[tokio::test]
 async fn test_concurrent_shutdown_during_operation() {
-    let (actor_handle, mut rx) = create_test_actor();
+    let (actor_handle, mut rx) = create_test_actor_with_receiver();
 
     // Spawn task to handle the actor message
     let responder = tokio::spawn(async move {
@@ -819,7 +721,7 @@ async fn test_concurrent_shutdown_during_operation() {
 /// Test that BeginMonitoring transitions state correctly.
 #[tokio::test]
 async fn test_concurrent_begin_monitoring_state_transition() {
-    let (actor_handle, mut rx) = create_test_actor();
+    let (actor_handle, mut rx) = create_test_actor_with_receiver();
 
     // Send BeginMonitoring
     actor_handle
@@ -843,7 +745,7 @@ async fn test_concurrent_begin_monitoring_state_transition() {
 /// Test multiple interval adjustments are handled correctly.
 #[tokio::test]
 async fn test_concurrent_interval_adjustments() {
-    let (actor_handle, mut rx) = create_test_actor();
+    let (actor_handle, mut rx) = create_test_actor_with_receiver();
 
     // Send multiple rapid interval adjustments (simulating backpressure fluctuation)
     let intervals = vec![
@@ -886,7 +788,7 @@ async fn test_concurrent_interval_adjustments() {
 /// Test that channel backpressure on actor channel is handled.
 #[tokio::test]
 async fn test_concurrent_actor_channel_backpressure() {
-    let (actor_handle, _rx) = create_test_actor();
+    let (actor_handle, _rx) = create_test_actor_with_receiver();
     // Note: _rx is not consumed, so channel will fill up
 
     // Try to fill the channel (capacity is ACTOR_CHANNEL_CAPACITY = 100)
@@ -916,7 +818,7 @@ async fn test_concurrent_actor_channel_backpressure() {
 /// Test RPC handler correctly tracks statistics under concurrent load.
 #[tokio::test]
 async fn test_concurrent_rpc_stats_tracking() {
-    let (actor_handle, mut rx) = create_test_actor();
+    let (actor_handle, mut rx) = create_test_actor_with_receiver();
     let (connector, _temp_dir) = create_isolated_connector().await;
     let event_bus = Arc::new(RwLock::new(connector));
 

@@ -6,18 +6,17 @@
 #![allow(dead_code)]
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use collector_core::event::ProcessEvent;
-use daemoneye_eventbus::rpc::{
-    CollectorOperation, RpcCorrelationMetadata, RpcPayload, RpcRequest, RpcStatus,
+use daemoneye_eventbus::rpc::{CollectorOperation, RpcCorrelationMetadata, RpcPayload, RpcRequest};
+use procmond::event_bus_connector::EventBusConnector;
+use procmond::monitor_collector::{
+    ACTOR_CHANNEL_CAPACITY, ActorHandle, ActorMessage, CollectorState, HealthCheckData,
 };
-use procmond::event_bus_connector::{EventBusConnector, EventBusConnectorConfig};
-use procmond::monitor_collector::{ActorHandle, ActorMessage, CollectorState, HealthCheckData};
 use procmond::rpc_service::{RpcServiceConfig, RpcServiceHandler};
-use procmond::wal::WalConfig;
 use tempfile::TempDir;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{RwLock, mpsc};
 
 // ============================================================================
 // Process Event Helpers
@@ -62,8 +61,8 @@ pub fn create_large_event(pid: u32, arg_count: usize) -> ProcessEvent {
         start_time: Some(SystemTime::now()),
         cpu_usage: Some(50.0),
         memory_usage: Some(100 * 1024 * 1024),
-        executable_hash: Some(format!("large_hash_{pid}")),
-        user_id: Some("1000".to_string()),
+        executable_hash: Some("a".repeat(64)),
+        user_id: Some("root".to_string()),
         accessible: true,
         file_exists: true,
         timestamp: SystemTime::now(),
@@ -75,33 +74,27 @@ pub fn create_large_event(pid: u32, arg_count: usize) -> ProcessEvent {
 // Actor Helpers
 // ============================================================================
 
-/// Creates a mock actor handle for testing.
+/// Creates a mock actor handle for testing (without receiver).
 pub fn create_test_actor() -> ActorHandle {
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, _rx) = mpsc::channel(ACTOR_CHANNEL_CAPACITY);
     ActorHandle::new(tx)
+}
+
+/// Creates a mock actor handle with receiver for message inspection.
+pub fn create_test_actor_with_receiver() -> (ActorHandle, mpsc::Receiver<ActorMessage>) {
+    let (tx, rx) = mpsc::channel(ACTOR_CHANNEL_CAPACITY);
+    (ActorHandle::new(tx), rx)
 }
 
 /// Creates a mock actor with health responder that responds to health check requests.
 pub fn spawn_health_responder() -> (ActorHandle, tokio::task::JoinHandle<()>) {
-    let (tx, mut rx) = mpsc::channel::<ActorMessage>(100);
+    let (tx, mut rx) = mpsc::channel::<ActorMessage>(ACTOR_CHANNEL_CAPACITY);
     let handle = ActorHandle::new(tx);
 
     let task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if let ActorMessage::HealthCheck { respond_to } = msg {
-                let health = HealthCheckData {
-                    state: CollectorState::Running,
-                    connected_to_agent: true,
-                    current_collection_interval: Duration::from_secs(1),
-                    events_collected_total: 100,
-                    events_published_total: 95,
-                    events_buffered: 5,
-                    last_collection_time: Some(SystemTime::now()),
-                    last_publish_time: Some(SystemTime::now()),
-                    error_count: 0,
-                    uptime: Duration::from_secs(3600),
-                    buffer_level_percent: 10.0,
-                };
+                let health = create_mock_health_data();
                 respond_to
                     .send(health)
                     .expect("Health response receiver should be waiting");
@@ -116,16 +109,15 @@ pub fn spawn_health_responder() -> (ActorHandle, tokio::task::JoinHandle<()>) {
 pub fn create_mock_health_data() -> HealthCheckData {
     HealthCheckData {
         state: CollectorState::Running,
-        connected_to_agent: true,
-        current_collection_interval: Duration::from_secs(1),
-        events_collected_total: 100,
-        events_published_total: 95,
-        events_buffered: 5,
-        last_collection_time: Some(SystemTime::now()),
-        last_publish_time: Some(SystemTime::now()),
-        error_count: 0,
-        uptime: Duration::from_secs(3600),
-        buffer_level_percent: 10.0,
+        collection_interval: Duration::from_secs(30),
+        original_interval: Duration::from_secs(30),
+        event_bus_connected: true,
+        buffer_level_percent: Some(10),
+        last_collection: Some(Instant::now()),
+        collection_cycles: 5,
+        lifecycle_events: 2,
+        collection_errors: 0,
+        backpressure_events: 0,
     }
 }
 
@@ -136,26 +128,50 @@ pub fn create_mock_health_data() -> HealthCheckData {
 /// Creates a test RPC request with the given operation.
 pub fn create_test_rpc_request(operation: CollectorOperation) -> RpcRequest {
     RpcRequest {
-        request_id: uuid::Uuid::new_v4().to_string(),
+        request_id: format!(
+            "test-{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ),
+        client_id: "test-client".to_string(),
+        target: "control.collector.procmond".to_string(),
         operation,
         payload: RpcPayload::Empty,
-        deadline: Some(SystemTime::now() + Duration::from_secs(5)),
-        correlation: Some(RpcCorrelationMetadata {
-            trace_id: Some("test-trace-123".to_string()),
-            span_id: Some("test-span-456".to_string()),
-            parent_span_id: None,
-            baggage: std::collections::HashMap::new(),
-        }),
+        timestamp: SystemTime::now(),
+        deadline: SystemTime::now() + Duration::from_secs(5),
+        correlation_metadata: RpcCorrelationMetadata::new("test-correlation".to_string()),
+    }
+}
+
+/// Creates a test RPC request for health check with configurable deadline.
+pub fn create_health_check_request(deadline_secs: u64) -> RpcRequest {
+    RpcRequest {
+        request_id: format!(
+            "health-test-{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ),
+        client_id: "test-client".to_string(),
+        target: "control.collector.procmond".to_string(),
+        operation: CollectorOperation::HealthCheck,
+        payload: RpcPayload::Empty,
+        timestamp: SystemTime::now(),
+        deadline: SystemTime::now() + Duration::from_secs(deadline_secs),
+        correlation_metadata: RpcCorrelationMetadata::new("health-test".to_string()),
     }
 }
 
 /// Creates an RPC service handler for testing.
-pub async fn create_test_rpc_handler(
+pub fn create_test_rpc_handler(
     actor: ActorHandle,
     event_bus: Arc<RwLock<EventBusConnector>>,
 ) -> RpcServiceHandler {
     let config = RpcServiceConfig::default();
-    RpcServiceHandler::new(config, actor, event_bus)
+    RpcServiceHandler::new(actor, event_bus, config)
 }
 
 // ============================================================================
@@ -166,31 +182,9 @@ pub async fn create_test_rpc_handler(
 /// Returns the connector and temp directory (keep temp_dir alive for test duration).
 pub async fn create_isolated_connector() -> (EventBusConnector, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let wal_path = temp_dir.path().join("test_wal");
-
-    let config = EventBusConnectorConfig {
-        broker_socket_path: temp_dir
-            .path()
-            .join("nonexistent.sock")
-            .to_string_lossy()
-            .to_string(),
-        wal_config: WalConfig {
-            directory: wal_path,
-            max_file_size: 1024 * 1024, // 1MB
-            max_files: 3,
-            sync_writes: false,
-        },
-        max_buffer_size: 10 * 1024 * 1024, // 10MB
-        backpressure_high_water: 0.7,
-        backpressure_low_water: 0.5,
-        reconnect_interval: Duration::from_millis(100),
-        max_reconnect_attempts: 3,
-    };
-
-    let connector = EventBusConnector::new(config)
+    let connector = EventBusConnector::new(temp_dir.path().to_path_buf())
         .await
         .expect("Failed to create connector");
-
     (connector, temp_dir)
 }
 
