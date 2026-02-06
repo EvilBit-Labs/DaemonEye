@@ -322,20 +322,32 @@ fn bench_wal_rotation(c: &mut Criterion) {
                 .expect("Failed to create WAL");
 
                 // Write events until rotation happens multiple times
-                let mut rotations_triggered = 0_u32;
-                let mut last_sequence = 0_u64;
+                // Track rotation by counting .wal files in directory
+                let initial_file_count = std::fs::read_dir(temp_dir.path())
+                    .map(|entries| {
+                        entries
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.path().extension().is_some_and(|ext| ext == "wal"))
+                            .count()
+                    })
+                    .unwrap_or(0);
 
                 for i in 0..500 {
                     let event = create_large_event(i);
-                    let seq = wal.write(event).await.expect("Failed to write");
-
-                    // Detect rotation by checking if sequence reset behavior or file count
-                    if seq < last_sequence {
-                        rotations_triggered = rotations_triggered.saturating_add(1);
-                    }
-                    last_sequence = seq;
+                    wal.write(event).await.expect("Failed to write");
                 }
 
+                // Count rotations by checking final file count
+                let final_file_count = std::fs::read_dir(temp_dir.path())
+                    .map(|entries| {
+                        entries
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.path().extension().is_some_and(|ext| ext == "wal"))
+                            .count()
+                    })
+                    .unwrap_or(0);
+
+                let rotations_triggered = final_file_count.saturating_sub(initial_file_count);
                 black_box(rotations_triggered)
             })
         });

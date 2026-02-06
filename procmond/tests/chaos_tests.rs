@@ -230,6 +230,9 @@ async fn test_connection_failure_sequence_ordering() {
     assert!(seq1 < seq2, "Sequence 1 < 2");
     assert!(seq2 < seq3, "Sequence 2 < 3");
 
+    // Drop connector before opening WAL to avoid file lock conflicts
+    drop(connector);
+
     // Verify in WAL
     let wal = WriteAheadLog::new(wal_path)
         .await
@@ -397,9 +400,9 @@ async fn test_backpressure_wal_prevents_data_loss() {
     );
 }
 
-/// Test backpressure release signal when buffer drains.
+/// Test that no backpressure signal is sent for small buffer usage.
 #[tokio::test]
-async fn test_backpressure_release_when_buffer_drains() {
+async fn test_backpressure_no_signal_for_low_buffer_usage() {
     let (mut connector, _temp_dir) = create_isolated_connector().await;
     let mut bp_rx = connector
         .take_backpressure_receiver()
@@ -529,19 +532,38 @@ async fn test_resource_limits_wal_bounded_file_size() {
         wal.write(event).await.expect("WAL write should succeed");
     }
 
-    // Check individual file sizes
+    // Check individual file sizes and count WAL files
+    let mut wal_file_count = 0;
+    // Allow generous overhead: 4x rotation threshold for last partial write
+    let max_allowed_size = rotation_threshold * 4;
+
     for entry in std::fs::read_dir(temp_dir.path()).expect("Should read dir") {
         let entry = entry.expect("Should read entry");
         let metadata = entry.metadata().expect("Should read metadata");
         let filename = entry.file_name().to_string_lossy().to_string();
 
         if filename.ends_with(".wal") {
+            wal_file_count += 1;
             let size = metadata.len();
-            // Files should be approximately rotation_threshold size
-            // Allow some overhead for partial writes
             println!("WAL file {} size: {} bytes", filename, size);
+
+            // Assert file size is bounded
+            assert!(
+                size <= max_allowed_size,
+                "WAL file {} size {} exceeds max allowed {} (rotation_threshold * 4)",
+                filename,
+                size,
+                max_allowed_size
+            );
         }
     }
+
+    // Should have created multiple WAL files due to rotation
+    assert!(
+        wal_file_count >= 2,
+        "Expected at least 2 WAL files from rotation, got {}",
+        wal_file_count
+    );
 }
 
 /// Test CPU-bound operations complete in reasonable time.

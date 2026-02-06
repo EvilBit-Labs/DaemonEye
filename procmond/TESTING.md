@@ -93,8 +93,8 @@ cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 # Coverage with nextest runner (recommended)
 cargo llvm-cov nextest --workspace --profile coverage
 
-# Check coverage threshold (CI)
-cargo llvm-cov nextest --workspace --profile coverage --fail-under-lines 80
+# Check coverage threshold (CI) - currently 9.7%, target is 80%
+cargo llvm-cov nextest --workspace --profile coverage --fail-under-lines 9.7
 ```
 
 View coverage report:
@@ -408,7 +408,7 @@ cargo nextest run --package procmond --test cross_platform_tests -- --skip windo
 
 ```bash
 # Ensure llvm-tools is installed
-rustup component add llvm-tools-preview
+rustup component add llvm-tools
 
 # Install cargo-llvm-cov
 cargo install cargo-llvm-cov
@@ -422,7 +422,7 @@ cargo llvm-cov --workspace
 
 ```bash
 # Run with verbose output
-cargo nextest run --package procmond -- --nocapture
+cargo nextest run --package procmond --no-capture
 
 # Run with debug logging
 RUST_LOG=debug cargo nextest run --package procmond

@@ -250,6 +250,8 @@ coverage:
 test-coverage: coverage
 
 # Check coverage thresholds
+
+# TODO: Raise threshold to 80% once test coverage reaches target (see TESTING.md)
 coverage-check:
     @{{ mise_exec }} cargo llvm-cov nextest --workspace --profile coverage --lcov --output-path lcov.info --fail-under-lines 9.7
 

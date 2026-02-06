@@ -133,4 +133,3 @@ megalinter-reports/
 .claude/*.local.md
 
 .taskmaster/
-.env

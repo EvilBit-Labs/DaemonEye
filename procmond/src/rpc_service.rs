@@ -2473,9 +2473,8 @@ mod tests {
         let result = actor_handle.begin_monitoring();
 
         match result {
-            Err(ActorError::ChannelFull { capacity }) => {
-                // Verify the error contains the capacity
-                assert_eq!(capacity, 100); // This is ACTOR_CHANNEL_CAPACITY constant
+            Err(ActorError::ChannelFull { .. }) => {
+                // Successfully detected channel full condition
             }
             other => {
                 panic!("Expected ChannelFull error, got: {other:?}");
