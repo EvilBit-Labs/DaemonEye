@@ -131,3 +131,6 @@ megalinter-reports/
 # Local Claude configuration
 .claude.local.md
 .claude/*.local.md
+
+.taskmaster/
+.env
