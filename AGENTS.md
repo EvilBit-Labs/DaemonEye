@@ -449,6 +449,11 @@ pub struct Cli {
 - Checks: fmt, clippy strict, tests, benchmarks
 - Security: Dependency scanning, SLSA (Enterprise)
 
+### Security Scanners
+
+- **zizmor**: GitHub Actions permissions - add explicit `permissions:` block to workflows
+- **CodeQL rust/cleartext-logging**: Don't interpolate sensitive values in assert messages
+
 ### Code Review
 
 - Primary tool: coderabbit.ai
