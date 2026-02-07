@@ -33,7 +33,7 @@ Execute tickets in order. Each ticket's dependencies must be complete before sta
   - Heartbeat publishing (30s interval)
   - *Requires: Ticket 2*
 
-- [ ] **Ticket 4**: [Implement Agent Loading State and Heartbeat Detection](./tickets/Implement_Agent_Loading_State_and_Heartbeat_Detection.md)
+- [x] **Ticket 4**: [Implement Agent Loading State and Heartbeat Detection](./tickets/Implement_Agent_Loading_State_and_Heartbeat_Detection.md)
 
   - Collector configuration format (agent.yaml)
   - Loading state machine (Loading → Ready → Steady State)

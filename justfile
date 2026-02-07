@@ -152,7 +152,7 @@ test-fs:
     @just rmrf tmp/xfstest
 
 test-ci:
-    @{{ mise_exec }} cargo nextest run --workspace --no-capture
+    @{{ mise_exec }} cargo nextest run --workspace --profile ci --no-capture
 
 # Run comprehensive tests (includes performance and security)
 test-comprehensive:
@@ -242,13 +242,18 @@ deny: deny-deps
 # CI AND QUALITY ASSURANCE
 # =============================================================================
 
-# Generate coverage report
+# Generate coverage report using nextest with coverage profile
 coverage:
-    @{{ mise_exec }} cargo llvm-cov --workspace --lcov --output-path lcov.info
+    @{{ mise_exec }} cargo llvm-cov nextest --workspace --profile coverage --lcov --output-path lcov.info
+
+# Alias for coverage generation
+test-coverage: coverage
 
 # Check coverage thresholds
+
+# TODO: Raise threshold to 80% once test coverage reaches target (see TESTING.md)
 coverage-check:
-    @{{ mise_exec }} cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 9.7
+    @{{ mise_exec }} cargo llvm-cov nextest --workspace --profile coverage --lcov --output-path lcov.info --fail-under-lines 9.7
 
 # Full local CI parity check
 ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release security-scan coverage-check dist-plan

@@ -1,0 +1,71 @@
+# DaemonEye nextest configuration
+# Documentation: https://nexte.st/docs/configuration/
+
+[store]
+# Store test results and metadata
+dir = "target/nextest"
+
+# =============================================================================
+# TEST PROFILES
+# =============================================================================
+
+[profile.default]
+# Default test execution settings
+# Fail fast to quickly identify broken tests during development
+fail-fast = true
+# Run tests with moderate parallelism by default
+test-threads = "num-cpus"
+# Show test output for failures
+failure-output = "immediate-final"
+# Status level for test results
+status-level = "pass"
+# Slow-warning at 60s, hard-kill after 120s (60s × terminate-after 2)
+slow-timeout = { period = "60s", terminate-after = 2 }
+# No retries in local development (use CI profile for flaky-test retries)
+retries = 0
+
+[profile.default.junit]
+# JUnit XML output for CI integration
+path = "target/nextest/default/junit.xml"
+report-name = "daemoneye-tests"
+
+# -----------------------------------------------------------------------------
+# CI Profile - Optimized for continuous integration
+# Usage: cargo nextest run --profile ci
+# -----------------------------------------------------------------------------
+[profile.ci]
+# Don't fail fast in CI to get full test results
+fail-fast = false
+# Use all available CPUs in CI
+test-threads = "num-cpus"
+# Show all failures at the end
+failure-output = "final"
+# Higher timeout for CI environments (may be slower)
+slow-timeout = { period = "120s", terminate-after = 3 }
+# Retry flaky tests in CI
+retries = 2
+
+[profile.ci.junit]
+path = "target/nextest/ci/junit.xml"
+report-name = "daemoneye-ci-tests"
+store-success-output = false
+store-failure-output = true
+
+# -----------------------------------------------------------------------------
+# Coverage Profile - For running with llvm-cov
+# Usage: cargo llvm-cov nextest --profile coverage
+# -----------------------------------------------------------------------------
+[profile.coverage]
+# Coverage runs should be thorough
+fail-fast = false
+# Single-threaded for accurate coverage
+test-threads = 1
+# Extended timeout for coverage instrumentation overhead
+slow-timeout = { period = "180s", terminate-after = 2 }
+# No retries - we want deterministic results
+retries = 0
+failure-output = "immediate-final"
+
+[profile.coverage.junit]
+path = "target/nextest/coverage/junit.xml"
+report-name = "daemoneye-coverage-tests"

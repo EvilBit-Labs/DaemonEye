@@ -34,7 +34,6 @@
     clippy::match_wild_err_arm,
     clippy::single_match_else,
     clippy::clone_on_ref_ptr,
-    clippy::let_underscore_must_use,
     clippy::ignored_unit_patterns,
     clippy::unreadable_literal,
     clippy::separated_literal_suffix,
