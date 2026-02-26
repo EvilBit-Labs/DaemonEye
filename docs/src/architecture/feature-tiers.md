@@ -216,7 +216,7 @@ The DaemonEye project maintains a dual-license approach to balance open source a
 
 ### **Feature Gating Implementation**
 
-```rust
+```rust,ignore
 // Compile-time feature gates
 #[cfg(feature = "business-tier")]
 pub mod security_center;

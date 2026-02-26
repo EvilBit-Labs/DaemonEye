@@ -476,6 +476,8 @@ mod tests {
 
     #[test]
     fn test_network_event_partial_eq() {
+        use chrono::Duration;
+
         let connection = NetworkConnection::new(
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
             8080,
@@ -485,19 +487,26 @@ mod tests {
             1234,
         );
 
-        let event1 = NetworkEvent::new(
+        let mut event1 = NetworkEvent::new(
             NetworkEventType::Connection,
             connection.clone(),
             serde_json::json!({"bytes": 1024}),
         );
 
-        let event2 = NetworkEvent::new(
+        let mut event2 = NetworkEvent::new(
             NetworkEventType::Connection,
             connection,
             serde_json::json!({"bytes": 1024}),
         );
 
-        // Note: These won't be equal due to timestamp differences
+        // Events with same timestamp should be equal
+        let fixed_time = chrono::Utc::now();
+        event1.timestamp = fixed_time;
+        event2.timestamp = fixed_time;
+        assert_eq!(event1, event2);
+
+        // Events with different timestamps should not be equal
+        event2.timestamp = fixed_time + Duration::seconds(1);
         assert_ne!(event1, event2);
     }
 }

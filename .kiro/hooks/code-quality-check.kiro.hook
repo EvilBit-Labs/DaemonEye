@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "name": "Code Quality Check",
+  "description": "Run `just check` when a code file is saved and ensure everything passes. Some of the formatters will make changes, so you may need to run it twice to ensure that the changes resolved any formatting issues.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*.rs",
+      "**/Cargo.toml",
+      "**/Cargo.lock",
+      "justfile",
+      "**/*.md"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A code file has been saved. Run `just check` to validate formatting, linting, and basic compilation. If the first run makes formatting changes, run it again to ensure all issues are resolved. Report the results and any issues that need attention.\n\nYou run each time an iterative change is made, so there may be partially implemented code identified. Do not remove the dead code, just mark them with the appropriate dead_code attribute to resolve the linting errors, and add an inline comment."
+  }
+}

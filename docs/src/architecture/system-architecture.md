@@ -14,6 +14,7 @@ graph TB
             HC[Hash Computer]
             AL[Audit Logger]
             IPC1[IPC Server]
+            EB1[EventBus Client]
         end
 
         subgraph "daemoneye-agent (Detection Orchestrator)"
@@ -22,6 +23,7 @@ graph TB
             RM[Rule Manager]
             IPC2[IPC Client]
             NS[Network Sinks]
+            BROKER[Embedded EventBus Broker]
         end
 
         subgraph "daemoneye-cli (Operator Interface)"
@@ -37,6 +39,12 @@ graph TB
             DET[Detection]
             ALT[Alerting]
             CRY[Crypto]
+        end
+
+        subgraph "daemoneye-eventbus (Event Bus)"
+            TOPICS[Topic Hierarchy]
+            CORR[Correlation Metadata]
+            TRANS[Cross-Platform Transport]
         end
     end
 
@@ -55,6 +63,10 @@ graph TB
     HC --> DE
     AL --> AL2
     IPC1 <--> IPC2
+    EB1 <--> BROKER
+    BROKER <--> TOPICS
+    BROKER <--> CORR
+    BROKER <--> TRANS
     DE --> AM
     AM --> NS
     NS --> SIEM
@@ -91,7 +103,7 @@ graph TB
 
 #### Key Interfaces
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait ProcessCollector: Send + Sync {
     async fn enumerate_processes(&self) -> Result<Vec<ProcessRecord>>;
@@ -114,7 +126,7 @@ pub trait AuditLogger: Send + Sync {
 
 #### Implementation Structure
 
-```rust
+```rust,ignore
 pub struct ProcessCollector {
     config: CollectorConfig,
     hash_computer: Box<dyn HashComputer>,
@@ -169,7 +181,7 @@ impl ProcessCollector {
 
 #### Key Interfaces
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait DetectionEngine: Send + Sync {
     async fn execute_rules(&self, scan_id: i64) -> Result<Vec<Alert>>;
@@ -195,7 +207,7 @@ pub trait ProcessManager: Send + Sync {
 
 #### Implementation Structure
 
-```rust
+```rust,ignore
 pub struct DetectionEngine {
     db: redb::Database,
     rule_manager: RuleManager,
@@ -255,7 +267,7 @@ impl DetectionEngine {
 
 #### Key Interfaces
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait QueryExecutor: Send + Sync {
     async fn execute_query(&self, query: &str, params: &[Value]) -> Result<QueryResult>;
@@ -270,8 +282,16 @@ pub trait HealthChecker: Send + Sync {
 
 #[async_trait]
 pub trait DataManager: Send + Sync {
-    async fn export_alerts(&self, format: ExportFormat, filter: &AlertFilter) -> Result<ExportResult>;
-    async fn export_processes(&self, format: ExportFormat, filter: &ProcessFilter) -> Result<ExportResult>;
+    async fn export_alerts(
+        &self,
+        format: ExportFormat,
+        filter: &AlertFilter,
+    ) -> Result<ExportResult>;
+    async fn export_processes(
+        &self,
+        format: ExportFormat,
+        filter: &ProcessFilter,
+    ) -> Result<ExportResult>;
 }
 ```
 
@@ -291,7 +311,7 @@ pub trait DataManager: Send + Sync {
 
 #### Module Structure
 
-```rust
+```rust,ignore
 pub mod config {
     pub mod environment;
     pub mod hierarchical;
@@ -392,11 +412,86 @@ sequenceDiagram
     SA-->>CLI: Formatted results
 ```
 
+## Communication Architecture
+
+DaemonEye uses a dual-protocol architecture for different communication needs:
+
+1. **IPC Protocol**: Direct protobuf communication between daemoneye-cli and daemoneye-agent
+2. **EventBus Protocol**: Local IPC pub/sub messaging between collectors and agent on the same system
+
+### EventBus Architecture
+
+The daemoneye-eventbus provides local cross-platform pub/sub messaging for collector coordination on a single system with the following features:
+
+#### Topic Hierarchy
+
+The event bus uses a hierarchical topic structure with up to 4 levels:
+
+**Event Topics** (Data Flow):
+
+- `events.process.*` - Process monitoring events (lifecycle, metadata, tree, integrity, anomaly, batch)
+- `events.network.*` - Network events (future extension)
+- `events.filesystem.*` - Filesystem events (future extension)
+- `events.performance.*` - Performance events (future extension)
+
+**Control Topics** (Management Flow):
+
+- `control.collector.*` - Collector lifecycle and configuration
+- `control.agent.*` - Agent orchestration and policy
+- `control.health.*` - Health monitoring and diagnostics
+
+#### Wildcard Support
+
+- **Single-level wildcard (`+`)**: Matches exactly one segment
+  - Example: `events.+.lifecycle` matches `events.process.lifecycle`
+- **Multi-level wildcard (`#`)**: Matches zero or more segments
+  - Example: `events.process.#` matches all process events
+
+#### Correlation Metadata
+
+The event bus supports comprehensive correlation tracking for multi-collector workflows:
+
+```rust,ignore
+// Hierarchical correlation tracking
+let parent_metadata = CorrelationMetadata::new("workflow-id".to_string())
+    .with_stage("detection".to_string())
+    .with_tag("workflow".to_string(), "threat_analysis".to_string());
+
+let child_metadata = parent_metadata.create_child("analysis-id".to_string());
+// Child inherits workflow stage and tags from parent
+```
+
+**Use Cases**:
+
+- Multi-collector workflows on the same system (process → network → filesystem analysis)
+- Forensic investigation tracking across local collectors
+- Local workflow tracing with correlation IDs
+- Performance analysis across workflow stages within a single host
+
+#### Access Control
+
+Topics have three access levels:
+
+- **Public**: Accessible to all components (e.g., `control.health.*`)
+- **Restricted**: Component-specific access (e.g., `events.process.*` for procmond)
+- **Privileged**: Requires authentication (e.g., `control.collector.lifecycle`)
+
+#### Embedded Broker
+
+The daemoneye-agent runs an embedded EventBus broker that:
+
+- Manages topic subscriptions and message routing
+- Enforces access control policies
+- Tracks correlation metadata for workflow coordination
+- Provides statistics and health monitoring
+
+For complete EventBus documentation, see the [daemoneye-eventbus crate documentation](../../daemoneye-eventbus/README.md).
+
 ## IPC Protocol Design
 
 ### Protocol Specification
 
-The IPC protocol uses Protocol Buffers for efficient, type-safe communication between procmond and daemoneye-agent.
+The IPC protocol uses Protocol Buffers for efficient, type-safe communication between daemoneye-cli and daemoneye-agent.
 
 ```protobuf
 syntax = "proto3";
@@ -460,7 +555,7 @@ message ProcessRecord {
 
 **Unix Domain Sockets (Linux/macOS)**:
 
-```rust
+```rust,ignore
 pub struct UnixSocketServer {
     path: PathBuf,
     listener: UnixListener,
@@ -489,7 +584,7 @@ impl IpcServer for UnixSocketServer {
 
 **Named Pipes (Windows)**:
 
-```rust
+```rust,ignore
 pub struct NamedPipeServer {
     pipe_name: String,
     server: NamedPipeServerStream,
@@ -514,7 +609,7 @@ impl IpcServer for NamedPipeServer {
 
 **Schema Design**:
 
-```rust
+```rust,ignore
 // Process snapshots table
 pub struct ProcessSnapshot {
     pub id: Uuid,
@@ -591,7 +686,7 @@ The audit ledger is implemented as a hash-chained log file, not a database table
 
 **Hash Chain Implementation**:
 
-```rust
+```rust,ignore
 pub struct AuditChain {
     hasher: blake3::Hasher,
     signer: Option<ed25519_dalek::Keypair>,
@@ -651,7 +746,7 @@ impl AuditChain {
 
 **Principle**: Each component operates with the minimum privileges required for its function.
 
-```rust
+```rust,ignore
 pub struct PrivilegeManager {
     initial_privileges: Privileges,
     current_privileges: Privileges,
@@ -687,7 +782,7 @@ impl PrivilegeManager {
 
 **AST Validation**: All user-provided SQL undergoes comprehensive validation.
 
-```rust
+```rust,ignore
 pub struct SqlValidator {
     parser: sqlparser::Parser<sqlparser::dialect::SQLiteDialect>,
     allowed_functions: HashSet<String>,
@@ -721,7 +816,7 @@ impl SqlValidator {
 
 **Bounded Channels**: Configurable capacity with backpressure policies.
 
-```rust
+```rust,ignore
 pub struct BoundedChannel<T> {
     sender: mpsc::Sender<T>,
     receiver: mpsc::Receiver<T>,

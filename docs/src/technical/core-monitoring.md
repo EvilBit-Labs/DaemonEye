@@ -14,13 +14,13 @@ DaemonEye uses a layered approach to process enumeration, providing a unified in
 
 **Primary Interface**: The `sysinfo` crate provides cross-platform process enumeration with consistent data structures.
 
-```rust
-use sysinfo::{System, SystemExt, ProcessExt, Pid};
+```rust,ignore
+use sysinfo::{Pid, ProcessExt, System, SystemExt};
 
 pub struct ProcessCollector {
     system: System,
     config: CollectorConfig,
-    hash_computer: Box<dyn HashComputer>,
+    hash_computer: Sha256HashComputer,
 }
 
 impl ProcessCollector {
@@ -28,9 +28,9 @@ impl ProcessCollector {
         self.system.refresh_processes();
 
         let mut processes = Vec::new();
-        let collection_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_millis() as i64;
+        let collection_time =
+            i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())
+                .map_err(|_| "Timestamp overflow: system time exceeds i64::MAX milliseconds")?;
 
         for (pid, process) in self.system.processes() {
             let process_record = ProcessRecord {
@@ -65,7 +65,7 @@ impl ProcessCollector {
 
 **Linux eBPF Integration (Enterprise Tier)**:
 
-```rust
+```rust,ignore
 #[cfg(target_os = "linux")]
 pub struct EbpfProcessCollector {
     base_collector: ProcessCollector,
@@ -87,7 +87,7 @@ impl EbpfProcessCollector {
 
 **Windows ETW Integration (Enterprise Tier)**:
 
-```rust
+```rust,ignore
 #[cfg(target_os = "windows")]
 pub struct EtwProcessCollector {
     base_collector: ProcessCollector,
@@ -109,7 +109,7 @@ impl EtwProcessCollector {
 
 **macOS EndpointSecurity Integration (Enterprise Tier)**:
 
-```rust
+```rust,ignore
 #[cfg(target_os = "macos")]
 pub struct EndpointSecurityProcessCollector {
     base_collector: ProcessCollector,
@@ -133,23 +133,41 @@ impl EndpointSecurityProcessCollector {
 
 **Hash Computation**: SHA-256 hashing of executable files for integrity verification.
 
-```rust
+```rust,ignore
+use sha2::{Digest, Sha256};
+use std::io::Read;
+use std::path::Path;
+
+pub trait HashComputer: Send + Sync {
+    fn compute_hash(&self, path: &Path) -> Result<Option<String>>;
+    fn get_algorithm(&self) -> &'static str;
+    fn buffer_size(&self) -> usize;
+    fn set_buffer_size(&mut self, size: usize);
+}
+
+#[derive(Clone)]
 pub struct Sha256HashComputer {
     buffer_size: usize,
 }
 
+impl Sha256HashComputer {
+    pub fn new(buffer_size: usize) -> Self {
+        Self { buffer_size }
+    }
+}
+
 impl HashComputer for Sha256HashComputer {
-    async fn compute_hash(&self, path: &Path) -> Result<Option<String>> {
+    fn compute_hash(&self, path: &Path) -> Result<Option<String>> {
         if !path.exists() {
             return Ok(None);
         }
 
-        let mut file = File::open(path).await?;
+        let mut file = std::fs::File::open(path)?;
         let mut hasher = Sha256::new();
         let mut buffer = vec![0u8; self.buffer_size];
 
         loop {
-            let bytes_read = file.read(&mut buffer).await?;
+            let bytes_read = file.read(&mut buffer)?;
             if bytes_read == 0 {
                 break;
             }
@@ -163,12 +181,20 @@ impl HashComputer for Sha256HashComputer {
     fn get_algorithm(&self) -> &'static str {
         "sha256"
     }
+
+    fn buffer_size(&self) -> usize {
+        self.buffer_size
+    }
+
+    fn set_buffer_size(&mut self, size: usize) {
+        self.buffer_size = size;
+    }
 }
 ```
 
 **Performance Optimization**: Asynchronous hash computation with configurable buffer sizes.
 
-```rust
+```rust,ignore
 impl ProcessCollector {
     async fn compute_executable_hash(&self, path: Option<&Path>) -> Result<Option<String>> {
         let path = match path {
@@ -185,18 +211,16 @@ impl ProcessCollector {
         let hash_computer = self.hash_computer.clone();
         let path = path.to_path_buf();
 
-        tokio::task::spawn_blocking(move || {
-            hash_computer.compute_hash(&path)
-        }).await?
+        tokio::task::spawn_blocking(move || hash_computer.compute_hash(&path)).await?
     }
 
     fn should_skip_hashing(&self, path: &Path) -> bool {
         // Skip hashing for system processes or temporary files
         let path_str = path.to_string_lossy();
-        path_str.contains("/proc/") ||
-        path_str.contains("/sys/") ||
-        path_str.contains("/tmp/") ||
-        path_str.contains("\\System32\\")
+        path_str.contains("/proc/")
+            || path_str.contains("/sys/")
+            || path_str.contains("/tmp/")
+            || path_str.contains("\\System32\\")
     }
 }
 ```
@@ -207,7 +231,7 @@ impl ProcessCollector {
 
 **AST Validation**: Comprehensive SQL parsing and validation to prevent injection attacks.
 
-```rust
+```rust,ignore
 use sqlparser::{ast::*, dialect::SQLiteDialect, parser::Parser};
 
 pub struct SqlValidator {
@@ -354,7 +378,7 @@ impl SqlValidator {
 
 **Sandboxed Execution**: Safe execution of detection rules with resource limits.
 
-```rust
+```rust,ignore
 pub struct DetectionEngine {
     db: redb::Database,
     sql_validator: SqlValidator,
@@ -391,17 +415,17 @@ impl DetectionEngine {
         // Execute with timeout and resource limits
         let execution_result = tokio::time::timeout(
             Duration::from_secs(30),
-            self.execute_sql_query(&rule.sql_query, scan_id)
-        ).await??;
+            self.execute_sql_query(&rule.sql_query, scan_id),
+        )
+        .await??;
 
         // Generate alerts from query results
         let mut alerts = Vec::new();
         for row in execution_result.rows {
-            let alert = self.alert_manager.generate_alert(
-                &rule,
-                &row,
-                scan_id
-            ).await?;
+            let alert = self
+                .alert_manager
+                .generate_alert(&rule, &row, scan_id)
+                .await?;
 
             if let Some(alert) = alert {
                 alerts.push(alert);
@@ -436,7 +460,7 @@ impl DetectionEngine {
 
 **Structured Alerts**: Comprehensive alert structure with full context.
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
     pub id: Uuid,
@@ -503,7 +527,7 @@ impl Alert {
 
 **Intelligent Deduplication**: Prevent alert spam while maintaining security visibility.
 
-```rust
+```rust,ignore
 pub struct AlertManager {
     db: redb::Database,
     dedupe_cache: Arc<Mutex<HashMap<String, Instant>>>,
@@ -559,7 +583,7 @@ impl AlertManager {
 
 **Pluggable Sinks**: Flexible alert delivery through multiple channels.
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait AlertSink: Send + Sync {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult>;
@@ -575,30 +599,28 @@ pub struct AlertDeliveryManager {
 
 impl AlertDeliveryManager {
     pub async fn deliver_alert(&self, alert: &Alert) -> Result<Vec<DeliveryResult>> {
-        let mut results = Vec::new();
+        let alert = alert.clone();
 
-        // Deliver to all sinks in parallel
-        let sink_tasks: Vec<_> = self.sinks.iter()
+        // Collect futures without spawning (avoids 'static lifetime requirement)
+        let delivery_futures: Vec<_> = self
+            .sinks
+            .iter()
             .map(|sink| {
                 let alert = alert.clone();
-                let sink = sink.as_ref();
-                tokio::spawn(async move {
-                    self.deliver_to_sink(sink, &alert).await
-                })
+                async move { sink.send(&alert).await }
             })
             .collect();
 
-        for task in sink_tasks {
-            match task.await {
-                Ok(result) => results.push(result),
-                Err(e) => {
-                    tracing::error!("Alert delivery task failed: {}", e);
-                    results.push(DeliveryResult::Failed(e.to_string()));
-                }
-            }
-        }
+        // Execute all deliveries concurrently
+        let results = futures::future::join_all(delivery_futures).await;
 
-        Ok(results)
+        Ok(results
+            .into_iter()
+            .map(|r| match r {
+                Ok(dr) => dr,
+                Err(e) => DeliveryResult::Failed(e.to_string()),
+            })
+            .collect())
     }
 
     async fn deliver_to_sink(&self, sink: &dyn AlertSink, alert: &Alert) -> DeliveryResult {
@@ -637,7 +659,7 @@ impl AlertDeliveryManager {
 
 **Stdout Sink**:
 
-```rust
+```rust,ignore
 pub struct StdoutSink {
     format: OutputFormat,
 }
@@ -667,7 +689,7 @@ impl AlertSink for StdoutSink {
 
 **Syslog Sink**:
 
-```rust
+```rust,ignore
 pub struct SyslogSink {
     facility: SyslogFacility,
     tag: String,
@@ -681,11 +703,7 @@ impl AlertSink for SyslogSink {
         let timestamp = self.format_timestamp(alert.alert_time);
         let message = format!(
             "<{}>{} {} {}: {}",
-            priority,
-            timestamp,
-            self.tag,
-            alert.title,
-            alert.description
+            priority, timestamp, self.tag, alert.title, alert.description
         );
 
         self.socket.send(message.as_bytes()).await?;
@@ -705,7 +723,7 @@ impl AlertSink for SyslogSink {
 
 **Webhook Sink**:
 
-```rust
+```rust,ignore
 pub struct WebhookSink {
     url: Url,
     client: reqwest::Client,
@@ -718,7 +736,8 @@ impl AlertSink for WebhookSink {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult> {
         let payload = serde_json::to_value(alert)?;
 
-        let response = self.client
+        let response = self
+            .client
             .post(self.url.clone())
             .headers(self.headers.clone())
             .json(&payload)
@@ -735,7 +754,8 @@ impl AlertSink for WebhookSink {
 
     async fn health_check(&self) -> HealthStatus {
         // Perform health check by sending a test request
-        match self.client
+        match self
+            .client
             .get(self.url.clone())
             .timeout(Duration::from_secs(5))
             .send()
@@ -765,20 +785,21 @@ impl AlertSink for WebhookSink {
 
 **Optimization Strategies**:
 
-```rust
+```rust,ignore
 impl ProcessCollector {
     async fn enumerate_processes_optimized(&self) -> Result<Vec<ProcessRecord>> {
         let start_time = Instant::now();
 
         // Use parallel processing for hash computation
-        let (processes, hash_tasks): (Vec<_>, Vec<_>) = self.collect_basic_process_data()
+        let (processes, hash_tasks): (Vec<_>, Vec<_>) = self
+            .collect_basic_process_data()
             .into_iter()
             .partition(|p| p.executable_path.is_none());
 
         // Compute hashes in parallel
-        let hash_results = futures::future::join_all(
-            hash_tasks.into_iter().map(|p| self.compute_hash_async(p))
-        ).await;
+        let hash_results =
+            futures::future::join_all(hash_tasks.into_iter().map(|p| self.compute_hash_async(p)))
+                .await;
 
         let mut all_processes = processes;
         all_processes.extend(hash_results.into_iter().flatten());
@@ -806,7 +827,7 @@ impl ProcessCollector {
 
 **Optimization Strategies**:
 
-```rust
+```rust,ignore
 impl DetectionEngine {
     async fn execute_rules_optimized(&self, scan_id: i64) -> Result<Vec<Alert>> {
         let rules = self.rule_manager.load_enabled_rules().await?;
@@ -816,8 +837,11 @@ impl DetectionEngine {
 
         // Execute simple rules in parallel
         let simple_alerts = futures::future::join_all(
-            simple_rules.into_iter().map(|rule| self.execute_rule(rule, scan_id))
-        ).await;
+            simple_rules
+                .into_iter()
+                .map(|rule| self.execute_rule(rule, scan_id)),
+        )
+        .await;
 
         // Execute complex rules sequentially to avoid resource contention
         let mut complex_alerts = Vec::new();
@@ -844,7 +868,7 @@ impl DetectionEngine {
 
 **Process Collection Failures**:
 
-```rust
+```rust,ignore
 impl ProcessCollector {
     async fn enumerate_processes_with_fallback(&self) -> Result<Vec<ProcessRecord>> {
         match self.enumerate_processes_enhanced().await {
@@ -860,9 +884,13 @@ impl ProcessCollector {
 
 **Detection Engine Failures**:
 
-```rust
+```rust,ignore
 impl DetectionEngine {
-    async fn execute_rule_with_recovery(&self, rule: &DetectionRule, scan_id: i64) -> Result<Vec<Alert>> {
+    async fn execute_rule_with_recovery(
+        &self,
+        rule: &DetectionRule,
+        scan_id: i64,
+    ) -> Result<Vec<Alert>> {
         match self.execute_rule(rule, scan_id).await {
             Ok(alerts) => Ok(alerts),
             Err(e) => {
@@ -885,18 +913,22 @@ impl DetectionEngine {
 
 **Memory Pressure Handling**:
 
-```rust
+```rust,ignore
+const MIN_HASH_BUFFER_SIZE: usize = 4 * 1024;
+
 impl ProcessCollector {
-    async fn handle_memory_pressure(&self) -> Result<()> {
+    async fn handle_memory_pressure(&mut self) -> Result<()> {
         let memory_usage = self.get_memory_usage()?;
 
         if memory_usage > self.config.memory_threshold {
             tracing::warn!("Memory pressure detected, reducing batch size");
 
-            // Reduce batch size for hash computation
-            self.hash_computer.set_buffer_size(
-                self.hash_computer.buffer_size() / 2
-            );
+            // Reduce batch size for hash computation without dropping below the minimum buffer
+            let current = self.hash_computer.buffer_size();
+            let new_size = (current / 2).max(MIN_HASH_BUFFER_SIZE);
+            if new_size < current {
+                self.hash_computer.set_buffer_size(new_size);
+            }
 
             // Trigger garbage collection
             tokio::task::yield_now().await;

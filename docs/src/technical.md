@@ -28,6 +28,22 @@ Enterprise tier features provide advanced monitoring capabilities including kern
 
 [Read Enterprise Tier Documentation →](./technical/enterprise-tier.md)
 
+## Platform-Specific Process Collectors
+
+DaemonEye provides platform-specific process collectors that leverage native operating system capabilities for enhanced monitoring and security analysis.
+
+### Windows Process Collector
+
+The Windows process collector provides comprehensive Windows-specific capabilities including SeDebugPrivilege detection, process tokens, UAC elevation status, and Windows service monitoring.
+
+[Read Windows Process Collector Documentation →](./technical/windows-process-collector.md)
+
+### macOS Process Collector
+
+The macOS process collector provides comprehensive macOS-specific capabilities including kernel extension integration, process code signing verification, system integrity protection monitoring, and EndpointSecurity framework integration.
+
+[Read macOS Process Collector Documentation →](./technical/macos-process-collector.md)
+
 ## Technical Architecture
 
 ### Component Overview
@@ -66,8 +82,8 @@ graph LR
 
 The process collection system uses the `sysinfo` crate for cross-platform process enumeration:
 
-```rust
-use sysinfo::{System, SystemExt, ProcessExt};
+```rust,ignore
+use sysinfo::System;
 
 pub struct ProcessCollector {
     system: System,
@@ -83,7 +99,8 @@ impl ProcessCollector {
     pub async fn collect_processes(&mut self) -> Result<Vec<ProcessInfo>, CollectionError> {
         self.system.refresh_all();
 
-        let processes = self.system
+        let processes = self
+            .system
             .processes()
             .values()
             .map(|p| ProcessInfo::from(p))
@@ -98,7 +115,7 @@ impl ProcessCollector {
 
 DaemonEye uses redb for high-performance event storage:
 
-```rust
+```rust,ignore
 use redb::{Database, ReadableTable, WritableTable};
 
 pub struct EventStore {
@@ -129,7 +146,7 @@ impl EventStore {
 
 The alert system provides multi-channel alert delivery:
 
-```rust
+```rust,ignore
 use async_trait::async_trait;
 
 #[async_trait]
@@ -197,7 +214,7 @@ Storage requirements scale with data retention:
 
 All inputs are validated using the `validator` crate:
 
-```rust
+```rust,ignore
 use validator::{Validate, ValidationError};
 
 #[derive(Validate)]
@@ -233,7 +250,7 @@ Multiple layers of SQL injection prevention:
 
 BLAKE3 hashing and Ed25519 signatures ensure data integrity:
 
-```rust
+```rust,ignore
 use blake3::Hasher;
 use ed25519_dalek::{Keypair, Signature};
 
@@ -259,7 +276,7 @@ impl IntegrityChecker {
 
 Comprehensive unit testing with mocks and test doubles:
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,7 +299,7 @@ mod tests {
             .times(1)
             .returning(|| Ok(CollectionResult::default()));
 
-        let agent = daemoneye-agent::new(Box::new(mock_collector));
+        let agent = daemoneye_agent::new(Box::new(mock_collector));
         let result = agent.run_collection_cycle().await;
 
         assert!(result.is_ok());
@@ -294,7 +311,7 @@ mod tests {
 
 Test component interactions and data flow:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_database_integration() {
     let temp_dir = TempDir::new().unwrap();
@@ -315,8 +332,8 @@ async fn test_database_integration() {
 
 Benchmark critical operations:
 
-```rust
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+```rust,ignore
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn benchmark_process_collection(c: &mut Criterion) {
     let mut group = c.benchmark_group("process_collection");

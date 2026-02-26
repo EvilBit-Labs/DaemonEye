@@ -48,7 +48,7 @@ Each IPC message uses a simple, robust framing protocol:
 
 The IPC system is configured through the `IpcConfig` structure:
 
-```rust
+```rust,ignore
 pub struct IpcConfig {
     pub endpoint_path: String,
     pub max_frame_bytes: usize,
@@ -80,10 +80,12 @@ pub struct IpcConfig {
 You can specify custom endpoints in the configuration:
 
 ```yaml
+# Example configuration (choose one based on platform)
 ipc:
-  endpoint_path: "/tmp/custom-daemoneye.sock"  # Unix/macOS
-  # OR
-  endpoint_path: "\\\\.\\pipe\\custom-daemoneye"    # Windows
+  # Unix/macOS
+  endpoint_path: /tmp/custom-daemoneye.sock
+  # Windows (alternative)
+  # endpoint_path: "\\\\.\\pipe\\custom-daemoneye"
 ```
 
 #### Endpoint Permissions
@@ -105,16 +107,18 @@ ipc:
 
 The IPC layer provides detailed error information:
 
-```rust
+```rust,ignore
+use std::io;
+
 pub enum IpcError {
-    Timeout,                    // Operation timed out
-    TooLarge { size, max_size }, // Message exceeds size limit
-    CrcMismatch { expected, actual }, // Data corruption detected
-    Io(io::Error),             // Underlying I/O error
-    Decode(prost::DecodeError), // Protobuf decoding error
-    Encode(String),            // Protobuf encoding error
-    PeerClosed,                // Connection closed by peer
-    InvalidLength { length },   // Invalid message length
+    Timeout,                                    // Operation timed out
+    TooLarge { size: usize, max_size: usize },  // Message exceeds size limit
+    CrcMismatch { expected: u32, actual: u32 }, // Data corruption detected
+    Io(io::Error),                              // Underlying I/O error
+    Decode(prost::DecodeError),                 // Protobuf decoding error
+    Encode(String),                             // Protobuf encoding error
+    PeerClosed,                                 // Connection closed by peer
+    InvalidLength { length: usize },            // Invalid message length
 }
 ```
 

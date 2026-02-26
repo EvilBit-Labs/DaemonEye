@@ -8,6 +8,7 @@
     clippy::str_to_string,
     clippy::as_conversions,
     clippy::uninlined_format_args,
+    clippy::print_stdout, // Test output is intentional
     clippy::use_debug,
     clippy::shadow_reuse,
     clippy::shadow_unrelated,

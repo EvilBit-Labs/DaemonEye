@@ -70,7 +70,7 @@ DaemonEye/
 
 ### Module Organization
 
-```rust
+```rust,ignore
 // Library structure pattern
 pub mod alerting; // Multi-channel alert delivery
 pub mod config; // Configuration management

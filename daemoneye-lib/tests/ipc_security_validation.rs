@@ -13,6 +13,7 @@
     clippy::uninlined_format_args,
     clippy::use_debug,
     clippy::shadow_reuse,
+    clippy::print_stdout, // Test output is intentional
     clippy::shadow_unrelated,
     clippy::single_match_else,
     clippy::case_sensitive_file_extension_comparisons,
@@ -131,21 +132,22 @@ async fn test_unix_socket_permissions() {
     );
 
     // Check parent directory permissions
-    if let Some(parent_dir) = socket_path.parent() {
-        if parent_dir != std::path::Path::new("/tmp") && parent_dir.exists() {
-            let parent_metadata =
-                std::fs::metadata(parent_dir).expect("Failed to get parent dir metadata");
-            let parent_permissions = parent_metadata.permissions();
-            let parent_mode = parent_permissions.mode();
+    if let Some(parent_dir) = socket_path.parent()
+        && parent_dir != std::path::Path::new("/tmp")
+        && parent_dir.exists()
+    {
+        let parent_metadata =
+            std::fs::metadata(parent_dir).expect("Failed to get parent dir metadata");
+        let parent_permissions = parent_metadata.permissions();
+        let parent_mode = parent_permissions.mode();
 
-            // Parent directory should have at least owner read/write/execute (0700)
-            // In test environments, it might have additional permissions (like 0755)
-            assert!(
-                (parent_mode & 0o700) == 0o700,
-                "Parent directory should have at least owner read/write/execute permissions, got {:o}",
-                parent_mode & 0o777
-            );
-        }
+        // Parent directory should have at least owner read/write/execute (0700)
+        // In test environments, it might have additional permissions (like 0755)
+        assert!(
+            (parent_mode & 0o700) == 0o700,
+            "Parent directory should have at least owner read/write/execute permissions, got {:o}",
+            parent_mode & 0o777
+        );
     }
 
     // Verify client can connect with proper permissions

@@ -125,3 +125,11 @@ megalinter-reports/
 
 # Override global gitignore
 !bin/
+# Added by goreleaser init:
+.intentionally-empty-file.o
+
+# Local Claude configuration
+.claude.local.md
+.claude/*.local.md
+
+.taskmaster/

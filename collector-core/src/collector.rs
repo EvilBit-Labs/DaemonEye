@@ -6,14 +6,26 @@
 use crate::{
     config::CollectorConfig,
     event::CollectionEvent,
+    event_bus::{EventBus, EventBusConfig, LocalEventBus},
     ipc::CollectorIpcServer,
+    performance::{PerformanceConfig, PerformanceMonitor},
+    rpc_services::{
+        CollectorConfigProvider, CollectorHealthProvider, CollectorRegistrationProvider,
+        CollectorRpcServiceManager, RpcServiceConfig,
+    },
     source::{EventSource, SourceCaps},
 };
 use anyhow::{Context, Result};
+use daemoneye_eventbus::{
+    DaemoneyeBroker,
+    rpc::{CollectorRpcClient, DeregistrationRequest, RegistrationRequest, RpcRequest, RpcStatus},
+};
 use daemoneye_lib::telemetry::{HealthStatus, PerformanceTimer, TelemetryCollector};
 use futures::future::try_join_all;
+use std::process;
 use std::{
     collections::HashMap,
+    env,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -91,6 +103,17 @@ pub struct CollectorRuntime {
     backpressure_semaphore: Arc<Semaphore>,
     event_batch: Vec<CollectionEvent>,
     last_batch_flush: Instant,
+    performance_monitor: Arc<PerformanceMonitor>,
+    event_bus: Option<Arc<dyn EventBus>>,
+    rpc_service_manager: Option<Arc<CollectorRpcServiceManager>>,
+}
+
+#[derive(Clone)]
+struct RegistrationSession {
+    collector_id: String,
+    topic: String,
+    broker: Arc<DaemoneyeBroker>,
+    timeout: Duration,
 }
 
 impl Collector {
@@ -113,6 +136,47 @@ impl Collector {
             config,
             sources: Vec::new(),
         }
+    }
+
+    /// Configures a collector to use DaemoneyeEventBus integration.
+    ///
+    /// This method only configures the socket path for later initialization.
+    /// The EventBus will be initialized when the collector starts running.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration for the collector runtime
+    /// * `socket_path` - Socket path for the embedded broker
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use collector_core::{Collector, CollectorConfig};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let config = CollectorConfig::default();
+    ///     let collector = Collector::configure_daemoneye_eventbus(config, "/tmp/daemoneye.sock")?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn configure_daemoneye_eventbus(
+        config: CollectorConfig,
+        socket_path: &str,
+    ) -> Result<Self> {
+        info!(
+            socket_path = socket_path,
+            "Creating collector with DaemoneyeEventBus"
+        );
+
+        let mut collector = Self::new(config);
+
+        // Store the socket path in the config for later use during runtime creation
+        // This ensures the EventBus will be properly initialized when the collector runs
+        collector.config.daemoneye_socket_path = Some(socket_path.to_string());
+
+        info!("Collector created with DaemoneyeEventBus configuration");
+        Ok(collector)
     }
 
     /// Registers an event source with the collector.
@@ -190,9 +254,292 @@ impl Collector {
             .fold(SourceCaps::empty(), |acc, caps| acc | caps)
     }
 
+    fn capability_labels(&self) -> Vec<String> {
+        let caps = self.capabilities();
+        let mut labels = Vec::new();
+        if caps.contains(SourceCaps::PROCESS) {
+            labels.push("process".to_string());
+        }
+        if caps.contains(SourceCaps::NETWORK) {
+            labels.push("network".to_string());
+        }
+        if caps.contains(SourceCaps::FILESYSTEM) {
+            labels.push("filesystem".to_string());
+        }
+        if caps.contains(SourceCaps::PERFORMANCE) {
+            labels.push("performance".to_string());
+        }
+        if caps.contains(SourceCaps::REALTIME) {
+            labels.push("realtime".to_string());
+        }
+        if caps.contains(SourceCaps::KERNEL_LEVEL) {
+            labels.push("kernel".to_string());
+        }
+        if caps.contains(SourceCaps::SYSTEM_WIDE) {
+            labels.push("system-wide".to_string());
+        }
+        labels
+    }
+
+    async fn register_with_broker(&self) -> Result<Option<RegistrationSession>> {
+        let Some(registration) = self.config.registration.as_ref().filter(|cfg| cfg.enabled) else {
+            return Ok(None);
+        };
+
+        let Some(broker) = registration.broker.as_ref() else {
+            warn!("Registration enabled but no broker handle provided; skipping auto-registration");
+            return Ok(None);
+        };
+
+        let collector_id = registration
+            .collector_id
+            .clone()
+            .unwrap_or_else(|| self.config.component_name.clone());
+        let collector_type = registration
+            .collector_type
+            .clone()
+            .unwrap_or_else(|| self.config.component_name.clone());
+        let topic = registration.topic.clone();
+        let mut attempt = 0u32;
+        let mut last_error: Option<anyhow::Error> = None;
+
+        while attempt <= registration.retry_attempts {
+            match self
+                .dispatch_registration(
+                    Arc::clone(broker),
+                    &topic,
+                    &collector_id,
+                    &collector_type,
+                    registration,
+                )
+                .await
+            {
+                Ok(_) => {
+                    info!(collector_id = %collector_id, "Collector registered with broker");
+                    return Ok(Some(RegistrationSession {
+                        collector_id,
+                        topic,
+                        broker: Arc::clone(broker),
+                        timeout: registration.timeout,
+                    }));
+                }
+                Err(err) => {
+                    last_error = Some(err);
+                    attempt = attempt.saturating_add(1);
+                    if attempt > registration.retry_attempts {
+                        break;
+                    }
+                    warn!(
+                        attempt = attempt,
+                        retries = registration.retry_attempts,
+                        "Collector registration failed, retrying"
+                    );
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!("Collector registration failed without specific error")
+        }))
+    }
+
+    /// Sanitize and validate hostname from environment variable.
+    ///
+    /// - Trims whitespace
+    /// - Removes control characters (null, newline, carriage return, etc.)
+    /// - Validates against RFC 1123 using hostname-validator crate
+    /// - Returns "unknown-host" if validation fails
+    fn sanitize_hostname(input: &str) -> String {
+        // Trim whitespace
+        let trimmed = input.trim();
+
+        // Remove control characters
+        let cleaned: String = trimmed.chars().filter(|c| !c.is_control()).collect();
+
+        // Validate using RFC 1123 compliant validator
+        if cleaned.is_empty() || !hostname_validator::is_valid(&cleaned) {
+            warn!("Hostname failed RFC 1123 validation, using fallback");
+            return "unknown-host".to_string();
+        }
+
+        cleaned
+    }
+
+    /// Sanitize and validate version string from compile-time sources.
+    ///
+    /// - Prefers compile-time COLLECTOR_CORE_VERSION or CARGO_PKG_VERSION
+    /// - Validates against semver-like pattern (digits, dots, optionally hyphenated pre-release/build metadata)
+    /// - Returns "unknown-version" if validation fails
+    fn sanitize_version() -> Option<String> {
+        // Try compile-time versions
+        let version = option_env!("COLLECTOR_CORE_VERSION")
+            .map(|v| v.to_string())
+            .or_else(|| Some(env!("CARGO_PKG_VERSION").to_string()));
+
+        let version = match version {
+            Some(v) => v,
+            None => {
+                warn!("No version available, using fallback");
+                return Some("unknown-version".to_string());
+            }
+        };
+
+        // Trim whitespace
+        let trimmed = version.trim();
+
+        // Remove control characters
+        let cleaned: String = trimmed.chars().filter(|c| !c.is_control()).collect();
+
+        if cleaned.is_empty() {
+            warn!("Version is empty after sanitization, using fallback");
+            return Some("unknown-version".to_string());
+        }
+
+        // Validate semver-like pattern: digits, dots, optionally hyphenated pre-release/build metadata
+        // Pattern: digits and dots for base version, optionally followed by hyphen and alphanumeric/dash/underscore for pre-release/build
+        let is_valid = if let Some(hyphen_pos) = cleaned.find('-') {
+            // Has pre-release or build metadata
+            let base = &cleaned[..hyphen_pos];
+            let metadata = &cleaned[hyphen_pos + 1..];
+
+            // Base version: digits and dots only
+            let base_valid =
+                !base.is_empty() && base.chars().all(|c| c.is_ascii_digit() || c == '.');
+
+            // Metadata: alphanumeric, dash, underscore, dot
+            let metadata_valid = !metadata.is_empty()
+                && metadata
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+
+            base_valid && metadata_valid
+        } else {
+            // No metadata: digits and dots only
+            !cleaned.is_empty() && cleaned.chars().all(|c| c.is_ascii_digit() || c == '.')
+        };
+
+        if !is_valid {
+            warn!("Version does not match semver-like pattern, using fallback");
+            return Some("unknown-version".to_string());
+        }
+
+        Some(cleaned)
+    }
+
+    async fn dispatch_registration(
+        &self,
+        broker: Arc<DaemoneyeBroker>,
+        topic: &str,
+        collector_id: &str,
+        collector_type: &str,
+        registration: &crate::config::CollectorRegistrationConfig,
+    ) -> Result<()> {
+        let client = CollectorRpcClient::new(topic, broker).await?;
+        let hostname_raw = env::var("HOSTNAME").unwrap_or_else(|_| "unknown-host".to_string());
+        let hostname = Self::sanitize_hostname(&hostname_raw);
+        let version = Self::sanitize_version();
+        let heartbeat_ms = registration
+            .heartbeat_interval
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+
+        let registration_request = RegistrationRequest {
+            collector_id: collector_id.to_string(),
+            collector_type: collector_type.to_string(),
+            hostname,
+            version,
+            pid: Some(process::id()),
+            capabilities: self.capability_labels(),
+            attributes: registration.attributes.clone(),
+            heartbeat_interval_ms: Some(heartbeat_ms),
+        };
+
+        let timeout = registration.timeout;
+        let request = RpcRequest::register(
+            client.client_id.clone(),
+            topic.to_string(),
+            registration_request,
+            timeout,
+        );
+        let response = client.call(request, timeout).await?;
+
+        if response.status != RpcStatus::Success {
+            let message = response
+                .error_details
+                .as_ref()
+                .map(|err| err.message.clone())
+                .unwrap_or_else(|| "registration failed".to_string());
+            anyhow::bail!("Collector registration failed: {}", message);
+        }
+
+        Ok(())
+    }
+
+    async fn deregister_from_broker(session: RegistrationSession) -> Result<()> {
+        let client = CollectorRpcClient::new(&session.topic, session.broker).await?;
+        let request = RpcRequest::deregister(
+            client.client_id.clone(),
+            session.topic.clone(),
+            DeregistrationRequest {
+                collector_id: session.collector_id,
+                reason: Some("collector shutdown".to_string()),
+                force: false,
+            },
+            session.timeout,
+        );
+
+        let response = client.call(request, session.timeout).await?;
+        if response.status != RpcStatus::Success {
+            let message = response
+                .error_details
+                .as_ref()
+                .map(|err| err.message.clone())
+                .unwrap_or_else(|| "deregistration failed".to_string());
+            anyhow::bail!("Collector deregistration failed: {}", message);
+        }
+
+        info!("Collector deregistered from broker");
+        Ok(())
+    }
+
     /// Returns the number of registered event sources.
     pub fn source_count(&self) -> usize {
         self.sources.len()
+    }
+
+    /// Returns a reference to the performance monitor for external access.
+    ///
+    /// # Deprecation Notice
+    ///
+    /// This is a temporary placeholder that currently always returns None.
+    /// The performance monitor is only available in the runtime and is not
+    /// stored on the Collector struct. This method will be implemented when
+    /// the PerformanceMonitor is properly stored on the Collector.
+    ///
+    /// # Planned Behavior
+    ///
+    /// When implemented, this method will return a reference to the performance
+    /// monitor for external access to metrics and monitoring capabilities.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use collector_core::{Collector, CollectorConfig};
+    ///
+    /// let collector = Collector::new(CollectorConfig::default());
+    /// if let Some(_monitor) = collector.performance_monitor() {
+    ///     // Monitor is available (placeholder example)
+    ///     // In the current version, this will always be None.
+    /// }
+    /// ```
+    #[deprecated(
+        note = "temporary placeholder; always returns None until PerformanceMonitor is stored on Collector"
+    )]
+    pub fn performance_monitor(&self) -> Option<Arc<PerformanceMonitor>> {
+        // This would require storing the performance monitor in the Collector struct
+        // For now, return None as the monitor is only available in the runtime
+        None
     }
 
     /// Runs the collector with all registered event sources.
@@ -209,12 +556,30 @@ impl Collector {
     ///
     /// # Examples
     ///
+    /// Running with the in-process event bus:
+    ///
     /// ```rust,no_run
     /// use collector_core::{Collector, CollectorConfig};
     ///
     /// #[tokio::main]
     /// async fn main() -> anyhow::Result<()> {
     ///     let mut collector = Collector::new(CollectorConfig::default());
+    ///     // Register sources...
+    ///     collector.run().await
+    /// }
+    /// ```
+    ///
+    /// Running with the Daemoneye event bus enabled:
+    ///
+    /// ```rust,no_run
+    /// use collector_core::{Collector, CollectorConfig};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let mut collector = Collector::configure_daemoneye_eventbus(
+    ///         CollectorConfig::default(),
+    ///         "/var/run/daemoneye.sock",
+    ///     )?;
     ///     // Register sources...
     ///     collector.run().await
     /// }
@@ -235,32 +600,102 @@ impl Collector {
         let (event_tx, event_rx) = mpsc::channel(self.config.event_buffer_size);
 
         // Create runtime
-        let mut runtime = CollectorRuntime::new(self.config.clone(), event_tx.clone(), event_rx);
+        let runtime = CollectorRuntime::new(self.config.clone(), event_tx.clone(), event_rx);
+
+        // Wrap runtime in Arc for RPC service access
+        let runtime_arc = Arc::new(RwLock::new(runtime));
+        let mut runtime_guard = runtime_arc.write().await;
+
+        // Initialize EventBus based on configuration
+        let socket_path = runtime_guard.config.daemoneye_socket_path.clone();
+        if let Some(ref path) = socket_path {
+            // DaemoneyeEventBus integration removed due to circular dependency
+            // Use LocalEventBus as temporary fallback
+            info!(
+                socket_path = %path,
+                "Using LocalEventBus as temporary fallback (circular dependency); daemoneye socket configured but not yet connected"
+            );
+        }
+        // Always initialize LocalEventBus (DaemoneyeEventBus not yet implemented)
+        runtime_guard.initialize_local_eventbus().await?;
 
         // Start IPC server
-        runtime.start_ipc_server().await?;
+        runtime_guard.start_ipc_server().await?;
+
+        let registration_session = self.register_with_broker().await?;
+
+        // Start RPC service if broker is available
+        if let Some(ref session) = registration_session {
+            runtime_guard
+                .start_rpc_service_with_runtime(
+                    session.collector_id.clone(),
+                    Arc::clone(&session.broker),
+                    Arc::clone(&runtime_arc),
+                )
+                .await?;
+        }
+
+        // Release the guard before running
+        drop(runtime_guard);
+
+        // Check telemetry config first (read-only)
+        let enable_telemetry = {
+            let runtime_guard = runtime_arc.read().await;
+            runtime_guard.config.enable_telemetry
+        };
+
+        // Acquire write lock once for all startup operations
+        let mut runtime_guard = runtime_arc.write().await;
 
         // Start all event sources
         for source in self.sources {
             let source_name = source.name().to_string();
             info!("Starting source: {}", source_name);
-            runtime.start_source(source).await?;
+            runtime_guard.start_source(source).await?;
             info!("Source started successfully: {}", source_name);
         }
 
         // Start health monitoring
-        runtime.start_health_monitoring().await;
+        runtime_guard.start_health_monitoring().await;
 
-        // Start telemetry collection
-        if runtime.config.enable_telemetry {
-            runtime.start_telemetry_collection().await;
+        // Start performance monitoring
+        runtime_guard.start_performance_monitoring().await;
+
+        // Start telemetry collection (if enabled)
+        if enable_telemetry {
+            runtime_guard.start_telemetry_collection().await;
         }
 
         // Start event processing
-        runtime.start_event_processing().await;
+        runtime_guard.start_event_processing().await;
 
-        // Run until shutdown
-        runtime.run_until_shutdown().await?;
+        // Get the shutdown signal before releasing the lock
+        let shutdown_signal = Arc::clone(&runtime_guard.shutdown_signal);
+
+        // Release the guard before waiting for shutdown
+        // IMPORTANT: This allows the RPC service to access the runtime while the collector runs
+        drop(runtime_guard);
+
+        // Wait for shutdown signal WITHOUT holding the runtime lock
+        CollectorRuntime::wait_for_shutdown(shutdown_signal).await;
+
+        // Reacquire the lock for graceful shutdown
+        {
+            let mut runtime_guard = runtime_arc.write().await;
+            runtime_guard.shutdown_gracefully().await?;
+        }
+
+        if let Some(session) = registration_session
+            && let Err(err) = Collector::deregister_from_broker(session).await
+        {
+            warn!(error = %err, "Failed to deregister collector from broker");
+        }
+
+        // Ensure the configured EventBus is shut down gracefully
+        {
+            let mut runtime_guard = runtime_arc.write().await;
+            runtime_guard.shutdown_eventbus().await?;
+        }
 
         info!("Collector runtime stopped");
         Ok(())
@@ -293,6 +728,10 @@ impl CollectorRuntime {
 
         let max_batch_size = config.max_batch_size;
 
+        // Initialize performance monitor with default configuration
+        let performance_config = PerformanceConfig::default();
+        let performance_monitor = Arc::new(PerformanceMonitor::new(performance_config));
+
         Self {
             config,
             event_rx,
@@ -308,6 +747,9 @@ impl CollectorRuntime {
             backpressure_semaphore,
             event_batch: Vec::with_capacity(max_batch_size),
             last_batch_flush: Instant::now(),
+            performance_monitor,
+            event_bus: None,
+            rpc_service_manager: None,
         }
     }
 
@@ -417,6 +859,127 @@ impl CollectorRuntime {
             .insert("health_monitor".to_string(), handle);
     }
 
+    /// Starts performance monitoring for comprehensive metrics collection.
+    async fn start_performance_monitoring(&mut self) {
+        let performance_monitor = Arc::clone(&self.performance_monitor);
+        let shutdown_signal = Arc::clone(&self.shutdown_signal);
+        let telemetry_collector = Arc::clone(&self.telemetry_collector);
+        let collection_interval = self.config.telemetry_interval;
+
+        let handle = tokio::spawn(async move {
+            let mut monitoring_interval = interval(collection_interval);
+
+            while !shutdown_signal.load(Ordering::Relaxed) {
+                monitoring_interval.tick().await;
+
+                // Collect resource metrics
+                let metrics = performance_monitor.collect_resource_metrics().await;
+
+                // Update system resource usage in performance monitor
+                let cpu_usage = daemoneye_lib::telemetry::ResourceMonitor::get_cpu_usage();
+                let memory_usage = daemoneye_lib::telemetry::ResourceMonitor::get_memory_usage();
+
+                performance_monitor.update_cpu_usage(cpu_usage);
+                performance_monitor.update_memory_usage(memory_usage);
+
+                // Log performance metrics periodically
+                debug!(
+                    throughput_eps = metrics.throughput.events_per_second,
+                    cpu_percent = metrics.cpu.current_cpu_percent,
+                    memory_mb = metrics.memory.current_memory_bytes / (1024 * 1024),
+                    "Performance metrics collected"
+                );
+
+                // Update telemetry collector with performance data
+                {
+                    let mut telemetry = telemetry_collector.write().await;
+                    telemetry.add_custom_metric(
+                        "events_per_second".to_string(),
+                        metrics.throughput.events_per_second,
+                    );
+                    telemetry.add_custom_metric(
+                        "peak_cpu_percent".to_string(),
+                        metrics.cpu.peak_cpu_percent,
+                    );
+                    telemetry.add_custom_metric(
+                        "peak_memory_mb".to_string(),
+                        metrics.memory.peak_memory_bytes as f64 / (1024.0 * 1024.0),
+                    );
+
+                    if let Some(trigger_metrics) = &metrics.trigger_latency {
+                        telemetry.add_custom_metric(
+                            "avg_trigger_latency_ms".to_string(),
+                            trigger_metrics.avg_latency_ms,
+                        );
+                        telemetry.add_custom_metric(
+                            "triggers_per_second".to_string(),
+                            trigger_metrics.triggers_per_second,
+                        );
+                    }
+                }
+
+                // Check for performance degradation
+                if let Some(degradation) = performance_monitor.check_performance_degradation().await
+                {
+                    warn!(
+                        degradation_count = degradation.degradations.len(),
+                        "Performance degradation detected"
+                    );
+
+                    for degradation_type in &degradation.degradations {
+                        match degradation_type {
+                            crate::performance::DegradationType::ThroughputDegradation {
+                                current_ratio,
+                                threshold,
+                            } => {
+                                warn!(
+                                    current_ratio = current_ratio,
+                                    threshold = threshold,
+                                    "Throughput degradation detected"
+                                );
+                            }
+                            crate::performance::DegradationType::CpuUsageIncrease {
+                                current_ratio,
+                                threshold,
+                            } => {
+                                warn!(
+                                    current_ratio = current_ratio,
+                                    threshold = threshold,
+                                    "CPU usage increase detected"
+                                );
+                            }
+                            crate::performance::DegradationType::MemoryUsageIncrease {
+                                current_ratio,
+                                threshold,
+                            } => {
+                                warn!(
+                                    current_ratio = current_ratio,
+                                    threshold = threshold,
+                                    "Memory usage increase detected"
+                                );
+                            }
+                            crate::performance::DegradationType::TriggerLatencyIncrease {
+                                current_ratio,
+                                threshold,
+                            } => {
+                                warn!(
+                                    current_ratio = current_ratio,
+                                    threshold = threshold,
+                                    "Trigger latency increase detected"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(())
+        });
+
+        self.health_handles
+            .insert("performance_monitor".to_string(), handle);
+    }
+
     /// Starts telemetry collection for performance monitoring.
     async fn start_telemetry_collection(&mut self) {
         let interval_duration = self.config.telemetry_interval;
@@ -486,6 +1049,10 @@ impl CollectorRuntime {
         let telemetry_collector = Arc::clone(&self.telemetry_collector);
         let backpressure_semaphore = Arc::clone(&self.backpressure_semaphore);
         let max_backpressure_wait = self.config.max_backpressure_wait;
+        let performance_monitor = Arc::clone(&self.performance_monitor);
+
+        // Clone event_bus for the spawned task (Arc allows sharing)
+        let event_bus = self.event_bus.clone();
 
         // Move the receiver into the processing task
         let mut event_rx = std::mem::replace(
@@ -545,7 +1112,7 @@ impl CollectorRuntime {
 
                                 // Process batch if it's full
                                 if event_batch.len() >= max_batch_size {
-                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor, event_bus.as_ref()).await {
                                         error!(error = %e, "Failed to process event batch");
                                         error_counter.fetch_add(1, Ordering::Relaxed);
                                     } else {
@@ -565,7 +1132,7 @@ impl CollectorRuntime {
                                 drop(permit);
 
                                 // Log milestones
-                                if total_events % 1000 == 0 {
+                                if total_events.is_multiple_of(1000) {
                                     info!(
                                         events_processed = total_events,
                                         batches_processed = batches_processed,
@@ -578,11 +1145,10 @@ impl CollectorRuntime {
                                 debug!("Event channel closed, processing remaining events");
 
                                 // Process any remaining events in the batch
-                                if !event_batch.is_empty() {
-                                    if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                                if !event_batch.is_empty()
+                                    && let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor, event_bus.as_ref()).await {
                                         error!(error = %e, "Failed to process final event batch");
                                     }
-                                }
 
                                 break;
                             }
@@ -594,7 +1160,7 @@ impl CollectorRuntime {
                         if !event_batch.is_empty() && last_batch_flush.elapsed() >= batch_timeout {
                             debug!(batch_size = event_batch.len(), "Flushing batch due to timeout");
 
-                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor, event_bus.as_ref()).await {
                                 error!(error = %e, "Failed to process timed-out event batch");
                                 error_counter.fetch_add(1, Ordering::Relaxed);
                             } else {
@@ -613,11 +1179,10 @@ impl CollectorRuntime {
                         info!("Shutdown signal received, processing remaining events");
 
                         // Process any remaining events in the batch
-                        if !event_batch.is_empty() {
-                            if let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector).await {
+                        if !event_batch.is_empty()
+                            && let Err(e) = Self::process_event_batch(&mut event_batch, &telemetry_collector, &performance_monitor, event_bus.as_ref()).await {
                                 error!(error = %e, "Failed to process shutdown event batch");
                             }
-                        }
 
                         break;
                     }
@@ -636,13 +1201,15 @@ impl CollectorRuntime {
             .insert("event_processor".to_string(), handle);
     }
 
-    /// Processes a batch of events.
+    /// Processes a batch of events (legacy method for backward compatibility).
     ///
     /// This method handles the actual processing of collected events,
     /// including any necessary transformations, filtering, or forwarding.
     async fn process_event_batch(
         batch: &mut Vec<CollectionEvent>,
         telemetry_collector: &Arc<RwLock<TelemetryCollector>>,
+        performance_monitor: &Arc<PerformanceMonitor>,
+        event_bus: Option<&Arc<dyn EventBus>>,
     ) -> Result<()> {
         if batch.is_empty() {
             return Ok(());
@@ -652,6 +1219,24 @@ impl CollectorRuntime {
         let batch_size = batch.len();
 
         debug!(batch_size = batch_size, "Processing event batch");
+
+        // Record events in performance monitor
+        for event in batch.iter() {
+            performance_monitor.record_event(event);
+
+            // Handle trigger requests for latency tracking
+            if let CollectionEvent::TriggerRequest(trigger_request) = event {
+                performance_monitor.record_trigger_start(&trigger_request.trigger_id);
+                // In a real implementation, trigger completion would be recorded
+                // when the trigger actually completes processing
+                warn!(
+                    "Trigger completion for {} is a placeholder and not a real measurement yet.",
+                    &trigger_request.trigger_id
+                );
+                // performance_monitor
+                //     .record_trigger_completion(&trigger_request.trigger_id, trigger_request);
+            }
+        }
 
         // In a full implementation, this would:
         // 1. Transform events as needed
@@ -675,6 +1260,19 @@ impl CollectorRuntime {
                 CollectionEvent::Performance(_) => {
                     // Process performance events
                 }
+                CollectionEvent::TriggerRequest(_) => {
+                    // Process trigger requests for analysis collector coordination
+                }
+            }
+
+            // Publish event to EventBus if configured
+            if let Some(bus) = event_bus {
+                let correlation_id = uuid::Uuid::new_v4().to_string();
+                let correlation_metadata =
+                    crate::event_bus::CorrelationMetadata::new(correlation_id);
+                if let Err(e) = bus.publish(event.clone(), correlation_metadata).await {
+                    warn!(error = %e, "Failed to publish event to EventBus");
+                }
             }
         }
 
@@ -696,10 +1294,17 @@ impl CollectorRuntime {
         Ok(())
     }
 
-    /// Runs the runtime until shutdown is signaled.
-    async fn run_until_shutdown(&mut self) -> Result<()> {
-        // Set up signal handling
-        let shutdown_signal = Arc::clone(&self.shutdown_signal);
+    /// Waits until shutdown is signaled (without holding any locks).
+    ///
+    /// This is a static function that only needs the shutdown signal Arc,
+    /// allowing the runtime lock to be released while waiting.
+    async fn wait_for_shutdown(shutdown_signal: Arc<AtomicBool>) {
+        // Create a future that polls the shutdown signal
+        let shutdown_poll = async {
+            while !shutdown_signal.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        };
 
         #[cfg(unix)]
         {
@@ -718,6 +1323,9 @@ impl CollectorRuntime {
                         _ = sigint.recv() => {
                             info!("Received SIGINT, initiating graceful shutdown");
                         }
+                        _ = shutdown_poll => {
+                            info!("RPC-triggered shutdown signal received");
+                        }
                     }
                 }
                 _ => {
@@ -727,18 +1335,21 @@ impl CollectorRuntime {
                     let start_time = Instant::now();
                     let max_runtime = Duration::from_secs(30); // 30 second max runtime for tests
 
-                    loop {
-                        if shutdown_signal.load(Ordering::Relaxed) {
-                            break;
+                    tokio::select! {
+                        _ = shutdown_poll => {
+                            info!("RPC-triggered shutdown signal received");
                         }
-
-                        // Check if we've exceeded the maximum runtime
-                        if start_time.elapsed() > max_runtime {
+                        _ = async {
+                            loop {
+                                if start_time.elapsed() > max_runtime {
+                                    info!("Maximum runtime exceeded, shutting down");
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
+                        } => {
                             info!("Maximum runtime exceeded, shutting down");
-                            break;
                         }
-
-                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
             }
@@ -758,6 +1369,9 @@ impl CollectorRuntime {
                         _ = ctrl_break.recv() => {
                             info!("Received Ctrl+Break, initiating graceful shutdown");
                         }
+                        _ = shutdown_poll => {
+                            info!("RPC-triggered shutdown signal received");
+                        }
                     }
                 }
                 _ => {
@@ -767,18 +1381,21 @@ impl CollectorRuntime {
                     let start_time = Instant::now();
                     let max_runtime = Duration::from_secs(30); // 30 second max runtime for tests
 
-                    loop {
-                        if shutdown_signal.load(Ordering::Relaxed) {
-                            break;
+                    tokio::select! {
+                        _ = shutdown_poll => {
+                            info!("RPC-triggered shutdown signal received");
                         }
-
-                        // Check if we've exceeded the maximum runtime
-                        if start_time.elapsed() > max_runtime {
+                        _ = async {
+                            loop {
+                                if start_time.elapsed() > max_runtime {
+                                    info!("Maximum runtime exceeded, shutting down");
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
+                        } => {
                             info!("Maximum runtime exceeded, shutting down");
-                            break;
                         }
-
-                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
             }
@@ -788,19 +1405,131 @@ impl CollectorRuntime {
         {
             warn!("Signal handling not supported on this platform");
             // On unsupported platforms, just wait for shutdown signal
-            loop {
-                if shutdown_signal.load(Ordering::Relaxed) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
+            shutdown_poll.await;
         }
 
         // Signal shutdown to all tasks
         shutdown_signal.store(true, Ordering::Relaxed);
+    }
 
-        // Wait for all tasks to complete with timeout
-        self.shutdown_gracefully().await?;
+    /// Start the RPC service with a runtime reference
+    async fn start_rpc_service_with_runtime(
+        &mut self,
+        collector_id: String,
+        broker: Arc<DaemoneyeBroker>,
+        runtime_arc: Arc<RwLock<CollectorRuntime>>,
+    ) -> Result<()> {
+        let rpc_topic = format!("control.collector.{}", collector_id);
+        let config = RpcServiceConfig {
+            collector_id: collector_id.clone(),
+            rpc_topic: rpc_topic.clone(),
+            default_timeout: Duration::from_secs(30),
+        };
+
+        // Create providers with references to runtime components
+        let telemetry_for_provider =
+            Arc::new(RwLock::new(Some(Arc::clone(&self.telemetry_collector))));
+        let perf_for_provider = Arc::new(RwLock::new(Some(Arc::clone(&self.performance_monitor))));
+        // Use the provided runtime reference
+        let runtime_for_provider = Arc::new(RwLock::new(Some(Arc::clone(&runtime_arc))));
+
+        let health_provider = Arc::new(CollectorHealthProvider {
+            runtime: Arc::clone(&runtime_for_provider),
+            telemetry: telemetry_for_provider,
+            performance_monitor: perf_for_provider,
+            collector_id: collector_id.clone(),
+        });
+
+        let config_provider = Arc::new(CollectorConfigProvider {
+            collector_id: collector_id.clone(),
+        });
+
+        let registration_provider =
+            Arc::new(CollectorRegistrationProvider::new(collector_id.clone()));
+
+        // Create RPC service manager
+        let rpc_manager = Arc::new(CollectorRpcServiceManager::new(
+            config,
+            broker,
+            health_provider,
+            config_provider,
+            registration_provider,
+        ));
+
+        // Set references
+        rpc_manager
+            .set_telemetry(Arc::clone(&self.telemetry_collector))
+            .await;
+        rpc_manager
+            .set_performance_monitor(Arc::clone(&self.performance_monitor))
+            .await;
+        rpc_manager
+            .set_shutdown_signal(Arc::clone(&self.shutdown_signal))
+            .await;
+
+        // Set runtime reference for health metrics
+        rpc_manager.set_runtime(Arc::clone(&runtime_arc)).await;
+
+        // Set task handler
+        let event_tx = self.event_tx.clone();
+        let shutdown_signal = Arc::clone(&self.shutdown_signal);
+
+        rpc_manager.set_task_handler(move |task| {
+            let _tx = event_tx.clone();
+            let shutdown = Arc::clone(&shutdown_signal);
+
+            Box::pin(async move {
+                use daemoneye_lib::proto::{DetectionResult, TaskType};
+
+                // Check if we're shutting down
+                if shutdown.load(Ordering::Relaxed) {
+                    return Ok(DetectionResult::failure(
+                        &task.task_id,
+                        "Collector is shutting down",
+                    ));
+                }
+
+                // For now, we'll implement a basic task handler
+                // In a full implementation, this would route tasks to appropriate event sources
+                match TaskType::try_from(task.task_type) {
+                    Ok(TaskType::EnumerateProcesses) => {
+                        debug!(task_id = %task.task_id, "Processing enumerate processes task");
+
+                        // This is a placeholder - in the full implementation,
+                        // this would trigger process enumeration via event sources
+                        Ok(DetectionResult::success(&task.task_id, vec![]))
+                    }
+                    Ok(task_type) => {
+                        warn!(task_id = %task.task_id, ?task_type, "Task type not yet implemented");
+                        Ok(DetectionResult::failure(
+                            &task.task_id,
+                            format!("Task type {:?} not yet implemented", task_type),
+                        ))
+                    }
+                    Err(_) => {
+                        error!(task_id = %task.task_id, task_type = task.task_type, "Unknown task type");
+                        Ok(DetectionResult::failure(
+                            &task.task_id,
+                            format!("Unknown task type: {}", task.task_type),
+                        ))
+                    }
+                }
+            })
+        }).await;
+
+        // Start the service
+        rpc_manager
+            .start()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to start RPC service: {}", e))?;
+
+        self.rpc_service_manager = Some(rpc_manager);
+
+        info!(
+            collector_id = %collector_id,
+            rpc_topic = %rpc_topic,
+            "RPC service started for collector"
+        );
 
         Ok(())
     }
@@ -809,7 +1538,15 @@ impl CollectorRuntime {
     async fn shutdown_gracefully(&mut self) -> Result<()> {
         info!("Starting graceful shutdown");
 
-        // Shutdown IPC server first
+        // Shutdown RPC service first
+        if let Some(rpc_manager) = self.rpc_service_manager.take() {
+            debug!("Shutting down RPC service");
+            if let Err(e) = rpc_manager.stop().await {
+                error!(error = %e, "Failed to shutdown RPC service gracefully");
+            }
+        }
+
+        // Shutdown IPC server
         if let Some(mut ipc_server) = self.ipc_server.take() {
             debug!("Shutting down IPC server");
             if let Err(e) = ipc_server.shutdown().await {
@@ -966,6 +1703,82 @@ impl CollectorRuntime {
             active_components: self.health_handles.len(),
             backpressure_permits_available: self.backpressure_semaphore.available_permits(),
         }
+    }
+
+    /// Initialize DaemoneyeEventBus for the collector runtime.
+    ///
+    /// Initialize LocalEventBus for the collector runtime.
+    ///
+    /// This method creates and configures a LocalEventBus instance
+    /// for in-process event distribution using crossbeam channels.
+    pub async fn initialize_local_eventbus(&mut self) -> Result<()> {
+        info!("Initializing LocalEventBus for collector runtime");
+
+        let event_bus_config = EventBusConfig {
+            max_subscribers: self.config.max_event_sources * 10,
+            buffer_size: self.config.event_buffer_size,
+            enable_statistics: true,
+        };
+
+        let local_event_bus = LocalEventBus::new(event_bus_config);
+        self.event_bus = Some(Arc::new(local_event_bus));
+
+        info!("LocalEventBus initialized successfully");
+        Ok(())
+    }
+
+    /// Get EventBus statistics if available.
+    ///
+    /// This method returns statistics from the configured EventBus,
+    /// providing insights into message throughput and subscriber activity.
+    pub async fn get_eventbus_statistics(
+        &self,
+    ) -> Result<Option<crate::event_bus::EventBusStatistics>> {
+        if let Some(event_bus) = &self.event_bus {
+            let stats = event_bus.get_statistics().await?;
+            Ok(Some(stats))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Publish an event to the EventBus if configured.
+    ///
+    /// This method publishes events to the configured EventBus for
+    /// distribution to subscribers with topic-based routing.
+    pub async fn publish_to_eventbus(
+        &self,
+        event: CollectionEvent,
+        correlation_id: Option<String>,
+    ) -> Result<()> {
+        if let Some(event_bus) = &self.event_bus {
+            let correlation_metadata = match correlation_id {
+                Some(id) => crate::event_bus::CorrelationMetadata::new(id),
+                None => {
+                    crate::event_bus::CorrelationMetadata::new(uuid::Uuid::new_v4().to_string())
+                }
+            };
+            event_bus.publish(event, correlation_metadata).await?;
+        } else {
+            debug!("No EventBus configured, skipping event publication");
+        }
+        Ok(())
+    }
+
+    /// Shutdown the EventBus if configured.
+    ///
+    /// This method performs a graceful shutdown of the EventBus,
+    /// ensuring all pending messages are processed.
+    pub async fn shutdown_eventbus(&mut self) -> Result<()> {
+        if let Some(event_bus) = self.event_bus.take() {
+            info!("Shutting down EventBus");
+
+            // Call shutdown on the EventBus trait (Arc<dyn EventBus> supports &self methods)
+            event_bus.shutdown().await?;
+
+            info!("EventBus shutdown completed");
+        }
+        Ok(())
     }
 }
 
@@ -1179,9 +1992,20 @@ mod tests {
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
+            platform_metadata: None,
         })];
 
-        let result = CollectorRuntime::process_event_batch(&mut batch, &telemetry_collector).await;
+        // Create a performance monitor for the test
+        let performance_config = PerformanceConfig::default();
+        let performance_monitor = Arc::new(PerformanceMonitor::new(performance_config));
+
+        let result = CollectorRuntime::process_event_batch(
+            &mut batch,
+            &telemetry_collector,
+            &performance_monitor,
+            None, // No event bus in test
+        )
+        .await;
         assert!(result.is_ok());
         assert!(batch.is_empty()); // Batch should be cleared after processing
     }

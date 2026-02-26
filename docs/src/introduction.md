@@ -19,11 +19,15 @@ DaemonEye is a complete rewrite of the Python prototype, designed for cybersecur
 
 DaemonEye follows a robust three-component security architecture:
 
-1. **ProcMonD (Collector)**: Privileged process monitoring daemon with minimal attack surface
-2. **daemoneye-agent (Orchestrator)**: User-space process for alerting and network operations
-3. **daemoneye-cli**: Command-line interface for queries and configuration
+1. **procmond (Collector)**: Privileged process monitoring daemon built on collector-core framework with minimal attack surface
+2. **daemoneye-agent (Orchestrator)**: User-space orchestrator with:
+   - Embedded EventBus broker for multi-collector coordination via topic-based pub/sub messaging
+   - RPC service for collector lifecycle management (start/stop/restart/health checks)
+   - IPC server for CLI communication using protobuf over Unix sockets/named pipes
+   - Alert management with multi-channel delivery
+3. **daemoneye-cli**: Command-line interface for database queries and system management
 
-This separation ensures robust security by isolating privileged operations from network functionality.
+This separation ensures robust security by isolating privileged operations from network functionality while enabling scalable multi-collector architectures with RPC-based lifecycle management.
 
 ## Documentation Structure
 

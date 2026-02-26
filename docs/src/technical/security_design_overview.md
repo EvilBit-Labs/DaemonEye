@@ -153,7 +153,7 @@ graph TB
 
 **Security Boundaries**:
 
-```rust
+```rust,ignore
 // Example security boundary enforcement
 pub struct ProcessCollector {
     privilege_manager: PrivilegeManager,
@@ -200,7 +200,7 @@ impl ProcessCollector {
 - **Timeout Protection**: Complete within 30 seconds or timeout with appropriate logging[^16]
 - **Audit Logging**: Reject forbidden constructs and log attempts for audit purposes[^18]
 
-```rust
+```rust,ignore
 pub struct SqlValidator {
     parser: sqlparser::Parser<sqlparser::dialect::SQLiteDialect>,
     allowed_functions: HashSet<String>,
@@ -292,7 +292,7 @@ impl SqlValidator {
 
 **Implementation Details**:
 
-```rust
+```rust,ignore
 pub struct AuditLedger {
     merkle_tree: MerkleTree<Blake3Hasher>,
     checkpoints: Vec<Checkpoint>,

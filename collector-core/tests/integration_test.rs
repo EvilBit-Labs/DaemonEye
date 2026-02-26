@@ -74,6 +74,7 @@ impl EventSource for MockProcessSource {
                 accessible: true,
                 file_exists: true,
                 timestamp: SystemTime::now(),
+                platform_metadata: None,
             });
 
             if tx.send(event).await.is_err() {
@@ -223,6 +224,7 @@ async fn test_event_types() {
         accessible: true,
         file_exists: true,
         timestamp,
+        platform_metadata: None,
     };
 
     let collection_event = CollectionEvent::Process(process_event);

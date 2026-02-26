@@ -1,7 +1,6 @@
 [book]
 authors = ["EvilBit-Labs"]
 language = "en"
-multilingual = false
 src = "src"
 title = "DaemonEye Documentation"
 description = "DaemonEye User Documentation"
@@ -24,8 +23,6 @@ level = 1
 
 [output.html.playground]
 runnable = false
-
-[preprocessor.alerts]
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"

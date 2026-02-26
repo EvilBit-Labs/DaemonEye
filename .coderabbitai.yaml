@@ -103,11 +103,13 @@ reviews:
             "daemoneye-agent/**",
             "daemoneye-cli/**",
             "daemoneye-lib/**",
+            "collector-core/**",
             "docs/src/**",
             "spec/**",
-            ".kiro/**",
-            ".cursor/**",
-            ".github/workflows/release.yml",
+            ".kiro/**/*.md",
+            ".cursor/**/*.mdc",
+            ".github/**",
+            "!.github/workflows/release.yml",
             "*.md",
             "*.toml",
             "*.yaml",
@@ -129,10 +131,11 @@ reviews:
             "!*.ico",
             "!*.wxs",
         ]
-    path_instructions: [
+    path_instructions:
+        [
             {
                 "path": "procmond/**",
-                "instructions": "CRITICAL: Privileged process collector with minimal attack surface. Enforce principle of least privilege, immediate privilege dropping after init, no network access, write-only access to audit ledger. Flag any unsafe code, privilege escalation risks, or attack surface expansions. Focus on security, performance, and minimal dependencies.",
+                "instructions": "CRITICAL: Privileged process collector with minimal attack surface. Enforce principle of least privilege, immediate privilege dropping after init, no network access, write-only access to audit ledger. Flag any unsafe code, privilege escalation risks, or attack surface expansions. Focus on security, performance, and minimal dependencies. Does not expose any shared code, so any reusable code should be in daemoneye-lib or collector-core.",
             },
             {
                 "path": "daemoneye-agent/**",
@@ -144,17 +147,15 @@ reviews:
             },
             {
                 "path": "daemoneye-lib/**",
-                "instructions": "Shared library providing common functionality across all components. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments.",
+                "instructions": "Shared library providing common functionality across all components. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments. Stability and performance of the library is critical.",
             },
-            # Not yet implemented
             {
-                "path": "security-center/**",
-                "instructions": "Business tier Security Center server. Enforce PostgreSQL database management, mTLS agent authentication, centralized data aggregation, rule pack distribution, and external SIEM integrations. Focus on scalability, security, and enterprise-grade reliability.",
+                "path": "collector-core/**",
+                "instructions": "Shared framework library providing common functionality for collectors, such as procmond. Enforce trait-based abstractions, security boundaries, comprehensive error handling. Focus on modularity, testability, and performance. Flag any unsafe code or potential panics. Ensure all public APIs are well-documented with rustdoc comments. Stability and performance of the library is critical.",
             },
-            # Not yet implemented
             {
-                "path": "gui/**",
-                "instructions": "Business tier web GUI frontend. Enforce React/TypeScript best practices, JWT authentication, responsive design, and real-time data visualization. Focus on user experience for security operations teams and fleet management.",
+                "path": "daemoneye-eventbus/**",
+                "instructions": "Cross-platform IPC event bus for DaemonEye monitoring system. Enforce cross-platform compatibility: PRIMARY platforms (Linux Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Alma/Rocky Linux 8+, Debian 11+ LTS, macOS 14.0+, Windows 10+, Windows Server 2019+, Windows Server 2022, Windows 11) and SECONDARY platforms (Alpine 3.16+, Amazon Linux 2+, Ubuntu 18.04, RHEL 7, macOS 12.0+, FreeBSD 13.0+). Use Windows named pipes and Unix domain sockets. Focus on performance (10k+ messages/sec), security (local IPC only), and reliability (at-most-once delivery). Flag any network exposure, privilege escalation, or performance regressions. Ensure proper error handling and resource cleanup.",
             },
             {
                 "path": "docs/src/**",
@@ -398,3 +399,36 @@ code_generation:
                     "instructions": "Generate React/TypeScript unit tests using Jest and React Testing Library. Test component rendering, user interactions, state management, and API integration. Focus on accessibility and responsive design testing.",
                 },
             ]
+issue_enrichment:
+    auto_enrich:
+        enabled: true
+
+    planning:
+        enabled: true
+        auto_planning:
+            enabled: false
+            labels:
+                - "enhancement"
+                - "bug"
+
+    labeling:
+        auto_apply_labels: true
+        labeling_instructions:
+            - label: "bug"
+              instructions: "Apply when the issue reports something that isn't working correctly. Look for error messages, unexpected behavior, crashes, or regressions in existing functionality."
+            - label: "enhancement"
+              instructions: "Apply when the issue requests new features or improvements. This includes new CLI options, new LLM providers, new output formats, performance improvements, or usability enhancements."
+            - label: "documentation"
+              instructions: "Apply when the issue is about missing, incorrect, or unclear documentation. This includes README updates, API documentation, examples, or inline code comments."
+            - label: "good first issue"
+              instructions: "Apply when the issue is well-scoped, has clear requirements, and doesn't require deep knowledge of the codebase. Good for newcomers to contribute."
+            - label: "help wanted"
+              instructions: "Apply when the issue needs community input, additional expertise, or the maintainers explicitly request assistance."
+            - label: "question"
+              instructions: "Apply when the issue is asking for clarification, guidance, or discussion rather than reporting a bug or requesting a feature."
+            - label: "duplicate"
+              instructions: "Apply when this issue duplicates an existing open or recently closed issue. Reference the original issue."
+            - label: "invalid"
+              instructions: "Apply when the issue doesn't provide enough information, is not related to this project, or cannot be reproduced."
+            - label: "wontfix"
+              instructions: "Apply when the issue describes behavior that is working as intended, is out of scope for the project, or conflicts with project goals."

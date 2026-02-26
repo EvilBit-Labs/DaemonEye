@@ -118,28 +118,33 @@ docker run -d --name daemoneye \
 
 ### Basic Usage
 
-**Check Status**:
+**Check Database Status**:
 
 ```bash
-daemoneye-cli health
+# View database statistics in human-readable format
+daemoneye-cli --database /var/lib/daemoneye/processes.db --format human
+
+# View database statistics in JSON format
+daemoneye-cli --database /var/lib/daemoneye/processes.db --format json
 ```
 
-**Query Processes**:
+**Start Process Collection**:
 
 ```bash
-daemoneye-cli query "SELECT pid, name, executable_path FROM processes LIMIT 10"
+# Start daemoneye-agent (orchestrator)
+daemoneye-agent --database /var/lib/daemoneye/processes.db --log-level info
+
+# Run procmond directly with enhanced collection
+procmond --database /var/lib/daemoneye/processes.db --interval 30 --enhanced-metadata --compute-hashes
 ```
 
-**List Alerts**:
+**Component Help**:
 
 ```bash
-daemoneye-cli alerts list
-```
-
-**View Logs**:
-
-```bash
-daemoneye-cli logs --tail 100
+# Get help for each component
+daemoneye-agent --help
+daemoneye-cli --help
+procmond --help
 ```
 
 ## Common Tasks

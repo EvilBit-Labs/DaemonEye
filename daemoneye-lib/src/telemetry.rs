@@ -228,11 +228,13 @@ impl TelemetryCollector {
         }
 
         // Check if operations are taking too long
-        if let Some(avg_duration) = self.operation_times.last() {
-            if avg_duration.as_millis() > 5000 {
-                status = HealthStatus::Degraded;
-                error_message = Some("Slow operation performance detected".to_owned());
-            }
+        if self
+            .operation_times
+            .last()
+            .is_some_and(|avg| avg.as_millis() > 5000)
+        {
+            status = HealthStatus::Degraded;
+            error_message = Some("Slow operation performance detected".to_owned());
         }
 
         // Check memory usage
@@ -288,11 +290,13 @@ impl TelemetryCollector {
         }
 
         // Check if operations are taking too long
-        if let Some(avg_duration) = self.operation_times.last() {
-            if avg_duration.as_millis() > 5000 {
-                status = HealthStatus::Degraded;
-                error_message = Some("Slow operation performance detected".to_owned());
-            }
+        if self
+            .operation_times
+            .last()
+            .is_some_and(|avg| avg.as_millis() > 5000)
+        {
+            status = HealthStatus::Degraded;
+            error_message = Some("Slow operation performance detected".to_owned());
         }
 
         // Check memory usage

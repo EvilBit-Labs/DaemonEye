@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# GoReleaser configuration for Windows builds
+# Run this on Windows CI/CD systems
+
+version: 2
+
+before:
+    hooks:
+        - rustup default stable
+        - rustup target add aarch64-pc-windows-msvc
+        - rustup target add x86_64-pc-windows-msvc
+        - cargo fetch --locked
+
+builds:
+    # procmond - Process monitoring daemon
+    - builder: rust
+      id: procmond
+      binary: procmond
+      tool: cargo
+      command: build
+      flags:
+          - --release
+          - --package=procmond
+      targets:
+          - aarch64-pc-windows-msvc
+          - x86_64-pc-windows-msvc
+
+    # daemoneye-agent - Detection orchestrator
+    - builder: rust
+      id: daemoneye-agent
+      binary: daemoneye-agent
+      tool: cargo
+      command: build
+      flags:
+          - --release
+          - --package=daemoneye-agent
+      targets:
+          - aarch64-pc-windows-msvc
+          - x86_64-pc-windows-msvc
+
+    # daemoneye-cli - Command-line interface
+    - builder: rust
+      id: daemoneye-cli
+      binary: daemoneye-cli
+      tool: cargo
+      command: build
+      flags:
+          - --release
+          - --package=daemoneye-cli
+      targets:
+          - aarch64-pc-windows-msvc
+          - x86_64-pc-windows-msvc
+
+# Only create GitHub release
+release:
+    github:
+        owner: EvilBit-Labs
+        name: DaemonEye

@@ -4,9 +4,11 @@
 //! collector runtime and event sources. It integrates with the existing
 //! daemoneye-lib ConfigLoader for hierarchical configuration management.
 
+use daemoneye_eventbus::DaemoneyeBroker;
 use daemoneye_lib::config::{Config as DaemonEyeConfig, ConfigError, ConfigLoader};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use serde_json::Value;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 /// Configuration for the collector-core runtime.
 ///
@@ -67,6 +69,16 @@ pub struct CollectorConfig {
 
     /// Component name for configuration loading
     pub component_name: String,
+
+    /// DaemoneyeEventBus socket path for embedded broker communication
+    pub daemoneye_socket_path: Option<String>,
+
+    /// IPC endpoint path for direct communication (e.g., with procmond)
+    pub ipc_endpoint: Option<String>,
+
+    /// Optional registration settings for broker auto-registration
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub registration: Option<CollectorRegistrationConfig>,
 }
 
 impl Default for CollectorConfig {
@@ -85,7 +97,61 @@ impl Default for CollectorConfig {
             enable_telemetry: true,
             telemetry_interval: Duration::from_secs(30),
             component_name: "collector-core".to_string(),
+            daemoneye_socket_path: None,
+            ipc_endpoint: None,
+            registration: None,
         }
+    }
+}
+
+/// Registration configuration for automatic broker registration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectorRegistrationConfig {
+    /// Enable broker registration for this collector.
+    pub enabled: bool,
+    /// Target control topic for registration RPC operations.
+    pub topic: String,
+    /// Optional override for collector identifier.
+    #[serde(default)]
+    pub collector_id: Option<String>,
+    /// Optional override for collector type reported to the broker.
+    #[serde(default)]
+    pub collector_type: Option<String>,
+    /// Interval between heartbeats reported to the registry.
+    pub heartbeat_interval: Duration,
+    /// Deadline for registration RPC operations.
+    pub timeout: Duration,
+    /// Number of retry attempts for registration failures.
+    pub retry_attempts: u32,
+    /// Additional metadata attributes reported during registration.
+    #[serde(default)]
+    pub attributes: HashMap<String, Value>,
+    /// Handle to the embedded broker when operating in-process.
+    #[serde(skip)]
+    pub broker: Option<Arc<DaemoneyeBroker>>,
+}
+
+impl Default for CollectorRegistrationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            topic: "control.collector.registration".to_string(),
+            collector_id: None,
+            collector_type: None,
+            heartbeat_interval: Duration::from_secs(30),
+            timeout: Duration::from_secs(10),
+            retry_attempts: 3,
+            attributes: HashMap::new(),
+            broker: None,
+        }
+    }
+}
+
+impl CollectorRegistrationConfig {
+    /// Attach a broker handle for in-process registration.
+    pub fn with_broker(mut self, broker: Arc<DaemoneyeBroker>) -> Self {
+        self.broker = Some(broker);
+        self
     }
 }
 
@@ -150,6 +216,22 @@ impl CollectorConfig {
             anyhow::bail!("component_name cannot be empty");
         }
 
+        if let Some(registration) = &self.registration
+            && registration.enabled
+        {
+            if registration.topic.trim().is_empty() {
+                anyhow::bail!("registration.topic cannot be empty");
+            }
+
+            if registration.timeout.is_zero() {
+                anyhow::bail!("registration.timeout must be greater than 0");
+            }
+
+            if registration.heartbeat_interval.is_zero() {
+                anyhow::bail!("registration.heartbeat_interval must be greater than 0");
+            }
+        }
+
         // Warn about potentially problematic configurations
         if self.event_buffer_size < 100 {
             tracing::warn!(
@@ -212,6 +294,12 @@ impl CollectorConfig {
         self
     }
 
+    /// Sets the IPC endpoint path.
+    pub fn with_ipc_endpoint(mut self, path: String) -> Self {
+        self.ipc_endpoint = Some(path);
+        self
+    }
+
     /// Sets the backpressure threshold.
     pub fn with_backpressure_threshold(mut self, threshold: usize) -> Self {
         self.backpressure_threshold = threshold;
@@ -248,6 +336,19 @@ impl CollectorConfig {
         self
     }
 
+    /// Sets the registration configuration.
+    pub fn with_registration(mut self, registration: CollectorRegistrationConfig) -> Self {
+        self.registration = Some(registration);
+        self
+    }
+
+    /// Assigns a broker handle for registration operations.
+    pub fn set_registration_broker(&mut self, broker: Arc<DaemoneyeBroker>) {
+        if let Some(config) = self.registration.as_mut() {
+            config.broker = Some(broker);
+        }
+    }
+
     /// Loads configuration from the existing daemoneye-lib ConfigLoader.
     ///
     /// This method integrates with the hierarchical configuration system
@@ -263,7 +364,7 @@ impl CollectorConfig {
     /// # Errors
     ///
     /// Returns an error if configuration loading or validation fails.
-    pub fn load_from_daemoneye_config(component_name: &str) -> Result<Self, ConfigError> {
+    pub fn load_from_daemoneye_config(component_name: &str) -> Result<Self, Box<ConfigError>> {
         let config_loader = ConfigLoader::new(component_name);
         let daemoneye_config = config_loader.load()?;
 
@@ -311,30 +412,34 @@ impl CollectorConfig {
     pub fn apply_env_overrides(mut self) -> Self {
         let prefix = format!("{}_COLLECTOR", self.component_name.to_uppercase());
 
-        if let Ok(val) = std::env::var(format!("{prefix}_MAX_EVENT_SOURCES")) {
-            if let Ok(max_sources) = val.parse() {
-                self.max_event_sources = max_sources;
-            }
+        if let Ok(val) = std::env::var(format!("{prefix}_MAX_EVENT_SOURCES"))
+            && let Ok(max_sources) = val.parse()
+        {
+            self.max_event_sources = max_sources;
         }
 
-        if let Ok(val) = std::env::var(format!("{prefix}_EVENT_BUFFER_SIZE")) {
-            if let Ok(buffer_size) = val.parse() {
-                self.event_buffer_size = buffer_size;
-                // Recalculate backpressure threshold
-                self.backpressure_threshold = (buffer_size * 80) / 100;
-            }
+        if let Ok(val) = std::env::var(format!("{prefix}_EVENT_BUFFER_SIZE"))
+            && let Ok(buffer_size) = val.parse()
+        {
+            self.event_buffer_size = buffer_size;
+            // Recalculate backpressure threshold
+            self.backpressure_threshold = (buffer_size * 80) / 100;
         }
 
-        if let Ok(val) = std::env::var(format!("{prefix}_ENABLE_TELEMETRY")) {
-            if let Ok(enabled) = val.parse() {
-                self.enable_telemetry = enabled;
-            }
+        if let Ok(val) = std::env::var(format!("{prefix}_ENABLE_TELEMETRY"))
+            && let Ok(enabled) = val.parse()
+        {
+            self.enable_telemetry = enabled;
         }
 
-        if let Ok(val) = std::env::var(format!("{prefix}_DEBUG_LOGGING")) {
-            if let Ok(enabled) = val.parse() {
-                self.enable_debug_logging = enabled;
-            }
+        if let Ok(val) = std::env::var(format!("{prefix}_DEBUG_LOGGING"))
+            && let Ok(enabled) = val.parse()
+        {
+            self.enable_debug_logging = enabled;
+        }
+
+        if let Ok(val) = std::env::var(format!("{prefix}_IPC_ENDPOINT")) {
+            self.ipc_endpoint = Some(val);
         }
 
         self

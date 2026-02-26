@@ -340,15 +340,16 @@ impl CircuitBreaker {
             return true;
         }
 
-        if let Some(last_failure) = self.last_failure_time {
-            if last_failure.elapsed() >= self.recovery_timeout && !self.is_half_open {
-                // Enter half-open state
-                self.is_half_open = true;
-                self.half_open_success_count = 0;
+        if let Some(last_failure) = self.last_failure_time
+            && last_failure.elapsed() >= self.recovery_timeout
+            && !self.is_half_open
+        {
+            // Enter half-open state
+            self.is_half_open = true;
+            self.half_open_success_count = 0;
 
-                debug!("Circuit breaker entering half-open state for recovery testing");
-                return true;
-            }
+            debug!("Circuit breaker entering half-open state for recovery testing");
+            return true;
         }
 
         false

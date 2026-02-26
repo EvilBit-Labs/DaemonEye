@@ -1,0 +1,59 @@
+---
+source: pattern_truth_table.rs
+expression: topic_pattern_matrix_v1
+---
+- pattern: events.process.+
+  topic: events.process.new
+  matches: true
+  pattern_error: null
+  topic_error: null
+- pattern: events.process.+
+  topic: events.process
+  matches: false
+  pattern_error: null
+  topic_error: null
+- pattern: events.#
+  topic: events.process.new
+  matches: true
+  pattern_error: null
+  topic_error: null
+- pattern: events.#
+  topic: control.collector.status
+  matches: false
+  pattern_error: null
+  topic_error: null
+- pattern: control.trigger.+
+  topic: control.trigger.request
+  matches: true
+  pattern_error: null
+  topic_error: null
+- pattern: control.trigger.+
+  topic: control.trigger
+  matches: false
+  pattern_error: null
+  topic_error: null
+- pattern: events.process.new
+  topic: events.process.new
+  matches: true
+  pattern_error: null
+  topic_error: null
+- pattern: events.process.new
+  topic: events.process.old
+  matches: false
+  pattern_error: null
+  topic_error: null
+- pattern: events.+.new
+  topic: events.process.new
+  matches: true
+  pattern_error: null
+  topic_error: null
+- pattern: events.#.process
+  topic: events.process.new
+  matches: null
+  pattern_error: "Invalid topic format: Multi-level wildcard (#) must be at the end"
+  topic_error: null
+- pattern: events.process.+
+  topic: system.health.status
+  matches: null
+  pattern_error: null
+  topic_error: "Reserved topic prefix: system"

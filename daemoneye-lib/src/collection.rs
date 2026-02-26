@@ -106,6 +106,7 @@ impl ProcessCollectionService for SysinfoProcessCollector {
                     | sysinfo::ProcessStatus::Parked
                     | sysinfo::ProcessStatus::LockBlocked
                     | sysinfo::ProcessStatus::UninterruptibleDiskSleep
+                    | sysinfo::ProcessStatus::Suspended
                     | sysinfo::ProcessStatus::Unknown(_) => {
                         ProcessStatus::Unknown(format!("{:?}", process.status()))
                     }
@@ -138,11 +139,9 @@ impl ProcessCollectionService for SysinfoProcessCollector {
 
         let iter = processes_data.into_iter().map(
             move |(pid_u32, name_str, status, cmdline, memory, cpu_usage)| {
-                if let Some(dl) = deadline_instant {
-                    if Instant::now() > dl {
-                        // Represent timeout as single error; downstream can stop.
-                        return Err(CollectionError::Timeout);
-                    }
+                if deadline_instant.is_some_and(|dl| Instant::now() > dl) {
+                    // Represent timeout as single error; downstream can stop.
+                    return Err(CollectionError::Timeout);
                 }
 
                 let mut builder = ProcessRecord::builder()

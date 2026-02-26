@@ -1,4 +1,5 @@
-use assert_cmd::prelude::*;
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use insta::assert_snapshot;
 use std::process::Command;
 use tempfile::TempDir;
@@ -8,7 +9,7 @@ fn prints_expected_greeting() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("daemoneye-agent"));
     cmd.env("DAEMONEYE_AGENT_DATABASE_PATH", db_path.to_str().unwrap());
     // Enable test mode so the agent exits immediately after startup banner.
     cmd.env("DAEMONEYE_AGENT_TEST_MODE", "1");
@@ -22,7 +23,7 @@ fn prints_expected_greeting() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("daemoneye-agent"));
     cmd.arg("--help");
 
     let output = cmd.output()?;
@@ -44,7 +45,7 @@ fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn shows_version() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("daemoneye-agent"));
     cmd.arg("--version");
 
     let output = cmd.output()?;
@@ -59,7 +60,7 @@ fn accepts_database_path() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("daemoneye-agent"));
     cmd.arg("--database").arg(&db_path);
     cmd.arg("--log-level").arg("error");
     cmd.env("DAEMONEYE_AGENT_TEST_MODE", "1");
@@ -77,7 +78,7 @@ fn accepts_log_level() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("daemoneye-agent"));
     cmd.arg("--database").arg(&db_path);
     cmd.arg("--log-level").arg("debug");
     cmd.env("DAEMONEYE_AGENT_TEST_MODE", "1");
@@ -95,7 +96,7 @@ fn handles_missing_database_gracefully() -> Result<(), Box<dyn std::error::Error
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("nonexistent").join("test.db");
 
-    let mut cmd = Command::cargo_bin("daemoneye-agent")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("daemoneye-agent"));
     cmd.arg("--database").arg(&db_path);
     cmd.arg("--log-level").arg("error");
     // Don't set test mode so it will try to initialize the database

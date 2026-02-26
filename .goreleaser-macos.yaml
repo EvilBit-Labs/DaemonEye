@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# GoReleaser configuration for macOS builds
+# Run this on macOS CI/CD systems
+
+version: 2
+
+before:
+    hooks:
+        - rustup default stable
+        - rustup target add aarch64-apple-darwin
+        - rustup target add x86_64-apple-darwin
+        - cargo fetch --locked
+
+builds:
+    # procmond - Process monitoring daemon
+    - builder: rust
+      id: procmond
+      binary: procmond
+      tool: cargo
+      command: build
+      flags:
+          - --release
+          - --package=procmond
+      targets:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+
+    # daemoneye-agent - Detection orchestrator
+    - builder: rust
+      id: daemoneye-agent
+      binary: daemoneye-agent
+      tool: cargo
+      command: build
+      flags:
+          - --release
+          - --package=daemoneye-agent
+      targets:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+
+    # daemoneye-cli - Command-line interface
+    - builder: rust
+      id: daemoneye-cli
+      binary: daemoneye-cli
+      tool: cargo
+      command: build
+      flags:
+          - --release
+          - --package=daemoneye-cli
+      targets:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+
+# Only create GitHub release
+release:
+    github:
+        owner: EvilBit-Labs
+        name: DaemonEye

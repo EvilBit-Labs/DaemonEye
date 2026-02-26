@@ -6,8 +6,10 @@
 
 use collector_core::{
     CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent, SourceCaps,
+    TriggerRequest,
 };
 use proptest::prelude::*;
+use proptest::strategy::Just;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // Property test strategies for generating test data
@@ -109,6 +111,7 @@ fn process_event_strategy() -> impl Strategy<Value = ProcessEvent> {
             accessible,
             file_exists,
             timestamp,
+            platform_metadata: None,
         },
     )
 }
@@ -199,6 +202,71 @@ fn performance_event_strategy() -> impl Strategy<Value = PerformanceEvent> {
         )
 }
 
+/// Strategy for generating metadata maps with varied content
+fn metadata_strategy() -> impl Strategy<Value = std::collections::HashMap<String, String>> {
+    prop::collection::hash_map(
+        prop::string::string_regex(r"[a-zA-Z0-9_-]{1,16}").unwrap(), // keys
+        prop::string::string_regex(r"[a-zA-Z0-9_\s.-]{0,64}").unwrap(), // values
+        0..=8, // 0 to 8 entries (including empty maps)
+    )
+}
+
+/// Strategy for generating TriggerRequest instances
+fn trigger_request_strategy() -> impl Strategy<Value = TriggerRequest> {
+    use collector_core::{AnalysisType, TriggerPriority, TriggerRequest};
+
+    (
+        prop::string::string_regex(r"[a-zA-Z0-9_-]{1,32}").unwrap(), // trigger_id
+        prop::string::string_regex(r"[a-zA-Z0-9_-]{1,32}").unwrap(), // target_collector
+        prop_oneof![
+            Just(AnalysisType::BinaryHash),
+            Just(AnalysisType::MemoryAnalysis),
+            Just(AnalysisType::YaraScan),
+            Just(AnalysisType::NetworkAnalysis),
+            Just(AnalysisType::BehavioralAnalysis),
+            prop::string::string_regex(r"[a-zA-Z0-9_]{1,16}")
+                .unwrap()
+                .prop_map(AnalysisType::Custom),
+        ], // analysis_type
+        prop_oneof![
+            Just(TriggerPriority::Low),
+            Just(TriggerPriority::Normal),
+            Just(TriggerPriority::High),
+            Just(TriggerPriority::Critical),
+        ], // priority
+        prop::option::of(pid_strategy()),                            // target_pid
+        prop::option::of(prop::string::string_regex(r"/[a-zA-Z0-9/_.-]{1,255}").unwrap()), // target_path
+        prop::string::string_regex(r"[a-zA-Z0-9_-]{1,32}").unwrap(), // correlation_id
+        metadata_strategy(),                                         // metadata
+        timestamp_strategy(),                                        // timestamp
+    )
+        .prop_map(
+            |(
+                trigger_id,
+                target_collector,
+                analysis_type,
+                priority,
+                target_pid,
+                target_path,
+                correlation_id,
+                metadata,
+                timestamp,
+            )| {
+                TriggerRequest {
+                    trigger_id,
+                    target_collector,
+                    analysis_type,
+                    priority,
+                    target_pid,
+                    target_path,
+                    correlation_id,
+                    metadata,
+                    timestamp,
+                }
+            },
+        )
+}
+
 /// Strategy for generating CollectionEvent instances
 fn collection_event_strategy() -> impl Strategy<Value = CollectionEvent> {
     prop_oneof![
@@ -206,6 +274,7 @@ fn collection_event_strategy() -> impl Strategy<Value = CollectionEvent> {
         network_event_strategy().prop_map(CollectionEvent::Network),
         filesystem_event_strategy().prop_map(CollectionEvent::Filesystem),
         performance_event_strategy().prop_map(CollectionEvent::Performance),
+        trigger_request_strategy().prop_map(CollectionEvent::TriggerRequest),
     ]
 }
 
@@ -461,6 +530,10 @@ proptest! {
                 prop_assert!(json.contains("\"Performance\""));
                 prop_assert!(json.contains("\"metric_name\""));
             }
+            CollectionEvent::TriggerRequest(_) => {
+                prop_assert!(json.contains("\"TriggerRequest\""));
+                prop_assert!(json.contains("\"trigger_id\""));
+            }
         }
     }
 }
@@ -514,6 +587,7 @@ mod deterministic_tests {
             accessible: true,
             file_exists: true,
             timestamp,
+            platform_metadata: None,
         });
 
         assert_eq!(process_event.event_type(), "process");

@@ -49,7 +49,7 @@ DaemonEye follows a comprehensive testing strategy that ensures:
 
 DaemonEye uses a comprehensive unit testing framework:
 
-```rust
+```rust,ignore
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,7 +90,7 @@ mod tests {
 
 Use mocks for external dependencies:
 
-```rust
+```rust,ignore
 use mockall::mock;
 
 mock! {
@@ -111,7 +111,7 @@ async fn test_agent_with_mock_collector() {
         .times(1)
         .returning(|| Ok(CollectionResult::default()));
 
-    let agent = daemoneye-agent::new(Box::new(mock_collector));
+    let agent = daemoneye_agent::new(Box::new(mock_collector));
     let result = agent.run_collection_cycle().await;
 
     assert!(result.is_ok());
@@ -122,7 +122,7 @@ async fn test_agent_with_mock_collector() {
 
 Use property-based testing for complex logic:
 
-```rust
+```rust,ignore
 use proptest::prelude::*;
 
 proptest! {
@@ -148,7 +148,7 @@ proptest! {
 
 Test database operations with real SQLite:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_database_integration() {
     let temp_dir = TempDir::new().unwrap();
@@ -180,7 +180,10 @@ async fn test_database_integration() {
     assert_eq!(process.pid, retrieved.pid);
 
     // Test query execution
-    let results = db.query_processes("SELECT * FROM processes WHERE pid = ?", &[1234]).await.unwrap();
+    let results = db
+        .query_processes("SELECT * FROM processes WHERE pid = ?", &[1234])
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 }
 ```
@@ -189,7 +192,7 @@ async fn test_database_integration() {
 
 Test inter-process communication:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_ipc_communication() {
     let temp_dir = TempDir::new().unwrap();
@@ -197,9 +200,7 @@ async fn test_ipc_communication() {
 
     // Start server
     let server = IpcServer::new(&socket_path).await.unwrap();
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     // Wait for server to start
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -222,7 +223,7 @@ async fn test_ipc_communication() {
 
 Test alert delivery mechanisms:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_alert_delivery() {
     let mut alert_manager = AlertManager::new();
@@ -257,7 +258,7 @@ async fn test_alert_delivery() {
 
 Test command-line interface:
 
-```rust
+```rust,ignore
 use insta::assert_snapshot;
 use std::process::Command;
 
@@ -291,7 +292,7 @@ fn test_cli_config() {
 
 Test complete system workflows:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_full_system_workflow() {
     let temp_dir = TempDir::new().unwrap();
@@ -309,7 +310,7 @@ async fn test_full_system_workflow() {
 
     // Start daemoneye-agent
     let agent_handle = tokio::spawn(async move {
-        let agent = daemoneye-agent::new(&config_path).await.unwrap();
+        let agent = daemoneye_agent::new(&config_path).await.unwrap();
         agent.run().await
     });
 
@@ -318,9 +319,14 @@ async fn test_full_system_workflow() {
 
     // Test CLI operations
     let mut cmd = Command::cargo_bin("daemoneye-cli").unwrap();
-    cmd.args(&["--config", config_path.to_str().unwrap(), "query", "SELECT COUNT(*) FROM processes"])
-        .assert()
-        .success();
+    cmd.args(&[
+        "--config",
+        config_path.to_str().unwrap(),
+        "query",
+        "SELECT COUNT(*) FROM processes",
+    ])
+    .assert()
+    .success();
 
     // Cleanup
     procmond_handle.abort();
@@ -334,8 +340,8 @@ async fn test_full_system_workflow() {
 
 Test system performance under load:
 
-```rust
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+```rust,ignore
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn benchmark_process_collection(c: &mut Criterion) {
     let mut group = c.benchmark_group("process_collection");
@@ -396,7 +402,7 @@ criterion_main!(benches);
 
 Test memory usage and leaks:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_memory_usage() {
     let initial_memory = get_memory_usage();
@@ -443,7 +449,7 @@ fn get_memory_usage() -> usize {
 
 Test system behavior under stress:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_stress_collection() {
     let collector = ProcessCollector::new();
@@ -472,7 +478,7 @@ async fn test_stress_collection() {
 
 Test with random inputs:
 
-```rust
+```rust,ignore
 use cargo_fuzz;
 
 #[no_mangle]
@@ -497,7 +503,7 @@ pub extern "C" fn fuzz_sql_query(data: &[u8]) {
 
 Test security boundaries:
 
-```rust
+```rust,ignore
 #[tokio::test]
 async fn test_privilege_dropping() {
     let collector = ProcessCollector::new();
@@ -548,7 +554,7 @@ async fn test_sql_injection_prevention() {
 
 Test input validation:
 
-```rust
+```rust,ignore
 #[test]
 fn test_input_validation() {
     // Test valid inputs
@@ -613,7 +619,7 @@ testing:
 
 ### Test Data Management
 
-```rust
+```rust,ignore
 pub struct TestDataManager {
     temp_dir: TempDir,
     test_data: HashMap<String, Vec<u8>>,
@@ -662,7 +668,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [1.85, stable, beta]
+        rust: [1.87, stable, beta]
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
@@ -702,7 +708,7 @@ jobs:
 
 ### Test Reporting
 
-```rust
+```rust,ignore
 use insta::assert_snapshot;
 
 #[test]
@@ -755,7 +761,7 @@ fn test_alert_format() {
 
 ### Test Utilities
 
-```rust
+```rust,ignore
 // tests/common/test_helpers.rs
 pub struct TestHelper {
     temp_dir: TempDir,

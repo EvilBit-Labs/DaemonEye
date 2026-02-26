@@ -140,18 +140,18 @@ impl DetectionEngine {
             }
             "high_cpu" => {
                 for process in processes {
-                    if let Some(cpu_usage) = process.cpu_usage {
-                        if cpu_usage > 80.0 {
-                            let alert = Alert::new(
-                                rule.severity,
-                                format!("High CPU usage detected: {cpu_usage}%"),
-                                format!("Process {} is using {}% CPU", process.name, cpu_usage),
-                                rule_id.clone(),
-                                process.clone(),
-                            );
+                    if let Some(cpu_usage) = process.cpu_usage
+                        && cpu_usage > 80.0
+                    {
+                        let alert = Alert::new(
+                            rule.severity,
+                            format!("High CPU usage detected: {cpu_usage}%"),
+                            format!("Process {} is using {}% CPU", process.name, cpu_usage),
+                            rule_id.clone(),
+                            process.clone(),
+                        );
 
-                            alerts.push(alert);
-                        }
+                        alerts.push(alert);
                     }
                 }
             }

@@ -1,11 +1,10 @@
-use assert_cmd::prelude::*;
 use insta::assert_snapshot;
 use std::process::Command;
 use tempfile::TempDir;
 
 #[test]
 fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("procmond")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("procmond"));
     cmd.arg("--help");
 
     let output = cmd.output()?;
@@ -27,7 +26,7 @@ fn shows_help() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn shows_version() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("procmond")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("procmond"));
     cmd.arg("--version");
 
     let output = cmd.output()?;
@@ -42,7 +41,7 @@ fn accepts_database_path() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("procmond")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("procmond"));
     cmd.arg("--database").arg(&db_path);
     cmd.arg("--log-level").arg("error");
 
@@ -59,7 +58,7 @@ fn accepts_log_level() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("procmond")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("procmond"));
     cmd.arg("--database").arg(&db_path);
     cmd.arg("--log-level").arg("debug");
 
@@ -76,7 +75,7 @@ fn accepts_collection_interval() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
 
-    let mut cmd = Command::cargo_bin("procmond")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("procmond"));
     cmd.arg("--database").arg(&db_path);
     cmd.arg("--interval").arg("60");
     cmd.arg("--log-level").arg("error");

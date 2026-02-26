@@ -488,7 +488,12 @@ impl SqlToIpcTranslator {
 }
 
 #[cfg(test)]
-#[allow(clippy::str_to_string, clippy::unwrap_used)]
+#[allow(
+    clippy::str_to_string,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use crate::{
@@ -673,5 +678,435 @@ mod tests {
 
         let result = translator.analyze_sql_requirements(&rule);
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_memory_monitoring_requirement() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "memory-rule".to_string(),
+            "Memory Monitoring Rule".to_string(),
+            "Rule requiring memory monitoring".to_string(),
+            "SELECT pid, name, memory_usage FROM processes WHERE memory_usage > 1000000000"
+                .to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+
+        assert!(
+            requirements
+                .required_domains
+                .contains(&MonitoringDomain::Process)
+        );
+        let proc_req = requirements.process_requirements.unwrap();
+        assert!(proc_req.needs_memory_monitoring);
+    }
+
+    #[tokio::test]
+    async fn test_network_domain_detection() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "network-rule".to_string(),
+            "Network Rule".to_string(),
+            "Rule for network monitoring".to_string(),
+            "SELECT * FROM network WHERE protocol = 'TCP'".to_string(),
+            "test".to_string(),
+            AlertSeverity::High,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+
+        assert!(
+            requirements
+                .required_domains
+                .contains(&MonitoringDomain::Network)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_connections_table_maps_to_network() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "connections-rule".to_string(),
+            "Connections Rule".to_string(),
+            "Rule using connections table".to_string(),
+            "SELECT * FROM connections WHERE port = 443".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+
+        assert!(
+            requirements
+                .required_domains
+                .contains(&MonitoringDomain::Network)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_filesystem_domain_detection() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "filesystem-rule".to_string(),
+            "Filesystem Rule".to_string(),
+            "Rule for filesystem monitoring".to_string(),
+            "SELECT * FROM filesystem WHERE path LIKE '/etc/%'".to_string(),
+            "test".to_string(),
+            AlertSeverity::High,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+
+        assert!(
+            requirements
+                .required_domains
+                .contains(&MonitoringDomain::Filesystem)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_files_table_maps_to_filesystem() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "files-rule".to_string(),
+            "Files Rule".to_string(),
+            "Rule using files table".to_string(),
+            "SELECT * FROM files WHERE extension = '.exe'".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+
+        assert!(
+            requirements
+                .required_domains
+                .contains(&MonitoringDomain::Filesystem)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_performance_domain_detection() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "performance-rule".to_string(),
+            "Performance Rule".to_string(),
+            "Rule for performance monitoring".to_string(),
+            "SELECT * FROM performance WHERE metric_name = 'cpu_total'".to_string(),
+            "test".to_string(),
+            AlertSeverity::Low,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+
+        assert!(
+            requirements
+                .required_domains
+                .contains(&MonitoringDomain::Performance)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_metrics_table_maps_to_performance() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "metrics-rule".to_string(),
+            "Metrics Rule".to_string(),
+            "Rule using metrics table".to_string(),
+            "SELECT * FROM metrics WHERE value > 90".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+
+        assert!(
+            requirements
+                .required_domains
+                .contains(&MonitoringDomain::Performance)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unknown_table_defaults_to_process() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "unknown-table-rule".to_string(),
+            "Unknown Table Rule".to_string(),
+            "Rule with unknown table".to_string(),
+            "SELECT * FROM unknown_table WHERE id = 1".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+
+        // Unknown tables should default to process monitoring
+        assert!(
+            requirements
+                .required_domains
+                .contains(&MonitoringDomain::Process)
+        );
+        assert!(requirements.process_requirements.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_non_select_query_rejected() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "insert-rule".to_string(),
+            "Insert Rule".to_string(),
+            "Rule with INSERT statement".to_string(),
+            "INSERT INTO processes (name) VALUES ('test')".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let result = translator.analyze_sql_requirements(&rule);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Only SELECT queries are supported")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_default_task_generation_with_empty_requirements() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let requirements = CollectionRequirements {
+            required_domains: HashSet::new(),
+            process_requirements: None,
+            network_requirements: None,
+            filesystem_requirements: None,
+            performance_requirements: None,
+            requires_realtime: false,
+            requires_system_wide: false,
+            requires_kernel_level: false,
+        };
+
+        let tasks = translator.translate_to_tasks(&requirements).unwrap();
+
+        // Should generate a default process enumeration task
+        assert_eq!(tasks.len(), 1);
+        let task = tasks.first().expect("expected at least one task");
+        assert_eq!(task.task_type, i32::from(TaskType::EnumerateProcesses));
+        assert!(task.task_id.starts_with("default-process-enum-"));
+    }
+
+    #[tokio::test]
+    async fn test_process_task_without_hash_verification() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let requirements = CollectionRequirements {
+            required_domains: {
+                let mut domains = HashSet::new();
+                domains.insert(MonitoringDomain::Process);
+                domains
+            },
+            process_requirements: Some(ProcessRequirements {
+                process_names: vec!["test".to_string()],
+                pids: vec![],
+                executable_patterns: vec![],
+                needs_hash_verification: false,
+                needs_cpu_monitoring: false,
+                needs_memory_monitoring: false,
+            }),
+            network_requirements: None,
+            filesystem_requirements: None,
+            performance_requirements: None,
+            requires_realtime: false,
+            requires_system_wide: true,
+            requires_kernel_level: false,
+        };
+
+        let tasks = translator.translate_to_tasks(&requirements).unwrap();
+
+        // Without hash verification, should only have 1 task
+        assert_eq!(tasks.len(), 1);
+        let task = tasks.first().expect("expected at least one task");
+        assert_eq!(task.task_type, i32::from(TaskType::EnumerateProcesses));
+    }
+
+    #[tokio::test]
+    async fn test_process_filter_with_pids() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let requirements = CollectionRequirements {
+            required_domains: {
+                let mut domains = HashSet::new();
+                domains.insert(MonitoringDomain::Process);
+                domains
+            },
+            process_requirements: Some(ProcessRequirements {
+                process_names: vec![],
+                pids: vec![1234, 5678],
+                executable_patterns: vec![],
+                needs_hash_verification: false,
+                needs_cpu_monitoring: false,
+                needs_memory_monitoring: false,
+            }),
+            network_requirements: None,
+            filesystem_requirements: None,
+            performance_requirements: None,
+            requires_realtime: false,
+            requires_system_wide: false,
+            requires_kernel_level: false,
+        };
+
+        let tasks = translator.translate_to_tasks(&requirements).unwrap();
+
+        assert_eq!(tasks.len(), 1);
+        let task = tasks.first().expect("expected at least one task");
+        let filter = task.process_filter.as_ref().unwrap();
+        assert_eq!(filter.pids, vec![1234, 5678]);
+    }
+
+    #[tokio::test]
+    async fn test_process_filter_with_executable_pattern() {
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        // Note: The current implementation only creates a ProcessFilter when
+        // process_names or pids are provided. executable_patterns alone won't
+        // create a filter - this could be improved in the future.
+        let requirements = CollectionRequirements {
+            required_domains: {
+                let mut domains = HashSet::new();
+                domains.insert(MonitoringDomain::Process);
+                domains
+            },
+            process_requirements: Some(ProcessRequirements {
+                process_names: vec!["test".to_string()], // Need at least a name to create filter
+                pids: vec![],
+                executable_patterns: vec!["/usr/bin/*".to_string()],
+                needs_hash_verification: false,
+                needs_cpu_monitoring: false,
+                needs_memory_monitoring: false,
+            }),
+            network_requirements: None,
+            filesystem_requirements: None,
+            performance_requirements: None,
+            requires_realtime: false,
+            requires_system_wide: false,
+            requires_kernel_level: false,
+        };
+
+        let tasks = translator.translate_to_tasks(&requirements).unwrap();
+
+        assert_eq!(tasks.len(), 1);
+        let task = tasks.first().expect("expected at least one task");
+        let filter = task.process_filter.as_ref().unwrap();
+        assert_eq!(filter.executable_pattern, Some("/usr/bin/*".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_alternative_column_names() {
+        // Test that 'hash' is recognized as an alternative to 'executable_hash'
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "alt-hash-rule".to_string(),
+            "Alternative Hash Column Rule".to_string(),
+            "Rule using 'hash' column name".to_string(),
+            "SELECT pid, name, hash FROM processes".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+        let proc_req = requirements.process_requirements.unwrap();
+        assert!(proc_req.needs_hash_verification);
+    }
+
+    #[tokio::test]
+    async fn test_alternative_cpu_column_name() {
+        // Test that 'cpu' is recognized as an alternative to 'cpu_usage'
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "alt-cpu-rule".to_string(),
+            "Alternative CPU Column Rule".to_string(),
+            "Rule using 'cpu' column name".to_string(),
+            "SELECT pid, name, cpu FROM processes WHERE cpu > 50".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+        let proc_req = requirements.process_requirements.unwrap();
+        assert!(proc_req.needs_cpu_monitoring);
+    }
+
+    #[tokio::test]
+    async fn test_alternative_memory_column_name() {
+        // Test that 'memory' is recognized as an alternative to 'memory_usage'
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "alt-memory-rule".to_string(),
+            "Alternative Memory Column Rule".to_string(),
+            "Rule using 'memory' column name".to_string(),
+            "SELECT pid, name, memory FROM processes WHERE memory > 1000000".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+        let proc_req = requirements.process_requirements.unwrap();
+        assert!(proc_req.needs_memory_monitoring);
+    }
+
+    #[tokio::test]
+    async fn test_process_table_singular_form() {
+        // Test that 'process' (singular) is recognized
+        let client = create_test_client();
+        let translator = SqlToIpcTranslator::new(client);
+
+        let rule = DetectionRule::new(
+            "singular-rule".to_string(),
+            "Singular Table Rule".to_string(),
+            "Rule using singular 'process' table".to_string(),
+            "SELECT * FROM process WHERE pid = 1".to_string(),
+            "test".to_string(),
+            AlertSeverity::Medium,
+        );
+
+        let requirements = translator.analyze_sql_requirements(&rule).unwrap();
+
+        assert!(
+            requirements
+                .required_domains
+                .contains(&MonitoringDomain::Process)
+        );
     }
 }

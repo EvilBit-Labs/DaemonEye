@@ -1,59 +1,40 @@
+---
+inclusion: always
+---
+
 # DaemonEye Performance Guidelines
 
-## Performance Targets
+## Performance Targets (Non-Negotiable)
 
-- **CPU Usage**: < 5% sustained during continuous monitoring
-- **Memory Usage**: < 100 MB resident under normal operation
-- **Process Enumeration**: < 5s for 10,000+ processes
-- **Database Operations**: > 1,000 records/second write rate
-- **Alert Latency**: < 100ms per detection rule execution
-- **Query Response**: Sub-second response times for 100,000+ events/minute (Enterprise)
+- **CPU Usage**: \<5% sustained during continuous monitoring
+- **Memory Usage**: \<100MB resident under normal operation
+- **Process Enumeration**: \<5s for 10,000+ processes
+- **Database Operations**: >1,000 records/second write rate
+- **Alert Latency**: \<100ms per detection rule execution
 
-## Resource Management
+## Required Architecture Patterns
 
-- **Bounded Channels**: Configurable capacity with backpressure policies
-- **Memory Limits**: Cooperative yielding and memory budget enforcement
-- **Timeout Support**: Cancellation tokens for graceful shutdown
-- **Circuit Breakers**: Reliability patterns for external dependencies
-- **Graceful Degradation**: Continue with reduced functionality when resources constrained
+### Database: redb Only
 
-## Database Technology: redb
+- **Primary Storage**: redb embedded database (never SQLite/PostgreSQL)
+- **Event Store**: Read/write for daemoneye-agent, read-only for daemoneye-cli
+- **Audit Ledger**: Write-only for procmond, separate database file
+- **Features**: ACID transactions, zero-copy deserialization, concurrent access
 
-**Primary Storage**: redb pure Rust embedded database for optimal performance and security
+### Resource Management (Mandatory)
 
-- **Event Store**: Read/write access for daemoneye-agent, read-only for daemoneye-cli
-- **Audit Ledger**: Write-only access for procmond, read-only for others
-- **Features**: Concurrent access, ACID transactions, zero-copy deserialization
-- **Performance**: Optimized for time-series queries and high-throughput writes
+- **Bounded Channels**: Use `tokio::sync::mpsc::channel(capacity)` with backpressure
+- **Memory Budgets**: Implement cooperative yielding with `tokio::task::yield_now()`
+- **Timeouts**: All operations must have bounded execution time
+- **Circuit Breakers**: Required for external dependencies (alerts, network)
 
-## Core Data Types
+## Required Data Structures
 
-Use strongly-typed structures with serde for serialization:
+### Core Types (Use Exactly)
 
-```rust
+```rust,ignore
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ProcessStatus {
-    Running,
-    Sleeping,
-    Stopped,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RuleType {
-    ProcessMonitor,
-    NetworkMonitor,
-    FileSystemMonitor,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskParameters {
-    pub filter: String,
-    pub threshold: u64,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProcessInfo {
@@ -66,50 +47,42 @@ pub struct ProcessInfo {
     pub cpu_usage: Option<f64>,
     pub memory_usage: Option<u64>,
     pub status: ProcessStatus,
-    pub executable_hash: Option<String>, // SHA-256
+    pub executable_hash: Option<String>, // SHA-256 only
     pub collection_time: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DetectionTask {
-    pub task_id: String,
-    pub rule_type: RuleType,
-    pub parameters: TaskParameters,
-    pub timeout: Duration,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProcessStatus {
+    Running,
+    Sleeping,
+    Stopped,
 }
 ```
 
-## Error Handling Patterns
+### Error Handling (Mandatory Pattern)
 
-Use thiserror for structured error types:
-
-```rust
+```rust,ignore
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("Permission denied accessing process {pid}")]
     PermissionDenied { pid: u32 },
-
     #[error("Process {pid} no longer exists")]
     ProcessNotFound { pid: u32 },
-
     #[error("Database operation failed: {0}")]
     DatabaseError(String),
-
-    #[error("IPC communication failed: {0}")]
-    IpcError(String),
 }
 ```
 
-## Database Schema Design
+## Database Schema (redb TableDefinitions)
 
-### Core Tables (redb)
+### Core Tables (Required)
 
-```rust
+```rust,ignore
 use redb::TableDefinition;
 
-// Event Store schema
+// Event Store (events.redb)
 const PROCESSES_TABLE: TableDefinition<u64, ProcessInfo> = TableDefinition::new("processes");
 const SCANS_TABLE: TableDefinition<u64, ScanMetadata> = TableDefinition::new("scans");
 const DETECTION_RULES_TABLE: TableDefinition<String, DetectionRule> =
@@ -118,77 +91,56 @@ const ALERTS_TABLE: TableDefinition<u64, Alert> = TableDefinition::new("alerts")
 const ALERT_DELIVERIES_TABLE: TableDefinition<u64, AlertDelivery> =
     TableDefinition::new("alert_deliveries");
 
-// Audit Ledger schema (separate database)
+// Audit Ledger (audit.redb - separate file)
 const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::new("audit_ledger");
 ```
 
-### Business/Enterprise Extensions
+## IPC Communication (Mandatory Patterns)
 
-```rust
-// Additional tables for Business/Enterprise tiers
-const AGENTS_TABLE: TableDefinition<String, AgentInfo> = TableDefinition::new("agents");
-const AGENT_CONNECTIONS_TABLE: TableDefinition<String, ConnectionInfo> =
-    TableDefinition::new("agent_connections");
-const FLEET_EVENTS_TABLE: TableDefinition<u64, FleetEvent> = TableDefinition::new("fleet_events");
-const RULE_PACKS_TABLE: TableDefinition<String, RulePack> = TableDefinition::new("rule_packs");
-const NETWORK_EVENTS_TABLE: TableDefinition<u64, NetworkEvent> =
-    TableDefinition::new("network_events"); // Enterprise
-const KERNEL_EVENTS_TABLE: TableDefinition<u64, KernelEvent> =
-    TableDefinition::new("kernel_events"); // Enterprise
+### Dual-Protocol Architecture (Required)
+
+- **CLI Communication**: IPC via interprocess crate (protobuf + CRC32 framing)
+- **Collector Communication**: daemoneye-eventbus message broker (topic-based pub/sub)
+
+### daemoneye-eventbus Integration (Required)
+
+```rust,ignore
+// Embedded broker within daemoneye-agent
+let broker = DaemoneyeBroker::new(broker_config).await?;
+
+// Topic-based pub/sub for collector coordination
+let subscription = EventSubscription {
+    subscriber_id: "procmond".to_string(),
+    topic_patterns: vec!["events.process.*".to_string()],
+    enable_wildcards: true,
+};
 ```
 
-## IPC Communication Performance
+### Topic Hierarchy (Exact Patterns Required)
 
-### Transport Layer
+- **Event Topics**: `events.process.*`, `events.network.*`, `events.filesystem.*`
+- **Control Topics**: `control.collector.*`, `control.health.*`
+- **Message Format**: Bincode serialization with correlation metadata
+- **Backpressure**: 10,000+ messages/second throughput, sub-millisecond latency
 
-Use `interprocess` crate for cross-platform IPC communication:
+## Configuration Hierarchy (Exact Order Required)
 
-```rust
-use interprocess::local_socket::LocalSocketStream;
-use daemoneye_lib::proto::{DetectionTask, DetectionResult};
-
-// Unix Domain Sockets (Linux/macOS) or Named Pipes (Windows)
-let stream = LocalSocketStream::connect("/tmp/DaemonEye.sock")?;
-
-// Protobuf message serialization with CRC32 checksums
-let task = DetectionTask::new()
-    .with_rule_id("suspicious_process")
-    .with_query("SELECT * FROM processes WHERE name = 'malware.exe'")
-    .build();
-
-// Serialize and send with framing
-let serialized = prost::Message::encode_to_vec(&task)?;
-// Send with CRC32 and length prefixing for integrity
-```
-
-### Message Framing
-
-- All IPC messages use length-delimited protobuf with CRC32 checksums for corruption detection
-- Sequence numbers for ordering
-- **Backpressure**: Credit-based flow control with configurable limits (default: 1000 pending records, max 10 concurrent tasks)
-
-## Configuration Management
-
-### Hierarchical Configuration
-
-Support multiple configuration sources with precedence:
-
-1. Command-line flags (highest precedence)
-2. Environment variables (`PROCMOND_*`)
-3. User configuration file (`~/.config/procmond/config.yaml`)
-4. System configuration file (`/etc/procmond/config.yaml`)
+1. CLI flags (highest precedence)
+2. Environment variables (`DAEMONEYE_*` prefix)
+3. User config (`~/.config/daemoneye/config.yaml`)
+4. System config (`/etc/daemoneye/config.yaml`)
 5. Embedded defaults (lowest precedence)
 
-### Configuration Structure
+### Required Config Structure
 
 ```yaml
 app:
-  scan_interval_ms: 30000
-  batch_size: 1000
+  scan_interval_ms: 30000  # Must be configurable
+  batch_size: 1000         # Must enforce memory limits
 
 database:
-  path: /var/lib/procmond/processes.sqlite
-  retention_days: 30
+  path: /var/lib/daemoneye/events.redb  # Must use .redb extension
+  retention_days: 30       # Must implement cleanup
 
 alerting:
   sinks:
@@ -198,15 +150,12 @@ alerting:
       url: https://alerts.example.com/api
 ```
 
-## Alert System Performance
+## Alert System (Exact Implementation Required)
 
-### Plugin-Based Alert Sinks
+### AlertSink Trait (Do Not Modify)
 
-Use trait-based plugin system:
-
-```rust
+```rust,ignore
 use async_trait::async_trait;
-use std::error::Error;
 
 #[async_trait]
 pub trait AlertSink: Send + Sync {
@@ -216,72 +165,60 @@ pub trait AlertSink: Send + Sync {
 }
 ```
 
-### Alert Delivery Performance
+### Required Features
 
-- Concurrent delivery to multiple sinks
-- Retry logic with exponential backoff
-- Circuit breaking for failing sinks
-- Delivery audit trail
+- Concurrent delivery with bounded parallelism
+- Exponential backoff retry (max 3 retries)
+- Circuit breaker for failing sinks
+- Complete delivery audit trail
 
-## Observability and Monitoring
+## Metrics (Exact Names Required)
 
-### Metrics Export
-
-Support Prometheus metrics for operational monitoring:
-
-```rust
-// Example Prometheus metrics
-// procmond_collection_duration_seconds{status="success|error"}
-// procmond_processes_collected_total
-// procmond_alerts_generated_total{severity="low|medium|high|critical"}
-// procmond_alert_deliveries_total{sink="stdout|syslog|webhook"}
-
-struct PrometheusMetrics {
-    collection_duration: String,
-    processes_collected: String,
-    alerts_generated: String,
-    alert_deliveries: String,
-}
+```rust,ignore
+// Do not modify these metric names
+// daemoneye_collection_duration_seconds{status="success|error"}
+// daemoneye_processes_collected_total
+// daemoneye_alerts_generated_total{severity="low|medium|high|critical"}
+// daemoneye_alert_deliveries_total{sink="stdout|syslog|webhook"}
 ```
 
-### Health Checks
+## Cross-Platform Requirements
 
-- Configuration validation endpoints
-- Database connectivity checks
-- Alert sink health monitoring
-- System capability assessment
+### Process Enumeration: sysinfo crate only
 
-## Platform Considerations
+- **Linux**: Optimize `/proc` filesystem access (primary target)
+- **macOS**: Handle security framework restrictions gracefully
+- **Windows**: Windows API access, service deployment support
 
-### Cross-Platform Compatibility
+### Graceful Degradation (Required)
 
-- Linux: Primary development target with `/proc` filesystem access
-- macOS: Native process enumeration with security framework integration
-- Windows: Windows API process access with service deployment
+- Continue with reduced functionality when privileges unavailable
+- Provide clear diagnostics about missing capabilities
+- Implement fallback mechanisms for constrained environments
 
-### Graceful Degradation
+## Critical Performance Patterns (Always Implement)
 
-- Continue with reduced functionality when elevated privileges unavailable
-- Provide clear diagnostics about system capabilities
-- Fallback mechanisms for constrained environments
+### Process Collection
 
-## Process Collection Performance
+- Handle permission denied gracefully (never crash)
+- Compute SHA-256 hashes for executable integrity
+- Bounded execution time (\<5s for 10k processes)
 
-- Use `sysinfo` crate as primary cross-platform abstraction
-- Implement platform-specific optimizations where beneficial
-- Handle permission denied gracefully with partial data collection
-- Compute SHA-256 hashes of executable files for integrity checking
+### Detection Engine
 
-## Detection Engine Performance
+- Use prepared statements only (never dynamic SQL)
+- Validate SQL with AST parsing (sqlparser crate)
+- Sandboxed execution with resource limits
 
-- Execute SQL rules against redb database with prepared statements
-- Implement rule validation and testing capabilities
-- Support hot-reloading of rule files with change detection
-- Provide performance metrics and optimization hints
+### Database Operations
 
-## Database Operations Performance
+- ACID transactions for consistency
+- Automatic schema migrations
+- Connection pooling and maintenance operations
+- Cooperative yielding under memory pressure
 
-- Use connection pooling for concurrent access
-- Implement automatic schema migrations
-- Support database maintenance operations (VACUUM, ANALYZE)
-- Provide detailed statistics and performance metrics
+### Resource Management
+
+- All operations must have timeouts
+- Implement backpressure on bounded channels
+- Memory budgets with `tokio::task::yield_now()`

@@ -30,7 +30,7 @@ pub struct CollectorIpcServer {
     server: Option<InterprocessServer>,
     capabilities: Arc<RwLock<SourceCaps>>,
     shutdown_signal: Arc<AtomicBool>,
-    _temp_dir: TempDir, // Keep temp directory alive for socket lifetime
+    _temp_dir: Option<TempDir>, // Keep temp directory alive for socket lifetime
 }
 
 impl CollectorIpcServer {
@@ -64,8 +64,12 @@ impl CollectorIpcServer {
         collector_config: CollectorConfig,
         capabilities: Arc<RwLock<SourceCaps>>,
     ) -> Result<Self> {
-        let (endpoint_path, temp_dir) =
-            create_endpoint_path().context("Failed to create endpoint path")?;
+        let (endpoint_path, temp_dir) = if let Some(path) = &collector_config.ipc_endpoint {
+            (path.clone(), None)
+        } else {
+            let (path, dir) = create_endpoint_path().context("Failed to create endpoint path")?;
+            (path, Some(dir))
+        };
 
         let ipc_config = IpcConfig {
             transport: TransportType::Interprocess,

@@ -223,6 +223,7 @@ impl EventSource for ChaosEventSource {
                         accessible: true,
                         file_exists: true,
                         timestamp: SystemTime::now(),
+                        platform_metadata: None,
                     })
                 }
                 _ => {
@@ -241,6 +242,7 @@ impl EventSource for ChaosEventSource {
                         accessible: true,
                         file_exists: true,
                         timestamp: SystemTime::now(),
+                        platform_metadata: None,
                     })
                 }
             };
@@ -291,10 +293,10 @@ impl EventSource for ChaosEventSource {
         self.record_event("health_check_called");
 
         // Simulate health check failures for some failure modes
-        if let FailureMode::RandomEventFailure = &self.failure_mode {
-            if random::<f64>() < self.failure_probability / 2.0 {
-                anyhow::bail!("Simulated health check failure");
-            }
+        if let FailureMode::RandomEventFailure = &self.failure_mode
+            && random::<f64>() < self.failure_probability / 2.0
+        {
+            anyhow::bail!("Simulated health check failure");
         }
 
         Ok(())

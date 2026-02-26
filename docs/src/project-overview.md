@@ -64,7 +64,13 @@ DaemonEye implements a **three-component security architecture** with strict pri
 - **Purpose**: User-space detection rule execution and alert management
 - **Security**: Minimal privileges, outbound-only network connections
 - **Database**: Read/write access to event store
-- **Features**: SQL-based detection engine, multi-channel alerting, procmond lifecycle management
+- **Features**:
+  - SQL-based detection engine with AST validation
+  - Multi-channel alerting with reliability guarantees
+  - Embedded EventBus broker for collector coordination
+  - RPC service for collector lifecycle management (start/stop/restart/health checks)
+  - Multi-collector task distribution and result aggregation
+  - Correlation tracking for distributed operations
 
 ### 3. **daemoneye-cli** (Operator Interface)
 
@@ -161,22 +167,25 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 ### **Core Technologies**
 
-- **Language**: Rust 2024 Edition (MSRV: 1.85+)
-- **Safety**: `unsafe_code = "forbid"` at workspace level
-- **Quality**: `warnings = "deny"` with zero-warnings policy
+- **Language**: Rust 2024 Edition (MSRV: 1.91+)
+- **Safety**: `unsafe_code = "forbid"` at workspace level with comprehensive linting
+- **Quality**: `warnings = "deny"` with zero-warnings policy enforced by CI
 - **Async Runtime**: Tokio with full feature set for I/O and task management
+- **Collection Framework**: collector-core for extensible event source management
 
 ### **Database Layer**
 
-- **Core**: redb (pure Rust embedded database) for optimal performance
+- **Core**: redb (pure Rust embedded database) for optimal performance and security
+- **Features**: Concurrent access, ACID transactions, zero-copy deserialization
+- **Configuration**: Separate event store and audit ledger with different durability settings
 - **Business/Enterprise**: PostgreSQL for centralized data aggregation
-- **Features**: WAL mode, connection pooling, ACID compliance
 
 ### **CLI Framework**
 
-- **clap v4**: Derive macros with shell completions
+- **clap v4**: Derive macros with shell completions (bash, zsh, fish, PowerShell)
 - **Terminal**: Automatic color detection, NO_COLOR and TERM=dumb support
-- **Output**: JSON, human-readable table, CSV formats
+- **Output**: JSON and human-readable formats with configurable formatting
+- **Arguments**: Comprehensive argument parsing with validation and help generation
 
 ### **Configuration Management**
 

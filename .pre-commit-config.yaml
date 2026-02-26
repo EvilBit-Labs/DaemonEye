@@ -71,8 +71,8 @@ repos:
                 - mdformat-web
                 - mdformat-wikilink
                 - mdformat-gfm-alerts
-                - mdformat-rustfmt
                 - mdformat-toc
+                - mdformat-rustfmt
             files: \.(md|mdx)$
 
     # 🔒 Security audit for Rust dependencies (moved to CI)

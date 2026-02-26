@@ -2,10 +2,11 @@
 
 ## Language & Runtime
 
-- **Language**: Rust 2024 Edition (MSRV: 1.85+)
-- **Safety**: `unsafe_code = "forbid"` at workspace level
-- **Quality**: `warnings = "deny"` with zero-warnings policy
+- **Language**: Rust 2024 Edition (MSRV: 1.91+)
+- **Safety**: `unsafe_code = "forbid"` at workspace level with comprehensive linting
+- **Quality**: `warnings = "deny"` with zero-warnings policy enforced by CI
 - **Async Runtime**: Tokio with full feature set for I/O and task management
+- **Collection Framework**: collector-core for extensible event source management
 
 ## Core Dependencies
 
@@ -25,6 +26,20 @@
 - **Protocol**: Custom protobuf over Unix sockets (Linux/macOS) and named pipes (Windows)
 - **Features**: Async message handling, automatic reconnection with exponential backoff
 - **Security**: Connection authentication and optional encryption
+- **Scope**: CLI-to-agent communication (daemoneye-cli ↔ daemoneye-agent)
+
+### EventBus and RPC Architecture
+
+- **daemoneye-eventbus**: Cross-platform IPC event bus with embedded broker architecture
+- **Transport**: Unix domain sockets (Linux/macOS) and named pipes (Windows)
+- **Messaging**: Topic-based pub/sub with hierarchical routing and wildcard patterns (`+`, `#`)
+- **Performance**: 10,000+ messages/second throughput, sub-millisecond latency
+- **Scope**: Multi-process coordination (daemoneye-agent ↔ collector-core components)
+- **Embedded Broker**: Runs within daemoneye-agent process for local collector coordination
+- **RPC Service**: Collector lifecycle management (start/stop/restart/health checks)
+- **RPC Features**: Timeout handling, correlation tracking, error propagation, capability-based routing
+- **Coordination**: Multi-collector task distribution, result aggregation, load balancing, failover
+- **Correlation Metadata**: Distributed tracing with correlation IDs, sequence numbers, workflow stages
 
 ### Configuration Management
 
@@ -56,15 +71,19 @@ just test         # Run all tests with cargo-nextest (unit + integration)
 just build        # Build entire workspace
 
 # Testing variants
-just test-unit    # Run unit tests only
-just test-integration  # Run integration tests only
-just test-fuzz    # Run fuzz testing suite
-just coverage     # Generate coverage report with tarpaulin
+just test-ci      # Run tests with nextest for CI
+just test-fast    # Run only fast unit tests
+just coverage     # Generate coverage report with llvm-cov
+
+# Benchmarking
+just bench        # Run all benchmarks
+just bench-process # Run process collection benchmarks
+just bench-database # Run database operation benchmarks
 
 # Component execution
-just run-procmond --once --verbose      # Run process monitor
-just run-daemoneye-cli --help             # Run CLI interface
-just run-daemoneye-agent --config /path   # Run orchestrator agent
+just run-procmond --interval 30 --enhanced-metadata    # Run process monitor
+just run-daemoneye-cli --format json                   # Run CLI interface
+just run-daemoneye-agent --log-level debug             # Run orchestrator agent
 ```
 
 ### Build Configuration

@@ -10,7 +10,7 @@ The core design follows a pipeline architecture where process data flows from co
 
 ### Collector-Core Framework Architecture
 
-The collector-core framework provides a unified foundation for multiple collection components, enabling extensible monitoring capabilities while maintaining shared operational infrastructure:
+The collector-core framework provides a unified foundation for multiple collection components, enabling extensible monitoring capabilities while maintaining shared operational infrastructure. The framework integrates with the daemoneye-eventbus for high-performance multi-process communication:
 
 ```mermaid
 graph LR
@@ -24,6 +24,7 @@ graph LR
 
         subgraph CR["Collector Runtime"]
             AGG["Event aggregation and batching"]
+            EVENTBUS["DaemonEye EventBus Client<br/>• Topic-based pub/sub<br/>• Wildcard subscriptions<br/>• Backpressure handling"]
             IPC["IPC server (protobuf + CRC32 framing)"]
             CFG["Configuration management and validation"]
             LOG["Structured logging and metrics"]
@@ -37,7 +38,8 @@ graph LR
         PerfS --> CR
     end
 
-    CC --> SA["daemoneye-agent<br/>(Orchestrator)<br/>• Task dispatch<br/>• Data aggregation<br/>• SQL detection<br/>• Alert management"]
+    CC --> BROKER["DaemonEye EventBus Broker<br/>(Embedded in daemoneye-agent)<br/>• Message routing<br/>• Subscription management<br/>• Multi-collector coordination"]
+    BROKER --> SA["daemoneye-agent<br/>(Orchestrator)<br/>• Task dispatch<br/>• Data aggregation<br/>• SQL detection<br/>• Alert management"]
 
 
 ```
@@ -45,7 +47,8 @@ graph LR
 **Core Framework Components**:
 
 - **Universal EventSource Trait**: Abstracts collection methodology from operational infrastructure
-- **Collector Runtime**: Manages event sources, IPC communication, and shared services
+- **Collector Runtime**: Manages event sources, eventbus communication, and shared services
+- **DaemonEye EventBus Integration**: High-performance message broker for multi-process coordination
 - **Extensible Event Model**: Supports multiple collection domains through unified event types
 - **Shared Infrastructure**: Common configuration, logging, health checks, and capability negotiation
 
@@ -58,16 +61,20 @@ graph LR
 
 ### Component Architecture
 
-DaemonEye consists of three main components that work together to provide comprehensive process monitoring, with procmond built on the collector-core framework:
+DaemonEye consists of three main components that work together to provide comprehensive process monitoring, with procmond built on the collector-core framework and integrated through the daemoneye-eventbus:
 
 ```mermaid
 graph LR
     subgraph "DaemonEye Architecture"
         CLI["daemoneye-cli<br/>(Interface)<br/>• User space<br/>• Queries<br/>• Management<br/>• Diagnostics<br/>• Config mgmt"]
 
-        AGENT["daemoneye-agent<br/>(Orchestrator)<br/>• User space<br/>• SQL engine<br/>• Rule mgmt<br/>• Detection<br/>• Alerting<br/>• Network comm<br/>• Task dispatch<br/>• Multi-domain correlation"]
+        subgraph "daemoneye-agent Process"
+            AGENT["daemoneye-agent<br/>(Orchestrator)<br/>• User space<br/>• SQL engine<br/>• Rule mgmt<br/>• Detection<br/>• Alerting<br/>• Network comm<br/>• Task dispatch<br/>• Multi-domain correlation"]
 
-        PROC["procmond<br/>(collector-core + process EventSource)<br/>• Privileged<br/>• Process enum<br/>• Hash compute<br/>• Audit logging<br/>• Protobuf IPC<br/>• Extensible architecture"]
+            BROKER["DaemonEye EventBus Broker<br/>(Embedded)<br/>• Topic routing<br/>• Subscription management<br/>• Message delivery<br/>• Multi-collector coordination"]
+        end
+
+        PROC["procmond<br/>(collector-core + process EventSource)<br/>• Privileged<br/>• Process enum<br/>• Hash compute<br/>• Audit logging<br/>• EventBus client<br/>• Extensible architecture"]
 
         AUDIT["Audit Ledger<br/>(Merkle Tree)<br/>collector-core managed"]
 
@@ -75,23 +82,29 @@ graph LR
     end
 
     CLI ---|IPC| AGENT
-    AGENT ---|IPC| PROC
+    AGENT --- BROKER
+    BROKER ---|EventBus| PROC
     PROC --> AUDIT
     AGENT --> STORE
 
 
 ```
 
-**IPC Protocol**: Protobuf + CRC32 framing over interprocess crate (existing implementation) **Communication Flow**: daemoneye-cli ↔ daemoneye-agent ↔ collector-core components Service Management: daemoneye-agent manages collector-core component lifecycle Extensibility: collector-core enables future business/enterprise tier functionality
+- **EventBus Protocol**: Topic-based pub/sub messaging with wildcard subscriptions and backpressure handling
+- **IPC Protocol**: Protobuf + CRC32 framing over interprocess crate for CLI communication
+- **Communication Flow**: daemoneye-cli ↔ daemoneye-agent ↔ embedded broker ↔ collector-core components
+- **Service Management**: daemoneye-agent manages collector-core component lifecycle and embedded broker
+- **Extensibility**: collector-core + daemoneye-eventbus enables future business/enterprise tier functionality
 
 ### Data Flow Architecture
 
-The system implements a pipeline processing model with clear phases and strict component separation:
+The system implements a pipeline processing model with clear phases and strict component separation, using the daemoneye-eventbus for high-performance multi-process communication:
 
 ```mermaid
 sequenceDiagram
     participant CLI as daemoneye-cli
     participant AGENT as daemoneye-agent
+    participant BROKER as DaemonEye EventBus Broker
     participant CORE as collector-core
     participant PROC as ProcessEventSource
     participant AUDIT as Audit Ledger
@@ -102,17 +115,21 @@ sequenceDiagram
     CLI->>AGENT: SQL Detection Rule
     AGENT->>AGENT: SQL AST Parsing & Validation
     AGENT->>AGENT: Extract Collection Requirements
-    AGENT->>CORE: Simple Protobuf Collection Task
+    AGENT->>BROKER: Publish Collection Task (Topic: control.tasks.process)
+
+    Note over BROKER,PROC: EventBus Message Routing
+    BROKER->>CORE: Route Task to Subscribed Collectors
+    CORE->>PROC: Start Collection
 
     Note over CORE,PROC: Collection Phase
-    CORE->>PROC: Start Collection
     PROC->>PROC: Enumerate Processes
     PROC->>PROC: Compute SHA-256 Hashes
     PROC->>AUDIT: Write Audit Entry (Tamper-Evident)
     PROC->>CORE: Collection Events
-    CORE->>AGENT: Aggregated Results
+    CORE->>BROKER: Publish Events (Topic: events.process.*)
 
-    Note over AGENT,STORE: Detection & Alert Phase
+    Note over BROKER,AGENT: Event Aggregation
+    BROKER->>AGENT: Route Events to Detection Engine
     AGENT->>STORE: Store Process Data
     AGENT->>AGENT: Execute Original SQL Rule
     AGENT->>AGENT: Generate Structured Alerts
@@ -126,21 +143,24 @@ sequenceDiagram
 
 **Pipeline Phases**:
 
-1. **Collection Phase**: procmond enumerates processes and computes hashes
-2. **SQL-to-IPC Translation**: daemoneye-agent uses sqlparser to extract collection requirements from SQL AST
-3. **Task Generation**: Complex SQL detection rules translated into simple protobuf collection tasks
-4. **IPC Communication**: procmond receives simple detection tasks via protobuf over IPC
-5. **Overcollection Strategy**: procmond may overcollect data due to granularity limitations
-6. **Audit Logging**: procmond writes to tamper-evident audit ledger (write-only; redb + rs-merkle Merkle tree)
-7. **Detection Phase**: daemoneye-agent executes original SQL rules against collected/stored data
-8. **Alert Generation**: Structured alerts with deduplication and context
-9. **Delivery Phase**: Multi-channel alert delivery with reliability guarantees
+01. **Collection Phase**: procmond enumerates processes and computes hashes
+02. **SQL-to-EventBus Translation**: daemoneye-agent uses sqlparser to extract collection requirements from SQL AST
+03. **Task Generation**: Complex SQL detection rules translated into simple collection tasks
+04. **EventBus Communication**: Tasks published to control topics, events published to event topics
+05. **Topic-Based Routing**: DaemonEye EventBus routes messages based on topic patterns and subscriptions
+06. **Overcollection Strategy**: procmond may overcollect data due to granularity limitations
+07. **Audit Logging**: procmond writes to tamper-evident audit ledger (write-only; redb + rs-merkle Merkle tree)
+08. **Event Aggregation**: daemoneye-agent subscribes to event topics for multi-collector coordination
+09. **Detection Phase**: daemoneye-agent executes original SQL rules against collected/stored data
+10. **Alert Generation**: Structured alerts with deduplication and context
+11. **Delivery Phase**: Multi-channel alert delivery with reliability guarantees
 
 **Key Architectural Principles**:
 
 - procmond has minimal complexity and attack surface
 - All complex logic (SQL, networking, redb) handled by daemoneye-agent
-- IPC protocol is simple and purpose-built for security
+- EventBus protocol provides high-performance pub/sub messaging with topic-based routing
+- Embedded broker eliminates external dependencies while enabling multi-process coordination
 - Clear separation between audit logging (procmond) and event processing (daemoneye-agent)
 - Pure Rust stack with redb for optimal performance and security
 - Zero unsafe code goal with any required unsafe code isolated to procmond only
@@ -193,10 +213,11 @@ The collector-core framework will wrap and extend existing proven components:
 - `Collector` struct for runtime management and event aggregation
 - `CollectionEvent` enum for unified event handling across domains
 - `CollectorConfig` for shared configuration management
+- `DaemoneyeEventBusAdapter` for seamless integration with daemoneye-eventbus
 
 **Core Implementation**:
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait EventSource: Send + Sync {
     fn name(&self) -> &'static str;
@@ -209,11 +230,15 @@ pub struct Collector {
     config: CollectorConfig,
     sources: Vec<Box<dyn EventSource>>,
     runtime: CollectorRuntime,
+    event_bus: Box<dyn EventBus>, // DaemonEye EventBus integration
     ipc_server: IpcServer,
 }
 
 impl Collector {
-    pub fn new(config: CollectorConfig) -> Self { ... }
+    pub async fn new(config: CollectorConfig) -> anyhow::Result<Self> {
+        let event_bus = EventBusFactory::create(&config.event_bus).await?;
+        // ... initialization
+    }
     pub fn register<S: EventSource + 'static>(&mut self, source: S) { ... }
     pub async fn run(self) -> anyhow::Result<()> { ... }
 }
@@ -243,6 +268,7 @@ bitflags! {
 
 - **Configuration Management**: Hierarchical config loading with validation (daemoneye-lib/src/config.rs)
 - **Logging Infrastructure**: Structured tracing with JSON output and metrics (daemoneye-lib/src/telemetry.rs)
+- **EventBus Integration**: DaemonEye EventBus client for topic-based pub/sub messaging
 - **IPC Server**: Protobuf-based communication with daemoneye-agent (daemoneye-lib/src/ipc/)
 - **Health Monitoring**: Component status tracking and graceful shutdown
 - **Event Batching**: Efficient event aggregation and backpressure handling
@@ -250,9 +276,10 @@ bitflags! {
 
 **Integration with Existing Components**:
 
-```rust
-// Refactored procmond using collector-core + existing components
-fn main() -> anyhow::Result<()> {
+```rust,ignore
+// Refactored procmond using collector-core + existing components + daemoneye-eventbus
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     // EXISTING: Reuse CLI parsing and initialization
     let cli = Cli::parse();
     tracing_subscriber::fmt::init();
@@ -264,52 +291,86 @@ fn main() -> anyhow::Result<()> {
     // EXISTING: Reuse database initialization
     let db_manager = Arc::new(Mutex::new(storage::DatabaseManager::new(&cli.database)?));
 
-    // NEW: Create collector-core with existing components
+    // NEW: Create collector-core with existing components + eventbus integration
     let collector_config = CollectorConfig::from(config);
-    let mut collector = collector_core::Collector::new(collector_config);
+    let mut collector = collector_core::Collector::new(collector_config).await?;
 
     // NEW: Register process source wrapping existing ProcessMessageHandler
     let process_handler = ProcessMessageHandler::new(Arc::clone(&db_manager));
     let process_source = ProcessEventSource::new(process_handler, config.app.clone());
     collector.register(process_source);
 
-    // EXISTING: Reuse IPC server creation with collector-core integration
+    // NEW: EventBus integration handles communication with daemoneye-agent
     collector.run().await
 }
 
-// ProcessEventSource wraps existing ProcessMessageHandler
+// ProcessEventSource wraps existing ProcessMessageHandler with EventBus integration
 pub struct ProcessEventSource {
-    handler: ProcessMessageHandler,  // EXISTING: Complete process logic
-    config: AppConfig,               // EXISTING: Configuration structure
+    handler: ProcessMessageHandler, // EXISTING: Complete process logic
+    config: AppConfig,              // EXISTING: Configuration structure
+    event_bus: Arc<dyn EventBus>,   // NEW: EventBus integration
 }
 
 #[async_trait]
 impl EventSource for ProcessEventSource {
-    fn name(&self) -> &'static str { "process-monitor" }
+    fn name(&self) -> &'static str {
+        "process-monitor"
+    }
 
     fn capabilities(&self) -> SourceCaps {
         SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE
     }
 
     async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
-        // EXISTING: Reuse ProcessMessageHandler.enumerate_processes logic
+        // Subscribe to control tasks from daemoneye-agent
+        let subscription = EventSubscription {
+            subscriber_id: "process-monitor".to_string(),
+            capabilities: self.capabilities(),
+            topic_patterns: Some(vec!["control.tasks.process.*".to_string()]),
+            enable_wildcards: true,
+            event_filter: None,
+            correlation_filter: None,
+        };
+
+        let mut task_receiver = self.event_bus.subscribe(subscription).await?;
+
+        // Handle both scheduled scans and on-demand tasks
+        let mut scan_interval =
+            tokio::time::interval(Duration::from_millis(self.config.scan_interval_ms));
+
         loop {
-            let task = DetectionTask {
-                task_id: format!("scan-{}", chrono::Utc::now().timestamp_millis()),
-                task_type: ProtoTaskType::EnumerateProcesses as i32,
-                process_filter: None,
-                hash_check: None,
-                metadata: None,
-            };
+            tokio::select! {
+                _ = scan_interval.tick() => {
+                    // EXISTING: Reuse ProcessMessageHandler.enumerate_processes logic
+                    let task = DetectionTask {
+                        task_id: format!("scan-{}", chrono::Utc::now().timestamp_millis()),
+                        task_type: ProtoTaskType::EnumerateProcesses as i32,
+                        process_filter: None,
+                        hash_check: None,
+                        metadata: None,
+                    };
 
-            let result = self.handler.enumerate_processes(&task).await?;
+                    let result = self.handler.enumerate_processes(&task).await?;
 
-            for process in result.processes {
-                let event = CollectionEvent::Process(ProcessEvent::from(process));
-                tx.send(event).await?;
+                    for process in result.processes {
+                        let event = CollectionEvent::Process(ProcessEvent::from(process));
+                        // Publish to EventBus for daemoneye-agent consumption
+                        self.event_bus.publish(event.clone(), format!("scan-{}", task.task_id)).await?;
+                        // Also send to local collector runtime
+                        tx.send(event).await?;
+                    }
+                }
+                Some(task_event) = task_receiver.recv() => {
+                    // Handle on-demand tasks from daemoneye-agent
+                    if let Ok(task) = serde_json::from_value::<DetectionTask>(task_event.event) {
+                        let result = self.handler.handle_detection_task(&task).await?;
+
+                        // Publish results back to EventBus
+                        let result_event = CollectionEvent::TaskResult(TaskResultEvent::from(result));
+                        self.event_bus.publish(result_event, task.task_id).await?;
+                    }
+                }
             }
-
-            tokio::time::sleep(Duration::from_millis(self.config.scan_interval_ms)).await;
         }
     }
 }
@@ -317,7 +378,7 @@ impl EventSource for ProcessEventSource {
 
 **Multi-Component Support**:
 
-```rust
+```rust,ignore
 // Example: Future network monitoring component
 fn main() -> anyhow::Result<()> {
     let config = collector_core::config::load()?;
@@ -347,7 +408,7 @@ fn main() -> anyhow::Result<()> {
 
 **Core Implementation**:
 
-```rust
+```rust,ignore
 pub struct ProcessEventSource {
     collector: Box<dyn ProcessCollector>,
     hash_computer: Box<dyn HashComputer>,
@@ -356,7 +417,9 @@ pub struct ProcessEventSource {
 
 #[async_trait]
 impl EventSource for ProcessEventSource {
-    fn name(&self) -> &'static str { "process-monitor" }
+    fn name(&self) -> &'static str {
+        "process-monitor"
+    }
 
     fn capabilities(&self) -> SourceCaps {
         SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE
@@ -401,7 +464,7 @@ fn main() -> anyhow::Result<()> {
 
 ### daemoneye-agent (Detection Orchestrator)
 
-**Purpose**: User-space detection rule execution, alert management, and collector-core component lifecycle management
+**Purpose**: User-space detection rule execution, alert management, collector-core component lifecycle management, and embedded EventBus broker hosting
 
 **Key Interfaces**:
 
@@ -410,22 +473,36 @@ fn main() -> anyhow::Result<()> {
 - `AlertSink` trait for pluggable delivery channels
 - `RuleManager` trait for rule loading and validation
 - `ProcessManager` trait for procmond lifecycle management
+- `DaemoneyeBroker` for embedded EventBus message routing
 
 **Core Implementation**:
 
-```rust
+```rust,ignore
+pub struct DaemoneyeAgent {
+    // Embedded broker instance
+    event_broker: Arc<DaemoneyeBroker>,
+    // Detection engine with broker integration
+    detection_engine: DetectionEngine,
+    // Collector lifecycle manager
+    collector_manager: CollectorManager,
+    // Configuration manager
+    config: AgentConfig,
+}
+
 pub struct DetectionEngine {
     db: redb::Database,
     rule_manager: RuleManager,
     alert_manager: AlertManager,
     sql_validator: SqlValidator,
-    ipc_client: IpcClient,
+    event_bus: DaemoneyeEventBus, // EventBus client for event consumption
+    broker: Arc<DaemoneyeBroker>, // Reference to embedded broker
 }
 
 #[async_trait]
 pub trait DetectionEngine {
     async fn execute_rules(&self, scan_id: i64) -> Result<Vec<Alert>>;
     async fn validate_sql(&self, query: &str) -> Result<ValidationResult>;
+    async fn subscribe_to_events(&mut self) -> Result<mpsc::UnboundedReceiver<BusEvent>>;
 }
 ```
 
@@ -433,16 +510,18 @@ pub trait DetectionEngine {
 
 - Operates in user space with minimal privileges
 - Manages redb event store (read/write access)
-- **SQL-to-IPC Translation**: Uses sqlparser to analyze SQL detection rules and extract collection requirements
-- **Task Generation**: Translates complex SQL queries into simple protobuf collection tasks for collector-core components
-- **Multi-Domain Correlation**: Aggregates events from multiple collection domains (process, network, filesystem, performance)
+- **Embedded EventBus Broker**: Hosts DaemoneyeBroker for multi-collector coordination within agent process
+- **SQL-to-EventBus Translation**: Uses sqlparser to analyze SQL detection rules and extract collection requirements
+- **Task Generation**: Translates complex SQL queries into simple collection tasks published to control topics
+- **Multi-Domain Correlation**: Aggregates events from multiple collection domains via EventBus subscriptions
+- **Topic-Based Routing**: Uses topic patterns for efficient event filtering and routing
 - **Overcollection Handling**: May request broader data collection than SQL requires, then applies SQL filtering to stored data
-- **Privilege Separation**: SQL execution never directly touches live processes; only simple collection tasks sent via IPC
+- **Privilege Separation**: SQL execution never directly touches live processes; only simple collection tasks sent via EventBus
 - Outbound-only network connections for alert delivery
 - Sandboxed rule execution with resource limits
-- IPC client for communication with collector-core components via interprocess crate
+- EventBus broker for communication with collector-core components
 - Manages collector-core component lifecycle (start, stop, restart, health monitoring)
-- **Capability Negotiation**: Discovers available monitoring capabilities from collector-core components
+- **Capability Negotiation**: Discovers available monitoring capabilities from collector-core components via EventBus
 
 **Service Management**:
 
@@ -465,7 +544,7 @@ pub trait DetectionEngine {
 
 **Core Implementation**:
 
-```rust
+```rust,ignore
 pub struct QueryExecutor {
     db: redb::Database,
     sql_validator: SqlValidator,
@@ -487,167 +566,364 @@ pub trait QueryExecutor {
 - Safe SQL execution via daemoneye-agent with prepared statements
 - Communicates only with daemoneye-agent for all operations
 
-### IPC Protocol Design
+### EventBus Protocol Design
 
-**Purpose**: Secure, efficient communication between collector-core components and daemoneye-agent
+**Purpose**: High-performance pub/sub messaging and RPC communication between collector-core components and daemoneye-agent through embedded broker
 
-**Protocol Specification** (extending existing protobuf definitions):
+**Protocol Specification** (daemoneye-eventbus message schemas):
 
-```protobuf
-syntax = "proto3";
+**Topic Hierarchy Design**:
 
-// NEW: Capability negotiation between collector-core and daemoneye-agent
-message CollectionCapabilities {
-    bool supports_processes = 1;
-    bool supports_network = 2;      // Future: netmond
-    bool supports_filesystem = 3;   // Future: fsmond
-    bool supports_performance = 4;  // Future: perfmond
-    bool kernel_level = 5;
-    bool realtime = 6;
-    bool system_wide = 7;
+```text
+# Event Topics (Data Flow)
+events.process.lifecycle     # Process start/stop/exit events
+events.process.metadata      # Process metadata updates (CPU, memory, etc.)
+events.process.tree          # Parent-child relationship changes
+events.process.integrity     # Hash verification and integrity checks
+events.process.anomaly       # Behavioral anomalies and suspicious patterns
+events.process.batch         # Bulk process enumeration results
+
+# Control Topics (Management Flow)
+control.collector.lifecycle  # Start/stop/restart collector processes
+control.collector.config     # Configuration updates and reloads
+control.collector.task       # Task assignment and distribution
+control.health.heartbeat     # Component heartbeat messages
+control.health.status        # Component status updates
+control.health.diagnostics   # Diagnostic information exchange
+
+# Future Extensions
+events.network.*             # Network monitoring events (netmond)
+events.filesystem.*          # Filesystem monitoring events (fsmond)
+events.performance.*         # Performance monitoring events (perfmond)
+```
+
+**Message Schema Structure**:
+
+```rust,ignore
+// Core EventBus message envelope
+pub struct EventBusMessage {
+    pub metadata: MessageMetadata,
+    pub correlation: CorrelationMetadata,
+    pub payload: MessagePayload,
 }
 
-// EXISTING: Detection tasks (from ipc.proto) - extend for future components
-message DetectionTask {
-    string task_id = 1;
-    TaskType task_type = 2;
-    optional ProcessFilter process_filter = 3;
-    optional HashCheck hash_check = 4;
-    optional string metadata = 5;
-    // NEW: Future extensions for additional collection domains
-    optional NetworkFilter network_filter = 6;    // Future: netmond
-    optional FilesystemFilter fs_filter = 7;      // Future: fsmond
-    optional PerformanceFilter perf_filter = 8;   // Future: perfmond
+// Collection events from monitoring components
+pub enum CollectionEvent {
+    Process(ProcessEvent),
+    Network(NetworkEvent),         // Future: netmond
+    Filesystem(FilesystemEvent),   // Future: fsmond
+    Performance(PerformanceEvent), // Future: perfmond
 }
 
-// EXISTING: Task types (from common.proto) - extend for future components
-enum TaskType {
-    ENUMERATE_PROCESSES = 0;
-    CHECK_PROCESS_HASH = 1;
-    MONITOR_PROCESS_TREE = 2;
-    VERIFY_EXECUTABLE = 3;
-    // NEW: Future task types
-    MONITOR_NETWORK_CONNECTIONS = 4;    // Future: netmond
-    TRACK_FILE_OPERATIONS = 5;          // Future: fsmond
-    COLLECT_PERFORMANCE_METRICS = 6;    // Future: perfmond
+// RPC patterns for collector lifecycle management
+pub struct RpcRequest {
+    pub operation: CollectorOperation,
+    pub payload: RpcPayload,
+    pub timeout: Duration,
+    pub correlation_id: String,
 }
 
-// EXISTING: Process filtering (from common.proto)
-message ProcessFilter {
-    repeated string process_names = 1;
-    repeated uint32 pids = 2;
-    optional string executable_pattern = 3;
+pub enum CollectorOperation {
+    Start,
+    Stop,
+    Restart,
+    HealthCheck,
+    UpdateConfig,
+    GracefulShutdown,
+    ForceShutdown,
+    GetCapabilities,
+    Pause,
+    Resume,
 }
 
-// EXISTING: Hash verification (from common.proto)
-message HashCheck {
-    string expected_hash = 1;
-    string hash_algorithm = 2;
-    string executable_path = 3;
-}
-
-// EXISTING: Detection results (from ipc.proto) - extend for future components
-message DetectionResult {
-    string task_id = 1;
-    bool success = 2;
-    optional string error_message = 3;
-    repeated ProcessRecord processes = 4;
-    optional HashResult hash_result = 5;
-    // NEW: Future extensions for additional collection domains
-    repeated NetworkRecord network_events = 6;    // Future: netmond
-    repeated FilesystemRecord fs_events = 7;      // Future: fsmond
-    repeated PerformanceRecord perf_events = 8;   // Future: perfmond
-}
-
-// EXISTING: Process record (from common.proto)
-message ProcessRecord {
-    uint32 pid = 1;
-    optional uint32 ppid = 2;
-    string name = 3;
-    optional string executable_path = 4;
-    repeated string command_line = 5;
-    optional int64 start_time = 6;
-    optional double cpu_usage = 7;
-    optional uint64 memory_usage = 8;
-    optional string executable_hash = 9;
-    optional string hash_algorithm = 10;
-    optional string user_id = 11;
-    bool accessible = 12;
-    bool file_exists = 13;
-    int64 collection_time = 14;
+// Multi-collector correlation metadata
+pub struct CorrelationMetadata {
+    pub correlation_id: String,
+    pub parent_correlation_id: Option<String>,
+    pub root_correlation_id: String,
+    pub sequence_number: u64,
+    pub workflow_stage: Option<String>,
+    pub correlation_tags: HashMap<String, String>,
 }
 ```
 
-**Transport Layer (Existing Interprocess Implementation)**:
+**Transport Layer (DaemonEye EventBus)**:
 
-- **Implementation**: **EXISTING** `interprocess` crate integration from docs/src/technical/ipc-implementation.md
+- **Implementation**: Cross-platform IPC with embedded broker architecture
 - **Unix/Linux/macOS**: Unix domain sockets with owner-only permissions (0700 dir, 0600 socket)
 - **Windows**: Named pipes with appropriate security descriptors
-- **Frame Protocol**: **EXISTING** Length-delimited protobuf messages with CRC32 integrity validation
-- **Codec**: **EXISTING** `IpcCodec` with BytesMut buffers, timeout handling, and comprehensive error types
-- **Security**: **EXISTING** No network access, local-only endpoints, connection limits
-- **Reliability**: **EXISTING** Async message handling, graceful shutdown, and proper cleanup
-- **Configuration**: **EXISTING** `IpcConfig` with timeouts, limits, and CRC32 variant selection
-- **Error Handling**: **EXISTING** Comprehensive `IpcError` types with automatic reconnection and exponential backoff
+- **Message Protocol**: Bincode serialization with efficient binary encoding
+- **Topic Routing**: Hierarchical topic matching with wildcard support (`+` single-level, `#` multi-level)
+- **Security**: Local-only endpoints, topic-based access control, connection limits
+- **Reliability**: At-most-once delivery semantics, circuit breaker patterns, retry logic
+- **Performance**: 10,000+ messages/second throughput, sub-millisecond latency
+- **Configuration**: Configurable timeouts, buffer sizes, and resource limits
+- **Error Handling**: Comprehensive error types with automatic reconnection and exponential backoff
 
-### IPC Protocol Flow
+### EventBus Communication Flow
 
 ```mermaid
 sequenceDiagram
-    participant SA as daemoneye-agent
-    participant PM as procmond
-    participant C as Codec
-    participant UDS as Unix Socket
+    participant AGENT as daemoneye-agent
+    participant BROKER as DaemonEye Broker
+    participant PROCMOND as procmond
+    participant NETMOND as netmond (future)
 
-    Note over SA,UDS: Connection Establishment
-    SA->>UDS: Connect to socket
-    UDS-->>SA: Connection accepted
+    Note over AGENT,NETMOND: Embedded Broker Startup
+    AGENT->>BROKER: Initialize Embedded Broker
+    BROKER->>BROKER: Start Topic Router & Transport
 
-    Note over SA,UDS: Message Exchange
-    SA->>C: Encode DetectionTask
-    C->>C: Add length + CRC32
-    C->>UDS: Write frame
-    UDS->>PM: Frame received
-    PM->>C: Read and validate frame
-    C->>C: Verify CRC32
-    C-->>PM: DetectionTask
+    Note over AGENT,NETMOND: Collector Registration
+    PROCMOND->>BROKER: Connect & Subscribe (control.collector.#)
+    NETMOND->>BROKER: Connect & Subscribe (control.collector.#)
+    AGENT->>BROKER: Subscribe (events.#, control.health.#)
 
-    PM->>PM: Process task
+    Note over AGENT,NETMOND: Task Distribution
+    AGENT->>BROKER: Publish (control.collector.task)
+    BROKER->>PROCMOND: Route Task (topic match)
+    PROCMOND->>PROCMOND: Process Collection Task
 
-    PM->>C: Encode DetectionResult
-    C->>C: Add length + CRC32
-    C->>UDS: Write frame
-    UDS->>SA: Frame received
-    SA->>C: Read and validate frame
-    C->>C: Verify CRC32
-    C-->>SA: DetectionResult
+    Note over AGENT,NETMOND: Event Publishing
+    PROCMOND->>BROKER: Publish (events.process.lifecycle)
+    NETMOND->>BROKER: Publish (events.network.connections)
+    BROKER->>AGENT: Route Events (wildcard match: events.#)
 
-    Note over SA,UDS: Connection Cleanup
-    SA->>UDS: Close connection
+    Note over AGENT,NETMOND: Health Monitoring
+    AGENT->>BROKER: Publish (control.health.heartbeat)
+    BROKER->>PROCMOND: Route Heartbeat Request
+    PROCMOND->>BROKER: Publish (control.health.status)
+    BROKER->>AGENT: Route Health Response
+
+    Note over AGENT,NETMOND: RPC Lifecycle Management
+    AGENT->>BROKER: RPC Request (control.collector.lifecycle)
+    BROKER->>PROCMOND: Route RPC Request
+    PROCMOND->>BROKER: RPC Response
+    BROKER->>AGENT: Route RPC Response
+```
+
+### EventBus Integration Patterns
+
+**Subscription Patterns**:
+
+```rust,ignore
+// daemoneye-agent: Subscribe to all events for correlation
+let subscription = EventSubscription {
+    subscriber_id: "daemoneye-agent".to_string(),
+    topic_patterns: Some(vec!["events.#".to_string()]),
+    enable_wildcards: true,
+    capabilities: SourceCaps::all(),
+    event_filter: None,
+    correlation_filter: None,
+};
+
+// procmond: Subscribe to collector control messages
+let subscription = EventSubscription {
+    subscriber_id: "procmond".to_string(),
+    topic_patterns: Some(vec![
+        "control.collector.#".to_string(),
+        "control.health.heartbeat".to_string(),
+    ]),
+    enable_wildcards: true,
+    capabilities: SourceCaps::PROCESS,
+    event_filter: None,
+    correlation_filter: None,
+};
+```
+
+**Publishing Patterns**:
+
+```rust,ignore
+// Publish process events with correlation
+let correlation = CorrelationMetadata::new()
+    .with_stage("process_analysis".to_string())
+    .with_tag("collector".to_string(), "procmond".to_string());
+
+event_bus.publish_to_topic(
+    CollectionEvent::Process(process_event),
+    "events.process.lifecycle",
+    correlation,
+).await?;
+
+// RPC call for collector management
+let rpc_request = RpcRequest::lifecycle(
+    "daemoneye-agent".to_string(),
+    "control.collector.procmond".to_string(),
+    CollectorOperation::Start,
+    lifecycle_request,
+    Duration::from_secs(30),
+);
+
+let response = rpc_client.call(rpc_request, Duration::from_secs(30)).await?;
 ```
 
 ### Error Handling Flow
 
 ```mermaid
 flowchart TD
-    A["Incoming Frame"] --> B{"Valid Length?"}
-    B -->|No| C["IpcError::InvalidLength"]
-    B -->|Yes| D{"Within Size Limit?"}
-    D -->|No| E["IpcError::TooLarge"]
-    D -->|Yes| F["Read Message Bytes"]
-    F --> G{"CRC32 Valid?"}
-    G -->|No| H["IpcError::CrcMismatch"]
-    G -->|Yes| I["Decode Protobuf"]
-    I --> J{"Decode Success?"}
-    J -->|No| K["IpcError::Decode"]
-    J -->|Yes| L["Process Message"]
+    A["Incoming Message"] --> B{"Valid Topic?"}
+    B -->|No| C["TopicError::InvalidFormat"]
+    B -->|Yes| D{"Access Allowed?"}
+    D -->|No| E["EventBusError::AccessDenied"]
+    D -->|Yes| F["Deserialize Message"]
+    F --> G{"Deserialization Success?"}
+    G -->|No| H["EventBusError::Decode"]
+    G -->|Yes| I["Route Message"]
+    I --> J{"Subscribers Found?"}
+    J -->|No| K["Log: No Subscribers"]
+    J -->|Yes| L["Deliver Message"]
 
     C --> M["Send Error Response"]
     E --> M
     H --> M
-    K --> M
-    L --> N["Send Success Response"]
+    K --> N["Continue Processing"]
+    L --> N
 ```
+
+### Cascading Workflow Coordination
+
+**Purpose**: Enable complex multi-collector workflows where one collector's results automatically trigger cascading analysis by other specialized collectors
+
+**Trigger Expression Mechanisms**:
+
+- **Event Types**: Collectors express triggers using structured event types (e.g., `process.suspicious`, `network.anomaly`, `file.malicious`)
+- **Predicates**: JSONPath expressions on event payloads for fine-grained filtering (`$.severity >= 'high'`, `$.file_type == 'executable'`)
+- **Rule IDs**: Specific detection rule matches that trigger downstream analysis chains
+
+**Result Routing Architecture**:
+
+- **Topic Naming**: Hierarchical topic structure (`collectors.{collector_id}.results.{event_type}`)
+- **Message Envelopes**: Correlation IDs, timestamps, routing metadata, and priority levels
+- **Routing Keys**: Content-based routing using event attributes and collector capabilities
+
+**Retry and Error Handling**:
+
+- **Exponential Backoff**: 1s, 2s, 4s, 8s maximum retry intervals with jitter
+- **Circuit Breaker**: Automatic failure detection and temporary collector isolation
+- **Dead Letter Queues**: Persistent storage for permanently failed cascades
+- **Correlation Tracking**: End-to-end visibility across multi-hop workflows
+
+**Visibility and Traceability**:
+
+- **Correlation IDs**: Unique identifiers for each workflow execution
+- **Parent-Child Relationships**: Hierarchical correlation tracking across collector chains
+- **Execution Timestamps**: Precise timing for performance analysis and debugging
+- **Workflow Stages**: Named stages for complex multi-step analysis processes
+
+**Sample Workflow Message Schema**:
+
+```json
+{
+  "correlation_id": "uuid-v4",
+  "parent_correlation_id": "uuid-v4-or-null",
+  "workflow_id": "suspicious_process_analysis",
+  "trigger": {
+    "type": "event_type",
+    "value": "process.suspicious",
+    "predicate": "$.severity >= 'high'"
+  },
+  "routing": {
+    "topic": "collectors.binmond.trigger",
+    "priority": "high",
+    "ttl_seconds": 300
+  },
+  "payload": { /* original event data */ }
+}
+```
+
+**Cascading Workflow Sequence**:
+
+1. **Monitor Collector** (procmond) detects suspicious process and publishes to `events.process.suspicious` topic
+2. **Triggerable Collector** (binmond) receives trigger, performs binary analysis, publishes results to `collectors.binmond.results`
+3. **Triggerable Collector** (memmond) receives binary analysis results, performs memory analysis, publishes to `collectors.memmond.results`
+4. **Triggerable Collector** (netanalymond) receives memory results, performs network analysis, publishes final results
+5. All steps maintain correlation ID for end-to-end traceability
+
+**Architecture Alignment**:
+
+- **Monitor Collectors**: Continuous system monitoring (procmond, netmond, fsmond, perfmond) that detect events and trigger cascading analysis
+- **Triggerable Collectors**: Event-driven enrichment (binmond, memmond, netanalymond, regmond) that provide detailed analysis on-demand
+- **Agent Orchestration**: daemoneye-agent coordinates the cascade, ensuring triggerable collectors don't trigger other triggerable collectors
+- **SQL Integration**: Complex SQL queries are translated into collection tasks and cascading workflows using the existing `AUTO JOIN` syntax
+
+### Dynamic Registration Protocol
+
+**Purpose**: Enable runtime registration and capability advertisement of monitoring collectors without system restart
+
+**Registration Handshake Protocol**:
+
+- **REGISTER**: New collectors initiate registration with capability advertisement
+- **REGISTER_ACK**: Broker responds with assigned collector ID and topic assignments
+- **HEARTBEAT**: Collectors maintain 30-second heartbeat intervals
+- **DEREGISTER**: Graceful shutdown with cleanup coordination
+
+**Capability Advertisement Schema**:
+
+```json
+{
+  "message_type": "REGISTER",
+  "collector_id": "binmond_v1.2.3",
+  "capabilities": {
+    "supported_events": [
+      "process.suspicious",
+      "file.created"
+    ],
+    "trigger_patterns": [
+      "$.severity >= 'medium'",
+      "$.file_type == 'executable'"
+    ],
+    "resource_limits": {
+      "max_cpu_percent": 25,
+      "max_memory_mb": 512,
+      "max_concurrent_workflows": 10
+    },
+    "version": "1.2.3",
+    "dependencies": [
+      "procmond",
+      "fsmond"
+    ],
+    "virtual_tables": [
+      "binary_analysis",
+      "code_signing",
+      "imports_exports",
+      "yara_matches"
+    ]
+  },
+  "endpoints": {
+    "trigger_topic": "collectors.binmond.trigger",
+    "result_topic": "collectors.binmond.results",
+    "health_topic": "collectors.binmond.health"
+  }
+}
+```
+
+**Collision and Duplicate Handling**:
+
+- **Timestamp Precedence**: First registration wins for duplicate collector IDs
+- **Automatic Suffixing**: Generate unique suffixes for conflicting registrations
+- **Capability Negotiation**: Resolve conflicts through capability matching and resource allocation
+
+**Static vs Dynamic Registration Relationship**:
+
+- **Static Monitor Collectors**: Core system collectors (procmond, netmond, fsmond, perfmond) registered at startup with highest precedence
+- **Dynamic Triggerable Collectors**: Optional analysis collectors (binmond, memmond, netanalymond, regmond) registered at runtime
+- **Precedence Rules**: Monitor collectors receive events first, triggerable collectors process filtered subsets based on SQL query requirements
+- **Capability Matching**: Dynamic collectors only receive events matching their advertised capabilities and SQL `AUTO JOIN` requirements
+
+**Resource and Lifecycle Management**:
+
+- **Activation Limits**: Maximum 50 concurrent dynamic collectors with configurable quotas
+- **Resource Quotas**: 25% CPU, 512MB memory, 10 concurrent workflows per collector (default)
+- **Shutdown Coordination**: 30-second grace period for active workflows, force termination for unresponsive collectors
+- **Owner Policies**: Dynamic collectors owned by registration process with automatic cleanup on exit
+- **Timeout Policies**: Automatic deregistration after 5 minutes of missed heartbeats
+
+**Registration Flow Sequence**:
+
+1. Collector sends `REGISTER` message with capabilities to broker
+2. Broker validates capabilities and assigns collector ID
+3. Broker responds with `REGISTER_ACK` containing assigned ID and topic assignments
+4. Collector begins sending `HEARTBEAT` messages every 30 seconds
+5. Broker monitors heartbeats and deregisters on timeout (3 missed heartbeats)
 
 ## Data Models
 
@@ -655,7 +931,7 @@ flowchart TD
 
 **ProcessRecord**: Represents a single process snapshot (existing implementation in daemoneye-lib/src/models/process.rs)
 
-```rust
+```rust,ignore
 // Existing ProcessRecord structure (from protobuf and Rust models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRecord {
@@ -681,7 +957,7 @@ pub struct ProcessRecord {
 
 **Alert**: Represents a detection result with full context (existing implementation in daemoneye-lib/src/models/alert.rs)
 
-```rust
+```rust,ignore
 // Existing Alert structure (from daemoneye-lib models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
@@ -711,7 +987,7 @@ pub enum AlertSeverity {
 
 **DetectionRule**: SQL-based detection rule with metadata (existing implementation in daemoneye-lib/src/models/rule.rs)
 
-```rust
+```rust,ignore
 // Existing DetectionRule structure (from daemoneye-lib models)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionRule {
@@ -773,7 +1049,7 @@ redb Logical Layout (conceptual):
 
 Simplified Data Structures (illustrative):
 
-```rust
+```rust,ignore
 #[derive(Serialize, Deserialize, Clone)]
 struct AuditEntry {
     id: u64,    // monotonic
@@ -799,7 +1075,7 @@ struct Checkpoint {
 
 rs-merkle Integration (minimal sketch):
 
-```rust
+```rust,ignore
 use blake3;
 use rs_merkle::{Hasher, MerkleProof, MerkleTree};
 
@@ -879,7 +1155,7 @@ The system implements a layered error handling approach using Rust's type system
 
 **Library Errors** (using `thiserror`):
 
-```rust
+```rust,ignore
 #[derive(Error, Debug)]
 pub enum CollectionError {
     #[error("Process enumeration failed: {source}")]
@@ -977,7 +1253,7 @@ The system implements comprehensive testing across multiple levels:
 
 **Synthetic Data Generation**:
 
-```rust
+```rust,ignore
 use proptest::prelude::*;
 
 prop_compose! {
@@ -1034,7 +1310,7 @@ prop_compose! {
 
 **Unsafe Code Isolation** (if absolutely required):
 
-```rust
+```rust,ignore
 // Only in procmond, highly structured and isolated
 mod unsafe_platform_specific {
     use std::ffi::c_void;
@@ -1072,7 +1348,7 @@ impl SafeProcessMemoryReader {
 
 **AST Validation**: All user-provided SQL undergoes comprehensive validation:
 
-```rust
+```rust,ignore
 pub struct SqlValidator {
     parser: sqlparser::Parser<sqlparser::dialect::SQLiteDialect>,
     allowed_functions: HashSet<String>,
@@ -1110,7 +1386,7 @@ impl SqlValidator {
 
 **Capability-Based Security**:
 
-```rust
+```rust,ignore
 pub struct PrivilegeManager {
     initial_privileges: Privileges,
     current_privileges: Privileges,

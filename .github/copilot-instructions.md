@@ -26,7 +26,10 @@ Security boundaries: Only `procmond` runs with elevated privileges; `daemoneye-a
 
 Always use `thiserror` for structured errors, `anyhow` for context:
 
-```rust
+```rust,ignore
+use thiserror::Error;
+use std::path::Path;
+
 #[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("Permission denied accessing process {pid}")]
@@ -40,6 +43,8 @@ pub enum CollectionError {
         context: String,
     },
 }
+
+struct ProcessConfig; // Example type
 
 fn read_process_config(path: &Path) -> Result<ProcessConfig, CollectionError> {
     let content = std::fs::read_to_string(path).map_err(|e| CollectionError::IoError {
@@ -57,7 +62,7 @@ fn read_process_config(path: &Path) -> Result<ProcessConfig, CollectionError> {
 
 **Transport Layer**: Use `interprocess` crate for cross-platform IPC communication:
 
-```rust
+```rust,ignore
 use interprocess::local_socket::LocalSocketStream;
 use daemoneye_lib::proto::{DetectionTask, DetectionResult};
 
@@ -83,11 +88,13 @@ let serialized = prost::Message::encode_to_vec(&task)?;
 
 Implement trait-based services for clear boundaries. For process collection we AVOID returning a gigantic `Vec` (which can cause unbounded memory growth on large fleets) and instead expose a backpressure‑friendly async stream so callers can incrementally consume results, short‑circuit, or apply their own batching:
 
-```rust
+```rust,ignore
+use async_trait::async_trait;
 use futures::stream::BoxStream;
 use std::time::Instant;
+use thiserror::Error;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("Permission denied accessing process {pid}")]
     PermissionDenied { pid: u32 },
@@ -100,6 +107,8 @@ pub enum CollectionError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
+
+struct ProcessRecord; // Example type
 
 pub type ProcessStream = BoxStream<'static, Result<ProcessRecord, CollectionError>>;
 

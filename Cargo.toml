@@ -6,6 +6,7 @@ members = [
     "collector-core",
     "daemoneye-agent",
     "daemoneye-cli",
+    "daemoneye-eventbus",
     "daemoneye-lib",
     "procmond",
 ]
@@ -13,86 +14,108 @@ resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
-authors = ["UncleSp1d3r", "Krypdo3"]
+authors = [
+    "UncleSp1d3r <unclespid3r@evilbitlabs.io>",
+    "KryptoKat <kryptokat@evilbitlabs.io>",
+]
 license = "Apache-2.0"
-rust-version = "1.85"
+keywords = ["security", "monitoring", "process", "detection"]
+categories = ["security"]
+rust-version = "1.91"
 repository = "https://github.com/EvilBit-Labs/DaemonEye"
-homepage = "https://evilbitlabs.io/daemoneye"
+homepage = "https://evilbitlabs.io/DaemonEye"
 edition = "2024"
+readme = "README.md"
+exclude = [
+    "/spec",
+    "/docs",
+    ".",
+    "/.kiro",
+    "/.cursor",
+    "/.vscode",
+    "/.github",
+    "/.git",
+    "/.env.*",
+    "*.orig",
+]
 
-# Overpinning the versions is breaking the cross-platform functionality, so we are limiting pinning to minor versions.
 [workspace.dependencies]
 # Core error handling and utilities
 anyhow = "1.0.100"
 
-# Testing
-assert_cmd = "2.0"
+# Testing and development
+assert_cmd = "2.1.2"
 
-# Async traits
-async-trait = "0.1"
+# Async runtime and traits
+async-trait = "0.1.89"
+bitflags = { version = "2.10.0", features = ["serde"] }
 
-# Binary serialization
-bincode = "2.0.1"
+# Cryptographic operations
+blake3 = "1.8.3"
 
-# Bitflags for capability flags
-bitflags = "2.6.0"
+# Buffer and byte utilities
+bytes = "1.11.0"
 
-# Cryptographic hashing
-blake3 = "1.8.2"
-bytes = "1.10.1"
+# Date/time and utilities
+chrono = { version = "0.4.43", features = ["serde"] }
 
-# Date/time
-chrono = { version = "0.4.42", features = ["serde"] }
-
-# CLI
-clap = { version = "4.5.48", features = ["derive"] }
+# CLI and configuration
+clap = { version = "4.5.56", features = ["derive"] }
 
 # Internal libraries
 collector-core = { path = "collector-core" }
 
-# CRC32 checksum
+# CRC checksums
 crc32c = "0.6.8"
-criterion = "0.7.0"
+criterion = "0.8.1"
+
+# High-performance concurrent data structures
+crossbeam = "0.8.4"
+daemoneye-eventbus = { path = "daemoneye-eventbus" }
 daemoneye-lib = { path = "daemoneye-lib" }
+dirs = "6.0.0"
+figment = { version = "0.10.19", features = ["toml", "json", "env"] }
 futures = "0.3.31"
 futures-util = "0.3.31"
-insta = { version = "1.43.2", features = ["filters"] }
 
-# IPC communication
+# System information and IPC
+hostname-validator = "1.1.1"
+insta = { version = "1.46.2", features = ["filters"] }
 interprocess = { version = "2.2.3", features = ["tokio"] }
-predicates = "3.1.3"
-proptest = "1.8.0"
-
-# Protocol Buffers
-prost = "0.14.1"
-prost-build = "0.14.1"
-prost-types = "0.14.1"
-rand = "0.9.2"
-
-# Database
-redb = "3.0.2"
-
-# Cryptographic operations
-rs_merkle = "1.5.0"
+parking_lot = "0.12.5"
 
 # Serialization
-serde = { version = "1.0.226", features = ["derive"] }
-serde_json = "1.0.145"
-serde_yaml = "0.9.33"
+postcard = { version = "1.1.3", features = ["alloc"] }
+
+# Testing utilities
+predicates = "3.1.3"
+proptest = "1.9.0"
+
+# Protocol Buffers
+prost = "0.14.3"
+prost-build = "0.14.3"
+prost-types = "0.14.3"
+rand = "0.9.2"
+
+# Database and storage
+redb = "3.1.0"
+regex = "1.12.2"
+rs_merkle = "1.5.0"
+
+# Platform-specific dependencies
+# macOS
+security-framework = "3.5.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 sha2 = "0.10.9"
+sqlparser = "0.60.0"
 
 # SQL parsing
 sqlparser = "0.59.0"
-
-# System information
-sysinfo = "0.37.0"
-
-# Temporary files
-tempfile = "3.22.0"
-thiserror = "2.0.16"
-
-# Async runtime
-tokio = { version = "1.47.1", features = [
+sysinfo = "0.38.0"
+tempfile = "3.24.0"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = [
     "rt",
     "rt-multi-thread",
     "net",
@@ -104,13 +127,34 @@ tokio = { version = "1.47.1", features = [
     "fs",
     "signal",
 ] }
+tokio-test = "0.4.5"
+toml = "0.9.8"
 
-# Logging
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+# Logging and observability
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+tracing-test = "0.2.5"
+unidirs = "0.1.2"
+uuid = { version = "1.20.0", features = ["v4", "serde"] }
+uzers = "0.12.2"
+whoami = "2.1.0"
 
-# UUID support
-uuid = { version = "1.18.1", features = ["v4", "serde"] }
+# Windows
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Security",
+    "Win32_System_Services",
+    "Win32_System_SystemInformation",
+    "Win32_System_Memory",
+    "Win32_System_Performance",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+] }
+windows-service = "0.8.0"
+winreg = "0.55.0"
 
 # Workspace lint configuration
 [workspace.lints.rust]
@@ -141,7 +185,7 @@ expect_used = "warn"
 # Security anti-patterns
 # allow_attributes = "warn" # I think we need them for test and benchmarks
 dbg_macro = "warn"
-# print_stdout = "warn" # TODO: Revisit this
+print_stdout = "warn" # Allowed per-use only with a specific annotation and justification
 # print_stderr = "warn"
 todo = "warn"
 unimplemented = "warn"
@@ -205,8 +249,8 @@ verbose_file_reads = "warn"
 wildcard_enum_match_arm = "warn"
 zero_sized_map_values = "warn"
 
-# Allow specific lints that are too noisy for this project
-missing_errors_doc = "allow"       # TODO: Revisit this
+# Allow specific lints that are too noisy for this project; each of these will get set to warn/deny at some point
+missing_errors_doc = "allow"
 missing_panics_doc = "allow"       # TODO: Revisit this
 must_use_candidate = "allow"       # TODO: Revisit this
 cast_possible_truncation = "allow" # TODO: Revisit this
@@ -227,3 +271,11 @@ multiple_crate_versions = "allow"
 inherits = "release"
 lto = "thin"
 overflow-checks = true
+
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+overflow-checks = true
+lto = "thin"
+codegen-units = 1
