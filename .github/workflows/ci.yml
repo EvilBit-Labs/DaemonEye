@@ -166,3 +166,32 @@ jobs:
               with:
                   token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
                   files: target/lcov.info
+
+    # Performance benchmarks - run on Linux only
+    benchmarks:
+        runs-on: ubuntu-latest
+        needs: [changes, test]
+        if: needs.changes.outputs.rust == 'true'
+        steps:
+            - uses: actions/checkout@v6
+            - uses: jdx/mise-action@v3
+              with:
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Run benchmarks
+              run: cargo bench --package procmond 2>&1 | tee bench-output.txt
+
+            - name: Run load tests
+              run: NO_COLOR=1 TERM=dumb cargo test --package procmond --test load_tests -- --nocapture 2>&1 | tee load-test-output.txt
+
+            - name: Upload benchmark results
+              uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: benchmark-results
+                  path: |
+                      bench-output.txt
+                      load-test-output.txt
+                  retention-days: 30
