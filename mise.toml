@@ -1,3 +1,4 @@
+# Several tools are set to "latest" to ensure they are using the idiomatic version file.
 [tools]
 cargo-binstall              = "1.17.3"
 cargo-insta                 = "1.46.1"
@@ -14,13 +15,13 @@ cargo-insta                 = "1.46.1"
 "cargo:mdbook-open-on-gh"   = "3.0.0"
 "cargo:mdbook-i18n-helpers" = "0.4.0"
 just                        = "latest"
-python                      = "3.13.11"
-rust                        = { version = "1.91.0", components = "llvm-tools,cargo,rustfmt,clippy", profile = "default" }
+python                      = "latest"
+rust                        = { version = "latest", components = "llvm-tools,cargo,rustfmt,clippy", profile = "default" }
 "cargo:cargo-outdated"      = "0.17.0"
 "cargo:cargo-release"       = "0.25.22"
 "cargo:cargo-auditable"     = "0.7.2"
 "cargo:cargo-cyclonedx"     = "0.5.7"
-"pipx:mdformat"             = { version = "0.7.21", uvx_args = "--with mdformat-gfm --with mdformat-frontmatter --with mdformat-footnote --with mdformat-simple-breaks --with mdformat-gfm-alerts --with mdformat-toc --with mdformat-wikilink --with mdformat-tables" }
+"pipx:mdformat"             = { version = "0.7.22", uvx_args = "--with mdformat-gfm --with mdformat-frontmatter --with mdformat-footnote --with mdformat-simple-breaks --with mdformat-gfm-alerts --with mdformat-toc --with mdformat-wikilink --with mdformat-tables" }
 prettier                    = "3.8.1"
 actionlint                  = "1.7.10"
 lychee                      = "0.22.0"
@@ -30,3 +31,21 @@ pre-commit                  = "4.5.1"
 protoc                      = "33.4"
 zig                         = "latest"
 "cargo:cargo-zigbuild"      = "latest"
+bun                         = "latest"
+
+# Many of these settings are defaults, but we are explicit in case they change in the future and to make it clear to users what is enabled.
+[settings]
+activate_aggressive                 = true
+idiomatic_version_file_enable_tools = [ "python", "rust", "bun", "zig" ]
+env_cache                           = true
+exec_auto_install                   = true
+github_attestations                 = true
+lockfile                            = true
+pin                                 = true
+slsa                                = true
+
+[settings.npm]
+package_manager = "bun"
+
+[settings.pipx]
+uvx = true
