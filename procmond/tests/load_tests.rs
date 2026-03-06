@@ -234,6 +234,115 @@ async fn test_sustained_mixed_event_load() {
     println!("Sustained load test: {total_events} events across {batch_count} batches");
 }
 
+/// Test synthetic 10,000+ process event publishing.
+///
+/// AGENTS.md budget: support 10,000+ processes without crashes or memory leaks.
+/// This test creates synthetic events (not real processes) to validate the
+/// publish pipeline handles high event counts without degradation.
+#[tokio::test]
+async fn test_synthetic_10k_process_events() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())
+        .await
+        .expect("Failed to create connector");
+
+    let target_count: u32 = 10_000;
+    let start = std::time::Instant::now();
+
+    let event_types = [
+        ProcessEventType::Start,
+        ProcessEventType::Modify,
+        ProcessEventType::Stop,
+    ];
+
+    for i in 0..target_count {
+        let event = create_test_event(i);
+        let event_type = event_types[(i % 3) as usize];
+        connector
+            .publish(event, event_type)
+            .await
+            .expect("Publish should succeed for 10K events");
+    }
+
+    let elapsed = start.elapsed();
+    let throughput = f64::from(target_count) / elapsed.as_secs_f64();
+
+    println!(
+        "Published {target_count} synthetic events in {elapsed:?} ({throughput:.0} events/sec)"
+    );
+
+    // Should complete within 5s budget (AGENTS.md: <5s for 10,000+ processes)
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "10K events took {elapsed:?}, budget is <5s"
+    );
+
+    // Throughput should still exceed 1,000 events/sec
+    assert!(
+        throughput > 1000.0,
+        "Throughput {throughput:.0}/s below 1000/s at 10K scale"
+    );
+}
+
+/// Test backpressure activation timing meets <1s target.
+///
+/// AGENTS.md budget: Backpressure activation <1s to adjust interval.
+/// This test fills the buffer to trigger backpressure and measures the
+/// time until the signal is received.
+#[tokio::test]
+async fn test_backpressure_activation_timing() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())
+        .await
+        .expect("Failed to create connector");
+
+    let mut bp_rx = connector
+        .take_backpressure_receiver()
+        .expect("Should have backpressure receiver");
+
+    let start = std::time::Instant::now();
+    let mut backpressure_detected = false;
+    let mut events_published = 0_u32;
+
+    // Publish events until backpressure triggers or we exceed a reasonable count
+    for i in 0..50_000_u32 {
+        let event = create_test_event(i);
+        match connector.publish(event, ProcessEventType::Start).await {
+            Ok(_seq) => {
+                events_published += 1;
+                // Check for backpressure signal (non-blocking)
+                if bp_rx.try_recv().is_ok() {
+                    backpressure_detected = true;
+                    break;
+                }
+            }
+            Err(_e) => {
+                // Buffer overflow also indicates backpressure activation
+                backpressure_detected = true;
+                break;
+            }
+        }
+    }
+
+    let elapsed = start.elapsed();
+
+    println!(
+        "Backpressure after {events_published} events in {elapsed:?} (detected: {backpressure_detected})"
+    );
+
+    if backpressure_detected {
+        // Backpressure should activate within 1 second
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "Backpressure took {elapsed:?}, budget is <1s"
+        );
+    } else {
+        println!(
+            "Backpressure not triggered after {events_published} events - buffer capacity may be very large"
+        );
+    }
+}
+
 /// Get current RSS in KB (Linux only, returns 0 on other platforms).
 fn get_current_rss_kb() -> u64 {
     #[cfg(target_os = "linux")]

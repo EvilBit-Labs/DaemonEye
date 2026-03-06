@@ -19,6 +19,9 @@
 //!
 //! [`sanitize_env_vars`] redacts environment variable values whose keys match
 //! common secret patterns (`PASSWORD`, `SECRET`, `TOKEN`, etc.).
+//!
+//! [`sanitize_file_path`] redacts file paths that reference well-known sensitive
+//! directories (`.ssh`, `.aws`, `.gnupg`, etc.).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -40,6 +43,18 @@ const SENSITIVE_FLAGS: &[&str] = &[
 /// Environment variable key patterns (case-insensitive) that indicate secrets.
 const SENSITIVE_ENV_KEYS: &[&str] = &["PASSWORD", "SECRET", "TOKEN", "KEY", "API_KEY", "AUTH"];
 
+/// Sensitive directory segments in file paths (case-insensitive on Windows).
+const SENSITIVE_PATH_SEGMENTS: &[&str] = &[
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".kube/config",
+    ".docker/config",
+    ".npmrc",
+    ".netrc",
+    ".env",
+];
+
 /// The redaction placeholder.
 const REDACTED: &str = "[REDACTED]";
 
@@ -53,6 +68,8 @@ pub enum Platform {
     MacOs,
     /// Windows (10+)
     Windows,
+    /// FreeBSD (13.0+, best-effort support)
+    FreeBsd,
     /// Unknown / unsupported
     Unknown,
 }
@@ -63,6 +80,7 @@ impl fmt::Display for Platform {
             Self::Linux => write!(f, "linux"),
             Self::MacOs => write!(f, "macos"),
             Self::Windows => write!(f, "windows"),
+            Self::FreeBsd => write!(f, "freebsd"),
             Self::Unknown => write!(f, "unknown"),
         }
     }
@@ -103,7 +121,8 @@ impl SecurityContext {
 /// - **Linux**: Parses `CapEff` from `/proc/self/status` and checks for
 ///   `CAP_SYS_PTRACE` (bit 19) and `CAP_DAC_READ_SEARCH` (bit 2).
 /// - **macOS**: Checks `getuid() == 0` for root access.
-/// - **Windows**: Returns degraded context (full implementation requires Win32 API).
+/// - **Windows**: Checks for elevated (Administrator) privileges via `Win32_Security`.
+/// - **FreeBSD**: Checks `getuid() == 0` for root access (best-effort).
 pub fn detect_privileges() -> SecurityContext {
     let platform = detect_platform();
 
@@ -111,6 +130,7 @@ pub fn detect_privileges() -> SecurityContext {
         Platform::Linux => detect_linux_privileges(),
         Platform::MacOs => detect_macos_privileges(),
         Platform::Windows => detect_windows_privileges(),
+        Platform::FreeBsd => detect_freebsd_privileges(),
         Platform::Unknown => SecurityContext::degraded(platform),
     };
 
@@ -139,6 +159,8 @@ const fn detect_platform() -> Platform {
         Platform::MacOs
     } else if cfg!(target_os = "windows") {
         Platform::Windows
+    } else if cfg!(target_os = "freebsd") {
+        Platform::FreeBsd
     } else {
         Platform::Unknown
     }
@@ -193,16 +215,24 @@ fn detect_linux_privileges() -> SecurityContext {
 }
 
 /// macOS-specific privilege detection.
+///
+/// Checks for root access via `getuid() == 0`. On macOS, root access implies
+/// full process inspection capabilities including `task_for_pid()`.
+///
+/// Note: Detecting `task_for_pid()` entitlements directly requires the
+/// `SecTaskCopyValueForEntitlement` API which involves unsafe FFI. Since the
+/// workspace forbids `unsafe_code`, we check for root access as a proxy —
+/// root always has `task_for_pid()` capability.
 #[cfg(target_os = "macos")]
 fn detect_macos_privileges() -> SecurityContext {
     let platform = Platform::MacOs;
     let mut capabilities = vec![];
 
-    // Check if running as root using uzers crate (safe wrapper around getuid)
     let is_root = uzers::get_current_uid() == 0;
 
     if is_root {
         capabilities.push("root".to_owned());
+        capabilities.push("task_for_pid".to_owned());
     }
 
     SecurityContext {
@@ -213,12 +243,140 @@ fn detect_macos_privileges() -> SecurityContext {
     }
 }
 
-/// Windows-specific privilege detection (stub).
+/// Windows-specific privilege detection via `Win32_Security`.
+///
+/// Checks whether the current process token has the `SeDebugPrivilege`
+/// enabled, which grants full access to other processes.
 #[cfg(target_os = "windows")]
 fn detect_windows_privileges() -> SecurityContext {
-    // Full implementation would use OpenProcessToken + LookupPrivilegeValue
-    warn!("Windows privilege detection not fully implemented");
-    SecurityContext::degraded(Platform::Windows)
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID};
+    use windows::Win32::Security::{
+        GetTokenInformation, LookupPrivilegeValueW, OpenProcessToken, PRIVILEGE_SET,
+        PrivilegeCheck, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    let platform = Platform::Windows;
+    let mut capabilities = vec![];
+    let mut has_full_process_access = false;
+
+    // Open the current process token
+    let mut token_handle = HANDLE::default();
+    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token_handle) };
+
+    if opened.is_err() {
+        warn!("Failed to open process token for privilege detection");
+        return SecurityContext::degraded(platform);
+    }
+
+    // Look up SeDebugPrivilege LUID
+    let privilege_name = windows::core::w!("SeDebugPrivilege");
+    let mut luid = LUID::default();
+    let lookup = unsafe { LookupPrivilegeValueW(None, privilege_name, &mut luid) };
+
+    if lookup.is_err() {
+        warn!("Failed to look up SeDebugPrivilege LUID");
+        let _ = unsafe { CloseHandle(token_handle) };
+        return SecurityContext::degraded(platform);
+    }
+
+    // Check if the privilege is enabled
+    let mut privilege_set = PRIVILEGE_SET {
+        PrivilegeCount: 1,
+        Control: 1, // PRIVILEGE_SET_ALL_NECESSARY
+        Privilege: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+            Luid: luid,
+            Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+        }],
+    };
+
+    let mut result = windows::Win32::Foundation::BOOL(0);
+    let check = unsafe { PrivilegeCheck(token_handle, &mut privilege_set, &mut result) };
+
+    let _ = unsafe { CloseHandle(token_handle) };
+
+    if check.is_err() {
+        warn!("Failed to check SeDebugPrivilege");
+        return SecurityContext::degraded(platform);
+    }
+
+    if result.as_bool() {
+        capabilities.push("SeDebugPrivilege".to_owned());
+        has_full_process_access = true;
+    }
+
+    // Also check if running as Administrator
+    let is_admin = is_windows_elevated();
+    if is_admin {
+        capabilities.push("Administrator".to_owned());
+    }
+
+    SecurityContext {
+        platform,
+        has_full_process_access,
+        capabilities,
+        degraded_mode: false,
+    }
+}
+
+/// Check if the current Windows process is running elevated (as Administrator).
+#[cfg(target_os = "windows")]
+fn is_windows_elevated() -> bool {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Security::{
+        GetTokenInformation, OpenProcessToken, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+    };
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    let mut token_handle = HANDLE::default();
+    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token_handle) };
+
+    if opened.is_err() {
+        return false;
+    }
+
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut return_length = 0_u32;
+    let info = unsafe {
+        GetTokenInformation(
+            token_handle,
+            TokenElevation,
+            Some(std::ptr::addr_of_mut!(elevation).cast()),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut return_length,
+        )
+    };
+
+    let _ = unsafe { windows::Win32::Foundation::CloseHandle(token_handle) };
+
+    info.is_ok() && elevation.TokenIsElevated != 0
+}
+
+/// FreeBSD-specific privilege detection.
+///
+/// FreeBSD is a "best-effort" platform. We check for root access, which
+/// implies full process inspection via `sysctl kern.proc`.
+#[cfg(target_os = "freebsd")]
+fn detect_freebsd_privileges() -> SecurityContext {
+    let platform = Platform::FreeBsd;
+    let mut capabilities = vec![];
+
+    let is_root = uzers::get_current_uid() == 0;
+    if is_root {
+        capabilities.push("root".to_owned());
+    }
+
+    info!(
+        platform = %platform,
+        "FreeBSD detected - using FallbackProcessCollector (basic metadata only)"
+    );
+
+    SecurityContext {
+        platform,
+        has_full_process_access: is_root,
+        capabilities,
+        degraded_mode: false,
+    }
 }
 
 /// Fallback stubs for platforms where the native implementation is unavailable.
@@ -235,6 +393,11 @@ const fn detect_macos_privileges() -> SecurityContext {
 #[cfg(not(target_os = "windows"))]
 const fn detect_windows_privileges() -> SecurityContext {
     SecurityContext::degraded(Platform::Windows)
+}
+
+#[cfg(not(target_os = "freebsd"))]
+const fn detect_freebsd_privileges() -> SecurityContext {
+    SecurityContext::degraded(Platform::FreeBsd)
 }
 
 /// Display wrapper that redacts sensitive argument values.
@@ -338,6 +501,42 @@ pub fn sanitize_env_vars<S: std::hash::BuildHasher>(
             }
         })
         .collect()
+}
+
+/// Sanitize a file path by redacting paths to well-known sensitive directories.
+///
+/// Paths containing segments like `.ssh`, `.aws`, `.gnupg`, `.kube/config`,
+/// `.docker/config`, `.npmrc`, `.netrc`, or `.env` are replaced with
+/// `[REDACTED]`.
+///
+/// On Windows, backslash separators are also handled.
+///
+/// # Example
+///
+/// ```
+/// use procmond::security::sanitize_file_path;
+///
+/// let result = sanitize_file_path("/home/user/.ssh/id_rsa");
+/// assert_eq!(result, "[REDACTED]");
+///
+/// let safe = sanitize_file_path("/usr/bin/bash");
+/// assert_eq!(safe, "/usr/bin/bash");
+/// ```
+pub fn sanitize_file_path(path: &str) -> String {
+    // Normalize Windows backslashes for matching
+    let normalized = path.replace('\\', "/");
+    let lower = normalized.to_lowercase();
+
+    let is_sensitive = SENSITIVE_PATH_SEGMENTS
+        .iter()
+        .any(|segment| lower.contains(&format!("/{segment}")));
+
+    if is_sensitive {
+        debug!(path_prefix = %path.chars().take(20).collect::<String>(), "Redacting sensitive file path");
+        REDACTED.to_owned()
+    } else {
+        path.to_owned()
+    }
 }
 
 #[cfg(test)]
@@ -468,6 +667,70 @@ mod tests {
         assert_eq!(format!("{}", Platform::Linux), "linux");
         assert_eq!(format!("{}", Platform::MacOs), "macos");
         assert_eq!(format!("{}", Platform::Windows), "windows");
+        assert_eq!(format!("{}", Platform::FreeBsd), "freebsd");
         assert_eq!(format!("{}", Platform::Unknown), "unknown");
+    }
+
+    #[test]
+    fn test_sanitize_file_path_ssh() {
+        assert_eq!(sanitize_file_path("/home/user/.ssh/id_rsa"), REDACTED);
+        assert_eq!(sanitize_file_path("/home/user/.ssh/known_hosts"), REDACTED);
+    }
+
+    #[test]
+    fn test_sanitize_file_path_aws() {
+        assert_eq!(sanitize_file_path("/home/user/.aws/credentials"), REDACTED);
+    }
+
+    #[test]
+    fn test_sanitize_file_path_gnupg() {
+        assert_eq!(
+            sanitize_file_path("/home/user/.gnupg/private-keys"),
+            REDACTED
+        );
+    }
+
+    #[test]
+    fn test_sanitize_file_path_windows_backslash() {
+        assert_eq!(
+            sanitize_file_path("C:\\Users\\admin\\.ssh\\id_rsa"),
+            REDACTED
+        );
+        assert_eq!(
+            sanitize_file_path("C:\\Users\\admin\\.aws\\credentials"),
+            REDACTED
+        );
+    }
+
+    #[test]
+    fn test_sanitize_file_path_safe() {
+        assert_eq!(sanitize_file_path("/usr/bin/bash"), "/usr/bin/bash");
+        assert_eq!(
+            sanitize_file_path("/home/user/Documents/report.pdf"),
+            "/home/user/Documents/report.pdf"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_file_path_env_and_netrc() {
+        assert_eq!(sanitize_file_path("/app/.env"), REDACTED);
+        assert_eq!(sanitize_file_path("/home/user/.netrc"), REDACTED);
+        assert_eq!(sanitize_file_path("/home/user/.npmrc"), REDACTED);
+    }
+
+    #[test]
+    fn test_sanitize_file_path_kube_docker() {
+        assert_eq!(sanitize_file_path("/home/user/.kube/config/ctx"), REDACTED);
+        assert_eq!(
+            sanitize_file_path("/home/user/.docker/config.json"),
+            REDACTED
+        );
+    }
+
+    #[test]
+    fn test_freebsd_platform_degraded() {
+        let ctx = SecurityContext::degraded(Platform::FreeBsd);
+        assert!(ctx.degraded_mode);
+        assert_eq!(ctx.platform, Platform::FreeBsd);
     }
 }

@@ -744,6 +744,114 @@ fn bench_serialization_throughput(c: &mut Criterion) {
 }
 
 // ============================================================================
+// RPC Service Benchmarks
+// ============================================================================
+
+/// Benchmark RPC health check request/response latency.
+///
+/// Uses a lightweight actor channel (no full collector) to measure the RPC
+/// handler's request processing overhead in isolation.
+fn bench_rpc_health_check_latency(c: &mut Criterion) {
+    use daemoneye_eventbus::rpc::{
+        CollectorOperation, RpcCorrelationMetadata, RpcPayload, RpcRequest,
+    };
+    use procmond::event_bus_connector::EventBusConnector;
+    use procmond::monitor_collector::{ActorHandle, ActorMessage};
+    use procmond::rpc_service::RpcServiceHandler;
+    use std::sync::Arc;
+    use tokio::sync::{RwLock, mpsc};
+
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("rpc_latency");
+    group.measurement_time(Duration::from_secs(15));
+    group.sample_size(10);
+
+    group.bench_function("health_check", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+                // Create a lightweight actor channel — no full collector needed
+                let (tx, mut rx) = mpsc::channel::<ActorMessage>(32);
+                let actor_handle = ActorHandle::new(tx);
+
+                // Drain actor messages in background so sends don't block
+                let drain_task = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+
+                let connector = EventBusConnector::new(temp_dir.path().to_path_buf())
+                    .await
+                    .expect("connector");
+                let event_bus = Arc::new(RwLock::new(connector));
+
+                let handler = RpcServiceHandler::with_defaults(actor_handle.clone(), event_bus);
+
+                let request = RpcRequest {
+                    request_id: "bench-1".to_owned(),
+                    client_id: "bench-client".to_owned(),
+                    target: "control.collector.procmond".to_owned(),
+                    operation: CollectorOperation::HealthCheck,
+                    payload: RpcPayload::Empty,
+                    timestamp: SystemTime::now(),
+                    deadline: SystemTime::now() + Duration::from_secs(30),
+                    correlation_metadata: RpcCorrelationMetadata::new("bench-corr".to_owned()),
+                };
+
+                let start = std::time::Instant::now();
+                let response = handler.handle_request(request).await;
+                let latency = start.elapsed();
+
+                drop(actor_handle);
+                drop(drain_task.await);
+
+                black_box((response, latency))
+            })
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark data sanitization throughput.
+fn bench_sanitization(c: &mut Criterion) {
+    use procmond::security::{sanitize_command_line, sanitize_file_path};
+
+    let mut group = c.benchmark_group("sanitization");
+
+    let test_cases = [
+        (
+            "clean_cmd",
+            "app --verbose --output file.txt --debug --workers 4",
+        ),
+        (
+            "sensitive_cmd",
+            "app --password secret123 --token ghp_xxx --api-key abc --verbose",
+        ),
+        ("long_cmd", &"arg ".repeat(200)),
+    ];
+
+    for (name, cmd) in &test_cases {
+        group.bench_function(BenchmarkId::new("command_line", name), |b| {
+            b.iter(|| black_box(sanitize_command_line(cmd)));
+        });
+    }
+
+    let path_cases = [
+        ("safe_path", "/usr/bin/bash"),
+        ("sensitive_ssh", "/home/user/.ssh/id_rsa"),
+        ("sensitive_aws", "/home/user/.aws/credentials"),
+        ("windows_path", "C:\\Users\\admin\\.ssh\\id_rsa"),
+    ];
+
+    for (name, path) in &path_cases {
+        group.bench_function(BenchmarkId::new("file_path", name), |b| {
+            b.iter(|| black_box(sanitize_file_path(path)));
+        });
+    }
+
+    group.finish();
+}
+
+// ============================================================================
 // Combined Workload Benchmarks
 // ============================================================================
 
@@ -913,6 +1021,12 @@ criterion_group!(
 );
 
 criterion_group!(
+    rpc_benchmarks,
+    bench_rpc_health_check_latency,
+    bench_sanitization
+);
+
+criterion_group!(
     combined_benchmarks,
     bench_combined_workload,
     bench_memory_efficiency
@@ -923,5 +1037,6 @@ criterion_main!(
     eventbus_benchmarks,
     process_benchmarks,
     serialization_benchmarks,
+    rpc_benchmarks,
     combined_benchmarks
 );

@@ -174,14 +174,47 @@ jobs:
         if: needs.changes.outputs.rust == 'true'
         steps:
             - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
             - uses: jdx/mise-action@v3
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
+            - name: Restore baseline benchmarks
+              uses: actions/cache/restore@v4
+              with:
+                  path: target/criterion
+                  key: criterion-baseline-${{ runner.os }}
+
             - name: Run benchmarks
               run: cargo bench --package procmond 2>&1 | tee bench-output.txt
+
+            - name: Check for performance regression
+              run: |
+                  # Criterion reports "regressed" when performance degrades beyond noise threshold.
+                  # Fail CI if any benchmark regresses more than 10%.
+                  if grep -q "Performance has regressed" bench-output.txt; then
+                    echo "::warning::Performance regression detected in benchmarks"
+                    grep -A2 "Performance has regressed" bench-output.txt
+                    if grep -oP 'change: \+\K[0-9.]+' bench-output.txt | awk '{if ($1 > 10.0) exit 1}'; then
+                      echo "All regressions within 10% threshold"
+                    else
+                      echo "::error::Benchmark regression exceeds 10% threshold"
+                      exit 1
+                    fi
+                  else
+                    echo "No performance regressions detected"
+                  fi
+
+            - name: Save baseline benchmarks
+              uses: actions/cache/save@v4
+              if: github.ref == 'refs/heads/main'
+              with:
+                  path: target/criterion
+                  key: criterion-baseline-${{ runner.os }}
 
             - name: Run load tests
               run: NO_COLOR=1 TERM=dumb cargo test --package procmond --test load_tests -- --nocapture 2>&1 | tee load-test-output.txt

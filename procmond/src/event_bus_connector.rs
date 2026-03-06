@@ -686,7 +686,7 @@ impl EventBusConnector {
 
     /// Sanitize a process event by redacting sensitive command-line arguments.
     ///
-    /// Joins the command-line arguments, applies [`sanitize_command_line`], and
+    /// Joins the command-line arguments, applies [`crate::security::sanitize_command_line`], and
     /// splits back into a `Vec<String>`. This ensures secrets passed via flags
     /// like `--password` or `--token` never appear in WAL or published events.
     fn sanitize_event(mut event: ProcessEvent) -> ProcessEvent {
@@ -694,6 +694,12 @@ impl EventBusConnector {
             let joined = event.command_line.join(" ");
             let sanitized = crate::security::sanitize_command_line(&joined);
             event.command_line = sanitized.split_whitespace().map(String::from).collect();
+        }
+        if let Some(ref path) = event.executable_path {
+            let sanitized = crate::security::sanitize_file_path(path);
+            if sanitized == "[REDACTED]" {
+                event.executable_path = Some(sanitized);
+            }
         }
         event
     }

@@ -39,7 +39,10 @@ pub use process_collector::{
     ProcessCollectionResult, ProcessCollector, ProcessCollectorCapabilities,
     SysinfoProcessCollector,
 };
-pub use security::{SecurityContext, detect_privileges, sanitize_command_line, sanitize_env_vars};
+pub use security::{
+    SecurityContext, detect_privileges, sanitize_command_line, sanitize_env_vars,
+    sanitize_file_path,
+};
 
 #[cfg(target_os = "linux")]
 pub use linux_collector::{LinuxCollectorConfig, LinuxProcessCollector};
