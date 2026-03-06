@@ -605,16 +605,19 @@ impl EventBusConnector {
         let topic = event_type.topic().to_owned();
         let event_type_str = event_type.to_type_string().to_owned();
 
+        // Sanitize command-line arguments before publishing or persisting to WAL
+        let sanitized_event = Self::sanitize_event(event);
+
         // Step 1: Write to WAL for durability (with event type for replay)
         let sequence = self
             .wal
-            .write_with_type(event.clone(), event_type_str)
+            .write_with_type(sanitized_event.clone(), event_type_str)
             .await?;
 
         debug!(
             sequence = sequence,
             topic = %topic,
-            pid = event.pid,
+            pid = sanitized_event.pid,
             "Event written to WAL"
         );
 
@@ -630,9 +633,10 @@ impl EventBusConnector {
 
         // Step 3: Try to publish or buffer
         if self.connected {
-            self.try_publish_or_buffer(sequence, event, topic).await?;
+            self.try_publish_or_buffer(sequence, sanitized_event, topic)
+                .await?;
         } else {
-            self.buffer_event(sequence, event, topic)?;
+            self.buffer_event(sequence, sanitized_event, topic)?;
         }
 
         Ok(sequence)
@@ -678,6 +682,20 @@ impl EventBusConnector {
                 "Failed to mark event as published in WAL"
             );
         }
+    }
+
+    /// Sanitize a process event by redacting sensitive command-line arguments.
+    ///
+    /// Joins the command-line arguments, applies [`sanitize_command_line`], and
+    /// splits back into a `Vec<String>`. This ensures secrets passed via flags
+    /// like `--password` or `--token` never appear in WAL or published events.
+    fn sanitize_event(mut event: ProcessEvent) -> ProcessEvent {
+        if !event.command_line.is_empty() {
+            let joined = event.command_line.join(" ");
+            let sanitized = crate::security::sanitize_command_line(&joined);
+            event.command_line = sanitized.split_whitespace().map(String::from).collect();
+        }
+        event
     }
 
     /// Take ownership of the backpressure signal receiver.
@@ -934,6 +952,87 @@ impl EventBusConnector {
     /// Get number of buffered events.
     pub fn buffered_event_count(&self) -> usize {
         self.buffer.len()
+    }
+
+    /// Subscribe to topic patterns on the broker.
+    ///
+    /// Returns a receiver for bus events matching the given topic patterns.
+    /// The subscription is created on the underlying `EventBusClient`.
+    ///
+    /// # Arguments
+    ///
+    /// * `subscriber_id` - Unique identifier for this subscription
+    /// * `topic_patterns` - Topic patterns to subscribe to (supports wildcards)
+    ///
+    /// # Errors
+    ///
+    /// - `EventBusConnectorError::Connection` if not connected
+    /// - `EventBusConnectorError::EventBus` if subscription fails
+    pub async fn subscribe(
+        &self,
+        subscriber_id: &str,
+        topic_patterns: Vec<String>,
+    ) -> EventBusConnectorResult<tokio::sync::mpsc::Receiver<daemoneye_eventbus::BusEvent>> {
+        let client = self.client.as_ref().ok_or_else(|| {
+            EventBusConnectorError::Connection("Not connected to broker".to_owned())
+        })?;
+
+        let subscription = daemoneye_eventbus::EventSubscription {
+            subscriber_id: subscriber_id.to_owned(),
+            capabilities: daemoneye_eventbus::SourceCaps {
+                event_types: vec!["control".to_owned()],
+                collectors: vec![],
+                max_priority: 0,
+            },
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(topic_patterns),
+            enable_wildcards: true,
+        };
+
+        client
+            .subscribe(subscription)
+            .await
+            .map_err(|e| EventBusConnectorError::EventBus(e.to_string()))
+    }
+
+    /// Publish raw bytes to a topic on the broker.
+    ///
+    /// This is used for control messages (RPC responses, heartbeats) that are
+    /// not `ProcessEvent` types. Unlike [`publish`](Self::publish), this method
+    /// does not write to the WAL or buffer on failure.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic` - The topic to publish to
+    /// * `payload` - The serialized payload bytes
+    ///
+    /// # Errors
+    ///
+    /// - `EventBusConnectorError::Connection` if not connected
+    /// - `EventBusConnectorError::EventBus` if publish fails
+    pub async fn publish_raw(&self, topic: &str, payload: Vec<u8>) -> EventBusConnectorResult<()> {
+        let client = self.client.as_ref().ok_or_else(|| {
+            EventBusConnectorError::Connection("Not connected to broker".to_owned())
+        })?;
+
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+
+        // Use send_direct-style approach via a control topic
+        // The broker routes control messages based on topic hierarchy
+        client
+            .enqueue_message(&self.client_id, topic, &payload)
+            .await
+            .map_err(|e| EventBusConnectorError::EventBus(e.to_string()))?;
+
+        debug!(
+            topic = %topic,
+            correlation_id = %correlation_id,
+            payload_size = payload.len(),
+            "Published raw message to topic"
+        );
+
+        Ok(())
     }
 
     // === Private Helper Methods ===
@@ -2327,6 +2426,163 @@ mod tests {
         // Also verify it's in buffer
         assert_eq!(connector.buffered_event_count(), 1);
         assert_eq!(connector.buffer[0].event.pid, 42);
+    }
+
+    // --- WAL-write-before-buffer ordering test ---
+
+    #[tokio::test]
+    async fn test_wal_write_before_buffer_ordering() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let wal_path = temp_dir.path().to_path_buf();
+
+        let mut connector = EventBusConnector::new(wal_path.clone())
+            .await
+            .expect("Failed to create connector");
+
+        // Publish multiple events while disconnected
+        for i in 1..=3 {
+            let event = create_test_event(i);
+            connector
+                .publish(event, ProcessEventType::Start)
+                .await
+                .expect("Failed to publish");
+        }
+
+        // Verify WAL contains all events (written first, before buffering)
+        let wal_entries = connector
+            .wal
+            .replay_entries()
+            .await
+            .expect("Failed to replay WAL");
+        assert_eq!(wal_entries.len(), 3, "WAL should have all events");
+
+        // Verify buffer also has the same events
+        assert_eq!(connector.buffered_event_count(), 3);
+
+        // Verify WAL sequences match buffer sequences (same ordering)
+        for (wal_entry, buffered) in wal_entries.iter().zip(connector.buffer.iter()) {
+            assert_eq!(wal_entry.sequence, buffered.sequence);
+            assert_eq!(wal_entry.event.pid, buffered.event.pid);
+        }
+    }
+
+    // --- Buffer overflow graceful handling test ---
+
+    #[tokio::test]
+    async fn test_buffer_overflow_returns_error_gracefully() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("Failed to create connector");
+
+        // Calculate event size to set precise buffer limit
+        let sample_event = create_test_event(1);
+        let event_size = BufferedEvent::estimate_size(&sample_event, "events.process.start");
+
+        // Allow exactly 2 events, reject the third
+        connector.max_buffer_size = event_size * 2;
+
+        // First two events should succeed
+        let event1 = create_test_event(1);
+        assert!(
+            connector
+                .publish(event1, ProcessEventType::Start)
+                .await
+                .is_ok()
+        );
+        let event2 = create_test_event(2);
+        assert!(
+            connector
+                .publish(event2, ProcessEventType::Start)
+                .await
+                .is_ok()
+        );
+
+        // Third event should fail with BufferOverflow
+        let event3 = create_test_event(3);
+        let result = connector.publish(event3, ProcessEventType::Start).await;
+        assert!(
+            matches!(result, Err(EventBusConnectorError::BufferOverflow)),
+            "Expected BufferOverflow, got: {result:?}"
+        );
+
+        // Verify WAL still has all 3 events (WAL write happens before buffer)
+        let wal_events = connector.wal.replay().await.expect("Failed to replay WAL");
+        assert_eq!(
+            wal_events.len(),
+            3,
+            "WAL should persist event even when buffer overflows"
+        );
+
+        // Buffer should only have the first 2 events
+        assert_eq!(connector.buffered_event_count(), 2);
+    }
+
+    // --- Backpressure trigger and release combined test ---
+
+    #[tokio::test]
+    async fn test_backpressure_trigger_and_release_cycle() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())
+            .await
+            .expect("Failed to create connector");
+
+        let mut rx = connector.take_backpressure_receiver().unwrap();
+
+        // Calculate event size for precise thresholds
+        let sample_event = create_test_event(1);
+        let event_size = BufferedEvent::estimate_size(&sample_event, "events.process.start");
+
+        // Set buffer so that:
+        //   3 events = 60% (below threshold)
+        //   4 events = 80% (above 70% high-water mark)
+        //   2 events = 40% (below 50% low-water mark)
+        // max = 5 * event_size => each event = 20%
+        connector.max_buffer_size = event_size * 5;
+
+        // Fill to 60% (3 events) - no backpressure signal
+        for i in 1..=3 {
+            let event = create_test_event(i);
+            connector
+                .publish(event, ProcessEventType::Start)
+                .await
+                .expect("Failed to publish");
+        }
+        assert!(rx.try_recv().is_err(), "No signal expected below 70%");
+
+        // Add 4th event to cross 70% threshold (usage = 80%)
+        let event4 = create_test_event(4);
+        connector
+            .publish(event4, ProcessEventType::Start)
+            .await
+            .expect("Failed to publish");
+
+        // Should receive Activated signal
+        let signal = rx
+            .try_recv()
+            .expect("Expected backpressure Activated signal");
+        assert_eq!(signal, BackpressureSignal::Activated);
+
+        // Drain buffer below 50% by removing events manually
+        // Remove 3 events: from 4 events (80%) down to 1 event (20%) which is below 50%
+        let previous_usage = connector.buffer_usage_percent();
+        for _ in 0..3 {
+            if let Some(removed) = connector.buffer.pop_front() {
+                connector.buffer_size_bytes = connector
+                    .buffer_size_bytes
+                    .saturating_sub(removed.size_bytes);
+            }
+        }
+        let current_usage = connector.buffer_usage_percent();
+
+        // Manually trigger backpressure check for the drain
+        connector.check_backpressure(previous_usage, current_usage);
+
+        // Should receive Released signal
+        let released_signal = rx
+            .try_recv()
+            .expect("Expected backpressure Released signal");
+        assert_eq!(released_signal, BackpressureSignal::Released);
     }
 
     // --- Client ID generation test ---

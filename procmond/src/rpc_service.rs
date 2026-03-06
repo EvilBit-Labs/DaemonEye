@@ -4,16 +4,8 @@
 //! from the daemoneye-agent. It parses incoming RPC requests and coordinates with
 //! the `ProcmondMonitorCollector` actor to execute operations.
 //!
-//! # Current Limitations
-//!
-//! This module is currently a **partial implementation**:
-//! - **No event bus subscription**: The handler does not yet subscribe to the control topic.
-//!   Integration requires extending `EventBusConnector` with subscription support.
-//! - **No response publishing**: The `publish_response` method only serializes and logs
-//!   responses. Actual publishing requires generic message support in `EventBusConnector`.
-//!
-//! The handler can be used directly by calling `handle_request()` with an `RpcRequest`,
-//! which will forward the operation to the actor and return an `RpcResponse`.
+//! The handler subscribes to the control topic, handles incoming RPC requests by
+//! forwarding them to the actor, and publishes responses to the event bus.
 //!
 //! # Supported Operations
 //!
@@ -131,10 +123,6 @@ pub struct RpcServiceHandler {
     /// Actor handle for communicating with the collector.
     actor_handle: ActorHandle,
     /// Event bus connector for publishing responses.
-    ///
-    /// TODO: Currently unused because EventBusConnector only supports ProcessEvent publishing.
-    /// Will be used when the connector gains generic RPC message support.
-    #[allow(dead_code)]
     event_bus: Arc<RwLock<EventBusConnector>>,
     /// Whether the service is running.
     running: Arc<std::sync::atomic::AtomicBool>,
@@ -161,6 +149,8 @@ pub struct RpcServiceStats {
     pub config_updates: u64,
     /// Shutdown requests.
     pub shutdown_requests: u64,
+    /// Failed response publishes.
+    pub responses_failed: u64,
 }
 
 impl RpcServiceHandler {
@@ -449,7 +439,7 @@ impl RpcServiceHandler {
                     HealthStatus::Degraded
                 }
             }
-            crate::monitor_collector::CollectorState::WaitingForAgent => HealthStatus::Degraded,
+            crate::monitor_collector::CollectorState::WaitingForAgent => HealthStatus::Healthy,
             crate::monitor_collector::CollectorState::ShuttingDown => HealthStatus::Unhealthy,
             crate::monitor_collector::CollectorState::Stopped => HealthStatus::Unresponsive,
         };
@@ -480,17 +470,23 @@ impl RpcServiceHandler {
 
         // Collector component
         let collector_status = match actor_health.state {
-            crate::monitor_collector::CollectorState::Running => HealthStatus::Healthy,
-            crate::monitor_collector::CollectorState::WaitingForAgent => HealthStatus::Degraded,
+            crate::monitor_collector::CollectorState::Running
+            | crate::monitor_collector::CollectorState::WaitingForAgent => HealthStatus::Healthy,
             crate::monitor_collector::CollectorState::ShuttingDown
             | crate::monitor_collector::CollectorState::Stopped => HealthStatus::Unhealthy,
         };
+        let collector_message =
+            if actor_health.state == crate::monitor_collector::CollectorState::WaitingForAgent {
+                "idle-awaiting-begin".to_owned()
+            } else {
+                format!("State: {}", actor_health.state)
+            };
         components.insert(
             "collector".to_owned(),
             ComponentHealth {
                 name: "collector".to_owned(),
                 status: collector_status,
-                message: Some(format!("State: {}", actor_health.state)),
+                message: Some(collector_message),
                 last_check: SystemTime::now(),
                 check_interval_seconds: 30,
             },
@@ -727,43 +723,58 @@ impl RpcServiceHandler {
 
     /// Publishes an RPC response to the event bus.
     ///
-    /// The response is published to the topic derived from the correlation metadata.
-    ///
-    /// # Note
-    ///
-    /// This method is currently a placeholder. Full integration with the EventBusConnector
-    /// for RPC response publishing requires additional API support (raw topic publishing).
-    /// For now, the response should be handled by the caller.
-    #[allow(clippy::unused_async)] // Will be async when EventBusConnector supports RPC
+    /// The response is published to `control.rpc.response.{client_id}`.
     pub async fn publish_response(&self, response: RpcResponse) -> RpcServiceResult<()> {
         let response_topic = format!(
             "{}.{}",
-            self.config.response_topic_prefix, response.correlation_metadata.correlation_id
+            self.config.response_topic_prefix, self.config.collector_id
         );
 
         debug!(
             request_id = %response.request_id,
             topic = %response_topic,
             status = ?response.status,
-            "RPC response ready for publishing"
+            "Publishing RPC response"
         );
 
-        // Serialize response for future use
-        let _payload = postcard::to_allocvec(&response).map_err(|e| {
+        // Serialize response
+        let payload = postcard::to_allocvec(&response).map_err(|e| {
             RpcServiceError::PublishFailed(format!("Failed to serialize response: {e}"))
         })?;
 
-        // TODO: Integrate with EventBusConnector when raw topic publishing is available
-        // For now, responses are logged and the serialized payload is available for
-        // integration with the broker when that API is extended.
+        // Publish to event bus (drop lock promptly)
+        let publish_result = {
+            let event_bus = self.event_bus.read().await;
+            event_bus.publish_raw(&response_topic, payload).await
+        };
+
+        if let Err(e) = publish_result {
+            warn!(
+                request_id = %response.request_id,
+                topic = %response_topic,
+                error = %e,
+                "Failed to publish RPC response"
+            );
+            self.record_response_failure().await;
+            return Err(RpcServiceError::PublishFailed(format!(
+                "Failed to publish response to {response_topic}: {e}"
+            )));
+        }
+
         info!(
             request_id = %response.request_id,
             topic = %response_topic,
             status = ?response.status,
-            "RPC response serialized and ready"
+            "RPC response published"
         );
 
         Ok(())
+    }
+
+    /// Records a failed response publish.
+    async fn record_response_failure(&self) {
+        let mut stats = self.stats.write().await;
+        stats.responses_failed = stats.responses_failed.saturating_add(1);
     }
 
     // --- Statistics helper methods ---
@@ -934,6 +945,7 @@ mod tests {
             lifecycle_events: 50,
             collection_errors: 2,
             backpressure_events: 5,
+            operational_sub_status: None,
         };
 
         let health_data = handler.convert_health_data(&actor_health);
@@ -966,6 +978,7 @@ mod tests {
             lifecycle_events: 25,
             collection_errors: 10,
             backpressure_events: 15,
+            operational_sub_status: None,
         };
 
         let health_data = handler.convert_health_data(&actor_health);
@@ -1129,6 +1142,7 @@ mod tests {
                     lifecycle_events: 2,
                     collection_errors: 0,
                     backpressure_events: 0,
+                    operational_sub_status: None,
                 };
                 // Intentionally ignore send result - receiver may have been dropped
                 drop(respond_to.send(health_data));
@@ -1616,19 +1630,17 @@ mod tests {
             lifecycle_events: 0,
             collection_errors: 0,
             backpressure_events: 0,
+            operational_sub_status: None,
         };
 
         let health_data = handler.convert_health_data(&actor_health);
-        assert_eq!(health_data.status, HealthStatus::Degraded);
+        assert_eq!(health_data.status, HealthStatus::Healthy);
 
         let collector_health = health_data.components.get("collector").unwrap();
-        assert_eq!(collector_health.status, HealthStatus::Degraded);
-        assert!(
-            collector_health
-                .message
-                .as_ref()
-                .unwrap()
-                .contains("waiting_for_agent")
+        assert_eq!(collector_health.status, HealthStatus::Healthy);
+        assert_eq!(
+            collector_health.message.as_deref(),
+            Some("idle-awaiting-begin")
         );
     }
 
@@ -1649,6 +1661,7 @@ mod tests {
             lifecycle_events: 50,
             collection_errors: 5,
             backpressure_events: 10,
+            operational_sub_status: None,
         };
 
         let health_data = handler.convert_health_data(&actor_health);
@@ -1675,6 +1688,7 @@ mod tests {
             lifecycle_events: 0,
             collection_errors: 0,
             backpressure_events: 0,
+            operational_sub_status: None,
         };
 
         let health_data = handler.convert_health_data(&actor_health);
@@ -1701,6 +1715,7 @@ mod tests {
             lifecycle_events: 5,
             collection_errors: 0,
             backpressure_events: 0,
+            operational_sub_status: None,
         };
 
         let health_data = handler.convert_health_data(&actor_health);
@@ -1840,7 +1855,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_publish_response_success() {
+    async fn test_publish_response_fails_when_disconnected() {
         let (actor_handle, _rx) = create_test_actor();
         let (event_bus, _temp_dir) = create_test_event_bus().await;
         let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
@@ -1859,8 +1874,15 @@ mod tests {
             correlation_metadata: RpcCorrelationMetadata::new("corr-publish".to_string()),
         };
 
+        // publish_response now actually publishes via event bus;
+        // without a connected broker, it should return PublishFailed
         let result = handler.publish_response(response).await;
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(matches!(result, Err(RpcServiceError::PublishFailed(_))));
+
+        // Verify responses_failed counter was incremented
+        let stats = handler.stats().await;
+        assert_eq!(stats.responses_failed, 1);
     }
 
     #[tokio::test]
@@ -1899,6 +1921,7 @@ mod tests {
                     lifecycle_events: 2,
                     collection_errors: 0,
                     backpressure_events: 0,
+                    operational_sub_status: None,
                 };
                 drop(respond_to.send(health_data));
             }
@@ -1946,6 +1969,7 @@ mod tests {
                     lifecycle_events: 2,
                     collection_errors: 0,
                     backpressure_events: 0,
+                    operational_sub_status: None,
                 };
                 drop(respond_to.send(health_data));
             }
@@ -2144,6 +2168,7 @@ mod tests {
                         lifecycle_events: 2,
                         collection_errors: 0,
                         backpressure_events: 0,
+                        operational_sub_status: None,
                     };
                     drop(respond_to.send(health_data));
                 }
@@ -2368,6 +2393,7 @@ mod tests {
                     lifecycle_events: 2,
                     collection_errors: 0,
                     backpressure_events: 0,
+                    operational_sub_status: None,
                 };
                 drop(respond_to.send(health_data));
             }

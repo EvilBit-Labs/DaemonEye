@@ -118,6 +118,7 @@ pub fn create_mock_health_data() -> HealthCheckData {
         lifecycle_events: 2,
         collection_errors: 0,
         backpressure_events: 0,
+        operational_sub_status: None,
     }
 }
 
