@@ -25,39 +25,8 @@ env:
     GITHUB_ACTIONS: true
 
 jobs:
-    # Detect if Rust code has changed
-    changes:
-        runs-on: ubuntu-latest
-        outputs:
-            rust: ${{ steps.filter.outputs.rust }}
-            docs: ${{ steps.filter.outputs.docs }}
-        steps:
-            - uses: actions/checkout@v6
-            - uses: dorny/paths-filter@v3
-              id: filter
-              with:
-                  filters: |
-                      rust:
-                        - '**/*.rs'
-                        - '**/Cargo.toml'
-                        - '**/Cargo.lock'
-                        - '**/build.rs'
-                        - '**/proto/*.proto'
-                        - 'justfile'
-                        - 'rust-toolchain.toml'
-                        - 'deny.toml'
-                        - '.config/nextest.toml'
-                      docs:
-                        - 'docs/**'
-                        - '*.md'
-                        - '.kiro/**'
-                        - 'spec/**'
-
-    # Code quality checks - always run
     quality:
         runs-on: ubuntu-latest
-        needs: changes
-        if: needs.changes.outputs.rust == 'true'
         steps:
             - uses: actions/checkout@v6
             - uses: dtolnay/rust-toolchain@1.91.0
@@ -74,8 +43,6 @@ jobs:
 
     test:
         runs-on: ubuntu-latest
-        needs: changes
-        if: needs.changes.outputs.rust == 'true'
         steps:
             - uses: actions/checkout@v6
             - uses: jdx/mise-action@v3
@@ -90,7 +57,6 @@ jobs:
             - name: Build release
               run: cargo build --release --all-features
 
-    # Test cross-platform - only run when Rust code changes
     test-cross-platform:
         strategy:
             matrix:
@@ -122,8 +88,7 @@ jobs:
                     # Note: macOS 12 (Monterey) testing would require custom runners
 
         runs-on: ${{ matrix.os }}
-        needs: [changes, quality]
-        if: needs.changes.outputs.rust == 'true'
+        needs: quality
         steps:
             - uses: actions/checkout@v6
             - uses: jdx/mise-action@v3
@@ -136,11 +101,9 @@ jobs:
             - run: cargo nextest run --profile ci --all-features
             - run: cargo build --release --all-features
 
-    # Generate coverage for TLS-enabled builds - only run when Rust code changes
     coverage:
         runs-on: ubuntu-latest
-        needs: [changes, test, test-cross-platform, quality]
-        if: needs.changes.outputs.rust == 'true'
+        needs: [test, test-cross-platform, quality]
         steps:
             - uses: actions/checkout@v6
             - uses: jdx/mise-action@v3
@@ -167,11 +130,9 @@ jobs:
                   token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
                   files: target/lcov.info
 
-    # Performance benchmarks - run on Linux only
     benchmarks:
         runs-on: ubuntu-latest
-        needs: [changes, test]
-        if: needs.changes.outputs.rust == 'true'
+        needs: test
         steps:
             - uses: actions/checkout@v6
               with:
