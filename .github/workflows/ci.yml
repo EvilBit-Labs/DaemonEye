@@ -28,15 +28,15 @@ jobs:
     quality:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
-            - uses: dtolnay/rust-toolchain@1.91.0
-              with:
-                  components: llvm-tools, cargo, rustfmt, clippy
-            - uses: jdx/mise-action@v3
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - uses: jdx/mise-action@6d1e696aa24c1aa1bcc1adea0212707c71ab78a8 # v3.6.1
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Ensure rustfmt and clippy are installed
+              run: rustup component add rustfmt clippy
 
             - name: Check formatting
               run: just lint-rust
@@ -52,10 +52,10 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Run tests (all features)
-              run: cargo nextest run --profile ci --all-features
+              run: mise x -- cargo nextest run --profile ci --all-features
 
             - name: Build release
-              run: cargo build --release --all-features
+              run: mise x -- cargo build --release --all-features
 
     test-cross-platform:
         strategy:
@@ -98,8 +98,8 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             # Run tests and build the release binary
-            - run: cargo nextest run --profile ci --all-features
-            - run: cargo build --release --all-features
+            - run: mise x -- cargo nextest run --profile ci --all-features
+            - run: mise x -- cargo build --release --all-features
 
     coverage:
         runs-on: ubuntu-latest
@@ -113,10 +113,10 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Generate coverage
-              run: cargo llvm-cov --all-features --no-report
+              run: mise x -- cargo llvm-cov --all-features --no-report
 
             - name: Combine coverage reports
-              run: cargo llvm-cov report --lcov --output-path lcov.info
+              run: mise x -- cargo llvm-cov report --lcov --output-path lcov.info
 
             - name: Upload to Codecov
               uses: codecov/codecov-action@v5
@@ -151,7 +151,7 @@ jobs:
                   key: criterion-baseline-${{ runner.os }}
 
             - name: Run benchmarks
-              run: cargo bench --package procmond 2>&1 | tee bench-output.txt
+              run: mise x -- cargo bench --package procmond 2>&1 | tee bench-output.txt
 
             - name: Check for performance regression
               run: |
@@ -178,7 +178,7 @@ jobs:
                   key: criterion-baseline-${{ runner.os }}
 
             - name: Run load tests
-              run: NO_COLOR=1 TERM=dumb cargo test --package procmond --test load_tests -- --nocapture 2>&1 | tee load-test-output.txt
+              run: NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test load_tests -- --nocapture 2>&1 | tee load-test-output.txt
 
             - name: Upload benchmark results
               uses: actions/upload-artifact@v4
