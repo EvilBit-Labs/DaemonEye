@@ -1,0 +1,168 @@
+[[tools.actionlint]]
+version = "1.7.10"
+backend = "aqua:rhysd/actionlint"
+"platforms.linux-arm64" = { checksum = "sha256:cd3dfe5f66887ec6b987752d8d9614e59fd22f39415c5ad9f28374623f41773a", url = "https://github.com/rhysd/actionlint/releases/download/v1.7.10/actionlint_1.7.10_linux_arm64.tar.gz"}
+"platforms.linux-x64" = { checksum = "sha256:f4c76b71db5755a713e6055cbb0857ed07e103e028bda117817660ebadb4386f", url = "https://github.com/rhysd/actionlint/releases/download/v1.7.10/actionlint_1.7.10_linux_amd64.tar.gz"}
+"platforms.macos-arm64" = { checksum = "sha256:004ca87b367b37f4d75c55ab6cf80f9b8c043adbfbd440f31c604d417939c442", url = "https://github.com/rhysd/actionlint/releases/download/v1.7.10/actionlint_1.7.10_darwin_arm64.tar.gz"}
+"platforms.macos-x64" = { checksum = "sha256:16782c41f2af264db80f855ee5d09164ca98fc78edf3bcd0f46eecff279682ba", url = "https://github.com/rhysd/actionlint/releases/download/v1.7.10/actionlint_1.7.10_darwin_amd64.tar.gz"}
+"platforms.windows-x64" = { checksum = "sha256:283467f9d6202a8cb8c00ad8dd0ee4e685b71fb86a6a56c68fcbb9ae8ed91237", url = "https://github.com/rhysd/actionlint/releases/download/v1.7.10/actionlint_1.7.10_windows_amd64.zip"}
+
+[[tools.cargo-binstall]]
+version = "1.17.3"
+backend = "aqua:cargo-bins/cargo-binstall"
+
+[[tools.cargo-insta]]
+version = "1.46.1"
+backend = "aqua:mitsuhiko/insta"
+"platforms.linux-x64" = { checksum = "sha256:fffdd3a5af4e7a67c132390b7622107c72039fe38b495f2e64a5f0a089559196", url = "https://github.com/mitsuhiko/insta/releases/download/1.46.1/cargo-insta-x86_64-unknown-linux-musl.tar.xz"}
+"platforms.macos-arm64" = { checksum = "sha256:5e3300ae49633be5fd12e5790f21eaf2350c28d8a97c0405d45a8b7dc23d15de", url = "https://github.com/mitsuhiko/insta/releases/download/1.46.1/cargo-insta-aarch64-apple-darwin.tar.xz"}
+"platforms.macos-x64" = { checksum = "sha256:31d379dd9a3d263e3932f4acc254aedc4a9ae20394cb3f1d0d7ecc86308c1bcb", url = "https://github.com/mitsuhiko/insta/releases/download/1.46.1/cargo-insta-x86_64-apple-darwin.tar.xz"}
+"platforms.windows-x64" = { checksum = "sha256:f833281ee8ba99540a45fb5ce7c5e18838f6fc58852d742b770822a735177b8a", url = "https://github.com/mitsuhiko/insta/releases/download/1.46.1/cargo-insta-x86_64-pc-windows-msvc.zip"}
+
+[[tools."cargo:cargo-audit"]]
+version = "0.22.0"
+backend = "cargo:cargo-audit"
+
+[[tools."cargo:cargo-auditable"]]
+version = "0.7.2"
+backend = "cargo:cargo-auditable"
+
+[[tools."cargo:cargo-cyclonedx"]]
+version = "0.5.7"
+backend = "cargo:cargo-cyclonedx"
+
+[[tools."cargo:cargo-deny"]]
+version = "0.19.0"
+backend = "cargo:cargo-deny"
+
+[[tools."cargo:cargo-llvm-cov"]]
+version = "0.6.24"
+backend = "cargo:cargo-llvm-cov"
+
+[[tools."cargo:cargo-nextest"]]
+version = "0.9.123-b.4"
+backend = "cargo:cargo-nextest"
+
+[[tools."cargo:cargo-outdated"]]
+version = "0.17.0"
+backend = "cargo:cargo-outdated"
+
+[[tools."cargo:cargo-release"]]
+version = "0.25.22"
+backend = "cargo:cargo-release"
+
+[[tools."cargo:cargo-zigbuild"]]
+version = "0.22.1"
+backend = "cargo:cargo-zigbuild"
+
+[[tools."cargo:mdbook"]]
+version = "0.5.2"
+backend = "cargo:mdbook"
+
+[[tools."cargo:mdbook-admonish"]]
+version = "1.20.0"
+backend = "cargo:mdbook-admonish"
+
+[[tools."cargo:mdbook-i18n-helpers"]]
+version = "0.4.0"
+backend = "cargo:mdbook-i18n-helpers"
+
+[[tools."cargo:mdbook-linkcheck"]]
+version = "0.7.7"
+backend = "cargo:mdbook-linkcheck"
+
+[[tools."cargo:mdbook-mermaid"]]
+version = "0.17.0"
+backend = "cargo:mdbook-mermaid"
+
+[[tools."cargo:mdbook-open-on-gh"]]
+version = "3.0.0"
+backend = "cargo:mdbook-open-on-gh"
+
+[[tools."cargo:mdbook-tabs"]]
+version = "0.3.4"
+backend = "cargo:mdbook-tabs"
+
+[[tools."cargo:mdbook-toc"]]
+version = "0.15.3"
+backend = "cargo:mdbook-toc"
+
+[[tools.just]]
+version = "1.46.0"
+backend = "aqua:casey/just"
+"platforms.linux-arm64" = { checksum = "sha256:b81970c8247fa64cfb30d2a3da0e487e4253f9f2d01865ed5e7d53cdc7b02188", url = "https://github.com/casey/just/releases/download/1.46.0/just-1.46.0-aarch64-unknown-linux-musl.tar.gz"}
+"platforms.linux-x64" = { checksum = "sha256:79966e6e353f535ee7d1c6221641bcc8e3381c55b0d0a6dc6e54b34f9db36eaa", url = "https://github.com/casey/just/releases/download/1.46.0/just-1.46.0-x86_64-unknown-linux-musl.tar.gz"}
+"platforms.macos-arm64" = { checksum = "sha256:438eaf6468a115aa7db93e501cc7e3272f453f6b7083be3863adfab546b23358", url = "https://github.com/casey/just/releases/download/1.46.0/just-1.46.0-aarch64-apple-darwin.tar.gz"}
+"platforms.macos-x64" = { checksum = "sha256:ec54dd60ac876261b7318f1852ef9c0319fede1e5a73c14f56d908a8edf595b8", url = "https://github.com/casey/just/releases/download/1.46.0/just-1.46.0-x86_64-apple-darwin.tar.gz"}
+"platforms.windows-x64" = { checksum = "sha256:f0acf3f8ccbcf360b481baae9cae4c921774c89d5d932012481d3e0bda78ab39", url = "https://github.com/casey/just/releases/download/1.46.0/just-1.46.0-x86_64-pc-windows-msvc.zip"}
+
+[[tools.lychee]]
+version = "0.22.0"
+backend = "aqua:lycheeverse/lychee"
+"platforms.linux-arm64" = { checksum = "sha256:29901e5df983fe2ff961ee9660c4ef3b4a9eae85d4776d0dc89581332e82d6db", url = "https://github.com/lycheeverse/lychee/releases/download/lychee-v0.22.0/lychee-aarch64-unknown-linux-gnu.tar.gz"}
+"platforms.linux-x64" = { checksum = "sha256:fbd422346dc5cd3afde08c9b7dbc032db139f17a25892b1a87f3b8b1222678c5", url = "https://github.com/lycheeverse/lychee/releases/download/lychee-v0.22.0/lychee-x86_64-unknown-linux-musl.tar.gz"}
+"platforms.macos-arm64" = { checksum = "sha256:197bf8b7aafd190e38ec8e931a16e38a2d1d2b1e9fa13aa4874d004ba09c4d05", url = "https://github.com/lycheeverse/lychee/releases/download/lychee-v0.22.0/lychee-arm64-macos.dmg"}
+"platforms.windows-x64" = { checksum = "sha256:3f416d1243e7b65e23547e5995b0e3c3388c1bc6451d36764acfd3ee0e5c8968", url = "https://github.com/lycheeverse/lychee/releases/download/lychee-v0.22.0/lychee-x86_64-windows.exe"}
+
+[[tools.markdownlint-cli2]]
+version = "0.20.0"
+backend = "npm:markdownlint-cli2"
+
+[[tools."pipx:mdformat"]]
+version = "0.7.21"
+backend = "pipx:mdformat"
+
+[tools."pipx:mdformat".options]
+uvx_args = "--with mdformat-gfm --with mdformat-frontmatter --with mdformat-footnote --with mdformat-simple-breaks --with mdformat-gfm-alerts --with mdformat-toc --with mdformat-wikilink --with mdformat-tables"
+
+[[tools.pre-commit]]
+version = "4.5.1"
+backend = "aqua:pre-commit/pre-commit"
+"platforms.linux-arm64" = { checksum = "sha256:19d00ba35cbf9c04dc3736cd8bb641e8633f3eddd4cedde71809574ae68a2cd1", url = "https://github.com/pre-commit/pre-commit/releases/download/v4.5.1/pre-commit-4.5.1.pyz"}
+"platforms.linux-x64" = { checksum = "sha256:19d00ba35cbf9c04dc3736cd8bb641e8633f3eddd4cedde71809574ae68a2cd1", url = "https://github.com/pre-commit/pre-commit/releases/download/v4.5.1/pre-commit-4.5.1.pyz"}
+"platforms.macos-arm64" = { checksum = "sha256:19d00ba35cbf9c04dc3736cd8bb641e8633f3eddd4cedde71809574ae68a2cd1", url = "https://github.com/pre-commit/pre-commit/releases/download/v4.5.1/pre-commit-4.5.1.pyz"}
+"platforms.macos-x64" = { checksum = "sha256:19d00ba35cbf9c04dc3736cd8bb641e8633f3eddd4cedde71809574ae68a2cd1", url = "https://github.com/pre-commit/pre-commit/releases/download/v4.5.1/pre-commit-4.5.1.pyz"}
+
+[[tools.prettier]]
+version = "3.8.1"
+backend = "npm:prettier"
+
+[[tools.protobuf]]
+version = "33.4"
+backend = "aqua:protocolbuffers/protobuf/protoc"
+"platforms.linux-arm64" = { checksum = "sha256:15aa988f4a6090636525ec236a8e4b3aab41eef402751bd5bb2df6afd9b7b5a5", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-linux-aarch_64.zip"}
+"platforms.linux-x64" = { checksum = "sha256:c0040ea9aef08fdeb2c74ca609b18d5fdbfc44ea0042fcfbfb38860d35f7dd66", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-linux-x86_64.zip"}
+"platforms.macos-arm64" = { checksum = "sha256:726297dcfed58592fd35620a5a6246ae020c39e88f3fd4cb1827df7bcf3dfcf1", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-osx-aarch_64.zip"}
+"platforms.macos-x64" = { checksum = "sha256:a49bec10d039e902d3b43e49938c42526f90011467609864fa6386ac4014da58", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-osx-x86_64.zip"}
+"platforms.windows-x64" = { checksum = "sha256:0b31be019b9fe45a388e93bf1f16d70afdf9ce5caf958ea47892fbc868b5a1b3", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-win64.zip"}
+
+[[tools.protoc]]
+version = "33.4"
+backend = "aqua:protocolbuffers/protobuf/protoc"
+"platforms.linux-arm64" = { checksum = "sha256:15aa988f4a6090636525ec236a8e4b3aab41eef402751bd5bb2df6afd9b7b5a5", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-linux-aarch_64.zip"}
+"platforms.linux-x64" = { checksum = "sha256:c0040ea9aef08fdeb2c74ca609b18d5fdbfc44ea0042fcfbfb38860d35f7dd66", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-linux-x86_64.zip"}
+"platforms.macos-arm64" = { checksum = "sha256:726297dcfed58592fd35620a5a6246ae020c39e88f3fd4cb1827df7bcf3dfcf1", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-osx-aarch_64.zip"}
+"platforms.macos-x64" = { checksum = "sha256:a49bec10d039e902d3b43e49938c42526f90011467609864fa6386ac4014da58", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-osx-x86_64.zip"}
+"platforms.windows-x64" = { checksum = "sha256:0b31be019b9fe45a388e93bf1f16d70afdf9ce5caf958ea47892fbc868b5a1b3", url = "https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-win64.zip"}
+
+[[tools.python]]
+version = "3.13.11"
+backend = "core:python"
+"platforms.linux-arm64" = { checksum = "sha256:f0f53642d65155007cbfa8601722f9bc189a5c8633f54fb78fcfef8bc817545f", url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11+20260127-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"}
+"platforms.linux-x64" = { checksum = "sha256:ec6aef3fec3183593445c2a57378d7f140e3a1fe637e7fec1dbfba10c5076549", url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11+20260127-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"}
+"platforms.macos-arm64" = { checksum = "sha256:718a87bf84d81cb81355488ca37be1f66c2252304be2090721016948de96e7ca", url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11+20260127-aarch64-apple-darwin-install_only_stripped.tar.gz"}
+"platforms.macos-x64" = { checksum = "sha256:2a84ac3dff6892d857b3bf7fc00f88335ed97f4ac4577e0651a56cc7f13239d7", url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11+20260127-x86_64-apple-darwin-install_only_stripped.tar.gz"}
+"platforms.windows-x64" = { checksum = "sha256:da73138f249d9eb38acf7b43225c40a8cd5ee2218474bbcf567e274626005f37", url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11+20260127-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"}
+
+[[tools.rust]]
+version = "1.91.0"
+backend = "core:rust"
+
+[[tools.zig]]
+version = "0.15.2"
+backend = "core:zig"
+"platforms.linux-arm64" = { checksum = "sha256:958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f", url = "https://ziglang.org/download/0.15.2/zig-aarch64-linux-0.15.2.tar.xz"}
+"platforms.linux-x64" = { checksum = "sha256:02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239", url = "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz"}
+"platforms.macos-arm64" = { checksum = "sha256:3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b", url = "https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz"}
+"platforms.macos-x64" = { checksum = "sha256:375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f", url = "https://ziglang.org/download/0.15.2/zig-x86_64-macos-0.15.2.tar.xz"}
+"platforms.windows-x64" = { checksum = "sha256:3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c", url = "https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip"}
