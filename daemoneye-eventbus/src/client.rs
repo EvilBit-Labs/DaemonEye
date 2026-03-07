@@ -693,6 +693,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         // Start a server first
@@ -722,6 +723,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         // Start a server first
@@ -763,6 +765,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         // Start a server first

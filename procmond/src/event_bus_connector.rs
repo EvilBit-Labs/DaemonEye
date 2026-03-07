@@ -407,6 +407,7 @@ impl EventBusConnector {
             auth_token: None,
             per_client_byte_limit: MAX_BUFFER_SIZE,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         // Store config for potential reconnection
@@ -1916,6 +1917,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: MAX_BUFFER_SIZE,
             rate_limit_config: None,
+            correlation_config: None,
         });
         connector.last_reconnect_attempt = Some(std::time::Instant::now());
         connector.reconnect_attempts = 1;
@@ -1945,6 +1947,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: MAX_BUFFER_SIZE,
             rate_limit_config: None,
+            correlation_config: None,
         });
 
         assert_eq!(connector.reconnect_attempts, 0);

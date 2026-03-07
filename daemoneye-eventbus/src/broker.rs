@@ -1,6 +1,6 @@
 //! Embedded broker implementation for the EventBus
 
-use crate::correlation::{CorrelationTracker, CorrelationTrackerConfig};
+use crate::correlation::CorrelationTracker;
 use crate::error::{EventBusError, Result};
 use crate::message::{BusEvent, CollectionEvent, EventSubscription, Message};
 use crate::queue_manager::QueueManager;
@@ -89,6 +89,7 @@ impl DaemoneyeBroker {
                 },
                 per_client_byte_limit: 10 * 1024 * 1024,
                 rate_limit_config: None,
+                correlation_config: None,
             };
         }
 
@@ -106,8 +107,8 @@ impl DaemoneyeBroker {
         let rate_limit_config = config.rate_limit_config.clone().unwrap_or_default();
         let rate_limiter = Arc::new(RateLimiter::new(rate_limit_config));
 
-        let correlation_tracker =
-            Arc::new(CorrelationTracker::new(CorrelationTrackerConfig::default()));
+        let correlation_config = config.correlation_config.clone().unwrap_or_default();
+        let correlation_tracker = Arc::new(CorrelationTracker::new(correlation_config));
 
         let broker = Self {
             topic_matcher: Arc::new(RwLock::new(TopicMatcher::new())),
@@ -627,19 +628,25 @@ impl DaemoneyeBroker {
     /// Like `publish()`, but accepts `CorrelationMetadata` directly and
     /// records the event in the correlation tracker for workflow tracking
     /// and forensic queries.
+    ///
+    /// The event is tracked *after* successful publish to avoid phantom
+    /// entries when the publish itself fails.
     pub async fn publish_with_correlation(
         &self,
         topic: &str,
         metadata: &crate::message::CorrelationMetadata,
         payload: Vec<u8>,
     ) -> Result<()> {
-        // Track the event in the correlation tracker
+        // Publish first — only track on success to avoid phantom events
+        self.publish(topic, &metadata.correlation_id, payload)
+            .await?;
+
+        // Record in correlation tracker for workflow tracking and forensic queries
         self.correlation_tracker
             .track_event(topic, metadata)
             .await?;
 
-        // Delegate to existing publish with correlation ID
-        self.publish(topic, &metadata.correlation_id, payload).await
+        Ok(())
     }
 
     /// Publish a control message without CollectionEvent deserialization

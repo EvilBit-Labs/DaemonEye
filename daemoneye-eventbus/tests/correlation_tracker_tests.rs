@@ -232,6 +232,84 @@ async fn test_cleanup_expired_workflows() {
 }
 
 #[tokio::test]
+async fn test_zero_history_size_does_not_loop() {
+    let config = CorrelationTrackerConfig {
+        max_history_size: 0,
+        max_active_workflows: 100,
+        workflow_timeout: Duration::from_secs(300),
+    };
+    let tracker = CorrelationTracker::new(config);
+
+    let meta = CorrelationMetadata::new("zero-hist".to_owned());
+    tracker
+        .track_event("events.process.new", &meta)
+        .await
+        .expect("track should succeed with zero history size");
+
+    let stats = tracker.stats().await;
+    assert_eq!(stats.history_size, 0, "history should remain empty");
+    assert_eq!(
+        stats.total_events_tracked, 1,
+        "event should still be counted"
+    );
+    assert_eq!(
+        stats.active_workflows, 1,
+        "workflow should still be tracked"
+    );
+}
+
+#[tokio::test]
+async fn test_input_validation_topic_too_long() {
+    let tracker = CorrelationTracker::new(CorrelationTrackerConfig::default());
+    let meta = CorrelationMetadata::new("wf-1".to_owned());
+    let long_topic = "x".repeat(513);
+
+    let result = tracker.track_event(&long_topic, &meta).await;
+    assert!(result.is_err(), "should reject topic exceeding max length");
+}
+
+#[tokio::test]
+async fn test_input_validation_topic_length_boundary() {
+    let tracker = CorrelationTracker::new(CorrelationTrackerConfig::default());
+    let meta = CorrelationMetadata::new("wf-1".to_owned());
+
+    // Exactly at limit should succeed
+    let ok_topic = "x".repeat(512);
+    let result = tracker.track_event(&ok_topic, &meta).await;
+    assert!(result.is_ok(), "512-char topic should succeed");
+
+    // Over limit should fail
+    let long_topic = "x".repeat(513);
+    let result = tracker.track_event(&long_topic, &meta).await;
+    assert!(result.is_err(), "513-char topic should fail");
+}
+
+#[tokio::test]
+async fn test_input_validation_tag_value_too_long() {
+    use std::collections::HashMap;
+
+    let tracker = CorrelationTracker::new(CorrelationTrackerConfig::default());
+
+    // Construct metadata directly to bypass CorrelationMetadata::with_tag() limits
+    let mut tags = HashMap::new();
+    tags.insert("key".to_owned(), "v".repeat(1025));
+    let meta = CorrelationMetadata {
+        correlation_id: "wf-tags".to_owned(),
+        root_correlation_id: "wf-tags".to_owned(),
+        parent_correlation_id: None,
+        workflow_stage: None,
+        correlation_tags: tags,
+        sequence_number: None,
+    };
+
+    let result = tracker.track_event("events.process.new", &meta).await;
+    assert!(
+        result.is_err(),
+        "should reject tag value exceeding max length"
+    );
+}
+
+#[tokio::test]
 async fn test_broker_publish_with_correlation_tracks_event() {
     use daemoneye_eventbus::{CollectionEvent, DaemoneyeBroker, ProcessEvent};
     use tempfile::tempdir;

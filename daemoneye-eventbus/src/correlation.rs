@@ -172,10 +172,45 @@ impl CorrelationTracker {
         metadata: &CorrelationMetadata,
     ) -> crate::error::Result<()> {
         const MAX_ID_LENGTH: usize = 256;
+        const MAX_TOPIC_LENGTH: usize = 512;
+        const MAX_STAGE_LENGTH: usize = 256;
+        const MAX_TAG_COUNT: usize = 64;
+        const MAX_TAG_KEY_LENGTH: usize = 128;
+        const MAX_TAG_VALUE_LENGTH: usize = 1024;
+
         if metadata.correlation_id.len() > MAX_ID_LENGTH {
             return Err(crate::error::EventBusError::broker(
                 "Correlation ID exceeds maximum length",
             ));
+        }
+        if metadata.root_correlation_id.len() > MAX_ID_LENGTH {
+            return Err(crate::error::EventBusError::broker(
+                "Root correlation ID exceeds maximum length",
+            ));
+        }
+        if topic.len() > MAX_TOPIC_LENGTH {
+            return Err(crate::error::EventBusError::broker(
+                "Topic exceeds maximum length",
+            ));
+        }
+        if let Some(stage) = &metadata.workflow_stage
+            && stage.len() > MAX_STAGE_LENGTH
+        {
+            return Err(crate::error::EventBusError::broker(
+                "Workflow stage name exceeds maximum length",
+            ));
+        }
+        if metadata.correlation_tags.len() > MAX_TAG_COUNT {
+            return Err(crate::error::EventBusError::broker(
+                "Too many correlation tags",
+            ));
+        }
+        for (key, value) in &metadata.correlation_tags {
+            if key.len() > MAX_TAG_KEY_LENGTH || value.len() > MAX_TAG_VALUE_LENGTH {
+                return Err(crate::error::EventBusError::broker(
+                    "Correlation tag key or value exceeds maximum length",
+                ));
+            }
         }
 
         let now = Instant::now();
@@ -234,19 +269,23 @@ impl CorrelationTracker {
         {
             let mut history = self.event_history.write().await;
 
-            // Enforce history size limit
-            while history.len() >= self.config.max_history_size {
-                history.pop_front();
-            }
+            // Enforce history size limit; skip storage entirely if configured to zero
+            if self.config.max_history_size == 0 {
+                // History disabled — nothing to store
+            } else {
+                while history.len() >= self.config.max_history_size {
+                    history.pop_front();
+                }
 
-            history.push_back(CorrelatedEvent {
-                correlation_id: metadata.correlation_id.clone(),
-                root_correlation_id: metadata.root_correlation_id.clone(),
-                topic: topic.to_owned(),
-                metadata: metadata.clone(),
-                received_at: now,
-                wall_clock: SystemTime::now(),
-            });
+                history.push_back(CorrelatedEvent {
+                    correlation_id: metadata.correlation_id.clone(),
+                    root_correlation_id: metadata.root_correlation_id.clone(),
+                    topic: topic.to_owned(),
+                    metadata: metadata.clone(),
+                    received_at: now,
+                    wall_clock: SystemTime::now(),
+                });
+            }
         }
 
         // Update stats
