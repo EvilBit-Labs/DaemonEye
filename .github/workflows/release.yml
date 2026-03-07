@@ -25,10 +25,10 @@ jobs:
         name: Release (Linux)
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   fetch-depth: 0
-            - uses: jdx/mise-action@v3
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
               with:
                   install: true
                   cache: true
@@ -47,7 +47,7 @@ jobs:
                   sudo apt-get install -y gcc-aarch64-linux-gnu
 
             - name: Run GoReleaser
-              uses: goreleaser/goreleaser-action@v7
+              uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
               with:
                   distribution: goreleaser
                   version: "~> v2"
@@ -59,10 +59,10 @@ jobs:
         name: Release (macOS)
         runs-on: macos-15
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   fetch-depth: 0
-            - uses: jdx/mise-action@v3
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
               with:
                   install: true
                   cache: true
@@ -76,7 +76,7 @@ jobs:
                       aarch64-apple-darwin
 
             - name: Run GoReleaser
-              uses: goreleaser/goreleaser-action@v7
+              uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
               with:
                   distribution: goreleaser
                   version: "~> v2"
@@ -89,10 +89,10 @@ jobs:
         name: Release (Windows)
         runs-on: windows-2022
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   fetch-depth: 0
-            - uses: jdx/mise-action@v3
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
               with:
                   install: true
                   cache: true
@@ -106,7 +106,7 @@ jobs:
                       aarch64-pc-windows-msvc
 
             - name: Run GoReleaser
-              uses: goreleaser/goreleaser-action@v7
+              uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
               with:
                   distribution: goreleaser
                   version: "~> v2"
