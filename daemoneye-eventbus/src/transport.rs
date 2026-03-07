@@ -65,6 +65,8 @@ pub struct SocketConfig {
     pub per_client_byte_limit: usize,
     /// Rate limit configuration (optional, uses default if None)
     pub rate_limit_config: Option<crate::rate_limiter::RateLimitConfig>,
+    /// Correlation tracker configuration (optional, uses default if None)
+    pub correlation_config: Option<crate::correlation::CorrelationTrackerConfig>,
 }
 
 impl SocketConfig {
@@ -79,6 +81,7 @@ impl SocketConfig {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024, // 10MB default
             rate_limit_config: None,
+            correlation_config: None,
         }
     }
 
@@ -1308,6 +1311,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         // Start a server first
@@ -1390,6 +1394,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         let server = TransportServer::new(socket_config.clone())

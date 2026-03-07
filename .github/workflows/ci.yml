@@ -25,72 +25,38 @@ env:
     GITHUB_ACTIONS: true
 
 jobs:
-    # Detect if Rust code has changed
-    changes:
-        runs-on: ubuntu-latest
-        outputs:
-            rust: ${{ steps.filter.outputs.rust }}
-            docs: ${{ steps.filter.outputs.docs }}
-        steps:
-            - uses: actions/checkout@v6
-            - uses: dorny/paths-filter@v3
-              id: filter
-              with:
-                  filters: |
-                      rust:
-                        - '**/*.rs'
-                        - '**/Cargo.toml'
-                        - '**/Cargo.lock'
-                        - '**/build.rs'
-                        - '**/proto/*.proto'
-                        - 'justfile'
-                        - 'rust-toolchain.toml'
-                        - 'deny.toml'
-                        - '.config/nextest.toml'
-                      docs:
-                        - 'docs/**'
-                        - '*.md'
-                        - '.kiro/**'
-                        - 'spec/**'
-
-    # Code quality checks - always run
     quality:
         runs-on: ubuntu-latest
-        needs: changes
-        if: needs.changes.outputs.rust == 'true'
         steps:
-            - uses: actions/checkout@v6
-            - uses: dtolnay/rust-toolchain@1.91.0
-              with:
-                  components: llvm-tools, cargo, rustfmt, clippy
-            - uses: jdx/mise-action@v3
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Ensure rustfmt and clippy are installed
+              run: rustup component add rustfmt clippy
 
             - name: Check formatting
               run: just lint-rust
 
     test:
         runs-on: ubuntu-latest
-        needs: changes
-        if: needs.changes.outputs.rust == 'true'
         steps:
-            - uses: actions/checkout@v6
-            - uses: jdx/mise-action@v3
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Run tests (all features)
-              run: cargo nextest run --profile ci --all-features
+              run: mise x -- cargo nextest run --profile ci --all-features
 
             - name: Build release
-              run: cargo build --release --all-features
+              run: mise x -- cargo build --release --all-features
 
-    # Test cross-platform - only run when Rust code changes
     test-cross-platform:
         strategy:
             matrix:
@@ -122,47 +88,104 @@ jobs:
                     # Note: macOS 12 (Monterey) testing would require custom runners
 
         runs-on: ${{ matrix.os }}
-        needs: [changes, quality]
-        if: needs.changes.outputs.rust == 'true'
+        needs: quality
         steps:
-            - uses: actions/checkout@v6
-            - uses: jdx/mise-action@v3
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             # Run tests and build the release binary
-            - run: cargo nextest run --profile ci --all-features
-            - run: cargo build --release --all-features
+            - run: mise x -- cargo nextest run --profile ci --all-features
+            - run: mise x -- cargo build --release --all-features
 
-    # Generate coverage for TLS-enabled builds - only run when Rust code changes
     coverage:
         runs-on: ubuntu-latest
-        needs: [changes, test, test-cross-platform, quality]
-        if: needs.changes.outputs.rust == 'true'
+        needs: [test, test-cross-platform, quality]
         steps:
-            - uses: actions/checkout@v6
-            - uses: jdx/mise-action@v3
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Generate coverage
-              run: cargo llvm-cov --all-features --no-report
+              run: mise x -- cargo llvm-cov --all-features --no-report
 
             - name: Combine coverage reports
-              run: cargo llvm-cov report --lcov --output-path lcov.info
+              run: mise x -- cargo llvm-cov report --lcov --output-path lcov.info
 
             - name: Upload to Codecov
-              uses: codecov/codecov-action@v5
+              uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
               with:
                   files: lcov.info
                   fail_ci_if_error: false
                   token: ${{ secrets.CODECOV_TOKEN }}
                   slug: EvilBit-Labs/daemoneye
-            - uses: qltysh/qlty-action/coverage@v2
+            - uses: qltysh/qlty-action/coverage@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
               with:
                   token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
                   files: target/lcov.info
+
+    benchmarks:
+        runs-on: ubuntu-latest
+        needs: test
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  fetch-depth: 0
+
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+              with:
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Restore baseline benchmarks
+              uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+              with:
+                  path: target/criterion
+                  key: criterion-baseline-${{ runner.os }}
+
+            - name: Run benchmarks
+              run: mise x -- cargo bench --package procmond 2>&1 | tee bench-output.txt
+
+            - name: Check for performance regression
+              run: |
+                  # Criterion reports "regressed" when performance degrades beyond noise threshold.
+                  # Fail CI if any benchmark regresses more than 10%.
+                  if grep -q "Performance has regressed" bench-output.txt; then
+                    echo "::warning::Performance regression detected in benchmarks"
+                    grep -A2 "Performance has regressed" bench-output.txt
+                    if grep -oP 'change: \+\K[0-9.]+' bench-output.txt | awk '{if ($1 > 10.0) exit 1}'; then
+                      echo "All regressions within 10% threshold"
+                    else
+                      echo "::error::Benchmark regression exceeds 10% threshold"
+                      exit 1
+                    fi
+                  else
+                    echo "No performance regressions detected"
+                  fi
+
+            - name: Save baseline benchmarks
+              uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+              if: github.ref == 'refs/heads/main'
+              with:
+                  path: target/criterion
+                  key: criterion-baseline-${{ runner.os }}
+
+            - name: Run load tests
+              run: NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test load_tests -- --ignored --nocapture 2>&1 | tee load-test-output.txt
+
+            - name: Upload benchmark results
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              if: always()
+              with:
+                  name: benchmark-results
+                  path: |
+                      bench-output.txt
+                      load-test-output.txt
+                  retention-days: 30

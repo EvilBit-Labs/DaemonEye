@@ -9,6 +9,7 @@ use procmond::{
     monitor_collector::{ProcmondMonitorCollector, ProcmondMonitorConfig},
     registration::{RegistrationConfig, RegistrationManager, RegistrationState},
     rpc_service::{RpcServiceConfig, RpcServiceHandler},
+    security::detect_privileges,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -80,6 +81,22 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration
     let config_loader = config::ConfigLoader::new("procmond");
     let _config = config_loader.load()?;
+
+    // Detect security privileges early (infallible - returns degraded on failure)
+    let security_ctx = detect_privileges();
+    if security_ctx.degraded_mode {
+        warn!(
+            platform = %security_ctx.platform,
+            "Running in degraded mode - some process metadata may be unavailable"
+        );
+    } else {
+        info!(
+            platform = %security_ctx.platform,
+            capabilities = ?security_ctx.capabilities,
+            full_access = security_ctx.has_full_process_access,
+            "Security context detected"
+        );
+    }
 
     // Initialize telemetry
     let mut telemetry = telemetry::TelemetryCollector::new("procmond".to_owned());
@@ -337,25 +354,26 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        // Keep RPC service reference alive (it will be used for handling incoming requests)
-        // In a full implementation, we would spawn a task to process RPC requests from the event bus
-        let _rpc_service = rpc_service;
-
-        // Startup behavior: begin monitoring immediately on launch.
+        // Begin monitoring immediately on startup.
         //
-        // The collector currently does not wait for an explicit "begin monitoring"
-        // command from the agent. This makes procmond usable in isolation and in
-        // test environments without requiring the full agent/broker stack.
+        // The collector does not wait for an explicit "begin monitoring" command
+        // from the agent. This makes procmond usable in isolation and in test
+        // environments without requiring the full agent/broker stack.
         //
-        // If coordinated startup with the agent becomes a hard requirement in the
-        // future, this is the place to integrate a subscription to a
-        // `control.collector.lifecycle` (or similar) control topic and defer
-        // calling `begin_monitoring()` until the appropriate control message is
-        // received.
+        // TODO: Once daemoneye-eventbus supports control message subscriptions
+        // (MessageType::Control delivery to subscribers), add a control transport
+        // task here that subscribes to `control.collector.lifecycle` for
+        // BeginMonitoring signals and `control.collector.procmond` for RPC
+        // requests (HealthCheck, UpdateConfig, etc.). The current EventBusClient
+        // subscription mechanism only delivers MessageType::Event, not Control.
         info!("Starting collection immediately on startup");
         if let Err(e) = actor_handle.begin_monitoring() {
             error!(error = %e, "Failed to send BeginMonitoring command");
         }
+
+        // Keep RPC service reference alive for future control transport integration
+        let _rpc_service = rpc_service;
+        let _control_event_bus = Arc::clone(&event_bus);
 
         // Spawn the actor task
         let actor_task = tokio::spawn(async move {

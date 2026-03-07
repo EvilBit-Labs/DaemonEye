@@ -54,6 +54,9 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 
 # Platform-specific dependencies
+[target.'cfg(unix)'.dependencies]
+uzers = { workspace = true }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # macOS Security Framework
 security-framework = { workspace = true }

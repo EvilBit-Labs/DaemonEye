@@ -262,6 +262,39 @@ impl WriteAheadLog {
     /// Default rotation threshold (80MB = 83,886,080 bytes)
     const DEFAULT_ROTATION_THRESHOLD: u64 = 80 * 1024 * 1024;
 
+    /// Restrict WAL file permissions to owner-only read/write (0o600) on Unix.
+    ///
+    /// WAL files may contain sensitive process metadata, so they must not be
+    /// world-readable. This is a no-op on non-Unix platforms.
+    #[cfg(unix)]
+    async fn restrict_permissions(path: &std::path::Path) -> WalResult<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        fs::set_permissions(path, perms).await.map_err(WalError::Io)
+    }
+
+    /// No-op on non-Unix platforms.
+    #[cfg(not(unix))]
+    async fn restrict_permissions(_path: &std::path::Path) -> WalResult<()> {
+        Ok(())
+    }
+
+    /// Build `OpenOptions` for creating a WAL file with secure permissions.
+    ///
+    /// On Unix, sets mode `0o600` at creation time to prevent a TOCTOU window
+    /// where a permissive umask could briefly make the file world-readable.
+    /// On non-Unix platforms, returns standard options (permissions are handled
+    /// by `restrict_permissions` as a best-effort fallback).
+    fn secure_create_options() -> fs::OpenOptions {
+        let mut opts = fs::OpenOptions::new();
+        opts.append(true).create(true);
+
+        #[cfg(unix)]
+        opts.mode(0o600);
+
+        opts
+    }
+
     /// Create or open a Write-Ahead Log at the specified directory.
     ///
     /// # Arguments
@@ -318,12 +351,13 @@ impl WriteAheadLog {
         #[allow(clippy::as_conversions)] // Safe: file sequence is always within u32 range
         let file_sequence_u32 = next_file_sequence as u32;
         let file_path = Self::wal_file_path(&wal_dir, file_sequence_u32);
-        let file = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
+        let file = Self::secure_create_options()
             .open(&file_path)
             .await
             .map_err(WalError::Io)?;
+
+        // Defense-in-depth: restrict permissions again in case the file already existed
+        Self::restrict_permissions(&file_path).await?;
 
         // Get initial file size if resuming
         let metadata = fs::metadata(&file_path).await.map_err(WalError::Io)?;
@@ -684,12 +718,13 @@ impl WriteAheadLog {
         let file_sequence_u32 = next_file_sequence as u32;
         let file_path = Self::wal_file_path(&self.wal_dir, file_sequence_u32);
 
-        let new_file = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
+        let new_file = Self::secure_create_options()
             .open(&file_path)
             .await
             .map_err(|e| WalError::FileRotation(format!("Failed to open new WAL file: {e}")))?;
+
+        // Defense-in-depth: restrict permissions again in case the file already existed
+        Self::restrict_permissions(&file_path).await?;
 
         // Atomically replace the file handle - old file is closed when dropped
         state.file = new_file;
@@ -2752,6 +2787,183 @@ mod tests {
     }
 
     // ==================== Concurrent Access During Cleanup ====================
+
+    // ==================== Targeted CRC32 Corruption Skip Test ====================
+
+    #[tokio::test]
+    async fn test_crc32_corruption_skips_entry_preserves_others() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let wal_path = temp_dir.path().to_path_buf();
+
+        // Write 3 events to a single file
+        {
+            let wal = WriteAheadLog::new(wal_path.clone())
+                .await
+                .expect("Failed to create WAL");
+
+            for i in 1..=3 {
+                let event = create_test_event(41_000 + i);
+                wal.write(event).await.expect("Failed to write event");
+            }
+        }
+
+        // Read the raw file and locate the second entry to corrupt its CRC
+        let wal_file_path = wal_path.join("procmond-00001.wal");
+        let mut contents = tokio::fs::read(&wal_file_path)
+            .await
+            .expect("Failed to read WAL file");
+
+        // Parse first entry length to find start of second entry
+        let first_len =
+            u32::from_le_bytes([contents[0], contents[1], contents[2], contents[3]]) as usize;
+        let second_entry_offset = 4 + first_len;
+
+        // Parse second entry length, then deserialize to find checksum offset
+        let second_len = u32::from_le_bytes([
+            contents[second_entry_offset],
+            contents[second_entry_offset + 1],
+            contents[second_entry_offset + 2],
+            contents[second_entry_offset + 3],
+        ]) as usize;
+
+        // Corrupt the second entry data (flip bits in the middle of its payload)
+        let second_data_start = second_entry_offset + 4;
+        #[allow(clippy::integer_division)]
+        let corrupt_offset = second_data_start + second_len / 2;
+        contents[corrupt_offset] ^= 0xFF;
+        contents[corrupt_offset + 1] ^= 0xFF;
+
+        tokio::fs::write(&wal_file_path, &contents)
+            .await
+            .expect("Failed to write corrupted file");
+
+        // Replay: second entry should be skipped, first and third should survive
+        let wal = WriteAheadLog::new(wal_path)
+            .await
+            .expect("Failed to reopen WAL");
+
+        let events = wal
+            .replay()
+            .await
+            .expect("Replay should handle CRC corruption");
+
+        assert_eq!(events.len(), 2, "Corrupted entry should be skipped");
+        assert_eq!(events[0].pid, 41_001, "First event should be intact");
+        assert_eq!(events[1].pid, 41_003, "Third event should be intact");
+    }
+
+    // ==================== Cleanup Empties WAL After Full Publish ====================
+
+    #[tokio::test]
+    async fn test_cleanup_after_mark_published_empties_wal() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let wal_path = temp_dir.path().to_path_buf();
+
+        // Use small rotation threshold to create multiple files
+        let wal = WriteAheadLog::with_rotation_threshold(wal_path.clone(), 100)
+            .await
+            .expect("Failed to create WAL");
+
+        // Write enough events to create multiple files
+        let mut last_seq = 0;
+        for i in 1..=20 {
+            let event = create_test_event(42_000 + i);
+            last_seq = wal.write(event).await.expect("Failed to write event");
+        }
+
+        let files_before = wal.list_wal_files().await.expect("Failed to list files");
+        assert!(files_before.len() > 1, "Should have multiple WAL files");
+
+        // Mark ALL events as published and run cleanup
+        wal.mark_published(last_seq)
+            .await
+            .expect("Failed to mark published");
+
+        // Replay should return no events (only the active file remains, but
+        // it may still contain entries; non-active files are deleted)
+        let files_after = wal.list_wal_files().await.expect("Failed to list files");
+
+        // Only the current (active) file should remain
+        assert_eq!(
+            files_after.len(),
+            1,
+            "Only active file should remain after full cleanup"
+        );
+
+        // Verify deleted files are truly gone
+        let deleted_count = files_before.len() - files_after.len();
+        assert!(
+            deleted_count >= 1,
+            "At least one non-active file should be cleaned up"
+        );
+    }
+
+    // ==================== Persistence and Replay Across Simulated Restarts ====================
+
+    #[tokio::test]
+    async fn test_persistence_replay_across_simulated_restart() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let wal_path = temp_dir.path().to_path_buf();
+
+        // Session 1: write events then drop (simulate crash/restart)
+        let written_pids: Vec<u32> = (1..=5).map(|i| 43_000 + i).collect();
+        {
+            let wal = WriteAheadLog::new(wal_path.clone())
+                .await
+                .expect("Failed to create WAL");
+
+            for &pid in &written_pids {
+                let event = create_test_event(pid);
+                wal.write(event).await.expect("Failed to write event");
+            }
+        } // WAL dropped - simulates process exit
+
+        // Session 2: reopen WAL and verify all events can be replayed
+        let wal = WriteAheadLog::new(wal_path)
+            .await
+            .expect("Failed to reopen WAL after restart");
+
+        let events = wal.replay().await.expect("Failed to replay after restart");
+
+        assert_eq!(
+            events.len(),
+            written_pids.len(),
+            "All events from previous session should be recoverable"
+        );
+
+        for (event, &expected_pid) in events.iter().zip(written_pids.iter()) {
+            assert_eq!(
+                event.pid, expected_pid,
+                "Event PID should match what was written"
+            );
+        }
+    }
+
+    // ==================== Rotation File Existence Verification ====================
+
+    #[tokio::test]
+    async fn test_rotation_at_threshold_both_files_exist() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Use tiny threshold to force rotation on first event
+        let wal = WriteAheadLog::with_rotation_threshold(temp_dir.path().to_path_buf(), 50)
+            .await
+            .expect("Failed to create WAL");
+
+        // Write events until rotation happens
+        for i in 1..=5 {
+            let event = create_test_event(44_000 + i);
+            wal.write(event).await.expect("Failed to write event");
+        }
+
+        let files = wal.list_wal_files().await.expect("Failed to list files");
+        assert!(files.len() >= 2, "Rotation should produce at least 2 files");
+
+        // Verify each file physically exists on disk
+        for (seq, path) in &files {
+            assert!(path.exists(), "WAL file {} should exist on disk", seq);
+        }
+    }
 
     #[tokio::test]
     async fn test_concurrent_writes_during_cleanup() {

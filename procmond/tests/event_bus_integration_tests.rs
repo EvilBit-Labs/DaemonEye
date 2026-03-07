@@ -1048,6 +1048,97 @@ async fn test_multiple_shutdowns_are_safe() {
         .expect("Second shutdown should succeed");
 }
 
+/// Test topic hierarchy correctness for ProcessEventType variants.
+///
+/// Verifies that Start/Stop/Modify map to the correct topic strings
+/// by publishing events and checking the WAL entries' event_type fields,
+/// which correspond to the topic hierarchy under `events.process.*`.
+#[tokio::test]
+async fn test_topic_hierarchy_correctness() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let wal_path = temp_dir.path().to_path_buf();
+
+    {
+        let mut connector = EventBusConnector::new(wal_path.clone())
+            .await
+            .expect("Failed to create connector");
+
+        // Publish one of each event type
+        connector
+            .publish(create_test_event(100), ProcessEventType::Start)
+            .await
+            .expect("Start should publish");
+
+        connector
+            .publish(create_test_event(200), ProcessEventType::Stop)
+            .await
+            .expect("Stop should publish");
+
+        connector
+            .publish(create_test_event(300), ProcessEventType::Modify)
+            .await
+            .expect("Modify should publish");
+    }
+
+    // Verify via WAL entries that the type strings match the topic hierarchy
+    let wal = WriteAheadLog::new(wal_path)
+        .await
+        .expect("Failed to open WAL");
+
+    let entries = wal.replay_entries().await.expect("Failed to replay WAL");
+    assert_eq!(entries.len(), 3);
+
+    // ProcessEventType::Start -> type "start" -> topic "events.process.start"
+    assert_eq!(entries[0].event.pid, 100);
+    assert_eq!(
+        entries[0].event_type.as_deref(),
+        Some("start"),
+        "Start event should have type 'start' (maps to events.process.start)"
+    );
+
+    // ProcessEventType::Stop -> type "stop" -> topic "events.process.stop"
+    assert_eq!(entries[1].event.pid, 200);
+    assert_eq!(
+        entries[1].event_type.as_deref(),
+        Some("stop"),
+        "Stop event should have type 'stop' (maps to events.process.stop)"
+    );
+
+    // ProcessEventType::Modify -> type "modify" -> topic "events.process.modify"
+    assert_eq!(entries[2].event.pid, 300);
+    assert_eq!(
+        entries[2].event_type.as_deref(),
+        Some("modify"),
+        "Modify event should have type 'modify' (maps to events.process.modify)"
+    );
+}
+
+/// Test publish_raw returns connection error when disconnected.
+///
+/// Creates a disconnected EventBusConnector and calls publish_raw,
+/// verifying it returns a Connection error.
+#[tokio::test]
+async fn test_publish_raw_returns_connection_error_when_disconnected() {
+    let (connector, _temp_dir) = create_isolated_connector().await;
+
+    // Connector is disconnected by default
+    assert!(!connector.is_connected());
+
+    let payload = b"test-payload-data".to_vec();
+    let result = connector
+        .publish_raw("control.rpc.response.test", payload)
+        .await;
+
+    assert!(result.is_err(), "publish_raw should fail when disconnected");
+
+    let err = result.unwrap_err();
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("Not connected"),
+        "Error should indicate not connected, got: {err_msg}"
+    );
+}
+
 /// Test publish after shutdown still works (to buffer/WAL).
 #[tokio::test]
 async fn test_publish_after_shutdown() {

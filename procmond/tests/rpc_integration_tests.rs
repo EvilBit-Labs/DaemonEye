@@ -81,6 +81,8 @@ async fn create_test_event_bus() -> (Arc<RwLock<EventBusConnector>>, TempDir) {
 
 /// Creates test health check data with configurable state.
 fn create_test_health_data(state: CollectorState, connected: bool) -> HealthCheckData {
+    let operational_sub_status =
+        (state == CollectorState::WaitingForAgent).then(|| "idle-awaiting-begin".to_owned());
     HealthCheckData {
         state,
         collection_interval: Duration::from_secs(5),
@@ -92,6 +94,7 @@ fn create_test_health_data(state: CollectorState, connected: bool) -> HealthChec
         lifecycle_events: 50,
         collection_errors: 2,
         backpressure_events: 5,
+        operational_sub_status,
     }
 }
 
@@ -246,7 +249,7 @@ async fn test_health_check_degraded_when_disconnected() {
     }
 }
 
-/// Test HealthCheck with WaitingForAgent state shows degraded.
+/// Test HealthCheck with WaitingForAgent state shows healthy with idle sub-status.
 #[tokio::test]
 async fn test_health_check_waiting_for_agent_state() {
     let (actor_handle, rx) = create_test_actor();
@@ -266,7 +269,14 @@ async fn test_health_check_waiting_for_agent_state() {
     responder.await.expect("Responder should complete");
 
     if let Some(RpcPayload::HealthCheck(health)) = response.payload {
-        assert_eq!(health.status, HealthStatus::Degraded);
+        assert_eq!(health.status, HealthStatus::Healthy);
+        // Verify the collector component reports idle-awaiting-begin
+        let collector_health = health.components.get("collector").unwrap();
+        assert_eq!(collector_health.status, HealthStatus::Healthy);
+        assert_eq!(
+            collector_health.message.as_deref(),
+            Some("idle-awaiting-begin")
+        );
     } else {
         panic!("Expected HealthCheck payload");
     }
@@ -931,9 +941,9 @@ async fn test_health_check_counter() {
 // Response Publishing Tests
 // ============================================================================
 
-/// Test publish_response serializes correctly.
+/// Test publish_response fails gracefully when broker is disconnected.
 #[tokio::test]
-async fn test_publish_response_serialization() {
+async fn test_publish_response_fails_when_disconnected() {
     let (actor_handle, rx) = create_test_actor();
     let (event_bus, _temp_dir) = create_test_event_bus().await;
     let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
@@ -948,9 +958,10 @@ async fn test_publish_response_serialization() {
     );
     let response = handler.handle_request(request).await;
 
-    // publish_response should succeed (just logs, doesn't actually publish)
+    // publish_response now actually publishes via event bus;
+    // without a connected broker, it should return PublishFailed
     let publish_result = handler.publish_response(response).await;
-    assert!(publish_result.is_ok());
+    assert!(publish_result.is_err());
 }
 
 // ============================================================================
@@ -1202,6 +1213,174 @@ async fn test_health_data_includes_buffer_level() {
 
     if let Some(RpcPayload::HealthCheck(health)) = response.payload {
         assert_eq!(health.metrics.get("buffer_level_percent"), Some(&75.0_f64));
+    } else {
+        panic!("Expected HealthCheck payload");
+    }
+}
+
+/// Test that response topic uses `control.rpc.response.{collector_id}` format.
+///
+/// Creates an RpcServiceHandler with a custom collector_id and calls publish_response().
+/// Since there's no connected broker, verify the error message contains the correct topic.
+#[tokio::test]
+async fn test_response_topic_uses_collector_id() {
+    let (actor_handle, _rx) = create_test_actor();
+    let (event_bus, _temp_dir) = create_test_event_bus().await;
+
+    let config = RpcServiceConfig {
+        collector_id: "test-collector".to_string(),
+        response_topic_prefix: "control.rpc.response".to_string(),
+        ..RpcServiceConfig::default()
+    };
+
+    let handler = RpcServiceHandler::new(actor_handle, event_bus, config);
+
+    let response = daemoneye_eventbus::rpc::RpcResponse {
+        request_id: "topic-test-1".to_string(),
+        service_id: "test-collector".to_string(),
+        operation: CollectorOperation::HealthCheck,
+        status: RpcStatus::Success,
+        payload: Some(RpcPayload::Empty),
+        timestamp: SystemTime::now(),
+        execution_time_ms: 5,
+        queue_time_ms: None,
+        total_time_ms: 5,
+        error_details: None,
+        correlation_metadata: RpcCorrelationMetadata::new("corr-topic-test".to_string()),
+    };
+
+    // publish_response should fail because we're not connected to the broker
+    let result = handler.publish_response(response).await;
+    assert!(result.is_err());
+
+    // The error message should contain the expected topic
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("control.rpc.response.test-collector"),
+        "Error should mention the response topic, got: {err_msg}"
+    );
+}
+
+/// Test concurrent health check request serialization.
+///
+/// Spawns multiple health check requests concurrently using `Arc<RpcServiceHandler>`
+/// and verifies they are all processed correctly.
+#[tokio::test]
+async fn test_concurrent_request_serialization() {
+    let (actor_handle, mut rx) = create_test_actor();
+    let (event_bus, _temp_dir) = create_test_event_bus().await;
+    let handler = Arc::new(RpcServiceHandler::with_defaults(actor_handle, event_bus));
+
+    let concurrent_count: usize = 8;
+
+    // Spawn responder to handle all concurrent health checks
+    let responder = tokio::spawn(async move {
+        for _ in 0..concurrent_count {
+            if let Some(ActorMessage::HealthCheck { respond_to }) = rx.recv().await {
+                let health = create_test_health_data(CollectorState::Running, true);
+                respond_to
+                    .send(health)
+                    .expect("Health response receiver should be waiting");
+            }
+        }
+    });
+
+    // Launch all requests concurrently via tokio::spawn
+    let mut handles = Vec::new();
+    for i in 0..concurrent_count {
+        let handler_clone = Arc::clone(&handler);
+        handles.push(tokio::spawn(async move {
+            let request = create_rpc_request(
+                &format!("serial-{i}"),
+                CollectorOperation::HealthCheck,
+                RpcPayload::Empty,
+            );
+            handler_clone.handle_request(request).await
+        }));
+    }
+
+    // Collect all results
+    let mut success_count = 0;
+    let mut request_ids = Vec::new();
+    for handle in handles {
+        let response = handle.await.expect("Task should complete");
+        if response.status == RpcStatus::Success {
+            success_count += 1;
+        }
+        request_ids.push(response.request_id);
+    }
+
+    responder.await.expect("Responder should complete");
+
+    // All requests should succeed
+    assert_eq!(
+        success_count, concurrent_count,
+        "All {concurrent_count} concurrent requests should succeed"
+    );
+
+    // All request IDs should be unique (no mixing)
+    request_ids.sort();
+    request_ids.dedup();
+    assert_eq!(
+        request_ids.len(),
+        concurrent_count,
+        "All request IDs should be unique"
+    );
+
+    // Stats should reflect all requests
+    let stats = handler.stats().await;
+    assert_eq!(stats.requests_received as usize, concurrent_count);
+    assert_eq!(stats.requests_succeeded as usize, concurrent_count);
+}
+
+/// Test WaitingForAgent produces Healthy status with operational_sub_status
+/// field set to "idle-awaiting-begin" on the health data.
+///
+/// This variant specifically verifies the operational_sub_status appears in
+/// the collector component message (complementing the existing
+/// `test_health_check_waiting_for_agent_state` test).
+#[tokio::test]
+async fn test_waiting_for_agent_operational_sub_status_in_health_data() {
+    let (actor_handle, rx) = create_test_actor();
+    let (event_bus, _temp_dir) = create_test_event_bus().await;
+    let handler = RpcServiceHandler::with_defaults(actor_handle, event_bus);
+
+    let request = create_rpc_request(
+        "health-sub-status",
+        CollectorOperation::HealthCheck,
+        RpcPayload::Empty,
+    );
+
+    let health_data = create_test_health_data(CollectorState::WaitingForAgent, true);
+    let responder = spawn_health_responder(rx, health_data);
+
+    let response = handler.handle_request(request).await;
+    responder.await.expect("Responder should complete");
+
+    assert_eq!(response.status, RpcStatus::Success);
+
+    if let Some(RpcPayload::HealthCheck(health)) = response.payload {
+        // Overall status should be Healthy for WaitingForAgent
+        assert_eq!(health.status, HealthStatus::Healthy);
+
+        // Collector component should be Healthy with idle-awaiting-begin message
+        let collector = health.components.get("collector").unwrap();
+        assert_eq!(collector.status, HealthStatus::Healthy);
+        assert_eq!(
+            collector.message.as_deref(),
+            Some("idle-awaiting-begin"),
+            "Collector component message should be 'idle-awaiting-begin'"
+        );
+
+        // Event bus should be Healthy (connected=true)
+        let event_bus_health = health.components.get("event_bus").unwrap();
+        assert_eq!(event_bus_health.status, HealthStatus::Healthy);
+
+        // error_count should be present
+        assert_eq!(
+            health.error_count, 2,
+            "Error count should match health data"
+        );
     } else {
         panic!("Expected HealthCheck payload");
     }

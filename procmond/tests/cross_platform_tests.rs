@@ -184,11 +184,8 @@ async fn test_linux_platform_specific_metadata_collected() {
     // Check for platform metadata in at least some processes
     let mut found_platform_metadata = false;
     for event in &events {
-        if event.platform_metadata.is_some() {
+        if let Some(ref metadata) = event.platform_metadata {
             found_platform_metadata = true;
-
-            // Verify the metadata structure contains Linux-specific fields
-            let metadata = event.platform_metadata.as_ref().unwrap();
 
             // Linux metadata should have namespace information
             if metadata.get("namespaces").is_some() {
@@ -328,11 +325,8 @@ async fn test_macos_platform_specific_metadata_collected() {
     // Check for platform metadata in at least some processes
     let mut found_platform_metadata = false;
     for event in &events {
-        if event.platform_metadata.is_some() {
+        if let Some(ref metadata) = event.platform_metadata {
             found_platform_metadata = true;
-
-            // Verify the metadata structure contains macOS-specific fields
-            let metadata = event.platform_metadata.as_ref().unwrap();
 
             // macOS metadata should have entitlements or code_signing info
             if metadata.get("entitlements").is_some() || metadata.get("code_signing").is_some() {
@@ -473,11 +467,8 @@ async fn test_windows_platform_specific_metadata_collected() {
     // Check for platform metadata in at least some processes
     let mut found_platform_metadata = false;
     for event in &events {
-        if event.platform_metadata.is_some() {
+        if let Some(ref metadata) = event.platform_metadata {
             found_platform_metadata = true;
-
-            // Verify the metadata structure contains Windows-specific fields
-            let metadata = event.platform_metadata.as_ref().unwrap();
 
             // Windows metadata should have security_info or service_info
             if metadata.get("security_info").is_some() || metadata.get("service_info").is_some() {
@@ -674,11 +665,10 @@ async fn test_cpu_memory_usage_collected() {
     let mut anomalous_memory_count = 0;
 
     for event in &events {
-        if event.cpu_usage.is_some() {
+        if let Some(cpu) = event.cpu_usage {
             with_cpu += 1;
 
             // CPU usage should be non-negative
-            let cpu = event.cpu_usage.unwrap();
             assert!(
                 cpu >= 0.0,
                 "CPU usage should be non-negative for PID {}",
@@ -686,9 +676,7 @@ async fn test_cpu_memory_usage_collected() {
             );
         }
 
-        if event.memory_usage.is_some() {
-            let memory = event.memory_usage.unwrap();
-
+        if let Some(memory) = event.memory_usage {
             // Memory usage should be reasonable (not exceeding total system memory by too much)
             // Some platforms may report anomalous values for system processes; track but don't fail
             if memory >= MAX_REASONABLE_MEMORY {
@@ -702,11 +690,10 @@ async fn test_cpu_memory_usage_collected() {
             }
         }
 
-        if event.start_time.is_some() {
+        if let Some(start_time) = event.start_time {
             with_start_time += 1;
 
             // Start time should be in the past
-            let start_time = event.start_time.unwrap();
             assert!(
                 start_time <= SystemTime::now(),
                 "Start time should be in the past for PID {}",

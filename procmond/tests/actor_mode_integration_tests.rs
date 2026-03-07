@@ -304,6 +304,7 @@ async fn test_health_check_succeeds_with_responsive_actor() {
                         lifecycle_events: 2,
                         collection_errors: 0,
                         backpressure_events: 0,
+                        operational_sub_status: None,
                     };
                     respond_to
                         .send(health_data)
