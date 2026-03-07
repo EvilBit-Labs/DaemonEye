@@ -184,11 +184,8 @@ async fn test_linux_platform_specific_metadata_collected() {
     // Check for platform metadata in at least some processes
     let mut found_platform_metadata = false;
     for event in &events {
-        if event.platform_metadata.is_some() {
+        if let Some(metadata) = &event.platform_metadata {
             found_platform_metadata = true;
-
-            // Verify the metadata structure contains Linux-specific fields
-            let metadata = event.platform_metadata.as_ref().unwrap();
 
             // Linux metadata should have namespace information
             if metadata.get("namespaces").is_some() {
@@ -470,11 +467,8 @@ async fn test_windows_platform_specific_metadata_collected() {
     // Check for platform metadata in at least some processes
     let mut found_platform_metadata = false;
     for event in &events {
-        if event.platform_metadata.is_some() {
+        if let Some(metadata) = &event.platform_metadata {
             found_platform_metadata = true;
-
-            // Verify the metadata structure contains Windows-specific fields
-            let metadata = event.platform_metadata.as_ref().unwrap();
 
             // Windows metadata should have security_info or service_info
             if metadata.get("security_info").is_some() || metadata.get("service_info").is_some() {
