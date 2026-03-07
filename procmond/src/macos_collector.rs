@@ -29,7 +29,7 @@ use collector_core::ProcessEvent;
 use std::path::Path;
 use std::time::SystemTime;
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 use crate::process_collector::{
     CollectionStats, ProcessCollectionConfig, ProcessCollectionError, ProcessCollectionResult,

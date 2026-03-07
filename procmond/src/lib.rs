@@ -8,6 +8,7 @@ pub mod monitor_collector;
 pub mod process_collector;
 pub mod registration;
 pub mod rpc_service;
+pub mod security;
 pub mod wal;
 
 #[cfg(target_os = "linux")]
@@ -37,6 +38,10 @@ pub use process_collector::{
     CollectionStats, FallbackProcessCollector, ProcessCollectionConfig, ProcessCollectionError,
     ProcessCollectionResult, ProcessCollector, ProcessCollectorCapabilities,
     SysinfoProcessCollector,
+};
+pub use security::{
+    SecurityContext, detect_privileges, sanitize_command_line, sanitize_env_vars,
+    sanitize_file_path,
 };
 
 #[cfg(target_os = "linux")]

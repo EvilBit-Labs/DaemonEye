@@ -270,7 +270,7 @@ async fn test_linux_collector_current_process() {
 
     // Linux-specific checks for current process
     assert!(event.ppid.is_some(), "Current process should have a parent");
-    if let Some(exe_path) = &event.executable_path {
+    if let Some(ref exe_path) = event.executable_path {
         assert!(
             Path::new(exe_path).exists(),
             "Executable path should exist: {}",

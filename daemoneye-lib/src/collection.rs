@@ -171,7 +171,7 @@ impl ProcessCollectionService for SysinfoProcessCollector {
 #[allow(
     clippy::expect_used,
     clippy::assertions_on_constants,
-    clippy::unchecked_duration_subtraction
+    clippy::unchecked_time_subtraction
 )]
 mod tests {
     use super::*;

@@ -52,7 +52,7 @@ DaemonEye supports deployment on:
 1. **Package Managers**: APT, YUM, Homebrew, Chocolatey
 2. **Pre-built Binaries**: Direct download and installation
 3. **Source Build**: Compile from source code
-4. **Release Tooling**: cargo-dist for automated cross-platform builds
+4. **Release Tooling**: GoReleaser for automated cross-platform builds
 5. **Containers**: Docker images and container deployment
 6. **Cloud**: AWS, Azure, GCP marketplace deployments
 

@@ -15,7 +15,7 @@ use std::path::Path;
 use std::time::SystemTime;
 use sysinfo::{Process, System};
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 use crate::process_collector::{
     CollectionStats, ProcessCollectionConfig, ProcessCollectionError, ProcessCollectionResult,

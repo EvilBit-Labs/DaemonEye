@@ -293,13 +293,7 @@ impl EventBusClient {
         let message = Message::event(topic.to_string(), correlation, payload, sequence);
         let message_data = message.serialize()?;
 
-        // Acquire permit for backpressure before sending
-        {
-            let transport = self.transport.lock().await;
-            let _permit = transport.acquire_permit().await?;
-            drop(_permit);
-            drop(transport);
-        }
+        // Send message — transport.send() acquires its own backpressure permit internally
         {
             let mut transport = self.transport.lock().await;
             transport.send(&message_data).await?;
@@ -315,6 +309,50 @@ impl EventBusClient {
             "Published message to topic: {} (correlation: {})",
             topic, message.correlation_metadata.correlation_id
         );
+        Ok(())
+    }
+
+    /// Publish a raw control message to a topic.
+    ///
+    /// Unlike [`publish`](Self::publish), this method accepts pre-serialized
+    /// payload bytes and sends them as a `Control` message type, which is
+    /// routed through the broker's topic matching to all matching subscribers.
+    ///
+    /// This is used for RPC responses, heartbeats, and other control-plane
+    /// messages that are not `CollectionEvent` types.
+    pub async fn publish_control(&self, topic: &str, payload: Vec<u8>) -> Result<()> {
+        // Validate topic
+        let _topic_obj = Topic::new(topic)
+            .map_err(|e| EventBusError::topic(format!("Invalid topic '{topic}': {e}")))?;
+
+        // Validate payload size
+        if payload.len() > 1024 * 1024 {
+            return Err(EventBusError::transport(
+                "Payload exceeds 1MB limit".to_string(),
+            ));
+        }
+
+        let correlation_id = Uuid::new_v4().to_string();
+
+        // Get next sequence number
+        let sequence = {
+            let mut seq_guard = self.sequence.lock().await;
+            let seq = *seq_guard;
+            *seq_guard += 1;
+            seq
+        };
+
+        // Create control message for topic-based routing
+        let message = Message::control(topic.to_string(), correlation_id, payload, sequence);
+        let message_data = message.serialize()?;
+
+        // Send message — transport.send() acquires its own backpressure permit internally
+        {
+            let mut transport = self.transport.lock().await;
+            transport.send(&message_data).await?;
+        }
+
+        debug!("Published control message to topic: {topic}");
         Ok(())
     }
 
@@ -336,13 +374,7 @@ impl EventBusClient {
             crate::message::Message::control(topic.clone(), correlation_id, payload.to_vec(), 0);
         let message_data = message.serialize()?;
 
-        // Acquire permit for backpressure
-        {
-            let transport = self.transport.lock().await;
-            let _permit = transport.acquire_permit().await?;
-            drop(_permit);
-            drop(transport);
-        }
+        // Send message — transport.send() acquires its own backpressure permit internally
         {
             let mut transport = self.transport.lock().await;
             transport.send(&message_data).await?;
@@ -379,13 +411,7 @@ impl EventBusClient {
         );
         let message_data = message.serialize()?;
 
-        // Acquire permit
-        {
-            let transport = self.transport.lock().await;
-            let _permit = transport.acquire_permit().await?;
-            drop(_permit);
-            drop(transport);
-        }
+        // Send message — transport.send() acquires its own backpressure permit internally
         {
             let mut transport = self.transport.lock().await;
             transport.send(&message_data).await?;
@@ -693,6 +719,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         // Start a server first
@@ -722,6 +749,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         // Start a server first
@@ -763,6 +791,7 @@ mod tests {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         // Start a server first
