@@ -210,82 +210,59 @@ cargo build --release --target x86_64-apple-darwin
 cargo build --release --target aarch64-apple-darwin
 ```
 
-### Method 4: Using cargo-dist (Release Tooling)
+### Method 4: Using GoReleaser (Release Tooling)
 
-DaemonEye uses `cargo-dist` and `cargo-release` for automated building, packaging, and releasing. This is the recommended method for developers and contributors who want to build release-quality binaries.
+DaemonEye uses [GoReleaser](https://goreleaser.com/) for automated cross-platform building, packaging, and releasing. This is the recommended method for developers and contributors who want to build release-quality binaries.
 
-**Install cargo-dist and cargo-release**:
-
-```bash
-# Install cargo-dist for cross-platform binary distribution
-cargo install cargo-dist
-
-# Install cargo-release for automated versioning and releasing
-cargo install cargo-release
-```
-
-**Build with cargo-dist**:
+**Local build with GoReleaser**:
 
 ```bash
-# Build and package for all supported platforms
-cargo dist build
+# Validate configuration
+just goreleaser-check
 
-# Build for specific platforms only
-cargo dist build --targets x86_64-unknown-linux-gnu,aarch64-apple-darwin
+# Build binaries locally (snapshot, no publish)
+just goreleaser-build
 
-# Build and create installers
-cargo dist build --artifacts=all
+# Run a full snapshot release (build + package, no publish)
+just goreleaser-snapshot
 ```
 
 **Release with cargo-release**:
 
 ```bash
-# Prepare a new release (updates version, changelog, etc.)
-cargo release --execute
-
 # Dry run to see what would be changed
 cargo release --dry-run
+
+# Prepare a new release (updates version, creates tag)
+cargo release --execute
 
 # Release with specific version
 cargo release 1.0.0 --execute
 ```
 
-**cargo-dist Configuration**:
+**GoReleaser Configuration**:
 
-The project includes a `Cargo.toml` configuration for cargo-dist that defines:
+The project includes platform-specific GoReleaser configs (`.goreleaser-linux.yaml`, `.goreleaser-macos.yaml`, `.goreleaser-windows.yaml`) that define:
 
-- **Supported platforms**: Linux (x86_64, aarch64), macOS (x86_64, aarch64), Windows (x86_64)
-- **Package formats**: Tarballs, ZIP files, and platform-specific installers
-- **Asset inclusion**: Binaries, documentation, and configuration templates
-- **Signing**: GPG signing for release artifacts
-
-**Benefits of cargo-dist**:
-
-- **Cross-platform builds**: Single command builds for all supported platforms
-- **Consistent packaging**: Standardized package formats across platforms
-- **Automated signing**: GPG signing of release artifacts
-- **Installation scripts**: Platform-specific installation helpers
-- **Checksum generation**: Automatic generation of SHA-256 checksums
-- **CI/CD integration**: Designed for automated release pipelines
+- **Supported platforms**: Linux (x86_64, aarch64), macOS (x86_64, aarch64), Windows (x86_64, aarch64)
+- **Package formats**: `.tar.gz` for Unix, `.zip` for Windows
+- **Binaries**: procmond, daemoneye-agent, daemoneye-cli
+- **Signing**: Cosign keyless signing via GitHub Actions OIDC
 
 **Release Workflow**:
 
 ```bash
-# 1. Update version and changelog
+# 1. Update version and create tag
 cargo release --execute
 
-# 2. Build and package all platforms
-cargo dist build --artifacts=all
+# 2. Push tag to trigger CI release
+git push --tags
 
-# 3. Test packages locally
-cargo dist test
-
-# 4. Publish to GitHub releases
-cargo dist publish
+# 3. GoReleaser builds, packages, signs, and publishes to GitHub Releases
 ```
 
 > [!NOTE]
-> **For Contributors**: If you're contributing to DaemonEye and need to test your changes, use `cargo dist build` to create release-quality binaries that match the official distribution format.
+> **For Contributors**: Use `just goreleaser-build` to create release-quality binaries that match the official distribution format.
 
 ## Platform-Specific Installation
 

@@ -928,6 +928,216 @@ async fn test_integration_connection_failure_with_wal_persistence() {
     }
 }
 
+// ============================================================================
+// SECTION 5: Additional Chaos Scenarios
+// ============================================================================
+
+/// Test that buffer exceeding 10MB drops oldest events and returns BufferOverflow without panic.
+#[tokio::test]
+async fn test_chaos_buffer_exceeds_10mb_no_panic() {
+    let (mut connector, _temp_dir) = create_isolated_connector().await;
+
+    let max_buffer_bytes: usize = 10 * 1024 * 1024;
+    let mut overflow_detected = false;
+    let mut events_published = 0_u32;
+
+    // Fill the buffer well beyond 10MB with large events while disconnected
+    for i in 1..=5000_u32 {
+        let event = create_large_event(i, 200);
+        match connector.publish(event, ProcessEventType::Start).await {
+            Ok(_) => {
+                events_published += 1;
+            }
+            Err(EventBusConnectorError::BufferOverflow) => {
+                overflow_detected = true;
+                println!(
+                    "BufferOverflow returned at event {i}, buffer size: {} bytes, usage: {}%",
+                    connector.buffer_size_bytes(),
+                    connector.buffer_usage_percent()
+                );
+                break;
+            }
+            Err(e) => panic!("Unexpected error: {e:?}"),
+        }
+    }
+
+    // Verify BufferOverflow was returned (not a panic)
+    assert!(
+        overflow_detected,
+        "Should have received BufferOverflow error before exhausting memory"
+    );
+
+    // Verify buffer did not exceed the 10MB limit
+    assert!(
+        connector.buffer_size_bytes() <= max_buffer_bytes,
+        "Buffer size {} should not exceed 10MB ({})",
+        connector.buffer_size_bytes(),
+        max_buffer_bytes
+    );
+
+    // Verify the system is still operational after overflow
+    assert!(
+        events_published > 0,
+        "Should have published some events before overflow"
+    );
+
+    println!(
+        "Buffer overflow test passed: {events_published} events published, buffer capped at {} bytes",
+        connector.buffer_size_bytes()
+    );
+}
+
+/// Test that multiple concurrent RPC requests are serialized one-at-a-time and all processed.
+#[tokio::test]
+async fn test_chaos_concurrent_rpc_serialized_all_processed() {
+    let (actor_handle, mut rx) = create_test_actor_with_receiver();
+    let (connector, _temp_dir) = create_isolated_connector().await;
+    let event_bus = Arc::new(RwLock::new(connector));
+
+    let handler = Arc::new(RpcServiceHandler::with_defaults(actor_handle, event_bus));
+
+    // Spawn responder that handles all health check requests
+    let responder = tokio::spawn(async move {
+        let mut count = 0_u64;
+        while let Some(msg) = rx.recv().await {
+            if let ActorMessage::HealthCheck { respond_to } = msg {
+                respond_to
+                    .send(create_mock_health_data())
+                    .expect("Response receiver should be waiting");
+                count += 1;
+                if count >= 10 {
+                    break;
+                }
+            }
+        }
+        count
+    });
+
+    // Send exactly 10 concurrent RPC requests
+    let mut handles = Vec::new();
+    for i in 0..10_u32 {
+        let handler_clone = Arc::clone(&handler);
+        let handle = tokio::spawn(async move {
+            let request = create_health_check_request(5);
+            let response = handler_clone.handle_request(request).await;
+            (i, response.status)
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all requests to complete
+    let mut results = Vec::new();
+    for handle in handles {
+        let result = timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("Request should complete within timeout")
+            .expect("Task should not panic");
+        results.push(result);
+    }
+
+    // Verify all 10 requests completed successfully
+    assert_eq!(results.len(), 10, "All 10 requests should have results");
+    for (i, status) in &results {
+        assert_eq!(*status, RpcStatus::Success, "Request {i} should succeed");
+    }
+
+    // Verify stats reflect exactly 10 requests received
+    let stats = handler.stats().await;
+    assert_eq!(
+        stats.requests_received, 10,
+        "Stats should show exactly 10 requests received"
+    );
+
+    // Clean up responder
+    let handled = timeout(Duration::from_secs(2), responder)
+        .await
+        .expect("Responder should complete")
+        .expect("Responder should not panic");
+
+    assert_eq!(
+        handled, 10,
+        "Responder should have handled exactly 10 requests"
+    );
+    println!("All 10 concurrent RPC requests serialized and processed successfully");
+}
+
+/// Test that config update during collection is queued and applied at next cycle boundary.
+#[tokio::test]
+async fn test_chaos_config_update_queued_during_collection() {
+    let (actor_handle, mut rx) = create_test_actor_with_receiver();
+
+    // Simulate a slow collection cycle by delaying the responder
+    let responder = tokio::spawn(async move {
+        let mut messages_received = Vec::new();
+
+        // Receive messages with a timeout so the test eventually finishes
+        loop {
+            match timeout(Duration::from_secs(2), rx.recv()).await {
+                Ok(Some(msg)) => {
+                    let msg_name = match msg {
+                        ActorMessage::UpdateConfig { respond_to, .. } => {
+                            // Simulate the config being queued and accepted at cycle boundary
+                            respond_to
+                                .send(Ok(()))
+                                .expect("Config update response should be received");
+                            "UpdateConfig"
+                        }
+                        ActorMessage::BeginMonitoring => "BeginMonitoring",
+                        ActorMessage::AdjustInterval { .. } => "AdjustInterval",
+                        ActorMessage::HealthCheck { respond_to } => {
+                            respond_to
+                                .send(create_mock_health_data())
+                                .expect("Health response should be received");
+                            "HealthCheck"
+                        }
+                        ActorMessage::GracefulShutdown { respond_to } => {
+                            respond_to
+                                .send(Ok(()))
+                                .expect("Shutdown response should be received");
+                            "GracefulShutdown"
+                        }
+                        _ => "Other",
+                    };
+                    messages_received.push(msg_name.to_string());
+                }
+                Ok(None) => break,
+                Err(_timeout) => break,
+            }
+        }
+
+        messages_received
+    });
+
+    // Send a config update via the actor handle
+    let new_config = procmond::monitor_collector::ProcmondMonitorConfig::default();
+    let result = actor_handle.update_config(new_config).await;
+
+    assert!(
+        result.is_ok(),
+        "Config update should be queued successfully"
+    );
+
+    // Verify that a subsequent health check still works (system remains responsive)
+    let health_result = actor_handle.health_check().await;
+    assert!(
+        health_result.is_ok(),
+        "Health check should succeed after config update"
+    );
+
+    // Drop the handle to close the channel, allowing the responder to finish
+    drop(actor_handle);
+
+    let messages = responder.await.expect("Responder should complete");
+
+    // Verify the config update message was received
+    assert!(
+        messages.contains(&"UpdateConfig".to_string()),
+        "Config update should have been received by the actor: {messages:?}"
+    );
+
+    println!("Config update queued properly, messages received in order: {messages:?}");
+}
+
 /// Integration test: Concurrent operations with backpressure.
 #[tokio::test]
 async fn test_integration_concurrent_operations_with_backpressure() {

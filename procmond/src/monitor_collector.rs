@@ -116,6 +116,8 @@ pub struct HealthCheckData {
     pub collection_errors: u64,
     /// Number of backpressure events.
     pub backpressure_events: u64,
+    /// Operational sub-status (e.g., "idle-awaiting-begin" when waiting for agent).
+    pub operational_sub_status: Option<String>,
 }
 
 /// Channel capacity for actor messages.
@@ -794,6 +796,9 @@ impl ProcmondMonitorCollector {
 
     /// Builds health check response data.
     fn build_health_data(&self) -> HealthCheckData {
+        let operational_sub_status = (self.state == CollectorState::WaitingForAgent)
+            .then(|| "idle-awaiting-begin".to_owned());
+
         HealthCheckData {
             state: self.state,
             collection_interval: self.current_interval,
@@ -805,6 +810,7 @@ impl ProcmondMonitorCollector {
             lifecycle_events: self.stats.lifecycle_events.load(Ordering::Relaxed),
             collection_errors: self.stats.collection_errors.load(Ordering::Relaxed),
             backpressure_events: self.stats.backpressure_events.load(Ordering::Relaxed),
+            operational_sub_status,
         }
     }
 
@@ -1768,6 +1774,7 @@ mod tests {
             lifecycle_events: 5,
             collection_errors: 0,
             backpressure_events: 1,
+            operational_sub_status: None,
         };
 
         let cloned = health_data.clone();
@@ -1789,6 +1796,7 @@ mod tests {
             lifecycle_events: 0,
             collection_errors: 0,
             backpressure_events: 0,
+            operational_sub_status: None,
         };
 
         let debug_str = format!("{health_data:?}");
@@ -2230,6 +2238,7 @@ mod tests {
                     lifecycle_events: 5,
                     collection_errors: 0,
                     backpressure_events: 1,
+                    operational_sub_status: None,
                 };
                 let send_result = respond_to.send(health_data);
                 assert!(send_result.is_ok(), "Oneshot send should succeed");
@@ -2309,6 +2318,7 @@ mod tests {
                     lifecycle_events: 0,
                     collection_errors: 0,
                     backpressure_events: 0,
+                    operational_sub_status: None,
                 };
                 let _ = respond_to.send(health_data);
             }

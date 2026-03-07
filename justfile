@@ -256,7 +256,7 @@ coverage-check:
     @{{ mise_exec }} cargo llvm-cov nextest --workspace --profile coverage --lcov --output-path lcov.info --fail-under-lines 9.7
 
 # Full local CI parity check
-ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release security-scan coverage-check dist-plan
+ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release security-scan coverage-check goreleaser-check
 
 # =============================================================================
 # DEVELOPMENT AND EXECUTION
@@ -274,15 +274,6 @@ run-daemoneye-agent *args:
 # =============================================================================
 # DISTRIBUTION AND PACKAGING
 # =============================================================================
-
-dist:
-    @{{ mise_exec }} dist build
-
-dist-check:
-    @{{ mise_exec }} dist check
-
-dist-plan:
-    @{{ mise_exec }} dist plan
 
 install:
     @{{ mise_exec }} cargo install --path .

@@ -63,6 +63,7 @@
 pub mod broker;
 pub mod client;
 pub mod config_manager;
+pub mod correlation;
 pub mod error;
 pub mod message;
 pub mod process_manager;
@@ -79,6 +80,10 @@ pub mod transport;
 pub use broker::{DaemoneyeBroker, DaemoneyeEventBus};
 pub use client::{ClientStats, EventBusClient};
 pub use config_manager::{ConfigManager, ConfigManagerError, ConfigSnapshot};
+pub use correlation::{
+    CorrelatedEvent, CorrelationTracker, CorrelationTrackerConfig, CorrelationTrackerStats,
+    StageInfo, TimelineEvent, WorkflowState, WorkflowTimeline,
+};
 pub use error::{EventBusError, Result};
 pub use message::{
     BusEvent, CollectionEvent, CorrelationFilter, CorrelationMetadata, EventFilter,
