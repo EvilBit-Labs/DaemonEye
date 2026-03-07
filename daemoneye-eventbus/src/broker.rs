@@ -1,5 +1,6 @@
 //! Embedded broker implementation for the EventBus
 
+use crate::correlation::{CorrelationTracker, CorrelationTrackerConfig};
 use crate::error::{EventBusError, Result};
 use crate::message::{BusEvent, CollectionEvent, EventSubscription, Message};
 use crate::queue_manager::QueueManager;
@@ -54,6 +55,8 @@ pub struct DaemoneyeBroker {
     queue_capacity: usize,
     /// Queue manager for handling client message queues
     queue_manager: Arc<QueueManager>,
+    /// Correlation tracker for multi-collector workflow tracking
+    correlation_tracker: Arc<CorrelationTracker>,
 }
 
 impl DaemoneyeBroker {
@@ -103,6 +106,9 @@ impl DaemoneyeBroker {
         let rate_limit_config = config.rate_limit_config.clone().unwrap_or_default();
         let rate_limiter = Arc::new(RateLimiter::new(rate_limit_config));
 
+        let correlation_tracker =
+            Arc::new(CorrelationTracker::new(CorrelationTrackerConfig::default()));
+
         let broker = Self {
             topic_matcher: Arc::new(RwLock::new(TopicMatcher::new())),
             client_manager: Arc::new(Mutex::new(client_manager)),
@@ -121,6 +127,7 @@ impl DaemoneyeBroker {
             auth_enabled,
             queue_capacity,
             queue_manager,
+            correlation_tracker,
         };
 
         info!("DaemonEye broker created with socket: {}", socket_path);
@@ -610,6 +617,31 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
+    /// Get a reference to the correlation tracker
+    pub fn correlation_tracker(&self) -> &CorrelationTracker {
+        &self.correlation_tracker
+    }
+
+    /// Publish a message with full correlation metadata tracking
+    ///
+    /// Like `publish()`, but accepts `CorrelationMetadata` directly and
+    /// records the event in the correlation tracker for workflow tracking
+    /// and forensic queries.
+    pub async fn publish_with_correlation(
+        &self,
+        topic: &str,
+        metadata: &crate::message::CorrelationMetadata,
+        payload: Vec<u8>,
+    ) -> Result<()> {
+        // Track the event in the correlation tracker
+        self.correlation_tracker
+            .track_event(topic, metadata)
+            .await?;
+
+        // Delegate to existing publish with correlation ID
+        self.publish(topic, &metadata.correlation_id, payload).await
+    }
+
     /// Publish a control message without CollectionEvent deserialization
     async fn publish_control_message(
         &self,
@@ -938,6 +970,28 @@ impl DaemoneyeEventBus {
     /// Get the broker reference
     pub fn broker(&self) -> &Arc<DaemoneyeBroker> {
         &self.broker
+    }
+
+    /// Publish an event with full correlation metadata for workflow tracking
+    pub async fn publish_with_metadata(
+        &mut self,
+        event: CollectionEvent,
+        metadata: crate::message::CorrelationMetadata,
+    ) -> Result<()> {
+        let topic = match &event {
+            CollectionEvent::Process(_) => "events.process.new",
+            CollectionEvent::Network(_) => "events.network.new",
+            CollectionEvent::Filesystem(_) => "events.filesystem.new",
+            CollectionEvent::Performance(_) => "events.performance.new",
+            CollectionEvent::TriggerRequest(_) => "control.trigger.request",
+        };
+
+        let payload = postcard::to_allocvec(&event)
+            .map_err(|e| EventBusError::serialization(e.to_string()))?;
+
+        self.broker
+            .publish_with_correlation(topic, &metadata, payload)
+            .await
     }
 }
 
