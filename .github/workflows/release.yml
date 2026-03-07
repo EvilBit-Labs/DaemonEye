@@ -2,8 +2,7 @@
 #
 # Triggered by pushing a semver tag (e.g. v0.1.0).
 # Builds 3 Rust binaries (procmond, daemoneye-agent, daemoneye-cli) across
-# 6 targets using GoReleaser with platform-specific configs (one job per OS),
-# Cosign for keyless signing, and Syft for SBOM generation.
+# 6 targets using GoReleaser with platform-specific configs (one job per OS).
 
 name: Release
 

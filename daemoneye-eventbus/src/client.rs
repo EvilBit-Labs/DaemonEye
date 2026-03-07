@@ -293,13 +293,7 @@ impl EventBusClient {
         let message = Message::event(topic.to_string(), correlation, payload, sequence);
         let message_data = message.serialize()?;
 
-        // Acquire permit for backpressure before sending
-        {
-            let transport = self.transport.lock().await;
-            let _permit = transport.acquire_permit().await?;
-            drop(_permit);
-            drop(transport);
-        }
+        // Send message — transport.send() acquires its own backpressure permit internally
         {
             let mut transport = self.transport.lock().await;
             transport.send(&message_data).await?;
@@ -352,13 +346,7 @@ impl EventBusClient {
         let message = Message::control(topic.to_string(), correlation_id, payload, sequence);
         let message_data = message.serialize()?;
 
-        // Acquire permit for backpressure before sending
-        {
-            let transport = self.transport.lock().await;
-            let _permit = transport.acquire_permit().await?;
-            drop(_permit);
-            drop(transport);
-        }
+        // Send message — transport.send() acquires its own backpressure permit internally
         {
             let mut transport = self.transport.lock().await;
             transport.send(&message_data).await?;
@@ -386,13 +374,7 @@ impl EventBusClient {
             crate::message::Message::control(topic.clone(), correlation_id, payload.to_vec(), 0);
         let message_data = message.serialize()?;
 
-        // Acquire permit for backpressure
-        {
-            let transport = self.transport.lock().await;
-            let _permit = transport.acquire_permit().await?;
-            drop(_permit);
-            drop(transport);
-        }
+        // Send message — transport.send() acquires its own backpressure permit internally
         {
             let mut transport = self.transport.lock().await;
             transport.send(&message_data).await?;
@@ -429,13 +411,7 @@ impl EventBusClient {
         );
         let message_data = message.serialize()?;
 
-        // Acquire permit
-        {
-            let transport = self.transport.lock().await;
-            let _permit = transport.acquire_permit().await?;
-            drop(_permit);
-            drop(transport);
-        }
+        // Send message — transport.send() acquires its own backpressure permit internally
         {
             let mut transport = self.transport.lock().await;
             transport.send(&message_data).await?;

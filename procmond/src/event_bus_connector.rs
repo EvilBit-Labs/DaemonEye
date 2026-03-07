@@ -687,18 +687,30 @@ impl EventBusConnector {
 
     /// Sanitize a process event by redacting sensitive command-line arguments.
     ///
-    /// Joins the command-line arguments, applies [`crate::security::sanitize_command_line`], and
-    /// splits back into a `Vec<String>`. This ensures secrets passed via flags
-    /// like `--password` or `--token` never appear in WAL or published events.
+    /// Sanitizes each argument individually to preserve argument boundaries
+    /// (e.g., quoted args and paths with spaces). Flags like `--password` or
+    /// `--token` cause the *next* argument to be redacted. Also redacts
+    /// executable paths pointing to sensitive directories.
     fn sanitize_event(mut event: ProcessEvent) -> ProcessEvent {
         if !event.command_line.is_empty() {
-            let joined = event.command_line.join(" ");
-            let sanitized = crate::security::sanitize_command_line(&joined);
-            event.command_line = sanitized.split_whitespace().map(String::from).collect();
+            let mut sanitized_args = Vec::with_capacity(event.command_line.len());
+            let mut redact_next = false;
+            for arg in &event.command_line {
+                if redact_next {
+                    sanitized_args.push("[REDACTED]".to_owned());
+                    redact_next = false;
+                } else if crate::security::is_sensitive_flag(arg) {
+                    sanitized_args.push(arg.clone());
+                    redact_next = true;
+                } else {
+                    sanitized_args.push(arg.clone());
+                }
+            }
+            event.command_line = sanitized_args;
         }
         if let Some(ref path) = event.executable_path {
             let sanitized = crate::security::sanitize_file_path(path);
-            if sanitized == "[REDACTED]" {
+            if sanitized != *path {
                 event.executable_path = Some(sanitized);
             }
         }

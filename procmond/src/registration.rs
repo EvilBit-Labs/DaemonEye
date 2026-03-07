@@ -2032,8 +2032,9 @@ mod tests {
         assert_eq!(stats.heartbeats_sent, 1);
         assert!(stats.last_heartbeat.is_some());
 
-        // Build a heartbeat message directly to verify the health_status mapping
-        // The publish_heartbeat method uses the same logic internally
+        // Verify build_heartbeat_message correctly passes through health status
+        // and sub-status. The WaitingForAgent -> Healthy mapping is tested above
+        // via publish_heartbeat (which queries the actor and maps CollectorState).
         let heartbeat = manager
             .build_heartbeat_message(
                 99,
@@ -2045,12 +2046,12 @@ mod tests {
         assert_eq!(
             heartbeat.health_status,
             HealthStatus::Healthy,
-            "WaitingForAgent state should map to Healthy health status"
+            "Healthy status should be passed through to heartbeat message"
         );
         assert_eq!(
             heartbeat.operational_sub_status.as_deref(),
             Some("idle-awaiting-begin"),
-            "WaitingForAgent should have 'idle-awaiting-begin' sub-status"
+            "Sub-status should be passed through to heartbeat message"
         );
         assert_eq!(heartbeat.collector_id, "procmond");
     }

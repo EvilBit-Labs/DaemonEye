@@ -437,6 +437,26 @@ impl fmt::Display for Sanitized<'_> {
     }
 }
 
+/// Check whether a token is a sensitive flag (case-insensitive).
+///
+/// Returns `true` for flags like `--password`, `--token`, `--secret`, etc.
+/// This is used for per-argument sanitization that preserves argument
+/// boundaries.
+///
+/// # Example
+///
+/// ```
+/// use procmond::security::is_sensitive_flag;
+///
+/// assert!(is_sensitive_flag("--password"));
+/// assert!(!is_sensitive_flag("--verbose"));
+/// ```
+pub fn is_sensitive_flag(token: &str) -> bool {
+    SENSITIVE_FLAGS
+        .iter()
+        .any(|flag| token.eq_ignore_ascii_case(flag))
+}
+
 /// Sanitize a command-line string by redacting values after sensitive flags.
 ///
 /// Scans for known sensitive flags and replaces the token immediately

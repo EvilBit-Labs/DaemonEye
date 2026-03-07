@@ -369,7 +369,7 @@ fn get_current_rss_kb() -> u64 {
         // Use sysinfo to get current process RSS on macOS
         use sysinfo::System;
         let pid = sysinfo::get_current_pid().unwrap_or(sysinfo::Pid::from(0));
-        let mut sys = System::new();
+        let mut sys = System::new_all();
         sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
         sys.process(pid).map_or(0, |p| p.memory() / 1024)
     }
