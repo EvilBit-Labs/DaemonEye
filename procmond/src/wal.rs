@@ -279,6 +279,22 @@ impl WriteAheadLog {
         Ok(())
     }
 
+    /// Build `OpenOptions` for creating a WAL file with secure permissions.
+    ///
+    /// On Unix, sets mode `0o600` at creation time to prevent a TOCTOU window
+    /// where a permissive umask could briefly make the file world-readable.
+    /// On non-Unix platforms, returns standard options (permissions are handled
+    /// by `restrict_permissions` as a best-effort fallback).
+    fn secure_create_options() -> fs::OpenOptions {
+        let mut opts = fs::OpenOptions::new();
+        opts.append(true).create(true);
+
+        #[cfg(unix)]
+        opts.mode(0o600);
+
+        opts
+    }
+
     /// Create or open a Write-Ahead Log at the specified directory.
     ///
     /// # Arguments
@@ -335,14 +351,12 @@ impl WriteAheadLog {
         #[allow(clippy::as_conversions)] // Safe: file sequence is always within u32 range
         let file_sequence_u32 = next_file_sequence as u32;
         let file_path = Self::wal_file_path(&wal_dir, file_sequence_u32);
-        let file = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
+        let file = Self::secure_create_options()
             .open(&file_path)
             .await
             .map_err(WalError::Io)?;
 
-        // Restrict WAL file permissions to owner-only (0o600 on Unix)
+        // Defense-in-depth: restrict permissions again in case the file already existed
         Self::restrict_permissions(&file_path).await?;
 
         // Get initial file size if resuming
@@ -704,14 +718,12 @@ impl WriteAheadLog {
         let file_sequence_u32 = next_file_sequence as u32;
         let file_path = Self::wal_file_path(&self.wal_dir, file_sequence_u32);
 
-        let new_file = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
+        let new_file = Self::secure_create_options()
             .open(&file_path)
             .await
             .map_err(|e| WalError::FileRotation(format!("Failed to open new WAL file: {e}")))?;
 
-        // Restrict WAL file permissions to owner-only (0o600 on Unix)
+        // Defense-in-depth: restrict permissions again in case the file already existed
         Self::restrict_permissions(&file_path).await?;
 
         // Atomically replace the file handle - old file is closed when dropped

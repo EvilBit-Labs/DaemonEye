@@ -1023,20 +1023,16 @@ impl EventBusConnector {
             EventBusConnectorError::Connection("Not connected to broker".to_owned())
         })?;
 
-        let correlation_id = uuid::Uuid::new_v4().to_string();
-
-        // Use send_direct-style approach via a control topic
-        // The broker routes control messages based on topic hierarchy
+        // Publish as a control message to the topic — the broker routes it
+        // through topic matching to all subscribers on that topic.
         client
-            .enqueue_message(&self.client_id, topic, &payload)
+            .publish_control(topic, payload)
             .await
             .map_err(|e| EventBusConnectorError::EventBus(e.to_string()))?;
 
         debug!(
             topic = %topic,
-            correlation_id = %correlation_id,
-            payload_size = payload.len(),
-            "Published raw message to topic"
+            "Published control message to topic"
         );
 
         Ok(())

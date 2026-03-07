@@ -800,8 +800,11 @@ fn bench_rpc_health_check_latency(c: &mut Criterion) {
                 let response = handler.handle_request(request).await;
                 let latency = start.elapsed();
 
+                // Drop handler and actor_handle before awaiting drain_task
+                // so all senders are dropped and the drain task can terminate.
+                drop(handler);
                 drop(actor_handle);
-                drop(drain_task.await);
+                drain_task.abort();
 
                 black_box((response, latency))
             })

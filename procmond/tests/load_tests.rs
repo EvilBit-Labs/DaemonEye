@@ -63,6 +63,7 @@ fn create_test_event(pid: u32) -> ProcessEvent {
 /// AGENTS.md budget: < 5s for 10,000+ processes.
 /// Most systems have 200-1,000 processes, so this is a comfortable margin.
 #[tokio::test]
+#[ignore = "load test — run via `cargo test --test load_tests -- --ignored`"]
 async fn test_collection_with_real_system_processes() {
     let collector = SysinfoProcessCollector::new(ProcessCollectionConfig::default());
     let start = std::time::Instant::now();
@@ -88,6 +89,7 @@ async fn test_collection_with_real_system_processes() {
 
 /// Test event publishing throughput meets the > 1,000 events/sec target.
 #[tokio::test]
+#[ignore = "load test — run via `cargo test --test load_tests -- --ignored`"]
 async fn test_event_publishing_throughput() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())
@@ -120,6 +122,7 @@ async fn test_event_publishing_throughput() {
 ///
 /// AGENTS.md budget: < 100 MB resident.
 #[tokio::test]
+#[ignore = "load test — run via `cargo test --test load_tests -- --ignored`"]
 async fn test_memory_usage_within_budget() {
     let collector = SysinfoProcessCollector::new(ProcessCollectionConfig::default());
 
@@ -153,6 +156,7 @@ async fn test_memory_usage_within_budget() {
 
 /// Test WAL write throughput meets > 500 writes/sec target.
 #[tokio::test]
+#[ignore = "load test — run via `cargo test --test load_tests -- --ignored`"]
 async fn test_wal_write_throughput() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())
@@ -183,6 +187,7 @@ async fn test_wal_write_throughput() {
 
 /// Test sustained load with mixed event types doesn't degrade over time.
 #[tokio::test]
+#[ignore = "load test — run via `cargo test --test load_tests -- --ignored`"]
 async fn test_sustained_mixed_event_load() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())
@@ -240,6 +245,7 @@ async fn test_sustained_mixed_event_load() {
 /// This test creates synthetic events (not real processes) to validate the
 /// publish pipeline handles high event counts without degradation.
 #[tokio::test]
+#[ignore = "load test — run via `cargo test --test load_tests -- --ignored`"]
 async fn test_synthetic_10k_process_events() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())
@@ -290,6 +296,7 @@ async fn test_synthetic_10k_process_events() {
 /// This test fills the buffer to trigger backpressure and measures the
 /// time until the signal is received.
 #[tokio::test]
+#[ignore = "load test — run via `cargo test --test load_tests -- --ignored`"]
 async fn test_backpressure_activation_timing() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())

@@ -723,7 +723,7 @@ impl RpcServiceHandler {
 
     /// Publishes an RPC response to the event bus.
     ///
-    /// The response is published to `control.rpc.response.{client_id}`.
+    /// The response is published to `control.rpc.response.{collector_id}`.
     pub async fn publish_response(&self, response: RpcResponse) -> RpcServiceResult<()> {
         let response_topic = format!(
             "{}.{}",
@@ -742,7 +742,10 @@ impl RpcServiceHandler {
             RpcServiceError::PublishFailed(format!("Failed to serialize response: {e}"))
         })?;
 
-        // Publish to event bus (drop lock promptly)
+        // Publish to event bus. The read guard is held across .await because
+        // publish_raw is async on &EventBusConnector. This is acceptable: the
+        // read lock doesn't block other reads, and publish is short-lived.
+        #[allow(clippy::await_holding_lock)]
         let publish_result = {
             let event_bus = self.event_bus.read().await;
             event_bus.publish_raw(&response_topic, payload).await

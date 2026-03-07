@@ -248,11 +248,15 @@ fn detect_macos_privileges() -> SecurityContext {
 /// Checks whether the current process token has the `SeDebugPrivilege`
 /// enabled, which grants full access to other processes.
 #[cfg(target_os = "windows")]
+// Safety: Win32 FFI calls (OpenProcessToken, LookupPrivilegeValueW, PrivilegeCheck,
+// CloseHandle) require unsafe blocks. The `windows` crate provides typed wrappers but
+// the underlying foreign function invocations remain inherently unsafe. All handles are
+// closed on every code path and no aliased mutable state is created.
+#[allow(unsafe_code)]
 fn detect_windows_privileges() -> SecurityContext {
     use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID};
     use windows::Win32::Security::{
-        GetTokenInformation, LookupPrivilegeValueW, OpenProcessToken, PRIVILEGE_SET,
-        PrivilegeCheck, TOKEN_QUERY,
+        LookupPrivilegeValueW, OpenProcessToken, PRIVILEGE_SET, PrivilegeCheck, TOKEN_QUERY,
     };
     use windows::Win32::System::Threading::GetCurrentProcess;
 
@@ -321,6 +325,11 @@ fn detect_windows_privileges() -> SecurityContext {
 
 /// Check if the current Windows process is running elevated (as Administrator).
 #[cfg(target_os = "windows")]
+// Safety: Win32 FFI calls (OpenProcessToken, GetTokenInformation, CloseHandle) require
+// unsafe blocks. The `windows` crate provides typed wrappers but the underlying foreign
+// function invocations remain inherently unsafe. The token handle is closed on every
+// code path and the TOKEN_ELEVATION struct is stack-allocated with a known fixed size.
+#[allow(unsafe_code)]
 fn is_windows_elevated() -> bool {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Security::{

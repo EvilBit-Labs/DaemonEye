@@ -354,143 +354,26 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        // Spawn the RPC control transport task.
+        // Begin monitoring immediately on startup.
         //
-        // This task subscribes to control topics and routes messages:
-        // - `control.collector.lifecycle`: BeginMonitoring signals from the agent
-        // - `control.collector.procmond`: RPC requests (HealthCheck, UpdateConfig, etc.)
-        let control_actor_handle = actor_handle.clone();
-        let control_event_bus = Arc::clone(&event_bus);
-        let control_task = tokio::spawn(async move {
-            // Subscribe to control topics
-            let event_bus_guard = control_event_bus.read().await;
-            let lifecycle_result = event_bus_guard
-                .subscribe(
-                    "procmond-lifecycle",
-                    vec!["control.collector.lifecycle".to_owned()],
-                )
-                .await;
-            let rpc_result = event_bus_guard
-                .subscribe(
-                    "procmond-rpc",
-                    vec!["control.collector.procmond".to_owned()],
-                )
-                .await;
-            drop(event_bus_guard);
+        // The collector does not wait for an explicit "begin monitoring" command
+        // from the agent. This makes procmond usable in isolation and in test
+        // environments without requiring the full agent/broker stack.
+        //
+        // TODO: Once daemoneye-eventbus supports control message subscriptions
+        // (MessageType::Control delivery to subscribers), add a control transport
+        // task here that subscribes to `control.collector.lifecycle` for
+        // BeginMonitoring signals and `control.collector.procmond` for RPC
+        // requests (HealthCheck, UpdateConfig, etc.). The current EventBusClient
+        // subscription mechanism only delivers MessageType::Event, not Control.
+        info!("Starting collection immediately on startup");
+        if let Err(e) = actor_handle.begin_monitoring() {
+            error!(error = %e, "Failed to send BeginMonitoring command");
+        }
 
-            let mut lifecycle_rx = match lifecycle_result {
-                Ok(rx) => rx,
-                Err(subscribe_err) => {
-                    warn!(
-                        error = %subscribe_err,
-                        "Failed to subscribe to lifecycle topic, waiting for explicit begin_monitoring"
-                    );
-                    // Fallback: begin monitoring immediately if subscription fails
-                    if let Err(begin_err) = control_actor_handle.begin_monitoring() {
-                        error!(error = %begin_err, "Failed to send BeginMonitoring command");
-                    }
-                    return;
-                }
-            };
-
-            let mut rpc_rx = match rpc_result {
-                Ok(rx) => rx,
-                Err(subscribe_err) => {
-                    warn!(
-                        error = %subscribe_err,
-                        "Failed to subscribe to RPC topic, RPC service unavailable"
-                    );
-                    // Still need to handle lifecycle even without RPC
-                    loop {
-                        tokio::select! {
-                            Some(_event) = lifecycle_rx.recv() => {
-                                info!("Received BeginMonitoring signal from agent");
-                                if let Err(begin_err) = control_actor_handle.begin_monitoring() {
-                                    error!(error = %begin_err, "Failed to send BeginMonitoring command");
-                                }
-                            }
-                            else => break,
-                        }
-                    }
-                    return;
-                }
-            };
-
-            info!("RPC control transport task started, waiting for agent commands");
-
-            loop {
-                if control_actor_handle.is_closed() {
-                    info!("Actor channel closed, control transport task exiting");
-                    break;
-                }
-
-                tokio::select! {
-                    Some(_event) = lifecycle_rx.recv() => {
-                        info!("Received BeginMonitoring signal from agent");
-                        // Retry with bounded exponential backoff on ChannelFull
-                        let mut retry_delay = Duration::from_millis(100);
-                        let max_retries = 5_u32;
-                        let mut success = false;
-                        for attempt in 1..=max_retries {
-                            match control_actor_handle.begin_monitoring() {
-                                Ok(()) => {
-                                    info!("BeginMonitoring accepted by actor");
-                                    success = true;
-                                    break;
-                                }
-                                Err(procmond::monitor_collector::ActorError::ChannelFull { .. }) => {
-                                    warn!(
-                                        attempt = attempt,
-                                        "Actor channel full, retrying BeginMonitoring"
-                                    );
-                                    tokio::time::sleep(retry_delay).await;
-                                    retry_delay = retry_delay
-                                        .saturating_mul(2)
-                                        .min(Duration::from_secs(1));
-                                }
-                                Err(e) => {
-                                    error!(error = %e, "Failed to send BeginMonitoring command");
-                                    break;
-                                }
-                            }
-                        }
-                        if !success {
-                            warn!("BeginMonitoring failed after {max_retries} retries");
-                        }
-                    }
-                    Some(event) = rpc_rx.recv() => {
-                        debug!(topic = %event.matched_pattern, "Received RPC request from event bus");
-                        // Deserialize the RPC request from the bus event payload
-                        let payload = match postcard::to_allocvec(&event.event) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                warn!(error = %e, "Failed to serialize bus event for RPC parsing");
-                                continue;
-                            }
-                        };
-                        let request: daemoneye_eventbus::rpc::RpcRequest =
-                            match postcard::from_bytes(&payload) {
-                                Ok(r) => r,
-                                Err(e) => {
-                                    warn!(error = %e, "Failed to deserialize RPC request");
-                                    continue;
-                                }
-                            };
-
-                        let response = rpc_service.handle_request(request).await;
-                        if let Err(e) = rpc_service.publish_response(response).await {
-                            warn!(error = %e, "Failed to publish RPC response");
-                        }
-                    }
-                    else => {
-                        info!("Control transport channels closed, task exiting");
-                        break;
-                    }
-                }
-            }
-
-            info!("RPC control transport task stopped");
-        });
+        // Keep RPC service reference alive for future control transport integration
+        let _rpc_service = rpc_service;
+        let _control_event_bus = Arc::clone(&event_bus);
 
         // Spawn the actor task
         let actor_task = tokio::spawn(async move {
@@ -534,10 +417,6 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info!("Shutdown task completed");
             }
         }
-
-        // Clean up control transport task
-        control_task.abort();
-        info!("Control transport task aborted");
 
         // Clean up backpressure monitor task
         if let Some(bp_task) = backpressure_task {
