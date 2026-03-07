@@ -135,6 +135,7 @@ fn create_mock_health_data() -> HealthCheckData {
         lifecycle_events: 2,
         collection_errors: 0,
         backpressure_events: 0,
+        operational_sub_status: None,
     }
 }
 
@@ -271,7 +272,8 @@ async fn test_privilege_health_reflects_state() {
     let responder = tokio::spawn(async move {
         if let Some(ActorMessage::HealthCheck { respond_to }) = rx.recv().await {
             let mut health = create_mock_health_data();
-            health.state = CollectorState::WaitingForAgent; // Not yet fully privileged
+            health.state = CollectorState::WaitingForAgent;
+            health.operational_sub_status = Some("idle-awaiting-begin".to_owned());
             respond_to
                 .send(health)
                 .expect("Health response receiver should be waiting");
@@ -285,14 +287,19 @@ async fn test_privilege_health_reflects_state() {
 
     assert_eq!(response.status, RpcStatus::Success);
 
-    // Health should show degraded state when waiting
+    // Health should show healthy with idle sub-status when waiting
     if let Some(RpcPayload::HealthCheck(health)) = response.payload {
         assert_eq!(
             health.status,
-            daemoneye_eventbus::rpc::HealthStatus::Degraded,
-            "Health should reflect WaitingForAgent as Degraded"
+            daemoneye_eventbus::rpc::HealthStatus::Healthy,
+            "Health should reflect WaitingForAgent as Healthy (idle-awaiting-begin)"
         );
-        println!("Health correctly reflects non-running privilege state");
+        let collector_health = health.components.get("collector").unwrap();
+        assert_eq!(
+            collector_health.message.as_deref(),
+            Some("idle-awaiting-begin")
+        );
+        println!("Health correctly reflects idle-awaiting-begin state");
     }
 }
 
@@ -755,53 +762,54 @@ async fn test_dos_system_responsiveness_under_load() {
 // SECTION 4: Data Sanitization Tests (Task 19)
 // ============================================================================
 
-/// Test that environment variables containing secrets are identified as sensitive.
-/// This tests the pattern matching for secret detection.
+/// Test that environment variables containing secrets are redacted by `sanitize_env_vars`.
 #[tokio::test]
 async fn test_sanitization_secret_patterns_detected() {
-    // Secret patterns that should be detected and sanitized
-    let secret_patterns = vec![
+    use procmond::security::sanitize_env_vars;
+    use std::collections::HashMap;
+
+    let mut env = HashMap::new();
+    // Keys that should be redacted (contain PASSWORD, SECRET, TOKEN, KEY, AUTH)
+    env.insert("SECRET".to_owned(), "val".to_owned());
+    env.insert("PASSWORD".to_owned(), "val".to_owned());
+    env.insert("TOKEN".to_owned(), "val".to_owned());
+    env.insert("API_KEY".to_owned(), "val".to_owned());
+    env.insert("AUTH_TOKEN".to_owned(), "val".to_owned());
+    env.insert("DB_PASSWORD".to_owned(), "val".to_owned());
+    env.insert("AWS_SECRET_ACCESS_KEY".to_owned(), "val".to_owned());
+    env.insert("GITHUB_TOKEN".to_owned(), "val".to_owned());
+    env.insert("ENCRYPTION_KEY".to_owned(), "val".to_owned());
+
+    // Keys that should NOT be redacted
+    env.insert("HOME".to_owned(), "/home/user".to_owned());
+    env.insert("PATH".to_owned(), "/usr/bin".to_owned());
+    env.insert("LANG".to_owned(), "en_US.UTF-8".to_owned());
+
+    let sanitized = sanitize_env_vars(&env);
+
+    // Sensitive keys should be redacted
+    for key in &[
         "SECRET",
-        "secret",
         "PASSWORD",
-        "password",
         "TOKEN",
-        "token",
         "API_KEY",
-        "api_key",
-        "APIKEY",
-        "apikey",
-        "ACCESS_KEY",
-        "SECRET_KEY",
-        "PRIVATE_KEY",
         "AUTH_TOKEN",
-        "BEARER_TOKEN",
-        "JWT_SECRET",
-        "ENCRYPTION_KEY",
-        "DATABASE_PASSWORD",
         "DB_PASSWORD",
         "AWS_SECRET_ACCESS_KEY",
         "GITHUB_TOKEN",
-        "NPM_TOKEN",
-        "DOCKER_PASSWORD",
-        "CREDENTIALS",
-    ];
-
-    for pattern in &secret_patterns {
-        // Verify pattern would be detected (simple substring check)
-        let lower = pattern.to_lowercase();
-        let is_secret = lower.contains("secret")
-            || lower.contains("password")
-            || lower.contains("token")
-            || lower.contains("key")
-            || lower.contains("credential")
-            || lower.contains("auth");
-
-        assert!(is_secret, "Pattern should be detected as secret-related");
+        "ENCRYPTION_KEY",
+    ] {
+        assert_eq!(
+            sanitized.get(*key).unwrap(),
+            "[REDACTED]",
+            "Key '{key}' should be redacted"
+        );
     }
 
-    // All patterns verified - count check ensures completeness
-    assert_eq!(secret_patterns.len(), 24, "Expected 24 secret patterns");
+    // Non-sensitive keys should be preserved
+    assert_eq!(sanitized.get("HOME").unwrap(), "/home/user");
+    assert_eq!(sanitized.get("PATH").unwrap(), "/usr/bin");
+    assert_eq!(sanitized.get("LANG").unwrap(), "en_US.UTF-8");
 }
 
 /// Test that events with secret-like command line args can be created
@@ -994,6 +1002,256 @@ async fn test_sanitization_no_false_positives() {
 }
 
 // ============================================================================
+// SECTION 5: Additional Security Scenarios
+// ============================================================================
+
+/// Test that process events with null bytes and special chars in name can be
+/// serialized and deserialized without panic.
+#[tokio::test]
+async fn test_security_null_bytes_special_chars_serialization() {
+    let names_with_special_chars = [
+        "process\x00with\x00null\x00bytes",
+        "\x00leading_null",
+        "trailing_null\x00",
+        "process\x01\x02\x03\x04control_chars",
+        "process\x7Fdel_char",
+        "\x00\x00\x00all_nulls\x00\x00\x00",
+        "mixed\x00null\nnewline\ttab\rcarriage",
+        "emoji_\u{1F600}_and_null\x00_combined",
+    ];
+
+    for (i, name) in names_with_special_chars.iter().enumerate() {
+        let mut event = create_test_event(i as u32);
+        event.name = (*name).to_string();
+
+        // Serialize to JSON (the format used by WAL and event bus)
+        let serialized = serde_json::to_string(&event);
+        assert!(
+            serialized.is_ok(),
+            "Serialization should not panic for name with special chars (pattern {i})"
+        );
+
+        let json_str = serialized.unwrap();
+
+        // Deserialize back
+        let deserialized: Result<ProcessEvent, _> = serde_json::from_str(&json_str);
+        assert!(
+            deserialized.is_ok(),
+            "Deserialization should not panic for name with special chars (pattern {i})"
+        );
+
+        let restored = deserialized.unwrap();
+        assert_eq!(
+            restored.name, event.name,
+            "Deserialized name should match original for pattern {i}"
+        );
+
+        println!(
+            "Pattern {i}: null/special char name round-tripped successfully ({} bytes)",
+            json_str.len()
+        );
+    }
+}
+
+/// Test that command-line args with sensitive data like `--password secret123`
+/// are redacted by the sanitization pipeline before storage.
+#[tokio::test]
+async fn test_security_sensitive_command_args_sanitized() {
+    use procmond::security::sanitize_command_line;
+
+    // Verify sanitize_command_line redacts known flags
+    let result = sanitize_command_line("myapp --password secret123 --verbose");
+    assert_eq!(result, "myapp --password [REDACTED] --verbose");
+    assert!(!result.contains("secret123"), "Secret should be redacted");
+
+    let result = sanitize_command_line("myapp --token ghp_xxxxxxxxxxxxx --output file.txt");
+    assert_eq!(result, "myapp --token [REDACTED] --output file.txt");
+    assert!(
+        !result.contains("ghp_xxxxxxxxxxxxx"),
+        "Token should be redacted"
+    );
+
+    let result = sanitize_command_line("docker login -p docker_password_here");
+    assert_eq!(result, "docker login -p [REDACTED]");
+    assert!(
+        !result.contains("docker_password_here"),
+        "Password should be redacted"
+    );
+
+    // Verify non-sensitive args are preserved
+    let result = sanitize_command_line("myapp --verbose --debug --output file.txt");
+    assert_eq!(result, "myapp --verbose --debug --output file.txt");
+
+    println!("Verified sensitive command args are sanitized at publish time");
+}
+
+/// Test that a flood of 200+ RPC requests is handled gracefully without crash.
+#[tokio::test]
+async fn test_security_rpc_flood_gracefully_handled() {
+    let (actor_handle, mut rx) = create_test_actor();
+    let (connector, _temp_dir) = create_isolated_connector().await;
+    let event_bus = Arc::new(RwLock::new(connector));
+
+    let config = RpcServiceConfig {
+        collector_id: "flood-test-procmond".to_string(),
+        control_topic: "control.collector.procmond".to_string(),
+        response_topic_prefix: "response.collector.procmond".to_string(),
+        default_timeout: Duration::from_millis(200),
+        max_concurrent_requests: 10,
+    };
+
+    let handler = Arc::new(RpcServiceHandler::new(actor_handle, event_bus, config));
+
+    // Spawn a responder that handles requests
+    let response_count = Arc::new(AtomicU64::new(0));
+    let response_count_clone = response_count.clone();
+
+    let responder = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if let ActorMessage::HealthCheck { respond_to } = msg {
+                respond_to
+                    .send(create_mock_health_data())
+                    .expect("Response receiver should be waiting");
+                response_count_clone.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    });
+
+    // Send 200+ concurrent requests (flood)
+    let request_count = 250_u32;
+    let mut handles = Vec::new();
+
+    let start = std::time::Instant::now();
+
+    for i in 0..request_count {
+        let handler_clone = Arc::clone(&handler);
+        let handle = tokio::spawn(async move {
+            let request = create_health_check_request(2);
+            let response = handler_clone.handle_request(request).await;
+            (i, response.status)
+        });
+        handles.push(handle);
+    }
+
+    // Collect all results (no panic expected)
+    let mut success_count = 0_u32;
+    let mut timeout_count = 0_u32;
+    let mut error_count = 0_u32;
+
+    for handle in handles {
+        match timeout(Duration::from_secs(10), handle).await {
+            Ok(Ok((_i, status))) => match status {
+                RpcStatus::Success => success_count += 1,
+                RpcStatus::Timeout => timeout_count += 1,
+                _ => error_count += 1,
+            },
+            Ok(Err(_join_err)) => error_count += 1,
+            Err(_timeout) => timeout_count += 1,
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let total_processed = success_count + timeout_count + error_count;
+
+    println!(
+        "RPC flood test: {request_count} sent, {success_count} success, {timeout_count} timeouts, {error_count} errors in {elapsed:?}"
+    );
+
+    // All requests should have been processed or rejected (no hang, no panic)
+    assert_eq!(
+        total_processed, request_count,
+        "All {request_count} requests should be accounted for"
+    );
+
+    // At least some should have succeeded
+    assert!(
+        success_count > 0,
+        "At least some requests should succeed under flood"
+    );
+
+    // System should not hang indefinitely
+    assert!(
+        elapsed < Duration::from_secs(30),
+        "Flood should be handled without hanging, took {elapsed:?}"
+    );
+
+    responder.abort();
+}
+
+/// Test that rapid event publishing to a disconnected connector triggers
+/// backpressure (BufferOverflow) preventing memory exhaustion.
+#[tokio::test]
+async fn test_security_event_flood_backpressure_memory_protection() {
+    let (mut connector, _temp_dir) = create_isolated_connector().await;
+
+    let max_buffer_bytes: usize = 10 * 1024 * 1024;
+    let mut overflow_count = 0_u32;
+    let mut published_count = 0_u32;
+
+    let start = std::time::Instant::now();
+
+    // Rapidly publish large events to a disconnected connector
+    for i in 1..=10_000_u32 {
+        let event = create_large_test_event(i, 200);
+        match connector.publish(event, ProcessEventType::Start).await {
+            Ok(_) => {
+                published_count += 1;
+            }
+            Err(EventBusConnectorError::BufferOverflow) => {
+                overflow_count += 1;
+                // Keep trying a few more times to verify consistent rejection
+                if overflow_count >= 5 {
+                    break;
+                }
+            }
+            Err(e) => {
+                // Other errors are acceptable under flood conditions
+                println!("Event {i} unexpected error: {e:?}");
+            }
+        }
+
+        // Safety limit
+        if start.elapsed() > Duration::from_secs(10) {
+            println!("Test duration limit reached at event {i}");
+            break;
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let buffer_bytes = connector.buffer_size_bytes();
+
+    println!(
+        "Event flood test: {published_count} published, {overflow_count} overflows, buffer {buffer_bytes} bytes in {elapsed:?}"
+    );
+
+    // BufferOverflow MUST have been returned (backpressure mechanism working)
+    assert!(
+        overflow_count > 0,
+        "BufferOverflow should be returned to prevent memory exhaustion"
+    );
+
+    // Buffer should never exceed 10MB
+    assert!(
+        buffer_bytes <= max_buffer_bytes,
+        "Buffer {buffer_bytes} should not exceed 10MB ({max_buffer_bytes})"
+    );
+
+    // System should remain operational after flood
+    let small_event = create_test_event(99999);
+    // Small event may also be rejected if buffer is full, that is acceptable
+    let post_flood = connector
+        .publish(small_event, ProcessEventType::Start)
+        .await;
+    match post_flood {
+        Ok(_) => println!("System accepted events after flood subsided"),
+        Err(EventBusConnectorError::BufferOverflow) => {
+            println!("Buffer still full after flood (expected)");
+        }
+        Err(e) => panic!("Unexpected error after flood: {e:?}"),
+    }
+}
+
+// ============================================================================
 // Integration Tests (Multiple Security Categories)
 // ============================================================================
 
@@ -1104,4 +1362,72 @@ async fn test_security_recovery_after_attacks() {
     );
 
     println!("System recovered successfully after attack patterns");
+}
+
+// ============================================================================
+// SECTION 6: Privilege Detection and WAL Permission Tests
+// ============================================================================
+
+/// Test that detect_privileges is infallible and returns a valid context.
+#[tokio::test]
+async fn test_detect_privileges_infallible() {
+    use procmond::security::detect_privileges;
+
+    let ctx = detect_privileges();
+    // Should always return a valid platform
+    let platform_str = format!("{}", ctx.platform);
+    assert!(
+        !platform_str.is_empty(),
+        "Platform display should be non-empty"
+    );
+
+    // If not degraded, capabilities should be meaningful
+    if ctx.degraded_mode {
+        println!("Privilege detection degraded: platform={}", ctx.platform);
+    } else {
+        println!(
+            "Privilege detection succeeded: platform={}, capabilities={:?}, full_access={}",
+            ctx.platform, ctx.capabilities, ctx.has_full_process_access
+        );
+    }
+}
+
+/// Test that WAL files are created with restricted permissions (0o600) on Unix.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_wal_files_have_restricted_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let mut connector = EventBusConnector::new(temp_dir.path().to_path_buf())
+        .await
+        .expect("Failed to create connector");
+
+    // Publish an event to ensure a WAL file exists
+    let event = create_test_event(1);
+    let _result = connector.publish(event, ProcessEventType::Start).await;
+
+    // Check all .wal files in the temp directory have 0o600 permissions
+    let entries = std::fs::read_dir(temp_dir.path()).expect("Should read dir");
+    let mut wal_file_count = 0_u32;
+    for entry in entries {
+        let entry = entry.expect("Should read entry");
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "wal") {
+            let perms = entry
+                .metadata()
+                .expect("Should read metadata")
+                .permissions();
+            let mode = perms.mode() & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "WAL file {:?} must have 0600 permissions, got {:o}",
+                path, mode
+            );
+            wal_file_count += 1;
+        }
+    }
+
+    assert!(wal_file_count > 0, "Should have at least one WAL file");
+    println!("Verified {wal_file_count} WAL files have 0o600 permissions");
 }

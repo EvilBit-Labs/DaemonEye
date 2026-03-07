@@ -32,10 +32,10 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Run cargo deny check
-              run: cargo deny check --config deny.ci.toml
+              run: cargo deny check --config deny.toml
 
             - name: Run cargo outdated
               run: cargo outdated --depth=1 --exit-code=1
 
-            - name: Run cargo dist check
-              run: cargo dist check
+            - name: Run goreleaser check
+              run: goreleaser check

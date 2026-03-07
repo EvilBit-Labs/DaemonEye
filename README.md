@@ -53,7 +53,7 @@ DaemonEye/
 - Rust toolchain 1.91+ (edition = 2024)
 - Cargo (bundled with Rust)
 - just task runner (optional but recommended)
-- Optional developer tools: cargo-nextest, cargo-llvm-cov, cargo-audit, cargo-deny, cargo-dist, cargo-release, mdbook (install via `just install-tools` and `just docs-install`)
+- Optional developer tools: cargo-nextest, cargo-llvm-cov, cargo-audit, cargo-deny, cargo-release, goreleaser, mdbook (install via `just install-tools` and `just docs-install`)
 
 ## Setup
 
@@ -90,7 +90,7 @@ With cargo (no just):
 Notes:
 
 - Binaries produced: procmond, daemoneye-agent, daemoneye-cli
-- Distribution helpers exist via cargo-dist and GoReleaser (see justfile: `dist`, `goreleaser-*`).
+- Distribution helpers exist via GoReleaser (see justfile: `goreleaser-*`).
 
 ## Configuration
 
@@ -184,4 +184,4 @@ This README reflects the current repository configuration (workspace crates, tas
 
 - TODO: Document concrete command-line flags for each binary (once stabilized)
 - TODO: Add end-to-end quickstart with example config and sample output
-- TODO: Publish prebuilt binaries via cargo-dist/GoReleaser and link here
+- TODO: Publish prebuilt binaries via GoReleaser and link here

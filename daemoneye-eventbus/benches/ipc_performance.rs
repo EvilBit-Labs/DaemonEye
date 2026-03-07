@@ -30,6 +30,7 @@ fn throughput_benchmark(c: &mut Criterion) {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         let _server = TransportServer::new(socket_config.clone())
@@ -79,6 +80,7 @@ fn latency_benchmark(c: &mut Criterion) {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         let server = TransportServer::new(socket_config.clone())
@@ -161,6 +163,7 @@ fn backpressure_benchmark(c: &mut Criterion) {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         let _server = TransportServer::new(socket_config.clone())
@@ -203,6 +206,7 @@ fn cross_platform_benchmark(c: &mut Criterion) {
             auth_token: None,
             per_client_byte_limit: 10 * 1024 * 1024,
             rate_limit_config: None,
+            correlation_config: None,
         };
 
         let mut group = c.benchmark_group("cross_platform");
