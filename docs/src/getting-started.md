@@ -47,15 +47,27 @@ DaemonEye requires elevated privileges for process monitoring. The system is des
 1. **Download the latest release**:
 
    ```bash
-   # Linux
-   wget https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-linux-x86_64.tar.gz
-   tar -xzf daemoneye-linux-x86_64.tar.gz
+   # Linux (x86_64)
+   wget https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/DaemonEye_Linux_x86_64.tar.gz
+   tar -xzf DaemonEye_Linux_x86_64.tar.gz
 
-   # macOS
-   curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-macos-x86_64.tar.gz | tar -xz
+   # Linux (ARM64)
+   wget https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/DaemonEye_Linux_aarch64.tar.gz
+   tar -xzf DaemonEye_Linux_aarch64.tar.gz
 
-   # Windows
-   # Download and extract from GitHub releases
+   # macOS (Intel)
+   curl -L https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/DaemonEye_Darwin_x86_64.tar.gz | tar -xz
+
+   # macOS (Apple Silicon)
+   curl -L https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/DaemonEye_Darwin_aarch64.tar.gz | tar -xz
+
+   # Windows (x86_64)
+   # Download https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/DaemonEye_Windows_x86_64.zip
+   # Extract the ZIP file
+
+   # Windows (ARM64)
+   # Download https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/DaemonEye_Windows_aarch64.zip
+   # Extract the ZIP file
    ```
 
 2. **Install to system directories**:
