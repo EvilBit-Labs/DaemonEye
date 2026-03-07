@@ -772,7 +772,8 @@ jobs:
           key: criterion-baseline-${{ runner.os }}
 
       - name: Run benchmarks
-        run: mise x -- cargo bench --package procmond 2>&1 | tee bench-output.txt
+        run: mise x -- cargo bench --package procmond 2>&1 | tee 
+          bench-output.txt
 
       - name: Check for performance regression
         run: |
@@ -799,7 +800,8 @@ jobs:
           key: criterion-baseline-${{ runner.os }}
 
       - name: Run load tests
-        run: NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test load_tests -- --ignored --nocapture 2>&1 | tee load-test-output.txt
+        run: NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test
+          load_tests -- --ignored --nocapture 2>&1 | tee load-test-output.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
