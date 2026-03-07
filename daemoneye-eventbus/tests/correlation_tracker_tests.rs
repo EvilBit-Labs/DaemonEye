@@ -299,7 +299,8 @@ async fn test_input_validation_tag_value_too_long() {
         parent_correlation_id: None,
         workflow_stage: None,
         correlation_tags: tags,
-        sequence_number: None,
+        sequence_number: 0,
+        created_at: std::time::SystemTime::now(),
     };
 
     let result = tracker.track_event("events.process.new", &meta).await;
