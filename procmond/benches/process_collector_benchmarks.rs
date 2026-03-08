@@ -422,7 +422,7 @@ fn bench_real_collectors_high_counts(c: &mut Criterion) {
 
     // Set longer measurement time for real collectors
     group.measurement_time(Duration::from_secs(60));
-    group.sample_size(5);
+    group.sample_size(10);
 
     // Test configurations for high process counts
     let high_count_configs = vec![
@@ -679,7 +679,7 @@ fn bench_memory_efficiency_high_counts(c: &mut Criterion) {
 
     // Set parameters for memory efficiency testing
     group.measurement_time(Duration::from_secs(45));
-    group.sample_size(5);
+    group.sample_size(10);
 
     // Test memory efficiency with extremely high process counts
     for process_count in [50000, 100000, 200000].iter() {
