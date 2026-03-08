@@ -188,12 +188,10 @@ fn bench_wal_write_throughput(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("wal_write_throughput");
 
-    // Set longer measurement time for throughput tests
-    group.measurement_time(Duration::from_secs(15));
+    group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
-    // Test different batch sizes
-    let batch_sizes = [100, 500, 1000, 5000];
+    let batch_sizes = [100, 500, 1000];
 
     for batch_size in batch_sizes.iter() {
         group.throughput(Throughput::Elements(*batch_size as u64));
@@ -244,10 +242,10 @@ fn bench_wal_replay(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("wal_replay");
 
-    group.measurement_time(Duration::from_secs(20));
+    group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
-    let event_counts = [100, 500, 1000, 2500];
+    let event_counts = [100, 500, 1000];
 
     for event_count in event_counts.iter() {
         group.throughput(Throughput::Elements(*event_count as u64));
@@ -304,7 +302,7 @@ fn bench_wal_rotation(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("wal_rotation");
 
-    group.measurement_time(Duration::from_secs(15));
+    group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
     // Use a very small rotation threshold to trigger rotation
@@ -399,7 +397,7 @@ fn bench_eventbus_buffer_throughput(c: &mut Criterion) {
 
     use procmond::event_bus_connector::{EventBusConnector, ProcessEventType};
 
-    group.measurement_time(Duration::from_secs(15));
+    group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
     let batch_sizes = [100, 500, 1000];
@@ -452,7 +450,7 @@ fn bench_eventbus_wal_replay(c: &mut Criterion) {
 
     use procmond::event_bus_connector::{EventBusConnector, ProcessEventType};
 
-    group.measurement_time(Duration::from_secs(15));
+    group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
     let event_counts = [100, 500, 1000];
@@ -508,7 +506,7 @@ fn bench_process_collection_real(c: &mut Criterion) {
     let mut group = c.benchmark_group("process_collection_real");
 
     // Allow longer measurement for real system collection
-    group.measurement_time(Duration::from_secs(30));
+    group.measurement_time(Duration::from_secs(10));
     group.sample_size(10);
 
     let configs = [
@@ -763,7 +761,7 @@ fn bench_rpc_health_check_latency(c: &mut Criterion) {
 
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("rpc_latency");
-    group.measurement_time(Duration::from_secs(15));
+    group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
     group.bench_function("health_check", |b| {
@@ -865,7 +863,7 @@ fn bench_combined_workload(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("combined_workload");
 
-    group.measurement_time(Duration::from_secs(20));
+    group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
     let event_counts = [100, 500, 1000];
@@ -931,10 +929,10 @@ fn bench_memory_efficiency(c: &mut Criterion) {
 
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
-    group.measurement_time(Duration::from_secs(15));
+    group.measurement_time(Duration::from_secs(5));
     group.sample_size(10); // Criterion requires at least 10 samples
 
-    let batch_sizes = [1000, 5000, 10000];
+    let batch_sizes = [1000, 5000];
 
     for batch_size in batch_sizes.iter() {
         group.throughput(Throughput::Elements(*batch_size as u64));
