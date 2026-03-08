@@ -243,75 +243,37 @@ fn detect_macos_privileges() -> SecurityContext {
     }
 }
 
-/// Windows-specific privilege detection via `Win32_Security`.
+/// Windows-specific privilege detection via `whoami` commands.
 ///
-/// Checks whether the current process token has the `SeDebugPrivilege`
-/// enabled, which grants full access to other processes.
+/// Checks whether the current process has `SeDebugPrivilege` enabled
+/// and whether it is running elevated (as Administrator).
+/// Uses `whoami /priv` and `whoami /groups` to avoid unsafe Win32 FFI.
 #[cfg(target_os = "windows")]
-// Safety: Win32 FFI calls (OpenProcessToken, LookupPrivilegeValueW, PrivilegeCheck,
-// CloseHandle) require unsafe blocks. The `windows` crate provides typed wrappers but
-// the underlying foreign function invocations remain inherently unsafe. All handles are
-// closed on every code path and no aliased mutable state is created.
-#[allow(unsafe_code)]
 fn detect_windows_privileges() -> SecurityContext {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID};
-    use windows::Win32::Security::{
-        LookupPrivilegeValueW, OpenProcessToken, PRIVILEGE_SET, PrivilegeCheck, TOKEN_QUERY,
-    };
-    use windows::Win32::System::Threading::GetCurrentProcess;
+    use std::process::Command;
 
     let platform = Platform::Windows;
     let mut capabilities = vec![];
     let mut has_full_process_access = false;
 
-    // Open the current process token
-    let mut token_handle = HANDLE::default();
-    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token_handle) };
-
-    if opened.is_err() {
-        warn!("Failed to open process token for privilege detection");
-        return SecurityContext::degraded(platform);
+    // Check for SeDebugPrivilege via `whoami /priv`
+    match Command::new("whoami").arg("/priv").output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // whoami /priv lists privileges with "Enabled" or "Disabled" status
+            if stdout.contains("SeDebugPrivilege") && stdout.contains("Enabled") {
+                capabilities.push("SeDebugPrivilege".to_owned());
+                has_full_process_access = true;
+            }
+        }
+        Err(err) => {
+            warn!("Failed to run whoami /priv for privilege detection: {err}");
+            return SecurityContext::degraded(platform);
+        }
     }
 
-    // Look up SeDebugPrivilege LUID
-    let privilege_name = windows::core::w!("SeDebugPrivilege");
-    let mut luid = LUID::default();
-    let lookup = unsafe { LookupPrivilegeValueW(None, privilege_name, &mut luid) };
-
-    if lookup.is_err() {
-        warn!("Failed to look up SeDebugPrivilege LUID");
-        let _ = unsafe { CloseHandle(token_handle) };
-        return SecurityContext::degraded(platform);
-    }
-
-    // Check if the privilege is enabled
-    let mut privilege_set = PRIVILEGE_SET {
-        PrivilegeCount: 1,
-        Control: 1, // PRIVILEGE_SET_ALL_NECESSARY
-        Privilege: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
-            Luid: luid,
-            Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
-        }],
-    };
-
-    let mut result = windows::Win32::Foundation::BOOL(0);
-    let check = unsafe { PrivilegeCheck(token_handle, &mut privilege_set, &mut result) };
-
-    let _ = unsafe { CloseHandle(token_handle) };
-
-    if check.is_err() {
-        warn!("Failed to check SeDebugPrivilege");
-        return SecurityContext::degraded(platform);
-    }
-
-    if result.as_bool() {
-        capabilities.push("SeDebugPrivilege".to_owned());
-        has_full_process_access = true;
-    }
-
-    // Also check if running as Administrator
-    let is_admin = is_windows_elevated();
-    if is_admin {
+    // Check for Administrator elevation via `whoami /groups`
+    if is_windows_elevated() {
         capabilities.push("Administrator".to_owned());
     }
 
@@ -324,41 +286,25 @@ fn detect_windows_privileges() -> SecurityContext {
 }
 
 /// Check if the current Windows process is running elevated (as Administrator).
+///
+/// Parses `whoami /groups` output for the built-in Administrators group SID
+/// (`S-1-5-32-544`) with enabled attributes, avoiding unsafe Win32 FFI.
 #[cfg(target_os = "windows")]
-// Safety: Win32 FFI calls (OpenProcessToken, GetTokenInformation, CloseHandle) require
-// unsafe blocks. The `windows` crate provides typed wrappers but the underlying foreign
-// function invocations remain inherently unsafe. The token handle is closed on every
-// code path and the TOKEN_ELEVATION struct is stack-allocated with a known fixed size.
-#[allow(unsafe_code)]
 fn is_windows_elevated() -> bool {
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::Security::{
-        GetTokenInformation, OpenProcessToken, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
-    };
-    use windows::Win32::System::Threading::GetCurrentProcess;
+    use std::process::Command;
 
-    let mut token_handle = HANDLE::default();
-    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token_handle) };
-
-    if opened.is_err() {
-        return false;
+    match Command::new("whoami").arg("/groups").output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // The Administrators group SID with "Enabled group" attribute
+            // indicates the process is running elevated
+            stdout.contains("S-1-5-32-544") && stdout.contains("Enabled group")
+        }
+        Err(err) => {
+            warn!("Failed to run whoami /groups for elevation detection: {err}");
+            false
+        }
     }
-
-    let mut elevation = TOKEN_ELEVATION::default();
-    let mut return_length = 0_u32;
-    let info = unsafe {
-        GetTokenInformation(
-            token_handle,
-            TokenElevation,
-            Some(std::ptr::addr_of_mut!(elevation).cast()),
-            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-            &mut return_length,
-        )
-    };
-
-    let _ = unsafe { windows::Win32::Foundation::CloseHandle(token_handle) };
-
-    info.is_ok() && elevation.TokenIsElevated != 0
 }
 
 /// FreeBSD-specific privilege detection.
