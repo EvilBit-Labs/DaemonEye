@@ -27,12 +27,12 @@ actionlint                  = "1.7.10"
 lychee                      = "0.22.0"
 markdownlint-cli2           = "0.20.0"
 protobuf                    = "33.4"
-pre-commit                  = "4.5.1"
 protoc                      = "33.4"
 zig                         = "latest"
 "cargo:cargo-zigbuild"      = "latest"
 bun                         = "latest"
-goreleaser = "latest"
+goreleaser                  = "latest"
+"pipx:pre-commit"           = "latest"
 
 # Many of these settings are defaults, but we are explicit in case they change in the future and to make it clear to users what is enabled.
 [settings]

@@ -336,6 +336,18 @@ async fn test_full_system_workflow() {
 
 ## Performance Testing
 
+### Automated CI Benchmarks
+
+DaemonEye's CI pipeline includes automated performance benchmarking to detect regressions:
+
+- **Automatic Execution**: Performance benchmarks run on every CI build using Criterion
+- **Regression Detection**: Tests automatically detect performance regressions with a 10% threshold
+- **Baseline Comparison**: Benchmark results are cached and compared against baseline from the main branch
+- **Load Testing**: Automated load tests validate system behavior under stress
+- **Results Archival**: Benchmark results are uploaded as artifacts with 30-day retention
+
+Developers can access benchmark results from the GitHub Actions workflow artifacts. If a performance regression exceeds the 10% threshold, the CI build will fail with a detailed error message showing which benchmarks regressed.
+
 ### Load Testing
 
 Test system performance under load:
@@ -654,6 +666,8 @@ impl TestDataManager {
 
 ### GitHub Actions Workflow
 
+The CI pipeline includes multiple jobs that run on every build:
+
 ```yaml
 name: Tests
 
@@ -664,47 +678,161 @@ on:
     branches: [main]
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ensure rustfmt and clippy are installed
+        run: rustup component add rustfmt clippy
+
+      - name: Check formatting
+        run: just lint-rust
+
   test:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run tests (all features)
+        run: mise x -- cargo nextest run --profile ci --all-features
+
+      - name: Build release
+        run: mise x -- cargo build --release --all-features
+
+  test-cross-platform:
     strategy:
       matrix:
-        rust: [1.87, stable, beta]
         os: [ubuntu-latest, macos-latest, windows-latest]
-
+    runs-on: ${{ matrix.os }}
+    needs: quality
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v3
         with:
-          toolchain: ${{ matrix.rust }}
-          override: true
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev
+      - run: mise x -- cargo nextest run --profile ci --all-features
+      - run: mise x -- cargo build --release --all-features
 
-      - name: Run tests
-        run: |
-          cargo test --verbose
-          cargo test --verbose --features integration-tests
+  coverage:
+    runs-on: ubuntu-latest
+    needs: [test, test-cross-platform, quality]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate coverage
+        run: mise x -- cargo llvm-cov --all-features --no-report
+
+      - name: Combine coverage reports
+        run: mise x -- cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore baseline benchmarks
+        uses: actions/cache/restore@v4
+        with:
+          path: target/criterion
+          key: criterion-baseline-${{ runner.os }}
 
       - name: Run benchmarks
-        run: cargo bench --verbose
+        run: mise x -- cargo bench --package procmond 2>&1 | tee 
+          bench-output.txt
 
-      - name: Run fuzz tests
+      - name: Check for performance regression
         run: |
-          cargo install cargo-fuzz
-          cargo fuzz build
-          cargo fuzz run process_info
-          cargo fuzz run sql_query
+          # Criterion reports "regressed" when performance degrades beyond noise threshold.
+          # Fail CI if any benchmark regresses more than 10%.
+          if grep -q "Performance has regressed" bench-output.txt; then
+            echo "::warning::Performance regression detected in benchmarks"
+            grep -A2 "Performance has regressed" bench-output.txt
+            if grep -oP 'change: \+\K[0-9.]+' bench-output.txt | awk '{if ($1 > 10.0) exit 1}'; then
+              echo "All regressions within 10% threshold"
+            else
+              echo "::error::Benchmark regression exceeds 10% threshold"
+              exit 1
+            fi
+          else
+            echo "No performance regressions detected"
+          fi
 
-      - name: Generate coverage report
-        run: |
-          cargo install cargo-tarpaulin
-          cargo tarpaulin --out Html --output-dir coverage
+      - name: Save baseline benchmarks
+        uses: actions/cache/save@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: target/criterion
+          key: criterion-baseline-${{ runner.os }}
+
+      - name: Run load tests
+        run: NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test
+          load_tests -- --ignored --nocapture 2>&1 | tee load-test-output.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: |
+            bench-output.txt
+            load-test-output.txt
+          retention-days: 30
 ```
+
+### CI Jobs Overview
+
+The CI pipeline includes the following jobs:
+
+1. **quality**: Runs code formatting and linting checks
+2. **test**: Executes the full test suite with all features enabled
+3. **test-cross-platform**: Tests on Ubuntu, macOS, and Windows
+4. **coverage**: Generates and uploads code coverage reports
+5. **benchmarks**: Runs performance benchmarks with regression detection
+
+### Accessing Benchmark Results
+
+Benchmark results are available in multiple ways:
+
+- **Workflow Artifacts**: Download `benchmark-results` artifacts from the GitHub Actions workflow summary page
+- **CI Logs**: View benchmark output directly in the workflow logs under the "Run benchmarks" step
+- **Performance Alerts**: If a regression exceeds 10%, the CI build will fail with a warning annotation showing which benchmarks regressed
+
+The `benchmarks` job stores baseline results from the `main` branch and compares all subsequent runs against this baseline to detect performance regressions.
 
 ### Test Reporting
 
