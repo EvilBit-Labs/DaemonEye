@@ -243,68 +243,18 @@ fn detect_macos_privileges() -> SecurityContext {
     }
 }
 
-/// Windows-specific privilege detection via `whoami` commands.
+/// Windows-specific privilege detection.
 ///
-/// Checks whether the current process has `SeDebugPrivilege` enabled
-/// and whether it is running elevated (as Administrator).
-/// Uses `whoami /priv` and `whoami /groups` to avoid unsafe Win32 FFI.
+/// TODO: Implement using the `token-privilege` crate once it is published.
+/// See <https://github.com/EvilBit-Labs/token-privilege> for the safe FFI wrapper
+/// that will provide `is_elevated()` and `is_privilege_enabled()` without requiring
+/// unsafe code in this workspace.
+///
+/// Until then, Windows runs in degraded mode (no privilege detection).
 #[cfg(target_os = "windows")]
 fn detect_windows_privileges() -> SecurityContext {
-    use std::process::Command;
-
-    let platform = Platform::Windows;
-    let mut capabilities = vec![];
-    let mut has_full_process_access = false;
-
-    // Check for SeDebugPrivilege via `whoami /priv`
-    match Command::new("whoami").arg("/priv").output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // whoami /priv lists privileges with "Enabled" or "Disabled" status
-            if stdout.contains("SeDebugPrivilege") && stdout.contains("Enabled") {
-                capabilities.push("SeDebugPrivilege".to_owned());
-                has_full_process_access = true;
-            }
-        }
-        Err(err) => {
-            warn!("Failed to run whoami /priv for privilege detection: {err}");
-            return SecurityContext::degraded(platform);
-        }
-    }
-
-    // Check for Administrator elevation via `whoami /groups`
-    if is_windows_elevated() {
-        capabilities.push("Administrator".to_owned());
-    }
-
-    SecurityContext {
-        platform,
-        has_full_process_access,
-        capabilities,
-        degraded_mode: false,
-    }
-}
-
-/// Check if the current Windows process is running elevated (as Administrator).
-///
-/// Parses `whoami /groups` output for the built-in Administrators group SID
-/// (`S-1-5-32-544`) with enabled attributes, avoiding unsafe Win32 FFI.
-#[cfg(target_os = "windows")]
-fn is_windows_elevated() -> bool {
-    use std::process::Command;
-
-    match Command::new("whoami").arg("/groups").output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // The Administrators group SID with "Enabled group" attribute
-            // indicates the process is running elevated
-            stdout.contains("S-1-5-32-544") && stdout.contains("Enabled group")
-        }
-        Err(err) => {
-            warn!("Failed to run whoami /groups for elevation detection: {err}");
-            false
-        }
-    }
+    warn!("Windows privilege detection not yet implemented; running in degraded mode");
+    SecurityContext::degraded(Platform::Windows)
 }
 
 /// FreeBSD-specific privilege detection.
