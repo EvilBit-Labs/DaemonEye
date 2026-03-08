@@ -1,0 +1,104 @@
+name: Benchmarks
+
+on:
+    workflow_dispatch:
+        inputs:
+            suite:
+                description: "Benchmark suite to run"
+                required: false
+                default: "all"
+                type: choice
+                options:
+                    - all
+                    - performance_benchmarks
+                    - process_collector_benchmarks
+
+# Restrict permissions to minimum required
+permissions:
+    contents: read
+
+defaults:
+    run:
+        shell: bash
+
+env:
+    CARGO_TERM_COLOR: always
+    CI: true
+
+jobs:
+    benchmarks:
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  fetch-depth: 0
+
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+              with:
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Restore baseline benchmarks
+              uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+              with:
+                  path: target/criterion
+                  key: criterion-baseline-${{ runner.os }}
+
+            - name: Run benchmarks
+              env:
+                  BENCH_SUITE: ${{ inputs.suite }}
+              run: |
+                  if [ "$BENCH_SUITE" = "all" ]; then
+                    mise x -- cargo bench --package procmond 2>&1 | tee bench-output.txt
+                  else
+                    mise x -- cargo bench --package procmond --bench "$BENCH_SUITE" 2>&1 | tee bench-output.txt
+                  fi
+
+            - name: Check for performance regression
+              run: |
+                  if grep -q "Performance has regressed" bench-output.txt; then
+                    echo "::warning::Performance regression detected in benchmarks"
+                    grep -A2 "Performance has regressed" bench-output.txt
+                  else
+                    echo "No performance regressions detected"
+                  fi
+
+            - name: Save baseline benchmarks
+              uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+              if: github.ref == 'refs/heads/main'
+              with:
+                  path: target/criterion
+                  key: criterion-baseline-${{ runner.os }}
+
+            - name: Upload benchmark results
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              if: always()
+              with:
+                  name: benchmark-results
+                  path: bench-output.txt
+                  retention-days: 30
+
+    load-tests:
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+              with:
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Run load tests
+              run: NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test load_tests -- --ignored --nocapture 2>&1 | tee load-test-output.txt
+
+            - name: Upload load test results
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              if: always()
+              with:
+                  name: load-test-results
+                  path: load-test-output.txt
+                  retention-days: 30
