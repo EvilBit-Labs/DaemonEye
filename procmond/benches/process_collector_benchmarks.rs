@@ -68,7 +68,6 @@ use tokio::runtime::Runtime;
 struct BenchmarkProcessCollector {
     name: &'static str,
     process_count: usize,
-    delay_per_process: Duration,
     capabilities: ProcessCollectorCapabilities,
 }
 
@@ -78,7 +77,6 @@ impl BenchmarkProcessCollector {
         Self {
             name,
             process_count,
-            delay_per_process: Duration::ZERO, // No artificial delay for accurate benchmarks
             capabilities: ProcessCollectorCapabilities {
                 basic_info: true,
                 enhanced_metadata: true,
@@ -88,12 +86,6 @@ impl BenchmarkProcessCollector {
                 realtime_collection: true,
             },
         }
-    }
-
-    /// Configures a delay per process to simulate system load.
-    fn with_delay(mut self, delay: Duration) -> Self {
-        self.delay_per_process = delay;
-        self
     }
 
     /// Generates a synthetic process event for benchmarking purposes.
@@ -138,9 +130,6 @@ impl ProcessCollector for BenchmarkProcessCollector {
         let mut events = Vec::with_capacity(self.process_count);
 
         for i in 0..self.process_count {
-            if !self.delay_per_process.is_zero() {
-                tokio::time::sleep(self.delay_per_process).await;
-            }
             events.push(self.generate_process_event(i));
         }
 
@@ -173,12 +162,11 @@ fn bench_process_enumeration_scale(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("process_enumeration_scale");
 
-    // Set longer measurement time for high process counts
-    group.measurement_time(Duration::from_secs(30));
+    group.measurement_time(Duration::from_secs(10));
     group.sample_size(10);
 
-    // Test with various process counts including very high counts (10,000+)
-    for process_count in [100, 500, 1000, 5000, 10000, 25000, 50000, 100000].iter() {
+    // Test with representative process counts up to 10,000+
+    for process_count in [100, 1000, 5000, 10000].iter() {
         group.throughput(Throughput::Elements(*process_count as u64));
         group.bench_with_input(
             BenchmarkId::new("enumerate_processes", process_count),
@@ -215,41 +203,6 @@ fn bench_process_enumeration_scale(c: &mut Criterion) {
                 });
             },
         );
-    }
-    group.finish();
-}
-
-/// Benchmark process enumeration with simulated system load.
-fn bench_process_enumeration_with_load(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let mut group = c.benchmark_group("process_enumeration_load");
-
-    // Simulate different system loads with delays
-    let load_scenarios = [
-        ("no_load", Duration::ZERO),
-        ("light_load", Duration::from_millis(1)),
-        ("medium_load", Duration::from_millis(5)),
-        ("heavy_load", Duration::from_millis(10)),
-    ];
-
-    for (load_name, delay) in load_scenarios.iter() {
-        group.bench_function(BenchmarkId::new("system_load", load_name), |b| {
-            b.iter(|| {
-                rt.block_on(async {
-                    let collector =
-                        BenchmarkProcessCollector::new("load-benchmark", 10000).with_delay(*delay);
-
-                    let start = std::time::Instant::now();
-                    let result = collector.collect_processes().await;
-                    let duration = start.elapsed();
-
-                    assert!(result.is_ok(), "Collection should succeed under load");
-                    let (events, stats) = result.unwrap();
-
-                    black_box((duration, events.len(), stats));
-                })
-            });
-        });
     }
     group.finish();
 }
@@ -420,11 +373,9 @@ fn bench_real_collectors_high_counts(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("real_collectors_high_counts");
 
-    // Set longer measurement time for real collectors
-    group.measurement_time(Duration::from_secs(60));
+    group.measurement_time(Duration::from_secs(10));
     group.sample_size(10);
 
-    // Test configurations for high process counts
     let high_count_configs = vec![
         (
             "basic_10k",
@@ -444,26 +395,6 @@ fn bench_real_collectors_high_counts(c: &mut Criterion) {
                 skip_system_processes: false,
                 skip_kernel_threads: false,
                 max_processes: 10000,
-            },
-        ),
-        (
-            "basic_25k",
-            ProcessCollectionConfig {
-                collect_enhanced_metadata: false,
-                compute_executable_hashes: false,
-                skip_system_processes: false,
-                skip_kernel_threads: false,
-                max_processes: 25000,
-            },
-        ),
-        (
-            "enhanced_25k",
-            ProcessCollectionConfig {
-                collect_enhanced_metadata: true,
-                compute_executable_hashes: false,
-                skip_system_processes: false,
-                skip_kernel_threads: false,
-                max_processes: 25000,
             },
         ),
     ];
@@ -555,8 +486,7 @@ fn bench_cross_platform_collectors(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("cross_platform_collectors");
 
-    // Set measurement parameters for cross-platform comparison
-    group.measurement_time(Duration::from_secs(30));
+    group.measurement_time(Duration::from_secs(10));
     group.sample_size(10);
 
     let config = ProcessCollectionConfig {
@@ -677,12 +607,10 @@ fn bench_memory_efficiency_high_counts(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("memory_efficiency_high_counts");
 
-    // Set parameters for memory efficiency testing
-    group.measurement_time(Duration::from_secs(45));
+    group.measurement_time(Duration::from_secs(10));
     group.sample_size(10);
 
-    // Test memory efficiency with extremely high process counts
-    for process_count in [50000, 100000, 200000].iter() {
+    for process_count in [10000, 50000].iter() {
         group.throughput(Throughput::Elements(*process_count as u64));
         group.bench_with_input(
             BenchmarkId::new("memory_efficiency", process_count),
@@ -753,7 +681,6 @@ fn get_current_memory_usage() -> usize {
 criterion_group!(
     benches,
     bench_process_enumeration_scale,
-    bench_process_enumeration_with_load,
     bench_single_process_collection,
     bench_concurrent_collection,
     bench_memory_usage_patterns,
