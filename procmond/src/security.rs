@@ -121,7 +121,8 @@ impl SecurityContext {
 /// - **Linux**: Parses `CapEff` from `/proc/self/status` and checks for
 ///   `CAP_SYS_PTRACE` (bit 19) and `CAP_DAC_READ_SEARCH` (bit 2).
 /// - **macOS**: Checks `getuid() == 0` for root access.
-/// - **Windows**: Checks for elevated (Administrator) privileges via `Win32_Security`.
+/// - **Windows**: Currently unimplemented; always returns degraded mode.
+///   See `detect_windows_privileges` and tracking issue #149.
 /// - **FreeBSD**: Checks `getuid() == 0` for root access (best-effort).
 pub fn detect_privileges() -> SecurityContext {
     let platform = detect_platform();
@@ -243,122 +244,19 @@ fn detect_macos_privileges() -> SecurityContext {
     }
 }
 
-/// Windows-specific privilege detection via `Win32_Security`.
+/// Windows-specific privilege detection.
 ///
-/// Checks whether the current process token has the `SeDebugPrivilege`
-/// enabled, which grants full access to other processes.
+/// TODO(#149): Implement using the `token-privilege` crate once it is published.
+/// See <https://github.com/EvilBit-Labs/token-privilege> for the safe FFI wrapper
+/// that will provide `is_elevated()` and `is_privilege_enabled()` without requiring
+/// unsafe code in this workspace.
+///
+/// Until then, Windows runs in degraded mode (no privilege detection).
+/// Tracking issue: <https://github.com/EvilBit-Labs/DaemonEye/issues/149>
 #[cfg(target_os = "windows")]
-// Safety: Win32 FFI calls (OpenProcessToken, LookupPrivilegeValueW, PrivilegeCheck,
-// CloseHandle) require unsafe blocks. The `windows` crate provides typed wrappers but
-// the underlying foreign function invocations remain inherently unsafe. All handles are
-// closed on every code path and no aliased mutable state is created.
-#[allow(unsafe_code)]
 fn detect_windows_privileges() -> SecurityContext {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID};
-    use windows::Win32::Security::{
-        LookupPrivilegeValueW, OpenProcessToken, PRIVILEGE_SET, PrivilegeCheck, TOKEN_QUERY,
-    };
-    use windows::Win32::System::Threading::GetCurrentProcess;
-
-    let platform = Platform::Windows;
-    let mut capabilities = vec![];
-    let mut has_full_process_access = false;
-
-    // Open the current process token
-    let mut token_handle = HANDLE::default();
-    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token_handle) };
-
-    if opened.is_err() {
-        warn!("Failed to open process token for privilege detection");
-        return SecurityContext::degraded(platform);
-    }
-
-    // Look up SeDebugPrivilege LUID
-    let privilege_name = windows::core::w!("SeDebugPrivilege");
-    let mut luid = LUID::default();
-    let lookup = unsafe { LookupPrivilegeValueW(None, privilege_name, &mut luid) };
-
-    if lookup.is_err() {
-        warn!("Failed to look up SeDebugPrivilege LUID");
-        let _ = unsafe { CloseHandle(token_handle) };
-        return SecurityContext::degraded(platform);
-    }
-
-    // Check if the privilege is enabled
-    let mut privilege_set = PRIVILEGE_SET {
-        PrivilegeCount: 1,
-        Control: 1, // PRIVILEGE_SET_ALL_NECESSARY
-        Privilege: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
-            Luid: luid,
-            Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
-        }],
-    };
-
-    let mut result = windows::Win32::Foundation::BOOL(0);
-    let check = unsafe { PrivilegeCheck(token_handle, &mut privilege_set, &mut result) };
-
-    let _ = unsafe { CloseHandle(token_handle) };
-
-    if check.is_err() {
-        warn!("Failed to check SeDebugPrivilege");
-        return SecurityContext::degraded(platform);
-    }
-
-    if result.as_bool() {
-        capabilities.push("SeDebugPrivilege".to_owned());
-        has_full_process_access = true;
-    }
-
-    // Also check if running as Administrator
-    let is_admin = is_windows_elevated();
-    if is_admin {
-        capabilities.push("Administrator".to_owned());
-    }
-
-    SecurityContext {
-        platform,
-        has_full_process_access,
-        capabilities,
-        degraded_mode: false,
-    }
-}
-
-/// Check if the current Windows process is running elevated (as Administrator).
-#[cfg(target_os = "windows")]
-// Safety: Win32 FFI calls (OpenProcessToken, GetTokenInformation, CloseHandle) require
-// unsafe blocks. The `windows` crate provides typed wrappers but the underlying foreign
-// function invocations remain inherently unsafe. The token handle is closed on every
-// code path and the TOKEN_ELEVATION struct is stack-allocated with a known fixed size.
-#[allow(unsafe_code)]
-fn is_windows_elevated() -> bool {
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::Security::{
-        GetTokenInformation, OpenProcessToken, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
-    };
-    use windows::Win32::System::Threading::GetCurrentProcess;
-
-    let mut token_handle = HANDLE::default();
-    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token_handle) };
-
-    if opened.is_err() {
-        return false;
-    }
-
-    let mut elevation = TOKEN_ELEVATION::default();
-    let mut return_length = 0_u32;
-    let info = unsafe {
-        GetTokenInformation(
-            token_handle,
-            TokenElevation,
-            Some(std::ptr::addr_of_mut!(elevation).cast()),
-            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-            &mut return_length,
-        )
-    };
-
-    let _ = unsafe { windows::Win32::Foundation::CloseHandle(token_handle) };
-
-    info.is_ok() && elevation.TokenIsElevated != 0
+    warn!("Windows privilege detection not yet implemented; running in degraded mode");
+    SecurityContext::degraded(Platform::Windows)
 }
 
 /// FreeBSD-specific privilege detection.

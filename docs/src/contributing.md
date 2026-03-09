@@ -125,6 +125,9 @@ just fmt
 # Run benchmarks
 just bench
 
+# Run procmond benchmarks
+just bench-procmond
+
 # Generate documentation
 just docs
 

@@ -186,6 +186,10 @@ test-security:
 bench:
     @{{ mise_exec }} cargo bench --workspace
 
+# Run procmond benchmarks (WAL, EventBus, process collection, serialization)
+bench-procmond:
+    @{{ mise_exec }} cargo bench -p procmond
+
 # Run specific benchmark suites
 bench-process:
     @{{ mise_exec }} cargo bench -p daemoneye-lib --bench process_collection
