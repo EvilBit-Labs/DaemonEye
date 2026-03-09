@@ -121,7 +121,8 @@ impl SecurityContext {
 /// - **Linux**: Parses `CapEff` from `/proc/self/status` and checks for
 ///   `CAP_SYS_PTRACE` (bit 19) and `CAP_DAC_READ_SEARCH` (bit 2).
 /// - **macOS**: Checks `getuid() == 0` for root access.
-/// - **Windows**: Checks for elevated (Administrator) privileges via `Win32_Security`.
+/// - **Windows**: Currently unimplemented; always returns degraded mode.
+///   See [`detect_windows_privileges`] and tracking issue #149.
 /// - **FreeBSD**: Checks `getuid() == 0` for root access (best-effort).
 pub fn detect_privileges() -> SecurityContext {
     let platform = detect_platform();
@@ -245,12 +246,13 @@ fn detect_macos_privileges() -> SecurityContext {
 
 /// Windows-specific privilege detection.
 ///
-/// TODO: Implement using the `token-privilege` crate once it is published.
+/// TODO(#149): Implement using the `token-privilege` crate once it is published.
 /// See <https://github.com/EvilBit-Labs/token-privilege> for the safe FFI wrapper
 /// that will provide `is_elevated()` and `is_privilege_enabled()` without requiring
 /// unsafe code in this workspace.
 ///
 /// Until then, Windows runs in degraded mode (no privilege detection).
+/// Tracking issue: <https://github.com/EvilBit-Labs/DaemonEye/issues/149>
 #[cfg(target_os = "windows")]
 fn detect_windows_privileges() -> SecurityContext {
     warn!("Windows privilege detection not yet implemented; running in degraded mode");

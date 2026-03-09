@@ -5,38 +5,28 @@
 //! (10,000+ processes) to establish baseline performance metrics.
 
 #![allow(
-    clippy::doc_markdown,
-    clippy::unreadable_literal,
     clippy::expect_used,
     clippy::unwrap_used,
-    clippy::str_to_string,
     clippy::arithmetic_side_effects,
-    clippy::missing_const_for_fn,
-    clippy::uninlined_format_args,
-    clippy::print_stdout,
-    clippy::map_unwrap_or,
-    clippy::non_ascii_literal,
-    clippy::use_debug,
-    clippy::shadow_reuse,
-    clippy::shadow_unrelated,
-    clippy::needless_pass_by_value,
-    clippy::redundant_clone,
     clippy::as_conversions,
-    clippy::panic,
-    clippy::option_if_let_else,
-    clippy::wildcard_enum_match_arm,
-    clippy::large_enum_variant,
-    clippy::integer_division,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::uninlined_format_args,
+    clippy::missing_assert_message,
+    clippy::semicolon_if_nothing_returned,
     clippy::clone_on_ref_ptr,
+    clippy::needless_pass_by_value,
+    clippy::integer_division,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
     clippy::unused_self,
     clippy::modulo_arithmetic,
     clippy::explicit_iter_loop,
-    clippy::semicolon_if_nothing_returned,
-    clippy::missing_assert_message,
+    clippy::shadow_reuse,
     clippy::pattern_type_mismatch,
-    clippy::significant_drop_tightening,
-    clippy::significant_drop_in_scrutinee,
-    clippy::if_not_else
+    clippy::if_not_else,
+    clippy::option_if_let_else,
+    clippy::cast_lossless
 )]
 
 use async_trait::async_trait;
@@ -276,7 +266,7 @@ fn bench_concurrent_collection(c: &mut Criterion) {
                         // Wait for all tasks to complete
                         let mut results = Vec::with_capacity(concurrent_tasks);
                         for handle in handles {
-                            let result = handle.await.unwrap();
+                            let result = handle.await.expect("concurrent collection task panicked");
                             results.push(result);
                         }
 
@@ -673,7 +663,7 @@ fn get_current_memory_usage() -> usize {
     if let Some(process) = system.process(pid) {
         process.memory() as usize
     } else {
-        // Fallback to 0 if process lookup fails
+        eprintln!("WARNING: Could not measure memory for PID {pid} - results will be inaccurate");
         0
     }
 }
