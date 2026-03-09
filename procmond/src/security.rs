@@ -122,7 +122,7 @@ impl SecurityContext {
 ///   `CAP_SYS_PTRACE` (bit 19) and `CAP_DAC_READ_SEARCH` (bit 2).
 /// - **macOS**: Checks `getuid() == 0` for root access.
 /// - **Windows**: Currently unimplemented; always returns degraded mode.
-///   See [`detect_windows_privileges`] and tracking issue #149.
+///   See `detect_windows_privileges` and tracking issue #149.
 /// - **FreeBSD**: Checks `getuid() == 0` for root access (best-effort).
 pub fn detect_privileges() -> SecurityContext {
     let platform = detect_platform();
