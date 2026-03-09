@@ -99,7 +99,7 @@ prost-types = "0.14.3"
 rand = "0.9.2"
 
 # Database and storage
-redb = "3.1.0"
+redb = "3.1.1"
 regex = "1.12.2"
 rs_merkle = "1.5.0"
 
