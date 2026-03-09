@@ -10,7 +10,10 @@ on:
                 type: choice
                 options:
                     - all
-                    - performance_benchmarks
+                    - wal_benchmarks
+                    - eventbus_benchmarks
+                    - serialization_benchmarks
+                    - system_benchmarks
                     - process_collector_benchmarks
 
 # Restrict permissions to minimum required
@@ -31,8 +34,6 @@ jobs:
         timeout-minutes: 15
         steps:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-              with:
-                  fetch-depth: 0
 
             - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
               with:
@@ -44,12 +45,13 @@ jobs:
               uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: target/criterion
-                  key: criterion-baseline-${{ runner.os }}
+                  key: criterion-baseline-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
 
             - name: Run benchmarks
               env:
                   BENCH_SUITE: ${{ inputs.suite }}
               run: |
+                  set -o pipefail
                   if [ "$BENCH_SUITE" = "all" ]; then
                     mise x -- cargo bench --package procmond 2>&1 | tee bench-output.txt
                   else
@@ -57,10 +59,18 @@ jobs:
                   fi
 
             - name: Check for performance regression
+              # CI runners have variable performance; use a generous 20% threshold
+              # to avoid false positives while still catching significant regressions.
               run: |
                   if grep -q "Performance has regressed" bench-output.txt; then
                     echo "::warning::Performance regression detected in benchmarks"
                     grep -A2 "Performance has regressed" bench-output.txt
+                    if grep -oP 'change: \+\K[0-9.]+' bench-output.txt | awk '{if ($1 > 20.0) exit 1}'; then
+                      echo "All regressions within 20% threshold (CI runner noise tolerance)"
+                    else
+                      echo "::error::Benchmark regression exceeds 20% threshold"
+                      exit 1
+                    fi
                   else
                     echo "No performance regressions detected"
                   fi
@@ -70,7 +80,7 @@ jobs:
               if: github.ref == 'refs/heads/main'
               with:
                   path: target/criterion
-                  key: criterion-baseline-${{ runner.os }}
+                  key: criterion-baseline-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
 
             - name: Upload benchmark results
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -93,7 +103,9 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Run load tests
-              run: NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test load_tests -- --ignored --nocapture 2>&1 | tee load-test-output.txt
+              run: |
+                  set -o pipefail
+                  NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test load_tests -- --ignored --nocapture 2>&1 | tee load-test-output.txt
 
             - name: Upload load test results
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
