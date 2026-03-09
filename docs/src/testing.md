@@ -336,17 +336,18 @@ async fn test_full_system_workflow() {
 
 ## Performance Testing
 
-### Automated CI Benchmarks
+### Automated Benchmarks
 
-DaemonEye's CI pipeline includes automated performance benchmarking to detect regressions:
+DaemonEye provides a dedicated benchmarking workflow for performance testing:
 
-- **Automatic Execution**: Performance benchmarks run on every CI build using Criterion
-- **Regression Detection**: Tests automatically detect performance regressions with a 10% threshold
+- **Manual Trigger**: Performance benchmarks are triggered manually via workflow_dispatch
+- **Configurable Suites**: Select which benchmark suite to run ("all", "performance_benchmarks", or "process_collector_benchmarks")
+- **Regression Detection**: Tests detect performance regressions and log warnings for review
 - **Baseline Comparison**: Benchmark results are cached and compared against baseline from the main branch
-- **Load Testing**: Automated load tests validate system behavior under stress
-- **Results Archival**: Benchmark results are uploaded as artifacts with 30-day retention
+- **Load Testing**: Automated load tests validate system behavior under stress in a separate job
+- **Results Archival**: Benchmark and load test results are uploaded as artifacts with 30-day retention
 
-Developers can access benchmark results from the GitHub Actions workflow artifacts. If a performance regression exceeds the 10% threshold, the CI build will fail with a detailed error message showing which benchmarks regressed.
+Developers can access benchmark results from the GitHub Actions workflow artifacts. Performance regressions are logged as warnings but do not fail the build, allowing for manual review and assessment.
 
 ### Load Testing
 
@@ -664,9 +665,13 @@ impl TestDataManager {
 
 ## Continuous Integration
 
-### GitHub Actions Workflow
+### GitHub Actions Workflows
 
-The CI pipeline includes multiple jobs that run on every build:
+DaemonEye uses two separate GitHub Actions workflows for testing:
+
+#### Main CI Workflow (`.github/workflows/ci.yml`)
+
+The main CI pipeline runs on every push and pull request:
 
 ```yaml
 name: Tests
@@ -750,10 +755,32 @@ jobs:
           files: lcov.info
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+```
 
+#### Benchmarks Workflow (`.github/workflows/benchmarks.yml`)
+
+The benchmarks workflow is triggered manually and runs independently:
+
+```yaml
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Benchmark suite to run"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - performance_benchmarks
+          - process_collector_benchmarks
+
+jobs:
   benchmarks:
     runs-on: ubuntu-latest
-    needs: test
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -772,22 +799,20 @@ jobs:
           key: criterion-baseline-${{ runner.os }}
 
       - name: Run benchmarks
-        run: mise x -- cargo bench --package procmond 2>&1 | tee 
-          bench-output.txt
+        env:
+          BENCH_SUITE: ${{ inputs.suite }}
+        run: |
+          if [ "$BENCH_SUITE" = "all" ]; then
+            mise x -- cargo bench --package procmond 2>&1 | tee bench-output.txt
+          else
+            mise x -- cargo bench --package procmond --bench "$BENCH_SUITE" 2>&1 | tee bench-output.txt
+          fi
 
       - name: Check for performance regression
         run: |
-          # Criterion reports "regressed" when performance degrades beyond noise threshold.
-          # Fail CI if any benchmark regresses more than 10%.
           if grep -q "Performance has regressed" bench-output.txt; then
             echo "::warning::Performance regression detected in benchmarks"
             grep -A2 "Performance has regressed" bench-output.txt
-            if grep -oP 'change: \+\K[0-9.]+' bench-output.txt | awk '{if ($1 > 10.0) exit 1}'; then
-              echo "All regressions within 10% threshold"
-            else
-              echo "::error::Benchmark regression exceeds 10% threshold"
-              exit 1
-            fi
           else
             echo "No performance regressions detected"
           fi
@@ -799,40 +824,64 @@ jobs:
           path: target/criterion
           key: criterion-baseline-${{ runner.os }}
 
-      - name: Run load tests
-        run: NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test
-          load_tests -- --ignored --nocapture 2>&1 | tee load-test-output.txt
-
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: benchmark-results
-          path: |
-            bench-output.txt
-            load-test-output.txt
+          path: bench-output.txt
+          retention-days: 30
+
+  load-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run load tests
+        run: NO_COLOR=1 TERM=dumb mise x -- cargo test --package procmond --test
+          load_tests -- --ignored --nocapture 2>&1 | tee load-test-output.txt
+
+      - name: Upload load test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-test-results
+          path: load-test-output.txt
           retention-days: 30
 ```
 
 ### CI Jobs Overview
 
-The CI pipeline includes the following jobs:
+The main CI pipeline includes the following jobs:
 
 1. **quality**: Runs code formatting and linting checks
 2. **test**: Executes the full test suite with all features enabled
 3. **test-cross-platform**: Tests on Ubuntu, macOS, and Windows
 4. **coverage**: Generates and uploads code coverage reports
-5. **benchmarks**: Runs performance benchmarks with regression detection
+
+The benchmarks workflow includes two independent jobs:
+
+1. **benchmarks**: Runs performance benchmarks with configurable suite selection (15-minute timeout)
+2. **load-tests**: Runs load tests under stress conditions (10-minute timeout)
 
 ### Accessing Benchmark Results
 
-Benchmark results are available in multiple ways:
+Benchmark results are available through the dedicated benchmarks workflow:
 
-- **Workflow Artifacts**: Download `benchmark-results` artifacts from the GitHub Actions workflow summary page
-- **CI Logs**: View benchmark output directly in the workflow logs under the "Run benchmarks" step
-- **Performance Alerts**: If a regression exceeds 10%, the CI build will fail with a warning annotation showing which benchmarks regressed
+- **Manual Trigger**: Navigate to the Actions tab and select the "Benchmarks" workflow, then choose "Run workflow" to trigger manually
+- **Suite Selection**: Choose which benchmark suite to run: "all" (default), "performance_benchmarks", or "process_collector_benchmarks"
+- **Workflow Artifacts**: Download `benchmark-results` and `load-test-results` artifacts from the workflow summary page
+- **CI Logs**: View benchmark output directly in the workflow logs
+- **Performance Alerts**: Regressions are logged as warnings for manual review without failing the workflow
 
-The `benchmarks` job stores baseline results from the `main` branch and compares all subsequent runs against this baseline to detect performance regressions.
+The benchmarks workflow stores baseline results from the `main` branch and compares all subsequent runs against this baseline to detect performance regressions.
 
 ### Test Reporting
 
