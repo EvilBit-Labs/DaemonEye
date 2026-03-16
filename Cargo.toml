@@ -60,7 +60,7 @@ bytes = "1.11.0"
 chrono = { version = "0.4.43", features = ["serde"] }
 
 # CLI and configuration
-clap = { version = "4.5.56", features = ["derive"] }
+clap = { version = "4.6.0", features = ["derive"] }
 
 # Internal libraries
 collector-core = { path = "collector-core" }
