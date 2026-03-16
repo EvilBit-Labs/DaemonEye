@@ -93,7 +93,7 @@ members = [
 
 [workspace.dependencies]
 tokio = { version = "1.0", features = ["full"] }
-clap = { version = "4.0", features = ["derive", "completion"] }
+clap = { version = "4.6.0", features = ["derive", "completion"] }
 serde = { version = "1.0", features = ["derive"] }
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
 sysinfo = "0.30"
