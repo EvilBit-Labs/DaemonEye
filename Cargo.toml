@@ -112,7 +112,7 @@ sha2 = "0.10.9"
 sqlparser = "0.61.0"
 
 sysinfo = "0.38.0"
-tempfile = "3.24.0"
+tempfile = "3.27.0"
 thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = [
     "rt",
