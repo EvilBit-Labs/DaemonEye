@@ -153,7 +153,7 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_Shell",
 ] }
 windows-service = "0.8.0"
-winreg = "0.55.0"
+winreg = "0.56.0"
 
 # Workspace lint configuration
 [workspace.lints.rust]
