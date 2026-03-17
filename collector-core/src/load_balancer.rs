@@ -277,7 +277,7 @@ impl LoadBalancer {
 
     /// Random selection
     async fn select_random(&self, collectors: &[&CollectorCapability]) -> Result<String> {
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         let index = rng.random_range(0..collectors.len());
         Ok(collectors[index].collector_id.clone())
