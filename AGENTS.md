@@ -567,3 +567,7 @@ When generating code:
 ---
 
 **Remember**: DaemonEye is security-focused. Prioritize security, performance, and reliability. When in doubt, choose the more secure and observable approach.
+
+## Agent Rules <!-- tessl-managed -->
+
+@.tessl/RULES.md follow the [instructions](.tessl/RULES.md)
