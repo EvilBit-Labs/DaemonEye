@@ -570,4 +570,4 @@ When generating code:
 
 ## Agent Rules <!-- tessl-managed -->
 
-For Tessl-managed tile rules, see [.tessl/RULES.md](.tessl/RULES.md).
+@.tessl/RULES.md follow the [instructions](.tessl/RULES.md)
