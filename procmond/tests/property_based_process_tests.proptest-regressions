@@ -7,3 +7,6 @@
 cc 792fa891f3b044d1bfb53ff0e919fd7df451f91526da0814727ec7d8fc5c754c # shrinks to max_processes = 50
 cc 62dde4ca87a425ea4e3bb5d96b72118e3cf2cccec4701863f8689ac0a38c9ae3 # shrinks to max_processes = 39, collect_enhanced_metadata = false
 cc ea66e304357de9939d33a5b428bb405b355ee37cc9502d2df0f83abb50dd976e # shrinks to max_processes = 60, collect_enhanced_metadata = false
+cc 53e7f46742458b09561579fcd143530d156cd7c1868a5905a0a761f5ecd753ff # shrinks to max_processes = 59, collect_enhanced_metadata = false
+cc 2f2ec503a4c6e8e5f160b726e8553e7dcf19fc1192aea1a1c5e3bdf57da4d9a3 # shrinks to max_processes = 58, collect_enhanced_metadata = false
+cc bca85b1d4af8d914dde360e6ecd14c399b0b678b9ce3d7f83e790051d3ecd13a # shrinks to max_processes = 84, collect_enhanced_metadata = false
