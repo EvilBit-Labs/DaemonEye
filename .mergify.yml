@@ -67,6 +67,7 @@ pull_request_rules:
   - name: Auto-approve dosubot PRs
     conditions:
       - base = main
+      - -draft
       - author = dosubot[bot]
     actions:
       review:
@@ -76,6 +77,7 @@ pull_request_rules:
   - name: Auto-approve dependabot PRs
     conditions:
       - base = main
+      - -draft
       - author = dependabot[bot]
     actions:
       review:
@@ -154,8 +156,8 @@ merge_protections:
   # 4. Outdated PR protection
   # ─────────────────────────────────────────────────────────────────────────
   - name: Do not merge outdated PRs
-    description: Make sure PRs are within 10 commits of the base branch before merging
+    description: Make sure PRs are within 3 commits of the base branch before merging
     if:
       - base = main
     success_conditions:
-      - "#commits-behind <= 10"
+      - "#commits-behind <= 3"
