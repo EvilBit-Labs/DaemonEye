@@ -128,8 +128,14 @@ megalinter-reports/
 # Added by goreleaser init:
 .intentionally-empty-file.o
 
-# Local Claude configuration
+# AI assistant artifacts
 .claude.local.md
-.claude/*.local.md
-
-.taskmaster/
+.full-review
+docs/plans
+.cursor/commands
+.github/prompts
+.kiro/specs/*
+.worktrees/
+**/tessl__*
+**/*.local.md
+.tessl/tiles/

@@ -128,7 +128,13 @@ We follow responsible disclosure practices:
 
 ## Accepted Risks (Dependencies)
 
-As of 2025-10-11 we have **no** outstanding accepted risks. The previous RUSTSEC exemptions for `instant` (RUSTSEC-2024-0384) and `paste` (RUSTSEC-2024-0436) were tied to the third-party `busrt` broker. With the introduction of our in-house `daemoneye-eventbus` crate that dependency has been removed from the workspace, eliminating both advisories.
+We have **no** outstanding accepted risks.
+
+### Advisory Resolution History
+
+**March 2026** — Resolved RUSTSEC-2023-0089 (atomic-polyfill unmaintained) and RUSTSEC-2025-0141 (bincode unmaintained) by disabling default features on the `postcard` dependency (`default-features = false`) and explicitly enabling only the required `alloc` feature. This removed `heapless` and `atomic-polyfill` from the dependency tree entirely. Both advisory ignore entries were removed from deny.toml.
+
+**January 2025** — Resolved RUSTSEC-2024-0384 (`instant`) and RUSTSEC-2024-0436 (`paste`) by removing the third-party `busrt` broker dependency. With the introduction of the in-house `daemoneye-eventbus` crate, both advisories were eliminated from the workspace.
 
 ### Operational Controls
 
@@ -146,4 +152,4 @@ For general security questions or concerns:
 
 ---
 
-**Last Updated**: September 2025 **Next Review**: September 2026
+**Last Updated**: March 2026 **Next Review**: March 2027

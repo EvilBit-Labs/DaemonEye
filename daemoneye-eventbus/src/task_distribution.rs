@@ -492,7 +492,7 @@ impl TaskDistributor {
             }
             RoutingStrategy::FirstAvailable => Ok(collectors[0].clone()),
             RoutingStrategy::Random => {
-                use rand::Rng;
+                use rand::RngExt;
                 let mut rng = rand::rng();
                 let index = rng.random_range(0..collectors.len());
                 Ok(collectors[index].clone())
