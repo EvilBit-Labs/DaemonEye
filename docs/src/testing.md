@@ -768,9 +768,9 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: "Benchmark suite to run"
+        description: Benchmark suite to run
         required: false
-        default: "all"
+        default: all
         type: choice
         options:
           - all
