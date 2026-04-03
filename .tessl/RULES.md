@@ -6,6 +6,6 @@ This file is updated when running `tessl install`. If a linked file is missing, 
 
 @tiles/popey/github-action-monitor/rules/post-push-monitor.md [post-push-monitor](tiles/popey/github-action-monitor/rules/post-push-monitor.md)
 
-## tessl/cli-setup — query_library_docs
+## tessl-labs/good-oss-citizen — good-oss-citizen
 
-@tiles/tessl/cli-setup/steering/query_library_docs.md [query_library_docs](tiles/tessl/cli-setup/steering/query_library_docs.md)
+@tiles/tessl-labs/good-oss-citizen/rules/good-oss-citizen.md [good-oss-citizen](tiles/tessl-labs/good-oss-citizen/rules/good-oss-citizen.md)
