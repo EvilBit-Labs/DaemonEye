@@ -16,9 +16,9 @@ This guide provides comprehensive installation instructions for DaemonEye across
 
 **Operating System**:
 
-- Linux: Kernel 3.10+ (Ubuntu 16.04+, RHEL 7.6+, Debian 9+)
-- macOS: 10.14+ (Mojave or later)
-- Windows: Windows 10+ or Windows Server 2016+
+- Linux: Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Debian 11+
+- macOS: 14.0+ (Sonoma or later)
+- Windows: Windows 10+, Server 2019+
 
 **Hardware**:
 
