@@ -101,7 +101,7 @@ flowchart LR
 - **Privilege Separation**: Only procmond runs elevated when necessary
 - **IPC**: Protobuf over Unix sockets/named pipes with CRC32 validation
 - **No Inbound Network**: Outbound-only for alert delivery
-- **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only
+- **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only \[Implemented: rule load-time validation; rule execution engine is a placeholder — see `detection/mod.rs`\]
 
 ---
 
@@ -189,18 +189,18 @@ flowchart LR
 
 - Least privilege: Components run with minimal permissions
 - Automatic privilege drop after initialization
-- SQL injection prevention: AST validation, prepared statements only
+- SQL injection prevention: AST validation at rule load time [Implemented]; SQL-based rule execution \[Planned — engine currently uses pattern matching, see `detection/mod.rs`\]
 - Credentials: Environment variables or OS keychain, never hardcoded
 - No inbound network: Outbound-only for alerts
-- Audit trail: Merkle tree with BLAKE3 integrity
+- Audit trail: BLAKE3 hash-chained audit ledger [Implemented]; Merkle tree inclusion proofs \[In Progress — `generate_inclusion_proof()` returns empty vec, see `crypto.rs`\]
 
 ### Enterprise Features
 
-- mTLS with certificate chain validation
-- SLSA Level 3 provenance, Cosign signatures
-- Merkle tree with inclusion proofs
-- Sandboxed detection engine (read-only DB)
-- Query whitelist (SELECT only with approved functions)
+- mTLS with certificate chain validation [Planned]
+- SLSA Level 3 provenance, Cosign signatures [Planned]
+- Merkle tree with inclusion proofs \[In Progress — chain hashing implemented; inclusion proof generation stubbed in `crypto.rs`\]
+- Sandboxed detection engine (read-only DB) [Planned]
+- Query whitelist (SELECT only with approved functions) [Implemented for rule validation; not yet enforced at execution time]
 
 ### Integer Overflow Protection
 
@@ -239,7 +239,7 @@ Use `checked_*`, `saturating_*`, or explicit `wrapping_*` for security-sensitive
 - Validate early, reject with actionable errors
 - Use typed parsers over regex
 - Length limits on all variable-length inputs
-- SQL: AST validation with `sqlparser`
+- SQL: AST validation with `sqlparser` \[Implemented at rule load time; execution-time enforcement is [Planned]\]
 
 ### Newtype Safety
 
@@ -424,9 +424,9 @@ pub struct Cli {
 ### Configuration Precedence
 
 1. Command-line flags
-2. Environment variables (`PROCMOND_*`)
-3. User config (`~/.config/procmond/config.yaml`)
-4. System config (`/etc/procmond/config.yaml`)
+2. Environment variables (component-namespaced: `DAEMONEYE_AGENT_*`, `DAEMONEYE_CLI_*`, `PROCMOND_*`)
+3. User config (`~/.config/daemoneye/config.toml`)
+4. System config (`/etc/daemoneye/config.toml`)
 5. Embedded defaults
 
 ---
