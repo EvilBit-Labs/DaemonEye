@@ -56,7 +56,7 @@ let bounded_id = if correlation_id.len() > MAX_CORRELATION_ID_LENGTH {
 
 The `String::len()` method returns byte length, not character count. If `MAX_CORRELATION_ID_LENGTH` (256) falls on a multi-byte UTF-8 boundary (e.g., within a 2-, 3-, or 4-byte character), this will panic at runtime with `byte index N is not a char boundary`.
 
-**Attack Scenario**: An attacker sends a crafted correlation ID containing multi-byte characters (e.g., emoji or CJK characters) positioned so that byte offset 256 falls mid-character. This causes a panic in the eventbus, crashing the daemoneye-agent process. Since the workspace has `panic = "deny"` at the clippy level, this indicates a missed enforcement gap.
+**Attack Scenario**: An attacker sends a crafted correlation ID containing multi-byte characters (e.g., emoji or CJK characters) positioned so that byte offset 256 falls mid-character. This causes a panic in the eventbus, crashing the daemoneye-agent process. Note: the workspace lint `panic = "deny"` prevents explicit `panic!()` calls but does not prevent runtime panics from invalid byte slicing — those are a distinct class of runtime error.
 
 **Remediation**:
 
@@ -335,7 +335,7 @@ It does not validate:
 
 **Description**: `sanitize_command_line()` splits on whitespace and checks if the previous token was a sensitive flag. However, it does not handle the common `--flag=value` syntax:
 
-```
+```text
 app --password=secret123 --verbose
 ```
 

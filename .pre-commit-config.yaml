@@ -67,7 +67,6 @@ repos:
                 - mdformat-footnote
                 - mdformat-simple-breaks
                 - mdformat-web
-                - mdformat-ruff
                 - mdformat-gfm-alerts
                 - mdformat-toc
                 - mdformat-front-matters
