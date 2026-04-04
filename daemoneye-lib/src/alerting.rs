@@ -56,16 +56,17 @@ pub enum AlertingError {
 }
 
 /// Alert delivery result.
+///
+/// This struct is returned inside `Ok(...)` from [`AlertSink::send`], meaning
+/// delivery succeeded. Error cases are represented by `Err(AlertingError)` and
+/// never reach this type. There is therefore no `success` flag or
+/// `error_message` field — those semantics belong to the `Result` wrapper.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeliveryResult {
     /// Sink name
     pub sink_name: String,
-    /// Delivery success status
-    pub success: bool,
     /// Delivery timestamp
     pub delivered_at: chrono::DateTime<chrono::Utc>,
-    /// Error message if delivery failed
-    pub error_message: Option<String>,
     /// Delivery duration in milliseconds
     pub duration_ms: u64,
 }
@@ -105,7 +106,7 @@ impl AlertSink for StdoutSink {
     /// - `Human`: a concise human-readable single-line string using `severity`, `detection_rule_id`, `title`, and `description`.
     /// - `Csv`: a single-line CSV with `id,severity,detection_rule_id,title,description`.
     ///
-    /// Returns a `DeliveryResult` containing the sink name, success=true, the delivery timestamp, and the elapsed duration in milliseconds.
+    /// Returns a `DeliveryResult` containing the sink name, the delivery timestamp, and the elapsed duration in milliseconds.
     ///
     /// # Examples
     ///
@@ -146,9 +147,7 @@ impl AlertSink for StdoutSink {
         let duration = start_time.elapsed();
         Ok(DeliveryResult {
             sink_name: self.name.clone(),
-            success: true,
             delivered_at: chrono::Utc::now(),
-            error_message: None,
             duration_ms: u64::try_from(duration.as_millis()).unwrap_or(0),
         })
     }
@@ -229,9 +228,7 @@ impl AlertSink for FileSink {
         let duration = start_time.elapsed();
         Ok(DeliveryResult {
             sink_name: self.name.clone(),
-            success: true,
             delivered_at: chrono::Utc::now(),
-            error_message: None,
             duration_ms: u64::try_from(duration.as_millis()).unwrap_or(0),
         })
     }
@@ -674,7 +671,6 @@ mod tests {
         );
 
         let result = sink.send(&alert).await.expect("Failed to send alert");
-        assert!(result.success);
         assert_eq!(result.sink_name, "test");
     }
 
@@ -698,11 +694,12 @@ mod tests {
             .await
             .expect("Failed to send alert");
         assert_eq!(results.len(), 1);
-        assert!(
+        assert_eq!(
             results
                 .first()
                 .expect("Expected at least one result")
-                .success
+                .sink_name,
+            "stdout"
         );
     }
 
@@ -856,32 +853,26 @@ mod tests {
     #[test]
     fn test_delivery_result_creation() {
         let result = DeliveryResult {
-            success: true,
             sink_name: "test-sink".to_owned(),
             delivered_at: chrono::Utc::now(),
-            error_message: None,
             duration_ms: 100,
         };
 
-        assert!(result.success);
         assert_eq!(result.sink_name, "test-sink");
-        assert!(result.error_message.is_none());
+        assert_eq!(result.duration_ms, 100);
     }
 
     #[test]
     fn test_delivery_result_serialization() {
         let result = DeliveryResult {
-            success: true,
             sink_name: "test-sink".to_owned(),
             delivered_at: chrono::Utc::now(),
-            error_message: None,
             duration_ms: 100,
         };
 
         let json = serde_json::to_string(&result).expect("Failed to serialize delivery result");
         let deserialized: DeliveryResult =
             serde_json::from_str(&json).expect("Failed to deserialize delivery result");
-        assert_eq!(result.success, deserialized.success);
         assert_eq!(result.sink_name, deserialized.sink_name);
         assert_eq!(result.duration_ms, deserialized.duration_ms);
     }

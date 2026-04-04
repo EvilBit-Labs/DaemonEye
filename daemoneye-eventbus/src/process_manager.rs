@@ -89,7 +89,7 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
 /// Resource limits for collector processes
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ResourceLimits {
     /// Maximum memory in bytes
     pub max_memory_bytes: Option<u64>,
@@ -178,6 +178,7 @@ pub struct CollectorProcess {
 
 /// Lifecycle state of a collector process
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CollectorState {
     /// Process is starting up
     Starting,
@@ -248,6 +249,7 @@ pub struct CollectorStatus {
 
 /// Health status of a collector
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HealthStatus {
     /// Process is healthy
     Healthy,
@@ -261,6 +263,7 @@ pub enum HealthStatus {
 
 /// Errors that can occur during process management
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ProcessManagerError {
     /// Collector not found
     #[error("Collector not found: {0}")]
@@ -303,7 +306,7 @@ pub enum ProcessManagerError {
 #[derive(Debug)]
 pub struct CollectorProcessManager {
     /// Manager configuration
-    pub config: ProcessManagerConfig,
+    config: ProcessManagerConfig,
     /// Running processes
     processes: Arc<Mutex<HashMap<String, CollectorProcess>>>,
     /// Shutdown signal broadcaster
@@ -329,7 +332,7 @@ impl CollectorProcessManager {
         config: &CollectorConfig,
     ) -> io::Result<Child> {
         const MAX_ATTEMPTS: usize = 3;
-        let mut attempt = 0usize;
+        let mut attempt = 0_usize;
 
         loop {
             let mut command = Command::new(binary_path);
@@ -339,7 +342,7 @@ impl CollectorProcessManager {
                 command.env(key, value);
             }
 
-            if let Some(working_dir) = &config.working_dir {
+            if let Some(ref working_dir) = config.working_dir {
                 command.current_dir(working_dir);
             }
 
@@ -349,9 +352,13 @@ impl CollectorProcessManager {
 
             match command.spawn() {
                 Ok(child) => return Ok(child),
-                Err(e) if Self::is_text_file_busy(&e) && attempt + 1 < MAX_ATTEMPTS => {
-                    attempt += 1;
-                    let backoff_ms = 25 * attempt as u64;
+                Err(e)
+                    if Self::is_text_file_busy(&e) && attempt.saturating_add(1) < MAX_ATTEMPTS =>
+                {
+                    attempt = attempt.saturating_add(1);
+                    // SAFETY: attempt is bounded by MAX_ATTEMPTS (a small constant); cast to u64 is lossless.
+                    #[allow(clippy::as_conversions)]
+                    let backoff_ms = 25_u64.saturating_mul(attempt as u64);
                     warn!(
                         attempt,
                         backoff_ms,
@@ -415,7 +422,7 @@ impl CollectorProcessManager {
                 info!(
                     "Processing restart request for collector {} (attempt {}/{})",
                     req.collector_id,
-                    req.restart_count + 1,
+                    req.restart_count.saturating_add(1),
                     req.config.max_restarts
                 );
 
@@ -432,7 +439,7 @@ impl CollectorProcessManager {
                         // Update restart count
                         let mut procs = manager_clone.processes.lock().await;
                         if let Some(proc) = procs.get_mut(&req.collector_id) {
-                            proc.restart_count = req.restart_count + 1;
+                            proc.restart_count = req.restart_count.saturating_add(1);
                         }
                     }
                     Err(e) => {
@@ -441,7 +448,7 @@ impl CollectorProcessManager {
                         // Set Failed state
                         let mut procs = manager_clone.processes.lock().await;
                         if let Some(proc) = procs.get_mut(&req.collector_id) {
-                            proc.state = CollectorState::Failed(format!("Restart failed: {}", e));
+                            proc.state = CollectorState::Failed(format!("Restart failed: {e}"));
                         }
                     }
                 }
@@ -449,6 +456,11 @@ impl CollectorProcessManager {
         });
 
         manager
+    }
+
+    /// Get the process manager configuration
+    pub const fn config(&self) -> &ProcessManagerConfig {
+        &self.config
     }
 
     /// Start a collector process
@@ -476,9 +488,7 @@ impl CollectorProcessManager {
         {
             let processes = self.processes.lock().await;
             if processes.contains_key(collector_id) {
-                return Err(ProcessManagerError::AlreadyRunning(
-                    collector_id.to_string(),
-                ));
+                return Err(ProcessManagerError::AlreadyRunning(collector_id.to_owned()));
             }
         }
 
@@ -489,8 +499,7 @@ impl CollectorProcessManager {
                 .cloned()
                 .ok_or_else(|| {
                     ProcessManagerError::SpawnFailed(format!(
-                        "No binary path configured for collector type: {}",
-                        collector_type
+                        "No binary path configured for collector type: {collector_type}"
                     ))
                 })?
         } else {
@@ -516,7 +525,7 @@ impl CollectorProcessManager {
 
         let pid = child
             .id()
-            .ok_or_else(|| ProcessManagerError::SpawnFailed("Failed to get PID".to_string()))?;
+            .ok_or_else(|| ProcessManagerError::SpawnFailed("Failed to get PID".to_owned()))?;
 
         info!("Spawned collector {} with PID: {}", collector_id, pid);
 
@@ -531,16 +540,14 @@ impl CollectorProcessManager {
             if let Err(e) = child.start_kill() {
                 warn!(pid, error = %e, "Failed to signal duplicate collector for termination");
             }
-            let _ = child.wait().await;
-            return Err(ProcessManagerError::AlreadyRunning(
-                collector_id.to_string(),
-            ));
+            drop(child.wait().await);
+            return Err(ProcessManagerError::AlreadyRunning(collector_id.to_owned()));
         }
 
         let now = SystemTime::now();
         let process = CollectorProcess {
-            collector_id: collector_id.to_string(),
-            collector_type: collector_type.to_string(),
+            collector_id: collector_id.to_owned(),
+            collector_type: collector_type.to_owned(),
             child: Some(child),
             pid,
             state: CollectorState::Starting,
@@ -555,17 +562,16 @@ impl CollectorProcessManager {
             rpc_client: None,
         };
 
-        processes.insert(collector_id.to_string(), process);
+        processes.insert(collector_id.to_owned(), process);
         drop(processes);
 
         // Create RPC client if broker is available
         if let Some(ref broker) = self.broker {
-            let target_topic = format!("control.collector.{}", collector_id);
+            let target_topic = format!("control.collector.{collector_id}");
             match CollectorRpcClient::new(&target_topic, Arc::clone(broker)).await {
                 Ok(client) => {
-                    let mut processes = self.processes.lock().await;
-                    if let Some(process) = processes.get_mut(collector_id) {
-                        process.rpc_client = Some(Arc::new(client));
+                    if let Some(proc_entry) = self.processes.lock().await.get_mut(collector_id) {
+                        proc_entry.rpc_client = Some(Arc::new(client));
                     }
                     info!(
                         collector_id = %collector_id,
@@ -583,15 +589,14 @@ impl CollectorProcessManager {
         }
 
         // Spawn monitoring task
-        self.spawn_process_monitor(collector_id.to_string()).await;
+        self.spawn_process_monitor(collector_id.to_owned()).await;
 
         // Spawn heartbeat task
-        self.spawn_heartbeat_task(collector_id.to_string()).await;
+        self.spawn_heartbeat_task(collector_id.to_owned()).await;
 
         // Update state to Running
-        let mut processes = self.processes.lock().await;
-        if let Some(process) = processes.get_mut(collector_id) {
-            process.state = CollectorState::Running;
+        if let Some(proc_entry) = self.processes.lock().await.get_mut(collector_id) {
+            proc_entry.state = CollectorState::Running;
         }
 
         Ok(pid)
@@ -606,6 +611,7 @@ impl CollectorProcessManager {
     /// - `restart_count < max_restarts`
     ///
     /// On exit without restart, the collector is removed from the process map to allow subsequent start calls.
+    #[allow(clippy::unused_async)]
     async fn spawn_process_monitor(&self, collector_id: String) {
         let processes = Arc::clone(&self.processes);
         let process_manager_config = self.config.clone();
@@ -654,7 +660,7 @@ impl CollectorProcessManager {
                                 info!(
                                     "Collector {} will be auto-restarted (attempt {}/{})",
                                     collector_id,
-                                    restart_count + 1,
+                                    restart_count.saturating_add(1),
                                     config.max_restarts
                                 );
 
@@ -717,6 +723,7 @@ impl CollectorProcessManager {
     ///
     /// This task periodically publishes heartbeat messages and monitors for timeouts.
     /// The task exits when the collector is removed from the process map.
+    #[allow(clippy::unused_async)]
     async fn spawn_heartbeat_task(&self, collector_id: String) {
         let processes = Arc::clone(&self.processes);
         let broker = self.broker.clone();
@@ -753,6 +760,8 @@ impl CollectorProcessManager {
         });
     }
 
+    // SAFETY: MutexGuard is always dropped before any await point inside the loop body.
+    #[allow(clippy::significant_drop_tightening)]
     async fn run_heartbeat_loop(
         collector_id: String,
         processes: Arc<Mutex<HashMap<String, CollectorProcess>>>,
@@ -763,8 +772,10 @@ impl CollectorProcessManager {
         loop {
             tokio::time::sleep(heartbeat_interval).await;
 
-            // Update heartbeat and check timeout
-            let should_exit = {
+            // Phase 1: Read state and compute work, then drop the lock before awaiting.
+            let (sequence, intervals_missed, now, heartbeat_enabled) = {
+                // SAFETY: MutexGuard is dropped at end of block before any await.
+                #[allow(clippy::significant_drop_tightening)]
                 let mut procs = processes.lock().await;
 
                 let Some(proc) = procs.get_mut(&collector_id) else {
@@ -781,13 +792,15 @@ impl CollectorProcessManager {
                     .unwrap_or(Duration::from_secs(0));
 
                 // Calculate expected heartbeats missed based on elapsed time.
-                // Use millisecond precision and guard against sub-second intervals to avoid division by zero.
+                // Use millisecond precision and guard against sub-interval rounding to avoid division by zero.
                 let intervals_missed: u64 = {
                     let interval_ms = heartbeat_interval.as_millis();
                     if interval_ms == 0 {
                         0
                     } else {
                         let elapsed_ms = elapsed_since_heartbeat.as_millis();
+                        // SAFETY: both values are u128 millisecond counts; quotient fits u64 in practice.
+                        #[allow(clippy::arithmetic_side_effects, clippy::integer_division)]
                         let n = elapsed_ms / interval_ms;
                         u64::try_from(n).unwrap_or(u64::MAX)
                     }
@@ -797,46 +810,77 @@ impl CollectorProcessManager {
                 proc.heartbeat_sequence = proc.heartbeat_sequence.wrapping_add(1);
                 let sequence = proc.heartbeat_sequence;
 
-                // Publish heartbeat if broker available
-                let mut publish_success = false;
-                if let Some(ref broker) = broker {
-                    let topic = format!("control.health.heartbeat.{}", collector_id);
-                    let message = Message::heartbeat(sequence);
-                    let correlation_id = format!("heartbeat-{}-{}", collector_id, sequence);
+                (sequence, intervals_missed, now, proc.heartbeat_enabled)
+            };
+            // Lock dropped here — safe to await.
 
-                    match serde_json::to_vec(&message) {
-                        Ok(payload) => {
-                            if let Err(e) = broker.publish(&topic, &correlation_id, payload).await {
-                                warn!("Failed to publish heartbeat for {}: {}", collector_id, e);
-                                // Increment missed heartbeats on publish failure
-                                proc.missed_heartbeats = proc.missed_heartbeats.saturating_add(1);
-                            } else {
+            // Phase 2: Publish heartbeat (async, no lock held).
+            let publish_result = if let Some(ref hb_broker) = broker {
+                let topic = format!("control.health.heartbeat.{collector_id}");
+                let message = Message::heartbeat(sequence);
+                let correlation_id = format!("heartbeat-{collector_id}-{sequence}");
+
+                match serde_json::to_vec(&message) {
+                    Ok(payload) => {
+                        match hb_broker.publish(&topic, &correlation_id, payload).await {
+                            Ok(()) => {
                                 debug!(
                                     "Published heartbeat {} for collector {}",
                                     sequence, collector_id
                                 );
-                                // Reset missed heartbeats and update timestamp on success
-                                proc.missed_heartbeats = 0;
-                                proc.last_heartbeat = now;
-                                publish_success = true;
+                                Some(true) // success
+                            }
+                            Err(e) => {
+                                warn!("Failed to publish heartbeat for {}: {}", collector_id, e);
+                                Some(false) // publish failure
                             }
                         }
-                        Err(e) => {
-                            error!("Failed to serialize heartbeat message: {}", e);
-                            proc.missed_heartbeats = proc.missed_heartbeats.saturating_add(1);
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize heartbeat message: {}", e);
+                        Some(false) // serialize failure
+                    }
+                }
+            } else {
+                None // no broker
+            };
+
+            // Phase 3: Update state based on publish result.
+            {
+                // SAFETY: MutexGuard is dropped at end of block; no await follows within this block.
+                #[allow(clippy::significant_drop_tightening)]
+                let mut procs = processes.lock().await;
+
+                let Some(proc) = procs.get_mut(&collector_id) else {
+                    return; // Collector removed between phases
+                };
+
+                match publish_result {
+                    Some(true) => {
+                        // Successful publish: reset counters and update timestamp
+                        proc.missed_heartbeats = 0;
+                        proc.last_heartbeat = now;
+                    }
+                    Some(false) => {
+                        // Publish or serialize failed
+                        proc.missed_heartbeats = proc.missed_heartbeats.saturating_add(1);
+                    }
+                    None => {
+                        // No broker: increment based on elapsed time if applicable
+                        if intervals_missed > 0 {
+                            // SAFETY: heartbeat_threshold is u32; adding 1 saturates safely.
+                            #[allow(clippy::as_conversions)]
+                            let cap = intervals_missed
+                                .min(u64::from(heartbeat_threshold).saturating_add(1))
+                                as u32;
+                            proc.missed_heartbeats = cap;
                         }
                     }
                 }
+            }
+            // Lock dropped here.
 
-                // If no broker or publish failed, increment based on elapsed time
-                if !publish_success && intervals_missed > 0 {
-                    proc.missed_heartbeats =
-                        intervals_missed.min(heartbeat_threshold as u64 + 1) as u32;
-                }
-
-                // Check if we should continue
-                proc.heartbeat_enabled
-            };
+            let should_exit = heartbeat_enabled;
 
             if !should_exit {
                 debug!(
@@ -879,12 +923,12 @@ impl CollectorProcessManager {
         timeout: Duration,
     ) -> Result<Option<i32>, ProcessManagerError> {
         // Extract child handle and RPC client before awaiting
-        #[allow(unused_variables)]
+        #[allow(unused_variables, clippy::significant_drop_tightening)]
         let (mut child, pid, collector_id_owned, rpc_client) = {
             let mut processes = self.processes.lock().await;
             let proc = processes
                 .get_mut(collector_id)
-                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_owned()))?;
 
             // If child is None, process already stopped or being stopped
             if proc.child.is_none() {
@@ -892,9 +936,9 @@ impl CollectorProcessManager {
                     "Collector {} already stopped (no child handle)",
                     collector_id
                 );
-                let exit_code = None;
                 processes.remove(collector_id);
-                return Ok(exit_code);
+                drop(processes);
+                return Ok(None);
             }
 
             info!(
@@ -905,13 +949,12 @@ impl CollectorProcessManager {
             // Mark as stopping
             proc.state = CollectorState::Stopping;
             let pid = proc.pid;
-            let collector_id_owned = collector_id.to_string();
+            let collector_id_owned = collector_id.to_owned();
 
             // Extract child and RPC client, leaving None in their places
             let child = proc.child.take().ok_or_else(|| {
                 ProcessManagerError::InvalidState(format!(
-                    "Collector {} has no child process to stop (may have already been stopped)",
-                    collector_id
+                    "Collector {collector_id} has no child process to stop (may have already been stopped)"
                 ))
             })?;
             let rpc_client = proc.rpc_client.take();
@@ -932,8 +975,7 @@ impl CollectorProcessManager {
                         "Collector stopped via RPC"
                     );
                     // Remove from process map
-                    let mut processes = self.processes.lock().await;
-                    processes.remove(&collector_id_owned);
+                    self.processes.lock().await.remove(&collector_id_owned);
                     return Ok(exit_code);
                 }
                 Err(e) => {
@@ -965,9 +1007,9 @@ impl CollectorProcessManager {
                     }
                     Err(e) => {
                         // Re-acquire lock to set Failed state and restore child
-                        let mut processes = self.processes.lock().await;
-                        if let Some(proc) = processes.get_mut(&collector_id_owned) {
-                            proc.state = CollectorState::Failed(format!("Signal failed: {}", e));
+                        if let Some(proc) = self.processes.lock().await.get_mut(&collector_id_owned)
+                        {
+                            proc.state = CollectorState::Failed(format!("Signal failed: {e}"));
                             proc.child = Some(child);
                         }
                         return Err(e);
@@ -982,8 +1024,7 @@ impl CollectorProcessManager {
                     let err =
                         ProcessManagerError::TerminateFailed(format!("Failed to terminate: {}", e));
                     // Re-acquire lock to set Failed state and restore child
-                    let mut processes = self.processes.lock().await;
-                    if let Some(proc) = processes.get_mut(&collector_id_owned) {
+                    if let Some(proc) = self.processes.lock().await.get_mut(&collector_id_owned) {
                         proc.state = CollectorState::Failed(format!("Terminate failed: {}", e));
                         proc.child = Some(child);
                     }
@@ -1001,16 +1042,14 @@ impl CollectorProcessManager {
                         collector_id_owned, status
                     );
                     // Re-acquire lock to remove entry on successful termination
-                    let mut processes = self.processes.lock().await;
-                    processes.remove(&collector_id_owned);
+                    self.processes.lock().await.remove(&collector_id_owned);
                     status.code()
                 }
                 Ok(Err(e)) => {
                     warn!("Error waiting for collector {}: {}", collector_id_owned, e);
                     // Re-acquire lock to set Failed state and keep entry for visibility
-                    let mut processes = self.processes.lock().await;
-                    if let Some(proc) = processes.get_mut(&collector_id_owned) {
-                        proc.state = CollectorState::Failed(format!("Wait failed: {}", e));
+                    if let Some(proc) = self.processes.lock().await.get_mut(&collector_id_owned) {
+                        proc.state = CollectorState::Failed(format!("Wait failed: {e}"));
                         // Don't restore child as it's consumed by wait()
                     }
                     // Fall through to force kill
@@ -1051,9 +1090,8 @@ impl CollectorProcessManager {
                 }
                 Err(e) => {
                     // Re-acquire lock to set Failed state
-                    let mut processes = self.processes.lock().await;
-                    if let Some(proc) = processes.get_mut(&collector_id_owned) {
-                        proc.state = CollectorState::Failed(format!("Force signal failed: {}", e));
+                    if let Some(proc) = self.processes.lock().await.get_mut(&collector_id_owned) {
+                        proc.state = CollectorState::Failed(format!("Force signal failed: {e}"));
                     }
                     return Err(e);
                 }
@@ -1064,8 +1102,7 @@ impl CollectorProcessManager {
             if let Err(e) = child.start_kill() {
                 let err = ProcessManagerError::TerminateFailed(format!("Failed to kill: {}", e));
                 // Re-acquire lock to set Failed state
-                let mut processes = self.processes.lock().await;
-                if let Some(proc) = processes.get_mut(&collector_id_owned) {
+                if let Some(proc) = self.processes.lock().await.get_mut(&collector_id_owned) {
                     proc.state = CollectorState::Failed(format!("Force kill failed: {}", e));
                 }
                 return Err(err);
@@ -1081,31 +1118,26 @@ impl CollectorProcessManager {
                     collector_id_owned, status
                 );
                 // Re-acquire lock to remove entry on successful termination
-                let mut processes = self.processes.lock().await;
-                processes.remove(&collector_id_owned);
+                self.processes.lock().await.remove(&collector_id_owned);
                 Ok(status.code())
             }
             Ok(Err(e)) => {
                 // Re-acquire lock to set Failed state and keep entry for visibility
-                let mut processes = self.processes.lock().await;
-                if let Some(proc) = processes.get_mut(&collector_id_owned) {
-                    proc.state = CollectorState::Failed(format!("Force wait failed: {}", e));
+                if let Some(proc) = self.processes.lock().await.get_mut(&collector_id_owned) {
+                    proc.state = CollectorState::Failed(format!("Force wait failed: {e}"));
                 }
                 Err(ProcessManagerError::TerminateFailed(format!(
-                    "Force wait failed: {}",
-                    e
+                    "Force wait failed: {e}"
                 )))
             }
             Err(_) => {
                 error!("Force kill timeout for collector {}", collector_id_owned);
                 // Re-acquire lock to set Failed state and keep entry for visibility
-                let mut processes = self.processes.lock().await;
-                if let Some(proc) = processes.get_mut(&collector_id_owned) {
-                    proc.state = CollectorState::Failed("Force kill timeout".to_string());
+                if let Some(proc) = self.processes.lock().await.get_mut(&collector_id_owned) {
+                    proc.state = CollectorState::Failed("Force kill timeout".to_owned());
                 }
                 Err(ProcessManagerError::Timeout(format!(
-                    "Force kill timeout for {}",
-                    collector_id_owned
+                    "Force kill timeout for {collector_id_owned}"
                 )))
             }
         }
@@ -1127,11 +1159,13 @@ impl CollectorProcessManager {
 
         if graceful {
             let shutdown_request = ShutdownRequest {
-                collector_id: collector_id.to_string(),
+                collector_id: collector_id.to_owned(),
                 shutdown_type: ShutdownType::Graceful,
+                // SAFETY: Duration millis fit in u64 for any reasonable timeout value.
+                #[allow(clippy::as_conversions)]
                 graceful_timeout_ms: timeout.as_millis() as u64,
                 force_after_timeout: true,
-                reason: Some("Process manager initiated graceful shutdown".to_string()),
+                reason: Some("Process manager initiated graceful shutdown".to_owned()),
             };
             let request = RpcRequest::shutdown(
                 client.client_id.clone(),
@@ -1147,28 +1181,25 @@ impl CollectorProcessManager {
                         match tokio::time::timeout(timeout, child.wait()).await {
                             Ok(Ok(status)) => Ok(status.code()),
                             Ok(Err(e)) => Err(ProcessManagerError::TerminateFailed(format!(
-                                "Wait failed: {}",
-                                e
+                                "Wait failed: {e}"
                             ))),
                             Err(_) => Err(ProcessManagerError::Timeout(
-                                "Process wait timeout".to_string(),
+                                "Process wait timeout".to_owned(),
                             )),
                         }
                     } else {
                         Err(ProcessManagerError::TerminateFailed(
                             response
                                 .error_details
-                                .map(|e| e.message)
-                                .unwrap_or_else(|| "RPC shutdown failed".to_string()),
+                                .map_or_else(|| "RPC shutdown failed".to_owned(), |e| e.message),
                         ))
                     }
                 }
                 Ok(Err(e)) => Err(ProcessManagerError::TerminateFailed(format!(
-                    "RPC call failed: {}",
-                    e
+                    "RPC call failed: {e}"
                 ))),
                 Err(_) => Err(ProcessManagerError::Timeout(
-                    "RPC shutdown timeout".to_string(),
+                    "RPC shutdown timeout".to_owned(),
                 )),
             }
         } else {
@@ -1188,27 +1219,24 @@ impl CollectorProcessManager {
                         match tokio::time::timeout(timeout, child.wait()).await {
                             Ok(Ok(status)) => Ok(status.code()),
                             Ok(Err(e)) => Err(ProcessManagerError::TerminateFailed(format!(
-                                "Wait failed: {}",
-                                e
+                                "Wait failed: {e}"
                             ))),
                             Err(_) => Err(ProcessManagerError::Timeout(
-                                "Process wait timeout".to_string(),
+                                "Process wait timeout".to_owned(),
                             )),
                         }
                     } else {
                         Err(ProcessManagerError::TerminateFailed(
                             response
                                 .error_details
-                                .map(|e| e.message)
-                                .unwrap_or_else(|| "RPC stop failed".to_string()),
+                                .map_or_else(|| "RPC stop failed".to_owned(), |e| e.message),
                         ))
                     }
                 }
                 Ok(Err(e)) => Err(ProcessManagerError::TerminateFailed(format!(
-                    "RPC call failed: {}",
-                    e
+                    "RPC call failed: {e}"
                 ))),
-                Err(_) => Err(ProcessManagerError::Timeout("RPC stop timeout".to_string())),
+                Err(_) => Err(ProcessManagerError::Timeout("RPC stop timeout".to_owned())),
             }
         }
     }
@@ -1228,6 +1256,8 @@ impl CollectorProcessManager {
     ///
     /// - `ProcessNotFound` if collector doesn't exist
     /// - `SpawnFailed` if restart fails
+    // SAFETY: MutexGuard is dropped before any subsequent await in this function.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn restart_collector(
         &self,
         collector_id: &str,
@@ -1237,10 +1267,12 @@ impl CollectorProcessManager {
 
         // Get current config
         let (collector_type, config, restart_count) = {
+            // SAFETY: MutexGuard dropped at end of block before any await.
+            #[allow(clippy::significant_drop_tightening)]
             let processes = self.processes.lock().await;
             let process = processes
                 .get(collector_id)
-                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_owned()))?;
 
             (
                 process.collector_type.clone(),
@@ -1258,9 +1290,8 @@ impl CollectorProcessManager {
             .await?;
 
         // Update restart count
-        let mut processes = self.processes.lock().await;
-        if let Some(process) = processes.get_mut(collector_id) {
-            process.restart_count = restart_count + 1;
+        if let Some(process) = self.processes.lock().await.get_mut(collector_id) {
+            process.restart_count = restart_count.saturating_add(1);
         }
 
         Ok(pid)
@@ -1277,13 +1308,15 @@ impl CollectorProcessManager {
     /// - `ProcessNotFound` if collector doesn't exist
     /// - `InvalidState` if collector is not in Running state
     /// - `PlatformNotSupported` on Windows
+    // SAFETY: Lock guard is held throughout the unix block to atomically check + update process state.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn pause_collector(&self, collector_id: &str) -> Result<(), ProcessManagerError> {
         #[cfg(unix)]
         {
             let mut processes = self.processes.lock().await;
             let process = processes
                 .get_mut(collector_id)
-                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_owned()))?;
 
             // Validate state before pausing
             if process.state != CollectorState::Running {
@@ -1304,7 +1337,7 @@ impl CollectorProcessManager {
             #[cfg(not(feature = "freebsd"))]
             {
                 Err(ProcessManagerError::SpawnFailed(
-                    "Pause operation requires freebsd feature".to_string(),
+                    "Pause operation requires freebsd feature".to_owned(),
                 ))
             }
         }
@@ -1329,13 +1362,15 @@ impl CollectorProcessManager {
     /// - `ProcessNotFound` if collector doesn't exist
     /// - `InvalidState` if collector is not paused
     /// - `PlatformNotSupported` on Windows
+    // SAFETY: Lock guard is held throughout the unix block to atomically check + update process state.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn resume_collector(&self, collector_id: &str) -> Result<(), ProcessManagerError> {
         #[cfg(unix)]
         {
             let mut processes = self.processes.lock().await;
             let process = processes
                 .get_mut(collector_id)
-                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+                .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_owned()))?;
 
             if process.state != CollectorState::Paused {
                 return Err(ProcessManagerError::InvalidState(format!(
@@ -1355,7 +1390,7 @@ impl CollectorProcessManager {
             #[cfg(not(feature = "freebsd"))]
             {
                 Err(ProcessManagerError::SpawnFailed(
-                    "Resume operation requires freebsd feature".to_string(),
+                    "Resume operation requires freebsd feature".to_owned(),
                 ))
             }
         }
@@ -1378,6 +1413,8 @@ impl CollectorProcessManager {
     /// # Returns
     ///
     /// Health status
+    // SAFETY: Lock guard held throughout to allow mutable access to child process handle.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn check_collector_health(
         &self,
         collector_id: &str,
@@ -1385,7 +1422,7 @@ impl CollectorProcessManager {
         let mut processes = self.processes.lock().await;
         let process = processes
             .get_mut(collector_id)
-            .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+            .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_owned()))?;
 
         process.last_health_check = Some(SystemTime::now());
 
@@ -1427,6 +1464,8 @@ impl CollectorProcessManager {
     /// # Returns
     ///
     /// Collector status
+    // SAFETY: Lock guard held throughout to allow mutable access to child process handle.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn get_collector_status(
         &self,
         collector_id: &str,
@@ -1434,7 +1473,7 @@ impl CollectorProcessManager {
         let mut processes = self.processes.lock().await;
         let process = processes
             .get_mut(collector_id)
-            .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_string()))?;
+            .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_owned()))?;
 
         let uptime = SystemTime::now()
             .duration_since(process.start_time)
@@ -1538,9 +1577,11 @@ impl CollectorProcessManager {
 /// Send a signal to a process (Unix only)
 #[cfg(all(unix, feature = "freebsd"))]
 fn send_signal(pid: u32, signal: Signal) -> Result<(), ProcessManagerError> {
+    #[allow(clippy::as_conversions, clippy::cast_possible_wrap)]
+    // pid u32→i32: valid for process IDs (max PID is well within i32 range)
     let nix_pid = Pid::from_raw(pid as i32);
     signal::kill(nix_pid, signal)
-        .map_err(|e| ProcessManagerError::TerminateFailed(format!("Failed to send signal: {}", e)))
+        .map_err(|e| ProcessManagerError::TerminateFailed(format!("Failed to send signal: {e}")))
 }
 
 #[cfg(all(unix, not(feature = "freebsd")))]
@@ -1549,11 +1590,47 @@ fn send_signal(_pid: u32, _signal: u32) -> Result<(), ProcessManagerError> {
     // On non-FreeBSD Unix systems, use tokio::process or std::process
     // For now, return an error indicating signal sending is not available
     Err(ProcessManagerError::TerminateFailed(
-        "Signal sending requires freebsd feature".to_string(),
+        "Signal sending requires freebsd feature".to_owned(),
     ))
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
 

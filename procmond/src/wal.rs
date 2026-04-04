@@ -554,15 +554,53 @@ impl WriteAheadLog {
     /// # Errors
     ///
     /// Returns `WalError` if serialization, file I/O, or rotation fails
-    #[allow(clippy::significant_drop_tightening)] // Lock is intentionally held throughout for atomic rotation
     pub async fn write(&self, event: ProcessEvent) -> WalResult<u64> {
+        let sequence = self.current_event_sequence.fetch_add(1, Ordering::SeqCst);
+        let entry = WalEntry::new(sequence, event);
+        self.write_entry(entry).await
+    }
+
+    /// Write an event to the WAL with event type metadata for topic routing.
+    ///
+    /// Similar to [`Self::write`], but includes an event type string that can be used
+    /// during replay to determine the correct topic for republishing.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - Process event to persist
+    /// * `event_type` - Event type string (e.g., "start", "stop", "modify")
+    ///
+    /// # Returns
+    ///
+    /// The sequence number assigned to this event
+    ///
+    /// # Errors
+    ///
+    /// Returns `WalError` if serialization, file I/O, or rotation fails
+    pub async fn write_with_type(&self, event: ProcessEvent, event_type: String) -> WalResult<u64> {
+        let sequence = self.current_event_sequence.fetch_add(1, Ordering::SeqCst);
+        let entry = WalEntry::with_event_type(sequence, event, event_type);
+        self.write_entry(entry).await
+    }
+
+    /// Serialize a WAL entry and append it to the current file, rotating if needed.
+    ///
+    /// This is the shared implementation used by [`Self::write`] and [`Self::write_with_type`].
+    /// The lock is held for the entire operation — including rotation — so that
+    /// writers never observe a missing file handle.
+    ///
+    /// # Returns
+    ///
+    /// The sequence number from `entry`
+    ///
+    /// # Errors
+    ///
+    /// Returns `WalError` if serialization, file I/O, or rotation fails
+    #[allow(clippy::significant_drop_tightening)] // Lock is intentionally held throughout for atomic rotation
+    async fn write_entry(&self, entry: WalEntry) -> WalResult<u64> {
         use tokio::io::AsyncWriteExt;
 
-        // Get the next event sequence number
-        let sequence = self.current_event_sequence.fetch_add(1, Ordering::SeqCst);
-
-        // Create WAL entry with automatic checksum
-        let entry = WalEntry::new(sequence, event);
+        let sequence = entry.sequence;
 
         // Serialize the entry
         let serialized =
@@ -608,87 +646,6 @@ impl WriteAheadLog {
             sequence = sequence,
             file_size = state.size,
             "WAL entry written"
-        );
-
-        // Check if rotation is needed - perform atomically within the same lock
-        if state.size >= self.rotation_threshold {
-            self.rotate_file_internal(&mut state).await?;
-        }
-
-        Ok(sequence)
-    }
-
-    /// Write an event to the WAL with event type metadata for topic routing.
-    ///
-    /// Similar to [`write`], but includes an event type string that can be used
-    /// during replay to determine the correct topic for republishing.
-    ///
-    /// # Arguments
-    ///
-    /// * `event` - Process event to persist
-    /// * `event_type` - Event type string (e.g., "start", "stop", "modify")
-    ///
-    /// # Returns
-    ///
-    /// The sequence number assigned to this event
-    ///
-    /// # Errors
-    ///
-    /// Returns `WalError` if serialization, file I/O, or rotation fails
-    #[allow(clippy::significant_drop_tightening)] // Lock is intentionally held throughout for atomic rotation
-    pub async fn write_with_type(&self, event: ProcessEvent, event_type: String) -> WalResult<u64> {
-        use tokio::io::AsyncWriteExt;
-
-        // Get the next event sequence number
-        let sequence = self.current_event_sequence.fetch_add(1, Ordering::SeqCst);
-
-        // Create WAL entry with event type
-        let entry = WalEntry::with_event_type(sequence, event, event_type);
-
-        // Serialize the entry
-        let serialized =
-            postcard::to_allocvec(&entry).map_err(|e| WalError::Serialization(e.to_string()))?;
-
-        // Prepare length prefix (little-endian u32)
-        #[allow(clippy::as_conversions)] // Safe: serialized len is bounded by frame size
-        let length = serialized.len() as u32;
-        let length_bytes = length.to_le_bytes();
-
-        // Calculate size increment safely
-        let size_increment = length_bytes.len().saturating_add(serialized.len());
-        #[allow(clippy::as_conversions)] // Safe: total size is bounded by max frame size
-        let size_increment_u64 = size_increment as u64;
-
-        // Write to current file - hold lock for entire operation including rotation
-        let mut state = self.file_state.lock().await;
-
-        // Write length prefix
-        state
-            .file
-            .write_all(&length_bytes)
-            .await
-            .map_err(WalError::Io)?;
-
-        // Write serialized entry
-        state
-            .file
-            .write_all(&serialized)
-            .await
-            .map_err(WalError::Io)?;
-
-        // Update file size and sequence tracking
-        state.size = state.size.saturating_add(size_increment_u64);
-
-        // Track min/max sequences for this file
-        if state.min_sequence == 0 {
-            state.min_sequence = sequence;
-        }
-        state.max_sequence = sequence;
-
-        debug!(
-            sequence = sequence,
-            file_size = state.size,
-            "WAL entry written with event type"
         );
 
         // Check if rotation is needed - perform atomically within the same lock

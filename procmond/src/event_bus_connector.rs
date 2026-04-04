@@ -116,6 +116,10 @@ pub enum EventBusConnectorError {
     /// Serialization failed.
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    /// Event type string read from WAL is not a recognised variant.
+    #[error("Unknown event type in WAL: '{0}'")]
+    UnknownEventType(String),
 }
 
 /// Result type for event bus connector operations.
@@ -172,16 +176,18 @@ impl ProcessEventType {
 
     /// Parse event type from a string stored in WAL.
     ///
-    /// Returns `Start` as a default for unknown or legacy entries.
-    fn from_type_string(s: &str) -> Self {
+    /// # Errors
+    ///
+    /// Returns [`EventBusConnectorError::UnknownEventType`] when `s` does not
+    /// match any known variant.  The caller must not silently substitute a
+    /// default: a corrupted `"stop"` entry reclassified as `Start` would keep
+    /// a terminated process alive in the tracking state.
+    fn from_type_string(s: &str) -> Result<Self, EventBusConnectorError> {
         match s {
-            "start" => Self::Start,
-            "stop" => Self::Stop,
-            "modify" => Self::Modify,
-            _ => {
-                warn!(event_type = s, "Unknown event type, defaulting to Start");
-                Self::Start
-            }
+            "start" => Ok(Self::Start),
+            "stop" => Ok(Self::Stop),
+            "modify" => Ok(Self::Modify),
+            _ => Err(EventBusConnectorError::UnknownEventType(s.to_owned())),
         }
     }
 }
@@ -807,13 +813,26 @@ impl EventBusConnector {
         let mut last_successful_sequence = 0_u64;
 
         for entry in entries {
-            // Get the topic from the stored event type, or default to Start for legacy entries
-            let event_type = entry
-                .event_type
-                .as_ref()
-                .map_or(ProcessEventType::Start, |s| {
-                    ProcessEventType::from_type_string(s)
-                });
+            // Resolve the topic from the stored event type.
+            // `None` means a legacy WAL entry written before event_type was
+            // persisted; default to Start to preserve backward compatibility.
+            // An unrecognised string is a data integrity error: skip the entry
+            // rather than misrouting it (e.g. Stop → Start causes stale tracking).
+            let event_type = match entry.event_type.as_deref() {
+                None => ProcessEventType::Start,
+                Some(s) => match ProcessEventType::from_type_string(s) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!(
+                            sequence = entry.sequence,
+                            event_type = s,
+                            error = %e,
+                            "Skipping WAL entry with unrecognised event type to prevent misrouting"
+                        );
+                        continue;
+                    }
+                },
+            };
             let topic = event_type.topic();
 
             if self.connected {
@@ -1491,34 +1510,34 @@ mod tests {
     #[test]
     fn test_process_event_type_from_type_string() {
         assert_eq!(
-            ProcessEventType::from_type_string("start"),
+            ProcessEventType::from_type_string("start").unwrap(),
             ProcessEventType::Start
         );
         assert_eq!(
-            ProcessEventType::from_type_string("stop"),
+            ProcessEventType::from_type_string("stop").unwrap(),
             ProcessEventType::Stop
         );
         assert_eq!(
-            ProcessEventType::from_type_string("modify"),
+            ProcessEventType::from_type_string("modify").unwrap(),
             ProcessEventType::Modify
         );
     }
 
     #[test]
     fn test_process_event_type_from_type_string_unknown() {
-        // Unknown strings should default to Start
-        assert_eq!(
+        // Unknown strings must return an error — never a silent Start default.
+        assert!(matches!(
             ProcessEventType::from_type_string("unknown"),
-            ProcessEventType::Start
-        );
-        assert_eq!(
+            Err(EventBusConnectorError::UnknownEventType(s)) if s == "unknown"
+        ));
+        assert!(matches!(
             ProcessEventType::from_type_string(""),
-            ProcessEventType::Start
-        );
-        assert_eq!(
+            Err(EventBusConnectorError::UnknownEventType(s)) if s.is_empty()
+        ));
+        assert!(matches!(
             ProcessEventType::from_type_string("START"),
-            ProcessEventType::Start
-        );
+            Err(EventBusConnectorError::UnknownEventType(s)) if s == "START"
+        ));
     }
 
     #[test]

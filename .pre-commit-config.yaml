@@ -56,8 +56,8 @@ repos:
     #       - id: cargo-machete
 
     # 📝 Markdown formatting and linting (temporarily disabled in CI due to path issues)
-    - repo: https://github.com/hukkin/mdformat
-      rev: 0.7.22
+    - repo: https://github.com/executablebooks/mdformat
+      rev: 1.0.0
       hooks:
           - id: mdformat
             additional_dependencies:
@@ -65,15 +65,12 @@ repos:
                 - mdformat-admon
                 - mdformat-config
                 - mdformat-footnote
-                - mdformat-frontmatter
                 - mdformat-simple-breaks
-                - mdformat-tables
                 - mdformat-web
-                - mdformat-wikilink
                 - mdformat-gfm-alerts
                 - mdformat-toc
-                - mdformat-rustfmt
-            files: \.(md|mdx)$
+                - mdformat-front-matters
+            types: [markdown]
 
     # 🔒 Security audit for Rust dependencies (moved to CI)
     - repo: local

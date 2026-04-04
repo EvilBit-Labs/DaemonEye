@@ -28,6 +28,7 @@ pub struct ConfigSnapshot {
 
 /// Configuration Manager errors
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ConfigManagerError {
     /// Configuration not found
     #[error("Configuration not found: {0}")]
@@ -88,7 +89,7 @@ impl ConfigManager {
     }
 
     fn config_path(&self, collector_id: &str) -> PathBuf {
-        self.config_dir.join(format!("{}.toml", collector_id))
+        self.config_dir.join(format!("{collector_id}.toml"))
     }
 
     /// Load configuration for a collector from disk (or default if missing)
@@ -108,8 +109,10 @@ impl ConfigManager {
         self.validate_config(&cfg).await?;
 
         // Cache
-        let mut guard = self.configs.lock().await;
-        guard.insert(collector_id.to_string(), cfg.clone());
+        self.configs
+            .lock()
+            .await
+            .insert(collector_id.to_owned(), cfg.clone());
         Ok(cfg)
     }
 
@@ -118,7 +121,8 @@ impl ConfigManager {
         &self,
         collector_id: &str,
     ) -> Result<CollectorConfig, ConfigManagerError> {
-        if let Some(cfg) = self.configs.lock().await.get(collector_id).cloned() {
+        let cached = self.configs.lock().await.get(collector_id).cloned();
+        if let Some(cfg) = cached {
             return Ok(cfg);
         }
         self.load_config(collector_id).await
@@ -143,8 +147,7 @@ impl ConfigManager {
             use std::os::unix::fs::PermissionsExt;
             let metadata = fs::metadata(&config.binary_path).await.map_err(|e| {
                 ConfigManagerError::ValidationFailed(format!(
-                    "Failed to check binary permissions: {}",
-                    e
+                    "Failed to check binary permissions: {e}"
                 ))
             })?;
             let mode = metadata.permissions().mode();
@@ -174,25 +177,23 @@ impl ConfigManager {
         }
 
         // Resource limits sanity checks
-        if let Some(limits) = &config.resource_limits {
+        if let Some(ref limits) = config.resource_limits {
             if let Some(max_memory) = limits.max_memory_bytes {
                 const MIN_MEMORY_BYTES: u64 = 1024 * 1024; // 1MB
                 const MAX_MEMORY_BYTES: u64 = 1024 * 1024 * 1024 * 1024; // 1TB
                 if max_memory == 0 {
                     return Err(ConfigManagerError::ValidationFailed(
-                        "max_memory_bytes cannot be zero".to_string(),
+                        "max_memory_bytes cannot be zero".to_owned(),
                     ));
                 }
                 if max_memory < MIN_MEMORY_BYTES {
                     return Err(ConfigManagerError::ValidationFailed(format!(
-                        "max_memory_bytes ({}) is below minimum ({})",
-                        max_memory, MIN_MEMORY_BYTES
+                        "max_memory_bytes ({max_memory}) is below minimum ({MIN_MEMORY_BYTES})"
                     )));
                 }
                 if max_memory > MAX_MEMORY_BYTES {
                     return Err(ConfigManagerError::ValidationFailed(format!(
-                        "max_memory_bytes ({}) exceeds maximum ({})",
-                        max_memory, MAX_MEMORY_BYTES
+                        "max_memory_bytes ({max_memory}) exceeds maximum ({MAX_MEMORY_BYTES})"
                     )));
                 }
             }
@@ -201,7 +202,7 @@ impl ConfigManager {
                 && (max_cpu == 0 || max_cpu > 100)
             {
                 return Err(ConfigManagerError::ValidationFailed(
-                    "max_cpu_percent must be 1..=100".to_string(),
+                    "max_cpu_percent must be 1..=100".to_owned(),
                 ));
             }
         }
@@ -221,12 +222,12 @@ impl ConfigManager {
         let mut new_config = current.clone();
 
         // Apply changes
-        self.apply_changes(&mut new_config, &config_changes)?;
+        Self::apply_changes(&mut new_config, &config_changes)?;
 
         // Validate
         if let Err(e) = self.validate_config(&new_config).await {
             if rollback_on_failure {
-                let _ = self.rollback_config(collector_id).await; // best effort
+                drop(self.rollback_config(collector_id).await); // best effort
             }
             return Err(e);
         }
@@ -253,21 +254,18 @@ impl ConfigManager {
         };
 
         // Update caches
-        {
-            let mut cfgs = self.configs.lock().await;
-            cfgs.insert(collector_id.to_string(), new_config.clone());
-        }
-        {
-            let mut snaps = self.snapshots.lock().await;
-            snaps.insert(
-                collector_id.to_string(),
-                ConfigSnapshot {
-                    config: current,
-                    timestamp: SystemTime::now(),
-                    version: new_version.saturating_sub(1), // Previous version
-                },
-            );
-        }
+        self.configs
+            .lock()
+            .await
+            .insert(collector_id.to_owned(), new_config.clone());
+        self.snapshots.lock().await.insert(
+            collector_id.to_owned(),
+            ConfigSnapshot {
+                config: current,
+                timestamp: SystemTime::now(),
+                version: new_version.saturating_sub(1), // Previous version
+            },
+        );
 
         Ok(ConfigSnapshot {
             config: new_config,
@@ -288,14 +286,15 @@ impl ConfigManager {
 
         let Some(prev) = snapshot else {
             return Err(ConfigManagerError::RollbackFailed(format!(
-                "No snapshot available for {}",
-                collector_id
+                "No snapshot available for {collector_id}"
             )));
         };
 
         self.persist_config(collector_id, &prev.config).await?;
-        let mut cfgs = self.configs.lock().await;
-        cfgs.insert(collector_id.to_string(), prev.config.clone());
+        self.configs
+            .lock()
+            .await
+            .insert(collector_id.to_owned(), prev.config.clone());
         Ok(prev.config)
     }
 
@@ -326,7 +325,7 @@ impl ConfigManager {
         }
 
         fs::rename(&temp_path, &config_path).await.map_err(|e| {
-            ConfigManagerError::PersistenceFailed(format!("Failed to rename temp file: {}", e))
+            ConfigManagerError::PersistenceFailed(format!("Failed to rename temp file: {e}"))
         })?;
 
         debug!(
@@ -348,25 +347,25 @@ impl ConfigManager {
     pub fn get_changed_fields(old: &CollectorConfig, new: &CollectorConfig) -> Vec<String> {
         let mut fields = Vec::new();
         if old.binary_path != new.binary_path {
-            fields.push("binary_path".to_string());
+            fields.push("binary_path".to_owned());
         }
         if old.args != new.args {
-            fields.push("args".to_string());
+            fields.push("args".to_owned());
         }
         if old.env != new.env {
-            fields.push("env".to_string());
+            fields.push("env".to_owned());
         }
         if old.working_dir != new.working_dir {
-            fields.push("working_dir".to_string());
+            fields.push("working_dir".to_owned());
         }
         if old.resource_limits != new.resource_limits {
-            fields.push("resource_limits".to_string());
+            fields.push("resource_limits".to_owned());
         }
         if old.auto_restart != new.auto_restart {
-            fields.push("auto_restart".to_string());
+            fields.push("auto_restart".to_owned());
         }
         if old.max_restarts != new.max_restarts {
-            fields.push("max_restarts".to_string());
+            fields.push("max_restarts".to_owned());
         }
         fields
     }
@@ -382,7 +381,7 @@ impl ConfigManager {
             if p.extension().and_then(|e| e.to_str()) == Some("toml")
                 && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
             {
-                out.push(stem.to_string());
+                out.push(stem.to_owned());
             }
         }
         out
@@ -400,7 +399,6 @@ impl ConfigManager {
     }
 
     fn apply_changes(
-        &self,
         cfg: &mut CollectorConfig,
         changes: &HashMap<String, JsonValue>,
     ) -> Result<(), ConfigManagerError> {
@@ -409,27 +407,27 @@ impl ConfigManager {
                 "binary_path" => {
                     let s = v.as_str().ok_or_else(|| {
                         ConfigManagerError::InvalidConfigChange(
-                            "binary_path must be string".to_string(),
+                            "binary_path must be string".to_owned(),
                         )
                     })?;
                     cfg.binary_path = PathBuf::from(s);
                 }
                 "args" => {
                     let arr = v.as_array().ok_or_else(|| {
-                        ConfigManagerError::InvalidConfigChange("args must be array".to_string())
+                        ConfigManagerError::InvalidConfigChange("args must be array".to_owned())
                     })?;
                     cfg.args = arr
                         .iter()
-                        .map(|x| x.as_str().unwrap_or("").to_string())
+                        .map(|x| x.as_str().unwrap_or("").to_owned())
                         .collect();
                 }
                 "env" => {
                     let obj = v.as_object().ok_or_else(|| {
-                        ConfigManagerError::InvalidConfigChange("env must be object".to_string())
+                        ConfigManagerError::InvalidConfigChange("env must be object".to_owned())
                     })?;
                     let mut env = HashMap::new();
                     for (ek, ev) in obj {
-                        env.insert(ek.clone(), ev.as_str().unwrap_or("").to_string());
+                        env.insert(ek.clone(), ev.as_str().unwrap_or("").to_owned());
                     }
                     cfg.env = env;
                 }
@@ -439,7 +437,7 @@ impl ConfigManager {
                     } else {
                         let s = v.as_str().ok_or_else(|| {
                             ConfigManagerError::InvalidConfigChange(
-                                "working_dir must be string or null".to_string(),
+                                "working_dir must be string or null".to_owned(),
                             )
                         })?;
                         cfg.working_dir = Some(PathBuf::from(s));
@@ -448,7 +446,7 @@ impl ConfigManager {
                 "resource_limits" => {
                     let obj = v.as_object().ok_or_else(|| {
                         ConfigManagerError::InvalidConfigChange(
-                            "resource_limits must be object".to_string(),
+                            "resource_limits must be object".to_owned(),
                         )
                     })?;
                     let mut limits = cfg.resource_limits.clone().unwrap_or_default();
@@ -463,7 +461,7 @@ impl ConfigManager {
                 "auto_restart" => {
                     cfg.auto_restart = v.as_bool().ok_or_else(|| {
                         ConfigManagerError::InvalidConfigChange(
-                            "auto_restart must be bool".to_string(),
+                            "auto_restart must be bool".to_owned(),
                         )
                     })?;
                 }
@@ -473,7 +471,7 @@ impl ConfigManager {
                             .and_then(|u| u32::try_from(u).ok())
                             .ok_or_else(|| {
                                 ConfigManagerError::InvalidConfigChange(
-                                    "max_restarts must be u32".to_string(),
+                                    "max_restarts must be u32".to_owned(),
                                 )
                             })?;
                 }
@@ -488,7 +486,7 @@ impl ConfigManager {
 
 fn temp_path_for(config_path: &Path) -> PathBuf {
     let mut tmp = config_path.to_path_buf();
-    if let Some(fname) = tmp.file_name().map(|s| s.to_owned()) {
+    if let Some(fname) = tmp.file_name().map(std::borrow::ToOwned::to_owned) {
         let tmpname = format!("{}.tmp", fname.to_string_lossy());
         tmp.set_file_name(tmpname);
     } else {

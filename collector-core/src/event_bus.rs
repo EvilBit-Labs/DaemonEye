@@ -16,13 +16,24 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
+#![allow(clippy::indexing_slicing)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::option_if_let_else)]
+#![allow(clippy::match_same_arms)]
+
 use crate::{event::CollectionEvent, source::SourceCaps};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::sync::{Mutex, RwLock};
@@ -42,7 +53,7 @@ pub trait EventBus: Send + Sync {
     async fn subscribe(
         &mut self,
         subscription: EventSubscription,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>>;
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Arc<BusEvent>>>;
 
     /// Unsubscribe from events
     async fn unsubscribe(&mut self, subscriber_id: &str) -> Result<()>;
@@ -118,7 +129,7 @@ pub struct EventFilter {
     pub min_priority: Option<u8>,
     /// Metadata filters
     pub metadata_filters: HashMap<String, String>,
-    /// Topic filters (deprecated - use topic_patterns in EventSubscription)
+    /// Topic filters (deprecated - use `topic_patterns` in `EventSubscription`)
     pub topic_filters: Vec<String>,
     /// Source collectors
     pub source_collectors: Vec<String>,
@@ -367,42 +378,49 @@ impl CorrelationMetadata {
     }
 
     /// Set workflow stage
+    #[must_use]
     pub fn with_stage(mut self, stage: String) -> Self {
         self.workflow_stage = Some(stage);
         self
     }
 
     /// Add correlation tag
+    #[must_use]
     pub fn with_tag(mut self, key: String, value: String) -> Self {
         self.correlation_tags.insert(key, value);
         self
     }
 
     /// Set sequence number
-    pub fn with_sequence(mut self, sequence: u64) -> Self {
+    #[must_use]
+    pub const fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence_number = sequence;
         self
     }
 
     /// Set trace ID for distributed tracing
+    #[must_use]
     pub fn with_trace_id(mut self, trace_id: String) -> Self {
         self.trace_id = Some(trace_id);
         self
     }
 
     /// Set span ID for distributed tracing
+    #[must_use]
     pub fn with_span_id(mut self, span_id: String) -> Self {
         self.span_id = Some(span_id);
         self
     }
 
     /// Set daemoneye-eventbus metadata
+    #[must_use]
     pub fn with_eventbus_metadata(mut self, metadata: EventBusMetadata) -> Self {
         self.eventbus_metadata = Some(metadata);
         self
     }
 
     /// Add topic chain for cross-topic correlation
+    #[must_use]
     pub fn add_topic_chain(
         mut self,
         source_topic: String,
@@ -436,6 +454,7 @@ impl CorrelationMetadata {
     }
 
     /// Set collector coordination metadata
+    #[must_use]
     pub fn with_collector_coordination(mut self, coordination: CollectorCoordination) -> Self {
         if let Some(ref mut eventbus_metadata) = self.eventbus_metadata {
             eventbus_metadata.collector_coordination = Some(coordination);
@@ -527,7 +546,7 @@ struct SubscriberInfo {
     /// Event filtering configuration for daemoneye-eventbus
     pub event_filter: Option<EventFilter>,
     /// Event sender channel
-    pub sender: tokio::sync::mpsc::UnboundedSender<BusEvent>,
+    pub sender: tokio::sync::mpsc::UnboundedSender<Arc<BusEvent>>,
 }
 
 /// Local event bus implementation using topic-based routing with daemoneye-eventbus semantics
@@ -537,8 +556,12 @@ pub struct LocalEventBus {
     config: EventBusConfig,
     /// Subscriber information with topic patterns
     subscribers: Arc<RwLock<HashMap<String, SubscriberInfo>>>,
-    /// Statistics
+    /// Statistics (used only for uptime and `active_subscribers`; hot-path counters use atomics)
     stats: Arc<Mutex<EventBusStatistics>>,
+    /// Atomic counter for total events published (avoids Mutex on hot path)
+    events_published: Arc<AtomicU64>,
+    /// Atomic counter for total events delivered (avoids Mutex on hot path)
+    events_delivered: Arc<AtomicU64>,
     /// Start time
     start_time: Instant,
 }
@@ -555,6 +578,8 @@ impl LocalEventBus {
                 active_subscribers: 0,
                 uptime: Duration::from_secs(0),
             })),
+            events_published: Arc::new(AtomicU64::new(0)),
+            events_delivered: Arc::new(AtomicU64::new(0)),
             start_time: Instant::now(),
         }
     }
@@ -579,9 +604,7 @@ impl LocalEventBus {
         for (i, segment) in segments.iter().enumerate() {
             if segment.is_empty() {
                 return Err(anyhow::anyhow!(
-                    "Empty segment at position {} in pattern '{}'",
-                    i,
-                    pattern
+                    "Empty segment at position {i} in pattern '{pattern}'"
                 ));
             }
         }
@@ -590,8 +613,7 @@ impl LocalEventBus {
         for (i, segment) in segments.iter().enumerate() {
             if *segment == "#" && i != segments.len() - 1 {
                 return Err(anyhow::anyhow!(
-                    "Multi-level wildcard '#' must be at the end of pattern '{}'",
-                    pattern
+                    "Multi-level wildcard '#' must be at the end of pattern '{pattern}'"
                 ));
             }
         }
@@ -623,7 +645,7 @@ impl LocalEventBus {
     const TOPIC_TRIGGER_REQUEST: &'static str = "control.trigger.request";
 
     /// Generate topic for an event based on its type
-    fn generate_topic_for_event(event: &CollectionEvent) -> &'static str {
+    const fn generate_topic_for_event(event: &CollectionEvent) -> &'static str {
         match event {
             CollectionEvent::Process(_) => Self::TOPIC_PROCESS_NEW,
             CollectionEvent::Network(_) => Self::TOPIC_NETWORK_NEW,
@@ -711,8 +733,9 @@ impl EventBus for LocalEventBus {
             "Publishing event to LocalEventBus with daemoneye-eventbus correlation metadata"
         );
 
-        // Create bus event with enhanced correlation metadata
-        let bus_event = BusEvent {
+        // Create bus event with enhanced correlation metadata and wrap in Arc once.
+        // Each subscriber receives a cheap Arc clone rather than a deep copy of the event.
+        let bus_event = Arc::new(BusEvent {
             id: Uuid::new_v4(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -722,13 +745,13 @@ impl EventBus for LocalEventBus {
             correlation_metadata,
             routing_metadata: {
                 let mut metadata = HashMap::with_capacity(1);
-                metadata.insert("topic".to_string(), topic.to_string());
+                metadata.insert("topic".to_owned(), topic.to_owned());
                 metadata
             },
-        };
+        });
 
         // Find matching subscribers and deliver events
-        let mut delivered_count = 0;
+        let mut delivered_count: u64 = 0;
         let mut failed_subscribers = Vec::with_capacity(4); // Pre-allocate for typical failure scenarios
 
         {
@@ -768,7 +791,7 @@ impl EventBus for LocalEventBus {
                         };
 
                     if topic_filter_passed && correlation_filter_passed && event_filter_passed {
-                        if subscriber_info.sender.send(bus_event.clone()).is_ok() {
+                        if subscriber_info.sender.send(Arc::clone(&bus_event)).is_ok() {
                             delivered_count += 1;
                             tracing::debug!(
                                 subscriber_id = %subscriber_id,
@@ -802,18 +825,10 @@ impl EventBus for LocalEventBus {
             }
         }
 
-        // Update statistics
-        let active_subscribers = {
-            let subscribers = self.subscribers.read().await;
-            subscribers.len()
-        };
-
-        {
-            let mut stats = self.stats.lock().await;
-            stats.events_published += 1;
-            stats.events_delivered += delivered_count;
-            stats.active_subscribers = active_subscribers;
-        }
+        // Increment atomic counters on the hot path (no lock required)
+        self.events_published.fetch_add(1, Ordering::Relaxed);
+        self.events_delivered
+            .fetch_add(delivered_count, Ordering::Relaxed);
 
         tracing::debug!(
             topic = %topic,
@@ -827,7 +842,7 @@ impl EventBus for LocalEventBus {
     async fn subscribe(
         &mut self,
         subscription: EventSubscription,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>> {
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Arc<BusEvent>>> {
         let subscriber_id = subscription.subscriber_id.clone();
 
         // Check if we've reached the maximum number of subscribers
@@ -859,19 +874,19 @@ impl EventBus for LocalEventBus {
 
             let mut patterns = Vec::with_capacity(capability_count.max(1));
             if subscription.capabilities.contains(SourceCaps::PROCESS) {
-                patterns.push("events.process.+".to_string()); // Single-level wildcard
+                patterns.push("events.process.+".to_owned()); // Single-level wildcard
             }
             if subscription.capabilities.contains(SourceCaps::NETWORK) {
-                patterns.push("events.network.+".to_string());
+                patterns.push("events.network.+".to_owned());
             }
             if subscription.capabilities.contains(SourceCaps::FILESYSTEM) {
-                patterns.push("events.filesystem.+".to_string());
+                patterns.push("events.filesystem.+".to_owned());
             }
             if subscription.capabilities.contains(SourceCaps::PERFORMANCE) {
-                patterns.push("events.performance.+".to_string());
+                patterns.push("events.performance.+".to_owned());
             }
             if patterns.is_empty() {
-                patterns.push("events.#".to_string()); // Multi-level wildcard for all events
+                patterns.push("events.#".to_owned()); // Multi-level wildcard for all events
             }
             patterns
         };
@@ -899,15 +914,15 @@ impl EventBus for LocalEventBus {
 
         {
             let mut subscribers = self.subscribers.write().await;
-            subscribers.insert(subscriber_id.clone(), subscriber_info);
-        }
+            subscribers.insert(subscriber_id.clone(), subscriber_info)
+        };
 
         // Update statistics
         {
             let mut stats = self.stats.lock().await;
             let subscribers = self.subscribers.read().await;
-            stats.active_subscribers = subscribers.len();
-        }
+            stats.active_subscribers = subscribers.len()
+        };
 
         tracing::info!(
             subscriber_id = %subscriber_id,
@@ -933,8 +948,8 @@ impl EventBus for LocalEventBus {
         // Update statistics
         {
             let mut stats = self.stats.lock().await;
-            stats.active_subscribers = active_subscribers;
-        }
+            stats.active_subscribers = active_subscribers
+        };
 
         tracing::info!(
             subscriber_id = %subscriber_id,
@@ -945,7 +960,17 @@ impl EventBus for LocalEventBus {
     }
 
     async fn get_statistics(&self) -> Result<EventBusStatistics> {
+        // Flush atomic counters into the stats struct on read.
+        // This is the only point where the Mutex is acquired for counter values,
+        // keeping the publish hot path free of lock contention.
+        let active_subscribers = {
+            let subscribers = self.subscribers.read().await;
+            subscribers.len()
+        };
         let mut stats = self.stats.lock().await;
+        stats.events_published = self.events_published.load(Ordering::Acquire);
+        stats.events_delivered = self.events_delivered.load(Ordering::Acquire);
+        stats.active_subscribers = active_subscribers;
         stats.uptime = self.start_time.elapsed();
         Ok(stats.clone())
     }
@@ -960,8 +985,8 @@ impl EventBus for LocalEventBus {
         // Clear all subscribers (this will close their channels)
         {
             let mut subscribers = self.subscribers.write().await;
-            subscribers.clear();
-        }
+            subscribers.clear()
+        };
 
         tracing::info!("LocalEventBus shutdown completed");
         Ok(())
@@ -1128,7 +1153,7 @@ impl LocalEventBus {
     }
 
     /// Apply sequence-based correlation filtering
-    fn apply_sequence_correlation_filter(
+    const fn apply_sequence_correlation_filter(
         correlation_metadata: &CorrelationMetadata,
         sequence_correlation: &SequenceCorrelation,
     ) -> bool {
@@ -1226,7 +1251,7 @@ impl LocalEventBus {
     fn apply_event_filter(event: &CollectionEvent, filter: &EventFilter) -> bool {
         // Check event type filtering
         if !filter.event_types.is_empty() {
-            let event_type = event.event_type().to_string();
+            let event_type = event.event_type().to_owned();
             if !filter.event_types.contains(&event_type) {
                 return false;
             }
@@ -1234,6 +1259,7 @@ impl LocalEventBus {
 
         // Check process ID filtering (for process events)
         if !filter.pids.is_empty() {
+            #[allow(clippy::wildcard_enum_match_arm)]
             match event {
                 CollectionEvent::Process(process_event) => {
                     if !filter.pids.contains(&process_event.pid) {
@@ -1289,7 +1315,9 @@ impl LocalEventBus {
     }
 
     /// Extract event priority for filtering
-    fn extract_event_priority(event: &CollectionEvent) -> u8 {
+    #[allow(clippy::wildcard_enum_match_arm)]
+    const fn extract_event_priority(event: &CollectionEvent) -> u8 {
+        #[allow(clippy::wildcard_enum_match_arm)]
         match event {
             CollectionEvent::TriggerRequest(trigger) => match trigger.priority {
                 crate::event::TriggerPriority::Low => 1,
@@ -1307,23 +1335,23 @@ impl LocalEventBus {
             CollectionEvent::Process(process_event) => {
                 // Pre-allocate HashMap with estimated capacity to reduce reallocations
                 let mut metadata = HashMap::with_capacity(8);
-                metadata.insert("pid".to_string(), process_event.pid.to_string());
+                metadata.insert("pid".to_owned(), process_event.pid.to_string());
                 if let Some(ppid) = process_event.ppid {
-                    metadata.insert("ppid".to_string(), ppid.to_string());
+                    metadata.insert("ppid".to_owned(), ppid.to_string());
                 }
-                metadata.insert("name".to_string(), process_event.name.clone());
+                metadata.insert("name".to_owned(), process_event.name.clone());
                 if let Some(executable_path) = &process_event.executable_path {
-                    metadata.insert("executable_path".to_string(), executable_path.clone());
+                    metadata.insert("executable_path".to_owned(), executable_path.clone());
                 }
                 if let Some(user_id) = &process_event.user_id {
-                    metadata.insert("user_id".to_string(), user_id.clone());
+                    metadata.insert("user_id".to_owned(), user_id.clone());
                 }
                 metadata.insert(
-                    "accessible".to_string(),
+                    "accessible".to_owned(),
                     process_event.accessible.to_string(),
                 );
                 metadata.insert(
-                    "file_exists".to_string(),
+                    "file_exists".to_owned(),
                     process_event.file_exists.to_string(),
                 );
                 metadata
@@ -1335,18 +1363,18 @@ impl LocalEventBus {
                 // Pre-allocate HashMap with estimated capacity based on trigger metadata size
                 let estimated_capacity = 5 + trigger.metadata.len();
                 let mut metadata = HashMap::with_capacity(estimated_capacity);
-                metadata.insert("trigger_id".to_string(), trigger.trigger_id.clone());
+                metadata.insert("trigger_id".to_owned(), trigger.trigger_id.clone());
                 metadata.insert(
-                    "target_collector".to_string(),
+                    "target_collector".to_owned(),
                     trigger.target_collector.clone(),
                 );
                 metadata.insert(
-                    "analysis_type".to_string(),
+                    "analysis_type".to_owned(),
                     format!("{:?}", trigger.analysis_type),
                 );
-                metadata.insert("priority".to_string(), format!("{:?}", trigger.priority));
+                metadata.insert("priority".to_owned(), format!("{:?}", trigger.priority));
                 if let Some(target_pid) = trigger.target_pid {
-                    metadata.insert("target_pid".to_string(), target_pid.to_string());
+                    metadata.insert("target_pid".to_owned(), target_pid.to_string());
                 }
                 metadata.extend(trigger.metadata.clone());
                 metadata
@@ -1355,7 +1383,7 @@ impl LocalEventBus {
     }
 
     /// Extract source collector for filtering - use static strings to avoid allocations
-    fn extract_source_collector(event: &CollectionEvent) -> &'static str {
+    const fn extract_source_collector(event: &CollectionEvent) -> &'static str {
         match event {
             CollectionEvent::Process(_) => "procmond",
             CollectionEvent::Network(_) => "netmond",
@@ -1416,25 +1444,25 @@ impl LocalEventBus {
 
         match event {
             CollectionEvent::Process(_) => {
-                capabilities.insert("domain".to_string(), "process".to_string());
-                capabilities.insert("realtime".to_string(), "true".to_string());
-                capabilities.insert("system_wide".to_string(), "true".to_string());
+                capabilities.insert("domain".to_owned(), "process".to_owned());
+                capabilities.insert("realtime".to_owned(), "true".to_owned());
+                capabilities.insert("system_wide".to_owned(), "true".to_owned());
             }
             CollectionEvent::Network(_) => {
-                capabilities.insert("domain".to_string(), "network".to_string());
-                capabilities.insert("realtime".to_string(), "true".to_string());
+                capabilities.insert("domain".to_owned(), "network".to_owned());
+                capabilities.insert("realtime".to_owned(), "true".to_owned());
             }
             CollectionEvent::Filesystem(_) => {
-                capabilities.insert("domain".to_string(), "filesystem".to_string());
-                capabilities.insert("realtime".to_string(), "true".to_string());
+                capabilities.insert("domain".to_owned(), "filesystem".to_owned());
+                capabilities.insert("realtime".to_owned(), "true".to_owned());
             }
             CollectionEvent::Performance(_) => {
-                capabilities.insert("domain".to_string(), "performance".to_string());
-                capabilities.insert("realtime".to_string(), "false".to_string());
+                capabilities.insert("domain".to_owned(), "performance".to_owned());
+                capabilities.insert("realtime".to_owned(), "false".to_owned());
             }
             CollectionEvent::TriggerRequest(_) => {
-                capabilities.insert("domain".to_string(), "control".to_string());
-                capabilities.insert("realtime".to_string(), "true".to_string());
+                capabilities.insert("domain".to_owned(), "control".to_owned());
+                capabilities.insert("realtime".to_owned(), "true".to_owned());
             }
         }
 
@@ -1443,6 +1471,42 @@ impl LocalEventBus {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
     use crate::event::ProcessEvent;
@@ -1456,11 +1520,11 @@ mod tests {
         let mut bus = LocalEventBus::new(config);
 
         let subscription = EventSubscription {
-            subscriber_id: "test-subscriber".to_string(),
+            subscriber_id: "test-subscriber".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1470,21 +1534,21 @@ mod tests {
         let event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: Some(5678),
-            name: "test".to_string(),
-            executable_path: Some("/bin/test".to_string()),
-            command_line: vec!["test".to_string(), "command".to_string()],
+            name: "test".to_owned(),
+            executable_path: Some("/bin/test".to_owned()),
+            command_line: vec!["test".to_owned(), "command".to_owned()],
             start_time: Some(SystemTime::now()),
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
-            user_id: Some("1000".to_string()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
             platform_metadata: None,
         });
 
-        let correlation_metadata = CorrelationMetadata::new("test-correlation".to_string());
+        let correlation_metadata = CorrelationMetadata::new("test-correlation".to_owned());
         bus.publish(event.clone(), correlation_metadata)
             .await
             .unwrap();
@@ -1513,22 +1577,22 @@ mod tests {
 
         // Subscribe to process events with wildcard pattern
         let process_subscription = EventSubscription {
-            subscriber_id: "process-subscriber".to_string(),
+            subscriber_id: "process-subscriber".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
 
         // Subscribe to network events with wildcard pattern
         let network_subscription = EventSubscription {
-            subscriber_id: "network-subscriber".to_string(),
+            subscriber_id: "network-subscriber".to_owned(),
             capabilities: crate::source::SourceCaps::NETWORK,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.network.+".to_string()]),
+            topic_patterns: Some(vec!["events.network.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1540,22 +1604,22 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: Some(5678),
-            name: "test_process".to_string(),
-            executable_path: Some("/bin/test".to_string()),
-            command_line: vec!["test".to_string()],
+            name: "test_process".to_owned(),
+            executable_path: Some("/bin/test".to_owned()),
+            command_line: vec!["test".to_owned()],
             start_time: Some(SystemTime::now()),
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
-            user_id: Some("1000".to_string()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
             platform_metadata: None,
         });
 
-        let correlation_metadata = CorrelationMetadata::new("test-correlation".to_string())
-            .with_tag("event_type".to_string(), "process".to_string());
+        let correlation_metadata = CorrelationMetadata::new("test-correlation".to_owned())
+            .with_tag("event_type".to_owned(), "process".to_owned());
         bus.publish(process_event.clone(), correlation_metadata)
             .await
             .unwrap();
@@ -1576,7 +1640,7 @@ mod tests {
                 .correlation_metadata
                 .correlation_tags
                 .get("event_type"),
-            Some(&"process".to_string())
+            Some(&"process".to_owned())
         );
 
         // Network subscriber should not receive the process event (verify topic isolation)
@@ -1690,21 +1754,21 @@ mod tests {
 
         // Subscribe to specific topic patterns
         let process_subscription = EventSubscription {
-            subscriber_id: "process-only".to_string(),
+            subscriber_id: "process-only".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
 
         let trigger_subscription = EventSubscription {
-            subscriber_id: "trigger-only".to_string(),
+            subscriber_id: "trigger-only".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["control.trigger.+".to_string()]),
+            topic_patterns: Some(vec!["control.trigger.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1716,7 +1780,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: None,
-            name: "test_process".to_string(),
+            name: "test_process".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -1732,22 +1796,22 @@ mod tests {
 
         // Publish a trigger request (should go to control.trigger.request topic)
         let trigger_event = CollectionEvent::TriggerRequest(crate::event::TriggerRequest {
-            trigger_id: "test-trigger".to_string(),
-            target_collector: "test-collector".to_string(),
+            trigger_id: "test-trigger".to_owned(),
+            target_collector: "test-collector".to_owned(),
             analysis_type: crate::event::AnalysisType::BinaryHash,
             priority: crate::event::TriggerPriority::Normal,
             target_pid: Some(1234),
             target_path: None,
-            correlation_id: "test-correlation".to_string(),
+            correlation_id: "test-correlation".to_owned(),
             metadata: HashMap::new(),
             timestamp: SystemTime::now(),
         });
 
         // Publish both events with correlation metadata
-        let process_correlation = CorrelationMetadata::new("process-correlation".to_string())
-            .with_tag("event_type".to_string(), "process".to_string());
-        let trigger_correlation = CorrelationMetadata::new("trigger-correlation".to_string())
-            .with_tag("event_type".to_string(), "trigger".to_string());
+        let process_correlation = CorrelationMetadata::new("process-correlation".to_owned())
+            .with_tag("event_type".to_owned(), "process".to_owned());
+        let trigger_correlation = CorrelationMetadata::new("trigger-correlation".to_owned())
+            .with_tag("event_type".to_owned(), "trigger".to_owned());
 
         bus.publish(process_event.clone(), process_correlation)
             .await
@@ -1763,7 +1827,7 @@ mod tests {
             .expect("process channel closed");
 
         assert!(matches!(
-            received_process.event,
+            &received_process.event,
             CollectionEvent::Process(_)
         ));
         assert_eq!(
@@ -1778,7 +1842,7 @@ mod tests {
             .expect("trigger channel closed");
 
         assert!(matches!(
-            received_trigger.event,
+            &received_trigger.event,
             CollectionEvent::TriggerRequest(_)
         ));
         assert_eq!(
@@ -1818,19 +1882,19 @@ mod tests {
 
         // Create a subscription with topic filtering
         let topic_filter = TopicFilter {
-            include_topics: vec!["events.process.lifecycle".to_string()],
-            exclude_topics: vec!["events.process.metadata".to_string()],
-            include_patterns: vec!["events.process.+".to_string()],
-            exclude_patterns: vec!["events.network.+".to_string()],
+            include_topics: vec!["events.process.lifecycle".to_owned()],
+            exclude_topics: vec!["events.process.metadata".to_owned()],
+            include_patterns: vec!["events.process.+".to_owned()],
+            exclude_patterns: vec!["events.network.+".to_owned()],
             priority_topics: HashMap::new(),
         };
 
         let subscription = EventSubscription {
-            subscriber_id: "filtered-subscriber".to_string(),
+            subscriber_id: "filtered-subscriber".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.#".to_string()]), // Subscribe to all events
+            topic_patterns: Some(vec!["events.#".to_owned()]), // Subscribe to all events
             enable_wildcards: true,
             topic_filter: Some(topic_filter),
         };
@@ -1841,7 +1905,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: None,
-            name: "test_process".to_string(),
+            name: "test_process".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -1856,7 +1920,7 @@ mod tests {
         });
 
         // This should be delivered (matches include_topics)
-        let correlation_metadata = CorrelationMetadata::new("test-1".to_string());
+        let correlation_metadata = CorrelationMetadata::new("test-1".to_owned());
         bus.publish(process_event.clone(), correlation_metadata)
             .await
             .unwrap();
@@ -1892,13 +1956,13 @@ mod tests {
 
         // Create a subscription with correlation filtering
         let correlation_filter = CorrelationFilter {
-            correlation_id: Some("target-correlation".to_string()),
+            correlation_id: Some("target-correlation".to_owned()),
             parent_correlation_id: None,
-            root_correlation_id: Some("root-workflow".to_string()),
-            workflow_stage: Some("analysis".to_string()),
+            root_correlation_id: Some("root-workflow".to_owned()),
+            workflow_stage: Some("analysis".to_owned()),
             correlation_tags: {
                 let mut tags = HashMap::new();
-                tags.insert("priority".to_string(), "high".to_string());
+                tags.insert("priority".to_owned(), "high".to_owned());
                 tags
             },
             process_ids: vec![],
@@ -1906,11 +1970,11 @@ mod tests {
         };
 
         let subscription = EventSubscription {
-            subscriber_id: "correlation-filtered-subscriber".to_string(),
+            subscriber_id: "correlation-filtered-subscriber".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: Some(correlation_filter),
-            topic_patterns: Some(vec!["events.#".to_string()]), // Subscribe to all events
+            topic_patterns: Some(vec!["events.#".to_owned()]), // Subscribe to all events
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1921,7 +1985,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: None,
-            name: "test_process".to_string(),
+            name: "test_process".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -1937,21 +2001,21 @@ mod tests {
 
         // Event that should match the correlation filter
         let matching_correlation = CorrelationMetadata::with_parent(
-            "target-correlation".to_string(),
-            "parent-id".to_string(),
-            "root-workflow".to_string(),
+            "target-correlation".to_owned(),
+            "parent-id".to_owned(),
+            "root-workflow".to_owned(),
         )
-        .with_stage("analysis".to_string())
-        .with_tag("priority".to_string(), "high".to_string());
+        .with_stage("analysis".to_owned())
+        .with_tag("priority".to_owned(), "high".to_owned());
 
         // Event that should NOT match the correlation filter (wrong correlation ID)
         let non_matching_correlation = CorrelationMetadata::with_parent(
-            "other-correlation".to_string(),
-            "parent-id".to_string(),
-            "root-workflow".to_string(),
+            "other-correlation".to_owned(),
+            "parent-id".to_owned(),
+            "root-workflow".to_owned(),
         )
-        .with_stage("analysis".to_string())
-        .with_tag("priority".to_string(), "high".to_string());
+        .with_stage("analysis".to_owned())
+        .with_tag("priority".to_owned(), "high".to_owned());
 
         // Publish matching event
         bus.publish(process_event.clone(), matching_correlation)
@@ -1974,7 +2038,7 @@ mod tests {
         );
         assert_eq!(
             received.correlation_metadata.workflow_stage,
-            Some("analysis".to_string())
+            Some("analysis".to_owned())
         );
 
         // Publish non-matching event
@@ -1999,11 +2063,11 @@ mod tests {
 
         // Subscribe to all events
         let subscription = EventSubscription {
-            subscriber_id: "hierarchy-tracker".to_string(),
+            subscriber_id: "hierarchy-tracker".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.#".to_string()]),
+            topic_patterns: Some(vec!["events.#".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -2013,7 +2077,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: None,
-            name: "test_process".to_string(),
+            name: "test_process".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -2028,31 +2092,31 @@ mod tests {
         });
 
         // Create a hierarchical correlation chain
-        let root_correlation = CorrelationMetadata::new("root-workflow".to_string())
-            .with_stage("initial_detection".to_string())
+        let root_correlation = CorrelationMetadata::new("root-workflow".to_owned())
+            .with_stage("initial_detection".to_owned())
             .with_sequence(1)
             .with_tag(
-                "workflow".to_string(),
-                "suspicious_process_analysis".to_string(),
+                "workflow".to_owned(),
+                "suspicious_process_analysis".to_owned(),
             );
 
         let child_correlation = CorrelationMetadata::with_parent(
-            "child-analysis".to_string(),
-            "root-workflow".to_string(),
-            "root-workflow".to_string(),
+            "child-analysis".to_owned(),
+            "root-workflow".to_owned(),
+            "root-workflow".to_owned(),
         )
-        .with_stage("binary_analysis".to_string())
+        .with_stage("binary_analysis".to_owned())
         .with_sequence(2)
-        .with_tag("analysis_type".to_string(), "yara_scan".to_string());
+        .with_tag("analysis_type".to_owned(), "yara_scan".to_owned());
 
         let grandchild_correlation = CorrelationMetadata::with_parent(
-            "grandchild-enrichment".to_string(),
-            "child-analysis".to_string(),
-            "root-workflow".to_string(),
+            "grandchild-enrichment".to_owned(),
+            "child-analysis".to_owned(),
+            "root-workflow".to_owned(),
         )
-        .with_stage("memory_analysis".to_string())
+        .with_stage("memory_analysis".to_owned())
         .with_sequence(3)
-        .with_tag("analysis_type".to_string(), "memory_dump".to_string());
+        .with_tag("analysis_type".to_owned(), "memory_dump".to_owned());
 
         // Publish events in hierarchical order
         bus.publish(process_event.clone(), root_correlation.clone())
@@ -2083,7 +2147,7 @@ mod tests {
         assert_eq!(root_event.correlation_metadata.sequence_number, 1);
         assert_eq!(
             root_event.correlation_metadata.workflow_stage,
-            Some("initial_detection".to_string())
+            Some("initial_detection".to_owned())
         );
 
         // Verify child event
@@ -2098,7 +2162,7 @@ mod tests {
         );
         assert_eq!(
             child_event.correlation_metadata.parent_correlation_id,
-            Some("root-workflow".to_string())
+            Some("root-workflow".to_owned())
         );
         assert_eq!(
             child_event.correlation_metadata.root_correlation_id,
@@ -2107,7 +2171,7 @@ mod tests {
         assert_eq!(child_event.correlation_metadata.sequence_number, 2);
         assert_eq!(
             child_event.correlation_metadata.workflow_stage,
-            Some("binary_analysis".to_string())
+            Some("binary_analysis".to_owned())
         );
 
         // Verify grandchild event
@@ -2122,7 +2186,7 @@ mod tests {
         );
         assert_eq!(
             grandchild_event.correlation_metadata.parent_correlation_id,
-            Some("child-analysis".to_string())
+            Some("child-analysis".to_owned())
         );
         assert_eq!(
             grandchild_event.correlation_metadata.root_correlation_id,
@@ -2131,7 +2195,7 @@ mod tests {
         assert_eq!(grandchild_event.correlation_metadata.sequence_number, 3);
         assert_eq!(
             grandchild_event.correlation_metadata.workflow_stage,
-            Some("memory_analysis".to_string())
+            Some("memory_analysis".to_owned())
         );
 
         bus.shutdown().await.unwrap();
@@ -2183,38 +2247,38 @@ mod tests {
 
         // Create enhanced event filter with daemoneye-eventbus support
         let eventbus_filters = EventBusFilters {
-            message_types: vec!["Event".to_string()],
+            message_types: vec!["Event".to_owned()],
             sequence_range: None,
             timestamp_range: None,
-            topic_domains: vec!["events".to_string()],
+            topic_domains: vec!["events".to_owned()],
             capability_filters: {
                 let mut filters = HashMap::new();
-                filters.insert("domain".to_string(), "process".to_string());
-                filters.insert("realtime".to_string(), "true".to_string());
+                filters.insert("domain".to_owned(), "process".to_owned());
+                filters.insert("realtime".to_owned(), "true".to_owned());
                 filters
             },
         };
 
         let event_filter = EventFilter {
-            event_types: vec!["process".to_string()],
+            event_types: vec!["process".to_owned()],
             pids: vec![1234, 5678],
             min_priority: Some(3),
             metadata_filters: {
                 let mut filters = HashMap::new();
-                filters.insert("name".to_string(), "test_process".to_string());
+                filters.insert("name".to_owned(), "test_process".to_owned());
                 filters
             },
             topic_filters: vec![],
-            source_collectors: vec!["procmond".to_string()],
+            source_collectors: vec!["procmond".to_owned()],
             eventbus_filters: Some(eventbus_filters),
         };
 
         let subscription = EventSubscription {
-            subscriber_id: "enhanced-filter-subscriber".to_string(),
+            subscriber_id: "enhanced-filter-subscriber".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: Some(event_filter),
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.#".to_string()]),
+            topic_patterns: Some(vec!["events.#".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -2225,14 +2289,14 @@ mod tests {
         let matching_process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234, // Matches PID filter
             ppid: None,
-            name: "test_process".to_string(), // Matches metadata filter
-            executable_path: Some("/bin/test".to_string()),
-            command_line: vec!["test".to_string()],
+            name: "test_process".to_owned(), // Matches metadata filter
+            executable_path: Some("/bin/test".to_owned()),
+            command_line: vec!["test".to_owned()],
             start_time: None,
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
-            user_id: Some("1000".to_string()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
@@ -2243,21 +2307,21 @@ mod tests {
         let non_matching_process_event = CollectionEvent::Process(ProcessEvent {
             pid: 9999, // Does NOT match PID filter
             ppid: None,
-            name: "test_process".to_string(),
-            executable_path: Some("/bin/test".to_string()),
-            command_line: vec!["test".to_string()],
+            name: "test_process".to_owned(),
+            executable_path: Some("/bin/test".to_owned()),
+            command_line: vec!["test".to_owned()],
             start_time: None,
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
-            user_id: Some("1000".to_string()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
             platform_metadata: None,
         });
 
-        let correlation_metadata = CorrelationMetadata::new("filter-test".to_string());
+        let correlation_metadata = CorrelationMetadata::new("filter-test".to_owned());
 
         // Publish matching event
         bus.publish(matching_process_event.clone(), correlation_metadata.clone())
@@ -2270,7 +2334,7 @@ mod tests {
             .expect("timeout waiting for matching event")
             .expect("channel closed");
 
-        assert!(matches!(received.event, CollectionEvent::Process(_)));
+        assert!(matches!(&received.event, CollectionEvent::Process(_)));
         assert_eq!(received.correlation_metadata.correlation_id, "filter-test");
 
         // Publish non-matching event
@@ -2300,26 +2364,26 @@ mod tests {
         let sequence_correlation = SequenceCorrelation {
             base_sequence: 100,
             window_size: 50,
-            group_id: "test-group".to_string(),
+            group_id: "test-group".to_owned(),
         };
 
         let topic_correlation = TopicCorrelation {
-            source_patterns: vec!["events.process.+".to_string()],
-            target_patterns: vec!["events.#".to_string()],
+            source_patterns: vec!["events.process.+".to_owned()],
+            target_patterns: vec!["events.#".to_owned()],
             correlation_keys: HashMap::new(),
         };
 
         let temporal_correlation = TemporalCorrelation {
             window_seconds: 60,
             max_events: Some(100),
-            trigger_conditions: vec!["high_priority".to_string()],
+            trigger_conditions: vec!["high_priority".to_owned()],
         };
 
         let cross_collector_correlation = CrossCollectorCorrelation {
-            source_collectors: vec!["procmond".to_string()],
-            target_collectors: vec!["procmond".to_string(), "netmond".to_string()],
+            source_collectors: vec!["procmond".to_owned()],
+            target_collectors: vec!["procmond".to_owned(), "netmond".to_owned()],
             correlation_metadata: HashMap::new(),
-            stage_progression: vec!["detection".to_string(), "analysis".to_string()],
+            stage_progression: vec!["detection".to_owned(), "analysis".to_owned()],
         };
 
         let eventbus_correlation = EventBusCorrelation {
@@ -2330,13 +2394,13 @@ mod tests {
         };
 
         let correlation_filter = CorrelationFilter {
-            correlation_id: Some("enhanced-correlation".to_string()),
+            correlation_id: Some("enhanced-correlation".to_owned()),
             parent_correlation_id: None,
-            root_correlation_id: Some("root-workflow".to_string()),
-            workflow_stage: Some("analysis".to_string()),
+            root_correlation_id: Some("root-workflow".to_owned()),
+            workflow_stage: Some("analysis".to_owned()),
             correlation_tags: {
                 let mut tags = HashMap::new();
-                tags.insert("priority".to_string(), "high".to_string());
+                tags.insert("priority".to_owned(), "high".to_owned());
                 tags
             },
             process_ids: vec![],
@@ -2344,11 +2408,11 @@ mod tests {
         };
 
         let subscription = EventSubscription {
-            subscriber_id: "enhanced-correlation-subscriber".to_string(),
+            subscriber_id: "enhanced-correlation-subscriber".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: Some(correlation_filter),
-            topic_patterns: Some(vec!["events.#".to_string()]),
+            topic_patterns: Some(vec!["events.#".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -2358,7 +2422,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: None,
-            name: "test_process".to_string(),
+            name: "test_process".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -2374,38 +2438,38 @@ mod tests {
 
         // Create correlation metadata that should match the enhanced filters
         let collector_coordination = CollectorCoordination {
-            initiator_collector: "procmond".to_string(),
-            target_collectors: vec!["procmond".to_string(), "netmond".to_string()],
-            workflow_id: "test-workflow".to_string(),
-            coordination_stage: "analysis".to_string(),
+            initiator_collector: "procmond".to_owned(),
+            target_collectors: vec!["procmond".to_owned(), "netmond".to_owned()],
+            workflow_id: "test-workflow".to_owned(),
+            coordination_stage: "analysis".to_owned(),
             coordination_data: HashMap::new(),
         };
 
         let eventbus_metadata = EventBusMetadata {
-            broker_id: Some("test-broker".to_string()),
-            routing_path: vec!["events.process.new".to_string()],
+            broker_id: Some("test-broker".to_owned()),
+            routing_path: vec!["events.process.new".to_owned()],
             delivery_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
             delivery_tracking: HashMap::new(),
             topic_chains: vec![TopicChain {
-                source_topic: "events.process.new".to_string(),
-                target_topic: "events.process.analysis".to_string(),
-                chain_id: "test-chain".to_string(),
+                source_topic: "events.process.new".to_owned(),
+                target_topic: "events.process.analysis".to_owned(),
+                chain_id: "test-chain".to_owned(),
                 chain_sequence: 125, // Within sequence window (100-150)
             }],
             collector_coordination: Some(collector_coordination),
         };
 
         let matching_correlation = CorrelationMetadata::with_parent(
-            "enhanced-correlation".to_string(),
-            "parent-id".to_string(),
-            "root-workflow".to_string(),
+            "enhanced-correlation".to_owned(),
+            "parent-id".to_owned(),
+            "root-workflow".to_owned(),
         )
-        .with_stage("analysis".to_string())
+        .with_stage("analysis".to_owned())
         .with_sequence(125) // Within sequence window
-        .with_tag("priority".to_string(), "high".to_string())
+        .with_tag("priority".to_owned(), "high".to_owned())
         .with_eventbus_metadata(eventbus_metadata);
 
         // Publish matching event
@@ -2431,13 +2495,13 @@ mod tests {
 
         // Create correlation metadata that should NOT match (sequence out of range)
         let non_matching_correlation = CorrelationMetadata::with_parent(
-            "enhanced-correlation".to_string(),
-            "parent-id".to_string(),
-            "root-workflow".to_string(),
+            "enhanced-correlation".to_owned(),
+            "parent-id".to_owned(),
+            "root-workflow".to_owned(),
         )
-        .with_stage("analysis".to_string())
+        .with_stage("analysis".to_owned())
         .with_sequence(200) // Outside sequence window (100-150)
-        .with_tag("priority".to_string(), "high".to_string());
+        .with_tag("priority".to_owned(), "high".to_owned());
 
         // Publish non-matching event
         bus.publish(process_event.clone(), non_matching_correlation)
@@ -2460,11 +2524,11 @@ mod tests {
         let mut bus = LocalEventBus::new(config);
 
         let subscription = EventSubscription {
-            subscriber_id: "tracking-subscriber".to_string(),
+            subscriber_id: "tracking-subscriber".to_owned(),
             capabilities: crate::source::SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.#".to_string()]),
+            topic_patterns: Some(vec!["events.#".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -2474,7 +2538,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: None,
-            name: "test_process".to_string(),
+            name: "test_process".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -2489,17 +2553,17 @@ mod tests {
         });
 
         // Create correlation metadata with topic chains and delivery tracking
-        let mut correlation_metadata = CorrelationMetadata::new("tracking-test".to_string())
-            .with_stage("initial_detection".to_string())
+        let mut correlation_metadata = CorrelationMetadata::new("tracking-test".to_owned())
+            .with_stage("initial_detection".to_owned())
             .with_sequence(1)
             .add_topic_chain(
-                "events.process.new".to_string(),
-                "events.process.analysis".to_string(),
-                "chain-1".to_string(),
+                "events.process.new".to_owned(),
+                "events.process.analysis".to_owned(),
+                "chain-1".to_owned(),
             );
 
         // Track delivery
-        correlation_metadata.track_delivery("tracking-subscriber".to_string(), true, None);
+        correlation_metadata.track_delivery("tracking-subscriber".to_owned(), true, None);
 
         bus.publish(process_event.clone(), correlation_metadata.clone())
             .await
@@ -2518,12 +2582,16 @@ mod tests {
         assert_eq!(received.correlation_metadata.sequence_number, 1);
         assert_eq!(
             received.correlation_metadata.workflow_stage,
-            Some("initial_detection".to_string())
+            Some("initial_detection".to_owned())
         );
 
         // Verify eventbus metadata was created
         assert!(received.correlation_metadata.eventbus_metadata.is_some());
-        let eventbus_metadata = received.correlation_metadata.eventbus_metadata.unwrap();
+        let eventbus_metadata = received
+            .correlation_metadata
+            .eventbus_metadata
+            .clone()
+            .unwrap();
 
         // Verify topic chains
         assert_eq!(eventbus_metadata.topic_chains.len(), 1);

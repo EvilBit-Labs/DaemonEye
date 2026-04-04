@@ -16,9 +16,9 @@ This guide provides comprehensive installation instructions for DaemonEye across
 
 **Operating System**:
 
-- Linux: Kernel 3.10+ (Ubuntu 16.04+, RHEL 7.6+, Debian 9+)
-- macOS: 10.14+ (Mojave or later)
-- Windows: Windows 10+ or Windows Server 2016+
+- Linux: Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Debian 11+
+- macOS: 14.0+ (Sonoma or later)
+- Windows: Windows 10+, Server 2019+
 
 **Hardware**:
 
@@ -62,18 +62,18 @@ This guide provides comprehensive installation instructions for DaemonEye across
 
 ```bash
 # Linux x86_64
-wget https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-linux-x86_64.tar.gz
+wget https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/daemoneye-linux-x86_64.tar.gz
 tar -xzf daemoneye-linux-x86_64.tar.gz
 
 # Linux ARM64
-wget https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-linux-aarch64.tar.gz
+wget https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/daemoneye-linux-aarch64.tar.gz
 tar -xzf daemoneye-linux-aarch64.tar.gz
 
 # macOS x86_64
-curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-macos-x86_64.tar.gz | tar -xz
+curl -L https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/daemoneye-macos-x86_64.tar.gz | tar -xz
 
 # macOS ARM64 (Apple Silicon)
-curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-macos-aarch64.tar.gz | tar -xz
+curl -L https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/daemoneye-macos-aarch64.tar.gz | tar -xz
 
 # Windows x86_64
 # Download from GitHub releases and extract
@@ -101,77 +101,18 @@ sudo chown -R $USER:$USER /var/log/daemoneye
 # Add to PATH environment variable
 ```
 
-### Method 2: Package Managers
+### Method 2: Package Managers *(Planned)*
 
-**Homebrew (macOS)**:
+> **Status: Not yet available.** Package manager support (Homebrew, APT, YUM/DNF, Chocolatey) is under development and will be available in a future release.
 
-```bash
-# Add DaemonEye tap
-brew tap daemoneye/daemoneye
+For now, use one of the following installation methods:
 
-# Install DaemonEye
-brew install daemoneye
+- **Pre-built Binaries** (Method 1) - Recommended for most users
+- **Build from Source** (Method 3) - For developers and advanced users
 
-# Start service
-brew services start daemoneye
-```
+### Method 3: Build from Source
 
-**APT (Ubuntu/Debian)**:
-
-```bash
-# Add repository key
-wget -qO - https://packages.daemoneye.com/apt/key.gpg | sudo apt-key add -
-
-# Add repository
-echo "deb https://packages.daemoneye.com/apt stable main" | sudo tee /etc/apt/sources.list.d/daemoneye.list
-
-# Update package list
-sudo apt update
-
-# Install DaemonEye
-sudo apt install daemoneye
-
-# Start service
-sudo systemctl start daemoneye
-sudo systemctl enable daemoneye
-```
-
-**YUM/DNF (RHEL/CentOS/Fedora)**:
-
-```bash
-# Add repository
-sudo tee /etc/yum.repos.d/daemoneye.repo << 'EOF'
-[daemoneye]
-name=DaemonEye
-baseurl=https://packages.daemoneye.com/yum/stable/
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.daemoneye.com/apt/key.gpg
-EOF
-
-# Install DaemonEye
-sudo yum install daemoneye  # RHEL/CentOS
-# or
-sudo dnf install daemoneye  # Fedora
-
-# Start service
-sudo systemctl start daemoneye
-sudo systemctl enable daemoneye
-```
-
-**Chocolatey (Windows)**:
-
-```powershell
-# Install DaemonEye
-choco install daemoneye
-
-# Start service
-Start-Service DaemonEye
-```
-
-### Method 3: From Source
-
-**Install Rust** (1.87+):
+**Install Rust** (1.91+):
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -183,8 +124,8 @@ rustup update
 
 ```bash
 # Clone repository
-git clone https://github.com/daemoneye/daemoneye.git
-cd daemoneye
+git clone https://github.com/EvilBit-Labs/DaemonEye.git
+cd DaemonEye
 
 # Build in release mode
 cargo build --release
@@ -268,90 +209,123 @@ git push --tags
 
 ### Linux Installation
 
-**Ubuntu/Debian**:
+**Ubuntu/Debian - Build from Source**:
 
 ```bash
 # Update system
 sudo apt update && sudo apt upgrade -y
 
 # Install dependencies
-sudo apt install -y ca-certificates curl wget gnupg lsb-release
+sudo apt install -y ca-certificates curl wget build-essential
 
-# Add DaemonEye repository
-wget -qO - https://packages.daemoneye.com/apt/key.gpg | sudo apt-key add -
-echo "deb https://packages.daemoneye.com/apt stable main" | sudo tee /etc/apt/sources.list.d/daemoneye.list
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 
-# Install DaemonEye
-sudo apt update
-sudo apt install daemoneye
+# Clone and build
+git clone https://github.com/EvilBit-Labs/DaemonEye.git
+cd DaemonEye
+cargo build --release
+
+# Install binaries
+sudo cp target/release/procmond target/release/daemoneye-agent target/release/daemoneye-cli /usr/local/bin/
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
+
+# Create system directories
+sudo mkdir -p /etc/daemoneye /var/lib/daemoneye /var/log/daemoneye
+sudo chown -R $USER:$USER /etc/daemoneye /var/lib/daemoneye /var/log/daemoneye
 
 # Configure service
 sudo systemctl enable daemoneye
 sudo systemctl start daemoneye
 ```
 
-**RHEL/CentOS**:
+**RHEL/CentOS - Build from Source**:
 
 ```bash
 # Update system
 sudo yum update -y
 
 # Install dependencies
-sudo yum install -y ca-certificates curl wget
+sudo yum install -y ca-certificates curl wget gcc g++ make
 
-# Add DaemonEye repository
-sudo tee /etc/yum.repos.d/daemoneye.repo << 'EOF'
-[daemoneye]
-name=DaemonEye
-baseurl=https://packages.daemoneye.com/yum/stable/
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.daemoneye.com/apt/key.gpg
-EOF
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 
-# Install DaemonEye
-sudo yum install daemoneye
+# Clone and build
+git clone https://github.com/EvilBit-Labs/DaemonEye.git
+cd DaemonEye
+cargo build --release
+
+# Install binaries
+sudo cp target/release/procmond target/release/daemoneye-agent target/release/daemoneye-cli /usr/local/bin/
+sudo chmod +x /usr/local/bin/procmond /usr/local/bin/daemoneye-agent /usr/local/bin/daemoneye-cli
+
+# Create system directories
+sudo mkdir -p /etc/daemoneye /var/lib/daemoneye /var/log/daemoneye
+sudo chown -R $USER:$USER /etc/daemoneye /var/lib/daemoneye /var/log/daemoneye
 
 # Configure service
 sudo systemctl enable daemoneye
 sudo systemctl start daemoneye
 ```
 
-**Arch Linux**:
+**Arch Linux - Build from Source**:
 
 ```bash
-# Install from AUR
-yay -S daemoneye
+# Install dependencies
+sudo pacman -S --needed base-devel rust
 
-# Or build from source
-git clone https://aur.archlinux.org/daemoneye.git
-cd daemoneye
-makepkg -si
+# Clone and build
+git clone https://github.com/EvilBit-Labs/DaemonEye.git
+cd DaemonEye
+cargo build --release
+
+# Install binaries
+sudo install -Dm755 target/release/procmond /usr/local/bin/procmond
+sudo install -Dm755 target/release/daemoneye-agent /usr/local/bin/daemoneye-agent
+sudo install -Dm755 target/release/daemoneye-cli /usr/local/bin/daemoneye-cli
+
+# Create system directories
+sudo mkdir -p /etc/daemoneye /var/lib/daemoneye /var/log/daemoneye
 ```
 
 ### macOS Installation
 
-**Using Homebrew**:
+**Using Homebrew** *(Planned)*:
+
+Homebrew package support for DaemonEye is coming soon. For now, please use the build from source or manual installation methods below.
+
+**Build from Source**:
 
 ```bash
-# Install Homebrew if not already installed
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# Clone the repository
+git clone https://github.com/EvilBit-Labs/DaemonEye.git
+cd DaemonEye
 
-# Add DaemonEye tap
-brew tap daemoneye/daemoneye
+# Install Rust if not already installed
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
 
-# Install DaemonEye
-brew install daemoneye
+# Build DaemonEye
+cargo build --release
 
-# Start service
-brew services start daemoneye
+# Install binaries (macOS-compatible: mkdir -p + install -m 755)
+sudo mkdir -p /usr/local/bin
+sudo install -m 755 target/release/procmond /usr/local/bin/procmond
+sudo install -m 755 target/release/daemoneye-agent /usr/local/bin/daemoneye-agent
+sudo install -m 755 target/release/daemoneye-cli /usr/local/bin/daemoneye-cli
+
+# Create system directories
+sudo mkdir -p /etc/daemoneye /var/lib/daemoneye /var/log/daemoneye
 ```
 
 **Manual Installation**:
 
 ```bash
 # Download and extract
-curl -L https://github.com/daemoneye/daemoneye/releases/latest/download/daemoneye-macos-x86_64.tar.gz | tar -xz
+curl -L https://github.com/EvilBit-Labs/DaemonEye/releases/latest/download/daemoneye-macos-x86_64.tar.gz | tar -xz
 
 # Install to system directories
 sudo cp procmond daemoneye-agent daemoneye-cli /usr/local/bin/
@@ -370,27 +344,51 @@ sudo chown -R $(whoami):staff /var/log/daemoneye
 
 ### Windows Installation
 
-**Using Chocolatey**:
+**Using Chocolatey** *(Planned)*:
+
+Chocolatey package support for DaemonEye is coming soon. For now, please use the build from source or manual installation methods below.
+
+**Build from Source**:
 
 ```powershell
-# Install Chocolatey if not already installed
-Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+# Install Rust (from https://rustup.rs/)
+# Download and run rustup-init.exe, or use:
+# iwr https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe -OutFile rustup-init.exe
+# .\rustup-init.exe -y
 
-# Install DaemonEye
-choco install daemoneye
+# Clone the repository
+git clone https://github.com/EvilBit-Labs/DaemonEye.git
+cd DaemonEye
 
-# Start service
-Start-Service DaemonEye
+# Build DaemonEye
+cargo build --release
+
+# Create installation directory
+New-Item -ItemType Directory -Path "C:\Program Files\DaemonEye" -Force
+
+# Install binaries
+Copy-Item "target\release\procmond.exe" "C:\Program Files\DaemonEye\"
+Copy-Item "target\release\daemoneye-agent.exe" "C:\Program Files\DaemonEye\"
+Copy-Item "target\release\daemoneye-cli.exe" "C:\Program Files\DaemonEye\"
+
+# Add to PATH (run as Administrator)
+[Environment]::SetEnvironmentVariable("PATH", "$env:PATH;C:\Program Files\DaemonEye", [EnvironmentVariableTarget]::Machine)
+
+# Create data directories
+New-Item -ItemType Directory -Path "C:\ProgramData\DaemonEye" -Force
+New-Item -ItemType Directory -Path "C:\ProgramData\DaemonEye\data" -Force
+New-Item -ItemType Directory -Path "C:\ProgramData\DaemonEye\logs" -Force
 ```
 
 **Manual Installation**:
 
 ```powershell
 # Download from GitHub releases
+# https://github.com/EvilBit-Labs/DaemonEye/releases
 # Extract to C:\Program Files\DaemonEye\
 
-# Add to PATH
-$env:PATH += ";C:\Program Files\DaemonEye"
+# Add to PATH (run as Administrator)
+[Environment]::SetEnvironmentVariable("PATH", "$env:PATH;C:\Program Files\DaemonEye", [EnvironmentVariableTarget]::Machine)
 
 # Create data directories
 New-Item -ItemType Directory -Path "C:\ProgramData\DaemonEye" -Force

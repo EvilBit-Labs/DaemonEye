@@ -151,6 +151,7 @@ impl CorrelationTracker {
     }
 
     /// Get the current state of a workflow by correlation ID
+    #[allow(clippy::unused_async)]
     pub async fn get_workflow_state(&self, correlation_id: &str) -> Option<WorkflowState> {
         self.active_workflows
             .get(correlation_id)
@@ -193,7 +194,7 @@ impl CorrelationTracker {
                 "Topic exceeds maximum length",
             ));
         }
-        if let Some(stage) = &metadata.workflow_stage
+        if let Some(ref stage) = metadata.workflow_stage
             && stage.len() > MAX_STAGE_LENGTH
         {
             return Err(crate::error::EventBusError::broker(
@@ -246,7 +247,7 @@ impl CorrelationTracker {
             workflow.last_activity = now;
 
             // Track stage if present
-            if let Some(stage_name) = &metadata.workflow_stage {
+            if let Some(ref stage_name) = metadata.workflow_stage {
                 let stage = workflow
                     .stages
                     .entry(stage_name.clone())
@@ -295,7 +296,7 @@ impl CorrelationTracker {
             stats.total_events_tracked = stats.total_events_tracked.saturating_add(1);
             stats.active_workflows = self.active_workflows.len();
             stats.history_size = history.len();
-        }
+        };
 
         Ok(())
     }
@@ -346,23 +347,24 @@ impl CorrelationTracker {
     /// Returns all events that share the given root correlation ID,
     /// ordered by the time they were received.
     pub async fn get_workflow_timeline(&self, root_correlation_id: &str) -> WorkflowTimeline {
-        let history = self.event_history.read().await;
-
-        let events: Vec<TimelineEvent> = history
-            .iter()
-            .filter(|event| event.root_correlation_id == root_correlation_id)
-            .map(|event| TimelineEvent {
-                stage: event.metadata.workflow_stage.clone(),
-                source: event
-                    .metadata
-                    .correlation_tags
-                    .get("source_process")
-                    .cloned(),
-                topic: event.topic.clone(),
-                correlation_id: event.correlation_id.clone(),
-                timestamp: event.wall_clock,
-            })
-            .collect();
+        let events: Vec<TimelineEvent> = {
+            let history = self.event_history.read().await;
+            history
+                .iter()
+                .filter(|event| event.root_correlation_id == root_correlation_id)
+                .map(|event| TimelineEvent {
+                    stage: event.metadata.workflow_stage.clone(),
+                    source: event
+                        .metadata
+                        .correlation_tags
+                        .get("source_process")
+                        .cloned(),
+                    topic: event.topic.clone(),
+                    correlation_id: event.correlation_id.clone(),
+                    timestamp: event.wall_clock,
+                })
+                .collect()
+        };
 
         WorkflowTimeline {
             root_correlation_id: root_correlation_id.to_owned(),

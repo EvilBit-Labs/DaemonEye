@@ -3,6 +3,11 @@
 //! This module provides load balancing algorithms, failover detection, and
 //! automatic task redistribution for collector instances.
 
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::as_conversions)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::indexing_slicing)]
+
 use crate::{
     capability_router::{CollectorCapability, CollectorHealthStatus},
     source::SourceCaps,
@@ -19,6 +24,7 @@ use tracing::{info, warn};
 
 /// Load balancing strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum LoadBalancingStrategy {
     /// Round-robin distribution
     RoundRobin,
@@ -235,8 +241,7 @@ impl LoadBalancer {
         for collector in collectors {
             let load = loads
                 .get(&collector.collector_id)
-                .map(|l| l.current_tasks)
-                .unwrap_or(0);
+                .map_or(0, |l| l.current_tasks);
 
             if load < min_load {
                 min_load = load;
@@ -260,8 +265,8 @@ impl LoadBalancer {
 
         for collector in collectors {
             let load = loads.get(&collector.collector_id);
-            let weight = load.map(|l| l.weight).unwrap_or(1.0);
-            let current_tasks = load.map(|l| l.current_tasks).unwrap_or(0);
+            let weight = load.map_or(1.0, |l| l.weight);
+            let current_tasks = load.map_or(0, |l| l.current_tasks);
 
             // Score = weight / (current_tasks + 1)
             let score = weight / (current_tasks + 1) as f64;
@@ -276,6 +281,7 @@ impl LoadBalancer {
     }
 
     /// Random selection
+    #[allow(clippy::unused_async)]
     async fn select_random(&self, collectors: &[&CollectorCapability]) -> Result<String> {
         use rand::RngExt;
         let mut rng = rand::rng();
@@ -363,7 +369,7 @@ impl LoadBalancer {
     /// # Invariant
     ///
     /// The selected failover collector is guaranteed to be different from the failed collector.
-    /// The failed collector is pre-filtered from available_collectors before selection.
+    /// The failed collector is pre-filtered from `available_collectors` before selection.
     pub async fn trigger_failover(
         &self,
         failed_collector_id: &str,
@@ -401,32 +407,31 @@ impl LoadBalancer {
             let loads = self.loads.read().await;
             loads
                 .get(failed_collector_id)
-                .map(|l| l.current_tasks)
-                .unwrap_or(0)
+                .map_or(0, |l| l.current_tasks)
         };
 
         // Create failover event
         let event = FailoverEvent {
             event_id: uuid::Uuid::new_v4().to_string(),
-            failed_collector_id: failed_collector_id.to_string(),
+            failed_collector_id: failed_collector_id.to_owned(),
             failover_collector_id: failover_collector_id.clone(),
             timestamp: SystemTime::now(),
-            reason: "Consecutive failures exceeded threshold".to_string(),
+            reason: "Consecutive failures exceeded threshold".to_owned(),
             tasks_redistributed: tasks_to_redistribute,
         };
 
         // Record failover event
         {
             let mut events = self.failover_events.write().await;
-            events.push(event.clone());
-        }
+            events.push(event.clone())
+        };
 
         // Update statistics
         {
             let mut stats = self.stats.write().await;
             stats.total_failovers += 1;
-            stats.total_tasks_redistributed += tasks_to_redistribute as u64;
-        }
+            stats.total_tasks_redistributed += tasks_to_redistribute as u64
+        };
 
         // Reset failed collector's task count
         {
@@ -477,6 +482,42 @@ impl LoadBalancer {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
@@ -491,15 +532,15 @@ mod tests {
 
         // Register collectors
         balancer
-            .register_collector("collector-1".to_string(), 1.0)
+            .register_collector("collector-1".to_owned(), 1.0)
             .await
             .unwrap();
         balancer
-            .register_collector("collector-2".to_string(), 1.0)
+            .register_collector("collector-2".to_owned(), 1.0)
             .await
             .unwrap();
         balancer
-            .register_collector("collector-3".to_string(), 1.0)
+            .register_collector("collector-3".to_owned(), 1.0)
             .await
             .unwrap();
 
@@ -531,11 +572,11 @@ mod tests {
 
         // Register collectors
         balancer
-            .register_collector("collector-1".to_string(), 1.0)
+            .register_collector("collector-1".to_owned(), 1.0)
             .await
             .unwrap();
         balancer
-            .register_collector("collector-2".to_string(), 1.0)
+            .register_collector("collector-2".to_owned(), 1.0)
             .await
             .unwrap();
 
@@ -565,11 +606,11 @@ mod tests {
         let balancer = LoadBalancer::new(config);
 
         balancer
-            .register_collector("collector-1".to_string(), 1.0)
+            .register_collector("collector-1".to_owned(), 1.0)
             .await
             .unwrap();
         balancer
-            .register_collector("collector-2".to_string(), 1.0)
+            .register_collector("collector-2".to_owned(), 1.0)
             .await
             .unwrap();
 
@@ -601,9 +642,9 @@ mod tests {
         (1..=count)
             .map(|i| CollectorCapability {
                 collector_id: format!("collector-{}", i),
-                collector_type: "procmond".to_string(),
+                collector_type: "procmond".to_owned(),
                 capabilities: SourceCaps::PROCESS,
-                topic_patterns: vec!["control.collector.process".to_string()],
+                topic_patterns: vec!["control.collector.process".to_owned()],
                 health_status: CollectorHealthStatus::Healthy,
                 last_heartbeat: SystemTime::now(),
                 metadata: HashMap::new(),

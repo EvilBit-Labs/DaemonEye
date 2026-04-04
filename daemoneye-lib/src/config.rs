@@ -661,21 +661,119 @@ impl ConfigLoader {
 
     /// Validate the final configuration.
     fn validate_config(config: &Config) -> Result<(), ConfigError> {
-        if config.app.scan_interval_ms == 0 {
+        // --- Numeric range validation ---
+
+        const SCAN_INTERVAL_MIN: u64 = 100;
+        const SCAN_INTERVAL_MAX: u64 = 3_600_000;
+        const BATCH_SIZE_MIN: usize = 1;
+        const BATCH_SIZE_MAX: usize = 10_000;
+        const RETENTION_DAYS_MIN: u32 = 1;
+        const RETENTION_DAYS_MAX: u32 = 3_650;
+
+        if config.app.scan_interval_ms < SCAN_INTERVAL_MIN
+            || config.app.scan_interval_ms > SCAN_INTERVAL_MAX
+        {
             return Err(ConfigError::ValidationError {
-                message: "scan_interval_ms must be greater than 0".to_owned(),
+                message: format!(
+                    "scan_interval_ms must be between {SCAN_INTERVAL_MIN} and {SCAN_INTERVAL_MAX}, got {}",
+                    config.app.scan_interval_ms
+                ),
             });
         }
 
-        if config.app.batch_size == 0 {
+        if config.app.batch_size < BATCH_SIZE_MIN || config.app.batch_size > BATCH_SIZE_MAX {
             return Err(ConfigError::ValidationError {
-                message: "batch_size must be greater than 0".to_owned(),
+                message: format!(
+                    "batch_size must be between {BATCH_SIZE_MIN} and {BATCH_SIZE_MAX}, got {}",
+                    config.app.batch_size
+                ),
             });
         }
 
-        if config.database.retention_days == 0 {
+        if config.database.retention_days < RETENTION_DAYS_MIN
+            || config.database.retention_days > RETENTION_DAYS_MAX
+        {
             return Err(ConfigError::ValidationError {
-                message: "retention_days must be greater than 0".to_owned(),
+                message: format!(
+                    "retention_days must be between {RETENTION_DAYS_MIN} and {RETENTION_DAYS_MAX}, got {}",
+                    config.database.retention_days
+                ),
+            });
+        }
+
+        // --- Path traversal validation ---
+
+        Self::validate_path_no_traversal(&config.database.path, "database.path")?;
+        Self::validate_path_no_traversal(
+            &config.broker.config_directory,
+            "broker.config_directory",
+        )?;
+
+        if let Some(ref log_file) = config.logging.file {
+            Self::validate_path_no_traversal(log_file, "logging.file")?;
+        }
+
+        for (collector_type, binary_path) in &config.broker.collector_binaries {
+            Self::validate_path_no_traversal(
+                binary_path,
+                &format!("broker.collector_binaries[{collector_type}]"),
+            )?;
+        }
+
+        // --- Socket path validation ---
+
+        Self::validate_socket_path(&config.broker.socket_path)?;
+
+        Ok(())
+    }
+
+    /// Validate that a path does not contain `..` components (directory traversal).
+    fn validate_path_no_traversal(path: &std::path::Path, field: &str) -> Result<(), ConfigError> {
+        use std::path::Component;
+        for component in path.components() {
+            if component == Component::ParentDir {
+                return Err(ConfigError::ValidationError {
+                    message: format!(
+                        "Path field '{field}' must not contain '..' (directory traversal): {}",
+                        path.display()
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate a socket path for null bytes, directory traversal, and OS length limits.
+    ///
+    /// Unix domain socket paths are limited to 108 bytes on Linux and macOS (the `sun_path`
+    /// field in `sockaddr_un` is 108 bytes including the NUL terminator).
+    fn validate_socket_path(socket_path: &str) -> Result<(), ConfigError> {
+        // 108-byte sun_path limit minus 1 for the NUL terminator.
+        const SOCKET_PATH_MAX_LEN: usize = 107;
+
+        if socket_path.contains('\0') {
+            return Err(ConfigError::ValidationError {
+                message: "broker.socket_path must not contain null bytes".to_owned(),
+            });
+        }
+
+        // Reject directory-traversal components.
+        for component in std::path::Path::new(socket_path).components() {
+            if component == std::path::Component::ParentDir {
+                return Err(ConfigError::ValidationError {
+                    message: format!(
+                        "broker.socket_path must not contain '..' (directory traversal): {socket_path}"
+                    ),
+                });
+            }
+        }
+
+        if socket_path.len() > SOCKET_PATH_MAX_LEN {
+            return Err(ConfigError::ValidationError {
+                message: format!(
+                    "broker.socket_path must not exceed {SOCKET_PATH_MAX_LEN} bytes (OS sun_path limit), got {}",
+                    socket_path.len()
+                ),
             });
         }
 
@@ -725,6 +823,281 @@ mod tests {
         let _loader = ConfigLoader::new("procmond");
         let result = ConfigLoader::validate_config(&config);
         assert!(result.is_ok());
+    }
+
+    // --- Numeric range validation tests ---
+
+    #[test]
+    fn test_validate_scan_interval_below_minimum() {
+        let mut config = Config::default();
+        config.app.scan_interval_ms = 99;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("scan_interval_ms"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_scan_interval_at_minimum() {
+        let mut config = Config::default();
+        config.app.scan_interval_ms = 100;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_scan_interval_above_maximum() {
+        let mut config = Config::default();
+        config.app.scan_interval_ms = 3_600_001;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("scan_interval_ms"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_scan_interval_at_maximum() {
+        let mut config = Config::default();
+        config.app.scan_interval_ms = 3_600_000;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_batch_size_below_minimum() {
+        let mut config = Config::default();
+        config.app.batch_size = 0;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("batch_size"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_batch_size_above_maximum() {
+        let mut config = Config::default();
+        config.app.batch_size = 10_001;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("batch_size"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_batch_size_at_boundaries() {
+        let mut config = Config::default();
+        config.app.batch_size = 1;
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+        config.app.batch_size = 10_000;
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_retention_days_below_minimum() {
+        let mut config = Config::default();
+        config.database.retention_days = 0;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("retention_days"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_retention_days_above_maximum() {
+        let mut config = Config::default();
+        config.database.retention_days = 3_651;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("retention_days"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_retention_days_at_boundaries() {
+        let mut config = Config::default();
+        config.database.retention_days = 1;
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+        config.database.retention_days = 3_650;
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+    }
+
+    // --- Path traversal validation tests ---
+
+    #[test]
+    fn test_validate_database_path_traversal() {
+        let mut config = Config::default();
+        config.database.path = PathBuf::from("/var/lib/../etc/daemoneye/processes.db");
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("database.path"),
+            "error should mention field: {msg}"
+        );
+        assert!(msg.contains(".."), "error should mention '..': {msg}");
+    }
+
+    #[test]
+    fn test_validate_database_path_valid() {
+        let mut config = Config::default();
+        config.database.path = PathBuf::from("/var/lib/daemoneye/processes.db");
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_logging_file_traversal() {
+        let mut config = Config::default();
+        config.logging.file = Some(PathBuf::from("/var/log/../../../etc/passwd"));
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("logging.file"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_logging_file_none_is_ok() {
+        let mut config = Config::default();
+        config.logging.file = None;
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_logging_file_valid() {
+        let mut config = Config::default();
+        config.logging.file = Some(PathBuf::from("/var/log/daemoneye/agent.log"));
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_broker_config_directory_traversal() {
+        let mut config = Config::default();
+        config.broker.config_directory = PathBuf::from("/etc/daemoneye/../../../tmp/evil");
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("broker.config_directory"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_collector_binary_path_traversal() {
+        let mut config = Config::default();
+        config.broker.collector_binaries.insert(
+            "procmond".to_owned(),
+            PathBuf::from("/usr/bin/../../../etc/passwd"),
+        );
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("broker.collector_binaries[procmond]"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_collector_binary_path_valid() {
+        let mut config = Config::default();
+        config
+            .broker
+            .collector_binaries
+            .insert("procmond".to_owned(), PathBuf::from("/usr/bin/procmond"));
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+    }
+
+    // --- Socket path validation tests ---
+
+    #[test]
+    fn test_validate_socket_path_null_byte() {
+        let result = ConfigLoader::validate_socket_path("/tmp/test\0.sock");
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("null bytes"),
+            "error should mention null bytes: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_socket_path_too_long() {
+        // 108 bytes total — one over the 107-byte limit.
+        let mut long_path = String::from("/tmp/");
+        long_path.push_str(&"a".repeat(103));
+        assert_eq!(
+            long_path.len(),
+            108,
+            "path must be 108 bytes to exceed the 107-byte limit"
+        );
+        let result = ConfigLoader::validate_socket_path(&long_path);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("107"),
+            "error should mention max length: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_socket_path_exactly_at_limit() {
+        // 107 bytes exactly — should pass (the OS limit is 108 bytes including NUL).
+        let mut path = String::from("/tmp/");
+        path.push_str(&"a".repeat(102));
+        assert_eq!(path.len(), 107, "path must be exactly 107 bytes");
+        let result = ConfigLoader::validate_socket_path(&path);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_socket_path_traversal() {
+        let result = ConfigLoader::validate_socket_path("/tmp/../etc/evil.sock");
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("directory traversal"),
+            "error should mention directory traversal: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_socket_path_valid() {
+        let result = ConfigLoader::validate_socket_path("/tmp/daemoneye-eventbus.sock");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_broker_socket_path_via_config() {
+        let mut config = Config::default();
+        config.broker.socket_path = "/tmp/test\0malicious.sock".to_owned();
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("null bytes"),
+            "error should mention null bytes: {msg}"
+        );
     }
 
     #[test]

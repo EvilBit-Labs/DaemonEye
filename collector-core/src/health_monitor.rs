@@ -6,6 +6,8 @@
 //! Publishing health status to external systems should be handled by the consumer (e.g., daemoneye-agent)
 //! to avoid circular dependencies.
 
+#![allow(clippy::significant_drop_tightening)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,10 +15,11 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
-use tokio::time::{Interval, interval};
+use tokio::time::interval;
 
 /// Overall health status values used by the health monitor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum HealthStatus {
     /// Component/system is healthy
     Healthy,
@@ -48,7 +51,7 @@ pub struct ComponentHealthStatus {
 impl ComponentHealthStatus {
     fn new(name: &str, status: HealthStatus, message: Option<String>) -> Self {
         Self {
-            name: name.to_string(),
+            name: name.to_owned(),
             status,
             last_check: SystemTime::now(),
             check_count: 0,
@@ -71,7 +74,7 @@ pub struct HealthMonitor {
 }
 
 impl HealthMonitor {
-    /// Create a new HealthMonitor.
+    /// Create a new `HealthMonitor`.
     #[must_use]
     pub fn new(collector_id: String, health_check_interval: Duration) -> Self {
         Self {
@@ -90,7 +93,7 @@ impl HealthMonitor {
         if matches!(initial, HealthStatus::Degraded | HealthStatus::Unhealthy) {
             entry.failure_count = 1;
         }
-        components.insert(name.to_string(), entry);
+        components.insert(name.to_owned(), entry);
     }
 
     /// Update a component health snapshot.
@@ -102,7 +105,7 @@ impl HealthMonitor {
     ) {
         let mut components = self.components.lock().await;
         let entry = components
-            .entry(name.to_string())
+            .entry(name.to_owned())
             .or_insert_with(|| ComponentHealthStatus::new(name, HealthStatus::Unknown, None));
         entry.status = status;
         entry.message = message;
@@ -132,6 +135,7 @@ impl HealthMonitor {
     }
 
     /// Start periodic aggregation and optional publishing.
+    #[allow(clippy::unused_async)]
     pub async fn start_monitoring(&self) -> JoinHandle<()> {
         let collector_id = self.collector_id.clone();
         let components = Arc::clone(&self.components);
@@ -139,7 +143,7 @@ impl HealthMonitor {
         let interval_duration = self.health_check_interval;
 
         tokio::spawn(async move {
-            let mut ticker: Interval = interval(interval_duration);
+            let mut ticker = interval(interval_duration);
             // Avoid accumulating ticks if the task is delayed
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
@@ -158,8 +162,8 @@ impl HealthMonitor {
                 // Update cached overall
                 {
                     let mut guard = overall_status.write().await;
-                    *guard = agg;
-                }
+                    *guard = agg
+                };
 
                 // Lightweight diagnostic
                 tracing::trace!(collector_id = %collector_id, status = ?agg, "Aggregated collector health");

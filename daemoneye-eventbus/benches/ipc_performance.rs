@@ -1,3 +1,33 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::dbg_macro,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::arithmetic_side_effects,
+    clippy::integer_division,
+    clippy::modulo_arithmetic,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::let_underscore_must_use,
+    clippy::uninlined_format_args,
+    clippy::explicit_iter_loop,
+    clippy::used_underscore_binding,
+    clippy::str_to_string,
+    clippy::shadow_unrelated,
+    clippy::non_ascii_literal,
+    clippy::pattern_type_mismatch,
+    clippy::unseparated_literal_suffix,
+    clippy::redundant_clone,
+    clippy::doc_markdown,
+    clippy::clone_on_ref_ptr
+)]
 //! IPC performance benchmarks for high-load and low-latency scenarios
 //!
 //! These benchmarks measure:

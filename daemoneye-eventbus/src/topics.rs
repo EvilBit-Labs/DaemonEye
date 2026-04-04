@@ -1,4 +1,4 @@
-//! Complete topic hierarchy for DaemonEye EventBus
+//! Complete topic hierarchy for `DaemonEye` `EventBus`
 //!
 //! This module defines the complete topic hierarchy as designed in the architecture,
 //! including event topics, control topics, and health monitoring topics.
@@ -168,7 +168,7 @@ pub mod collector {
     /// assert_eq!(topic, "control.collector.task.procmond.procmond-1");
     /// ```
     pub fn task_topic(collector_type: &str, collector_id: &str) -> String {
-        format!("{}.{}.{}", TASK, collector_type, collector_id)
+        format!("{TASK}.{collector_type}.{collector_id}")
     }
 
     /// Build a collector-specific lifecycle topic for RPC operations
@@ -190,7 +190,7 @@ pub mod collector {
     /// assert_eq!(topic, "control.collector.procmond-1");
     /// ```
     pub fn lifecycle_topic(collector_id: &str) -> String {
-        format!("control.collector.{}", collector_id)
+        format!("control.collector.{collector_id}")
     }
 
     /// Build a collector-specific config topic for RPC operations
@@ -212,7 +212,7 @@ pub mod collector {
     /// assert_eq!(topic, "control.collector.config.procmond-1");
     /// ```
     pub fn config_topic(collector_id: &str) -> String {
-        format!("{}.{}", CONFIG, collector_id)
+        format!("{CONFIG}.{collector_id}")
     }
 }
 
@@ -271,7 +271,7 @@ pub mod health {
     /// assert_eq!(topic, "control.health.heartbeat.procmond-1");
     /// ```
     pub fn heartbeat_topic(collector_id: &str) -> String {
-        format!("{}.{}", HEARTBEAT, collector_id)
+        format!("{HEARTBEAT}.{collector_id}")
     }
 }
 
@@ -307,7 +307,7 @@ pub mod shutdown {
     /// assert_eq!(topic, "control.shutdown.procmond-1");
     /// ```
     pub fn shutdown_topic(collector_id: &str) -> String {
-        format!("{}.{}", SHUTDOWN, collector_id)
+        format!("{SHUTDOWN}.{collector_id}")
     }
 }
 
@@ -353,6 +353,9 @@ impl TopicHierarchy {
     }
 
     /// Initialize a topic registry with default access control
+    // Registration failures during initialization are intentionally ignored - each topic
+    // is registered on a best-effort basis; a duplicate or invalid topic does not abort setup.
+    #[allow(clippy::let_underscore_must_use)]
     pub fn initialize_registry() -> TopicRegistry {
         let mut registry = TopicRegistry::new();
 
@@ -496,7 +499,7 @@ pub struct TopicBuilder {
 
 impl TopicBuilder {
     /// Create a new topic builder
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             segments: Vec::new(),
         }
@@ -505,126 +508,145 @@ impl TopicBuilder {
     /// Start building an event topic
     pub fn events() -> Self {
         Self {
-            segments: vec!["events".to_string()],
+            segments: vec!["events".to_owned()],
         }
     }
 
     /// Start building a control topic
     pub fn control() -> Self {
         Self {
-            segments: vec!["control".to_string()],
+            segments: vec!["control".to_owned()],
         }
     }
 
     /// Add a process subdomain
+    #[must_use]
     pub fn process(mut self) -> Self {
-        self.segments.push("process".to_string());
+        self.segments.push("process".to_owned());
         self
     }
 
     /// Add a network subdomain
+    #[must_use]
     pub fn network(mut self) -> Self {
-        self.segments.push("network".to_string());
+        self.segments.push("network".to_owned());
         self
     }
 
     /// Add a filesystem subdomain
+    #[must_use]
     pub fn filesystem(mut self) -> Self {
-        self.segments.push("filesystem".to_string());
+        self.segments.push("filesystem".to_owned());
         self
     }
 
     /// Add a performance subdomain
+    #[must_use]
     pub fn performance(mut self) -> Self {
-        self.segments.push("performance".to_string());
+        self.segments.push("performance".to_owned());
         self
     }
 
     /// Add a collector subdomain
+    #[must_use]
     pub fn collector(mut self) -> Self {
-        self.segments.push("collector".to_string());
+        self.segments.push("collector".to_owned());
         self
     }
 
     /// Add an agent subdomain
+    #[must_use]
     pub fn agent(mut self) -> Self {
-        self.segments.push("agent".to_string());
+        self.segments.push("agent".to_owned());
         self
     }
 
     /// Add a health subdomain
+    #[must_use]
     pub fn health(mut self) -> Self {
-        self.segments.push("health".to_string());
+        self.segments.push("health".to_owned());
         self
     }
 
     /// Add a lifecycle topic type
+    #[must_use]
     pub fn lifecycle(mut self) -> Self {
-        self.segments.push("lifecycle".to_string());
+        self.segments.push("lifecycle".to_owned());
         self
     }
 
     /// Add a metadata topic type
+    #[must_use]
     pub fn metadata(mut self) -> Self {
-        self.segments.push("metadata".to_string());
+        self.segments.push("metadata".to_owned());
         self
     }
 
     /// Add a config topic type
+    #[must_use]
     pub fn config(mut self) -> Self {
-        self.segments.push("config".to_string());
+        self.segments.push("config".to_owned());
         self
     }
 
     /// Add a task topic type
+    #[must_use]
     pub fn task(mut self) -> Self {
-        self.segments.push("task".to_string());
+        self.segments.push("task".to_owned());
         self
     }
 
     /// Add a heartbeat topic type
+    #[must_use]
     pub fn heartbeat(mut self) -> Self {
-        self.segments.push("heartbeat".to_string());
+        self.segments.push("heartbeat".to_owned());
         self
     }
 
     /// Add a status topic type
+    #[must_use]
     pub fn status(mut self) -> Self {
-        self.segments.push("status".to_string());
+        self.segments.push("status".to_owned());
         self
     }
 
     /// Add a diagnostics topic type
+    #[must_use]
     pub fn diagnostics(mut self) -> Self {
-        self.segments.push("diagnostics".to_string());
+        self.segments.push("diagnostics".to_owned());
         self
     }
 
     /// Add a tree topic type
+    #[must_use]
     pub fn tree(mut self) -> Self {
-        self.segments.push("tree".to_string());
+        self.segments.push("tree".to_owned());
         self
     }
 
     /// Add an integrity topic type
+    #[must_use]
     pub fn integrity(mut self) -> Self {
-        self.segments.push("integrity".to_string());
+        self.segments.push("integrity".to_owned());
         self
     }
 
     /// Add an anomaly topic type
+    #[must_use]
     pub fn anomaly(mut self) -> Self {
-        self.segments.push("anomaly".to_string());
+        self.segments.push("anomaly".to_owned());
         self
     }
 
     /// Add a batch topic type
+    #[must_use]
     pub fn batch(mut self) -> Self {
-        self.segments.push("batch".to_string());
+        self.segments.push("batch".to_owned());
         self
     }
 
     /// Add a custom segment
+    #[must_use]
     pub fn segment(mut self, segment: impl Into<String>) -> Self {
         self.segments.push(segment.into());
         self
@@ -649,6 +671,42 @@ impl Default for TopicBuilder {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
 

@@ -45,9 +45,8 @@ async fn setup_test_broker_and_agent() -> anyhow::Result<(TempDir, BrokerManager
 #[tokio::test]
 async fn test_collector_registration_and_rpc_client_creation() -> anyhow::Result<()> {
     let (_temp_dir, manager) = setup_test_broker_and_agent().await?;
-
-    // Wait for broker to be ready
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_broker_and_agent() calls manager.start().await which
+    // fully initializes the broker before returning.
 
     // Test RPC client creation
     let collector_id = "test-collector";
@@ -64,9 +63,7 @@ async fn test_collector_registration_and_rpc_client_creation() -> anyhow::Result
 #[tokio::test]
 async fn test_rpc_health_check_workflow() -> anyhow::Result<()> {
     let (_temp_dir, manager) = setup_test_broker_and_agent().await?;
-
-    // Wait for broker to be ready
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: manager.start() fully initializes the broker.
 
     // Create RPC client
     let collector_id = "test-collector";
@@ -82,9 +79,7 @@ async fn test_rpc_health_check_workflow() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_rpc_lifecycle_operations() -> anyhow::Result<()> {
     let (_temp_dir, manager) = setup_test_broker_and_agent().await?;
-
-    // Wait for broker to be ready
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: manager.start() fully initializes the broker.
 
     // Test lifecycle operation methods exist and can be called
     // Note: Full integration requires a running collector with RPC server
@@ -105,8 +100,7 @@ async fn test_rpc_lifecycle_operations() -> anyhow::Result<()> {
 async fn test_graceful_shutdown_coordination() -> anyhow::Result<()> {
     let (_temp_dir, manager) = setup_test_broker_and_agent().await?;
 
-    // Wait for broker to be ready
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: manager.start() fully initializes the broker.
 
     // Test that shutdown sends RPC calls before falling back to signals
     // This is tested via the shutdown method which now includes RPC calls
@@ -119,9 +113,7 @@ async fn test_graceful_shutdown_coordination() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_rpc_failure_and_fallback() -> anyhow::Result<()> {
     let (_temp_dir, manager) = setup_test_broker_and_agent().await?;
-
-    // Wait for broker to be ready
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: manager.start() fully initializes the broker.
 
     // Test that RPC failures are handled gracefully
     // Attempt to stop a non-existent collector - should return an error, not panic
@@ -153,9 +145,7 @@ async fn test_rpc_failure_and_fallback() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_concurrent_rpc_operations() -> anyhow::Result<()> {
     let (_temp_dir, manager) = setup_test_broker_and_agent().await?;
-
-    // Wait for broker to be ready
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: manager.start() fully initializes the broker.
 
     // Test concurrent RPC operations
     // Create multiple clients
@@ -190,9 +180,8 @@ async fn test_concurrent_rpc_operations() -> anyhow::Result<()> {
 #[ignore = "Flaky cross-process RPC test - skipped in CI"]
 async fn test_cross_process_rpc_workflow() -> anyhow::Result<()> {
     let (temp_dir, broker_manager) = setup_test_broker_and_agent().await?;
-
-    // Wait for broker to be ready
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // No sleep needed: setup_test_broker_and_agent() calls manager.start().await which
+    // fully initializes the broker before returning.
 
     // Setup collector with broker registration
     let socket_path = broker_manager.socket_path();
@@ -222,7 +211,8 @@ async fn test_cross_process_rpc_workflow() -> anyhow::Result<()> {
         let _ = collector.run().await;
     });
 
-    // Wait for collector to register and start RPC service
+    // Intentional: waiting for the spawned collector process to complete its
+    // async registration handshake with the broker before probing via RPC.
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Verify collector is registered by checking RPC client can be created

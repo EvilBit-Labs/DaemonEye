@@ -3,7 +3,10 @@
 //! This module provides the shared infrastructure for implementing Monitor Collectors
 //! that integrate process lifecycle tracking, trigger system coordination, and
 //! analysis chain management while maintaining full compliance with the collector-core
-//! EventSource trait.
+//! `EventSource` trait.
+
+#![allow(clippy::as_conversions)]
+#![allow(clippy::arithmetic_side_effects)]
 
 use crate::{AnalysisChainConfig, EventSource, TriggerConfig};
 use std::{
@@ -157,7 +160,7 @@ impl MonitorCollectorStats {
 
 /// Trait for Monitor Collector implementations.
 ///
-/// This trait extends EventSource with Monitor Collector-specific functionality
+/// This trait extends `EventSource` with Monitor Collector-specific functionality
 /// for statistics reporting and health monitoring.
 pub trait MonitorCollector: EventSource {
     /// Returns current runtime statistics.
@@ -165,7 +168,7 @@ pub trait MonitorCollector: EventSource {
 
     /// Performs a health check specific to monitor collector functionality.
     ///
-    /// This extends the base EventSource health_check with monitor-specific
+    /// This extends the base `EventSource` `health_check` with monitor-specific
     /// validation such as error rate checking and resource utilization.
     #[allow(async_fn_in_trait)]
     async fn monitor_health_check(&self) -> anyhow::Result<()> {
