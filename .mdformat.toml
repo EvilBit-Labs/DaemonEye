@@ -20,5 +20,4 @@ extensions = [
     "simple_breaks",
     "gfm_alerts",
     "toc",
-    "wikilink",
 ]

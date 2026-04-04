@@ -743,9 +743,13 @@ impl ConfigLoader {
         Ok(())
     }
 
-    /// Validate a socket path for null bytes and excessive length.
+    /// Validate a socket path for null bytes, directory traversal, and OS length limits.
+    ///
+    /// Unix domain socket paths are limited to 108 bytes on Linux and macOS (the `sun_path`
+    /// field in `sockaddr_un` is 108 bytes including the NUL terminator).
     fn validate_socket_path(socket_path: &str) -> Result<(), ConfigError> {
-        const SOCKET_PATH_MAX_LEN: usize = 255;
+        // 108-byte sun_path limit minus 1 for the NUL terminator.
+        const SOCKET_PATH_MAX_LEN: usize = 107;
 
         if socket_path.contains('\0') {
             return Err(ConfigError::ValidationError {
@@ -753,10 +757,21 @@ impl ConfigLoader {
             });
         }
 
+        // Reject directory-traversal components.
+        for component in std::path::Path::new(socket_path).components() {
+            if component == std::path::Component::ParentDir {
+                return Err(ConfigError::ValidationError {
+                    message: format!(
+                        "broker.socket_path must not contain '..' (directory traversal): {socket_path}"
+                    ),
+                });
+            }
+        }
+
         if socket_path.len() > SOCKET_PATH_MAX_LEN {
             return Err(ConfigError::ValidationError {
                 message: format!(
-                    "broker.socket_path must not exceed {SOCKET_PATH_MAX_LEN} characters, got {}",
+                    "broker.socket_path must not exceed {SOCKET_PATH_MAX_LEN} bytes (OS sun_path limit), got {}",
                     socket_path.len()
                 ),
             });
@@ -1028,24 +1043,42 @@ mod tests {
 
     #[test]
     fn test_validate_socket_path_too_long() {
-        let long_path = "/tmp/".to_owned() + &"a".repeat(252);
-        assert!(long_path.len() > 255);
+        // 108 bytes total — one over the 107-byte limit.
+        let mut long_path = String::from("/tmp/");
+        long_path.push_str(&"a".repeat(103));
+        assert_eq!(
+            long_path.len(),
+            108,
+            "path must be 108 bytes to exceed the 107-byte limit"
+        );
         let result = ConfigLoader::validate_socket_path(&long_path);
         assert!(result.is_err());
         let msg = format!("{}", result.expect_err("expected validation error"));
         assert!(
-            msg.contains("255"),
+            msg.contains("107"),
             "error should mention max length: {msg}"
         );
     }
 
     #[test]
     fn test_validate_socket_path_exactly_at_limit() {
-        // 255 chars exactly — should pass
-        let path = "/tmp/".to_owned() + &"a".repeat(250);
-        assert_eq!(path.len(), 255);
+        // 107 bytes exactly — should pass (the OS limit is 108 bytes including NUL).
+        let mut path = String::from("/tmp/");
+        path.push_str(&"a".repeat(102));
+        assert_eq!(path.len(), 107, "path must be exactly 107 bytes");
         let result = ConfigLoader::validate_socket_path(&path);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_socket_path_traversal() {
+        let result = ConfigLoader::validate_socket_path("/tmp/../etc/evil.sock");
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("directory traversal"),
+            "error should mention directory traversal: {msg}"
+        );
     }
 
     #[test]

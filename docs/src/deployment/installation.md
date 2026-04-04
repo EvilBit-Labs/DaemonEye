@@ -101,9 +101,9 @@ sudo chown -R $USER:$USER /var/log/daemoneye
 # Add to PATH environment variable
 ```
 
-### Method 2: Package Managers (Planned)
+### Method 2: Package Managers *(Planned)*
 
-Package manager support (Homebrew, APT, YUM/DNF, Chocolatey) is currently under development. Installers will be available in future releases.
+> **Status: Not yet available.** Package manager support (Homebrew, APT, YUM/DNF, Chocolatey) is under development and will be available in a future release.
 
 For now, use one of the following installation methods:
 
@@ -112,7 +112,7 @@ For now, use one of the following installation methods:
 
 ### Method 3: Build from Source
 
-**Install Rust** (1.87+):
+**Install Rust** (1.91+):
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -311,10 +311,11 @@ source "$HOME/.cargo/env"
 # Build DaemonEye
 cargo build --release
 
-# Install binaries
-sudo install -Dm755 target/release/procmond /usr/local/bin/procmond
-sudo install -Dm755 target/release/daemoneye-agent /usr/local/bin/daemoneye-agent
-sudo install -Dm755 target/release/daemoneye-cli /usr/local/bin/daemoneye-cli
+# Install binaries (macOS-compatible: mkdir -p + install -m 755)
+sudo mkdir -p /usr/local/bin
+sudo install -m 755 target/release/procmond /usr/local/bin/procmond
+sudo install -m 755 target/release/daemoneye-agent /usr/local/bin/daemoneye-agent
+sudo install -m 755 target/release/daemoneye-cli /usr/local/bin/daemoneye-cli
 
 # Create system directories
 sudo mkdir -p /etc/daemoneye /var/lib/daemoneye /var/log/daemoneye

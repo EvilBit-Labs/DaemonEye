@@ -21,7 +21,7 @@ rust                        = { version = "latest", components = "llvm-tools,car
 "cargo:cargo-release"       = "1.1.2"
 "cargo:cargo-auditable"     = "0.7.4"
 "cargo:cargo-cyclonedx"     = "0.5.9"
-"pipx:mdformat"             = { version = "1.0.0", uvx_args = "--with mdformat-gfm --with mdformat-config --with mdformat-footnote --with mdformat-front-matters --with mdformat-simple-breaks --with mdformat-web --with mdformat-wikilink --with mdformat-gfm-alerts --with mdformat-toc" }
+"pipx:mdformat"             = { version = "1.0.0", uvx_args = "--with mdformat-gfm --with mdformat-config --with mdformat-footnote --with mdformat-front-matters --with mdformat-simple-breaks --with mdformat-web --with mdformat-gfm-alerts --with mdformat-toc" }
 prettier                    = "3.8.1"
 actionlint                  = "1.7.12"
 lychee                      = "0.23.0"

@@ -562,7 +562,7 @@ impl WriteAheadLog {
 
     /// Write an event to the WAL with event type metadata for topic routing.
     ///
-    /// Similar to [`write`], but includes an event type string that can be used
+    /// Similar to [`Self::write`], but includes an event type string that can be used
     /// during replay to determine the correct topic for republishing.
     ///
     /// # Arguments
@@ -585,7 +585,7 @@ impl WriteAheadLog {
 
     /// Serialize a WAL entry and append it to the current file, rotating if needed.
     ///
-    /// This is the shared implementation used by [`write`] and [`write_with_type`].
+    /// This is the shared implementation used by [`Self::write`] and [`Self::write_with_type`].
     /// The lock is held for the entire operation — including rotation — so that
     /// writers never observe a missing file handle.
     ///
