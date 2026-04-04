@@ -51,7 +51,7 @@ async-trait = "0.1.89"
 bitflags = { version = "2.11.0", features = ["serde"] }
 
 # Cryptographic operations
-blake3 = "1.8.4"
+blake3 = { version = "1.8.4", default-features = false, features = ["std"] }
 
 # Buffer and byte utilities
 bytes = "1.11.1"
