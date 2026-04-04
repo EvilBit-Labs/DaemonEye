@@ -28,8 +28,10 @@ jobs:
     quality:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+            - name: Checkout repository
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - name: Set up mise toolchain
+              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
@@ -45,8 +47,10 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 20
         steps:
-            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+            - name: Checkout repository
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - name: Set up mise toolchain
+              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
@@ -92,24 +96,30 @@ jobs:
         timeout-minutes: 30
         needs: quality
         steps:
-            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+            - name: Checkout repository
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - name: Set up mise toolchain
+              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             # Run tests and build the release binary
-            - run: mise x -- cargo nextest run --profile ci --all-features
-            - run: mise x -- cargo build --release --all-features
+            - name: Run tests (all features)
+              run: mise x -- cargo nextest run --profile ci --all-features
+            - name: Build release
+              run: mise x -- cargo build --release --all-features
 
     coverage:
         runs-on: ubuntu-latest
         timeout-minutes: 30
         needs: [test, test-cross-platform, quality]
         steps:
-            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+            - name: Checkout repository
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - name: Set up mise toolchain
+              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
@@ -128,7 +138,8 @@ jobs:
                   fail_ci_if_error: false
                   token: ${{ secrets.CODECOV_TOKEN }}
                   slug: EvilBit-Labs/daemoneye
-            - uses: qltysh/qlty-action/coverage@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
+            - name: Upload to Qlty
+              uses: qltysh/qlty-action/coverage@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
               with:
                   token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
                   files: target/lcov.info
