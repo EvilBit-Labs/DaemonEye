@@ -31,9 +31,13 @@ DaemonEye uses a multi-container architecture:
 
 ## Container Images
 
-### Official Images
+> **NOTE: Docker images are not yet published.** Official Docker images are planned for future releases. For now, please build DaemonEye from source (see [Building from Source](#building-from-source) below).
 
-**Core Images**:
+### Planned Official Images
+
+The following Docker images are planned but not yet available:
+
+**Core Images** (Aspirational):
 
 ```bash
 # Process monitoring daemon
@@ -53,7 +57,7 @@ docker pull daemoneye/security-center:latest
 docker pull daemoneye/security-center:1.0.0
 ```
 
-**Image Tags**:
+**Planned Image Tags**:
 
 - `latest`: Latest stable release
 - `1.0.0`: Specific version
@@ -93,7 +97,71 @@ COPY procmond /usr/local/bin/
 ENTRYPOINT ["procmond"]
 ```
 
+## Building from Source
+
+Since official Docker images are not yet available, you can build DaemonEye images from the source repository:
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/daemoneye/daemoneye.git
+cd daemoneye
+```
+
+### Build with Multi-Stage Dockerfile
+
+Create a `Dockerfile` in the repository root:
+
+```dockerfile
+# Build stage
+FROM rust:1.91-bookworm as builder
+
+WORKDIR /app
+COPY . .
+
+RUN cargo build --release --bin procmond
+RUN cargo build --release --bin daemoneye-agent
+RUN cargo build --release --bin daemoneye-cli
+
+# Runtime stage - procmond
+FROM debian:bookworm-slim as procmond-runtime
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/procmond /usr/local/bin/procmond
+
+ENTRYPOINT ["procmond"]
+```
+
+### Build Images Locally
+
+```bash
+# Build procmond image
+docker build -t daemoneye/procmond:latest \
+  --target procmond-runtime \
+  .
+
+# Build daemoneye-agent image (similar approach with different binary)
+docker build -t daemoneye/daemoneye-agent:latest \
+  --target agent-runtime \
+  .
+
+# Build daemoneye-cli image
+docker build -t daemoneye/daemoneye-cli:latest \
+  --target cli-runtime \
+  .
+```
+
+### Tag Versions
+
+```bash
+docker tag daemoneye/procmond:latest daemoneye/procmond:1.0.0
+docker tag daemoneye/daemoneye-agent:latest daemoneye/daemoneye-agent:1.0.0
+docker tag daemoneye/daemoneye-cli:latest daemoneye/daemoneye-cli:1.0.0
+```
+
 ## Basic Docker Deployment
+
+> **Note:** The examples below assume Docker images are available. Until official images are published, build images locally from source (see [Building from Source](#building-from-source) above).
 
 ### Single Container Deployment
 
@@ -182,6 +250,8 @@ docker run -d \
 ```
 
 ## Docker Compose Deployment
+
+> **Note:** The examples below use Docker image names. Until official images are published, update the image references to use your locally-built images (e.g., change `daemoneye/procmond:latest` to your local image reference).
 
 ### Basic Docker Compose
 
@@ -791,6 +861,11 @@ main "$@"
 ```
 
 ## Kubernetes Deployment
+
+> **Note:** The Kubernetes manifests below reference Docker images. Until official images are published, you must either:
+>
+> 1. Build images locally and push to your container registry, then update image references in manifests
+> 2. Use imagePullPolicy: Never and pre-load images on cluster nodes
 
 ### Kubernetes Manifests
 
