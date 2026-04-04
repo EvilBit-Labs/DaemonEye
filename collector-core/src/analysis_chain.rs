@@ -22,6 +22,13 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::as_conversions)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::indexing_slicing)]
+
 use crate::{
     event::{AnalysisType, CollectionEvent, TriggerPriority, TriggerRequest},
     event_bus::{BusEvent, EventBus, EventFilter, EventSubscription},
@@ -120,7 +127,7 @@ pub struct AnalysisWorkflowDefinition {
     /// Analysis stages in dependency order
     pub stages: Vec<AnalysisStage>,
 
-    /// Stage dependency graph (stage_id -> dependencies)
+    /// Stage dependency graph (`stage_id` -> dependencies)
     pub dependencies: HashMap<String, Vec<String>>,
 
     /// Workflow-level timeout override
@@ -171,7 +178,8 @@ pub struct AnalysisStage {
 }
 
 /// Current status of an analysis workflow execution.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WorkflowStatus {
     /// Workflow is queued for execution
     Queued,
@@ -193,7 +201,8 @@ pub enum WorkflowStatus {
 }
 
 /// Status of an individual analysis stage.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StageStatus {
     /// Stage is waiting for dependencies
     Pending,
@@ -315,6 +324,7 @@ pub struct WorkflowError {
 
 /// Types of workflow errors.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum WorkflowErrorType {
     /// Stage execution timeout
     StageTimeout,
@@ -559,10 +569,10 @@ impl AnalysisChainCoordinator {
         );
 
         // Validate workflow definition
-        self.validate_workflow_definition(&workflow)?;
+        Self::validate_workflow_definition(&workflow)?;
 
         // Check for circular dependencies
-        self.validate_dependencies(&workflow)?;
+        Self::validate_dependencies(&workflow)?;
 
         // Store workflow definition
         let mut definitions = self.workflow_definitions.write().await;
@@ -572,7 +582,7 @@ impl AnalysisChainCoordinator {
     }
 
     /// Validates a workflow definition for correctness.
-    fn validate_workflow_definition(&self, workflow: &AnalysisWorkflowDefinition) -> Result<()> {
+    fn validate_workflow_definition(workflow: &AnalysisWorkflowDefinition) -> Result<()> {
         // Validate workflow ID
         if workflow.workflow_id.is_empty() {
             anyhow::bail!("Workflow ID cannot be empty");
@@ -584,17 +594,17 @@ impl AnalysisChainCoordinator {
         }
 
         // Validate stage IDs are unique
-        let stage_ids = self.validate_stage_ids(&workflow.stages)?;
+        let stage_ids = Self::validate_stage_ids(&workflow.stages)?;
 
         // Validate dependencies reference existing stages
         for (stage_id, deps) in &workflow.dependencies {
             if !stage_ids.contains(stage_id) {
-                anyhow::bail!("Dependency references unknown stage: {}", stage_id);
+                anyhow::bail!("Dependency references unknown stage: {stage_id}");
             }
 
             for dep in deps {
                 if !stage_ids.contains(dep) {
-                    anyhow::bail!("Dependency references unknown stage: {}", dep);
+                    anyhow::bail!("Dependency references unknown stage: {dep}");
                 }
             }
         }
@@ -603,7 +613,7 @@ impl AnalysisChainCoordinator {
     }
 
     /// Validates stage IDs for uniqueness and completeness.
-    fn validate_stage_ids(&self, stages: &[AnalysisStage]) -> Result<HashSet<String>> {
+    fn validate_stage_ids(stages: &[AnalysisStage]) -> Result<HashSet<String>> {
         let mut stage_ids = HashSet::with_capacity(stages.len());
 
         for stage in stages {
@@ -624,7 +634,7 @@ impl AnalysisChainCoordinator {
     }
 
     /// Validates workflow dependencies for circular references.
-    fn validate_dependencies(&self, workflow: &AnalysisWorkflowDefinition) -> Result<()> {
+    fn validate_dependencies(workflow: &AnalysisWorkflowDefinition) -> Result<()> {
         // Use topological sort to detect cycles
         let mut in_degree: HashMap<String, usize> = HashMap::new();
         let mut graph: HashMap<String, Vec<String>> = HashMap::new();
@@ -722,10 +732,10 @@ impl AnalysisChainCoordinator {
 
         // Create subscription for analysis results
         let subscription = EventSubscription {
-            subscriber_id: "analysis-chain-coordinator".to_string(),
+            subscriber_id: "analysis-chain-coordinator".to_owned(),
             capabilities: SourceCaps::all(), // Subscribe to all collector types
             event_filter: Some(EventFilter {
-                event_types: vec!["analysis_result".to_string()],
+                event_types: vec!["analysis_result".to_owned()],
                 pids: vec![],
                 min_priority: None,
                 metadata_filters: HashMap::new(),
@@ -775,8 +785,8 @@ impl AnalysisChainCoordinator {
                 {
                     let mut stats = statistics.write().await;
                     stats.running_workflows = execution_count;
-                    stats.last_updated = SystemTime::now();
-                }
+                    stats.last_updated = SystemTime::now()
+                };
 
                 // Log status for long-running workflows
                 for (execution_id, execution) in executions.iter() {
@@ -956,8 +966,7 @@ impl AnalysisChainCoordinator {
                             execution
                                 .stage_statuses
                                 .get(&stage_exec.stage_id)
-                                .map(|status| matches!(status, StageStatus::Running))
-                                .unwrap_or(true)
+                                .is_none_or(|status| matches!(status, StageStatus::Running))
                         } else {
                             false
                         };
@@ -1044,7 +1053,7 @@ impl AnalysisChainCoordinator {
             definitions
                 .get(workflow_id)
                 .cloned()
-                .with_context(|| format!("Workflow definition not found: {}", workflow_id))?
+                .with_context(|| format!("Workflow definition not found: {workflow_id}"))?
         };
 
         // Create execution instance
@@ -1089,15 +1098,15 @@ impl AnalysisChainCoordinator {
         // Store execution
         {
             let mut executions = self.active_executions.write().await;
-            executions.insert(execution_id.clone(), execution);
-        }
+            executions.insert(execution_id.clone(), execution)
+        };
 
         // Update statistics
         {
             let mut stats = self.statistics.write().await;
             stats.total_workflows += 1;
-            self.execution_counter.fetch_add(1, Ordering::Relaxed);
-        }
+            self.execution_counter.fetch_add(1, Ordering::Relaxed)
+        };
 
         // Start workflow execution
         self.start_workflow_execution(&execution_id).await?;
@@ -1128,9 +1137,9 @@ impl AnalysisChainCoordinator {
             let executions = self.active_executions.read().await;
             let execution = executions
                 .get(execution_id)
-                .with_context(|| format!("Workflow execution not found: {}", execution_id))?;
+                .with_context(|| format!("Workflow execution not found: {execution_id}"))?;
 
-            self.find_ready_stages(execution)
+            Self::find_ready_stages(execution)
         };
 
         for stage_id in ready_stages {
@@ -1141,7 +1150,7 @@ impl AnalysisChainCoordinator {
     }
 
     /// Finds stages that are ready to execute (all dependencies completed).
-    fn find_ready_stages(&self, execution: &WorkflowExecution) -> Vec<String> {
+    fn find_ready_stages(execution: &WorkflowExecution) -> Vec<String> {
         let mut ready_stages = Vec::new();
 
         for stage in &execution.workflow_definition.stages {
@@ -1159,8 +1168,7 @@ impl AnalysisChainCoordinator {
                 .workflow_definition
                 .dependencies
                 .get(&stage.stage_id)
-                .map(|deps| deps.as_slice())
-                .unwrap_or(&[]);
+                .map_or(&[] as &[_], Vec::as_slice);
 
             let dependencies_satisfied = dependencies.iter().all(|dep_id| {
                 matches!(
@@ -1183,14 +1191,14 @@ impl AnalysisChainCoordinator {
             let executions = self.active_executions.read().await;
             let execution = executions
                 .get(execution_id)
-                .with_context(|| format!("Workflow execution not found: {}", execution_id))?;
+                .with_context(|| format!("Workflow execution not found: {execution_id}"))?;
 
             let stage = execution
                 .workflow_definition
                 .stages
                 .iter()
                 .find(|s| s.stage_id == stage_id)
-                .with_context(|| format!("Stage not found in workflow: {}", stage_id))?
+                .with_context(|| format!("Stage not found in workflow: {stage_id}"))?
                 .clone();
 
             let timeout = stage.timeout.unwrap_or(self.config.default_stage_timeout);
@@ -1212,7 +1220,7 @@ impl AnalysisChainCoordinator {
             if let Some(execution) = executions.get_mut(execution_id) {
                 execution
                     .stage_statuses
-                    .insert(stage_id.to_string(), StageStatus::Running);
+                    .insert(stage_id.to_owned(), StageStatus::Running);
                 execution.last_updated = SystemTime::now();
             }
         }
@@ -1220,18 +1228,18 @@ impl AnalysisChainCoordinator {
         // Track stage execution for timeout management
         {
             let mut tracker = self.stage_tracker.write().await;
-            let stage_key = format!("{}:{}", execution_id, stage_id);
+            let stage_key = format!("{execution_id}:{stage_id}");
             tracker.insert(
                 stage_key,
                 StageExecution {
-                    execution_id: execution_id.to_string(),
-                    stage_id: stage_id.to_string(),
+                    execution_id: execution_id.to_owned(),
+                    stage_id: stage_id.to_owned(),
                     started_at: Instant::now(),
                     timeout,
                     retry_count: 0,
                 },
-            );
-        }
+            )
+        };
 
         // Create trigger request for the analysis collector
         let trigger_request = TriggerRequest {
@@ -1241,13 +1249,13 @@ impl AnalysisChainCoordinator {
             priority: stage.priority.clone(),
             target_pid: None,  // Would be populated from context
             target_path: None, // Would be populated from context
-            correlation_id: format!("{}:{}", execution_id, stage_id),
+            correlation_id: format!("{execution_id}:{stage_id}"),
             metadata: stage.config.clone(),
             timestamp: SystemTime::now(),
         };
         trigger_request
             .validate()
-            .map_err(|e| anyhow::anyhow!("Invalid trigger request: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid trigger request: {e}"))?;
 
         // Send trigger request via event bus
         self.send_trigger_request(trigger_request).await?;
@@ -1265,7 +1273,7 @@ impl AnalysisChainCoordinator {
         let event = CollectionEvent::TriggerRequest(trigger.clone());
         let correlation_metadata =
             crate::event_bus::CorrelationMetadata::new(trigger.correlation_id.clone())
-                .with_tag("trigger_type".to_string(), "analysis_chain".to_string());
+                .with_tag("trigger_type".to_owned(), "analysis_chain".to_owned());
         bus.publish(event, correlation_metadata)
             .await
             .context("Failed to publish trigger request")?;
@@ -1351,7 +1359,7 @@ impl AnalysisChainCoordinator {
 
     /// Processes a result event from the event bus and updates stage statuses.
     async fn process_result_event(
-        coordinator: &Arc<AnalysisChainCoordinator>,
+        coordinator: &Arc<Self>,
         active_executions: &Arc<RwLock<HashMap<String, WorkflowExecution>>>,
         completed_executions: &Arc<RwLock<VecDeque<WorkflowExecution>>>,
         statistics: &Arc<RwLock<WorkflowStatistics>>,
@@ -1360,14 +1368,15 @@ impl AnalysisChainCoordinator {
         max_completed: usize,
     ) -> Result<()> {
         // Extract execution and stage IDs from the event's routing metadata
-        let execution_id = bus_event.routing_metadata.get("execution_id");
-        let stage_id = bus_event.routing_metadata.get("stage_id");
+        let opt_execution_id = bus_event.routing_metadata.get("execution_id");
+        let opt_stage_id = bus_event.routing_metadata.get("stage_id");
 
-        if let (Some(execution_id), Some(stage_id)) = (execution_id, stage_id) {
+        if let (Some(execution_id), Some(stage_id)) = (opt_execution_id, opt_stage_id) {
             let mut executions = active_executions.write().await;
 
             if let Some(execution) = executions.get_mut(execution_id) {
                 // Update the specific stage status based on the event
+                #[allow(clippy::wildcard_enum_match_arm)]
                 let new_stage_status = match &bus_event.event {
                     CollectionEvent::TriggerRequest(trigger_request) => {
                         // Check if this is a result event (success/failure)
@@ -1379,10 +1388,9 @@ impl AnalysisChainCoordinator {
                                 .as_str()
                             {
                                 "success" => StageStatus::Completed,
-                                "failed" => StageStatus::Failed,
                                 "cancelled" => StageStatus::Cancelled,
                                 "timeout" => StageStatus::TimedOut,
-                                _ => StageStatus::Failed,
+                                _ => StageStatus::Failed, // includes "failed" and unknown values
                             }
                         } else {
                             // Default to completed if no specific status
@@ -1409,7 +1417,7 @@ impl AnalysisChainCoordinator {
                         | StageStatus::Cancelled
                         | StageStatus::TimedOut
                 ) {
-                    let stage_key = format!("{}:{}", execution_id, stage_id);
+                    let stage_key = format!("{execution_id}:{stage_id}");
                     let mut tracker = stage_tracker.write().await;
                     tracker.remove(&stage_key);
                 }
@@ -1446,8 +1454,7 @@ impl AnalysisChainCoordinator {
                                 .stages
                                 .iter()
                                 .find(|s| s.stage_id == dependent_stage_id)
-                                .map(|s| s.optional)
-                                .unwrap_or(false);
+                                .is_some_and(|s| s.optional);
 
                             let new_status = if is_optional {
                                 StageStatus::Skipped
@@ -1460,7 +1467,7 @@ impl AnalysisChainCoordinator {
                                 .insert(dependent_stage_id.clone(), new_status);
 
                             // Also remove from stage_tracker if it was queued
-                            let dep_stage_key = format!("{}:{}", execution_id, dependent_stage_id);
+                            let dep_stage_key = format!("{execution_id}:{dependent_stage_id}");
                             let mut tracker = stage_tracker.write().await;
                             tracker.remove(&dep_stage_key);
                         }
@@ -1490,19 +1497,19 @@ impl AnalysisChainCoordinator {
                 }
 
                 // Re-acquire lock to check completion status
-                let mut executions = active_executions.write().await;
-                let Some(execution) = executions.get_mut(execution_id) else {
+                let mut executions2 = active_executions.write().await;
+                let Some(execution2) = executions2.get_mut(execution_id) else {
                     // Execution was removed (possibly completed), nothing more to do
                     return Ok(());
                 };
 
                 // Check if all stages are now complete
                 let all_stages_complete =
-                    execution.workflow_definition.stages.iter().all(|stage| {
-                        execution
+                    execution2.workflow_definition.stages.iter().all(|stage| {
+                        execution2
                             .stage_statuses
                             .get(&stage.stage_id)
-                            .map(|status| {
+                            .is_some_and(|status| {
                                 matches!(
                                     status,
                                     StageStatus::Completed
@@ -1511,21 +1518,20 @@ impl AnalysisChainCoordinator {
                                         | StageStatus::TimedOut
                                 )
                             })
-                            .unwrap_or(false)
                     });
 
                 if all_stages_complete {
                     // Determine overall workflow status
-                    let has_failures = execution.stage_statuses.values().any(|status| {
+                    let has_failures = execution2.stage_statuses.values().any(|status| {
                         matches!(status, StageStatus::Failed | StageStatus::TimedOut)
                     });
 
-                    let has_cancellations = execution
+                    let has_cancellations = execution2
                         .stage_statuses
                         .values()
                         .any(|status| matches!(status, StageStatus::Cancelled));
 
-                    execution.status = if has_cancellations {
+                    execution2.status = if has_cancellations {
                         WorkflowStatus::Cancelled
                     } else if has_failures {
                         WorkflowStatus::Failed
@@ -1533,15 +1539,15 @@ impl AnalysisChainCoordinator {
                         WorkflowStatus::Completed
                     };
 
-                    execution.completed_at = Some(SystemTime::now());
+                    execution2.completed_at = Some(SystemTime::now());
 
                     // Final progress calculation when all stages complete
-                    let total_stages = execution.workflow_definition.stages.len();
-                    execution.progress =
-                        Self::calculate_progress(&execution.stage_statuses, total_stages);
+                    let total_stages2 = execution2.workflow_definition.stages.len();
+                    execution2.progress =
+                        Self::calculate_progress(&execution2.stage_statuses, total_stages2);
 
                     // Move to completed executions
-                    let completed_execution = executions
+                    let completed_execution = executions2
                         .remove(execution_id)
                         .expect("Execution should exist when processing completion");
                     Self::move_to_completed_executions(
@@ -1605,6 +1611,7 @@ impl AnalysisChainCoordinator {
         // Update statistics
         {
             let mut stats = statistics.write().await;
+            #[allow(clippy::wildcard_enum_match_arm)]
             match execution.status {
                 WorkflowStatus::Completed => {
                     stats.completed_workflows += 1;
@@ -1652,39 +1659,39 @@ mod tests {
 
         // Valid workflow
         let valid_workflow = AnalysisWorkflowDefinition {
-            workflow_id: "test-workflow".to_string(),
-            name: "Test Workflow".to_string(),
-            description: "Test workflow description".to_string(),
-            version: "1.0".to_string(),
+            workflow_id: "test-workflow".to_owned(),
+            name: "Test Workflow".to_owned(),
+            description: "Test workflow description".to_owned(),
+            version: "1.0".to_owned(),
             stages: vec![
                 AnalysisStage {
-                    stage_id: "stage1".to_string(),
-                    name: "Stage 1".to_string(),
-                    target_collector: "collector1".to_string(),
+                    stage_id: "stage1".to_owned(),
+                    name: "Stage 1".to_owned(),
+                    target_collector: "collector1".to_owned(),
                     analysis_type: AnalysisType::BinaryHash,
                     timeout: None,
                     priority: TriggerPriority::Normal,
                     optional: false,
                     config: HashMap::new(),
                     input_requirements: vec![],
-                    output_data: vec!["hash".to_string()],
+                    output_data: vec!["hash".to_owned()],
                 },
                 AnalysisStage {
-                    stage_id: "stage2".to_string(),
-                    name: "Stage 2".to_string(),
-                    target_collector: "collector2".to_string(),
+                    stage_id: "stage2".to_owned(),
+                    name: "Stage 2".to_owned(),
+                    target_collector: "collector2".to_owned(),
                     analysis_type: AnalysisType::MemoryAnalysis,
                     timeout: None,
                     priority: TriggerPriority::Normal,
                     optional: false,
                     config: HashMap::new(),
-                    input_requirements: vec!["hash".to_string()],
-                    output_data: vec!["memory_dump".to_string()],
+                    input_requirements: vec!["hash".to_owned()],
+                    output_data: vec!["memory_dump".to_owned()],
                 },
             ],
             dependencies: {
                 let mut deps = HashMap::new();
-                deps.insert("stage2".to_string(), vec!["stage1".to_string()]);
+                deps.insert("stage2".to_owned(), vec!["stage1".to_owned()]);
                 deps
             },
             timeout: None,
@@ -1692,38 +1699,23 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        assert!(
-            coordinator
-                .validate_workflow_definition(&valid_workflow)
-                .is_ok()
-        );
+        let _ = coordinator; // coordinator created above; validation is a static method
+        assert!(AnalysisChainCoordinator::validate_workflow_definition(&valid_workflow).is_ok());
 
         // Invalid workflow - empty ID
         let mut invalid_workflow = valid_workflow.clone();
-        invalid_workflow.workflow_id = "".to_string();
-        assert!(
-            coordinator
-                .validate_workflow_definition(&invalid_workflow)
-                .is_err()
-        );
+        invalid_workflow.workflow_id = "".to_owned();
+        assert!(AnalysisChainCoordinator::validate_workflow_definition(&invalid_workflow).is_err());
 
         // Invalid workflow - no stages
         let mut invalid_workflow = valid_workflow.clone();
         invalid_workflow.stages.clear();
-        assert!(
-            coordinator
-                .validate_workflow_definition(&invalid_workflow)
-                .is_err()
-        );
+        assert!(AnalysisChainCoordinator::validate_workflow_definition(&invalid_workflow).is_err());
 
         // Invalid workflow - duplicate stage IDs
         let mut invalid_workflow = valid_workflow.clone();
-        invalid_workflow.stages[1].stage_id = "stage1".to_string();
-        assert!(
-            coordinator
-                .validate_workflow_definition(&invalid_workflow)
-                .is_err()
-        );
+        invalid_workflow.stages[1].stage_id = "stage1".to_owned();
+        assert!(AnalysisChainCoordinator::validate_workflow_definition(&invalid_workflow).is_err());
     }
 
     #[test]
@@ -1733,40 +1725,40 @@ mod tests {
 
         // Workflow with circular dependency
         let circular_workflow = AnalysisWorkflowDefinition {
-            workflow_id: "circular-workflow".to_string(),
-            name: "Circular Workflow".to_string(),
-            description: "Workflow with circular dependencies".to_string(),
-            version: "1.0".to_string(),
+            workflow_id: "circular-workflow".to_owned(),
+            name: "Circular Workflow".to_owned(),
+            description: "Workflow with circular dependencies".to_owned(),
+            version: "1.0".to_owned(),
             stages: vec![
                 AnalysisStage {
-                    stage_id: "stage1".to_string(),
-                    name: "Stage 1".to_string(),
-                    target_collector: "collector1".to_string(),
+                    stage_id: "stage1".to_owned(),
+                    name: "Stage 1".to_owned(),
+                    target_collector: "collector1".to_owned(),
                     analysis_type: AnalysisType::BinaryHash,
                     timeout: None,
                     priority: TriggerPriority::Normal,
                     optional: false,
                     config: HashMap::new(),
                     input_requirements: vec![],
-                    output_data: vec!["hash".to_string()],
+                    output_data: vec!["hash".to_owned()],
                 },
                 AnalysisStage {
-                    stage_id: "stage2".to_string(),
-                    name: "Stage 2".to_string(),
-                    target_collector: "collector2".to_string(),
+                    stage_id: "stage2".to_owned(),
+                    name: "Stage 2".to_owned(),
+                    target_collector: "collector2".to_owned(),
                     analysis_type: AnalysisType::MemoryAnalysis,
                     timeout: None,
                     priority: TriggerPriority::Normal,
                     optional: false,
                     config: HashMap::new(),
-                    input_requirements: vec!["hash".to_string()],
-                    output_data: vec!["memory_dump".to_string()],
+                    input_requirements: vec!["hash".to_owned()],
+                    output_data: vec!["memory_dump".to_owned()],
                 },
             ],
             dependencies: {
                 let mut deps = HashMap::new();
-                deps.insert("stage1".to_string(), vec!["stage2".to_string()]);
-                deps.insert("stage2".to_string(), vec!["stage1".to_string()]);
+                deps.insert("stage1".to_owned(), vec!["stage2".to_owned()]);
+                deps.insert("stage2".to_owned(), vec!["stage1".to_owned()]);
                 deps
             },
             timeout: None,
@@ -1774,11 +1766,8 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        assert!(
-            coordinator
-                .validate_dependencies(&circular_workflow)
-                .is_err()
-        );
+        let _ = coordinator; // coordinator created above; validation is a static method
+        assert!(AnalysisChainCoordinator::validate_dependencies(&circular_workflow).is_err());
     }
 
     #[test]
@@ -1814,21 +1803,21 @@ mod tests {
         let coordinator = AnalysisChainCoordinator::new(config);
 
         let workflow = AnalysisWorkflowDefinition {
-            workflow_id: "test-workflow".to_string(),
-            name: "Test Workflow".to_string(),
-            description: "Test workflow description".to_string(),
-            version: "1.0".to_string(),
+            workflow_id: "test-workflow".to_owned(),
+            name: "Test Workflow".to_owned(),
+            description: "Test workflow description".to_owned(),
+            version: "1.0".to_owned(),
             stages: vec![AnalysisStage {
-                stage_id: "stage1".to_string(),
-                name: "Stage 1".to_string(),
-                target_collector: "collector1".to_string(),
+                stage_id: "stage1".to_owned(),
+                name: "Stage 1".to_owned(),
+                target_collector: "collector1".to_owned(),
                 analysis_type: AnalysisType::BinaryHash,
                 timeout: None,
                 priority: TriggerPriority::Normal,
                 optional: false,
                 config: HashMap::new(),
                 input_requirements: vec![],
-                output_data: vec!["hash".to_string()],
+                output_data: vec!["hash".to_owned()],
             }],
             dependencies: HashMap::new(),
             timeout: None,

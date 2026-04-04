@@ -208,6 +208,8 @@ fn demonstrate_access_control(registry: &TopicRegistry) {
             TopicAccessLevel::Public => "PUBLIC",
             TopicAccessLevel::Restricted => "RESTRICTED",
             TopicAccessLevel::Privileged => "PRIVILEGED",
+            // TopicAccessLevel is #[non_exhaustive]; handle any future variants
+            _ => "UNKNOWN",
         };
         println!("  {} -> {} ({})", topic, level_str, description);
     }

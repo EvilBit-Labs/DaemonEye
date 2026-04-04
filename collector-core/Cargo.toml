@@ -83,3 +83,6 @@ tracing-subscriber = { workspace = true }
 [[bench]]
 name    = "collector_benchmarks"
 harness = false
+
+[lints]
+workspace = true

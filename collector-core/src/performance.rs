@@ -4,6 +4,17 @@
 //! throughput measurement, resource usage tracking, trigger event latency monitoring,
 //! and baseline performance metrics collection for the collector-core framework.
 
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::as_conversions)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
+#![allow(clippy::integer_division)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::indexing_slicing)]
+#![allow(clippy::unnecessary_wraps)]
+#![allow(clippy::option_if_let_else)]
+
 use crate::{CollectionEvent, TriggerRequest};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -249,7 +260,7 @@ impl PerformanceMonitor {
             .active_timers
             .lock()
             .expect("Active timers lock should not be poisoned");
-        timers.insert(trigger_id.to_string(), Instant::now());
+        timers.insert(trigger_id.to_owned(), Instant::now());
     }
 
     /// Records trigger completion and calculates latency.
@@ -410,7 +421,7 @@ impl PerformanceMonitor {
             current_cpu_percent: current_cpu,
             peak_cpu_percent: peak_cpu,
             avg_cpu_percent: avg_cpu,
-            samples: samples.iter().cloned().collect(),
+            samples: samples.iter().copied().collect(),
             timestamp: SystemTime::now(),
             enumeration_cpu_percent: None, // Would be set during specific operations
             processing_cpu_percent: None,  // Would be set during specific operations
@@ -452,7 +463,7 @@ impl PerformanceMonitor {
             current_memory_bytes: current_memory,
             peak_memory_bytes: peak_memory,
             avg_memory_bytes: avg_memory,
-            samples: samples.iter().cloned().collect(),
+            samples: samples.iter().copied().collect(),
             timestamp: SystemTime::now(),
             enumeration_memory_bytes: None, // Would be set during specific operations
             processing_memory_bytes: None,  // Would be set during specific operations
@@ -473,7 +484,7 @@ impl PerformanceMonitor {
             return None;
         }
 
-        let mut sorted_samples: Vec<f64> = samples.iter().cloned().collect();
+        let mut sorted_samples: Vec<f64> = samples.iter().copied().collect();
         sorted_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let avg_latency = if sorted_samples.is_empty() {
@@ -481,7 +492,7 @@ impl PerformanceMonitor {
         } else {
             sorted_samples.iter().sum::<f64>() / sorted_samples.len() as f64
         };
-        let peak_latency = sorted_samples.last().cloned().unwrap_or(0.0);
+        let peak_latency = sorted_samples.last().copied().unwrap_or(0.0);
 
         // Use nearest-rank percentile calculation
         let p95_latency = if sorted_samples.is_empty() {
@@ -489,14 +500,14 @@ impl PerformanceMonitor {
         } else {
             let k = (0.95 * sorted_samples.len() as f64).ceil() as usize;
             let index = k.saturating_sub(1).min(sorted_samples.len() - 1);
-            sorted_samples.get(index).cloned().unwrap_or(0.0)
+            sorted_samples.get(index).copied().unwrap_or(0.0)
         };
         let p99_latency = if sorted_samples.is_empty() {
             0.0
         } else {
             let k = (0.99 * sorted_samples.len() as f64).ceil() as usize;
             let index = k.saturating_sub(1).min(sorted_samples.len() - 1);
-            sorted_samples.get(index).cloned().unwrap_or(0.0)
+            sorted_samples.get(index).copied().unwrap_or(0.0)
         };
 
         // Calculate triggers per second based on delta from previous sample
@@ -674,17 +685,13 @@ impl PerformanceMonitor {
                     current.memory.current_memory_bytes as f64
                         / baseline.baseline_memory_bytes as f64
                 },
-                trigger_latency_ratio: current
-                    .trigger_latency
-                    .as_ref()
-                    .map(|t| {
-                        if baseline.baseline_trigger_latency_ms == 0.0 {
-                            1.0
-                        } else {
-                            t.avg_latency_ms / baseline.baseline_trigger_latency_ms
-                        }
-                    })
-                    .unwrap_or(1.0),
+                trigger_latency_ratio: current.trigger_latency.as_ref().map_or(1.0, |t| {
+                    if baseline.baseline_trigger_latency_ms == 0.0 {
+                        1.0
+                    } else {
+                        t.avg_latency_ms / baseline.baseline_trigger_latency_ms
+                    }
+                }),
                 baseline_established_at: baseline.established_at,
                 comparison_timestamp: SystemTime::now(),
             })
@@ -747,7 +754,7 @@ impl PerformanceMonitor {
         #[cfg(unix)]
         {
             use std::fs;
-            let mut count = 0u64;
+            let mut count = 0_u64;
 
             // Count TCP connections
             if let Ok(contents) = fs::read_to_string("/proc/net/tcp") {
@@ -855,6 +862,7 @@ pub struct PerformanceComparison {
 
 /// Types of performance degradation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DegradationType {
     ThroughputDegradation { current_ratio: f64, threshold: f64 },
     CpuUsageIncrease { current_ratio: f64, threshold: f64 },
@@ -905,14 +913,14 @@ mod tests {
         let event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: Some(1),
-            name: "test_process".to_string(),
-            executable_path: Some("/usr/bin/test".to_string()),
-            command_line: vec!["test".to_string()],
+            name: "test_process".to_owned(),
+            executable_path: Some("/usr/bin/test".to_owned()),
+            command_line: vec!["test".to_owned()],
             start_time: Some(SystemTime::now()),
             cpu_usage: Some(1.5),
             memory_usage: Some(1024 * 1024),
-            executable_hash: Some("test_hash".to_string()),
-            user_id: Some("1000".to_string()),
+            executable_hash: Some("test_hash".to_owned()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
@@ -959,13 +967,13 @@ mod tests {
         let monitor = PerformanceMonitor::new(config);
 
         let trigger = TriggerRequest {
-            trigger_id: "test_trigger".to_string(),
-            target_collector: "test_collector".to_string(),
+            trigger_id: "test_trigger".to_owned(),
+            target_collector: "test_collector".to_owned(),
             analysis_type: crate::AnalysisType::YaraScan,
             priority: crate::TriggerPriority::Normal,
             target_pid: Some(1234),
             target_path: None,
-            correlation_id: "test_correlation".to_string(),
+            correlation_id: "test_correlation".to_owned(),
             metadata: HashMap::new(),
             timestamp: SystemTime::now(),
         };
@@ -1041,14 +1049,14 @@ mod tests {
         let event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: Some(1),
-            name: "test_process".to_string(),
-            executable_path: Some("/usr/bin/test".to_string()),
-            command_line: vec!["test".to_string()],
+            name: "test_process".to_owned(),
+            executable_path: Some("/usr/bin/test".to_owned()),
+            command_line: vec!["test".to_owned()],
             start_time: Some(SystemTime::now()),
             cpu_usage: Some(1.5),
             memory_usage: Some(1024 * 1024),
-            executable_hash: Some("test_hash".to_string()),
-            user_id: Some("1000".to_string()),
+            executable_hash: Some("test_hash".to_owned()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),

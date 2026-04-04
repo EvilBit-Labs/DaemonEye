@@ -2,7 +2,12 @@
 //!
 //! This module provides configuration structures and validation for the
 //! collector runtime and event sources. It integrates with the existing
-//! daemoneye-lib ConfigLoader for hierarchical configuration management.
+//! daemoneye-lib `ConfigLoader` for hierarchical configuration management.
+
+#![allow(clippy::as_conversions)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
+#![allow(clippy::integer_division)]
 
 use daemoneye_eventbus::DaemoneyeBroker;
 use daemoneye_lib::config::{Config as DaemonEyeConfig, ConfigError, ConfigLoader};
@@ -70,7 +75,7 @@ pub struct CollectorConfig {
     /// Component name for configuration loading
     pub component_name: String,
 
-    /// DaemoneyeEventBus socket path for embedded broker communication
+    /// `DaemoneyeEventBus` socket path for embedded broker communication
     pub daemoneye_socket_path: Option<String>,
 
     /// IPC endpoint path for direct communication (e.g., with procmond)
@@ -96,7 +101,7 @@ impl Default for CollectorConfig {
             max_backpressure_wait: Duration::from_millis(500),
             enable_telemetry: true,
             telemetry_interval: Duration::from_secs(30),
-            component_name: "collector-core".to_string(),
+            component_name: "collector-core".to_owned(),
             daemoneye_socket_path: None,
             ipc_endpoint: None,
             registration: None,
@@ -135,7 +140,7 @@ impl Default for CollectorRegistrationConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            topic: "control.collector.registration".to_string(),
+            topic: "control.collector.registration".to_owned(),
             collector_id: None,
             collector_type: None,
             heartbeat_interval: Duration::from_secs(30),
@@ -149,6 +154,7 @@ impl Default for CollectorRegistrationConfig {
 
 impl CollectorRegistrationConfig {
     /// Attach a broker handle for in-process registration.
+    #[must_use]
     pub fn with_broker(mut self, broker: Arc<DaemoneyeBroker>) -> Self {
         self.broker = Some(broker);
         self
@@ -259,84 +265,98 @@ impl CollectorConfig {
     }
 
     /// Sets the maximum number of event sources.
-    pub fn with_max_event_sources(mut self, max: usize) -> Self {
+    #[must_use]
+    pub const fn with_max_event_sources(mut self, max: usize) -> Self {
         self.max_event_sources = max;
         self
     }
 
     /// Sets the event buffer size.
-    pub fn with_event_buffer_size(mut self, size: usize) -> Self {
+    #[must_use]
+    pub const fn with_event_buffer_size(mut self, size: usize) -> Self {
         self.event_buffer_size = size;
         self
     }
 
     /// Sets the shutdown timeout.
-    pub fn with_shutdown_timeout(mut self, timeout: Duration) -> Self {
+    #[must_use]
+    pub const fn with_shutdown_timeout(mut self, timeout: Duration) -> Self {
         self.shutdown_timeout = timeout;
         self
     }
 
     /// Sets the health check interval.
-    pub fn with_health_check_interval(mut self, interval: Duration) -> Self {
+    #[must_use]
+    pub const fn with_health_check_interval(mut self, interval: Duration) -> Self {
         self.health_check_interval = interval;
         self
     }
 
     /// Enables or disables debug logging.
-    pub fn with_debug_logging(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn with_debug_logging(mut self, enabled: bool) -> Self {
         self.enable_debug_logging = enabled;
         self
     }
 
     /// Sets the component name for configuration loading.
+    #[must_use]
     pub fn with_component_name(mut self, name: String) -> Self {
         self.component_name = name;
         self
     }
 
     /// Sets the IPC endpoint path.
+    #[must_use]
     pub fn with_ipc_endpoint(mut self, path: String) -> Self {
         self.ipc_endpoint = Some(path);
         self
     }
 
     /// Sets the backpressure threshold.
-    pub fn with_backpressure_threshold(mut self, threshold: usize) -> Self {
+    #[must_use]
+    pub const fn with_backpressure_threshold(mut self, threshold: usize) -> Self {
         self.backpressure_threshold = threshold;
         self
     }
 
     /// Enables or disables telemetry collection.
-    pub fn with_telemetry(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn with_telemetry(mut self, enabled: bool) -> Self {
         self.enable_telemetry = enabled;
         self
     }
 
     /// Sets the telemetry collection interval.
-    pub fn with_telemetry_interval(mut self, interval: Duration) -> Self {
+    #[must_use]
+    pub const fn with_telemetry_interval(mut self, interval: Duration) -> Self {
         self.telemetry_interval = interval;
         self
     }
 
     /// Sets the maximum backpressure wait time.
-    pub fn with_max_backpressure_wait(mut self, wait: Duration) -> Self {
+    #[must_use]
+    pub const fn with_max_backpressure_wait(mut self, wait: Duration) -> Self {
         self.max_backpressure_wait = wait;
         self
     }
 
     /// Sets the maximum batch size.
-    pub fn with_max_batch_size(mut self, size: usize) -> Self {
+    #[must_use]
+    pub const fn with_max_batch_size(mut self, size: usize) -> Self {
         self.max_batch_size = size;
         self
     }
 
     /// Sets the batch timeout.
-    pub fn with_batch_timeout(mut self, timeout: Duration) -> Self {
+    #[must_use]
+    pub const fn with_batch_timeout(mut self, timeout: Duration) -> Self {
         self.batch_timeout = timeout;
         self
     }
 
     /// Sets the registration configuration.
+    #[must_use]
     pub fn with_registration(mut self, registration: CollectorRegistrationConfig) -> Self {
         self.registration = Some(registration);
         self
@@ -349,10 +369,10 @@ impl CollectorConfig {
         }
     }
 
-    /// Loads configuration from the existing daemoneye-lib ConfigLoader.
+    /// Loads configuration from the existing daemoneye-lib `ConfigLoader`.
     ///
     /// This method integrates with the hierarchical configuration system
-    /// used by other DaemonEye components, applying overrides from:
+    /// used by other `DaemonEye` components, applying overrides from:
     /// 1. System configuration files
     /// 2. User configuration files
     /// 3. Environment variables
@@ -368,7 +388,7 @@ impl CollectorConfig {
         let config_loader = ConfigLoader::new(component_name);
         let daemoneye_config = config_loader.load()?;
 
-        let mut collector_config = Self::default().with_component_name(component_name.to_string());
+        let mut collector_config = Self::default().with_component_name(component_name.to_owned());
 
         // Apply daemoneye-lib configuration overrides
         collector_config = collector_config.apply_daemoneye_config(&daemoneye_config);
@@ -409,6 +429,7 @@ impl CollectorConfig {
     ///
     /// This method reads collector-core specific environment variables
     /// using the component name as a prefix.
+    #[must_use]
     pub fn apply_env_overrides(mut self) -> Self {
         let prefix = format!("{}_COLLECTOR", self.component_name.to_uppercase());
 
@@ -599,7 +620,7 @@ mod tests {
     #[test]
     fn test_config_builder_methods_extended() {
         let config = CollectorConfig::new()
-            .with_component_name("test-component".to_string())
+            .with_component_name("test-component".to_owned())
             .with_backpressure_threshold(500)
             .with_telemetry(false);
 
@@ -613,7 +634,7 @@ mod tests {
         // Note: This test doesn't actually set environment variables
         // due to unsafe_code = "forbid" constraint
         let config = CollectorConfig::default()
-            .with_component_name("test".to_string())
+            .with_component_name("test".to_owned())
             .apply_env_overrides();
 
         // Should return unchanged config since no env vars are set
@@ -628,7 +649,7 @@ mod tests {
                 ..Default::default()
             },
             logging: daemoneye_lib::config::LoggingConfig {
-                level: "debug".to_string(),
+                level: "debug".to_owned(),
                 ..Default::default()
             },
             ..Default::default()

@@ -72,17 +72,17 @@ pub struct CollectorRpcClient {
     /// Default timeout for RPC calls
     pub default_timeout: Duration,
     /// Reference to the embedded broker for publishing requests
-    broker: Arc<DaemoneyeBroker>,
+    pub broker: Arc<DaemoneyeBroker>,
     /// Channel for receiving response messages
     #[allow(dead_code)]
-    response_receiver: Arc<Mutex<mpsc::UnboundedReceiver<Message>>>,
+    pub response_receiver: Arc<Mutex<mpsc::UnboundedReceiver<Message>>>,
     /// Topic for receiving responses
     #[allow(dead_code)]
-    response_topic: String,
+    pub response_topic: String,
     /// Pending requests awaiting responses
-    pending_requests: Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>,
+    pub pending_requests: Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>,
     /// Subscriber ID for response topic subscription
-    subscriber_id: Uuid,
+    pub subscriber_id: Uuid,
 }
 
 /// RPC service for handling collector lifecycle operations
@@ -143,6 +143,7 @@ pub trait ConfigProvider: Send + Sync {
 
 /// Errors that can occur during collector registration lifecycle management.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RegistrationError {
     /// Collector is already registered with the registry.
     #[error("collector `{0}` is already registered")]
@@ -270,7 +271,7 @@ pub struct RpcCorrelationMetadata {
 }
 
 impl RpcCorrelationMetadata {
-    /// Create new correlation metadata with required correlation_id; sets root_correlation_id to the same value.
+    /// Create new correlation metadata with required `correlation_id`; sets `root_correlation_id` to the same value.
     pub fn new(correlation_id: String) -> Self {
         Self {
             root_correlation_id: correlation_id.clone(),
@@ -287,12 +288,14 @@ impl RpcCorrelationMetadata {
     }
 
     /// Attach a parent correlation id.
+    #[must_use]
     pub fn with_parent(mut self, parent_id: String) -> Self {
         self.parent_correlation_id = Some(parent_id);
         self
     }
 
     /// Set tracing IDs.
+    #[must_use]
     pub fn with_trace(mut self, trace_id: String, span_id: String) -> Self {
         self.trace_id = Some(trace_id);
         self.span_id = Some(span_id);
@@ -300,6 +303,7 @@ impl RpcCorrelationMetadata {
     }
 
     /// Set workflow identifiers.
+    #[must_use]
     pub fn with_workflow(mut self, workflow_id: String, stage: String) -> Self {
         self.workflow_id = Some(workflow_id);
         self.workflow_stage = Some(stage);
@@ -307,13 +311,15 @@ impl RpcCorrelationMetadata {
     }
 
     /// Add a tag.
+    #[must_use]
     pub fn with_tag(mut self, key: String, value: String) -> Self {
         self.correlation_tags.insert(key, value);
         self
     }
 
     /// Increment hop count for cascading calls.
-    pub fn increment_hop(mut self) -> Self {
+    #[must_use]
+    pub const fn increment_hop(mut self) -> Self {
         self.hop_count = self.hop_count.saturating_add(1);
         self
     }
@@ -321,6 +327,7 @@ impl RpcCorrelationMetadata {
 
 /// RPC operation types for collector lifecycle management
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CollectorOperation {
     /// Register a collector with the broker
     Register,
@@ -352,6 +359,7 @@ pub enum CollectorOperation {
 
 /// RPC payload containing operation-specific data
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RpcPayload {
     /// Collector lifecycle request
     Lifecycle(CollectorLifecycleRequest),
@@ -381,6 +389,7 @@ pub enum RpcPayload {
 
 /// RPC response status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub enum RpcStatus {
     /// Operation completed successfully
     #[default]
@@ -412,6 +421,7 @@ pub struct RpcError {
 
 /// Error categories for RPC operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub enum ErrorCategory {
     /// Configuration or validation error
     Configuration,
@@ -515,6 +525,7 @@ pub struct HealthCheckData {
 
 /// Health status enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub enum HealthStatus {
     /// Service is healthy and operational
     Healthy,
@@ -606,6 +617,7 @@ pub struct ShutdownRequest {
 
 /// Shutdown type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub enum ShutdownType {
     /// Graceful shutdown with cleanup
     #[default]
@@ -670,7 +682,7 @@ impl CollectorRpcClient {
     /// Create a new RPC client for the specified target topic with broker integration
     pub async fn new(target_topic: &str, broker: Arc<DaemoneyeBroker>) -> Result<Self> {
         let client_id = Uuid::new_v4().to_string();
-        let response_topic = format!("control.rpc.response.{}", client_id);
+        let response_topic = format!("control.rpc.response.{client_id}");
         let subscriber_id = Uuid::new_v4();
 
         // Subscribe to response topic using raw message subscription
@@ -681,13 +693,13 @@ impl CollectorRpcClient {
 
         // Start response handler background task
         Self::start_response_handler(
-            pending_requests.clone(),
-            response_receiver.clone(),
+            Arc::clone(&pending_requests),
+            Arc::clone(&response_receiver),
             response_topic.clone(),
         );
 
         Ok(Self {
-            target_topic: target_topic.to_string(),
+            target_topic: target_topic.to_owned(),
             client_id,
             default_timeout: Duration::from_secs(30),
             broker,
@@ -703,10 +715,10 @@ impl CollectorRpcClient {
         let (tx, rx) = oneshot::channel();
 
         // Store sender in pending requests
-        {
-            let mut pending = self.pending_requests.lock().await;
-            pending.insert(request.request_id.clone(), tx);
-        }
+        self.pending_requests
+            .lock()
+            .await
+            .insert(request.request_id.clone(), tx);
 
         // Serialize RPC request
         let payload = postcard::to_allocvec(&request)
@@ -734,15 +746,19 @@ impl CollectorRpcClient {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => {
                 // Remove from pending requests and return error
-                let mut pending = self.pending_requests.lock().await;
-                pending.remove(&request.request_id);
-                Err(EventBusError::rpc("Response channel closed".to_string()))
+                self.pending_requests
+                    .lock()
+                    .await
+                    .remove(&request.request_id);
+                Err(EventBusError::rpc("Response channel closed".to_owned()))
             }
             Err(_) => {
                 // Timeout: remove from pending requests and return timeout error
-                let mut pending = self.pending_requests.lock().await;
-                pending.remove(&request.request_id);
-                Err(EventBusError::timeout("RPC request timeout".to_string()))
+                self.pending_requests
+                    .lock()
+                    .await
+                    .remove(&request.request_id);
+                Err(EventBusError::timeout("RPC request timeout".to_owned()))
             }
         }
     }
@@ -800,10 +816,14 @@ impl CollectorRpcClient {
 
     /// Handle incoming response message
     pub async fn handle_response(&self, response: RpcResponse) -> Result<()> {
-        let mut pending = self.pending_requests.lock().await;
-        if let Some(tx) = pending.remove(&response.request_id) {
+        let maybe_tx = self
+            .pending_requests
+            .lock()
+            .await
+            .remove(&response.request_id);
+        if let Some(tx) = maybe_tx {
             tx.send(response)
-                .map_err(|_| EventBusError::rpc("Failed to send response".to_string()))?;
+                .map_err(|_closed| EventBusError::rpc("Failed to send response".to_owned()))?;
         } else {
             tracing::warn!(
                 "Received response for unknown request ID: {}",
@@ -818,12 +838,15 @@ impl CollectorRpcClient {
         // Unsubscribe from response topic
         self.broker.unsubscribe(self.subscriber_id).await?;
 
+        // Drain pending requests before building error responses
+        let drained: Vec<(String, oneshot::Sender<RpcResponse>)> =
+            self.pending_requests.lock().await.drain().collect();
+
         // Clear all pending requests with timeout errors
-        let mut pending = self.pending_requests.lock().await;
-        for (request_id, tx) in pending.drain() {
+        for (request_id, tx) in drained {
             let error_response = RpcResponse {
                 request_id,
-                service_id: "client".to_string(),
+                service_id: "client".to_owned(),
                 operation: CollectorOperation::HealthCheck, // Default operation
                 status: RpcStatus::Cancelled,
                 payload: None,
@@ -832,15 +855,15 @@ impl CollectorRpcClient {
                 queue_time_ms: None,
                 total_time_ms: 0,
                 error_details: Some(RpcError {
-                    code: "CLIENT_SHUTDOWN".to_string(),
-                    message: "RPC client is shutting down".to_string(),
+                    code: "CLIENT_SHUTDOWN".to_owned(),
+                    message: "RPC client is shutting down".to_owned(),
                     context: HashMap::new(),
                     category: ErrorCategory::Internal,
                 }),
                 correlation_metadata: RpcCorrelationMetadata::default(),
             };
 
-            let _ = tx.send(error_response); // Ignore send errors during shutdown
+            drop(tx.send(error_response)); // Ignore send errors during shutdown
         }
 
         Ok(())
@@ -884,14 +907,14 @@ impl CollectorRpcService {
         service_id: String,
         capabilities: ServiceCapabilities,
         process_manager: Arc<CollectorProcessManager>,
-        config_manager: Arc<ConfigManager>,
+        config_manager: &Arc<ConfigManager>,
         broker: Option<Arc<DaemoneyeBroker>>,
     ) -> Self {
         let health_provider = Arc::new(DefaultHealthProvider {
             process_manager: Arc::clone(&process_manager),
         });
         let config_provider = Arc::new(DefaultConfigProvider {
-            config_manager: Arc::clone(&config_manager),
+            config_manager: Arc::clone(config_manager),
             process_manager: Arc::clone(&process_manager),
             broker: broker.clone(),
         });
@@ -945,8 +968,8 @@ impl CollectorRpcService {
             return self.create_error_response(
                 request,
                 RpcError {
-                    code: "UNSUPPORTED_OPERATION".to_string(),
-                    message: format!("Operation {:?} not supported by this service", operation),
+                    code: "UNSUPPORTED_OPERATION".to_owned(),
+                    message: format!("Operation {operation:?} not supported by this service"),
                     context: HashMap::new(),
                     category: ErrorCategory::Configuration,
                 },
@@ -1010,8 +1033,8 @@ impl CollectorRpcService {
                 self.create_error_response(
                     request,
                     RpcError {
-                        code: "UNSUPPORTED_OPERATION".to_string(),
-                        message: "ExecuteTask operation not supported by base service".to_string(),
+                        code: "UNSUPPORTED_OPERATION".to_owned(),
+                        message: "ExecuteTask operation not supported by base service".to_owned(),
                         context: HashMap::new(),
                         category: ErrorCategory::Configuration,
                     },
@@ -1028,20 +1051,17 @@ impl CollectorRpcService {
         start_time: SystemTime,
         deadline: SystemTime,
     ) -> RpcResponse {
-        let registration = match &request.payload {
-            RpcPayload::Registration(req) => req.clone(),
-            _ => {
-                return self.create_error_response(
-                    request,
-                    RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Expected Registration payload for Register operation".to_string(),
-                        context: HashMap::new(),
-                        category: ErrorCategory::Configuration,
-                    },
-                    start_time,
-                );
-            }
+        let RpcPayload::Registration(registration) = request.payload.clone() else {
+            return self.create_error_response(
+                request,
+                RpcError {
+                    code: "INVALID_PAYLOAD".to_owned(),
+                    message: "Expected Registration payload for Register operation".to_owned(),
+                    context: HashMap::new(),
+                    category: ErrorCategory::Configuration,
+                },
+                start_time,
+            );
         };
 
         if Self::deadline_has_passed(deadline) {
@@ -1074,7 +1094,7 @@ impl CollectorRpcService {
                 start_time,
             ),
             Err(e) => {
-                let rpc_error = self.map_registration_error_to_rpc_error(e);
+                let rpc_error = Self::map_registration_error_to_rpc_error(&e);
                 self.create_error_response(request, rpc_error, start_time)
             }
         }
@@ -1087,21 +1107,17 @@ impl CollectorRpcService {
         start_time: SystemTime,
         deadline: SystemTime,
     ) -> RpcResponse {
-        let deregistration = match &request.payload {
-            RpcPayload::Deregistration(req) => req.clone(),
-            _ => {
-                return self.create_error_response(
-                    request,
-                    RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Expected Deregistration payload for Deregister operation"
-                            .to_string(),
-                        context: HashMap::new(),
-                        category: ErrorCategory::Configuration,
-                    },
-                    start_time,
-                );
-            }
+        let RpcPayload::Deregistration(deregistration) = request.payload.clone() else {
+            return self.create_error_response(
+                request,
+                RpcError {
+                    code: "INVALID_PAYLOAD".to_owned(),
+                    message: "Expected Deregistration payload for Deregister operation".to_owned(),
+                    context: HashMap::new(),
+                    category: ErrorCategory::Configuration,
+                },
+                start_time,
+            );
         };
 
         if Self::deadline_has_passed(deadline) {
@@ -1131,17 +1147,14 @@ impl CollectorRpcService {
             Ok(()) => {
                 let mut payload = HashMap::new();
                 payload.insert(
-                    "collector_id".to_string(),
+                    "collector_id".to_owned(),
                     serde_json::json!(deregistration.collector_id),
                 );
-                payload.insert("status".to_string(), serde_json::json!("deregistered"));
+                payload.insert("status".to_owned(), serde_json::json!("deregistered"));
                 if let Some(reason) = deregistration.reason {
-                    payload.insert("reason".to_string(), serde_json::json!(reason));
+                    payload.insert("reason".to_owned(), serde_json::json!(reason));
                 }
-                payload.insert(
-                    "forced".to_string(),
-                    serde_json::json!(deregistration.force),
-                );
+                payload.insert("forced".to_owned(), serde_json::json!(deregistration.force));
                 self.create_success_response(
                     request,
                     Some(RpcPayload::Generic(payload)),
@@ -1149,7 +1162,7 @@ impl CollectorRpcService {
                 )
             }
             Err(e) => {
-                let rpc_error = self.map_registration_error_to_rpc_error(e);
+                let rpc_error = Self::map_registration_error_to_rpc_error(&e);
                 self.create_error_response(request, rpc_error, start_time)
             }
         }
@@ -1163,20 +1176,17 @@ impl CollectorRpcService {
         deadline: SystemTime,
     ) -> RpcResponse {
         // Extract lifecycle request from payload
-        let lifecycle_request = match &request.payload {
-            RpcPayload::Lifecycle(req) => req,
-            _ => {
-                return self.create_error_response(
-                    request,
-                    RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Expected Lifecycle payload for Start operation".to_string(),
-                        context: HashMap::new(),
-                        category: ErrorCategory::Configuration,
-                    },
-                    start_time,
-                );
-            }
+        let RpcPayload::Lifecycle(lifecycle_request) = request.payload.clone() else {
+            return self.create_error_response(
+                request,
+                RpcError {
+                    code: "INVALID_PAYLOAD".to_owned(),
+                    message: "Expected Lifecycle payload for Start operation".to_owned(),
+                    context: HashMap::new(),
+                    category: ErrorCategory::Configuration,
+                },
+                start_time,
+            );
         };
 
         if Self::deadline_has_passed(deadline) {
@@ -1192,7 +1202,7 @@ impl CollectorRpcService {
         let mut collector_config = CollectorConfig {
             binary_path: self
                 .process_manager
-                .config
+                .config()
                 .collector_binaries
                 .get(&lifecycle_request.collector_type)
                 .cloned()
@@ -1202,21 +1212,23 @@ impl CollectorRpcService {
             working_dir: lifecycle_request
                 .working_directory
                 .as_ref()
-                .map(|s| s.into()),
+                .map(std::convert::Into::into),
             resource_limits: lifecycle_request.resource_limits.as_ref().map(|limits| {
                 crate::process_manager::ResourceLimits {
                     max_memory_bytes: limits.max_memory_bytes,
+                    // SAFETY: CPU percent is clamped to 0-100, so f64-to-u32 truncation is safe.
+                    #[allow(clippy::as_conversions)]
                     max_cpu_percent: limits.max_cpu_percent.map(|p| p as u32),
                 }
             }),
-            auto_restart: self.process_manager.config.enable_auto_restart,
+            auto_restart: self.process_manager.config().enable_auto_restart,
             max_restarts: 3,
         };
 
         // Add config overrides as command-line args
-        if let Some(overrides) = &lifecycle_request.config_overrides {
+        if let Some(ref overrides) = lifecycle_request.config_overrides {
             for (key, value) in overrides {
-                collector_config.args.push(format!("--{}", key));
+                collector_config.args.push(format!("--{key}"));
                 collector_config.args.push(value.to_string());
             }
         }
@@ -1252,12 +1264,12 @@ impl CollectorRpcService {
         match start_result {
             Ok(pid) => {
                 let mut context = HashMap::new();
-                context.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
+                context.insert("pid".to_owned(), serde_json::Value::Number(pid.into()));
                 let payload = RpcPayload::Generic(context);
                 self.create_success_response(request, Some(payload), start_time)
             }
             Err(e) => {
-                let rpc_error = self.map_process_error_to_rpc_error(e);
+                let rpc_error = Self::map_process_error_to_rpc_error(&e);
                 self.create_error_response(request, rpc_error, start_time)
             }
         }
@@ -1271,24 +1283,21 @@ impl CollectorRpcService {
         deadline: SystemTime,
     ) -> RpcResponse {
         // Extract lifecycle request from payload
-        let lifecycle_request = match &request.payload {
-            RpcPayload::Lifecycle(req) => req,
-            _ => {
-                return self.create_error_response(
-                    request,
-                    RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Expected Lifecycle payload for Stop operation".to_string(),
-                        context: HashMap::new(),
-                        category: ErrorCategory::Configuration,
-                    },
-                    start_time,
-                );
-            }
+        let RpcPayload::Lifecycle(lifecycle_request) = request.payload.clone() else {
+            return self.create_error_response(
+                request,
+                RpcError {
+                    code: "INVALID_PAYLOAD".to_owned(),
+                    message: "Expected Lifecycle payload for Stop operation".to_owned(),
+                    context: HashMap::new(),
+                    category: ErrorCategory::Configuration,
+                },
+                start_time,
+            );
         };
 
         // Determine timeout
-        let timeout = self.process_manager.config.default_graceful_timeout;
+        let timeout = self.process_manager.config().default_graceful_timeout;
 
         if Self::deadline_has_passed(deadline) {
             return self.create_deadline_error(
@@ -1319,7 +1328,7 @@ impl CollectorRpcService {
                 let mut context = HashMap::new();
                 if let Some(code) = exit_code {
                     context.insert(
-                        "exit_code".to_string(),
+                        "exit_code".to_owned(),
                         serde_json::Value::Number(code.into()),
                     );
                 }
@@ -1327,7 +1336,7 @@ impl CollectorRpcService {
                 self.create_success_response(request, Some(payload), start_time)
             }
             Err(e) => {
-                let rpc_error = self.map_process_error_to_rpc_error(e);
+                let rpc_error = Self::map_process_error_to_rpc_error(&e);
                 self.create_error_response(request, rpc_error, start_time)
             }
         }
@@ -1341,25 +1350,25 @@ impl CollectorRpcService {
         deadline: SystemTime,
     ) -> RpcResponse {
         // Extract lifecycle request from payload
-        let lifecycle_request = match &request.payload {
-            RpcPayload::Lifecycle(req) => req,
-            _ => {
-                return self.create_error_response(
-                    request,
-                    RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Expected Lifecycle payload for Restart operation".to_string(),
-                        context: HashMap::new(),
-                        category: ErrorCategory::Configuration,
-                    },
-                    start_time,
-                );
-            }
+        let RpcPayload::Lifecycle(lifecycle_request) = request.payload.clone() else {
+            return self.create_error_response(
+                request,
+                RpcError {
+                    code: "INVALID_PAYLOAD".to_owned(),
+                    message: "Expected Lifecycle payload for Restart operation".to_owned(),
+                    context: HashMap::new(),
+                    category: ErrorCategory::Configuration,
+                },
+                start_time,
+            );
         };
 
         // Determine timeout (stop + start)
-        let timeout =
-            self.process_manager.config.default_graceful_timeout + Duration::from_secs(10);
+        let timeout = self
+            .process_manager
+            .config()
+            .default_graceful_timeout
+            .saturating_add(Duration::from_secs(10));
 
         if Self::deadline_has_passed(deadline) {
             return self.create_deadline_error(
@@ -1388,12 +1397,12 @@ impl CollectorRpcService {
         match restart_result {
             Ok(pid) => {
                 let mut context = HashMap::new();
-                context.insert("pid".to_string(), serde_json::Value::Number(pid.into()));
+                context.insert("pid".to_owned(), serde_json::Value::Number(pid.into()));
                 let payload = RpcPayload::Generic(context);
                 self.create_success_response(request, Some(payload), start_time)
             }
             Err(e) => {
-                let rpc_error = self.map_process_error_to_rpc_error(e);
+                let rpc_error = Self::map_process_error_to_rpc_error(&e);
                 self.create_error_response(request, rpc_error, start_time)
             }
         }
@@ -1407,17 +1416,19 @@ impl CollectorRpcService {
         deadline: SystemTime,
     ) -> RpcResponse {
         // Extract collector_id from payload, or use service_id as fallback for empty payloads
-        let collector_id = match &request.payload {
-            RpcPayload::Lifecycle(req) => req.collector_id.clone(),
+        // NOTE: `_` is required for non-exhaustive enum variants.
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let collector_id = match request.payload.clone() {
+            RpcPayload::Lifecycle(req) => req.collector_id,
             RpcPayload::Generic(map) => {
-                if let Some(serde_json::Value::String(id)) = map.get("collector_id") {
-                    id.clone()
+                if let Some(serde_json::Value::String(id)) = map.get("collector_id").cloned() {
+                    id
                 } else {
                     return self.create_error_response(
                         request,
                         RpcError {
-                            code: "INVALID_PAYLOAD".to_string(),
-                            message: "Missing collector_id in payload".to_string(),
+                            code: "INVALID_PAYLOAD".to_owned(),
+                            message: "Missing collector_id in payload".to_owned(),
                             context: HashMap::new(),
                             category: ErrorCategory::Configuration,
                         },
@@ -1432,8 +1443,8 @@ impl CollectorRpcService {
                 return self.create_error_response(
                     request,
                     RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Invalid payload for HealthCheck operation".to_string(),
+                        code: "INVALID_PAYLOAD".to_owned(),
+                        message: "Invalid payload for HealthCheck operation".to_owned(),
                         context: HashMap::new(),
                         category: ErrorCategory::Configuration,
                     },
@@ -1461,6 +1472,8 @@ impl CollectorRpcService {
                 Some(RpcPayload::HealthCheck(health_data)),
                 start_time,
             ),
+            // NOTE: `_` is required for non-exhaustive enum variants.
+            #[allow(clippy::wildcard_enum_match_arm)]
             Err(e) => match e {
                 ProcessManagerError::ProcessNotFound(_) => {
                     let health_data = HealthCheckData {
@@ -1479,7 +1492,7 @@ impl CollectorRpcService {
                     )
                 }
                 other => {
-                    let rpc_error = self.map_process_error_to_rpc_error(other);
+                    let rpc_error = Self::map_process_error_to_rpc_error(&other);
                     self.create_error_response(request, rpc_error, start_time)
                 }
             },
@@ -1494,20 +1507,17 @@ impl CollectorRpcService {
         deadline: SystemTime,
     ) -> RpcResponse {
         // Extract ConfigUpdateRequest from payload
-        let config_request = match &request.payload {
-            RpcPayload::ConfigUpdate(req) => req.clone(),
-            _ => {
-                return self.create_error_response(
-                    request,
-                    RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Invalid payload for ConfigUpdate operation".to_string(),
-                        context: HashMap::new(),
-                        category: ErrorCategory::Configuration,
-                    },
-                    start_time,
-                );
-            }
+        let RpcPayload::ConfigUpdate(config_request) = request.payload.clone() else {
+            return self.create_error_response(
+                request,
+                RpcError {
+                    code: "INVALID_PAYLOAD".to_owned(),
+                    message: "Invalid payload for ConfigUpdate operation".to_owned(),
+                    context: HashMap::new(),
+                    category: ErrorCategory::Configuration,
+                },
+                start_time,
+            );
         };
 
         let collector_id = config_request.collector_id.clone();
@@ -1551,8 +1561,8 @@ impl CollectorRpcService {
                 if config_request.validate_only {
                     info!("Configuration validation successful for {}", collector_id);
                     let mut context = HashMap::new();
-                    context.insert("validated".to_string(), serde_json::json!(true));
-                    context.insert("version".to_string(), serde_json::json!(update.version));
+                    context.insert("validated".to_owned(), serde_json::json!(true));
+                    context.insert("version".to_owned(), serde_json::json!(update.version));
                     return self.create_success_response(
                         request,
                         Some(RpcPayload::Generic(context)),
@@ -1561,18 +1571,18 @@ impl CollectorRpcService {
                 }
 
                 let mut response_data = HashMap::new();
-                response_data.insert("collector_id".to_string(), serde_json::json!(collector_id));
-                response_data.insert("version".to_string(), serde_json::json!(update.version));
+                response_data.insert("collector_id".to_owned(), serde_json::json!(collector_id));
+                response_data.insert("version".to_owned(), serde_json::json!(update.version));
                 response_data.insert(
-                    "changed_fields".to_string(),
+                    "changed_fields".to_owned(),
                     serde_json::json!(update.changed_fields),
                 );
                 response_data.insert(
-                    "restarted".to_string(),
+                    "restarted".to_owned(),
                     serde_json::json!(update.restart_performed),
                 );
                 response_data.insert(
-                    "timestamp".to_string(),
+                    "timestamp".to_owned(),
                     serde_json::json!(
                         update
                             .timestamp
@@ -1594,7 +1604,7 @@ impl CollectorRpcService {
                 error!("Configuration update failed for {}: {}", collector_id, e);
                 self.create_error_response(
                     request,
-                    self.map_config_error_to_rpc_error(e),
+                    Self::map_config_error_to_rpc_error(e),
                     start_time,
                 )
             }
@@ -1602,62 +1612,64 @@ impl CollectorRpcService {
     }
 
     /// Map configuration manager error to RPC error
-    fn map_config_error_to_rpc_error(&self, error: ConfigManagerError) -> RpcError {
+    fn map_config_error_to_rpc_error(error: ConfigManagerError) -> RpcError {
         use crate::config_manager::ConfigManagerError;
 
         let mut context = HashMap::new();
 
+        // NOTE: `_` is required for non-exhaustive enum variants.
+        #[allow(clippy::wildcard_enum_match_arm)]
         match error {
             ConfigManagerError::ConfigNotFound(msg) => {
-                context.insert("details".to_string(), serde_json::json!(msg));
+                context.insert("details".to_owned(), serde_json::json!(msg));
                 RpcError {
-                    code: "CONFIG_NOT_FOUND".to_string(),
-                    message: format!("Configuration not found: {}", msg),
+                    code: "CONFIG_NOT_FOUND".to_owned(),
+                    message: format!("Configuration not found: {msg}"),
                     context,
                     category: ErrorCategory::Configuration,
                 }
             }
             ConfigManagerError::ValidationFailed(msg) => {
-                context.insert("validation_error".to_string(), serde_json::json!(msg));
+                context.insert("validation_error".to_owned(), serde_json::json!(msg));
                 RpcError {
-                    code: "VALIDATION_FAILED".to_string(),
-                    message: format!("Configuration validation failed: {}", msg),
+                    code: "VALIDATION_FAILED".to_owned(),
+                    message: format!("Configuration validation failed: {msg}"),
                     context,
                     category: ErrorCategory::Configuration,
                 }
             }
             ConfigManagerError::PersistenceFailed(msg) => {
-                context.insert("details".to_string(), serde_json::json!(msg));
+                context.insert("details".to_owned(), serde_json::json!(msg));
                 RpcError {
-                    code: "PERSISTENCE_FAILED".to_string(),
-                    message: format!("Failed to persist configuration: {}", msg),
+                    code: "PERSISTENCE_FAILED".to_owned(),
+                    message: format!("Failed to persist configuration: {msg}"),
                     context,
                     category: ErrorCategory::Internal,
                 }
             }
             ConfigManagerError::RollbackFailed(msg) => {
-                context.insert("details".to_string(), serde_json::json!(msg));
+                context.insert("details".to_owned(), serde_json::json!(msg));
                 RpcError {
-                    code: "ROLLBACK_FAILED".to_string(),
-                    message: format!("Failed to rollback configuration: {}", msg),
+                    code: "ROLLBACK_FAILED".to_owned(),
+                    message: format!("Failed to rollback configuration: {msg}"),
                     context,
                     category: ErrorCategory::Internal,
                 }
             }
             ConfigManagerError::InvalidConfigChange(msg) => {
-                context.insert("details".to_string(), serde_json::json!(msg));
+                context.insert("details".to_owned(), serde_json::json!(msg));
                 RpcError {
-                    code: "INVALID_CONFIG_CHANGE".to_string(),
-                    message: format!("Invalid configuration change: {}", msg),
+                    code: "INVALID_CONFIG_CHANGE".to_owned(),
+                    message: format!("Invalid configuration change: {msg}"),
                     context,
                     category: ErrorCategory::Configuration,
                 }
             }
             _ => {
-                context.insert("error".to_string(), serde_json::json!(error.to_string()));
+                context.insert("error".to_owned(), serde_json::json!(error.to_string()));
                 RpcError {
-                    code: "CONFIGURATION_ERROR".to_string(),
-                    message: format!("Configuration error: {}", error),
+                    code: "CONFIGURATION_ERROR".to_owned(),
+                    message: format!("Configuration error: {error}"),
                     context,
                     category: ErrorCategory::Internal,
                 }
@@ -1666,6 +1678,7 @@ impl CollectorRpcService {
     }
 
     /// Handle capabilities request
+    #[allow(clippy::unused_async)]
     async fn handle_capabilities_request(
         &self,
         request: RpcRequest,
@@ -1683,7 +1696,7 @@ impl CollectorRpcService {
 
         let capabilities_data = CapabilitiesData {
             collector_id: self.service_id.clone(),
-            event_types: vec!["process".to_string()],
+            event_types: vec!["process".to_owned()],
             operations: self.supported_operations.clone(),
             resource_requirements: ResourceRequirements {
                 min_memory_bytes: 50 * 1024 * 1024, // 50MB
@@ -1691,11 +1704,7 @@ impl CollectorRpcService {
                 required_privileges: vec![],
                 required_capabilities: vec![],
             },
-            platform_support: vec![
-                "linux".to_string(),
-                "macos".to_string(),
-                "windows".to_string(),
-            ],
+            platform_support: vec!["linux".to_owned(), "macos".to_owned(), "windows".to_owned()],
             features: HashMap::new(),
         };
 
@@ -1714,20 +1723,17 @@ impl CollectorRpcService {
         deadline: SystemTime,
     ) -> RpcResponse {
         // Extract shutdown request from payload
-        let shutdown_request = match &request.payload {
-            RpcPayload::Shutdown(req) => req,
-            _ => {
-                return self.create_error_response(
-                    request,
-                    RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Expected Shutdown payload".to_string(),
-                        context: HashMap::new(),
-                        category: ErrorCategory::Configuration,
-                    },
-                    start_time,
-                );
-            }
+        let RpcPayload::Shutdown(shutdown_request) = request.payload.clone() else {
+            return self.create_error_response(
+                request,
+                RpcError {
+                    code: "INVALID_PAYLOAD".to_owned(),
+                    message: "Expected Shutdown payload".to_owned(),
+                    context: HashMap::new(),
+                    category: ErrorCategory::Configuration,
+                },
+                start_time,
+            );
         };
 
         let timeout = Duration::from_millis(shutdown_request.graceful_timeout_ms);
@@ -1759,7 +1765,7 @@ impl CollectorRpcService {
         match shutdown_result {
             Ok(_) => self.create_success_response(request, None, start_time),
             Err(e) => {
-                let rpc_error = self.map_process_error_to_rpc_error(e);
+                let rpc_error = Self::map_process_error_to_rpc_error(&e);
                 self.create_error_response(request, rpc_error, start_time)
             }
         }
@@ -1773,20 +1779,17 @@ impl CollectorRpcService {
         deadline: SystemTime,
     ) -> RpcResponse {
         // Extract shutdown request from payload
-        let shutdown_request = match &request.payload {
-            RpcPayload::Shutdown(req) => req,
-            _ => {
-                return self.create_error_response(
-                    request,
-                    RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Expected Shutdown payload".to_string(),
-                        context: HashMap::new(),
-                        category: ErrorCategory::Configuration,
-                    },
-                    start_time,
-                );
-            }
+        let RpcPayload::Shutdown(shutdown_request) = request.payload.clone() else {
+            return self.create_error_response(
+                request,
+                RpcError {
+                    code: "INVALID_PAYLOAD".to_owned(),
+                    message: "Expected Shutdown payload".to_owned(),
+                    context: HashMap::new(),
+                    category: ErrorCategory::Configuration,
+                },
+                start_time,
+            );
         };
 
         // Force kill with short timeout
@@ -1817,7 +1820,7 @@ impl CollectorRpcService {
         match shutdown_result {
             Ok(_) => self.create_success_response(request, None, start_time),
             Err(e) => {
-                let rpc_error = self.map_process_error_to_rpc_error(e);
+                let rpc_error = Self::map_process_error_to_rpc_error(&e);
                 self.create_error_response(request, rpc_error, start_time)
             }
         }
@@ -1831,17 +1834,19 @@ impl CollectorRpcService {
         deadline: SystemTime,
     ) -> RpcResponse {
         // Extract collector_id from payload
-        let collector_id = match &request.payload {
-            RpcPayload::Lifecycle(req) => req.collector_id.clone(),
+        // NOTE: `_` is required for non-exhaustive enum variants.
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let collector_id = match request.payload.clone() {
+            RpcPayload::Lifecycle(req) => req.collector_id,
             RpcPayload::Generic(map) => {
-                if let Some(serde_json::Value::String(id)) = map.get("collector_id") {
-                    id.clone()
+                if let Some(serde_json::Value::String(id)) = map.get("collector_id").cloned() {
+                    id
                 } else {
                     return self.create_error_response(
                         request,
                         RpcError {
-                            code: "INVALID_PAYLOAD".to_string(),
-                            message: "Missing collector_id in payload".to_string(),
+                            code: "INVALID_PAYLOAD".to_owned(),
+                            message: "Missing collector_id in payload".to_owned(),
                             context: HashMap::new(),
                             category: ErrorCategory::Configuration,
                         },
@@ -1853,8 +1858,8 @@ impl CollectorRpcService {
                 return self.create_error_response(
                     request,
                     RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Invalid payload for Pause operation".to_string(),
+                        code: "INVALID_PAYLOAD".to_owned(),
+                        message: "Invalid payload for Pause operation".to_owned(),
                         context: HashMap::new(),
                         category: ErrorCategory::Configuration,
                     },
@@ -1876,7 +1881,7 @@ impl CollectorRpcService {
         match self.process_manager.pause_collector(&collector_id).await {
             Ok(()) => self.create_success_response(request, None, start_time),
             Err(e) => {
-                let rpc_error = self.map_process_error_to_rpc_error(e);
+                let rpc_error = Self::map_process_error_to_rpc_error(&e);
                 self.create_error_response(request, rpc_error, start_time)
             }
         }
@@ -1890,17 +1895,19 @@ impl CollectorRpcService {
         deadline: SystemTime,
     ) -> RpcResponse {
         // Extract collector_id from payload
-        let collector_id = match &request.payload {
-            RpcPayload::Lifecycle(req) => req.collector_id.clone(),
+        // NOTE: `_` is required for non-exhaustive enum variants.
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let collector_id = match request.payload.clone() {
+            RpcPayload::Lifecycle(req) => req.collector_id,
             RpcPayload::Generic(map) => {
-                if let Some(serde_json::Value::String(id)) = map.get("collector_id") {
-                    id.clone()
+                if let Some(serde_json::Value::String(id)) = map.get("collector_id").cloned() {
+                    id
                 } else {
                     return self.create_error_response(
                         request,
                         RpcError {
-                            code: "INVALID_PAYLOAD".to_string(),
-                            message: "Missing collector_id in payload".to_string(),
+                            code: "INVALID_PAYLOAD".to_owned(),
+                            message: "Missing collector_id in payload".to_owned(),
                             context: HashMap::new(),
                             category: ErrorCategory::Configuration,
                         },
@@ -1912,8 +1919,8 @@ impl CollectorRpcService {
                 return self.create_error_response(
                     request,
                     RpcError {
-                        code: "INVALID_PAYLOAD".to_string(),
-                        message: "Invalid payload for Resume operation".to_string(),
+                        code: "INVALID_PAYLOAD".to_owned(),
+                        message: "Invalid payload for Resume operation".to_owned(),
                         context: HashMap::new(),
                         category: ErrorCategory::Configuration,
                     },
@@ -1935,70 +1942,70 @@ impl CollectorRpcService {
         match self.process_manager.resume_collector(&collector_id).await {
             Ok(()) => self.create_success_response(request, None, start_time),
             Err(e) => {
-                let rpc_error = self.map_process_error_to_rpc_error(e);
+                let rpc_error = Self::map_process_error_to_rpc_error(&e);
                 self.create_error_response(request, rpc_error, start_time)
             }
         }
     }
 
-    /// Map ProcessManagerError to RpcError
-    fn map_process_error_to_rpc_error(&self, error: ProcessManagerError) -> RpcError {
-        let (code, message, category) = match error {
+    /// Map `ProcessManagerError` to `RpcError`
+    fn map_process_error_to_rpc_error(error: &ProcessManagerError) -> RpcError {
+        let (code, message, category) = match *error {
             ProcessManagerError::ProcessNotFound(ref id) => (
                 "PROCESS_NOT_FOUND",
-                format!("Collector not found: {}", id),
+                format!("Collector not found: {id}"),
                 ErrorCategory::Resource,
             ),
             ProcessManagerError::AlreadyRunning(ref id) => (
                 "ALREADY_RUNNING",
-                format!("Collector already running: {}", id),
+                format!("Collector already running: {id}"),
                 ErrorCategory::Resource,
             ),
             ProcessManagerError::SpawnFailed(ref msg) => (
                 "SPAWN_FAILED",
-                format!("Failed to spawn process: {}", msg),
+                format!("Failed to spawn process: {msg}"),
                 ErrorCategory::Internal,
             ),
             ProcessManagerError::TerminateFailed(ref msg) => (
                 "TERMINATE_FAILED",
-                format!("Failed to terminate process: {}", msg),
+                format!("Failed to terminate process: {msg}"),
                 ErrorCategory::Internal,
             ),
             ProcessManagerError::InvalidState(ref msg) => (
                 "INVALID_STATE",
-                format!("Invalid state: {}", msg),
+                format!("Invalid state: {msg}"),
                 ErrorCategory::Configuration,
             ),
             ProcessManagerError::ConfigurationError(ref msg) => (
                 "CONFIGURATION_ERROR",
-                format!("Configuration error: {}", msg),
+                format!("Configuration error: {msg}"),
                 ErrorCategory::Configuration,
             ),
             ProcessManagerError::PlatformNotSupported(ref msg) => (
                 "PLATFORM_NOT_SUPPORTED",
-                format!("Operation not supported: {}", msg),
+                format!("Operation not supported: {msg}"),
                 ErrorCategory::Configuration,
             ),
             ProcessManagerError::Timeout(ref msg) => (
                 "TIMEOUT",
-                format!("Operation timed out: {}", msg),
+                format!("Operation timed out: {msg}"),
                 ErrorCategory::Timeout,
             ),
             ProcessManagerError::Io(ref err) => (
                 "IO_ERROR",
-                format!("I/O error: {}", err),
+                format!("I/O error: {err}"),
                 ErrorCategory::Internal,
             ),
         };
 
         let mut context = HashMap::new();
         context.insert(
-            "error_type".to_string(),
-            serde_json::Value::String(code.to_string()),
+            "error_type".to_owned(),
+            serde_json::Value::String(code.to_owned()),
         );
 
         RpcError {
-            code: code.to_string(),
+            code: code.to_owned(),
             message,
             context,
             category,
@@ -2006,43 +2013,43 @@ impl CollectorRpcService {
     }
 
     /// Map registration errors to RPC error payloads.
-    fn map_registration_error_to_rpc_error(&self, error: RegistrationError) -> RpcError {
-        let (code, message, category) = match &error {
-            RegistrationError::AlreadyRegistered(id) => (
+    fn map_registration_error_to_rpc_error(error: &RegistrationError) -> RpcError {
+        let (code, message, category) = match *error {
+            RegistrationError::AlreadyRegistered(ref id) => (
                 "ALREADY_REGISTERED",
-                format!("Collector `{}` is already registered", id),
+                format!("Collector `{id}` is already registered"),
                 ErrorCategory::Configuration,
             ),
-            RegistrationError::NotFound(id) => (
+            RegistrationError::NotFound(ref id) => (
                 "REGISTRATION_NOT_FOUND",
-                format!("Collector `{}` is not registered", id),
+                format!("Collector `{id}` is not registered"),
                 ErrorCategory::Configuration,
             ),
-            RegistrationError::Validation(msg) => (
+            RegistrationError::Validation(ref msg) => (
                 "REGISTRATION_INVALID",
-                format!("Invalid registration request: {}", msg),
+                format!("Invalid registration request: {msg}"),
                 ErrorCategory::Configuration,
             ),
-            RegistrationError::Expired(msg) => (
+            RegistrationError::Expired(ref msg) => (
                 "REGISTRATION_EXPIRED",
-                format!("Registration expired: {}", msg),
+                format!("Registration expired: {msg}"),
                 ErrorCategory::Timeout,
             ),
-            RegistrationError::Internal(msg) => (
+            RegistrationError::Internal(ref msg) => (
                 "REGISTRATION_INTERNAL",
-                format!("Registration internal error: {}", msg),
+                format!("Registration internal error: {msg}"),
                 ErrorCategory::Internal,
             ),
         };
 
         let mut context = HashMap::new();
         context.insert(
-            "error".to_string(),
+            "error".to_owned(),
             serde_json::Value::String(error.to_string()),
         );
 
         RpcError {
-            code: code.to_string(),
+            code: code.to_owned(),
             message,
             context,
             category,
@@ -2058,21 +2065,21 @@ impl CollectorRpcService {
     ) -> RpcResponse {
         let mut context = HashMap::new();
         context.insert(
-            "stage".to_string(),
-            serde_json::Value::String(stage.to_string()),
+            "stage".to_owned(),
+            serde_json::Value::String(stage.to_owned()),
         );
         context.insert(
-            "deadline_epoch_seconds".to_string(),
+            "deadline_epoch_seconds".to_owned(),
             serde_json::json!(Self::unix_timestamp(deadline)),
         );
         context.insert(
-            "now_epoch_seconds".to_string(),
+            "now_epoch_seconds".to_owned(),
             serde_json::json!(Self::unix_timestamp(SystemTime::now())),
         );
 
         let error = RpcError {
-            code: "DEADLINE_EXCEEDED".to_string(),
-            message: format!("Request deadline exceeded while {}", stage),
+            code: "DEADLINE_EXCEEDED".to_owned(),
+            message: format!("Request deadline exceeded while {stage}"),
             context,
             category: ErrorCategory::Timeout,
         };
@@ -2107,6 +2114,8 @@ impl CollectorRpcService {
             .unwrap_or(Duration::ZERO);
         let correlation_metadata = request.correlation_metadata.clone().increment_hop();
 
+        // SAFETY: Duration::as_millis() returns u128; values for elapsed times fit in u64.
+        #[allow(clippy::as_conversions)]
         RpcResponse {
             request_id: request.request_id,
             service_id: self.service_id.clone(),
@@ -2139,6 +2148,8 @@ impl CollectorRpcService {
             .unwrap_or(Duration::ZERO);
         let correlation_metadata = request.correlation_metadata.clone().increment_hop();
 
+        // SAFETY: Duration::as_millis() returns u128; values for elapsed times fit in u64.
+        #[allow(clippy::as_conversions)]
         RpcResponse {
             request_id: request.request_id,
             service_id: self.service_id.clone(),
@@ -2183,9 +2194,9 @@ impl HealthProvider for DefaultHealthProvider {
         // Components
         let mut components = HashMap::new();
         components.insert(
-            "process".to_string(),
+            "process".to_owned(),
             ComponentHealth {
-                name: "process".to_string(),
+                name: "process".to_owned(),
                 status: match health {
                     ProcessHealthStatus::Healthy => HealthStatus::Healthy,
                     ProcessHealthStatus::Degraded => HealthStatus::Degraded,
@@ -2212,9 +2223,9 @@ impl HealthProvider for DefaultHealthProvider {
             .as_secs();
 
         components.insert(
-            "heartbeat".to_string(),
+            "heartbeat".to_owned(),
             ComponentHealth {
-                name: "heartbeat".to_string(),
+                name: "heartbeat".to_owned(),
                 status: heartbeat_status,
                 message: Some(format!(
                     "Last heartbeat: {}s ago, Missed: {}",
@@ -2226,11 +2237,11 @@ impl HealthProvider for DefaultHealthProvider {
         );
 
         components.insert(
-            "event_sources".to_string(),
+            "event_sources".to_owned(),
             ComponentHealth {
-                name: "event_sources".to_string(),
+                name: "event_sources".to_owned(),
                 status: HealthStatus::Healthy,
-                message: Some("Event sources operational".to_string()),
+                message: Some("Event sources operational".to_owned()),
                 last_check: SystemTime::now(),
                 check_interval_seconds: 60,
             },
@@ -2243,21 +2254,26 @@ impl HealthProvider for DefaultHealthProvider {
             .unwrap_or(HealthStatus::Unknown);
 
         let mut metrics = HashMap::new();
-        metrics.insert("pid".to_string(), status.pid as f64);
-        metrics.insert("restart_count".to_string(), status.restart_count as f64);
-        metrics.insert("uptime_seconds".to_string(), status.uptime.as_secs() as f64);
+        metrics.insert("pid".to_owned(), f64::from(status.pid));
+        metrics.insert("restart_count".to_owned(), f64::from(status.restart_count));
+        // SAFETY: u64 seconds and heartbeat_age (u64) are converted to f64 for metric storage;
+        // values are bounded by practical uptime limits well within f64 precision.
+        #[allow(clippy::as_conversions)]
+        metrics.insert("uptime_seconds".to_owned(), status.uptime.as_secs() as f64);
         metrics.insert(
-            "missed_heartbeats".to_string(),
-            status.missed_heartbeats as f64,
+            "missed_heartbeats".to_owned(),
+            f64::from(status.missed_heartbeats),
         );
+        // SAFETY: heartbeat_age is a u64 seconds value; safe to cast to f64 for metric purposes.
+        #[allow(clippy::as_conversions)]
         metrics.insert(
-            "last_heartbeat_age_seconds".to_string(),
+            "last_heartbeat_age_seconds".to_owned(),
             heartbeat_age as f64,
         );
-        metrics.insert("error_count".to_string(), 0.0);
+        metrics.insert("error_count".to_owned(), 0.0);
 
         Ok(HealthCheckData {
-            collector_id: collector_id.to_string(),
+            collector_id: collector_id.to_owned(),
             status: overall_status,
             components,
             metrics,
@@ -2345,15 +2361,14 @@ impl ConfigProvider for DefaultConfigProvider {
             {
                 // Surface as validation-like failure to preserve existing mapping category
                 return Err(ConfigManagerError::PersistenceFailed(format!(
-                    "Failed to restart collector after config update: {}",
-                    e
+                    "Failed to restart collector after config update: {e}"
                 )));
             }
         } else if let Some(ref broker) = self.broker {
             // Publish hot-reload notification
-            let topic = format!("control.collector.config.{}", collector_id);
+            let topic = format!("control.collector.config.{collector_id}");
             let notification = ConfigChangeNotification {
-                collector_id: collector_id.to_string(),
+                collector_id: collector_id.to_owned(),
                 changed_fields: changed_fields.clone(),
                 version: snapshot.version,
                 timestamp: SystemTime::now()
@@ -2364,7 +2379,7 @@ impl ConfigProvider for DefaultConfigProvider {
             match serde_json::to_vec(&notification) {
                 Ok(payload) => {
                     if let Err(e) = broker
-                        .publish(&topic, &format!("config-change-{}", collector_id), payload)
+                        .publish(&topic, &format!("config-change-{collector_id}"), payload)
                         .await
                     {
                         warn!(
@@ -2433,6 +2448,7 @@ impl RegistrationProvider for DefaultRegistrationProvider {
                 last_heartbeat: now,
             },
         );
+        drop(guard);
 
         Ok(response)
     }
@@ -2457,7 +2473,7 @@ impl RegistrationProvider for DefaultRegistrationProvider {
             record.last_heartbeat = SystemTime::now();
             Ok(())
         } else {
-            Err(RegistrationError::NotFound(collector_id.to_string()))
+            Err(RegistrationError::NotFound(collector_id.to_owned()))
         }
     }
 }
@@ -2469,8 +2485,8 @@ impl CollectorLifecycleRequest {
         config_overrides: Option<HashMap<String, serde_json::Value>>,
     ) -> Self {
         Self {
-            collector_id: collector_id.to_string(),
-            collector_type: collector_id.to_string(), // Default to same as ID
+            collector_id: collector_id.to_owned(),
+            collector_type: collector_id.to_owned(), // Default to same as ID
             config_overrides,
             environment: None,
             working_directory: None,
@@ -2482,8 +2498,8 @@ impl CollectorLifecycleRequest {
     /// Create a stop collector request
     pub fn stop(collector_id: &str) -> Self {
         Self {
-            collector_id: collector_id.to_string(),
-            collector_type: collector_id.to_string(),
+            collector_id: collector_id.to_owned(),
+            collector_type: collector_id.to_owned(),
             config_overrides: None,
             environment: None,
             working_directory: None,
@@ -2498,8 +2514,8 @@ impl CollectorLifecycleRequest {
         config_overrides: Option<HashMap<String, serde_json::Value>>,
     ) -> Self {
         Self {
-            collector_id: collector_id.to_string(),
-            collector_type: collector_id.to_string(),
+            collector_id: collector_id.to_owned(),
+            collector_type: collector_id.to_owned(),
             config_overrides,
             environment: None,
             working_directory: None,
@@ -2591,7 +2607,7 @@ impl RpcRequest {
     /// * `target` - The target topic (e.g., "control.collector.test-collector")
     /// * `timeout` - Request timeout duration
     ///
-    /// Note: The collector_id is inferred from the service handling the request.
+    /// Note: The `collector_id` is inferred from the service handling the request.
     /// When sending to a specific collector's topic, the collector will use its own ID.
     pub fn health_check(client_id: String, target: String, timeout: Duration) -> Self {
         Self::new(

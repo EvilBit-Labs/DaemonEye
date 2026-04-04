@@ -18,10 +18,10 @@ pub struct RateLimitConfig {
     pub capacity: usize,
     /// Number of tokens to add per second
     pub refill_rate: f64,
-    /// Per-client rate limits (client_id -> config)
-    pub per_client_limits: HashMap<String, RateLimitConfig>,
-    /// Per-topic rate limits (topic_prefix -> config)
-    pub per_topic_limits: HashMap<String, RateLimitConfig>,
+    /// Per-client rate limits (`client_id` -> config)
+    pub per_client_limits: HashMap<String, Self>,
+    /// Per-topic rate limits (`topic_prefix` -> config)
+    pub per_topic_limits: HashMap<String, Self>,
 }
 
 impl Default for RateLimitConfig {
@@ -47,13 +47,15 @@ impl RateLimitConfig {
     }
 
     /// Set per-client rate limit
-    pub fn with_client_limit(mut self, client_id: String, config: RateLimitConfig) -> Self {
+    #[must_use]
+    pub fn with_client_limit(mut self, client_id: String, config: Self) -> Self {
         self.per_client_limits.insert(client_id, config);
         self
     }
 
     /// Set per-topic rate limit
-    pub fn with_topic_limit(mut self, topic_prefix: String, config: RateLimitConfig) -> Self {
+    #[must_use]
+    pub fn with_topic_limit(mut self, topic_prefix: String, config: Self) -> Self {
         self.per_topic_limits.insert(topic_prefix, config);
         self
     }
@@ -75,9 +77,13 @@ struct TokenBucket {
 impl TokenBucket {
     /// Create a new token bucket
     fn new(capacity: usize, refill_rate: f64) -> Self {
+        // SAFETY: usize to f64 is lossless for values up to 2^53; bucket capacity will never
+        // approach that bound in practice.
+        #[allow(clippy::as_conversions)]
+        let capacity_f64 = capacity as f64;
         Self {
-            tokens: capacity as f64,
-            capacity: capacity as f64,
+            tokens: capacity_f64,
+            capacity: capacity_f64,
             refill_rate,
             last_update: Instant::now(),
         }
@@ -86,6 +92,9 @@ impl TokenBucket {
     /// Try to consume tokens, returning true if successful
     fn try_consume(&mut self, tokens: usize) -> bool {
         self.refill();
+        // SAFETY: usize to f64 is lossless for values up to 2^53; token counts will never
+        // approach that bound in practice.
+        #[allow(clippy::as_conversions)]
         let tokens_needed = tokens as f64;
         if self.tokens >= tokens_needed {
             self.tokens -= tokens_needed;
@@ -129,86 +138,95 @@ impl RateLimiter {
     /// Create a new rate limiter with default configuration
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
-            default_config: config.clone(),
+            default_config: config,
             client_buckets: Arc::new(Mutex::new(HashMap::new())),
             topic_buckets: Arc::new(Mutex::new(HashMap::new())),
             combined_buckets: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
+    /// Find a topic config by prefix match
+    fn find_topic_config<'a>(&'a self, topic: &str) -> Option<&'a RateLimitConfig> {
+        self.default_config
+            .per_topic_limits
+            .iter()
+            .find(|&(prefix, _)| topic.starts_with(prefix.as_str()))
+            .map(|(_, cfg)| cfg)
+    }
+
     /// Check if a message can be sent (consume tokens)
     /// Returns true if allowed, false if rate limited
     pub async fn check_rate_limit(&self, client_id: Option<&str>, topic: Option<&str>) -> bool {
         // Determine which config to use (per-client > per-topic > default)
-        let config = if let Some(client_id) = client_id {
-            if let Some(client_config) = self.default_config.per_client_limits.get(client_id) {
-                Some(client_config)
-            } else if let Some(topic) = topic {
-                // Check for topic prefix match
-                self.default_config
-                    .per_topic_limits
-                    .iter()
-                    .find(|(prefix, _)| topic.starts_with(prefix.as_str()))
-                    .map(|(_, config)| config)
-            } else {
-                None
-            }
-        } else if let Some(topic) = topic {
-            self.default_config
-                .per_topic_limits
-                .iter()
-                .find(|(prefix, _)| topic.starts_with(prefix.as_str()))
-                .map(|(_, config)| config)
-        } else {
-            None
+        let config = match (client_id, topic) {
+            (Some(cid), Some(t)) => self
+                .default_config
+                .per_client_limits
+                .get(cid)
+                .or_else(|| self.find_topic_config(t))
+                .unwrap_or(&self.default_config),
+            (Some(cid), None) => self
+                .default_config
+                .per_client_limits
+                .get(cid)
+                .unwrap_or(&self.default_config),
+            (None, Some(t)) => self.find_topic_config(t).unwrap_or(&self.default_config),
+            (None, None) => &self.default_config,
         };
 
-        let config = config.unwrap_or(&self.default_config);
-
         // Check per-client limit if client_id provided
-        if let Some(client_id) = client_id {
-            let mut buckets = self.client_buckets.lock().await;
-            let bucket = buckets
-                .entry(client_id.to_string())
-                .or_insert_with(|| TokenBucket::new(config.capacity, config.refill_rate));
-            if !bucket.try_consume(1) {
-                debug!("Rate limit exceeded for client: {}", client_id);
+        if let Some(cid) = client_id {
+            let allowed = self
+                .client_buckets
+                .lock()
+                .await
+                .entry(cid.to_owned())
+                .or_insert_with(|| TokenBucket::new(config.capacity, config.refill_rate))
+                .try_consume(1);
+            if !allowed {
+                debug!("Rate limit exceeded for client: {}", cid);
                 return false;
             }
         }
 
         // Check per-topic limit if topic provided
-        if let Some(topic) = topic {
+        if let Some(t) = topic {
             // Find matching topic prefix
-            if let Some((prefix, topic_config)) = self
+            let prefix_and_config = self
                 .default_config
                 .per_topic_limits
                 .iter()
-                .find(|(p, _)| topic.starts_with(p.as_str()))
-            {
-                let mut buckets = self.topic_buckets.lock().await;
-                let bucket = buckets.entry(prefix.clone()).or_insert_with(|| {
-                    TokenBucket::new(topic_config.capacity, topic_config.refill_rate)
-                });
-                if !bucket.try_consume(1) {
-                    debug!("Rate limit exceeded for topic: {}", topic);
+                .find(|&(p, _)| t.starts_with(p.as_str()));
+
+            if let Some((prefix, topic_config)) = prefix_and_config {
+                let allowed = self
+                    .topic_buckets
+                    .lock()
+                    .await
+                    .entry(prefix.clone())
+                    .or_insert_with(|| {
+                        TokenBucket::new(topic_config.capacity, topic_config.refill_rate)
+                    })
+                    .try_consume(1);
+                if !allowed {
+                    debug!("Rate limit exceeded for topic: {}", t);
                     return false;
                 }
             }
         }
 
         // Check combined client+topic limit if both provided
-        if let (Some(client_id), Some(topic)) = (client_id, topic) {
-            let key = format!("{}:{}", client_id, topic);
-            let mut buckets = self.combined_buckets.lock().await;
-            let bucket = buckets
+        if let (Some(cid), Some(t)) = (client_id, topic) {
+            let key = format!("{cid}:{t}");
+            if !self
+                .combined_buckets
+                .lock()
+                .await
                 .entry(key)
-                .or_insert_with(|| TokenBucket::new(config.capacity, config.refill_rate));
-            if !bucket.try_consume(1) {
-                debug!(
-                    "Rate limit exceeded for client+topic: {}:{}",
-                    client_id, topic
-                );
+                .or_insert_with(|| TokenBucket::new(config.capacity, config.refill_rate))
+                .try_consume(1)
+            {
+                debug!("Rate limit exceeded for client+topic: {}:{}", cid, t);
                 return false;
             }
         }
@@ -218,11 +236,13 @@ impl RateLimiter {
 
     /// Remove a client's rate limiter (cleanup on disconnect)
     pub async fn remove_client(&self, client_id: &str) {
-        let mut buckets = self.client_buckets.lock().await;
-        buckets.remove(client_id);
+        self.client_buckets.lock().await.remove(client_id);
         // Also remove combined buckets for this client
-        let mut combined = self.combined_buckets.lock().await;
-        combined.retain(|key, _| !key.starts_with(&format!("{}:", client_id)));
+        let prefix = format!("{client_id}:");
+        self.combined_buckets
+            .lock()
+            .await
+            .retain(|key, _| !key.starts_with(&prefix));
     }
 
     /// Get current token count for a client (for testing/debugging)

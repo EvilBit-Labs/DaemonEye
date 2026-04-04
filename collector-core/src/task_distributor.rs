@@ -11,6 +11,13 @@
 //! - Priority queues ensure critical tasks are processed first
 //! - No unsafe code or privilege escalation
 
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::as_conversions)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
+#![allow(clippy::option_if_let_else)]
+#![allow(clippy::single_match_else)]
+
 use crate::{event::CollectionEvent, source::SourceCaps};
 use anyhow::{Context, Result};
 use daemoneye_eventbus::DaemoneyeBroker;
@@ -38,6 +45,7 @@ struct InFlightTask {
 
 /// Task priority levels for distribution
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TaskPriority {
     /// Low priority tasks (background analysis)
     Low = 0,
@@ -97,7 +105,7 @@ pub struct TaskDistributor {
     task_queue: Arc<RwLock<PriorityTaskQueue>>,
     /// Distribution statistics
     stats: Arc<RwLock<DistributionStats>>,
-    /// Task timeout tracking (keyed by task_id, value is timeout timestamp)
+    /// Task timeout tracking (keyed by `task_id`, value is timeout timestamp)
     timeout_tracker: Arc<RwLock<HashMap<String, SystemTime>>>,
     /// In-flight tasks awaiting consumer acknowledgment
     /// Tasks are moved here after successful publish and removed after ack or timeout
@@ -118,7 +126,7 @@ struct PriorityTaskQueue {
 }
 
 impl PriorityTaskQueue {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             critical: VecDeque::new(),
             high: VecDeque::new(),
@@ -189,8 +197,8 @@ impl TaskDistributor {
         // Add task to persistent queue first
         {
             let mut queue = self.task_queue.write().await;
-            queue.push(task.clone());
-        }
+            queue.push(task.clone())
+        };
 
         // Publish task to target topic
         let start_time = SystemTime::now();
@@ -207,8 +215,8 @@ impl TaskDistributor {
                 let timeout_at = published_at + task.timeout;
                 {
                     let mut tracker = self.timeout_tracker.write().await;
-                    tracker.insert(task_id.clone(), timeout_at);
-                }
+                    tracker.insert(task_id.clone(), timeout_at)
+                };
 
                 // Remove task from queue since it's now published and in-flight
                 // This prevents duplicate publications while awaiting acknowledgment
@@ -220,8 +228,8 @@ impl TaskDistributor {
                             new_queue.push(queued_task);
                         }
                     }
-                    *queue = new_queue;
-                }
+                    *queue = new_queue
+                };
 
                 // Move task to in-flight tracking
                 // Task will be removed from in-flight only after explicit acknowledgment
@@ -234,8 +242,8 @@ impl TaskDistributor {
                             published_at,
                             retry_count: 0,
                         },
-                    );
-                }
+                    )
+                };
 
                 // Update statistics
                 let mut stats = self.stats.write().await;
@@ -284,14 +292,14 @@ impl TaskDistributor {
                         }
                     }
                     // Restore queue without the failed task
-                    *queue = new_queue;
-                }
+                    *queue = new_queue
+                };
 
                 // Update failure statistics
                 let mut stats = self.stats.write().await;
                 stats.tasks_failed += 1;
 
-                Err(anyhow::anyhow!("Task distribution failed: {}", e))
+                Err(anyhow::anyhow!("Task distribution failed: {e}"))
             }
         }
     }
@@ -318,8 +326,8 @@ impl TaskDistributor {
                 // Remove timeout tracking
                 {
                     let mut tracker = self.timeout_tracker.write().await;
-                    tracker.remove(task_id);
-                }
+                    tracker.remove(task_id)
+                };
 
                 // Remove from persistent queue
                 {
@@ -330,8 +338,8 @@ impl TaskDistributor {
                             new_queue.push(queued_task);
                         }
                     }
-                    *queue = new_queue;
-                }
+                    *queue = new_queue
+                };
 
                 debug!(
                     task_id = %task_id,
@@ -366,15 +374,15 @@ impl TaskDistributor {
     pub fn route_task_by_capabilities(&self, capabilities: SourceCaps) -> String {
         // Determine primary capability and route to appropriate topic
         if capabilities.contains(SourceCaps::PROCESS) {
-            "control.collector.process".to_string()
+            "control.collector.process".to_owned()
         } else if capabilities.contains(SourceCaps::NETWORK) {
-            "control.collector.network".to_string()
+            "control.collector.network".to_owned()
         } else if capabilities.contains(SourceCaps::FILESYSTEM) {
-            "control.collector.filesystem".to_string()
+            "control.collector.filesystem".to_owned()
         } else if capabilities.contains(SourceCaps::PERFORMANCE) {
-            "control.collector.performance".to_string()
+            "control.collector.performance".to_owned()
         } else {
-            "control.collector.generic".to_string()
+            "control.collector.generic".to_owned()
         }
     }
 
@@ -391,21 +399,21 @@ impl TaskDistributor {
         // Determine required capabilities and target topic based on event type
         let (required_capabilities, target_topic) = match event {
             CollectionEvent::Process(_) => {
-                (SourceCaps::PROCESS, "control.collector.process".to_string())
+                (SourceCaps::PROCESS, "control.collector.process".to_owned())
             }
             CollectionEvent::Network(_) => {
-                (SourceCaps::NETWORK, "control.collector.network".to_string())
+                (SourceCaps::NETWORK, "control.collector.network".to_owned())
             }
             CollectionEvent::Filesystem(_) => (
                 SourceCaps::FILESYSTEM,
-                "control.collector.filesystem".to_string(),
+                "control.collector.filesystem".to_owned(),
             ),
             CollectionEvent::Performance(_) => (
                 SourceCaps::PERFORMANCE,
-                "control.collector.performance".to_string(),
+                "control.collector.performance".to_owned(),
             ),
             CollectionEvent::TriggerRequest(_) => {
-                (SourceCaps::PROCESS, "control.trigger.request".to_string())
+                (SourceCaps::PROCESS, "control.trigger.request".to_owned())
             }
         };
 
@@ -440,13 +448,8 @@ impl TaskDistributor {
         // Collect timed out task IDs in single pass
         let timed_out_tasks: Vec<String> = tracker
             .iter()
-            .filter_map(|(task_id, timeout_at)| {
-                if now >= *timeout_at {
-                    Some(task_id.clone())
-                } else {
-                    None
-                }
-            })
+            .filter(|(_, timeout_at)| now >= **timeout_at)
+            .map(|(task_id, _)| task_id.clone())
             .collect();
 
         // Process timed out tasks: move from in-flight back to queue for retry
@@ -464,17 +467,16 @@ impl TaskDistributor {
                 // Re-queue the task for retry
                 // This allows the task to be picked up and published again
                 queue.push(task);
-
-                // Remove from timeout tracker (will be re-added on next publish)
-                tracker.remove(task_id);
             } else {
                 // Task was in timeout tracker but not in-flight (shouldn't happen)
                 warn!(
                     task_id = %task_id,
                     "Task in timeout tracker but not in-flight, cleaning up"
                 );
-                tracker.remove(task_id);
             }
+
+            // Remove from timeout tracker (will be re-added on next publish)
+            tracker.remove(task_id);
         }
         drop(queue); // Release lock before updating stats
         drop(in_flight); // Release lock before updating stats
@@ -580,7 +582,7 @@ mod tests {
 
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
-            name: "test-process".to_string(),
+            name: "test-process".to_owned(),
             command_line: vec![],
             executable_path: None,
             ppid: None,
@@ -613,7 +615,7 @@ mod tests {
             task_id: Uuid::new_v4().to_string(),
             priority,
             required_capabilities: SourceCaps::PROCESS,
-            target_topic: "test.topic".to_string(),
+            target_topic: "test.topic".to_owned(),
             payload: vec![],
             correlation_id: Uuid::new_v4().to_string(),
             created_at: SystemTime::now(),

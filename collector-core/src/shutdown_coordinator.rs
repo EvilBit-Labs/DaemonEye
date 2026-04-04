@@ -4,6 +4,8 @@
 //! using RPC calls instead of signal handling, enabling proper resource cleanup
 //! and state preservation during system shutdown.
 
+#![allow(clippy::arithmetic_side_effects)]
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -88,7 +90,8 @@ struct CollectorShutdownState {
 }
 
 /// Shutdown phases
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ShutdownPhase {
     /// Shutdown initiated
     Initiated,
@@ -108,6 +111,7 @@ pub enum ShutdownPhase {
 
 /// Shutdown events
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ShutdownEvent {
     /// Shutdown initiated for collector
     ShutdownInitiated {
@@ -233,9 +237,9 @@ impl ShutdownCoordinator {
             let mut states = self
                 .shutdown_states
                 .write()
-                .unwrap_or_else(|e| e.into_inner());
-            states.insert(request.collector_id.clone(), shutdown_state);
-        }
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            states.insert(request.collector_id.clone(), shutdown_state)
+        };
 
         // Send shutdown initiated event
         let event = ShutdownEvent::ShutdownInitiated {
@@ -244,7 +248,7 @@ impl ShutdownCoordinator {
             timeout,
             timestamp: SystemTime::now(),
         };
-        let _ = self.shutdown_events.send(event);
+        drop(self.shutdown_events.send(event));
 
         // Execute shutdown sequence
         let result = if request.force {
@@ -258,11 +262,10 @@ impl ShutdownCoordinator {
             let states = self
                 .shutdown_states
                 .read()
-                .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             states
                 .get(&request.collector_id)
-                .map(|s| s.phase.clone())
-                .unwrap_or(ShutdownPhase::Failed)
+                .map_or(ShutdownPhase::Failed, |s| s.phase.clone())
         };
 
         match result {
@@ -273,12 +276,12 @@ impl ShutdownCoordinator {
                     "Collector shutdown completed successfully"
                 );
 
-                let event = ShutdownEvent::ShutdownCompleted {
+                let completed_event = ShutdownEvent::ShutdownCompleted {
                     collector_id: request.collector_id.clone(),
                     duration,
                     timestamp: SystemTime::now(),
                 };
-                let _ = self.shutdown_events.send(event);
+                drop(self.shutdown_events.send(completed_event));
 
                 Ok(ShutdownResponse {
                     success: true,
@@ -295,13 +298,13 @@ impl ShutdownCoordinator {
                     "Collector shutdown failed"
                 );
 
-                let event = ShutdownEvent::ShutdownFailed {
+                let failed_event = ShutdownEvent::ShutdownFailed {
                     collector_id: request.collector_id.clone(),
                     error: e.to_string(),
                     phase: final_phase.clone(),
                     timestamp: SystemTime::now(),
                 };
-                let _ = self.shutdown_events.send(event);
+                drop(self.shutdown_events.send(failed_event));
 
                 Ok(ShutdownResponse {
                     success: false,
@@ -335,7 +338,7 @@ impl ShutdownCoordinator {
             let states = self
                 .shutdown_states
                 .read()
-                .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             states.keys().cloned().collect()
         };
 
@@ -347,7 +350,7 @@ impl ShutdownCoordinator {
             collector_count,
             timestamp: SystemTime::now(),
         };
-        let _ = self.shutdown_events.send(event);
+        drop(self.shutdown_events.send(event));
 
         let start_time = Instant::now();
         let responses = if self.config.enable_parallel_shutdown {
@@ -372,13 +375,13 @@ impl ShutdownCoordinator {
         );
 
         // Send global shutdown completed event
-        let event = ShutdownEvent::GlobalShutdownCompleted {
+        let global_completed_event = ShutdownEvent::GlobalShutdownCompleted {
             duration,
             successful_shutdowns,
             failed_shutdowns,
             timestamp: SystemTime::now(),
         };
-        let _ = self.shutdown_events.send(event);
+        drop(self.shutdown_events.send(global_completed_event));
 
         // Notify all waiters that shutdown is complete
         self.completion_notify.notify_waiters();
@@ -426,11 +429,11 @@ impl ShutdownCoordinator {
 
         // Send forced shutdown event
         let event = ShutdownEvent::ForcedShutdown {
-            collector_id: collector_id.to_string(),
-            reason: "Forced shutdown requested".to_string(),
+            collector_id: collector_id.to_owned(),
+            reason: "Forced shutdown requested".to_owned(),
             timestamp: SystemTime::now(),
         };
-        let _ = self.shutdown_events.send(event);
+        drop(self.shutdown_events.send(event));
 
         // Immediate resource cleanup
         self.cleanup_collector_resources(collector_id).await?;
@@ -443,6 +446,7 @@ impl ShutdownCoordinator {
     }
 
     /// Update shutdown phase for a collector
+    #[allow(clippy::unused_async)]
     async fn update_shutdown_phase(
         &self,
         collector_id: &str,
@@ -452,14 +456,14 @@ impl ShutdownCoordinator {
             let mut states = self
                 .shutdown_states
                 .write()
-                .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(state) = states.get_mut(collector_id) {
                 let old_phase = state.phase.clone();
                 state.phase = new_phase.clone();
                 state.last_update = SystemTime::now();
                 old_phase
             } else {
-                return Err(anyhow::anyhow!("Collector not found: {}", collector_id));
+                return Err(anyhow::anyhow!("Collector not found: {collector_id}"));
             }
         };
 
@@ -472,12 +476,12 @@ impl ShutdownCoordinator {
 
         // Send phase change event
         let event = ShutdownEvent::PhaseChanged {
-            collector_id: collector_id.to_string(),
+            collector_id: collector_id.to_owned(),
             old_phase,
             new_phase,
             timestamp: SystemTime::now(),
         };
-        let _ = self.shutdown_events.send(event);
+        drop(self.shutdown_events.send(event));
 
         Ok(())
     }
@@ -501,7 +505,7 @@ impl ShutdownCoordinator {
             let mut states = self
                 .shutdown_states
                 .write()
-                .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(state) = states.get_mut(collector_id) {
                 state.cleanup_completed = true;
             }
@@ -525,12 +529,12 @@ impl ShutdownCoordinator {
         let mut tasks = Vec::new();
 
         for collector_id in collector_ids {
-            let semaphore = Arc::clone(&semaphore);
-            let reason = reason.clone();
+            let semaphore_clone = Arc::clone(&semaphore);
+            let reason_clone = reason.clone();
             let coordinator = self.clone_for_task();
 
             let task = tokio::spawn(async move {
-                let permit = match semaphore.acquire().await {
+                let permit = match semaphore_clone.acquire().await {
                     Ok(permit) => permit,
                     Err(err) => {
                         error!(
@@ -544,7 +548,7 @@ impl ShutdownCoordinator {
 
                 let request = ShutdownRequest {
                     collector_id: collector_id.clone(),
-                    reason,
+                    reason: reason_clone,
                     force: false,
                     timeout: None,
                 };
@@ -574,7 +578,7 @@ impl ShutdownCoordinator {
                     error!(error = %e, "Shutdown task join failed");
                     responses.push(ShutdownResponse {
                         success: false,
-                        error_message: Some(format!("Task join failed: {}", e)),
+                        error_message: Some(format!("Task join failed: {e}")),
                         duration: Duration::from_secs(0),
                         final_phase: ShutdownPhase::Failed,
                     });
@@ -637,11 +641,12 @@ impl ShutdownCoordinator {
     }
 
     /// Get shutdown status for a collector
+    #[allow(clippy::unused_async)]
     pub async fn get_shutdown_status(&self, collector_id: &str) -> Option<ShutdownPhase> {
         let states = self
             .shutdown_states
             .read()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         states.get(collector_id).map(|s| s.phase.clone())
     }
 
@@ -655,7 +660,7 @@ impl ShutdownCoordinator {
 
             // Wait for notification with timeout
             match tokio::time::timeout(timeout, self.completion_notify.notified()).await {
-                Ok(_) => {
+                Ok(()) => {
                     // Notification received, check if shutdown is still active
                     if !self.global_shutdown.load(Ordering::SeqCst) {
                         return Ok(());
@@ -688,8 +693,8 @@ mod tests {
         let coordinator = ShutdownCoordinator::new(config);
 
         let request = ShutdownRequest {
-            collector_id: "test-collector".to_string(),
-            reason: "Test shutdown".to_string(),
+            collector_id: "test-collector".to_owned(),
+            reason: "Test shutdown".to_owned(),
             force: false,
             timeout: None,
         };
@@ -705,8 +710,8 @@ mod tests {
         let coordinator = ShutdownCoordinator::new(config);
 
         let request = ShutdownRequest {
-            collector_id: "test-collector".to_string(),
-            reason: "Test forced shutdown".to_string(),
+            collector_id: "test-collector".to_owned(),
+            reason: "Test forced shutdown".to_owned(),
             force: true,
             timeout: None,
         };
@@ -725,8 +730,8 @@ mod tests {
         let mut event_rx = coordinator.subscribe_to_shutdown_events();
 
         let request = ShutdownRequest {
-            collector_id: "event-test".to_string(),
-            reason: "Test events".to_string(),
+            collector_id: "event-test".to_owned(),
+            reason: "Test events".to_owned(),
             force: false,
             timeout: None,
         };

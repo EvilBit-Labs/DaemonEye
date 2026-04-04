@@ -1,6 +1,6 @@
-//! # DaemonEye EventBus
+//! # `DaemonEye` `EventBus`
 //!
-//! A cross-platform IPC event bus designed specifically for the DaemonEye monitoring system.
+//! A cross-platform IPC event bus designed specifically for the `DaemonEye` monitoring system.
 //! Provides pub/sub messaging with wildcard topic matching and embedded broker functionality.
 //!
 //! ## Features
@@ -123,7 +123,7 @@ pub use transport::{
     ManagedClient, SocketConfig, TransportClient, TransportManager, TransportServer,
 };
 
-/// EventBus trait for compatibility with collector-core
+/// `EventBus` trait for compatibility with collector-core
 #[allow(async_fn_in_trait)]
 pub trait EventBus: Send + Sync {
     /// Publishes an event to the event bus with correlation tracking.

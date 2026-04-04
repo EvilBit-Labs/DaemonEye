@@ -61,7 +61,7 @@ pub struct SocketConfig {
     pub freebsd_path: Option<String>,
     /// Optional authentication token for server-side validation
     pub auth_token: Option<String>,
-    /// Per-client byte limit to prevent DoS
+    /// Per-client byte limit to prevent `DoS`
     pub per_client_byte_limit: usize,
     /// Rate limit configuration (optional, uses default if None)
     pub rate_limit_config: Option<crate::rate_limiter::RateLimitConfig>,
@@ -73,8 +73,8 @@ impl SocketConfig {
     /// Create a new socket configuration
     pub fn new(instance_id: &str) -> Self {
         Self {
-            unix_path: format!("/tmp/daemoneye-{}.sock", instance_id),
-            windows_pipe: format!(r"\\.\pipe\DaemonEye-{}", instance_id),
+            unix_path: format!("/tmp/daemoneye-{instance_id}.sock"),
+            windows_pipe: format!(r"\\.\pipe\DaemonEye-{instance_id}"),
             connection_limit: 100, // Default connection limit
             #[cfg(target_os = "freebsd")]
             freebsd_path: None,
@@ -163,6 +163,7 @@ pub struct TransportServer {
 
 impl TransportServer {
     /// Create a new transport server
+    #[allow(clippy::unused_async)]
     pub async fn new(config: SocketConfig) -> Result<Self> {
         let socket_path = config.get_socket_path();
 
@@ -208,7 +209,7 @@ impl TransportServer {
 
         // Create the listener using the appropriate name type
         let name = create_socket_name(&socket_path).map_err(|e| {
-            EventBusError::transport(format!("Invalid socket name {}: {}", socket_path, e))
+            EventBusError::transport(format!("Invalid socket name {socket_path}: {e}"))
         })?;
 
         let opts = ListenerOptions::new().name(name);
@@ -221,7 +222,7 @@ impl TransportServer {
         }
 
         let listener = opts.create_tokio().map_err(|e| {
-            EventBusError::transport(format!("Failed to bind to socket {}: {}", socket_path, e))
+            EventBusError::transport(format!("Failed to bind to socket {socket_path}: {e}"))
         })?;
 
         // Restrict socket permissions to owner-only (0o600) on Unix
@@ -231,15 +232,14 @@ impl TransportServer {
             std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
                 .map_err(|e| {
                     EventBusError::transport(format!(
-                        "Failed to set socket permissions on {}: {}",
-                        socket_path, e
+                        "Failed to set socket permissions on {socket_path}: {e}"
                     ))
                 })?;
-        }
+        };
 
         info!("Transport server created for: {}", socket_path);
         Ok(Self {
-            config: config.clone(),
+            config,
             listener: Some(listener),
             active_connections: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             inbound_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(1000)),
@@ -257,7 +257,7 @@ impl TransportServer {
         let listener = self
             .listener
             .as_ref()
-            .ok_or_else(|| EventBusError::transport("Server not listening".to_string()))?;
+            .ok_or_else(|| EventBusError::transport("Server not listening".to_owned()))?;
         let config = self.config.clone();
 
         // This runs in the current task context (for tests/benches)
@@ -297,7 +297,7 @@ impl TransportServer {
                 }
                 Err(e) => {
                     debug!("Echo handler accept error: {}", e);
-                    return Err(EventBusError::transport(format!("Accept error: {}", e)));
+                    return Err(EventBusError::transport(format!("Accept error: {e}")));
                 }
             }
         }
@@ -311,6 +311,8 @@ impl TransportServer {
             .ok_or_else(|| EventBusError::transport("Server not listening"))?;
 
         // Enforce concurrent connection limit
+        // SAFETY: usize to u64 is lossless on all supported 64-bit platforms.
+        #[allow(clippy::as_conversions)]
         let limit = self.config.connection_limit as u64;
 
         if limit > 0 {
@@ -329,7 +331,7 @@ impl TransportServer {
                     .active_connections
                     .compare_exchange(
                         current,
-                        current + 1,
+                        current.saturating_add(1),
                         std::sync::atomic::Ordering::SeqCst,
                         std::sync::atomic::Ordering::SeqCst,
                     )
@@ -348,7 +350,7 @@ impl TransportServer {
             // Roll back active connection counter on failure
             self.active_connections
                 .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-            EventBusError::transport(format!("Failed to accept connection: {}", e))
+            EventBusError::transport(format!("Failed to accept connection: {e}"))
         })?;
 
         debug!("Accepted new client connection");
@@ -361,11 +363,12 @@ impl TransportServer {
     }
 
     /// Get the socket configuration
-    pub fn config(&self) -> &SocketConfig {
+    pub const fn config(&self) -> &SocketConfig {
         &self.config
     }
 
     /// Shutdown the server
+    #[allow(clippy::unused_async)]
     pub async fn shutdown(&mut self) -> Result<()> {
         info!("Transport server shutdown");
 
@@ -398,7 +401,7 @@ struct ActiveConnectionGuard {
 }
 
 impl ActiveConnectionGuard {
-    fn new(counter: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
+    const fn new(counter: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
         Self { counter }
     }
 
@@ -407,10 +410,12 @@ impl ActiveConnectionGuard {
         let mut current = self.counter.load(ordering);
 
         while current != 0 {
-            match self
-                .counter
-                .compare_exchange(current, current - 1, ordering, ordering)
-            {
+            match self.counter.compare_exchange(
+                current,
+                current.saturating_sub(1),
+                ordering,
+                ordering,
+            ) {
                 Ok(_) => return,
                 Err(updated) => current = updated,
             }
@@ -535,7 +540,7 @@ impl TransportClient {
 
         // Attempt to connect with timeout
         let name = create_socket_name(&socket_path).map_err(|e| {
-            EventBusError::transport(format!("Invalid socket name {}: {}", socket_path, e))
+            EventBusError::transport(format!("Invalid socket name {socket_path}: {e}"))
         })?;
         let connection_future = LocalSocketStream::connect(name);
         let timeout_duration = self.config.connection_timeout;
@@ -554,15 +559,13 @@ impl TransportClient {
             Ok(Err(e)) => {
                 self.connected = false;
                 Err(EventBusError::transport(format!(
-                    "Failed to connect to {}: {}",
-                    socket_path, e
+                    "Failed to connect to {socket_path}: {e}"
                 )))
             }
             Err(_) => {
                 self.connected = false;
                 Err(EventBusError::transport(format!(
-                    "Connection to {} timed out after {:?}",
-                    socket_path, timeout_duration
+                    "Connection to {socket_path} timed out after {timeout_duration:?}"
                 )))
             }
         }
@@ -570,6 +573,10 @@ impl TransportClient {
 
     /// Reconnect with exponential backoff
     pub async fn reconnect(&mut self) -> Result<()> {
+        // Calculate backoff delay with safe numeric conversions.
+        // Cap reconnect_attempts to prevent powi overflow (2^62 fits in f64 without precision loss).
+        const MAX_BACKOFF_EXPONENT: u32 = 62;
+
         if self.reconnect_attempts >= self.config.max_reconnect_attempts {
             return Err(EventBusError::transport(format!(
                 "Maximum reconnection attempts ({}) exceeded",
@@ -577,13 +584,12 @@ impl TransportClient {
             )));
         }
 
-        // Calculate backoff delay with safe numeric conversions.
-        // Cap reconnect_attempts to prevent powi overflow (2^62 fits in f64 without precision loss).
-        const MAX_BACKOFF_EXPONENT: u32 = 62;
         // Cap to i32::MAX (well within u32 range) before narrowing for powi.
-        #[allow(clippy::as_conversions)]
         // Safety: value is clamped to MAX_BACKOFF_EXPONENT (62) which fits i32
-        let exponent: i32 = self.reconnect_attempts.min(MAX_BACKOFF_EXPONENT) as i32;
+        let exponent = self
+            .reconnect_attempts
+            .min(MAX_BACKOFF_EXPONENT)
+            .cast_signed();
         // initial_reconnect_delay.as_millis() returns u128; cap to u64::MAX before converting.
         let base_ms_u128 = self
             .config
@@ -615,12 +621,12 @@ impl TransportClient {
 
         warn!(
             "Reconnection attempt {} after {:?}",
-            self.reconnect_attempts + 1,
+            self.reconnect_attempts.saturating_add(1),
             delay
         );
 
         sleep(delay).await;
-        self.reconnect_attempts += 1;
+        self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
 
         // Close existing connection if any
         self.stream = None;
@@ -630,19 +636,19 @@ impl TransportClient {
     }
 
     /// Send a message through the transport with automatic reconnection and backpressure
-    /// Uses zero-copy optimization with write_vectored and IoSlice
+    /// Uses zero-copy optimization with `write_vectored` and `IoSlice`
     pub async fn send(&mut self, data: &[u8]) -> Result<()> {
         // Validate payload size
         if data.len() > 1024 * 1024 {
             return Err(EventBusError::transport(
-                "Payload exceeds 1MB limit".to_string(),
+                "Payload exceeds 1MB limit".to_owned(),
             ));
         }
 
         // Acquire permit for backpressure control (drop before reconnect if needed)
         let permit = if let Some(ref semaphore) = self.outbound_semaphore {
-            Some(semaphore.acquire().await.map_err(|_| {
-                EventBusError::transport("Backpressure: semaphore closed".to_string())
+            Some(semaphore.acquire().await.map_err(|_closed| {
+                EventBusError::transport("Backpressure: semaphore closed".to_owned())
             })?)
         } else {
             None
@@ -653,8 +659,8 @@ impl TransportClient {
             self.reconnect().await?;
             // Re-acquire permit after reconnect
             let _permit = if let Some(ref semaphore) = self.outbound_semaphore {
-                Some(semaphore.acquire().await.map_err(|_| {
-                    EventBusError::transport("Backpressure: semaphore closed".to_string())
+                Some(semaphore.acquire().await.map_err(|_closed| {
+                    EventBusError::transport("Backpressure: semaphore closed".to_owned())
                 })?)
             } else {
                 None
@@ -667,67 +673,73 @@ impl TransportClient {
             .ok_or_else(|| EventBusError::transport("No active connection"))?;
 
         // Prepare length prefix and data for vectored write
+        // SAFETY: data.len() is validated above to be ≤ 1MB (< u32::MAX).
+        #[allow(clippy::as_conversions)]
         let length = data.len() as u32;
         let length_bytes = length.to_le_bytes();
 
         // Use write_vectored for zero-copy optimization
         // This allows the kernel to send both the length prefix and data in a single syscall
         let slices = [IoSlice::new(&length_bytes), IoSlice::new(data)];
-        let written = stream.write_vectored(&slices).await.map_err(|e| {
-            EventBusError::transport(format!("Failed to write vectored data: {}", e))
-        })?;
+        let written = stream
+            .write_vectored(&slices)
+            .await
+            .map_err(|e| EventBusError::transport(format!("Failed to write vectored data: {e}")))?;
 
         // Ensure all data was written
-        let expected = length_bytes.len() + data.len();
+        let expected = length_bytes.len().saturating_add(data.len());
         if written < expected {
             // Fallback to individual writes if vectored write was partial
             if written < length_bytes.len() {
                 stream
-                    .write_all(&length_bytes[written..])
+                    .write_all(length_bytes.get(written..).unwrap_or(&[]))
                     .await
                     .map_err(|e| {
-                        EventBusError::transport(format!("Failed to write remaining length: {}", e))
+                        EventBusError::transport(format!("Failed to write remaining length: {e}"))
                     })?;
-                stream.write_all(data).await.map_err(|e| {
-                    EventBusError::transport(format!("Failed to write data: {}", e))
-                })?;
+                stream
+                    .write_all(data)
+                    .await
+                    .map_err(|e| EventBusError::transport(format!("Failed to write data: {e}")))?;
             } else {
-                let data_written = written - length_bytes.len();
-                stream.write_all(&data[data_written..]).await.map_err(|e| {
-                    EventBusError::transport(format!("Failed to write remaining data: {}", e))
-                })?;
+                let data_written = written.saturating_sub(length_bytes.len());
+                stream
+                    .write_all(data.get(data_written..).unwrap_or(&[]))
+                    .await
+                    .map_err(|e| {
+                        EventBusError::transport(format!("Failed to write remaining data: {e}"))
+                    })?;
             }
         }
 
         stream
             .flush()
             .await
-            .map_err(|e| EventBusError::transport(format!("Failed to flush data: {}", e)))?;
+            .map_err(|e| EventBusError::transport(format!("Failed to flush data: {e}")))?;
 
         debug!("Sent {} bytes through transport", data.len());
         Ok(())
     }
 
     /// Receive a message from the transport with automatic reconnection and zero-copy optimization
-    /// Uses ReadBuf with preallocated buffer to minimize allocations
+    /// Uses `ReadBuf` with preallocated buffer to minimize allocations
     pub async fn receive(&mut self) -> Result<Vec<u8>> {
         // Acquire inbound permit if available (server-side)
-        let permit =
-            if let Some(ref semaphore) = self.inbound_semaphore {
-                Some(semaphore.acquire().await.map_err(|_| {
-                    EventBusError::transport("Inbound semaphore closed".to_string())
-                })?)
-            } else {
-                None
-            };
+        let permit = if let Some(ref semaphore) = self.inbound_semaphore {
+            Some(semaphore.acquire().await.map_err(|_closed| {
+                EventBusError::transport("Inbound semaphore closed".to_owned())
+            })?)
+        } else {
+            None
+        };
 
         if !self.connected {
             drop(permit); // Drop permit before reconnect
             self.reconnect().await?;
             // Re-acquire permit after reconnect
             let _permit = if let Some(ref semaphore) = self.inbound_semaphore {
-                Some(semaphore.acquire().await.map_err(|_| {
-                    EventBusError::transport("Inbound semaphore closed".to_string())
+                Some(semaphore.acquire().await.map_err(|_closed| {
+                    EventBusError::transport("Inbound semaphore closed".to_owned())
                 })?)
             } else {
                 None
@@ -740,24 +752,27 @@ impl TransportClient {
             .ok_or_else(|| EventBusError::transport("No active connection"))?;
 
         // Read length prefix first using ReadBuf for zero-copy
-        let mut length_bytes = [0u8; 4];
+        let mut length_bytes = [0_u8; 4];
         let mut length_buf = ReadBuf::new(&mut length_bytes);
-        stream.read_buf(&mut length_buf).await.map_err(|e| {
-            EventBusError::transport(format!("Failed to read length prefix: {}", e))
-        })?;
+        stream
+            .read_buf(&mut length_buf)
+            .await
+            .map_err(|e| EventBusError::transport(format!("Failed to read length prefix: {e}")))?;
 
         if length_buf.filled().len() < 4 {
             return Err(EventBusError::transport(
-                "Incomplete length prefix received".to_string(),
+                "Incomplete length prefix received".to_owned(),
             ));
         }
 
+        // SAFETY: u32 to usize is lossless on all supported platforms (usize >= 32 bits).
+        #[allow(clippy::as_conversions)]
         let length = u32::from_le_bytes(length_bytes) as usize;
 
         // Validate length to prevent DoS
         if length > 1024 * 1024 {
             return Err(EventBusError::transport(
-                "Message length exceeds 1MB limit".to_string(),
+                "Message length exceeds 1MB limit".to_owned(),
             ));
         }
 
@@ -769,11 +784,11 @@ impl TransportClient {
             stream
                 .read_buf(&mut read_buf)
                 .await
-                .map_err(|e| EventBusError::transport(format!("Failed to read data: {}", e)))?;
+                .map_err(|e| EventBusError::transport(format!("Failed to read data: {e}")))?;
 
             if read_buf.filled().len() < length {
                 return Err(EventBusError::transport(
-                    "Incomplete message received".to_string(),
+                    "Incomplete message received".to_owned(),
                 ));
             }
 
@@ -787,11 +802,11 @@ impl TransportClient {
             stream
                 .read_buf(&mut read_buf)
                 .await
-                .map_err(|e| EventBusError::transport(format!("Failed to read data: {}", e)))?;
+                .map_err(|e| EventBusError::transport(format!("Failed to read data: {e}")))?;
 
             if read_buf.filled().len() < length {
                 return Err(EventBusError::transport(
-                    "Incomplete message received".to_string(),
+                    "Incomplete message received".to_owned(),
                 ));
             }
 
@@ -863,10 +878,10 @@ impl TransportClient {
             semaphore
                 .acquire()
                 .await
-                .map_err(|_| EventBusError::transport("Semaphore closed".to_string()))
+                .map_err(|_closed| EventBusError::transport("Semaphore closed".to_owned()))
         } else {
             Err(EventBusError::transport(
-                "No outbound semaphore available".to_string(),
+                "No outbound semaphore available".to_owned(),
             ))
         }
     }
@@ -874,7 +889,9 @@ impl TransportClient {
     /// Release credit for flow control
     pub async fn release_credit(&self, credits: usize) -> Result<()> {
         let mut available = self.available_credits.lock().await;
-        *available = available.saturating_add(credits);
+        let new_value = available.saturating_add(credits);
+        *available = new_value;
+        drop(available);
         Ok(())
     }
 
@@ -884,7 +901,7 @@ impl TransportClient {
     }
 
     /// Get connection statistics
-    pub fn get_connection_stats(&self) -> ConnectionStats {
+    pub const fn get_connection_stats(&self) -> ConnectionStats {
         ConnectionStats {
             connected: self.connected,
             reconnect_attempts: self.reconnect_attempts,
@@ -893,6 +910,7 @@ impl TransportClient {
     }
 
     /// Close the transport connection
+    #[allow(clippy::unused_async)]
     pub async fn close(mut self) -> Result<()> {
         self.connected = false;
         self.buffer.clear();
@@ -1022,6 +1040,7 @@ impl ClientConnectionManager {
     }
 
     /// Insert an accepted client connection (from server accept)
+    #[allow(clippy::unused_async)]
     pub async fn insert_accepted_client(
         &mut self,
         client_id: String,
@@ -1058,6 +1077,7 @@ impl ClientConnectionManager {
     }
 
     /// Subscribe a client to topic patterns
+    #[allow(clippy::unused_async)]
     pub async fn subscribe_client(
         &mut self,
         client_id: &str,
@@ -1065,8 +1085,7 @@ impl ClientConnectionManager {
     ) -> Result<()> {
         if !self.clients.contains_key(client_id) {
             return Err(EventBusError::transport(format!(
-                "Client {} not found",
-                client_id
+                "Client {client_id} not found"
             )));
         }
 
@@ -1075,11 +1094,12 @@ impl ClientConnectionManager {
             client_id, topic_patterns
         );
         self.subscriptions
-            .insert(client_id.to_string(), topic_patterns);
+            .insert(client_id.to_owned(), topic_patterns);
         Ok(())
     }
 
     /// Unsubscribe a client from all topics
+    #[allow(clippy::unused_async)]
     pub async fn unsubscribe_client(&mut self, client_id: &str) -> Result<()> {
         if let Some(patterns) = self.subscriptions.get_mut(client_id) {
             debug!("Unsubscribing client {} from all topics", client_id);
@@ -1095,21 +1115,20 @@ impl ClientConnectionManager {
                 Ok(()) => {
                     managed_client.last_activity = std::time::Instant::now();
                     managed_client.healthy = true;
-                    self.stats.messages_sent += 1;
+                    self.stats.messages_sent = self.stats.messages_sent.saturating_add(1);
                     Ok(())
                 }
                 Err(e) => {
                     error!("Failed to send to client {}: {}", client_id, e);
                     managed_client.healthy = false;
-                    self.stats.failed_connections += 1;
+                    self.stats.failed_connections = self.stats.failed_connections.saturating_add(1);
                     self.update_healthy_clients_count();
                     Err(e)
                 }
             }
         } else {
             Err(EventBusError::transport(format!(
-                "Client {} not found",
-                client_id
+                "Client {client_id} not found"
             )))
         }
     }
@@ -1123,16 +1142,12 @@ impl ClientConnectionManager {
         let matching_clients: Vec<String> = self
             .subscriptions
             .iter()
-            .filter_map(|(client_id, patterns)| {
-                if patterns
+            .filter(|&(_client_id, patterns)| {
+                patterns
                     .iter()
-                    .any(|pattern| self.topic_matches(topic, pattern))
-                {
-                    Some(client_id.clone())
-                } else {
-                    None
-                }
+                    .any(|pattern| Self::topic_matches(topic, pattern))
             })
+            .map(|(client_id, _patterns)| client_id.clone())
             .collect();
 
         // Send to matching clients
@@ -1145,16 +1160,16 @@ impl ClientConnectionManager {
 
         // Remove failed clients
         for client_id in failed_clients {
-            let _ = self.remove_client(&client_id).await;
+            drop(self.remove_client(&client_id).await);
         }
 
         Ok(delivered_clients)
     }
 
-    /// Topic pattern matching delegated to TopicPattern implementation
-    fn topic_matches(&self, topic: &str, pattern: &str) -> bool {
+    /// Topic pattern matching delegated to `TopicPattern` implementation
+    fn topic_matches(topic: &str, pattern: &str) -> bool {
         let topic_obj = match Topic::new(topic) {
-            Ok(topic) => topic,
+            Ok(t) => t,
             Err(err) => {
                 debug!("Ignoring publish to invalid topic {topic}: {err}");
                 return false;
@@ -1162,7 +1177,7 @@ impl ClientConnectionManager {
         };
 
         let pattern_obj = match TopicPattern::new(pattern) {
-            Ok(pattern) => pattern,
+            Ok(p) => p,
             Err(err) => {
                 debug!("Ignoring invalid subscription pattern {pattern}: {err}");
                 return false;
@@ -1177,12 +1192,12 @@ impl ClientConnectionManager {
         let mut unhealthy_clients = Vec::new();
 
         for (client_id, managed_client) in &mut self.clients {
-            if !managed_client.client.health_check().await? {
+            if managed_client.client.health_check().await? {
+                managed_client.healthy = true;
+            } else {
                 warn!("Client {} failed health check", client_id);
                 managed_client.healthy = false;
                 unhealthy_clients.push(client_id.clone());
-            } else {
-                managed_client.healthy = true;
             }
         }
 
@@ -1197,7 +1212,8 @@ impl ClientConnectionManager {
                     }
                     Err(e) => {
                         error!("Failed to reconnect client {}: {}", client_id, e);
-                        self.stats.reconnection_attempts += 1;
+                        self.stats.reconnection_attempts =
+                            self.stats.reconnection_attempts.saturating_add(1);
                     }
                 }
             }
@@ -1213,7 +1229,7 @@ impl ClientConnectionManager {
     }
 
     /// Get connection manager statistics
-    pub fn get_stats(&self) -> &ConnectionManagerStats {
+    pub const fn get_stats(&self) -> &ConnectionManagerStats {
         &self.stats
     }
 
@@ -1250,7 +1266,7 @@ impl ClientConnectionManager {
 
         let client_ids: Vec<String> = self.clients.keys().cloned().collect();
         for client_id in client_ids {
-            let _ = self.remove_client(&client_id).await;
+            drop(self.remove_client(&client_id).await);
         }
 
         Ok(())
@@ -1295,7 +1311,7 @@ impl TransportManager {
                 Ok(client) => {
                     info!(
                         "New client connected, total clients: {}",
-                        self.clients.len() + 1
+                        self.clients.len().saturating_add(1)
                     );
                     self.clients.push(client);
                 }
@@ -1309,7 +1325,7 @@ impl TransportManager {
     }
 
     /// Get the number of connected clients
-    pub fn client_count(&self) -> usize {
+    pub const fn client_count(&self) -> usize {
         self.clients.len()
     }
 
@@ -1449,9 +1465,18 @@ mod tests {
         assert!(result.is_ok());
 
         // Test topic matching
-        assert!(manager.topic_matches("events.process.lifecycle", "events.process.#"));
-        assert!(manager.topic_matches("control.health.status", "control.health.+"));
-        assert!(!manager.topic_matches("events.network.connections", "events.process.#"));
+        assert!(ClientConnectionManager::topic_matches(
+            "events.process.lifecycle",
+            "events.process.#"
+        ));
+        assert!(ClientConnectionManager::topic_matches(
+            "control.health.status",
+            "control.health.+"
+        ));
+        assert!(!ClientConnectionManager::topic_matches(
+            "events.network.connections",
+            "events.process.#"
+        ));
 
         // Remove client
         let result = manager.remove_client("test-client").await;
@@ -1469,23 +1494,55 @@ mod tests {
         let config = ClientConfig::default();
         let manager = ClientConnectionManager::new(config);
 
+        let _ = manager; // manager created above; topic_matches is a static method
+
         // Test exact match
-        assert!(manager.topic_matches("events.process.lifecycle", "events.process.lifecycle"));
+        assert!(ClientConnectionManager::topic_matches(
+            "events.process.lifecycle",
+            "events.process.lifecycle"
+        ));
 
         // Test single-level wildcard
-        assert!(manager.topic_matches("events.process.lifecycle", "events.process.+"));
-        assert!(manager.topic_matches("events.process.metadata", "events.process.+"));
-        assert!(!manager.topic_matches("events.process.lifecycle.extra", "events.process.+"));
+        assert!(ClientConnectionManager::topic_matches(
+            "events.process.lifecycle",
+            "events.process.+"
+        ));
+        assert!(ClientConnectionManager::topic_matches(
+            "events.process.metadata",
+            "events.process.+"
+        ));
+        assert!(!ClientConnectionManager::topic_matches(
+            "events.process.lifecycle.extra",
+            "events.process.+"
+        ));
 
         // Test multi-level wildcard
-        assert!(manager.topic_matches("events.process.lifecycle", "events.#"));
-        assert!(manager.topic_matches("events.process.lifecycle.extra", "events.#"));
-        assert!(manager.topic_matches("events.network.connections", "events.#"));
-        assert!(!manager.topic_matches("control.collector.status", "events.#"));
+        assert!(ClientConnectionManager::topic_matches(
+            "events.process.lifecycle",
+            "events.#"
+        ));
+        assert!(ClientConnectionManager::topic_matches(
+            "events.process.lifecycle.extra",
+            "events.#"
+        ));
+        assert!(ClientConnectionManager::topic_matches(
+            "events.network.connections",
+            "events.#"
+        ));
+        assert!(!ClientConnectionManager::topic_matches(
+            "control.collector.status",
+            "events.#"
+        ));
 
         // Test no match
-        assert!(!manager.topic_matches("events.network.connections", "events.process.+"));
-        assert!(!manager.topic_matches("control.collector.status", "events.process.*"));
+        assert!(!ClientConnectionManager::topic_matches(
+            "events.network.connections",
+            "events.process.+"
+        ));
+        assert!(!ClientConnectionManager::topic_matches(
+            "control.collector.status",
+            "events.process.*"
+        ));
     }
 
     #[tokio::test]

@@ -1,8 +1,13 @@
-//! DaemonEye EventBus integration for collector-core framework.
+//! `DaemonEye` `EventBus` integration for collector-core framework.
 //!
 //! This module provides integration between the collector-core framework and the
 //! daemoneye-eventbus message broker, enabling high-performance pub/sub messaging
 //! with topic-based routing and embedded broker functionality.
+
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::as_conversions)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
 
 use crate::{
     event::CollectionEvent,
@@ -25,9 +30,9 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-/// Comprehensive metrics for DaemonEye EventBus monitoring and observability.
+/// Comprehensive metrics for `DaemonEye` `EventBus` monitoring and observability.
 ///
-/// This structure provides detailed metrics beyond the standard EventBus interface,
+/// This structure provides detailed metrics beyond the standard `EventBus` interface,
 /// including broker-specific performance indicators, transport statistics,
 /// and health monitoring data for operational visibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +74,7 @@ pub struct BrokerHealthStatus {
 
 /// Health status enumeration for monitoring systems.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HealthStatus {
     /// System is operating normally
     Healthy,
@@ -150,10 +156,10 @@ pub struct PerformanceMetrics {
     pub resource_utilization: f64,
 }
 
-/// DaemonEye EventBus implementation for collector-core compatibility.
+/// `DaemonEye` `EventBus` implementation for collector-core compatibility.
 ///
 /// This struct wraps the daemoneye-eventbus broker functionality and implements
-/// the collector-core EventBus trait for seamless integration with existing
+/// the collector-core `EventBus` trait for seamless integration with existing
 /// collector-core components.
 ///
 /// # Architecture
@@ -184,11 +190,11 @@ pub struct DaemoneyeEventBus {
 }
 
 impl DaemoneyeEventBus {
-    /// Create a new DaemoneyeEventBus with embedded broker.
+    /// Create a new `DaemoneyeEventBus` with embedded broker.
     ///
     /// # Arguments
     ///
-    /// * `config` - EventBus configuration
+    /// * `config` - `EventBus` configuration
     /// * `socket_path` - Socket path for the embedded broker
     ///
     /// # Examples
@@ -222,7 +228,7 @@ impl DaemoneyeEventBus {
             .context("Failed to create EventBus from broker")?;
 
         // Get broker reference from the event_bus_impl
-        let broker_ref = event_bus_impl.broker().clone();
+        let broker_ref = Arc::clone(event_bus_impl.broker());
 
         let event_bus = Self {
             inner: Arc::new(Mutex::new(event_bus_impl)),
@@ -234,14 +240,14 @@ impl DaemoneyeEventBus {
         Ok(event_bus)
     }
 
-    /// Create a new DaemoneyeEventBus from an existing broker.
+    /// Create a new `DaemoneyeEventBus` from an existing broker.
     ///
     /// This method is useful when you want to share a broker instance
-    /// across multiple EventBus instances.
+    /// across multiple `EventBus` instances.
     ///
     /// # Arguments
     ///
-    /// * `config` - EventBus configuration
+    /// * `config` - `EventBus` configuration
     /// * `broker` - Existing broker instance
     pub async fn from_broker(config: EventBusConfig, broker: DaemoneyeBroker) -> Result<Self> {
         info!(
@@ -255,7 +261,7 @@ impl DaemoneyeEventBus {
             .context("Failed to create EventBus from broker")?;
 
         // Get broker reference from the event_bus_impl
-        let broker_ref = event_bus_impl.broker().clone();
+        let broker_ref = Arc::clone(event_bus_impl.broker());
 
         let event_bus = Self {
             inner: Arc::new(Mutex::new(event_bus_impl)),
@@ -270,15 +276,15 @@ impl DaemoneyeEventBus {
     /// Get a reference to the embedded broker.
     ///
     /// This method provides direct access to the broker for advanced
-    /// operations that are not exposed through the EventBus trait.
-    pub fn broker(&self) -> &Arc<DaemoneyeBroker> {
+    /// operations that are not exposed through the `EventBus` trait.
+    pub const fn broker(&self) -> &Arc<DaemoneyeBroker> {
         &self.broker
     }
 
     /// Start the embedded broker.
     ///
     /// This method starts the broker's internal transport and message
-    /// routing systems. It should be called before using the EventBus.
+    /// routing systems. It should be called before using the `EventBus`.
     pub async fn start(&self) -> Result<()> {
         info!("Starting embedded broker");
         self.broker
@@ -289,40 +295,41 @@ impl DaemoneyeEventBus {
         Ok(())
     }
 
-    /// Shutdown the EventBus and embedded broker.
+    /// Shutdown the `EventBus` and embedded broker.
     ///
-    /// This method performs a graceful shutdown of the EventBus and
+    /// This method performs a graceful shutdown of the `EventBus` and
     /// its embedded broker, ensuring all pending messages are processed.
     ///
     /// # Errors
     ///
-    /// Returns the first error encountered during shutdown. Both inner EventBus
+    /// Returns the first error encountered during shutdown. Both inner `EventBus`
     /// and broker shutdown are attempted even if one fails.
+    #[allow(clippy::same_name_method)]
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down DaemoneyeEventBus");
-        let mut first_error: Option<anyhow::Error> = None;
 
-        // Shutdown inner EventBus
-        if let Err(e) = self.inner.lock().await.shutdown().await {
+        // Shutdown inner EventBus - collect error but continue
+        let inner_result = self.inner.lock().await.shutdown().await;
+        if let Err(ref e) = inner_result {
             error!(error = %e, "Failed to shutdown inner EventBus");
-            first_error = Some(e.into());
         }
 
-        // Shutdown broker (attempt even if inner failed)
-        if let Err(e) = self.broker.shutdown().await {
+        // Shutdown broker (attempt even if inner failed) - collect error but continue
+        let broker_result = self.broker.shutdown().await;
+        if let Err(ref e) = broker_result {
             error!(error = %e, "Failed to shutdown broker");
-            first_error.get_or_insert(e.into());
         }
 
-        if let Some(err) = first_error {
-            return Err(err);
-        }
+        // Return first error encountered
+        inner_result
+            .and(broker_result)
+            .map_err(anyhow::Error::from)?;
 
         info!("DaemoneyeEventBus shutdown completed");
         Ok(())
     }
 
-    /// Convert collector-core CollectionEvent to daemoneye-eventbus CollectionEvent.
+    /// Convert collector-core `CollectionEvent` to daemoneye-eventbus `CollectionEvent`.
     fn convert_collection_event(
         event: &crate::event::CollectionEvent,
     ) -> Result<daemoneye_eventbus::CollectionEvent, anyhow::Error> {
@@ -383,12 +390,12 @@ impl DaemoneyeEventBus {
 
                 // Serialize the full trigger request into payload so downstream can reconstruct
                 let payload = serde_json::to_vec(trigger_request)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize trigger request: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize trigger request: {e}"))?;
 
                 Ok(daemoneye_eventbus::CollectionEvent::TriggerRequest(
                     daemoneye_eventbus::TriggerRequest {
                         request_id: trigger_request.trigger_id.clone(),
-                        collector_type: analysis_type_str.to_string(),
+                        collector_type: analysis_type_str.to_owned(),
                         priority: match trigger_request.priority {
                             crate::event::TriggerPriority::Low => 1,
                             crate::event::TriggerPriority::Normal => 2,
@@ -403,7 +410,7 @@ impl DaemoneyeEventBus {
         }
     }
 
-    /// Convert collector-core EventSubscription to daemoneye-eventbus EventSubscription.
+    /// Convert collector-core `EventSubscription` to daemoneye-eventbus `EventSubscription`.
     fn convert_subscription(
         subscription: &crate::event_bus::EventSubscription,
     ) -> daemoneye_eventbus::EventSubscription {
@@ -428,11 +435,10 @@ impl DaemoneyeEventBus {
             }),
             correlation_filter: subscription.correlation_filter.as_ref().map(|filter| {
                 daemoneye_eventbus::CorrelationFilter {
-                    correlation_ids: if let Some(id) = &filter.correlation_id {
-                        vec![id.clone()]
-                    } else {
-                        vec![]
-                    },
+                    correlation_ids: filter
+                        .correlation_id
+                        .as_ref()
+                        .map_or_else(Vec::new, |id| vec![id.clone()]),
                     correlation_patterns: vec![],
                     parent_correlation_ids: vec![],
                     root_correlation_ids: vec![],
@@ -452,26 +458,26 @@ impl DaemoneyeEventBus {
         let mut event_types = Vec::with_capacity(4);
 
         if capabilities.contains(CollectorSourceCaps::PROCESS) {
-            event_types.push("process".to_string());
+            event_types.push("process".to_owned());
         }
         if capabilities.contains(CollectorSourceCaps::NETWORK) {
-            event_types.push("network".to_string());
+            event_types.push("network".to_owned());
         }
         if capabilities.contains(CollectorSourceCaps::FILESYSTEM) {
-            event_types.push("filesystem".to_string());
+            event_types.push("filesystem".to_owned());
         }
         if capabilities.contains(CollectorSourceCaps::PERFORMANCE) {
-            event_types.push("performance".to_string());
+            event_types.push("performance".to_owned());
         }
 
         event_types
     }
 
-    /// Convert daemoneye-eventbus BusEvent to collector-core BusEvent.
+    /// Convert daemoneye-eventbus `BusEvent` to collector-core `BusEvent`.
     ///
     /// # Errors
     ///
-    /// Returns an error if TriggerRequest deserialization or validation fails.
+    /// Returns an error if `TriggerRequest` deserialization or validation fails.
     /// This prevents silent data corruption from masking protocol issues.
     fn convert_bus_event(
         event: &daemoneye_eventbus::BusEvent,
@@ -505,7 +511,7 @@ impl DaemoneyeEventBus {
                     source_addr: network_event.source_address.clone(),
                     dest_addr: network_event.destination_address.clone(),
                     protocol: network_event.protocol.clone(),
-                    state: "unknown".to_string(),
+                    state: "unknown".to_owned(),
                     pid: None,
                     bytes_sent: 0,
                     bytes_received: 0,
@@ -529,7 +535,7 @@ impl DaemoneyeEventBus {
                     value: perf_event.value,
                     unit: perf_event.unit.clone(),
                     pid: None,
-                    component: "unknown".to_string(),
+                    component: "unknown".to_owned(),
                     timestamp: std::time::SystemTime::now(),
                 })
             }
@@ -558,6 +564,12 @@ impl DaemoneyeEventBus {
 
                 crate::event::CollectionEvent::TriggerRequest(req)
             }
+            // Handle future variants added to the non_exhaustive CollectionEvent enum
+            &_ => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported CollectionEvent variant \u{2014} update convert_bus_event to handle new variants"
+                ));
+            }
         };
 
         Ok(crate::event_bus::BusEvent {
@@ -569,14 +581,14 @@ impl DaemoneyeEventBus {
                 .as_secs(),
             event: collection_event,
             correlation_metadata: crate::event_bus::CorrelationMetadata::new(
-                event.correlation_id().to_string(),
+                event.correlation_id().to_owned(),
             ),
             routing_metadata: std::collections::HashMap::new(),
         })
     }
 
     /// Convert daemoneye-eventbus statistics to collector-core statistics.
-    fn convert_statistics(stats: &DaemoneyeEventBusStatistics) -> EventBusStatistics {
+    const fn convert_statistics(stats: &DaemoneyeEventBusStatistics) -> EventBusStatistics {
         EventBusStatistics {
             events_published: stats.messages_published,
             events_delivered: stats.messages_delivered,
@@ -587,7 +599,7 @@ impl DaemoneyeEventBus {
 
     /// Get comprehensive daemoneye-eventbus specific metrics and health indicators.
     ///
-    /// This method provides detailed metrics beyond the standard EventBus interface,
+    /// This method provides detailed metrics beyond the standard `EventBus` interface,
     /// including broker-specific performance indicators, transport statistics,
     /// and health monitoring data.
     ///
@@ -645,6 +657,7 @@ impl DaemoneyeEventBus {
     }
 
     /// Get broker health status using provided statistics (optimized version).
+    #[allow(clippy::unused_async)]
     async fn get_broker_health_with_stats(
         &self,
         stats: &DaemoneyeEventBusStatistics,
@@ -672,13 +685,14 @@ impl DaemoneyeEventBus {
             uptime,
             last_health_check: std::time::SystemTime::now(),
             active_connections: stats.active_subscribers,
-            message_throughput: self.calculate_message_throughput(stats),
+            message_throughput: Self::calculate_message_throughput(stats),
             error_rate: 0.0, // Simplified implementation - would need broker API extension for actual error tracking
-            memory_usage: self.estimate_memory_usage(stats),
+            memory_usage: Self::estimate_memory_usage(stats),
         })
     }
 
     /// Get transport layer statistics using provided statistics (optimized version).
+    #[allow(clippy::unused_async)]
     async fn get_transport_statistics_with_stats(
         &self,
         broker_stats: &DaemoneyeEventBusStatistics,
@@ -700,6 +714,7 @@ impl DaemoneyeEventBus {
     }
 
     /// Get client statistics using provided statistics (optimized version).
+    #[allow(clippy::unused_async)]
     async fn get_client_statistics_with_stats(
         &self,
         broker_stats: &DaemoneyeEventBusStatistics,
@@ -715,6 +730,7 @@ impl DaemoneyeEventBus {
     }
 
     /// Get topic routing statistics using provided statistics (optimized version).
+    #[allow(clippy::unused_async)]
     async fn get_topic_statistics_with_stats(
         &self,
         broker_stats: &DaemoneyeEventBusStatistics,
@@ -722,13 +738,14 @@ impl DaemoneyeEventBus {
         Ok(TopicStatistics {
             active_topics: broker_stats.active_topics,
             total_subscriptions: broker_stats.active_subscribers,
-            message_routing_efficiency: self.calculate_routing_efficiency(broker_stats),
+            message_routing_efficiency: Self::calculate_routing_efficiency(broker_stats),
             topic_distribution: HashMap::new(), // Would need broker API extension
             wildcard_usage: 0,                  // Would need broker API extension
         })
     }
 
     /// Calculate performance metrics based on broker statistics.
+    #[allow(clippy::unused_async)]
     async fn calculate_performance_metrics(
         &self,
         stats: &DaemoneyeEventBusStatistics,
@@ -743,19 +760,19 @@ impl DaemoneyeEventBus {
                 1.0
             },
             average_subscribers: stats.active_subscribers as f64,
-            throughput_efficiency: self.calculate_throughput_efficiency(stats),
-            resource_utilization: self.estimate_resource_utilization(stats),
+            throughput_efficiency: Self::calculate_throughput_efficiency(stats),
+            resource_utilization: Self::estimate_resource_utilization(stats),
         })
     }
 
     /// Calculate message throughput for health monitoring.
-    fn calculate_message_throughput(&self, stats: &DaemoneyeEventBusStatistics) -> f64 {
+    fn calculate_message_throughput(stats: &DaemoneyeEventBusStatistics) -> f64 {
         let uptime_seconds = stats.uptime_seconds.max(1);
         stats.messages_published as f64 / uptime_seconds as f64
     }
 
     /// Estimate memory usage based on broker statistics.
-    fn estimate_memory_usage(&self, stats: &DaemoneyeEventBusStatistics) -> u64 {
+    const fn estimate_memory_usage(stats: &DaemoneyeEventBusStatistics) -> u64 {
         // Rough estimation based on active subscribers and topics
         // In practice, this would need actual memory monitoring
         const BASE_MEMORY: u64 = 1024 * 1024; // 1MB base
@@ -768,7 +785,7 @@ impl DaemoneyeEventBus {
     }
 
     /// Calculate routing efficiency for topic statistics.
-    fn calculate_routing_efficiency(&self, stats: &DaemoneyeEventBusStatistics) -> f64 {
+    fn calculate_routing_efficiency(stats: &DaemoneyeEventBusStatistics) -> f64 {
         if stats.messages_published == 0 {
             return 1.0;
         }
@@ -778,7 +795,7 @@ impl DaemoneyeEventBus {
     }
 
     /// Calculate throughput efficiency for performance metrics.
-    fn calculate_throughput_efficiency(&self, stats: &DaemoneyeEventBusStatistics) -> f64 {
+    fn calculate_throughput_efficiency(stats: &DaemoneyeEventBusStatistics) -> f64 {
         // Simplified efficiency calculation based on delivery ratio and subscriber count
         let delivery_ratio = if stats.messages_published > 0 {
             stats.messages_delivered as f64 / stats.messages_published as f64
@@ -796,7 +813,7 @@ impl DaemoneyeEventBus {
     }
 
     /// Estimate resource utilization for performance metrics.
-    fn estimate_resource_utilization(&self, stats: &DaemoneyeEventBusStatistics) -> f64 {
+    fn estimate_resource_utilization(stats: &DaemoneyeEventBusStatistics) -> f64 {
         // Simplified resource utilization based on activity
         const MESSAGE_SCALE: f64 = 1000.0;
         const SUBSCRIBER_SCALE: f64 = 100.0;
@@ -874,7 +891,7 @@ impl DaemoneyeEventBus {
     /// Get health status for monitoring integration.
     ///
     /// This method provides a simple health check interface for monitoring
-    /// systems that need to determine if the EventBus is operating correctly.
+    /// systems that need to determine if the `EventBus` is operating correctly.
     pub async fn health_check(&self) -> Result<bool> {
         let health = self.get_broker_health().await?;
 
@@ -938,7 +955,7 @@ impl EventBus for DaemoneyeEventBus {
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
             // Signal readiness before entering the loop to avoid race with immediate publish
-            let _ = ready_tx.send(());
+            ready_tx.send(()).ok();
             let mut daemoneye_rx = daemoneye_receiver;
             while let Some(daemoneye_event) = daemoneye_rx.recv().await {
                 // Convert the event, handling errors explicitly
@@ -967,7 +984,7 @@ impl EventBus for DaemoneyeEventBus {
         });
 
         // Ensure the forwarding task is ready before returning
-        let _ = ready_rx.await;
+        drop(ready_rx.await);
 
         info!(
             subscriber_id = %subscriber_id,
@@ -1022,7 +1039,7 @@ impl EventBus for DaemoneyeEventBus {
 
     async fn shutdown(&self) -> Result<()> {
         // Delegate to the existing shutdown method
-        DaemoneyeEventBus::shutdown(self).await
+        Self::shutdown(self).await
     }
 }
 
@@ -1035,7 +1052,7 @@ mod unit_tests {
     #[test]
     fn convert_subscription_populates_event_types() {
         let subscription = EventSubscription {
-            subscriber_id: "test".to_string(),
+            subscriber_id: "test".to_owned(),
             capabilities: SourceCaps::PROCESS | SourceCaps::NETWORK,
             event_filter: None,
             correlation_filter: None,
@@ -1047,7 +1064,7 @@ mod unit_tests {
         let converted = DaemoneyeEventBus::convert_subscription(&subscription);
         assert_eq!(
             converted.capabilities.event_types,
-            vec!["process".to_string(), "network".to_string()]
+            vec!["process".to_owned(), "network".to_owned()]
         );
     }
 }
@@ -1100,11 +1117,11 @@ mod tests {
 
         // Create subscription (tightened to process-specific pattern)
         let subscription = EventSubscription {
-            subscriber_id: "test-subscriber".to_string(),
+            subscriber_id: "test-subscriber".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1115,14 +1132,14 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: Some(5678),
-            name: "test_process".to_string(),
-            executable_path: Some("/bin/test".to_string()),
-            command_line: vec!["test".to_string(), "arg1".to_string()],
+            name: "test_process".to_owned(),
+            executable_path: Some("/bin/test".to_owned()),
+            command_line: vec!["test".to_owned(), "arg1".to_owned()],
             start_time: Some(SystemTime::now()),
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
-            user_id: Some("1000".to_string()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
@@ -1130,7 +1147,7 @@ mod tests {
         });
 
         let correlation_metadata =
-            crate::event_bus::CorrelationMetadata::new("test-correlation".to_string());
+            crate::event_bus::CorrelationMetadata::new("test-correlation".to_owned());
         event_bus
             .publish(process_event.clone(), correlation_metadata)
             .await
@@ -1175,13 +1192,13 @@ mod tests {
 
         // Create subscription for trigger requests (tightened patterns)
         let subscription = EventSubscription {
-            subscriber_id: "trigger-subscriber".to_string(),
+            subscriber_id: "trigger-subscriber".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
             topic_patterns: Some(vec![
-                "events.process.+".to_string(),
-                "control.trigger.+".to_string(),
+                "events.process.+".to_owned(),
+                "control.trigger.+".to_owned(),
             ]),
             enable_wildcards: true,
             topic_filter: None,
@@ -1191,19 +1208,19 @@ mod tests {
 
         // Create and publish a trigger request
         let trigger_request = CollectionEvent::TriggerRequest(TriggerRequest {
-            trigger_id: "trigger-123".to_string(),
-            target_collector: "yara-collector".to_string(),
+            trigger_id: "trigger-123".to_owned(),
+            target_collector: "yara-collector".to_owned(),
             analysis_type: crate::event::AnalysisType::YaraScan,
             priority: TriggerPriority::High,
             target_pid: Some(1234),
-            target_path: Some("/tmp/suspicious_file".to_string()),
-            correlation_id: "test-correlation".to_string(),
+            target_path: Some("/tmp/suspicious_file".to_owned()),
+            correlation_id: "test-correlation".to_owned(),
             metadata: std::collections::HashMap::new(),
             timestamp: SystemTime::now(),
         });
 
         let trigger_correlation =
-            crate::event_bus::CorrelationMetadata::new("trigger-correlation".to_string());
+            crate::event_bus::CorrelationMetadata::new("trigger-correlation".to_owned());
         event_bus
             .publish(trigger_request.clone(), trigger_correlation)
             .await
@@ -1255,11 +1272,11 @@ mod tests {
 
         // Create subscription
         let subscription = EventSubscription {
-            subscriber_id: "stats-subscriber".to_string(),
+            subscriber_id: "stats-subscriber".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1270,7 +1287,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 9999,
             ppid: None,
-            name: "stats_test".to_string(),
+            name: "stats_test".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -1312,11 +1329,11 @@ mod tests {
 
         // Create subscription
         let subscription = EventSubscription {
-            subscriber_id: "unsub-test".to_string(),
+            subscriber_id: "unsub-test".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1352,11 +1369,11 @@ mod tests {
         event_bus.start().await.unwrap();
 
         let subscription = EventSubscription {
-            subscriber_id: "immediate-sub".to_string(),
+            subscriber_id: "immediate-sub".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1367,7 +1384,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 42,
             ppid: None,
-            name: "immediate".to_string(),
+            name: "immediate".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -1382,7 +1399,7 @@ mod tests {
         });
 
         let correlation_metadata =
-            crate::event_bus::CorrelationMetadata::new("immediate-correlation".to_string());
+            crate::event_bus::CorrelationMetadata::new("immediate-correlation".to_owned());
         event_bus
             .publish(process_event, correlation_metadata)
             .await
@@ -1418,11 +1435,11 @@ mod tests {
         bus1.start().await.unwrap();
 
         let sub = |id: &str| EventSubscription {
-            subscriber_id: id.to_string(),
+            subscriber_id: id.to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1433,7 +1450,7 @@ mod tests {
         let event = CollectionEvent::Process(ProcessEvent {
             pid: 7,
             ppid: None,
-            name: "multi".to_string(),
+            name: "multi".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -1448,7 +1465,7 @@ mod tests {
         });
 
         let correlation_metadata =
-            crate::event_bus::CorrelationMetadata::new("multi-correlation".to_string());
+            crate::event_bus::CorrelationMetadata::new("multi-correlation".to_owned());
         bus1.publish(event, correlation_metadata).await.unwrap();
 
         let e1 = timeout(Duration::from_secs(3), rx1.recv())
@@ -1478,11 +1495,11 @@ mod tests {
 
         // Create subscription and publish some events to generate metrics
         let subscription = EventSubscription {
-            subscriber_id: "metrics-test".to_string(),
+            subscriber_id: "metrics-test".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1612,11 +1629,11 @@ mod tests {
 
         // Create subscription
         let subscription = EventSubscription {
-            subscriber_id: "perf-test".to_string(),
+            subscriber_id: "perf-test".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1686,11 +1703,11 @@ mod tests {
 
         // Create subscription and publish events
         let subscription = EventSubscription {
-            subscriber_id: "logging-test".to_string(),
+            subscriber_id: "logging-test".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1700,7 +1717,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 3000,
             ppid: None,
-            name: "logging_test".to_string(),
+            name: "logging_test".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -1715,7 +1732,7 @@ mod tests {
         });
 
         let correlation_metadata =
-            crate::event_bus::CorrelationMetadata::new("logging-correlation".to_string());
+            crate::event_bus::CorrelationMetadata::new("logging-correlation".to_owned());
         event_bus
             .publish(process_event, correlation_metadata)
             .await
@@ -1767,11 +1784,11 @@ mod tests {
 
         // Create subscription and publish event
         let subscription = EventSubscription {
-            subscriber_id: "compatibility-test".to_string(),
+            subscriber_id: "compatibility-test".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
-            topic_patterns: Some(vec!["events.process.+".to_string()]),
+            topic_patterns: Some(vec!["events.process.+".to_owned()]),
             enable_wildcards: true,
             topic_filter: None,
         };
@@ -1781,7 +1798,7 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 4000,
             ppid: None,
-            name: "compatibility_test".to_string(),
+            name: "compatibility_test".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -1796,7 +1813,7 @@ mod tests {
         });
 
         let correlation_metadata =
-            crate::event_bus::CorrelationMetadata::new("compatibility-correlation".to_string());
+            crate::event_bus::CorrelationMetadata::new("compatibility-correlation".to_owned());
         event_bus
             .publish(process_event, correlation_metadata)
             .await

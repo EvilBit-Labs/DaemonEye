@@ -247,9 +247,8 @@ impl RpcServiceHandler {
             | CollectorOperation::ForceShutdown
             | CollectorOperation::Pause
             | CollectorOperation::Resume
-            | CollectorOperation::ExecuteTask => {
-                Err(RpcServiceError::UnsupportedOperation { operation })
-            }
+            | CollectorOperation::ExecuteTask
+            | _ => Err(RpcServiceError::UnsupportedOperation { operation }),
         };
 
         // Update stats and create response
@@ -341,7 +340,8 @@ impl RpcServiceHandler {
             | RpcPayload::Task(_)
             | RpcPayload::TaskResult(_)
             | RpcPayload::Generic(_)
-            | RpcPayload::Empty => {
+            | RpcPayload::Empty
+            | _ => {
                 return Err(RpcServiceError::InvalidRequest(
                     "Expected ConfigUpdate payload".to_owned(),
                 ));
@@ -402,7 +402,8 @@ impl RpcServiceHandler {
             | RpcPayload::Task(_)
             | RpcPayload::TaskResult(_)
             | RpcPayload::Generic(_)
-            | RpcPayload::Empty => None,
+            | RpcPayload::Empty
+            | _ => None,
         };
 
         info!(
@@ -816,7 +817,8 @@ impl RpcServiceHandler {
             | CollectorOperation::GetCapabilities
             | CollectorOperation::Pause
             | CollectorOperation::Resume
-            | CollectorOperation::ExecuteTask => {
+            | CollectorOperation::ExecuteTask
+            | _ => {
                 // Other operations don't have specific counters yet
             }
         }

@@ -4,6 +4,10 @@
 //! with the collector-core runtime, enabling communication between collector-core
 //! components and daemoneye-agent.
 
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::as_conversions)]
+#![allow(clippy::pattern_type_mismatch)]
+
 use crate::{config::CollectorConfig, source::SourceCaps};
 use anyhow::{Context, Result};
 use daemoneye_lib::{
@@ -56,12 +60,12 @@ impl CollectorIpcServer {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = CollectorConfig::default();
     /// let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS));
-    /// let ipc_server = CollectorIpcServer::new(config, capabilities)?;
+    /// let ipc_server = CollectorIpcServer::new(&config, capabilities)?;
     /// # Ok(())
     /// # }
     /// ```
     pub fn new(
-        collector_config: CollectorConfig,
+        collector_config: &CollectorConfig,
         capabilities: Arc<RwLock<SourceCaps>>,
     ) -> Result<Self> {
         let (endpoint_path, temp_dir) = if let Some(path) = &collector_config.ipc_endpoint {
@@ -126,9 +130,9 @@ impl CollectorIpcServer {
         let capabilities = Arc::clone(&self.capabilities);
         let shutdown_signal = Arc::clone(&self.shutdown_signal);
 
-        let task_handler = Arc::new(task_handler);
+        let task_handler_arc = Arc::new(task_handler);
         server.set_handler(move |task: DetectionTask| {
-            let handler = Arc::clone(&task_handler);
+            let handler = Arc::clone(&task_handler_arc);
             let caps = Arc::clone(&capabilities);
             let shutdown = Arc::clone(&shutdown_signal);
 
@@ -176,10 +180,10 @@ impl CollectorIpcServer {
         Ok(())
     }
 
-    /// Returns the current capabilities as a CollectionCapabilities message.
+    /// Returns the current capabilities as a `CollectionCapabilities` message.
     ///
-    /// This method converts the collector-core SourceCaps bitflags into
-    /// a protobuf CollectionCapabilities message for capability negotiation
+    /// This method converts the collector-core `SourceCaps` bitflags into
+    /// a protobuf `CollectionCapabilities` message for capability negotiation
     /// with daemoneye-agent.
     pub async fn get_capabilities(&self) -> CollectionCapabilities {
         let caps = self.capabilities.read().await;
@@ -227,27 +231,29 @@ async fn validate_task_capabilities(
     let caps = capabilities.read().await;
 
     match TaskType::try_from(task.task_type) {
-        Ok(TaskType::EnumerateProcesses)
-        | Ok(TaskType::CheckProcessHash)
-        | Ok(TaskType::MonitorProcessTree)
-        | Ok(TaskType::VerifyExecutable) => {
+        Ok(
+            TaskType::EnumerateProcesses
+            | TaskType::CheckProcessHash
+            | TaskType::MonitorProcessTree
+            | TaskType::VerifyExecutable,
+        ) => {
             if !caps.contains(SourceCaps::PROCESS) {
-                return Err("Process monitoring not supported".to_string());
+                return Err("Process monitoring not supported".to_owned());
             }
         }
         Ok(TaskType::MonitorNetworkConnections) => {
             if !caps.contains(SourceCaps::NETWORK) {
-                return Err("Network monitoring not supported".to_string());
+                return Err("Network monitoring not supported".to_owned());
             }
         }
         Ok(TaskType::TrackFileOperations) => {
             if !caps.contains(SourceCaps::FILESYSTEM) {
-                return Err("Filesystem monitoring not supported".to_string());
+                return Err("Filesystem monitoring not supported".to_owned());
             }
         }
         Ok(TaskType::CollectPerformanceMetrics) => {
             if !caps.contains(SourceCaps::PERFORMANCE) {
-                return Err("Performance monitoring not supported".to_string());
+                return Err("Performance monitoring not supported".to_owned());
             }
         }
         Ok(_) => {
@@ -261,7 +267,7 @@ async fn validate_task_capabilities(
     Ok(())
 }
 
-/// Converts SourceCaps bitflags to protobuf CollectionCapabilities.
+/// Converts `SourceCaps` bitflags to protobuf `CollectionCapabilities`.
 fn source_caps_to_proto_capabilities(caps: SourceCaps) -> CollectionCapabilities {
     use daemoneye_lib::proto::{AdvancedCapabilities, MonitoringDomain};
 
@@ -293,10 +299,10 @@ fn source_caps_to_proto_capabilities(caps: SourceCaps) -> CollectionCapabilities
 /// Get the default endpoint path based on the platform.
 ///
 /// Creates a temporary directory and generates a deterministic unique ID
-/// for the socket path. Returns both the path and the TempDir handle
+/// for the socket path. Returns both the path and the `TempDir` handle
 /// to ensure proper cleanup.
 ///
-/// On Unix systems, ensures the socket path stays within the SUN_LEN limit (108 chars).
+/// On Unix systems, ensures the socket path stays within the `SUN_LEN` limit (108 chars).
 fn create_endpoint_path() -> Result<(String, TempDir)> {
     let temp_dir = tempfile::Builder::new()
         .prefix("daemoneye-")
@@ -312,19 +318,19 @@ fn create_endpoint_path() -> Result<(String, TempDir)> {
 
     let socket_path = if cfg!(unix) {
         let mut path = temp_dir.path().to_path_buf();
-        path.push(format!("c{}.sock", unique_id));
-        let path_str = path.to_string_lossy().to_string();
+        path.push(format!("c{unique_id}.sock"));
+        let path_str = path.to_string_lossy().into_owned();
 
         // Ensure path doesn't exceed SUN_LEN limit (108 chars including null terminator)
         if path_str.len() >= 100 {
             // Fallback to a very short path in the temp directory
             let short_path = temp_dir.path().join("s.sock");
-            short_path.to_string_lossy().to_string()
+            short_path.to_string_lossy().into_owned()
         } else {
             path_str
         }
     } else if cfg!(windows) {
-        format!(r"\\.\pipe\daemoneye\collector-{}", unique_id)
+        format!(r"\\.\pipe\daemoneye\collector-{unique_id}")
     } else {
         return Err(anyhow::anyhow!("Unsupported platform"));
     };
@@ -412,7 +418,7 @@ mod tests {
         let config = CollectorConfig::default();
         let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS));
         let _server =
-            CollectorIpcServer::new(config, capabilities).expect("Server creation should succeed");
+            CollectorIpcServer::new(&config, capabilities).expect("Server creation should succeed");
         // Server creation should succeed
     }
 
@@ -420,7 +426,7 @@ mod tests {
     async fn test_capability_updates() {
         let config = CollectorConfig::default();
         let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS));
-        let server = CollectorIpcServer::new(config, Arc::clone(&capabilities))
+        let server = CollectorIpcServer::new(&config, Arc::clone(&capabilities))
             .expect("Server creation should succeed");
 
         // Test initial capabilities
@@ -463,7 +469,7 @@ mod tests {
 
         // Test valid process task
         let process_task = DetectionTask {
-            task_id: "test-1".to_string(),
+            task_id: "test-1".to_owned(),
             task_type: TaskType::EnumerateProcesses as i32,
             process_filter: None,
             hash_check: None,
@@ -478,7 +484,7 @@ mod tests {
 
         // Test invalid network task (not supported)
         let network_task = DetectionTask {
-            task_id: "test-2".to_string(),
+            task_id: "test-2".to_owned(),
             task_type: TaskType::MonitorNetworkConnections as i32,
             process_filter: None,
             hash_check: None,

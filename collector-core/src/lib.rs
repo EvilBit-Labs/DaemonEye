@@ -1,6 +1,6 @@
 //! # Collector Core Framework
 //!
-//! The framework for building first-party and third-party collectors for DaemonEye.
+//! The framework for building first-party and third-party collectors for `DaemonEye`.
 //! It intentionally depends on daemoneye-eventbus for IPC transport of collection events.
 //!
 //! ## Overview

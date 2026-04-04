@@ -5,7 +5,15 @@
 //! It implements trigger condition evaluation, deduplication, rate limiting, and
 //! metadata tracking for forensic analysis.
 
-/// Macro to acquire a std::sync::Mutex lock and convert poison errors to TriggerError.
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::as_conversions)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
+#![allow(clippy::integer_division)]
+#![allow(clippy::unnecessary_wraps)]
+#![allow(clippy::option_if_let_else)]
+
+/// Macro to acquire a `std::sync::Mutex` lock and convert poison errors to `TriggerError`.
 ///
 /// This reduces boilerplate when locking mutexes that need error handling.
 ///
@@ -17,7 +25,7 @@ macro_rules! lock_or_err {
     ($mutex:expr, $name:literal) => {
         $mutex
             .lock()
-            .map_err(|_| TriggerError::LockError($name.to_string()))
+            .map_err(|_| TriggerError::LockError($name.to_owned()))
     };
 }
 
@@ -98,6 +106,7 @@ pub struct TriggerCondition {
 
 /// Types of trigger conditions that can be evaluated.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum ConditionType {
     /// Process name matches pattern
     ProcessNamePattern(String),
@@ -290,7 +299,7 @@ impl TriggerManager {
         );
 
         // Validate capabilities
-        self.validate_collector_capabilities(&capabilities)?;
+        Self::validate_collector_capabilities(&capabilities)?;
 
         // Register with SQL evaluator
         {
@@ -302,7 +311,7 @@ impl TriggerManager {
                 .filter(|condition| {
                     condition.target_collector == capabilities.collector_id
                         && capabilities.supported_conditions.iter().any(|supported| {
-                            self.condition_types_compatible(supported, &condition.condition_type)
+                            Self::condition_types_compatible(supported, &condition.condition_type)
                         })
                         && capabilities
                             .supported_analysis
@@ -314,8 +323,8 @@ impl TriggerManager {
             evaluator.register_collector_conditions(
                 capabilities.collector_id.clone(),
                 collector_conditions,
-            )?;
-        }
+            )?
+        };
 
         // Store capabilities
         let mut caps = lock_or_err!(self.collector_capabilities, "collector_capabilities")?;
@@ -326,33 +335,32 @@ impl TriggerManager {
 
     /// Validates collector capabilities against system requirements.
     fn validate_collector_capabilities(
-        &self,
         capabilities: &TriggerCapabilities,
     ) -> Result<(), TriggerError> {
         // Validate collector ID format
         if capabilities.collector_id.is_empty() {
             return Err(TriggerError::ConfigError(
-                "Collector ID cannot be empty".to_string(),
+                "Collector ID cannot be empty".to_owned(),
             ));
         }
 
         // Validate trigger rate limits
         if capabilities.max_trigger_rate == 0 {
             return Err(TriggerError::ConfigError(
-                "Maximum trigger rate must be greater than 0".to_string(),
+                "Maximum trigger rate must be greater than 0".to_owned(),
             ));
         }
 
         // Validate resource limits
         if capabilities.resource_limits.max_memory_per_task == 0 {
             return Err(TriggerError::ConfigError(
-                "Maximum memory per task must be greater than 0".to_string(),
+                "Maximum memory per task must be greater than 0".to_owned(),
             ));
         }
 
         if capabilities.resource_limits.max_analysis_time_ms == 0 {
             return Err(TriggerError::ConfigError(
-                "Maximum analysis time must be greater than 0".to_string(),
+                "Maximum analysis time must be greater than 0".to_owned(),
             ));
         }
 
@@ -360,11 +368,7 @@ impl TriggerManager {
     }
 
     /// Checks if two condition types are compatible (same variant, ignoring data).
-    fn condition_types_compatible(
-        &self,
-        supported: &ConditionType,
-        requested: &ConditionType,
-    ) -> bool {
+    fn condition_types_compatible(supported: &ConditionType, requested: &ConditionType) -> bool {
         use std::mem::discriminant;
         discriminant(supported) == discriminant(requested)
     }
@@ -386,10 +390,9 @@ impl TriggerManager {
             })?;
 
         // Validate condition type support (check by discriminant, not exact match)
-        let condition_supported = collector_caps
-            .supported_conditions
-            .iter()
-            .any(|supported| self.condition_types_compatible(supported, &condition.condition_type));
+        let condition_supported = collector_caps.supported_conditions.iter().any(|supported| {
+            Self::condition_types_compatible(supported, &condition.condition_type)
+        });
 
         if !condition_supported {
             return Err(TriggerError::ConfigError(format!(
@@ -452,8 +455,8 @@ impl TriggerManager {
         // Add condition to the list
         {
             let mut conditions = lock_or_err!(self.conditions, "conditions")?;
-            conditions.push(condition);
-        }
+            conditions.push(condition)
+        };
 
         // Get evaluator lock and register conditions
         let mut evaluator = lock_or_err!(self.sql_evaluator, "sql_evaluator")?;
@@ -577,7 +580,7 @@ impl TriggerManager {
     ///
     /// # Returns
     ///
-    /// HashMap mapping collector IDs to their capabilities. Returns empty map if lock fails.
+    /// `HashMap` mapping collector IDs to their capabilities. Returns empty map if lock fails.
     pub fn get_all_collector_capabilities(&self) -> HashMap<String, TriggerCapabilities> {
         self.collector_capabilities
             .lock()
@@ -608,7 +611,7 @@ impl TriggerManager {
 
         // Evaluate each registered condition
         for condition in conditions.iter() {
-            if self.evaluate_condition(condition, process_data)? {
+            if Self::evaluate_condition(condition, process_data)? {
                 debug!(
                     condition_id = %condition.id,
                     pid = process_data.pid,
@@ -649,7 +652,6 @@ impl TriggerManager {
 
     /// Evaluates a single trigger condition against process data.
     fn evaluate_condition(
-        &self,
         condition: &TriggerCondition,
         data: &ProcessTriggerData,
     ) -> Result<bool, TriggerError> {
@@ -658,8 +660,7 @@ impl TriggerManager {
             ConditionType::ExecutablePathPattern(pattern) => Ok(data
                 .executable_path
                 .as_ref()
-                .map(|path| path.contains(pattern))
-                .unwrap_or(false)),
+                .is_some_and(|path| path.contains(pattern))),
             ConditionType::MissingExecutable => Ok(!data.file_exists),
             ConditionType::HashMismatch => {
                 // This would be implemented with actual hash verification logic
@@ -673,14 +674,8 @@ impl TriggerManager {
                 cpu_threshold,
                 memory_threshold,
             } => {
-                let cpu_anomaly = data
-                    .cpu_usage
-                    .map(|cpu| cpu > *cpu_threshold)
-                    .unwrap_or(false);
-                let memory_anomaly = data
-                    .memory_usage
-                    .map(|mem| mem > *memory_threshold)
-                    .unwrap_or(false);
+                let cpu_anomaly = data.cpu_usage.is_some_and(|cpu| cpu > *cpu_threshold);
+                let memory_anomaly = data.memory_usage.is_some_and(|mem| mem > *memory_threshold);
                 Ok(cpu_anomaly || memory_anomaly)
             }
             ConditionType::Custom(_) => {
@@ -701,17 +696,17 @@ impl TriggerManager {
         let timestamp = SystemTime::now();
 
         let mut metadata = HashMap::new();
-        metadata.insert("condition_id".to_string(), condition.id.clone());
-        metadata.insert("source_pid".to_string(), data.pid.to_string());
+        metadata.insert("condition_id".to_owned(), condition.id.clone());
+        metadata.insert("source_pid".to_owned(), data.pid.to_string());
         if let Some(path) = &data.executable_path {
-            metadata.insert("executable_path".to_string(), path.clone());
+            metadata.insert("executable_path".to_owned(), path.clone());
         }
 
         // Track trigger metadata if enabled
         if self.config.enable_metadata_tracking {
             let trigger_metadata = TriggerMetadata {
                 generated_at: timestamp,
-                source_event_type: "process".to_string(),
+                source_event_type: "process".to_owned(),
                 matched_condition: condition.id.clone(),
                 evaluation_context: metadata.clone(),
                 correlation_id: correlation_id.clone(),
@@ -868,13 +863,13 @@ impl TriggerManager {
     ///     let manager = TriggerManager::new(config);
     ///
     ///     let trigger = TriggerRequest {
-    ///         trigger_id: "trigger_123".to_string(),
-    ///         target_collector: "binary-hasher".to_string(),
+    ///         trigger_id: "trigger_123".to_owned(),
+    ///         target_collector: "binary-hasher".to_owned(),
     ///         analysis_type: AnalysisType::BinaryHash,
     ///         priority: TriggerPriority::High,
     ///         target_pid: Some(1234),
-    ///         target_path: Some("/usr/bin/suspicious".to_string()),
-    ///         correlation_id: "corr_456".to_string(),
+    ///         target_path: Some("/usr/bin/suspicious".to_owned()),
+    ///         correlation_id: "corr_456".to_owned(),
     ///         metadata: HashMap::new(),
     ///         timestamp: SystemTime::now(),
     ///     };
@@ -893,7 +888,7 @@ impl TriggerManager {
         let event_bus_clone = {
             let bus_guard = self.event_bus.read().await;
             bus_guard.as_ref().ok_or_else(|| {
-                TriggerError::EventBusError("Event bus not configured".to_string())
+                TriggerError::EventBusError("Event bus not configured".to_owned())
             })?;
             // We need to clone the Arc-wrapped reference, but since it's a Box<dyn EventBus>,
             // we can't directly clone it. For now, we'll work around this by re-acquiring
@@ -937,14 +932,14 @@ impl TriggerManager {
         let publish_result = {
             let mut bus_guard = event_bus_arc.write().await;
             let event_bus = bus_guard.as_mut().ok_or_else(|| {
-                TriggerError::EventBusError("Event bus not configured".to_string())
+                TriggerError::EventBusError("Event bus not configured".to_owned())
             })?;
 
             event_bus
                 .publish(
                     collection_event,
                     crate::event_bus::CorrelationMetadata::new(correlation_id.clone())
-                        .with_tag("trigger_source".to_string(), "trigger_manager".to_string()),
+                        .with_tag("trigger_source".to_owned(), "trigger_manager".to_owned()),
                 )
                 .await
         };
@@ -973,9 +968,10 @@ impl TriggerManager {
 
                 // Update running average
                 let total_emissions = stats.total_emitted as f64;
-                stats.avg_emission_latency_ms =
-                    (stats.avg_emission_latency_ms * (total_emissions - 1.0) + latency_ms)
-                        / total_emissions;
+                stats.avg_emission_latency_ms = stats
+                    .avg_emission_latency_ms
+                    .mul_add(total_emissions - 1.0, latency_ms)
+                    / total_emissions;
             }
         }
 
@@ -993,6 +989,7 @@ impl TriggerManager {
     ///
     /// This method ensures that the target collector exists, supports the requested
     /// analysis type, and can handle the specified priority level.
+    #[allow(clippy::unused_async)]
     pub async fn validate_trigger_request(
         &self,
         trigger: &TriggerRequest,
@@ -1030,9 +1027,14 @@ impl TriggerManager {
         }
 
         // Validate resource constraints
-        if trigger.target_path.as_ref().map(|p| p.len()).unwrap_or(0) > 4096 {
+        if trigger
+            .target_path
+            .as_ref()
+            .map_or(0, std::string::String::len)
+            > 4096
+        {
             return Err(TriggerError::ValidationError(
-                "Target path exceeds maximum length (4096 characters)".to_string(),
+                "Target path exceeds maximum length (4096 characters)".to_owned(),
             ));
         }
 
@@ -1046,7 +1048,7 @@ impl TriggerManager {
         if metadata_size > 65536 {
             // 64KB limit
             return Err(TriggerError::ValidationError(
-                "Trigger metadata exceeds maximum size (64KB)".to_string(),
+                "Trigger metadata exceeds maximum size (64KB)".to_owned(),
             ));
         }
 
@@ -1058,6 +1060,7 @@ impl TriggerManager {
     /// This method adds the trigger to the timeout tracker, allowing the system
     /// to detect and handle triggers that don't receive responses within the
     /// configured timeout period.
+    #[allow(clippy::unused_async)]
     pub async fn track_trigger_timeout(
         &self,
         trigger: &TriggerRequest,
@@ -1088,6 +1091,7 @@ impl TriggerManager {
     ///
     /// This method should be called periodically to clean up triggers that have
     /// exceeded their timeout period and update statistics accordingly.
+    #[allow(clippy::unused_async)]
     pub async fn handle_trigger_timeouts(&self) -> Result<Vec<String>, TriggerError> {
         let mut timed_out_triggers = Vec::new();
         let now = SystemTime::now();
@@ -1137,6 +1141,7 @@ impl TriggerManager {
     ///
     /// This method should be called when a trigger request receives a response
     /// from the analysis collector to clean up tracking state.
+    #[allow(clippy::unused_async)]
     pub async fn complete_trigger_request(&self, trigger_id: &str) -> Result<(), TriggerError> {
         let mut tracker = lock_or_err!(self.timeout_tracker, "timeout_tracker")?;
 
@@ -1232,7 +1237,7 @@ impl TriggerManager {
             let mut cache = lock_or_err!(self.deduplication_cache, "deduplication_cache")?;
             cache.retain(|_, timestamp| {
                 now.duration_since(*timestamp).unwrap_or(Duration::MAX) < dedup_window
-            });
+            })
         }
 
         // Clean metadata cache with incremental eviction to reduce lock contention
@@ -1241,7 +1246,7 @@ impl TriggerManager {
             let cache = lock_or_err!(self.metadata_cache, "metadata_cache")?;
 
             // Check if the cache size exceeds the maximum allowed
-            if cache.len() > max_pending_triggers {
+            (cache.len() > max_pending_triggers).then(|| {
                 let target_size = max_pending_triggers / 2;
                 let to_remove_count = cache.len() - target_size;
 
@@ -1257,10 +1262,8 @@ impl TriggerManager {
                 // Sort entries by generated_at time in ascending order (oldest first)
                 entries_to_sort.sort_by_key(|(_, generated_at)| *generated_at);
 
-                Some((entries_to_sort, to_remove_count))
-            } else {
-                None
-            }
+                (entries_to_sort, to_remove_count)
+            })
         };
 
         // Reacquire the lock to remove elements if eviction is needed
@@ -1450,7 +1453,7 @@ impl PriorityTriggerQueue {
             TriggerPriority::Critical | TriggerPriority::High => {
                 if self.high_priority.len() >= self.max_queue_size / 2 {
                     self.stats.dropped_queue_full += 1;
-                    return Err(TriggerError::QueueFull("high_priority".to_string()));
+                    return Err(TriggerError::QueueFull("high_priority".to_owned()));
                 }
                 self.high_priority.push_back(trigger);
                 self.stats.high_priority_depth = self.high_priority.len();
@@ -1458,7 +1461,7 @@ impl PriorityTriggerQueue {
             TriggerPriority::Normal | TriggerPriority::Low => {
                 if self.normal_priority.len() >= self.max_queue_size / 2 {
                     self.stats.dropped_queue_full += 1;
-                    return Err(TriggerError::QueueFull("normal_priority".to_string()));
+                    return Err(TriggerError::QueueFull("normal_priority".to_owned()));
                 }
                 self.normal_priority.push_back(trigger);
                 self.stats.normal_priority_depth = self.normal_priority.len();
@@ -1616,6 +1619,7 @@ impl SqlTriggerEvaluator {
         &self,
         condition: TriggerCondition,
     ) -> Result<CompiledTriggerCondition, TriggerError> {
+        #[allow(clippy::wildcard_enum_match_arm)]
         let compiled_predicate = match &condition.condition_type {
             ConditionType::Custom(sql_expr) => {
                 // Parse SQL expression for custom conditions
@@ -1688,16 +1692,15 @@ impl SqlTriggerEvaluator {
             || (sql_expr.contains('(') && expr_upper.contains("SELECT"))
         {
             return Err(TriggerError::SqlParsingError(format!(
-                "Expression contains disallowed patterns (e.g., SELECT, FROM, table-qualified identifiers, subqueries): {}",
-                sql_expr
+                "Expression contains disallowed patterns (e.g., SELECT, FROM, table-qualified identifiers, subqueries): {sql_expr}"
             )));
         }
 
         // Wrap the expression in a SELECT statement for parsing
-        let sql = format!("SELECT * FROM dummy WHERE {}", sql_expr);
+        let sql = format!("SELECT * FROM dummy WHERE {sql_expr}");
 
         let statements = Parser::parse_sql(&self.dialect, &sql).map_err(|e| {
-            TriggerError::SqlParsingError(format!("Failed to parse SQL expression: {}", e))
+            TriggerError::SqlParsingError(format!("Failed to parse SQL expression: {e}"))
         })?;
 
         if let Some(sqlparser::ast::Statement::Query(query)) = statements.first()
@@ -1708,7 +1711,7 @@ impl SqlTriggerEvaluator {
         }
 
         Err(TriggerError::SqlParsingError(
-            "Could not extract WHERE clause expression from SQL statement.".to_string(),
+            "Could not extract WHERE clause expression from SQL statement.".to_owned(),
         ))
     }
 
@@ -1722,9 +1725,8 @@ impl SqlTriggerEvaluator {
         self.evaluation_stats.total_evaluations += 1;
 
         // Get conditions reference to avoid expensive clone
-        let conditions = match self.compiled_conditions.get(collector_id) {
-            Some(conditions) => conditions,
-            None => return Ok(Vec::new()), // No conditions registered for this collector
+        let Some(conditions) = self.compiled_conditions.get(collector_id) else {
+            return Ok(Vec::new()); // No conditions registered for this collector
         };
 
         let mut triggers = Vec::new();
@@ -1733,7 +1735,8 @@ impl SqlTriggerEvaluator {
         for (index, compiled_condition) in conditions.iter().enumerate() {
             let condition_start = SystemTime::now();
 
-            let matches = match self.evaluate_compiled_condition(compiled_condition, process_data) {
+            let matches = match Self::evaluate_compiled_condition(compiled_condition, process_data)
+            {
                 Ok(matches) => matches,
                 Err(e) => {
                     self.evaluation_stats.evaluation_errors += 1;
@@ -1755,7 +1758,7 @@ impl SqlTriggerEvaluator {
 
                 // Create trigger request
                 let trigger =
-                    self.create_sql_trigger_request(&compiled_condition.condition, process_data)?;
+                    Self::create_sql_trigger_request(&compiled_condition.condition, process_data)?;
                 triggers.push(trigger);
             }
         }
@@ -1792,7 +1795,6 @@ impl SqlTriggerEvaluator {
 
     /// Evaluates a compiled trigger condition against process data.
     fn evaluate_compiled_condition(
-        &self,
         compiled_condition: &CompiledTriggerCondition,
         data: &ProcessTriggerData,
     ) -> Result<bool, TriggerError> {
@@ -1801,8 +1803,7 @@ impl SqlTriggerEvaluator {
             ConditionType::ExecutablePathPattern(pattern) => Ok(data
                 .executable_path
                 .as_ref()
-                .map(|path| path.contains(pattern))
-                .unwrap_or(false)),
+                .is_some_and(|path| path.contains(pattern))),
             ConditionType::MissingExecutable => Ok(!data.file_exists),
             ConditionType::HashMismatch => {
                 // This would integrate with actual hash verification logic
@@ -1816,14 +1817,8 @@ impl SqlTriggerEvaluator {
                 cpu_threshold,
                 memory_threshold,
             } => {
-                let cpu_anomaly = data
-                    .cpu_usage
-                    .map(|cpu| cpu > *cpu_threshold)
-                    .unwrap_or(false);
-                let memory_anomaly = data
-                    .memory_usage
-                    .map(|mem| mem > *memory_threshold)
-                    .unwrap_or(false);
+                let cpu_anomaly = data.cpu_usage.is_some_and(|cpu| cpu > *cpu_threshold);
+                let memory_anomaly = data.memory_usage.is_some_and(|mem| mem > *memory_threshold);
                 Ok(cpu_anomaly || memory_anomaly)
             }
             ConditionType::Custom(_sql_expr) => {
@@ -1838,7 +1833,6 @@ impl SqlTriggerEvaluator {
 
     /// Creates a trigger request from a matched condition and process data.
     fn create_sql_trigger_request(
-        &self,
         condition: &TriggerCondition,
         data: &ProcessTriggerData,
     ) -> Result<TriggerRequest, TriggerError> {
@@ -1847,12 +1841,12 @@ impl SqlTriggerEvaluator {
         let timestamp = SystemTime::now();
 
         let mut metadata = HashMap::new();
-        metadata.insert("condition_id".to_string(), condition.id.clone());
-        metadata.insert("source_pid".to_string(), data.pid.to_string());
-        metadata.insert("evaluation_method".to_string(), "sql_trigger".to_string());
+        metadata.insert("condition_id".to_owned(), condition.id.clone());
+        metadata.insert("source_pid".to_owned(), data.pid.to_string());
+        metadata.insert("evaluation_method".to_owned(), "sql_trigger".to_owned());
 
         if let Some(ref path) = data.executable_path {
-            metadata.insert("executable_path".to_string(), path.clone());
+            metadata.insert("executable_path".to_owned(), path.clone());
         }
 
         Ok(TriggerRequest {
@@ -1969,6 +1963,7 @@ struct TriggerTimeout {
 
 /// Errors that can occur in the trigger system.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TriggerError {
     #[error("Lock error on {0}")]
     LockError(String),
@@ -2023,32 +2018,32 @@ mod tests {
     fn create_test_process_data() -> ProcessTriggerData {
         ProcessTriggerData {
             pid: 1234,
-            name: "test_process".to_string(), // This contains "test" which should match the pattern
-            executable_path: Some("/usr/bin/test".to_string()),
+            name: "test_process".to_owned(), // This contains "test" which should match the pattern
+            executable_path: Some("/usr/bin/test".to_owned()),
             file_exists: true,
             cpu_usage: Some(5.0),
             memory_usage: Some(1024 * 1024),
-            executable_hash: Some("abc123".to_string()),
+            executable_hash: Some("abc123".to_owned()),
         }
     }
 
     fn create_test_condition() -> TriggerCondition {
         TriggerCondition {
-            id: "test_condition".to_string(),
-            description: "Test condition".to_string(),
+            id: "test_condition".to_owned(),
+            description: "Test condition".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             priority: TriggerPriority::Normal,
-            target_collector: "binary-hasher".to_string(),
-            condition_type: ConditionType::ProcessNamePattern("test".to_string()),
+            target_collector: "binary-hasher".to_owned(),
+            condition_type: ConditionType::ProcessNamePattern("test".to_owned()),
         }
     }
 
     fn create_test_capabilities() -> TriggerCapabilities {
         TriggerCapabilities {
-            collector_id: "binary-hasher".to_string(),
+            collector_id: "binary-hasher".to_owned(),
             supported_conditions: vec![
-                ConditionType::ProcessNamePattern("test".to_string()), // Match the test condition
-                ConditionType::ExecutablePathPattern("".to_string()),
+                ConditionType::ProcessNamePattern("test".to_owned()), // Match the test condition
+                ConditionType::ExecutablePathPattern("".to_owned()),
                 ConditionType::MissingExecutable,
                 ConditionType::HashMismatch,
             ],
@@ -2130,11 +2125,11 @@ mod tests {
             .unwrap();
 
         let condition = TriggerCondition {
-            id: "missing_exe".to_string(),
-            description: "Missing executable".to_string(),
+            id: "missing_exe".to_owned(),
+            description: "Missing executable".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             priority: TriggerPriority::High,
-            target_collector: "binary-hasher".to_string(),
+            target_collector: "binary-hasher".to_owned(),
             condition_type: ConditionType::MissingExecutable,
         };
         manager.register_condition(condition).unwrap();
@@ -2154,7 +2149,7 @@ mod tests {
 
         // Register capabilities for behavior analyzer
         let mut capabilities = create_test_capabilities();
-        capabilities.collector_id = "behavior-analyzer".to_string();
+        capabilities.collector_id = "behavior-analyzer".to_owned();
         capabilities.supported_analysis = vec![AnalysisType::BehavioralAnalysis];
         capabilities
             .supported_conditions
@@ -2167,11 +2162,11 @@ mod tests {
             .unwrap();
 
         let condition = TriggerCondition {
-            id: "resource_anomaly".to_string(),
-            description: "Resource anomaly".to_string(),
+            id: "resource_anomaly".to_owned(),
+            description: "Resource anomaly".to_owned(),
             analysis_type: AnalysisType::BehavioralAnalysis,
             priority: TriggerPriority::High,
-            target_collector: "behavior-analyzer".to_string(),
+            target_collector: "behavior-analyzer".to_owned(),
             condition_type: ConditionType::ResourceAnomaly {
                 cpu_threshold: 80.0,
                 memory_threshold: 1024 * 1024 * 1024, // 1GB
@@ -2289,17 +2284,17 @@ mod tests {
     #[test]
     fn test_deduplication_key_equality() {
         let key1 = DeduplicationKey {
-            collector: "binary-hasher".to_string(),
+            collector: "binary-hasher".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             target_pid: Some(1234),
-            target_path: Some("/usr/bin/test".to_string()),
+            target_path: Some("/usr/bin/test".to_owned()),
         };
 
         let key2 = DeduplicationKey {
-            collector: "binary-hasher".to_string(),
+            collector: "binary-hasher".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             target_pid: Some(1234),
-            target_path: Some("/usr/bin/test".to_string()),
+            target_path: Some("/usr/bin/test".to_owned()),
         };
 
         assert_eq!(key1, key2);
@@ -2351,12 +2346,12 @@ mod tests {
 
         // Invalid condition (unsupported analysis type) should fail
         let invalid_condition = TriggerCondition {
-            id: "invalid_condition".to_string(),
-            description: "Invalid condition".to_string(),
+            id: "invalid_condition".to_owned(),
+            description: "Invalid condition".to_owned(),
             analysis_type: AnalysisType::YaraScan, // Not supported by test capabilities
             priority: TriggerPriority::Normal,
-            target_collector: "binary-hasher".to_string(),
-            condition_type: ConditionType::ProcessNamePattern("test".to_string()),
+            target_collector: "binary-hasher".to_owned(),
+            condition_type: ConditionType::ProcessNamePattern("test".to_owned()),
         };
         assert!(
             manager
@@ -2396,25 +2391,25 @@ mod tests {
 
         // Create triggers with different priorities
         let high_priority_trigger = TriggerRequest {
-            trigger_id: "high".to_string(),
-            target_collector: "test".to_string(),
+            trigger_id: "high".to_owned(),
+            target_collector: "test".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             priority: TriggerPriority::High,
             target_pid: Some(1234),
             target_path: None,
-            correlation_id: "corr1".to_string(),
+            correlation_id: "corr1".to_owned(),
             metadata: HashMap::new(),
             timestamp: SystemTime::now(),
         };
 
         let low_priority_trigger = TriggerRequest {
-            trigger_id: "low".to_string(),
-            target_collector: "test".to_string(),
+            trigger_id: "low".to_owned(),
+            target_collector: "test".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             priority: TriggerPriority::Low,
             target_pid: Some(5678),
             target_path: None,
-            correlation_id: "corr2".to_string(),
+            correlation_id: "corr2".to_owned(),
             metadata: HashMap::new(),
             timestamp: SystemTime::now(),
         };
@@ -2441,7 +2436,7 @@ mod tests {
         for i in 0..5 {
             let trigger = TriggerRequest {
                 trigger_id: format!("trigger_{}", i),
-                target_collector: "test".to_string(),
+                target_collector: "test".to_owned(),
                 analysis_type: AnalysisType::BinaryHash,
                 priority: TriggerPriority::Normal,
                 target_pid: Some(i as u32),
@@ -2458,13 +2453,13 @@ mod tests {
 
         // Low priority triggers should be dropped
         let low_priority_trigger = TriggerRequest {
-            trigger_id: "low_priority".to_string(),
-            target_collector: "test".to_string(),
+            trigger_id: "low_priority".to_owned(),
+            target_collector: "test".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             priority: TriggerPriority::Low,
             target_pid: Some(9999),
             target_path: None,
-            correlation_id: "corr_low".to_string(),
+            correlation_id: "corr_low".to_owned(),
             metadata: HashMap::new(),
             timestamp: SystemTime::now(),
         };
@@ -2478,13 +2473,13 @@ mod tests {
 
         // High priority triggers should still be accepted
         let high_priority_trigger = TriggerRequest {
-            trigger_id: "high_priority".to_string(),
-            target_collector: "test".to_string(),
+            trigger_id: "high_priority".to_owned(),
+            target_collector: "test".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             priority: TriggerPriority::Critical,
             target_pid: Some(8888),
             target_path: None,
-            correlation_id: "corr_high".to_string(),
+            correlation_id: "corr_high".to_owned(),
             metadata: HashMap::new(),
             timestamp: SystemTime::now(),
         };
@@ -2610,7 +2605,7 @@ mod tests {
 
         // Test validation with unknown collector
         let mut invalid_trigger = create_test_trigger_request();
-        invalid_trigger.target_collector = "unknown-collector".to_string();
+        invalid_trigger.target_collector = "unknown-collector".to_owned();
         let result = manager.validate_trigger_request(&invalid_trigger).await;
         assert!(result.is_err());
         assert!(matches!(
@@ -2620,7 +2615,7 @@ mod tests {
 
         // Test validation with unsupported analysis type
         let mut invalid_trigger = create_test_trigger_request();
-        invalid_trigger.analysis_type = AnalysisType::Custom("unsupported".to_string());
+        invalid_trigger.analysis_type = AnalysisType::Custom("unsupported".to_owned());
         let result = manager.validate_trigger_request(&invalid_trigger).await;
         assert!(result.is_err());
         assert!(matches!(
@@ -2631,7 +2626,7 @@ mod tests {
         // Test validation with oversized metadata
         let mut invalid_trigger = create_test_trigger_request();
         invalid_trigger.metadata.insert(
-            "large_key".to_string(),
+            "large_key".to_owned(),
             "x".repeat(70000), // Exceeds 64KB limit
         );
         let result = manager.validate_trigger_request(&invalid_trigger).await;
@@ -2732,13 +2727,13 @@ mod tests {
 
         // Test validation failure tracking
         let invalid_trigger = TriggerRequest {
-            trigger_id: "invalid_trigger".to_string(),
-            target_collector: "unknown-collector".to_string(),
+            trigger_id: "invalid_trigger".to_owned(),
+            target_collector: "unknown-collector".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             priority: TriggerPriority::High,
             target_pid: Some(1234),
             target_path: None,
-            correlation_id: "test_correlation".to_string(),
+            correlation_id: "test_correlation".to_owned(),
             metadata: HashMap::new(),
             timestamp: SystemTime::now(),
         };
@@ -2755,16 +2750,16 @@ mod tests {
     /// Helper function to create a test trigger request.
     fn create_test_trigger_request() -> TriggerRequest {
         TriggerRequest {
-            trigger_id: "test_trigger_123".to_string(),
-            target_collector: "binary-hasher".to_string(),
+            trigger_id: "test_trigger_123".to_owned(),
+            target_collector: "binary-hasher".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             priority: TriggerPriority::High,
             target_pid: Some(1234),
-            target_path: Some("/usr/bin/test".to_string()),
-            correlation_id: "test_correlation_456".to_string(),
+            target_path: Some("/usr/bin/test".to_owned()),
+            correlation_id: "test_correlation_456".to_owned(),
             metadata: {
                 let mut metadata = HashMap::new();
-                metadata.insert("test_key".to_string(), "test_value".to_string());
+                metadata.insert("test_key".to_owned(), "test_value".to_owned());
                 metadata
             },
             timestamp: SystemTime::now(),

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
 
 /// Resource limits for collector processes
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceLimits {
     /// Maximum memory in bytes
     pub max_memory_bytes: Option<u64>,

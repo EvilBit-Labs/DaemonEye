@@ -534,6 +534,8 @@ proptest! {
                 prop_assert!(json.contains("\"TriggerRequest\""));
                 prop_assert!(json.contains("\"trigger_id\""));
             }
+            // CollectionEvent is #[non_exhaustive]; handle any future variants gracefully
+            _ => {}
         }
     }
 }

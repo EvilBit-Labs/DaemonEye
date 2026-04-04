@@ -1,4 +1,4 @@
-//! Message types and serialization for the EventBus
+//! Message types and serialization for the `EventBus`
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -35,9 +35,12 @@ fn truncate_to_byte_boundary(s: &str, max_len: usize) -> &str {
     // Include only characters that fit entirely within max_len bytes.
     let end = s
         .char_indices()
-        .take_while(|&(byte_pos, ch)| byte_pos + ch.len_utf8() <= max_len)
+        .take_while(|&(byte_pos, ch)| byte_pos.saturating_add(ch.len_utf8()) <= max_len)
         .last()
-        .map_or(0, |(byte_pos, ch)| byte_pos + ch.len_utf8());
+        .map_or(0, |(byte_pos, ch)| byte_pos.saturating_add(ch.len_utf8()));
+    // SAFETY: `end` is always a valid UTF-8 character boundary because it was
+    // computed by summing the byte-length of complete Unicode scalar values.
+    #[allow(clippy::string_slice)]
     &s[..end]
 }
 
@@ -50,7 +53,7 @@ impl CorrelationMetadata {
         // Security: Limit correlation ID length
         const MAX_CORRELATION_ID_LENGTH: usize = 256;
         let bounded_id = if correlation_id.len() > MAX_CORRELATION_ID_LENGTH {
-            truncate_to_byte_boundary(&correlation_id, MAX_CORRELATION_ID_LENGTH).to_string()
+            truncate_to_byte_boundary(&correlation_id, MAX_CORRELATION_ID_LENGTH).to_owned()
         } else {
             correlation_id
         };
@@ -79,19 +82,19 @@ impl CorrelationMetadata {
         const MAX_CORRELATION_ID_LENGTH: usize = 256;
 
         let bounded_id = if correlation_id.len() > MAX_CORRELATION_ID_LENGTH {
-            truncate_to_byte_boundary(&correlation_id, MAX_CORRELATION_ID_LENGTH).to_string()
+            truncate_to_byte_boundary(&correlation_id, MAX_CORRELATION_ID_LENGTH).to_owned()
         } else {
             correlation_id
         };
 
         let bounded_parent = if parent_correlation_id.len() > MAX_CORRELATION_ID_LENGTH {
-            truncate_to_byte_boundary(&parent_correlation_id, MAX_CORRELATION_ID_LENGTH).to_string()
+            truncate_to_byte_boundary(&parent_correlation_id, MAX_CORRELATION_ID_LENGTH).to_owned()
         } else {
             parent_correlation_id
         };
 
         let bounded_root = if root_correlation_id.len() > MAX_CORRELATION_ID_LENGTH {
-            truncate_to_byte_boundary(&root_correlation_id, MAX_CORRELATION_ID_LENGTH).to_string()
+            truncate_to_byte_boundary(&root_correlation_id, MAX_CORRELATION_ID_LENGTH).to_owned()
         } else {
             root_correlation_id
         };
@@ -111,12 +114,13 @@ impl CorrelationMetadata {
     ///
     /// # Security
     /// - Limits workflow stage length to prevent resource exhaustion
+    #[must_use]
     pub fn with_stage(mut self, stage: String) -> Self {
         // Security: Limit workflow stage length
         const MAX_STAGE_LENGTH: usize = 128;
 
         let bounded_stage = if stage.len() > MAX_STAGE_LENGTH {
-            truncate_to_byte_boundary(&stage, MAX_STAGE_LENGTH).to_string()
+            truncate_to_byte_boundary(&stage, MAX_STAGE_LENGTH).to_owned()
         } else {
             stage
         };
@@ -130,6 +134,7 @@ impl CorrelationMetadata {
     /// # Security
     /// - Limits number of tags to prevent resource exhaustion
     /// - Bounds tag key and value lengths
+    #[must_use]
     pub fn with_tag(mut self, key: String, value: String) -> Self {
         // Security: Limit number of tags to prevent resource exhaustion
         const MAX_TAGS: usize = 64;
@@ -146,17 +151,19 @@ impl CorrelationMetadata {
     }
 
     /// Set sequence number
-    pub fn with_sequence(mut self, sequence: u64) -> Self {
+    #[must_use]
+    pub const fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence_number = sequence;
         self
     }
 
     /// Increment sequence number
-    pub fn increment_sequence(&mut self) {
+    pub const fn increment_sequence(&mut self) {
         self.sequence_number = self.sequence_number.saturating_add(1);
     }
 
     /// Create a child correlation from this one
+    #[must_use]
     pub fn create_child(&self, child_id: String) -> Self {
         Self {
             correlation_id: child_id,
@@ -172,7 +179,7 @@ impl CorrelationMetadata {
     /// Check if this correlation matches a filter pattern
     ///
     /// # Security
-    /// - Limits regex pattern length to prevent ReDoS attacks
+    /// - Limits regex pattern length to prevent `ReDoS` attacks
     /// - Escapes regex special characters to prevent regex injection
     /// - Uses anchored full-string matching for security
     pub fn matches_pattern(&self, pattern: &str) -> bool {
@@ -189,14 +196,13 @@ impl CorrelationMetadata {
             // Replace escaped \* with .* for wildcard matching
             let regex_pattern = escaped_pattern.replace("\\*", ".*");
             // Anchor with ^ and $ for full-string matching
-            let anchored_pattern = format!("^{}$", regex_pattern);
+            let anchored_pattern = format!("^{regex_pattern}$");
             if let Ok(regex) = regex::Regex::new(&anchored_pattern) {
                 return regex.is_match(&self.correlation_id)
                     || self
                         .parent_correlation_id
                         .as_ref()
-                        .map(|p| regex.is_match(p))
-                        .unwrap_or(false)
+                        .is_some_and(|p| regex.is_match(p))
                     || regex.is_match(&self.root_correlation_id);
             }
         }
@@ -206,25 +212,18 @@ impl CorrelationMetadata {
             || self
                 .parent_correlation_id
                 .as_ref()
-                .map(|p| p == pattern)
-                .unwrap_or(false)
+                .is_some_and(|p| p == pattern)
             || self.root_correlation_id == pattern
     }
 
     /// Check if this correlation has a specific tag
     pub fn has_tag(&self, key: &str, value: &str) -> bool {
-        self.correlation_tags
-            .get(key)
-            .map(|v| v == value)
-            .unwrap_or(false)
+        self.correlation_tags.get(key).is_some_and(|v| v == value)
     }
 
     /// Check if this correlation is in a specific workflow stage
     pub fn in_stage(&self, stage: &str) -> bool {
-        self.workflow_stage
-            .as_ref()
-            .map(|s| s == stage)
-            .unwrap_or(false)
+        self.workflow_stage.as_ref().is_some_and(|s| s == stage)
     }
 }
 
@@ -255,6 +254,7 @@ pub struct Message {
 
 /// Types of messages for routing and handling
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub enum MessageType {
     /// Regular event message
     #[default]
@@ -372,8 +372,8 @@ impl Message {
     /// Create a heartbeat message
     pub fn heartbeat(sequence: u64) -> Self {
         Self::new_with_correlation_id(
-            "heartbeat".to_string(),
-            "system".to_string(),
+            "heartbeat".to_owned(),
+            "system".to_owned(),
             Vec::new(),
             sequence,
             MessageType::Heartbeat,
@@ -383,8 +383,8 @@ impl Message {
     /// Create a shutdown message
     pub fn shutdown() -> Self {
         Self::new_with_correlation_id(
-            "shutdown".to_string(),
-            "system".to_string(),
+            "shutdown".to_owned(),
+            "system".to_owned(),
             Vec::new(),
             0,
             MessageType::Shutdown,
@@ -445,14 +445,14 @@ impl Message {
         ))
     }
 
-    /// Serialize message to bytes
-    pub fn serialize(&self) -> Result<Vec<u8>, crate::error::EventBusError> {
+    /// Encode message to bytes using postcard serialization
+    pub fn to_bytes(&self) -> Result<Vec<u8>, crate::error::EventBusError> {
         postcard::to_allocvec(self)
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))
     }
 
-    /// Deserialize message from bytes
-    pub fn deserialize(data: &[u8]) -> Result<Self, crate::error::EventBusError> {
+    /// Decode message from bytes using postcard deserialization
+    pub fn from_bytes(data: &[u8]) -> Result<Self, crate::error::EventBusError> {
         postcard::from_bytes(data)
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))
     }
@@ -499,6 +499,7 @@ impl BusEvent {
 
 /// Collection event types for compatibility with collector-core
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CollectionEvent {
     /// Process monitoring events
     Process(ProcessEvent),
@@ -672,49 +673,57 @@ impl CorrelationFilter {
     }
 
     /// Add a correlation ID to filter
+    #[must_use]
     pub fn with_correlation_id(mut self, id: String) -> Self {
         self.correlation_ids.push(id);
         self
     }
 
     /// Add a correlation pattern to filter
+    #[must_use]
     pub fn with_pattern(mut self, pattern: String) -> Self {
         self.correlation_patterns.push(pattern);
         self
     }
 
     /// Add a parent correlation ID to filter
+    #[must_use]
     pub fn with_parent_id(mut self, id: String) -> Self {
         self.parent_correlation_ids.push(id);
         self
     }
 
     /// Add a root correlation ID to filter
+    #[must_use]
     pub fn with_root_id(mut self, id: String) -> Self {
         self.root_correlation_ids.push(id);
         self
     }
 
     /// Add a workflow stage to filter
+    #[must_use]
     pub fn with_stage(mut self, stage: String) -> Self {
         self.workflow_stages.push(stage);
         self
     }
 
     /// Add a required tag to filter
+    #[must_use]
     pub fn with_required_tag(mut self, key: String, value: String) -> Self {
         self.required_tags.insert(key, value);
         self
     }
 
     /// Add an optional tag to filter (any match)
+    #[must_use]
     pub fn with_any_tag(mut self, key: String, value: String) -> Self {
         self.any_tags.insert(key, value);
         self
     }
 
     /// Set sequence range
-    pub fn with_sequence_range(mut self, min: Option<u64>, max: Option<u64>) -> Self {
+    #[must_use]
+    pub const fn with_sequence_range(mut self, min: Option<u64>, max: Option<u64>) -> Self {
         self.min_sequence = min;
         self.max_sequence = max;
         self

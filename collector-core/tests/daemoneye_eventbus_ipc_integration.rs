@@ -205,7 +205,7 @@ async fn test_ipc_server_capability_integration() {
         SourceCaps::PROCESS | SourceCaps::NETWORK | SourceCaps::REALTIME,
     ));
     let collector_config = collector_core::CollectorConfig::default();
-    let ipc_server = CollectorIpcServer::new(collector_config, Arc::clone(&capabilities))
+    let ipc_server = CollectorIpcServer::new(&collector_config, Arc::clone(&capabilities))
         .expect("Failed to create IPC server");
 
     // Get capabilities from IPC server

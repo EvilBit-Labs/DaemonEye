@@ -1,4 +1,4 @@
-//! Embedded broker implementation for the EventBus
+//! Embedded broker implementation for the `EventBus`
 
 use crate::correlation::CorrelationTracker;
 use crate::error::{EventBusError, Result};
@@ -45,9 +45,9 @@ pub struct DaemoneyeBroker {
         Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<Message>>>>,
     /// Reverse mapping from original subscriber IDs to broker UUIDs
     subscriber_id_mapping: Arc<Mutex<std::collections::HashMap<String, Uuid>>>,
-    /// Routing table for one-to-one messaging (client_id -> transport client)
+    /// Routing table for one-to-one messaging (`client_id` -> transport client)
     direct_routing: Arc<Mutex<std::collections::HashMap<String, String>>>,
-    /// Global semaphore for publish() backpressure
+    /// Global semaphore for `publish()` backpressure
     publish_semaphore: Arc<tokio::sync::Semaphore>,
     /// Rate limiter with token bucket algorithm
     rate_limiter: Arc<RateLimiter>,
@@ -64,12 +64,13 @@ pub struct DaemoneyeBroker {
 
 impl DaemoneyeBroker {
     /// Create a new embedded broker
+    #[allow(clippy::unused_async)]
     pub async fn new(socket_path: &str) -> Result<Self> {
-        Self::new_with_config(socket_path, false, 1000).await
+        Self::new_with_config(socket_path, false, 1000)
     }
 
     /// Create a new embedded broker with configuration
-    pub async fn new_with_config(
+    pub fn new_with_config(
         socket_path: &str,
         auth_enabled: bool,
         queue_capacity: usize,
@@ -80,16 +81,12 @@ impl DaemoneyeBroker {
         // Override with provided socket path if different
         if socket_path != config.get_socket_path() {
             config = SocketConfig {
-                unix_path: socket_path.to_string(),
-                windows_pipe: socket_path.to_string(),
+                unix_path: socket_path.to_owned(),
+                windows_pipe: socket_path.to_owned(),
                 connection_limit: 100, // Default connection limit
                 #[cfg(target_os = "freebsd")]
                 freebsd_path: None,
-                auth_token: if auth_enabled {
-                    Some(Uuid::new_v4().to_string())
-                } else {
-                    None
-                },
+                auth_token: auth_enabled.then(|| Uuid::new_v4().to_string()),
                 per_client_byte_limit: 10 * 1024 * 1024,
                 rate_limit_config: None,
                 correlation_config: None,
@@ -103,8 +100,11 @@ impl DaemoneyeBroker {
         let client_config = ClientConfig::default();
         let client_manager = ClientConnectionManager::new(client_config);
 
-        // Create queue manager with configured capacity
-        let queue_manager = Arc::new(QueueManager::new(queue_capacity, queue_capacity * 10));
+        // Create queue manager with configured capacity (overflow-safe: capacity is bounded by caller)
+        let queue_manager = Arc::new(QueueManager::new(
+            queue_capacity,
+            queue_capacity.saturating_mul(10),
+        ));
 
         // Create rate limiter with configuration from SocketConfig or default
         let rate_limit_config = config.rate_limit_config.clone().unwrap_or_default();
@@ -145,33 +145,29 @@ impl DaemoneyeBroker {
 
         // Create and start transport server
         let server = TransportServer::new(self.config.clone()).await?;
-        {
-            let mut server_guard = self.transport_server.lock().await;
-            *server_guard = Some(server);
-        }
+        *self.transport_server.lock().await = Some(server);
 
         // Start client connection acceptance task
-        self.start_client_acceptance_task().await?;
+        self.start_client_acceptance_task();
 
         // Start health monitoring task
-        self.start_health_monitoring_task().await?;
+        self.start_health_monitoring_task();
 
         info!("DaemonEye broker started successfully");
         Ok(())
     }
 
     /// Start client acceptance background task
-    async fn start_client_acceptance_task(&self) -> Result<()> {
+    fn start_client_acceptance_task(&self) {
         let server = Arc::clone(&self.transport_server);
         let client_manager = Arc::clone(&self.client_manager);
         let direct_routing = Arc::clone(&self.direct_routing);
         let queue_manager = Arc::clone(&self.queue_manager);
         let auth_enabled = self.auth_enabled;
         let auth_token = self.config.auth_token.clone();
-        let shutdown_rx = self.shutdown_tx.subscribe();
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
-            let mut shutdown_rx = shutdown_rx;
             loop {
                 tokio::select! {
                     // Accept new connections with timeout
@@ -200,9 +196,10 @@ impl DaemoneyeBroker {
                                 info!("Accepted new client connection: {}", client_id);
 
                                 // Authenticate if enabled (read first frame before inserting)
-                                if auth_enabled && let Err(e) = Self::authenticate_client(&mut accepted_client, &auth_token).await {
+                                if auth_enabled && let Err(e) = Self::authenticate_client(&mut accepted_client, auth_token.as_ref()).await {
                                     error!("Authentication failed for client {}: {}", client_id, e);
-                                    let _ = accepted_client.close().await;
+                                    // Intentionally ignore close() error — we're already rejecting this client
+                                    drop(accepted_client.close().await);
                                     continue;
                                 }
 
@@ -216,32 +213,28 @@ impl DaemoneyeBroker {
                                 }
 
                                 // Update direct routing
-                                {
-                                    let mut routing = direct_routing.lock().await;
-                                    routing.insert(client_id.clone(), client_id.clone());
-                                }
+                                direct_routing.lock().await.insert(client_id.clone(), client_id.clone());
 
                                 // Drain queued messages for reconnected client
-                                {
-                                    let queue_manager_drain = Arc::clone(&queue_manager);
-                                    let client_id_drain = client_id.clone();
-                                    let client_manager_drain = Arc::clone(&client_manager);
-                                    tokio::spawn(async move {
-                                        let queued_messages = queue_manager_drain.drain_queue(&client_id_drain).await;
-                                        if let Ok(messages) = queued_messages && !messages.is_empty() {
-                                            info!("Draining {} queued messages for client: {}", messages.len(), client_id_drain);
-                                            let mut manager = client_manager_drain.lock().await;
-                                            for msg in messages {
-                                                if let Err(e) = manager.send_to_client(&client_id_drain, &msg).await {
-                                                    warn!("Failed to send drained message to client {}: {}", client_id_drain, e);
-                                                    // Re-enqueue if send fails
-                                                    let _ = queue_manager_drain.enqueue(&client_id_drain, msg).await;
-                                                    break; // Stop draining if send fails
-                                                }
+                                let queue_manager_drain = Arc::clone(&queue_manager);
+                                let client_id_drain = client_id.clone();
+                                let client_manager_drain = Arc::clone(&client_manager);
+                                drop(tokio::spawn(async move {
+                                    let queued_messages = queue_manager_drain.drain_queue(&client_id_drain).await;
+                                    if let Ok(messages) = queued_messages && !messages.is_empty() {
+                                        info!("Draining {} queued messages for client: {}", messages.len(), client_id_drain);
+                                        let mut manager = client_manager_drain.lock().await;
+                                        for msg in messages {
+                                            if let Err(e) = manager.send_to_client(&client_id_drain, &msg).await {
+                                                warn!("Failed to send drained message to client {}: {}", client_id_drain, e);
+                                                // Re-enqueue if send fails
+                                                // Intentionally ignore re-enqueue error — best-effort recovery
+                                                drop(queue_manager_drain.enqueue(&client_id_drain, msg).await);
+                                                break; // Stop draining if send fails
                                             }
                                         }
-                                    });
-                                }
+                                    }
+                                }));
 
                                 // Spawn per-connection task to monitor stream and handle messages
                                 let client_id_task = client_id.clone();
@@ -252,7 +245,7 @@ impl DaemoneyeBroker {
                                 tokio::spawn(async move {
                                     loop {
                                         tokio::select! {
-                                            _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {
+                                            () = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {
                                                 // Periodic health check
                                                 let mut client_guard = client_manager_task.lock().await;
                                                 if let Some(managed_client) = client_guard.get_managed_client_mut(&client_id_task) {
@@ -281,10 +274,7 @@ impl DaemoneyeBroker {
                                     }
 
                                     // Remove from direct routing
-                                    {
-                                        let mut routing = direct_routing_task.lock().await;
-                                        routing.remove(&client_id_task);
-                                    }
+                                    direct_routing_task.lock().await.remove(&client_id_task);
 
                                     info!("Client {} connection task completed", client_id_task);
                                 });
@@ -310,16 +300,14 @@ impl DaemoneyeBroker {
                 }
             }
         });
-
-        Ok(())
     }
 
     /// Authenticate a client connection
     async fn authenticate_client(
         transport_client: &mut TransportClient,
-        expected_token: &Option<String>,
+        expected_token: Option<&String>,
     ) -> Result<()> {
-        if let Some(expected) = expected_token {
+        if let Some(expected) = expected_token.map(String::as_str) {
             // Read first frame (authentication message)
             let auth_frame = transport_client.receive().await?;
 
@@ -339,12 +327,12 @@ impl DaemoneyeBroker {
                     Ok(())
                 } else {
                     Err(EventBusError::transport(
-                        "Authentication failed: invalid token".to_string(),
+                        "Authentication failed: invalid token".to_owned(),
                     ))
                 }
             } else {
                 Err(EventBusError::transport(
-                    "Authentication failed: malformed message".to_string(),
+                    "Authentication failed: malformed message".to_owned(),
                 ))
             }
         } else {
@@ -353,7 +341,7 @@ impl DaemoneyeBroker {
     }
 
     /// Start health monitoring background task
-    async fn start_health_monitoring_task(&self) -> Result<()> {
+    fn start_health_monitoring_task(&self) {
         let client_manager = Arc::clone(&self.client_manager);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
@@ -377,12 +365,10 @@ impl DaemoneyeBroker {
                 }
             }
         });
-
-        Ok(())
     }
 
     /// Get the socket configuration
-    pub fn config(&self) -> &SocketConfig {
+    pub const fn config(&self) -> &SocketConfig {
         &self.config
     }
 
@@ -391,15 +377,15 @@ impl DaemoneyeBroker {
         // Validate payload
         if payload.len() > 1024 * 1024 {
             return Err(EventBusError::transport(
-                "Payload exceeds 1MB limit".to_string(),
+                "Payload exceeds 1MB limit".to_owned(),
             ));
         }
 
-        let transport_client_id = {
+        let maybe_transport_client_id = {
             let routing = self.direct_routing.lock().await;
             routing.get(client_id).cloned()
         };
-        if let Some(transport_client_id) = transport_client_id {
+        if let Some(transport_client_id) = maybe_transport_client_id {
             let mut client_manager = self.client_manager.lock().await;
             match client_manager
                 .send_to_client(&transport_client_id, payload)
@@ -442,8 +428,7 @@ impl DaemoneyeBroker {
                 );
             }
             Err(EventBusError::transport(format!(
-                "Client {} not found for direct routing",
-                client_id
+                "Client {client_id} not found for direct routing"
             )))
         }
     }
@@ -458,12 +443,12 @@ impl DaemoneyeBroker {
         // Validate payload
         if payload.len() > 1024 * 1024 {
             return Err(EventBusError::transport(
-                "Payload exceeds 1MB limit".to_string(),
+                "Payload exceeds 1MB limit".to_owned(),
             ));
         }
 
         // Queue topic format: queue.{client_id}.{topic}
-        let queue_topic = format!("queue.{}.{}", client_id, topic);
+        let queue_topic = format!("queue.{client_id}.{topic}");
         self.publish(&queue_topic, &Uuid::new_v4().to_string(), payload.to_vec())
             .await
     }
@@ -471,25 +456,24 @@ impl DaemoneyeBroker {
     /// Publish a message to the broker with backpressure control
     pub async fn publish(&self, topic: &str, correlation_id: &str, payload: Vec<u8>) -> Result<()> {
         // Acquire global semaphore for backpressure
-        let _permit = self
-            .publish_semaphore
-            .acquire()
-            .await
-            .map_err(|_| EventBusError::transport("Publish semaphore closed".to_string()))?;
+        let _permit =
+            self.publish_semaphore.acquire().await.map_err(|_closed| {
+                EventBusError::transport("Publish semaphore closed".to_owned())
+            })?;
 
         // Rate limit check with proper token bucket algorithm
-        let client_id = self.extract_client_id_from_topic(topic);
+        let client_id = Self::extract_client_id_from_topic(topic);
         if !self
             .rate_limiter
             .check_rate_limit(client_id.as_deref(), Some(topic))
             .await
         {
-            return Err(EventBusError::transport("Rate limit exceeded".to_string()));
+            return Err(EventBusError::transport("Rate limit exceeded".to_owned()));
         }
         // Validate payload size
         if payload.len() > 1024 * 1024 {
             return Err(EventBusError::transport(
-                "Payload exceeds 1MB limit".to_string(),
+                "Payload exceeds 1MB limit".to_owned(),
             ));
         }
 
@@ -516,17 +500,17 @@ impl DaemoneyeBroker {
 
         // Build Message regardless of subscriber type (no CollectionEvent decoding required for routing)
         let message = Message::event(
-            topic.to_string(),
-            correlation_id.to_string(),
+            topic.to_owned(),
+            correlation_id.to_owned(),
             payload.clone(),
             sequence,
         );
 
         // Serialize message
-        let message_data = message.serialize()?;
+        let message_data = message.to_bytes()?;
 
         // Send to managed clients via client manager (no CollectionEvent decoding needed)
-        let mut delivered_count = 0;
+        let mut delivered_count = 0_u64;
         {
             let mut client_manager = self.client_manager.lock().await;
             match client_manager
@@ -534,7 +518,10 @@ impl DaemoneyeBroker {
                 .await
             {
                 Ok(delivered_clients) => {
-                    delivered_count += delivered_clients.len() as u64;
+                    // SAFETY: len() fits in u64 on all supported platforms; cast is lossless.
+                    #[allow(clippy::as_conversions)]
+                    let len_u64 = delivered_clients.len() as u64;
+                    delivered_count = delivered_count.saturating_add(len_u64);
                     debug!(
                         "Delivered message to {} managed clients",
                         delivered_clients.len()
@@ -566,8 +553,8 @@ impl DaemoneyeBroker {
 
         for subscriber_id in &subscribers {
             if let Some(sender) = senders_guard.get(subscriber_id) {
-                match &collection_event_result {
-                    Ok(collection_event) => {
+                match collection_event_result {
+                    Ok(ref collection_event) => {
                         // Successfully decoded - build and wrap BusEvent in Arc so the channel
                         // transfer is a pointer copy rather than a deep clone of event data.
                         let bus_event = Arc::new(BusEvent {
@@ -575,17 +562,17 @@ impl DaemoneyeBroker {
                             event: collection_event.clone(),
                             correlation_metadata: message.correlation_metadata.clone(),
                             bus_timestamp: std::time::SystemTime::now(),
-                            matched_pattern: topic.to_string(),
+                            matched_pattern: topic.to_owned(),
                             subscriber_id: subscriber_id.clone(),
                         });
 
                         if sender.send(bus_event).is_err() {
                             failed_senders.push(subscriber_id.clone());
                         } else {
-                            delivered_count += 1;
+                            delivered_count = delivered_count.saturating_add(1);
                         }
                     }
-                    Err(e) => {
+                    Err(ref e) => {
                         // Decode failed - log and skip this subscriber
                         warn!(
                             "Failed to decode CollectionEvent for subscriber {}: {}. Skipping delivery.",
@@ -646,7 +633,7 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
-    /// Publish a control message without CollectionEvent deserialization
+    /// Publish a control message without `CollectionEvent` deserialization
     async fn publish_control_message(
         &self,
         topic: &str,
@@ -669,17 +656,17 @@ impl DaemoneyeBroker {
 
         // Create control message directly without CollectionEvent deserialization
         let message = Message::control(
-            topic.to_string(),
-            correlation_id.to_string(),
+            topic.to_owned(),
+            correlation_id.to_owned(),
             payload,
             sequence,
         );
 
         // Serialize message
-        let message_data = message.serialize()?;
+        let message_data = message.to_bytes()?;
 
         // Send to managed clients via client manager
-        let mut delivered_count = 0;
+        let mut delivered_count = 0_u64;
         {
             let mut client_manager = self.client_manager.lock().await;
             match client_manager
@@ -687,7 +674,10 @@ impl DaemoneyeBroker {
                 .await
             {
                 Ok(delivered_clients) => {
-                    delivered_count += delivered_clients.len() as u64;
+                    // SAFETY: len() fits in u64 on all supported platforms; cast is lossless.
+                    #[allow(clippy::as_conversions)]
+                    let len_u64 = delivered_clients.len() as u64;
+                    delivered_count = delivered_count.saturating_add(len_u64);
                     debug!(
                         "Delivered control message to {} managed clients",
                         delivered_clients.len()
@@ -705,7 +695,7 @@ impl DaemoneyeBroker {
         // Send raw messages to RPC subscribers (only those matching the topic)
         let mut raw_senders_guard = self.raw_subscriber_senders.lock().await;
         let mut raw_failed_senders = Vec::new();
-        let mut raw_delivered_count = 0;
+        let mut raw_delivered_count = 0_u64;
 
         for subscriber_id in &subscribers {
             if let Some(sender) = raw_senders_guard.get(subscriber_id) {
@@ -716,7 +706,7 @@ impl DaemoneyeBroker {
                     );
                     raw_failed_senders.push(subscriber_id.clone());
                 } else {
-                    raw_delivered_count += 1;
+                    raw_delivered_count = raw_delivered_count.saturating_add(1);
                 }
             }
         }
@@ -729,12 +719,14 @@ impl DaemoneyeBroker {
 
         // Increment atomic counters on the hot path (no Mutex required)
         self.messages_published.fetch_add(1, Ordering::Relaxed);
-        self.messages_delivered
-            .fetch_add(delivered_count + raw_delivered_count, Ordering::Relaxed);
+        self.messages_delivered.fetch_add(
+            delivered_count.saturating_add(raw_delivered_count),
+            Ordering::Relaxed,
+        );
 
         debug!(
             "Published control message to {} subscribers on topic: {}",
-            delivered_count + raw_delivered_count,
+            delivered_count.saturating_add(raw_delivered_count),
             topic
         );
         Ok(())
@@ -742,8 +734,10 @@ impl DaemoneyeBroker {
 
     /// Subscribe to a topic pattern
     pub async fn subscribe(&self, pattern: &str, subscriber_id: Uuid) -> Result<()> {
-        let mut topic_matcher = self.topic_matcher.write().await;
-        topic_matcher.subscribe(pattern, subscriber_id)?;
+        self.topic_matcher
+            .write()
+            .await
+            .subscribe(pattern, &subscriber_id)?;
 
         debug!("Subscribed {} to pattern: {}", subscriber_id, pattern);
         Ok(())
@@ -757,15 +751,17 @@ impl DaemoneyeBroker {
     ) -> Result<mpsc::UnboundedReceiver<Message>> {
         // Subscribe to topic pattern
         let mut topic_matcher = self.topic_matcher.write().await;
-        topic_matcher.subscribe(pattern, subscriber_id)?;
+        topic_matcher.subscribe(pattern, &subscriber_id)?;
         drop(topic_matcher);
 
         // Create channel for raw messages
         let (tx, rx) = mpsc::unbounded_channel();
 
-        // Store sender for raw message delivery
-        let mut raw_senders = self.raw_subscriber_senders.lock().await;
-        raw_senders.insert(subscriber_id.to_string(), tx);
+        // Store sender for raw message delivery (drop lock before returning)
+        self.raw_subscriber_senders
+            .lock()
+            .await
+            .insert(subscriber_id.to_string(), tx);
 
         debug!(
             "Subscribed {} to raw messages for pattern: {}",
@@ -777,19 +773,16 @@ impl DaemoneyeBroker {
     /// Unsubscribe from all patterns
     pub async fn unsubscribe(&self, subscriber_id: Uuid) -> Result<()> {
         let mut topic_matcher = self.topic_matcher.write().await;
-        topic_matcher.unsubscribe(subscriber_id)?;
+        topic_matcher.unsubscribe(&subscriber_id)?;
         drop(topic_matcher);
 
-        // Remove from both regular and raw subscribers
+        // Remove from both regular and raw subscribers (drop locks immediately after use)
         let subscriber_str = subscriber_id.to_string();
-        {
-            let mut senders = self.subscriber_senders.lock().await;
-            senders.remove(&subscriber_str);
-        }
-        {
-            let mut raw_senders = self.raw_subscriber_senders.lock().await;
-            raw_senders.remove(&subscriber_str);
-        }
+        self.subscriber_senders.lock().await.remove(&subscriber_str);
+        self.raw_subscriber_senders
+            .lock()
+            .await
+            .remove(&subscriber_str);
 
         debug!("Unsubscribed: {}", subscriber_id);
         Ok(())
@@ -803,38 +796,41 @@ impl DaemoneyeBroker {
             && socket_config.auth_token.as_ref() != Some(expected_token)
         {
             return Err(EventBusError::transport(
-                "Authentication failed: invalid token".to_string(),
+                "Authentication failed: invalid token".to_owned(),
             ));
         }
 
-        let mut client_manager = self.client_manager.lock().await;
-        client_manager
-            .add_client(client_id.clone(), socket_config)
-            .await?;
-
-        // Add to direct routing table
-        {
-            let mut routing = self.direct_routing.lock().await;
-            routing.insert(client_id.clone(), client_id.clone());
-        }
-
+        let total_clients = {
+            let mut client_manager = self.client_manager.lock().await;
+            client_manager
+                .add_client(client_id.clone(), socket_config)
+                .await?;
+            let count = client_manager.get_stats().total_clients;
+            drop(client_manager);
+            count
+        };
         info!(
             "Client connected: {}, total clients: {}",
-            client_id,
-            client_manager.get_stats().total_clients
+            client_id, total_clients
         );
+        self.direct_routing
+            .lock()
+            .await
+            .insert(client_id.clone(), client_id.clone());
         Ok(())
     }
 
     /// Extract client ID from topic (helper for rate limiting)
-    fn extract_client_id_from_topic(&self, topic: &str) -> Option<String> {
+    fn extract_client_id_from_topic(topic: &str) -> Option<String> {
         if topic.starts_with("direct.") {
-            topic.strip_prefix("direct.").map(|s| s.to_string())
+            topic
+                .strip_prefix("direct.")
+                .map(std::borrow::ToOwned::to_owned)
         } else if topic.starts_with("queue.") {
             topic
                 .strip_prefix("queue.")
                 .and_then(|s| s.split('.').next())
-                .map(|s| s.to_string())
+                .map(std::borrow::ToOwned::to_owned)
         } else {
             None
         }
@@ -842,22 +838,23 @@ impl DaemoneyeBroker {
 
     /// Remove a client connection
     pub async fn remove_client(&self, client_id: &str) -> Result<()> {
-        let mut client_manager = self.client_manager.lock().await;
-        client_manager.remove_client(client_id).await?;
+        let remaining_clients = {
+            let mut client_manager = self.client_manager.lock().await;
+            client_manager.remove_client(client_id).await?;
+            let count = client_manager.get_stats().total_clients;
+            drop(client_manager);
+            count
+        };
 
         // Remove from direct routing table
-        {
-            let mut routing = self.direct_routing.lock().await;
-            routing.remove(client_id);
-        }
+        self.direct_routing.lock().await.remove(client_id);
 
         // Remove from rate limiter
         self.rate_limiter.remove_client(client_id).await;
 
         info!(
             "Client disconnected: {}, remaining clients: {}",
-            client_id,
-            client_manager.get_stats().total_clients
+            client_id, remaining_clients
         );
         Ok(())
     }
@@ -892,8 +889,9 @@ impl DaemoneyeBroker {
         EventBusStatistics {
             messages_published,
             messages_delivered,
-            active_subscribers: topic_matcher.subscriber_count()
-                + client_manager.get_stats().total_clients,
+            active_subscribers: topic_matcher
+                .subscriber_count()
+                .saturating_add(client_manager.get_stats().total_clients),
             active_topics: topic_matcher.pattern_count(),
             uptime_seconds: self.start_time.elapsed().as_secs(),
         }
@@ -940,7 +938,7 @@ impl std::fmt::Debug for DaemoneyeBroker {
     }
 }
 
-/// EventBus implementation using the embedded broker
+/// `EventBus` implementation using the embedded broker
 pub struct DaemoneyeEventBus {
     broker: Arc<DaemoneyeBroker>,
     #[allow(dead_code)]
@@ -950,14 +948,14 @@ pub struct DaemoneyeEventBus {
 }
 
 impl DaemoneyeEventBus {
-    /// Create a new EventBus from a broker
+    /// Create a new `EventBus` from a broker
     pub async fn from_broker(broker: DaemoneyeBroker) -> Result<Self> {
-        let broker = Arc::new(broker);
+        let broker_arc = Arc::new(broker);
         let subscriber_id = Uuid::new_v4();
         let (event_sender, _event_receiver) = mpsc::unbounded_channel::<Arc<BusEvent>>();
 
         let event_bus = Self {
-            broker: Arc::clone(&broker),
+            broker: Arc::clone(&broker_arc),
             subscriber_id,
             event_sender,
         };
@@ -969,7 +967,7 @@ impl DaemoneyeEventBus {
     }
 
     /// Get the broker reference
-    pub fn broker(&self) -> &Arc<DaemoneyeBroker> {
+    pub const fn broker(&self) -> &Arc<DaemoneyeBroker> {
         &self.broker
     }
 
@@ -979,16 +977,16 @@ impl DaemoneyeEventBus {
         event: CollectionEvent,
         metadata: crate::message::CorrelationMetadata,
     ) -> Result<()> {
-        let topic = match &event {
+        let payload = postcard::to_allocvec(&event)
+            .map_err(|e| EventBusError::serialization(e.to_string()))?;
+
+        let topic = match event {
             CollectionEvent::Process(_) => "events.process.new",
             CollectionEvent::Network(_) => "events.network.new",
             CollectionEvent::Filesystem(_) => "events.filesystem.new",
             CollectionEvent::Performance(_) => "events.performance.new",
             CollectionEvent::TriggerRequest(_) => "control.trigger.request",
         };
-
-        let payload = postcard::to_allocvec(&event)
-            .map_err(|e| EventBusError::serialization(e.to_string()))?;
 
         self.broker
             .publish_with_correlation(topic, &metadata, payload)
@@ -998,18 +996,17 @@ impl DaemoneyeEventBus {
 
 impl EventBus for DaemoneyeEventBus {
     async fn publish(&mut self, event: CollectionEvent, correlation_id: String) -> Result<()> {
-        // Determine topic based on event type
-        let topic = match &event {
+        // Serialize event first, then determine topic based on event type
+        let payload = postcard::to_allocvec(&event)
+            .map_err(|e| EventBusError::serialization(e.to_string()))?;
+
+        let topic = match event {
             CollectionEvent::Process(_) => "events.process.new",
             CollectionEvent::Network(_) => "events.network.new",
             CollectionEvent::Filesystem(_) => "events.filesystem.new",
             CollectionEvent::Performance(_) => "events.performance.new",
             CollectionEvent::TriggerRequest(_) => "control.trigger.request",
         };
-
-        // Serialize event to payload
-        let payload = postcard::to_allocvec(&event)
-            .map_err(|e| EventBusError::serialization(e.to_string()))?;
 
         self.broker.publish(topic, &correlation_id, payload).await
     }
@@ -1019,18 +1016,18 @@ impl EventBus for DaemoneyeEventBus {
         subscription: EventSubscription,
     ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Arc<BusEvent>>> {
         // Extract topic patterns from subscription
-        let patterns = if let Some(topic_patterns) = &subscription.topic_patterns {
+        let patterns = if let Some(ref topic_patterns) = subscription.topic_patterns {
             topic_patterns.clone()
         } else {
             // Generate patterns based on capabilities
             let mut patterns = Vec::new();
             for event_type in &subscription.capabilities.event_types {
                 match event_type.as_str() {
-                    "process" => patterns.push("events.process.*".to_string()),
-                    "network" => patterns.push("events.network.*".to_string()),
-                    "filesystem" => patterns.push("events.filesystem.*".to_string()),
-                    "performance" => patterns.push("events.performance.*".to_string()),
-                    _ => patterns.push(format!("events.{}.*", event_type)),
+                    "process" => patterns.push("events.process.*".to_owned()),
+                    "network" => patterns.push("events.network.*".to_owned()),
+                    "filesystem" => patterns.push("events.filesystem.*".to_owned()),
+                    "performance" => patterns.push("events.performance.*".to_owned()),
+                    _ => patterns.push(format!("events.{event_type}.*")),
                 }
             }
             patterns
@@ -1056,58 +1053,71 @@ impl EventBus for DaemoneyeEventBus {
 
         // Store the sender for this subscription using the broker-side UUID
         // and maintain the mapping from original subscriber ID to broker UUID
-        {
-            let mut senders = self.broker.subscriber_senders.lock().await;
-            let mut mapping = self.broker.subscriber_id_mapping.lock().await;
-
-            senders.insert(subscriber_id.to_string(), tx);
-            mapping.insert(subscription.subscriber_id.clone(), subscriber_id);
-        }
+        self.broker
+            .subscriber_senders
+            .lock()
+            .await
+            .insert(subscriber_id.to_string(), tx);
+        self.broker
+            .subscriber_id_mapping
+            .lock()
+            .await
+            .insert(subscription.subscriber_id.clone(), subscriber_id);
 
         Ok(rx)
     }
 
     async fn unsubscribe(&mut self, subscriber_id: &str) -> Result<()> {
         // First try to parse subscriber ID as UUID
-        match subscriber_id.parse::<Uuid>() {
-            Ok(id) => {
-                // Direct UUID lookup - unsubscribe from broker and remove sender
-                self.broker.unsubscribe(id).await?;
-                let mut senders = self.broker.subscriber_senders.lock().await;
-                let mut mapping = self.broker.subscriber_id_mapping.lock().await;
-
-                senders.remove(&id.to_string());
-                // Remove from mapping by finding the key that maps to this UUID
-                mapping.retain(|_, &mut uuid| uuid != id);
-                Ok(())
-            }
-            Err(_) => {
-                // String-based lookup - find the corresponding broker UUID
+        if let Ok(id) = subscriber_id.parse::<Uuid>() {
+            // Direct UUID lookup - unsubscribe from broker and remove sender
+            self.broker.unsubscribe(id).await?;
+            self.broker
+                .subscriber_senders
+                .lock()
+                .await
+                .remove(&id.to_string());
+            // Remove from mapping by finding the key that maps to this UUID
+            self.broker
+                .subscriber_id_mapping
+                .lock()
+                .await
+                .retain(|_, &mut uuid| uuid != id);
+        } else {
+            // String-based lookup - find the corresponding broker UUID
+            let maybe_broker_uuid = {
                 let mapping = self.broker.subscriber_id_mapping.lock().await;
-                if let Some(&broker_uuid) = mapping.get(subscriber_id) {
-                    // Found the mapping, now unsubscribe from broker and clean up
-                    drop(mapping); // Release mapping lock before calling broker
-                    self.broker.unsubscribe(broker_uuid).await?;
-
-                    let mut senders = self.broker.subscriber_senders.lock().await;
-                    let mut mapping = self.broker.subscriber_id_mapping.lock().await;
-
-                    senders.remove(&broker_uuid.to_string());
-                    mapping.remove(subscriber_id);
-                } else {
-                    // No mapping found - this might be a direct UUID string that wasn't parsed
-                    // Try to find it in the senders map directly
-                    let mut senders = self.broker.subscriber_senders.lock().await;
-                    if senders.contains_key(subscriber_id) {
-                        // This is a direct string key, remove it
-                        senders.remove(subscriber_id);
-                    } else {
-                        warn!("No subscription found for subscriber ID: {}", subscriber_id);
-                    }
+                mapping.get(subscriber_id).copied()
+            };
+            if let Some(broker_uuid) = maybe_broker_uuid {
+                // Found the mapping, now unsubscribe from broker and clean up
+                self.broker.unsubscribe(broker_uuid).await?;
+                self.broker
+                    .subscriber_senders
+                    .lock()
+                    .await
+                    .remove(&broker_uuid.to_string());
+                self.broker
+                    .subscriber_id_mapping
+                    .lock()
+                    .await
+                    .remove(subscriber_id);
+            } else {
+                // No mapping found - this might be a direct UUID string that wasn't parsed
+                // Try to find it in the senders map directly
+                if self
+                    .broker
+                    .subscriber_senders
+                    .lock()
+                    .await
+                    .remove(subscriber_id)
+                    .is_none()
+                {
+                    warn!("No subscription found for subscriber ID: {}", subscriber_id);
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 
     async fn statistics(&self) -> EventBusStatistics {
@@ -1175,9 +1185,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_manager_enqueue_on_disconnect() {
-        let broker = DaemoneyeBroker::new_with_config("/tmp/test-queue-enqueue.sock", false, 100)
-            .await
-            .unwrap();
+        let broker =
+            DaemoneyeBroker::new_with_config("/tmp/test-queue-enqueue.sock", false, 100).unwrap();
         assert!(broker.start().await.is_ok());
 
         // Try to route to non-existent client - should enqueue
@@ -1216,7 +1225,6 @@ mod tests {
     async fn test_auth_valid_token_connection_succeeds() {
         let sock = "/tmp/test-auth-valid.sock";
         let broker = DaemoneyeBroker::new_with_config(sock, true, 100)
-            .await
             .expect("broker creation must succeed");
         broker.start().await.expect("broker start must succeed");
 
@@ -1242,7 +1250,6 @@ mod tests {
     async fn test_auth_invalid_token_connection_rejected() {
         let sock = "/tmp/test-auth-invalid.sock";
         let broker = DaemoneyeBroker::new_with_config(sock, true, 100)
-            .await
             .expect("broker creation must succeed");
 
         let client_socket_config = make_socket_config(sock, Some("wrong-token".to_string()));
@@ -1265,7 +1272,6 @@ mod tests {
     async fn test_auth_no_token_connection_rejected() {
         let sock = "/tmp/test-auth-none.sock";
         let broker = DaemoneyeBroker::new_with_config(sock, true, 100)
-            .await
             .expect("broker creation must succeed");
 
         // Pass a SocketConfig with no auth token.
@@ -1286,9 +1292,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_manager_drain_on_reconnect() {
-        let broker = DaemoneyeBroker::new_with_config("/tmp/test-queue-drain.sock", false, 100)
-            .await
-            .unwrap();
+        let broker =
+            DaemoneyeBroker::new_with_config("/tmp/test-queue-drain.sock", false, 100).unwrap();
         assert!(broker.start().await.is_ok());
 
         let client_id = "test-client-drain";

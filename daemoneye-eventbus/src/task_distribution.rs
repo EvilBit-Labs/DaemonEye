@@ -22,10 +22,10 @@
 //!
 //! The task distribution system consists of:
 //!
-//! - **TaskDistributor**: Main coordinator that routes tasks to collectors
-//! - **CapabilityRegistry**: Tracks collector capabilities and availability
-//! - **TaskQueue**: Priority queue for pending tasks
-//! - **RoutingStrategy**: Pluggable routing algorithms (round-robin, least-loaded, etc.)
+//! - **`TaskDistributor`**: Main coordinator that routes tasks to collectors
+//! - **`CapabilityRegistry`**: Tracks collector capabilities and availability
+//! - **`TaskQueue`**: Priority queue for pending tasks
+//! - **`RoutingStrategy`**: Pluggable routing algorithms (round-robin, least-loaded, etc.)
 //!
 //! ## Usage Example
 //!
@@ -86,7 +86,7 @@ use uuid::Uuid;
 pub struct TaskRequest {
     /// Unique task identifier
     pub task_id: String,
-    /// Operation to perform (e.g., "enumerate_processes", "scan_file")
+    /// Operation to perform (e.g., "`enumerate_processes`", "`scan_file`")
     pub operation: String,
     /// Priority level (higher = more urgent)
     pub priority: u8,
@@ -146,7 +146,7 @@ enum CollectorStatus {
     /// Collector is unhealthy or unresponsive
     Unhealthy,
     /// Collector is shutting down
-    /// SECURITY_TODO: Implement graceful shutdown coordination (Task 2.5.5)
+    /// `SECURITY_TODO`: Implement graceful shutdown coordination (Task 2.5.5)
     #[allow(dead_code)] // Reserved for future graceful shutdown coordination
     ShuttingDown,
 }
@@ -184,13 +184,14 @@ impl Ord for QueuedTask {
                 // For same priority, older tasks come first (FIFO)
                 other.queued_at.cmp(&self.queued_at)
             }
-            other => other,
+            Ordering::Less | Ordering::Greater => self.task.priority.cmp(&other.task.priority),
         }
     }
 }
 
 /// Routing strategy for task distribution
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RoutingStrategy {
     /// Round-robin across available collectors
     RoundRobin,
@@ -241,6 +242,7 @@ pub struct TaskDistributor {
 
 impl TaskDistributor {
     /// Create a new task distributor
+    #[allow(clippy::unused_async)]
     pub async fn new(broker: Arc<DaemoneyeBroker>) -> Result<Self> {
         Ok(Self {
             broker,
@@ -256,6 +258,7 @@ impl TaskDistributor {
     }
 
     /// Create a new task distributor with custom configuration
+    #[allow(clippy::unused_async)]
     pub async fn with_config(
         broker: Arc<DaemoneyeBroker>,
         max_queue_size: usize,
@@ -302,7 +305,7 @@ impl TaskDistributor {
         {
             let mut stats = self.stats.lock().await;
             stats.active_collectors = registry_len;
-        }
+        };
 
         info!(
             "Registered collector: {} (type: {})",
@@ -317,8 +320,7 @@ impl TaskDistributor {
             let mut registry = self.capability_registry.write().await;
             if registry.remove(collector_id).is_none() {
                 return Err(EventBusError::topic(format!(
-                    "Collector not found: {}",
-                    collector_id
+                    "Collector not found: {collector_id}"
                 )));
             }
             registry.len()
@@ -328,7 +330,7 @@ impl TaskDistributor {
         {
             let mut stats = self.stats.lock().await;
             stats.active_collectors = registry_len;
-        }
+        };
 
         info!("Deregistered collector: {}", collector_id);
         Ok(())
@@ -343,8 +345,7 @@ impl TaskDistributor {
             Ok(())
         } else {
             Err(EventBusError::topic(format!(
-                "Collector not found: {}",
-                collector_id
+                "Collector not found: {collector_id}"
             )))
         }
     }
@@ -385,7 +386,7 @@ impl TaskDistributor {
                 "No suitable collectors available, queuing task"
             );
             self.queue_task(task).await?;
-            return Ok("queued".to_string());
+            return Ok("queued".to_owned());
         }
 
         // Select a collector using the routing strategy
@@ -396,14 +397,14 @@ impl TaskDistributor {
             .await?;
 
         // Update statistics
-        {
-            let mut stats = self.stats.lock().await;
-            stats.tasks_distributed += 1;
-            *stats
-                .tasks_by_type
-                .entry(selected_collector.capability.collector_type.clone())
-                .or_insert(0) += 1;
-        }
+        let mut stats_guard = self.stats.lock().await;
+        stats_guard.tasks_distributed = stats_guard.tasks_distributed.saturating_add(1);
+        let entry = stats_guard
+            .tasks_by_type
+            .entry(selected_collector.capability.collector_type.clone())
+            .or_insert(0);
+        *entry = entry.saturating_add(1);
+        drop(stats_guard);
 
         info!(
             task_id = %task.task_id,
@@ -419,10 +420,13 @@ impl TaskDistributor {
         &self,
         task: &TaskRequest,
     ) -> Result<Vec<CollectorRegistration>> {
-        let registry = self.capability_registry.read().await;
         let now = SystemTime::now();
+        let heartbeat_timeout = self.heartbeat_timeout;
 
-        let suitable: Vec<CollectorRegistration> = registry
+        let suitable: Vec<CollectorRegistration> = self
+            .capability_registry
+            .read()
+            .await
             .values()
             .filter(|reg| {
                 // Check if collector supports the operation
@@ -451,7 +455,7 @@ impl TaskDistributor {
 
                 // Check if collector is responsive (heartbeat)
                 if let Ok(elapsed) = now.duration_since(reg.last_heartbeat)
-                    && elapsed > self.heartbeat_timeout
+                    && elapsed > heartbeat_timeout
                 {
                     return false;
                 }
@@ -470,17 +474,23 @@ impl TaskDistributor {
         collectors: &[CollectorRegistration],
     ) -> Result<CollectorRegistration> {
         if collectors.is_empty() {
-            return Err(EventBusError::broker("No collectors available".to_string()));
+            return Err(EventBusError::broker("No collectors available".to_owned()));
         }
 
-        let strategy = *self.routing_strategy.read().await;
+        let routing = *self.routing_strategy.read().await;
 
-        match strategy {
+        match routing {
             RoutingStrategy::RoundRobin => {
-                let mut counter = self.round_robin_counter.lock().await;
-                let index = *counter % collectors.len();
-                *counter = counter.wrapping_add(1);
-                Ok(collectors[index].clone())
+                let (index, next) = {
+                    let counter = self.round_robin_counter.lock().await;
+                    let idx = counter.checked_rem(collectors.len()).unwrap_or(0);
+                    (idx, counter.wrapping_add(1))
+                };
+                *self.round_robin_counter.lock().await = next;
+                collectors
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| EventBusError::broker("No collectors available".to_owned()))
             }
             RoutingStrategy::LeastLoaded => {
                 // Find collector with fewest current tasks
@@ -488,14 +498,20 @@ impl TaskDistributor {
                     .iter()
                     .min_by_key(|reg| reg.current_tasks)
                     .cloned()
-                    .ok_or_else(|| EventBusError::broker("No collectors available".to_string()))
+                    .ok_or_else(|| EventBusError::broker("No collectors available".to_owned()))
             }
-            RoutingStrategy::FirstAvailable => Ok(collectors[0].clone()),
+            RoutingStrategy::FirstAvailable => collectors
+                .first()
+                .cloned()
+                .ok_or_else(|| EventBusError::broker("No collectors available".to_owned())),
             RoutingStrategy::Random => {
                 use rand::RngExt;
                 let mut rng = rand::rng();
                 let index = rng.random_range(0..collectors.len());
-                Ok(collectors[index].clone())
+                collectors
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| EventBusError::broker("No collectors available".to_owned()))
             }
         }
     }
@@ -524,7 +540,7 @@ impl TaskDistributor {
         {
             let mut registry = self.capability_registry.write().await;
             if let Some(reg) = registry.get_mut(&collector.capability.collector_id) {
-                reg.current_tasks += 1;
+                reg.current_tasks = reg.current_tasks.saturating_add(1);
                 // Update status if at capacity
                 if reg.current_tasks >= reg.capability.max_concurrent_tasks {
                     reg.status = CollectorStatus::AtCapacity;
@@ -557,63 +573,57 @@ impl TaskDistributor {
         {
             let mut stats = self.stats.lock().await;
             stats.tasks_queued = queue_len;
-        }
+        };
 
         Ok(())
     }
 
     /// Process queued tasks (should be called periodically)
     pub async fn process_queue(&self) -> Result<usize> {
-        let mut processed = 0;
+        let mut processed = 0_usize;
 
         loop {
             // Get next task from queue
-            let queued_task = {
-                let mut queue = self.task_queue.lock().await;
-                queue.pop()
-            };
+            let next_task = self.task_queue.lock().await.pop();
 
-            let Some(mut queued_task) = queued_task else {
+            let Some(mut pending) = next_task else {
                 break;
             };
 
             // Check if task has expired
-            if SystemTime::now() > queued_task.task.deadline {
-                warn!("Task {} expired, dropping", queued_task.task.task_id);
-                let mut stats = self.stats.lock().await;
-                stats.tasks_failed += 1;
+            if SystemTime::now() > pending.task.deadline {
+                warn!("Task {} expired, dropping", pending.task.task_id);
+                let failed = self.stats.lock().await.tasks_failed;
+                self.stats.lock().await.tasks_failed = failed.saturating_add(1);
                 continue;
             }
 
             // Try to distribute the task
-            match self.distribute_task(queued_task.task.clone()).await {
+            match self.distribute_task(pending.task.clone()).await {
                 Ok(collector_id) => {
-                    if collector_id != "queued" {
-                        processed += 1;
-                        debug!(
-                            "Processed queued task {} to collector {}",
-                            queued_task.task.task_id, collector_id
-                        );
-                    } else {
+                    if collector_id == "queued" {
                         // Task was re-queued, put it back
-                        let mut queue = self.task_queue.lock().await;
-                        queue.push(queued_task);
+                        self.task_queue.lock().await.push(pending);
                         break;
                     }
+                    processed = processed.saturating_add(1);
+                    debug!(
+                        "Processed queued task {} to collector {}",
+                        pending.task.task_id, collector_id
+                    );
                 }
                 Err(e) => {
-                    queued_task.retry_count += 1;
-                    if queued_task.retry_count >= self.max_retries {
+                    pending.retry_count = pending.retry_count.saturating_add(1);
+                    if pending.retry_count >= self.max_retries {
                         error!(
                             "Task {} failed after {} retries: {}",
-                            queued_task.task.task_id, self.max_retries, e
+                            pending.task.task_id, self.max_retries, e
                         );
-                        let mut stats = self.stats.lock().await;
-                        stats.tasks_failed += 1;
+                        let mut stats_guard = self.stats.lock().await;
+                        stats_guard.tasks_failed = stats_guard.tasks_failed.saturating_add(1);
                     } else {
                         // Re-queue for retry
-                        let mut queue = self.task_queue.lock().await;
-                        queue.push(queued_task);
+                        self.task_queue.lock().await.push(pending);
                         break;
                     }
                 }
@@ -621,13 +631,11 @@ impl TaskDistributor {
         }
 
         // Update statistics
+        let queue_len = self.task_queue.lock().await.len();
         {
-            let mut stats = self.stats.lock().await;
-            stats.tasks_queued = {
-                let queue = self.task_queue.lock().await;
-                queue.len()
-            };
-        }
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.tasks_queued = queue_len;
+        };
 
         Ok(processed)
     }
@@ -637,7 +645,7 @@ impl TaskDistributor {
         let mut registry = self.capability_registry.write().await;
         if let Some(reg) = registry.get_mut(collector_id) {
             if reg.current_tasks > 0 {
-                reg.current_tasks -= 1;
+                reg.current_tasks = reg.current_tasks.saturating_sub(1);
                 // Update status if no longer at capacity
                 if reg.current_tasks < reg.capability.max_concurrent_tasks
                     && reg.status == CollectorStatus::AtCapacity
@@ -648,18 +656,16 @@ impl TaskDistributor {
                     "Task {} completed on collector {} ({} tasks remaining)",
                     task_id, collector_id, reg.current_tasks
                 );
-                Ok(())
             } else {
                 warn!(
                     "Task completion for collector {} but no tasks tracked",
                     collector_id
                 );
-                Ok(())
             }
+            Ok(())
         } else {
             Err(EventBusError::topic(format!(
-                "Collector not found: {}",
-                collector_id
+                "Collector not found: {collector_id}"
             )))
         }
     }
@@ -692,8 +698,8 @@ impl TaskDistributor {
     /// Check collector health and update status
     pub async fn check_collector_health(&self) -> Result<()> {
         let now = SystemTime::now();
-        let mut unhealthy_count = 0;
-        let mut recovered_count = 0;
+        let mut unhealthy_count = 0_usize;
+        let mut recovered_count = 0_usize;
 
         let available_count = {
             let mut registry = self.capability_registry.write().await;
@@ -706,7 +712,7 @@ impl TaskDistributor {
                                 collector_id, elapsed
                             );
                             reg.status = CollectorStatus::Unhealthy;
-                            unhealthy_count += 1;
+                            unhealthy_count = unhealthy_count.saturating_add(1);
                         }
                     } else {
                         // Collector is responsive
@@ -718,7 +724,7 @@ impl TaskDistributor {
                             } else {
                                 CollectorStatus::Available
                             };
-                            recovered_count += 1;
+                            recovered_count = recovered_count.saturating_add(1);
                         }
                     }
                 }
@@ -731,9 +737,9 @@ impl TaskDistributor {
 
         // Update statistics
         {
-            let mut stats = self.stats.lock().await;
-            stats.active_collectors = available_count;
-        }
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.active_collectors = available_count;
+        };
 
         if unhealthy_count > 0 {
             info!("Marked {} collectors as unhealthy", unhealthy_count);
@@ -748,8 +754,7 @@ impl TaskDistributor {
 
     /// Set routing strategy
     pub async fn set_routing_strategy(&self, strategy: RoutingStrategy) {
-        let mut current_strategy = self.routing_strategy.write().await;
-        *current_strategy = strategy;
+        *self.routing_strategy.write().await = strategy;
         info!("Routing strategy changed to: {:?}", strategy);
     }
 
@@ -768,26 +773,27 @@ impl TaskDistributor {
     }
 
     /// Start background tasks for queue processing and health checks
+    #[allow(clippy::unused_async)]
     pub async fn start_background_tasks(&self) -> Result<()> {
         // Queue processing task
-        let distributor_clone = self.clone_for_background();
+        let queue_distributor = self.clone_for_background();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             loop {
                 interval.tick().await;
-                if let Err(e) = distributor_clone.process_queue().await {
+                if let Err(e) = queue_distributor.process_queue().await {
                     error!("Error processing queue: {}", e);
                 }
             }
         });
 
         // Health check task
-        let distributor_clone = self.clone_for_background();
+        let health_distributor = self.clone_for_background();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(10));
             loop {
                 interval.tick().await;
-                if let Err(e) = distributor_clone.check_collector_health().await {
+                if let Err(e) = health_distributor.check_collector_health().await {
                     error!("Error checking collector health: {}", e);
                 }
             }

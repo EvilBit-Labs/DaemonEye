@@ -65,14 +65,14 @@ impl QueueManager {
         // Validate message size
         if msg.len() > 1024 * 1024 {
             return Err(EventBusError::transport(
-                "Message exceeds 1MB limit".to_string(),
+                "Message exceeds 1MB limit".to_owned(),
             ));
         }
 
         let mut queues = self.queues.lock().await;
 
         // Get or create queue for client
-        let queue_info = queues.entry(client_id.to_string()).or_insert_with(|| {
+        let queue_info = queues.entry(client_id.to_owned()).or_insert_with(|| {
             let (tx, rx) = mpsc::channel(self.max_queue_size);
             QueueInfo {
                 sender: tx,
@@ -85,60 +85,65 @@ impl QueueManager {
         // Try to send (non-blocking)
         match queue_info.sender.try_send(msg) {
             Ok(()) => {
-                queue_info.stats.messages_enqueued += 1;
-                queue_info.stats.current_depth += 1;
+                queue_info.stats.messages_enqueued =
+                    queue_info.stats.messages_enqueued.saturating_add(1);
+                queue_info.stats.current_depth = queue_info.stats.current_depth.saturating_add(1);
                 queue_info.last_message = Some(Instant::now());
                 debug!("Enqueued message for client: {}", client_id);
                 Ok(())
             }
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                queue_info.stats.messages_dropped += 1;
+                queue_info.stats.messages_dropped =
+                    queue_info.stats.messages_dropped.saturating_add(1);
                 warn!("Queue full for client: {}, message dropped", client_id);
                 Err(EventBusError::transport(
-                    "Queue full, backpressure".to_string(),
+                    "Queue full, backpressure".to_owned(),
                 ))
             }
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                 warn!("Queue closed for client: {}", client_id);
                 queues.remove(client_id);
-                Err(EventBusError::transport("Queue closed".to_string()))
+                drop(queues);
+                Err(EventBusError::transport("Queue closed".to_owned()))
             }
         }
     }
 
     /// Dequeue a message for a client (with timeout)
     pub async fn dequeue(&self, client_id: &str, _timeout: Duration) -> Result<Option<Vec<u8>>> {
+        // Note: This is a simplified implementation
+        // In a real scenario, we'd need to track receivers per client
         let queues = self.queues.lock().await;
-
-        if let Some(_queue_info) = queues.get(client_id) {
-            // Create a receiver for this dequeue operation
-            // Note: This is a simplified implementation
-            // In a real scenario, we'd need to track receivers per client
+        if queues.get(client_id).is_some() {
             drop(queues);
-            Ok(None) // Placeholder - would need receiver tracking
-        } else {
-            Ok(None)
         }
+        Ok(None) // Placeholder - would need receiver tracking
     }
 
     /// Drain all queued messages for a client
     pub async fn drain_queue(&self, client_id: &str) -> Result<Vec<Vec<u8>>> {
-        let mut queues = self.queues.lock().await;
+        let mut queues_guard = self.queues.lock().await;
 
-        if let Some(queue_info) = queues.get_mut(client_id) {
+        if let Some(queue_info) = queues_guard.get_mut(client_id) {
             let mut messages = Vec::new();
             if let Some(mut receiver) = queue_info.receiver.take() {
-                drop(queues);
+                drop(queues_guard);
                 // Drain all available messages
                 while let Ok(msg) = receiver.try_recv() {
                     messages.push(msg);
                 }
                 // Put receiver back
-                let mut queues = self.queues.lock().await;
-                if let Some(queue_info) = queues.get_mut(client_id) {
-                    queue_info.receiver = Some(receiver);
-                    queue_info.stats.messages_dequeued += messages.len() as u64;
-                    queue_info.stats.current_depth = queue_info
+                let mut queues_guard2 = self.queues.lock().await;
+                if let Some(updated_queue_info) = queues_guard2.get_mut(client_id) {
+                    updated_queue_info.receiver = Some(receiver);
+                    // SAFETY: messages.len() fits in u64 on all supported platforms.
+                    #[allow(clippy::as_conversions)]
+                    let len_u64 = messages.len() as u64;
+                    updated_queue_info.stats.messages_dequeued = updated_queue_info
+                        .stats
+                        .messages_dequeued
+                        .saturating_add(len_u64);
+                    updated_queue_info.stats.current_depth = updated_queue_info
                         .stats
                         .current_depth
                         .saturating_sub(messages.len());
@@ -157,9 +162,9 @@ impl QueueManager {
 
     /// Report available credits (buffer space) for a client
     pub async fn report_credits(&self, client_id: &str, available_slots: usize) -> Result<()> {
-        let mut queues = self.queues.lock().await;
+        let client_found = self.queues.lock().await.get_mut(client_id).is_some();
 
-        if let Some(_queue_info) = queues.get_mut(client_id) {
+        if client_found {
             // Update queue stats based on credits
             // Credits indicate available buffer space, which affects queue capacity
             debug!(
@@ -168,36 +173,34 @@ impl QueueManager {
             );
             // If credits are available and queue has messages, we could trigger draining
             // This is handled by the broker on reconnection
-            Ok(())
         } else {
             // Client not found in queue manager - this is OK, client may not have queued messages
             debug!(
                 "Client {} not found in queue manager (no queued messages)",
                 client_id
             );
-            Ok(())
         }
+        Ok(())
     }
 
     /// Auto-prune old messages (FIFO)
     pub async fn prune_old_messages(&self, max_age: Duration) -> Result<usize> {
-        let mut queues = self.queues.lock().await;
-        let mut pruned_count = 0;
+        let mut pruned_count = 0_usize;
         let now = Instant::now();
 
+        let mut queues = self.queues.lock().await;
         queues.retain(|client_id, queue_info| {
-            if let Some(last_msg) = queue_info.last_message {
+            queue_info.last_message.is_none_or(|last_msg| {
                 if now.duration_since(last_msg) > max_age {
                     debug!("Pruning old queue for client: {}", client_id);
-                    pruned_count += 1;
+                    pruned_count = pruned_count.saturating_add(1);
                     false
                 } else {
                     true
                 }
-            } else {
-                true
-            }
+            })
         });
+        drop(queues);
 
         Ok(pruned_count)
     }
@@ -210,14 +213,12 @@ impl QueueManager {
 
     /// Remove a client queue
     pub async fn remove_client(&self, client_id: &str) -> Result<()> {
-        let mut queues = self.queues.lock().await;
-        if queues.remove(client_id).is_some() {
+        let removed = self.queues.lock().await.remove(client_id).is_some();
+        if removed {
             debug!("Removed queue for client: {}", client_id);
-            Ok(())
-        } else {
-            // Client not found - this is OK, may not have had a queue
-            Ok(())
         }
+        // Client not found - this is OK, may not have had a queue
+        Ok(())
     }
 }
 

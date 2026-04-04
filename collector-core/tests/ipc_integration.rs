@@ -59,7 +59,7 @@ async fn test_ipc_server_creation() {
     let config = CollectorConfig::default();
     let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS));
     let _ipc_server =
-        CollectorIpcServer::new(config, capabilities).expect("Failed to create IPC server");
+        CollectorIpcServer::new(&config, capabilities).expect("Failed to create IPC server");
 
     // Server creation should succeed without starting
     // This tests the basic setup without requiring actual IPC socket creation
@@ -70,7 +70,7 @@ async fn test_capability_negotiation() {
     let config = CollectorConfig::default();
     let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS | SourceCaps::REALTIME));
     let ipc_server =
-        CollectorIpcServer::new(config, capabilities).expect("Failed to create IPC server");
+        CollectorIpcServer::new(&config, capabilities).expect("Failed to create IPC server");
 
     // Test initial capabilities
     use daemoneye_lib::proto::MonitoringDomain;
