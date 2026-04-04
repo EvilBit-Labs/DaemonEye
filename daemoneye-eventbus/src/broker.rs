@@ -27,8 +27,10 @@ pub struct DaemoneyeBroker {
     transport_server: Arc<Mutex<Option<TransportServer>>>,
     /// Message sequence counter
     sequence: Arc<AtomicU64>,
-    /// Statistics
-    stats: Arc<Mutex<EventBusStatistics>>,
+    /// Atomic counter for total messages published (avoids Mutex on hot path)
+    messages_published: Arc<AtomicU64>,
+    /// Atomic counter for total messages delivered (avoids Mutex on hot path)
+    messages_delivered: Arc<AtomicU64>,
     /// Broker start time
     start_time: Instant,
     /// Shutdown signal broadcaster
@@ -116,7 +118,8 @@ impl DaemoneyeBroker {
             client_manager: Arc::new(Mutex::new(client_manager)),
             transport_server: Arc::new(Mutex::new(None)),
             sequence: Arc::new(AtomicU64::new(0)),
-            stats: Arc::new(Mutex::new(EventBusStatistics::default())),
+            messages_published: Arc::new(AtomicU64::new(0)),
+            messages_delivered: Arc::new(AtomicU64::new(0)),
             start_time: Instant::now(),
             shutdown_tx,
             config,
@@ -593,21 +596,12 @@ impl DaemoneyeBroker {
         for subscriber_id in failed_senders {
             senders_guard.remove(&subscriber_id);
         }
-
-        // Get total subscriber count
-        let total_subscribers = {
-            let client_manager = self.client_manager.lock().await;
-            client_manager.get_stats().total_clients + senders_guard.len()
-        };
         drop(senders_guard);
 
-        // Update statistics: increment messages_published exactly once
-        {
-            let mut stats_guard = self.stats.lock().await;
-            stats_guard.messages_published += 1;
-            stats_guard.messages_delivered += delivered_count;
-            stats_guard.active_subscribers = total_subscribers;
-        }
+        // Increment atomic counters on the hot path (no Mutex required)
+        self.messages_published.fetch_add(1, Ordering::Relaxed);
+        self.messages_delivered
+            .fetch_add(delivered_count, Ordering::Relaxed);
 
         debug!(
             "Published message to {} subscribers on topic: {}",
@@ -663,9 +657,8 @@ impl DaemoneyeBroker {
 
         if subscribers.is_empty() {
             debug!("No subscribers for control topic: {}", topic);
-            // Update statistics even when no subscribers
-            let mut stats_guard = self.stats.lock().await;
-            stats_guard.messages_published += 1;
+            // Increment atomic counter even when no subscribers
+            self.messages_published.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
 
@@ -729,12 +722,10 @@ impl DaemoneyeBroker {
         }
         drop(raw_senders_guard);
 
-        // Update statistics
-        {
-            let mut stats_guard = self.stats.lock().await;
-            stats_guard.messages_published += 1;
-            stats_guard.messages_delivered += delivered_count + raw_delivered_count;
-        }
+        // Increment atomic counters on the hot path (no Mutex required)
+        self.messages_published.fetch_add(1, Ordering::Relaxed);
+        self.messages_delivered
+            .fetch_add(delivered_count + raw_delivered_count, Ordering::Relaxed);
 
         debug!(
             "Published control message to {} subscribers on topic: {}",
@@ -886,13 +877,16 @@ impl DaemoneyeBroker {
 
     /// Get current statistics
     pub async fn statistics(&self) -> EventBusStatistics {
-        let stats_guard = self.stats.lock().await;
+        // Read message counters from atomics (no stats Mutex needed for these fields)
+        let messages_published = self.messages_published.load(Ordering::Acquire);
+        let messages_delivered = self.messages_delivered.load(Ordering::Acquire);
+
         let topic_matcher = self.topic_matcher.read().await;
         let client_manager = self.client_manager.lock().await;
 
         EventBusStatistics {
-            messages_published: stats_guard.messages_published,
-            messages_delivered: stats_guard.messages_delivered,
+            messages_published,
+            messages_delivered,
             active_subscribers: topic_matcher.subscriber_count()
                 + client_manager.get_stats().total_clients,
             active_topics: topic_matcher.pattern_count(),

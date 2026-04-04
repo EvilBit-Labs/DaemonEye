@@ -22,7 +22,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::sync::{Mutex, RwLock};
@@ -537,8 +540,12 @@ pub struct LocalEventBus {
     config: EventBusConfig,
     /// Subscriber information with topic patterns
     subscribers: Arc<RwLock<HashMap<String, SubscriberInfo>>>,
-    /// Statistics
+    /// Statistics (used only for uptime and active_subscribers; hot-path counters use atomics)
     stats: Arc<Mutex<EventBusStatistics>>,
+    /// Atomic counter for total events published (avoids Mutex on hot path)
+    events_published: Arc<AtomicU64>,
+    /// Atomic counter for total events delivered (avoids Mutex on hot path)
+    events_delivered: Arc<AtomicU64>,
     /// Start time
     start_time: Instant,
 }
@@ -555,6 +562,8 @@ impl LocalEventBus {
                 active_subscribers: 0,
                 uptime: Duration::from_secs(0),
             })),
+            events_published: Arc::new(AtomicU64::new(0)),
+            events_delivered: Arc::new(AtomicU64::new(0)),
             start_time: Instant::now(),
         }
     }
@@ -728,7 +737,7 @@ impl EventBus for LocalEventBus {
         };
 
         // Find matching subscribers and deliver events
-        let mut delivered_count = 0;
+        let mut delivered_count: u64 = 0;
         let mut failed_subscribers = Vec::with_capacity(4); // Pre-allocate for typical failure scenarios
 
         {
@@ -802,18 +811,10 @@ impl EventBus for LocalEventBus {
             }
         }
 
-        // Update statistics
-        let active_subscribers = {
-            let subscribers = self.subscribers.read().await;
-            subscribers.len()
-        };
-
-        {
-            let mut stats = self.stats.lock().await;
-            stats.events_published += 1;
-            stats.events_delivered += delivered_count;
-            stats.active_subscribers = active_subscribers;
-        }
+        // Increment atomic counters on the hot path (no lock required)
+        self.events_published.fetch_add(1, Ordering::Relaxed);
+        self.events_delivered
+            .fetch_add(delivered_count, Ordering::Relaxed);
 
         tracing::debug!(
             topic = %topic,
@@ -945,7 +946,17 @@ impl EventBus for LocalEventBus {
     }
 
     async fn get_statistics(&self) -> Result<EventBusStatistics> {
+        // Flush atomic counters into the stats struct on read.
+        // This is the only point where the Mutex is acquired for counter values,
+        // keeping the publish hot path free of lock contention.
+        let active_subscribers = {
+            let subscribers = self.subscribers.read().await;
+            subscribers.len()
+        };
         let mut stats = self.stats.lock().await;
+        stats.events_published = self.events_published.load(Ordering::Acquire);
+        stats.events_delivered = self.events_delivered.load(Ordering::Acquire);
+        stats.active_subscribers = active_subscribers;
         stats.uptime = self.start_time.elapsed();
         Ok(stats.clone())
     }

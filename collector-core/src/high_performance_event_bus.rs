@@ -3,15 +3,14 @@
 //! This module provides a high-throughput event bus that can handle
 //! millions of events per second with minimal latency using crossbeam's optimized
 //! channels. Note that while the core event routing uses lock-free crossbeam channels,
-//! subscriber management and statistics tracking use blocking synchronization (RwLock).
+//! subscriber management uses blocking synchronization (RwLock). Statistics counters
+//! use lock-free atomics on the hot path and are flushed to the stats struct only
+//! on read, avoiding write-lock contention per event.
 
 use crate::{event::CollectionEvent, source::SourceCaps};
 use anyhow::Result;
 use async_trait::async_trait;
-use crossbeam::{
-    channel::{Receiver, Sender, TrySendError, bounded},
-    utils::Backoff,
-};
+use crossbeam::channel::{Receiver, Sender, TrySendError, bounded};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -215,7 +214,6 @@ impl HighPerformanceEventBusImpl {
 
         // Clone the Arc references for the thread
         let subscribers_clone = Arc::clone(&subscribers);
-        let statistics_clone = Arc::clone(&statistics_arc);
         let shutdown_signal_clone = Arc::clone(&shutdown_signal);
         let delivery_counter_clone = Arc::clone(&delivery_counter);
         let drop_counter_clone = Arc::clone(&drop_counter);
@@ -225,11 +223,14 @@ impl HighPerformanceEventBusImpl {
         // Start the event routing task using crossbeam scope for safe concurrency
         let routing_handle = thread::spawn(move || {
             let _finished_guard = RoutingFinishedGuard::new(routing_finished_clone);
-            let backoff = Backoff::new();
+
+            // Use recv_timeout so the thread sleeps when idle instead of spin-waiting.
+            // The timeout allows periodic shutdown checks while avoiding busy-looping.
+            const RECV_TIMEOUT: Duration = Duration::from_millis(10);
 
             while !shutdown_signal_clone.load(Ordering::Acquire) {
-                // Use crossbeam's backoff for efficient spinning
-                if let Ok(bus_event) = receiver.try_recv() {
+                // Block efficiently until an event arrives or the timeout elapses
+                if let Ok(bus_event) = receiver.recv_timeout(RECV_TIMEOUT) {
                     // Collect subscriber information first, then release lock before blocking operations
                     let subscribers_to_notify: Vec<(
                         String,
@@ -357,14 +358,11 @@ impl HighPerformanceEventBusImpl {
                         }
                     }
 
-                    // Update statistics
-                    let mut stats = statistics_clone.write();
-                    stats.events_delivered += delivered;
-                    stats.events_dropped += dropped;
-                    stats.last_updated = SystemTime::now();
-                } else {
-                    // No events available, use backoff for efficient waiting
-                    backoff.snooze();
+                    // Atomic counters (delivery_counter_clone / drop_counter_clone) are
+                    // already incremented per-event above. The local `delivered` and `dropped`
+                    // variables are only used for per-batch bookkeeping here; they do not
+                    // need to be written to the stats RwLock on every event.
+                    let _ = (delivered, dropped); // silence unused-variable warnings
                 }
             }
         });
@@ -424,15 +422,6 @@ impl HighPerformanceEventBusImpl {
     #[allow(dead_code)]
     fn matches_filter(&self, event: &CollectionEvent, filter: &EventFilter) -> bool {
         matches_filter(event, filter)
-    }
-
-    /// Updates event bus statistics.
-    #[allow(dead_code)]
-    fn update_statistics(&self, delivered: u64, dropped: u64) {
-        let mut stats = self.statistics.write();
-        stats.events_delivered += delivered;
-        stats.events_dropped += dropped;
-        stats.last_updated = SystemTime::now();
     }
 
     /// Flushes atomic counters to statistics (called periodically to reduce lock contention).
