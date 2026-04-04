@@ -45,7 +45,8 @@
     clippy::redundant_else,
     clippy::match_same_arms,
     clippy::ignore_without_reason,
-    dead_code
+    dead_code,
+    unused_imports
 )]
 //! Performance comparison tests between daemoneye-eventbus and crossbeam event distribution.
 //!

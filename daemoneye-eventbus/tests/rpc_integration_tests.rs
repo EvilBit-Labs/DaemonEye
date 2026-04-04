@@ -45,7 +45,8 @@
     clippy::redundant_else,
     clippy::match_same_arms,
     clippy::ignore_without_reason,
-    dead_code
+    dead_code,
+    unused_imports
 )]
 //! Integration tests for RPC call patterns
 //!
@@ -1402,7 +1403,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 /// Setup test process manager with mock binaries
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 fn setup_test_process_manager() -> (Arc<CollectorProcessManager>, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 

@@ -46,6 +46,7 @@
     clippy::match_same_arms,
     clippy::ignore_without_reason,
     dead_code,
+    unused_imports,
     clippy::manual_assert,
     clippy::unused_self,
     clippy::unused_async,
