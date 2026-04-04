@@ -162,6 +162,8 @@ flowchart LR
 - **map_err_ignore**: Name ignored variables in closures (`|_elapsed|` not `|_|`)
 - **as_conversions**: Add `#[allow(clippy::as_conversions)]` with safety comment for intentional casts
 - **Async in tracing macros**: Never `.await` inside `info!`/`debug!`/`warn!`/`error!` - causes `future_not_send`. Extract value first.
+- **string_slice**: Denied — use `split_once('=')` or `char_indices()` instead of `&s[..pos]` on user input
+- **items_after_statements**: All `const` declarations must be at function top, not after `return` statements
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Formatting**: `rustfmt` with 119 char line length
 - **Rustdoc**: Escape brackets in paths like `/proc/\[pid\]/stat` to avoid broken link warnings
@@ -239,6 +241,7 @@ Use `checked_*`, `saturating_*`, or explicit `wrapping_*` for security-sensitive
 - Validate early, reject with actionable errors
 - Use typed parsers over regex
 - Length limits on all variable-length inputs
+- **Socket path limit**: Unix `sockaddr_un.sun_path` is 108 bytes with NUL — usable limit is 107, not 255
 - SQL: AST validation with `sqlparser` \[Implemented at rule load time; execution-time enforcement is [Planned]\]
 
 ### Newtype Safety
