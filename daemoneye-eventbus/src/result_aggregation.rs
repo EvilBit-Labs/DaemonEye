@@ -24,11 +24,11 @@
 //!
 //! The result aggregation system consists of:
 //!
-//! - **ResultAggregator**: Main coordinator that collects and aggregates results
-//! - **ResultCollector**: Subscribes to result topics and collects results
-//! - **CorrelationTracker**: Tracks correlation IDs across multi-collector workflows
-//! - **DeduplicationCache**: Prevents duplicate result processing
-//! - **FailoverManager**: Detects failures and redistributes tasks
+//! - **`ResultAggregator`**: Main coordinator that collects and aggregates results
+//! - **`ResultCollector`**: Subscribes to result topics and collects results
+//! - **`CorrelationTracker`**: Tracks correlation IDs across multi-collector workflows
+//! - **`DeduplicationCache`**: Prevents duplicate result processing
+//! - **`FailoverManager`**: Detects failures and redistributes tasks
 //!
 //! ## Usage Example
 //!
@@ -160,6 +160,7 @@ struct CorrelationEntry {
 
 /// Collector health status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CollectorHealth {
     /// Collector is healthy and responsive
     Healthy,
@@ -278,6 +279,7 @@ impl ResultAggregator {
     }
 
     /// Start result collection background task
+    #[allow(clippy::unused_async)]
     async fn start_result_collection_task(&self) -> Result<()> {
         let broker = Arc::clone(&self.broker);
 
@@ -304,6 +306,7 @@ impl ResultAggregator {
     }
 
     /// Start correlation processing background task
+    #[allow(clippy::unused_async)]
     async fn start_correlation_processing_task(&self) -> Result<()> {
         let pending_results = Arc::clone(&self.pending_results);
         let correlation_tracker = Arc::clone(&self.correlation_tracker);
@@ -312,6 +315,8 @@ impl ResultAggregator {
         let correlation_timeout = self.config.correlation_timeout;
 
         tokio::spawn(async move {
+            // Maximum results per correlation to prevent memory exhaustion
+            const MAX_RESULTS_PER_CORRELATION: usize = 10000;
             let mut interval = tokio::time::interval(Duration::from_millis(100));
             loop {
                 interval.tick().await;
@@ -332,34 +337,31 @@ impl ResultAggregator {
                     HashMap::with_capacity(100);
                 for result in results_to_process {
                     // Extract correlation ID from result metadata
-                    let correlation_id = match &result.event {
-                        CollectionEvent::Process(event) => {
+                    let correlation_id = match result.event {
+                        CollectionEvent::Process(ref event) => {
                             event.metadata.get("correlation_id").cloned()
                         }
-                        CollectionEvent::Network(event) => {
+                        CollectionEvent::Network(ref event) => {
                             event.metadata.get("correlation_id").cloned()
                         }
-                        CollectionEvent::Filesystem(event) => {
+                        CollectionEvent::Filesystem(ref event) => {
                             event.metadata.get("correlation_id").cloned()
                         }
-                        CollectionEvent::Performance(event) => {
+                        CollectionEvent::Performance(ref event) => {
                             event.metadata.get("correlation_id").cloned()
                         }
-                        CollectionEvent::TriggerRequest(event) => {
+                        CollectionEvent::TriggerRequest(ref event) => {
                             event.metadata.get("correlation_id").cloned()
                         }
                     };
 
-                    if let Some(correlation_id) = correlation_id {
+                    if let Some(cid) = correlation_id {
                         // Validate correlation ID length to prevent memory exhaustion
-                        if correlation_id.len() > 256 {
+                        if cid.len() > 256 {
                             warn!("Correlation ID exceeds maximum length, skipping result");
                             continue;
                         }
-                        correlation_groups
-                            .entry(correlation_id)
-                            .or_default()
-                            .push(result);
+                        correlation_groups.entry(cid).or_default().push(result);
                     }
                 }
 
@@ -382,8 +384,9 @@ impl ResultAggregator {
                             });
 
                     // Enforce maximum results per correlation to prevent memory exhaustion
-                    const MAX_RESULTS_PER_CORRELATION: usize = 10000;
-                    if entry.results.len() + results.len() > MAX_RESULTS_PER_CORRELATION {
+                    if entry.results.len().saturating_add(results.len())
+                        > MAX_RESULTS_PER_CORRELATION
+                    {
                         warn!(
                             "Correlation {} exceeds maximum result count, dropping excess",
                             correlation_id
@@ -417,24 +420,24 @@ impl ResultAggregator {
 
                         // Update statistics
                         let mut stats_guard = stats.lock().await;
-                        stats_guard.correlations_completed += 1;
+                        stats_guard.correlations_completed =
+                            stats_guard.correlations_completed.saturating_add(1);
                     }
                 }
 
                 // Clean up expired correlations
                 tracker.retain(|_, entry| {
-                    if let Ok(elapsed) = now.duration_since(entry.updated_at) {
-                        elapsed < correlation_timeout
-                    } else {
-                        true
-                    }
+                    now.duration_since(entry.updated_at)
+                        .map_or(true, |elapsed| elapsed < correlation_timeout)
                 });
 
                 // Update statistics
+                let tracker_len = tracker.len();
+                drop(tracker);
                 {
                     let mut stats_guard = stats.lock().await;
-                    stats_guard.correlations_active = tracker.len();
-                }
+                    stats_guard.correlations_active = tracker_len;
+                };
             }
         });
 
@@ -442,6 +445,7 @@ impl ResultAggregator {
     }
 
     /// Start health monitoring background task
+    #[allow(clippy::unused_async)]
     async fn start_health_monitoring_task(&self) -> Result<()> {
         let collector_health = Arc::clone(&self.collector_health);
         let task_distributor = Arc::clone(&self.task_distributor);
@@ -454,39 +458,44 @@ impl ResultAggregator {
                 interval.tick().await;
 
                 let now = SystemTime::now();
-                let mut health_map = collector_health.write().await;
-                let mut healthy_count = 0;
-                let mut unhealthy_count = 0;
+                let mut healthy_count = 0_usize;
+                let mut unhealthy_count = 0_usize;
                 // Pre-allocate based on typical failure rate (small capacity)
                 let mut failed_collectors = Vec::with_capacity(4);
 
-                for (collector_id, status) in health_map.iter_mut() {
-                    // Check if collector has been inactive
-                    if let Ok(elapsed) = now.duration_since(status.last_success)
-                        && elapsed > Duration::from_secs(60)
-                    {
-                        // Mark as unhealthy if no results for 60 seconds
-                        if status.health != CollectorHealth::Unhealthy
-                            && status.health != CollectorHealth::Failed
+                {
+                    let mut health_map = collector_health.write().await;
+                    for (collector_id, status) in health_map.iter_mut() {
+                        // Check if collector has been inactive
+                        if let Ok(elapsed) = now.duration_since(status.last_success)
+                            && elapsed > Duration::from_secs(60)
                         {
-                            warn!("Collector {} marked as unhealthy", collector_id);
-                            status.health = CollectorHealth::Unhealthy;
-                            status.failure_count += 1;
+                            // Mark as unhealthy if no results for 60 seconds
+                            if status.health != CollectorHealth::Unhealthy
+                                && status.health != CollectorHealth::Failed
+                            {
+                                warn!("Collector {} marked as unhealthy", collector_id);
+                                status.health = CollectorHealth::Unhealthy;
+                                status.failure_count = status.failure_count.saturating_add(1);
+                            }
+
+                            // Mark as failed after 3 consecutive failures
+                            if status.failure_count >= 3 && status.health != CollectorHealth::Failed
+                            {
+                                error!("Collector {} marked as failed", collector_id);
+                                status.health = CollectorHealth::Failed;
+                                failed_collectors.push(collector_id.clone());
+                            }
                         }
 
-                        // Mark as failed after 3 consecutive failures
-                        if status.failure_count >= 3 && status.health != CollectorHealth::Failed {
-                            error!("Collector {} marked as failed", collector_id);
-                            status.health = CollectorHealth::Failed;
-                            failed_collectors.push(collector_id.clone());
-                        }
-                    }
-
-                    // Count health status
-                    match status.health {
-                        CollectorHealth::Healthy | CollectorHealth::Degraded => healthy_count += 1,
-                        CollectorHealth::Unhealthy | CollectorHealth::Failed => {
-                            unhealthy_count += 1
+                        // Count health status
+                        match status.health {
+                            CollectorHealth::Healthy | CollectorHealth::Degraded => {
+                                healthy_count = healthy_count.saturating_add(1);
+                            }
+                            CollectorHealth::Unhealthy | CollectorHealth::Failed => {
+                                unhealthy_count = unhealthy_count.saturating_add(1);
+                            }
                         }
                     }
                 }
@@ -496,7 +505,7 @@ impl ResultAggregator {
                     let mut stats_guard = stats.lock().await;
                     stats_guard.healthy_collectors = healthy_count;
                     stats_guard.unhealthy_collectors = unhealthy_count;
-                }
+                };
 
                 // Handle failed collectors
                 for collector_id in failed_collectors {
@@ -508,7 +517,7 @@ impl ResultAggregator {
 
                     // Update statistics
                     let mut stats_guard = stats.lock().await;
-                    stats_guard.failover_events += 1;
+                    stats_guard.failover_events = stats_guard.failover_events.saturating_add(1);
                 }
             }
         });
@@ -517,6 +526,7 @@ impl ResultAggregator {
     }
 
     /// Start deduplication cleanup background task
+    #[allow(clippy::unused_async)]
     async fn start_deduplication_cleanup_task(&self) -> Result<()> {
         let deduplication_cache = Arc::clone(&self.deduplication_cache);
         let deduplication_window = self.config.deduplication_window;
@@ -527,18 +537,17 @@ impl ResultAggregator {
                 interval.tick().await;
 
                 let now = SystemTime::now();
-                let mut cache = deduplication_cache.write().await;
+                let cache_size = {
+                    let mut cache = deduplication_cache.write().await;
+                    // Remove expired entries
+                    cache.retain(|_, entry| {
+                        now.duration_since(entry.created_at)
+                            .map_or(true, |elapsed| elapsed < deduplication_window)
+                    });
+                    cache.len()
+                };
 
-                // Remove expired entries
-                cache.retain(|_, entry| {
-                    if let Ok(elapsed) = now.duration_since(entry.created_at) {
-                        elapsed < deduplication_window
-                    } else {
-                        true
-                    }
-                });
-
-                debug!("Deduplication cache size: {}", cache.len());
+                debug!("Deduplication cache size: {}", cache_size);
             }
         });
 
@@ -549,7 +558,7 @@ impl ResultAggregator {
     ///
     /// # Security
     ///
-    /// - Validates collector_id length to prevent memory exhaustion
+    /// - Validates `collector_id` length to prevent memory exhaustion
     /// - Enforces backpressure to prevent resource exhaustion
     /// - Deduplicates results to prevent duplicate processing
     pub async fn collect_result(&self, result: CollectorResult) -> Result<()> {
@@ -557,7 +566,7 @@ impl ResultAggregator {
         if result.collector_id.len() > 256 {
             warn!("Collector ID exceeds maximum length, rejecting result");
             return Err(EventBusError::broker(
-                "Collector ID exceeds maximum length".to_string(),
+                "Collector ID exceeds maximum length".to_owned(),
             ));
         }
 
@@ -566,73 +575,78 @@ impl ResultAggregator {
             let backpressure = *self.backpressure_active.lock().await;
             if backpressure {
                 warn!("Backpressure active, dropping result");
-                return Err(EventBusError::broker("Backpressure active".to_string()));
+                return Err(EventBusError::broker("Backpressure active".to_owned()));
             }
         }
 
         // Check deduplication (compute hash key outside lock to reduce lock hold time)
-        let result_hash = self.compute_result_hash(&result);
+        let result_hash = Self::compute_result_hash(&result);
         let hash_key = result_hash.to_string();
-        {
-            let mut cache = self.deduplication_cache.write().await;
-            if cache.contains_key(&hash_key) {
-                debug!("Duplicate result detected, skipping");
-                let mut stats = self.stats.lock().await;
-                stats.results_deduplicated += 1;
-                return Ok(());
-            }
-
-            // Add to deduplication cache
-            cache.insert(
-                hash_key,
-                DeduplicationEntry {
-                    result_hash,
-                    created_at: SystemTime::now(),
-                },
-            );
+        let is_duplicate = self
+            .deduplication_cache
+            .read()
+            .await
+            .contains_key(&hash_key);
+        if is_duplicate {
+            debug!("Duplicate result detected, skipping");
+            {
+                let mut stats_guard = self.stats.lock().await;
+                stats_guard.results_deduplicated =
+                    stats_guard.results_deduplicated.saturating_add(1);
+            };
+            return Ok(());
         }
+        // Add to deduplication cache
+        self.deduplication_cache.write().await.insert(
+            hash_key,
+            DeduplicationEntry {
+                result_hash,
+                created_at: SystemTime::now(),
+            },
+        );
 
-        // Update collector health (capture collector_id once to avoid multiple clones)
+        // Update collector health
         let collector_id = result.collector_id.clone();
-        {
-            let mut health_map = self.collector_health.write().await;
-            let now = SystemTime::now();
-            let status =
-                health_map
-                    .entry(collector_id.clone())
-                    .or_insert_with(|| CollectorHealthStatus {
-                        collector_id,
-                        health: CollectorHealth::Healthy,
-                        last_success: now,
-                        failure_count: 0,
-                        total_results: 0,
-                        failed_results: 0,
-                    });
-
-            status.last_success = now;
-            status.total_results += 1;
-            status.failure_count = 0;
-            status.health = CollectorHealth::Healthy;
-        }
+        let now = SystemTime::now();
+        let mut health_map = self.collector_health.write().await;
+        let status =
+            health_map
+                .entry(collector_id.clone())
+                .or_insert_with(|| CollectorHealthStatus {
+                    collector_id,
+                    health: CollectorHealth::Healthy,
+                    last_success: now,
+                    failure_count: 0,
+                    total_results: 0,
+                    failed_results: 0,
+                });
+        status.last_success = now;
+        status.total_results = status.total_results.saturating_add(1);
+        status.failure_count = 0;
+        status.health = CollectorHealth::Healthy;
+        drop(health_map);
 
         // Add to pending results
-        {
+        let pending_len = {
             let mut pending = self.pending_results.lock().await;
             pending.push_back(result);
+            pending.len()
+        };
 
-            // Check for backpressure
-            if pending.len() >= self.config.backpressure_threshold {
-                warn!("Backpressure threshold reached");
-                *self.backpressure_active.lock().await = true;
-                let mut stats = self.stats.lock().await;
-                stats.backpressure_events += 1;
-            }
-
-            // Update statistics
-            let mut stats = self.stats.lock().await;
-            stats.results_collected += 1;
-            stats.results_pending = pending.len();
+        // Check for backpressure
+        if pending_len >= self.config.backpressure_threshold {
+            warn!("Backpressure threshold reached");
+            *self.backpressure_active.lock().await = true;
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.backpressure_events = stats_guard.backpressure_events.saturating_add(1);
         }
+
+        // Update statistics
+        {
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.results_collected = stats_guard.results_collected.saturating_add(1);
+            stats_guard.results_pending = pending_len;
+        };
 
         Ok(())
     }
@@ -641,7 +655,7 @@ impl ResultAggregator {
     ///
     /// Includes multiple fields to ensure distinct events are not deduplicated
     /// when sequence numbers are equal.
-    fn compute_result_hash(&self, result: &CollectorResult) -> u64 {
+    fn compute_result_hash(result: &CollectorResult) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -655,8 +669,8 @@ impl ResultAggregator {
         std::mem::discriminant(&result.event).hash(&mut hasher);
 
         // Hash key fields from the event based on event type
-        match &result.event {
-            CollectionEvent::Process(event) => {
+        match result.event {
+            CollectionEvent::Process(ref event) => {
                 event.pid.hash(&mut hasher);
                 event.name.hash(&mut hasher);
                 event.executable_path.as_deref().hash(&mut hasher);
@@ -665,7 +679,7 @@ impl ResultAggregator {
                     corr_id.hash(&mut hasher);
                 }
             }
-            CollectionEvent::Network(event) => {
+            CollectionEvent::Network(ref event) => {
                 event.connection_id.hash(&mut hasher);
                 event.source_address.hash(&mut hasher);
                 event.destination_address.hash(&mut hasher);
@@ -674,7 +688,7 @@ impl ResultAggregator {
                     corr_id.hash(&mut hasher);
                 }
             }
-            CollectionEvent::Filesystem(event) => {
+            CollectionEvent::Filesystem(ref event) => {
                 event.path.hash(&mut hasher);
                 event.event_type.hash(&mut hasher);
                 event.size.hash(&mut hasher);
@@ -683,7 +697,7 @@ impl ResultAggregator {
                     corr_id.hash(&mut hasher);
                 }
             }
-            CollectionEvent::Performance(event) => {
+            CollectionEvent::Performance(ref event) => {
                 event.metric_name.hash(&mut hasher);
                 event.value.to_bits().hash(&mut hasher);
                 // Include correlation ID from metadata if present
@@ -691,7 +705,7 @@ impl ResultAggregator {
                     corr_id.hash(&mut hasher);
                 }
             }
-            CollectionEvent::TriggerRequest(event) => {
+            CollectionEvent::TriggerRequest(ref event) => {
                 event.request_id.hash(&mut hasher);
                 event.collector_type.hash(&mut hasher);
                 event.priority.hash(&mut hasher);
@@ -740,6 +754,42 @@ impl ResultAggregator {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
     use crate::message::ProcessEvent;

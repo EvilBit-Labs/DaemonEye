@@ -1,4 +1,4 @@
-//! Message types and serialization for the EventBus
+//! Message types and serialization for the `EventBus`
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -24,6 +24,26 @@ pub struct CorrelationMetadata {
     pub created_at: SystemTime,
 }
 
+/// Truncate a string to at most `max_len` bytes, respecting UTF-8 character boundaries.
+///
+/// Unlike a raw byte slice `s[..max_len]`, this never panics on multi-byte characters
+/// (e.g. emoji or CJK text) because it steps forward by whole scalar values.
+fn truncate_to_byte_boundary(s: &str, max_len: usize) -> &str {
+    if s.len() <= max_len {
+        return s;
+    }
+    // Include only characters that fit entirely within max_len bytes.
+    let end = s
+        .char_indices()
+        .take_while(|&(byte_pos, ch)| byte_pos.saturating_add(ch.len_utf8()) <= max_len)
+        .last()
+        .map_or(0, |(byte_pos, ch)| byte_pos.saturating_add(ch.len_utf8()));
+    // SAFETY: `end` is always a valid UTF-8 character boundary because it was
+    // computed by summing the byte-length of complete Unicode scalar values.
+    #[allow(clippy::string_slice)]
+    &s[..end]
+}
+
 impl CorrelationMetadata {
     /// Create a new correlation metadata instance
     ///
@@ -33,7 +53,7 @@ impl CorrelationMetadata {
         // Security: Limit correlation ID length
         const MAX_CORRELATION_ID_LENGTH: usize = 256;
         let bounded_id = if correlation_id.len() > MAX_CORRELATION_ID_LENGTH {
-            correlation_id[..MAX_CORRELATION_ID_LENGTH].to_string()
+            truncate_to_byte_boundary(&correlation_id, MAX_CORRELATION_ID_LENGTH).to_owned()
         } else {
             correlation_id
         };
@@ -62,19 +82,19 @@ impl CorrelationMetadata {
         const MAX_CORRELATION_ID_LENGTH: usize = 256;
 
         let bounded_id = if correlation_id.len() > MAX_CORRELATION_ID_LENGTH {
-            correlation_id[..MAX_CORRELATION_ID_LENGTH].to_string()
+            truncate_to_byte_boundary(&correlation_id, MAX_CORRELATION_ID_LENGTH).to_owned()
         } else {
             correlation_id
         };
 
         let bounded_parent = if parent_correlation_id.len() > MAX_CORRELATION_ID_LENGTH {
-            parent_correlation_id[..MAX_CORRELATION_ID_LENGTH].to_string()
+            truncate_to_byte_boundary(&parent_correlation_id, MAX_CORRELATION_ID_LENGTH).to_owned()
         } else {
             parent_correlation_id
         };
 
         let bounded_root = if root_correlation_id.len() > MAX_CORRELATION_ID_LENGTH {
-            root_correlation_id[..MAX_CORRELATION_ID_LENGTH].to_string()
+            truncate_to_byte_boundary(&root_correlation_id, MAX_CORRELATION_ID_LENGTH).to_owned()
         } else {
             root_correlation_id
         };
@@ -94,12 +114,13 @@ impl CorrelationMetadata {
     ///
     /// # Security
     /// - Limits workflow stage length to prevent resource exhaustion
+    #[must_use]
     pub fn with_stage(mut self, stage: String) -> Self {
         // Security: Limit workflow stage length
         const MAX_STAGE_LENGTH: usize = 128;
 
         let bounded_stage = if stage.len() > MAX_STAGE_LENGTH {
-            stage[..MAX_STAGE_LENGTH].to_string()
+            truncate_to_byte_boundary(&stage, MAX_STAGE_LENGTH).to_owned()
         } else {
             stage
         };
@@ -113,6 +134,7 @@ impl CorrelationMetadata {
     /// # Security
     /// - Limits number of tags to prevent resource exhaustion
     /// - Bounds tag key and value lengths
+    #[must_use]
     pub fn with_tag(mut self, key: String, value: String) -> Self {
         // Security: Limit number of tags to prevent resource exhaustion
         const MAX_TAGS: usize = 64;
@@ -129,17 +151,19 @@ impl CorrelationMetadata {
     }
 
     /// Set sequence number
-    pub fn with_sequence(mut self, sequence: u64) -> Self {
+    #[must_use]
+    pub const fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence_number = sequence;
         self
     }
 
     /// Increment sequence number
-    pub fn increment_sequence(&mut self) {
+    pub const fn increment_sequence(&mut self) {
         self.sequence_number = self.sequence_number.saturating_add(1);
     }
 
     /// Create a child correlation from this one
+    #[must_use]
     pub fn create_child(&self, child_id: String) -> Self {
         Self {
             correlation_id: child_id,
@@ -155,7 +179,7 @@ impl CorrelationMetadata {
     /// Check if this correlation matches a filter pattern
     ///
     /// # Security
-    /// - Limits regex pattern length to prevent ReDoS attacks
+    /// - Limits regex pattern length to prevent `ReDoS` attacks
     /// - Escapes regex special characters to prevent regex injection
     /// - Uses anchored full-string matching for security
     pub fn matches_pattern(&self, pattern: &str) -> bool {
@@ -172,14 +196,13 @@ impl CorrelationMetadata {
             // Replace escaped \* with .* for wildcard matching
             let regex_pattern = escaped_pattern.replace("\\*", ".*");
             // Anchor with ^ and $ for full-string matching
-            let anchored_pattern = format!("^{}$", regex_pattern);
+            let anchored_pattern = format!("^{regex_pattern}$");
             if let Ok(regex) = regex::Regex::new(&anchored_pattern) {
                 return regex.is_match(&self.correlation_id)
                     || self
                         .parent_correlation_id
                         .as_ref()
-                        .map(|p| regex.is_match(p))
-                        .unwrap_or(false)
+                        .is_some_and(|p| regex.is_match(p))
                     || regex.is_match(&self.root_correlation_id);
             }
         }
@@ -189,25 +212,18 @@ impl CorrelationMetadata {
             || self
                 .parent_correlation_id
                 .as_ref()
-                .map(|p| p == pattern)
-                .unwrap_or(false)
+                .is_some_and(|p| p == pattern)
             || self.root_correlation_id == pattern
     }
 
     /// Check if this correlation has a specific tag
     pub fn has_tag(&self, key: &str, value: &str) -> bool {
-        self.correlation_tags
-            .get(key)
-            .map(|v| v == value)
-            .unwrap_or(false)
+        self.correlation_tags.get(key).is_some_and(|v| v == value)
     }
 
     /// Check if this correlation is in a specific workflow stage
     pub fn in_stage(&self, stage: &str) -> bool {
-        self.workflow_stage
-            .as_ref()
-            .map(|s| s == stage)
-            .unwrap_or(false)
+        self.workflow_stage.as_ref().is_some_and(|s| s == stage)
     }
 }
 
@@ -238,6 +254,7 @@ pub struct Message {
 
 /// Types of messages for routing and handling
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub enum MessageType {
     /// Regular event message
     #[default]
@@ -355,8 +372,8 @@ impl Message {
     /// Create a heartbeat message
     pub fn heartbeat(sequence: u64) -> Self {
         Self::new_with_correlation_id(
-            "heartbeat".to_string(),
-            "system".to_string(),
+            "heartbeat".to_owned(),
+            "system".to_owned(),
             Vec::new(),
             sequence,
             MessageType::Heartbeat,
@@ -366,8 +383,8 @@ impl Message {
     /// Create a shutdown message
     pub fn shutdown() -> Self {
         Self::new_with_correlation_id(
-            "shutdown".to_string(),
-            "system".to_string(),
+            "shutdown".to_owned(),
+            "system".to_owned(),
             Vec::new(),
             0,
             MessageType::Shutdown,
@@ -428,14 +445,14 @@ impl Message {
         ))
     }
 
-    /// Serialize message to bytes
-    pub fn serialize(&self) -> Result<Vec<u8>, crate::error::EventBusError> {
+    /// Encode message to bytes using postcard serialization
+    pub fn to_bytes(&self) -> Result<Vec<u8>, crate::error::EventBusError> {
         postcard::to_allocvec(self)
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))
     }
 
-    /// Deserialize message from bytes
-    pub fn deserialize(data: &[u8]) -> Result<Self, crate::error::EventBusError> {
+    /// Decode message from bytes using postcard deserialization
+    pub fn from_bytes(data: &[u8]) -> Result<Self, crate::error::EventBusError> {
         postcard::from_bytes(data)
             .map_err(|e| crate::error::EventBusError::serialization(e.to_string()))
     }
@@ -482,6 +499,7 @@ impl BusEvent {
 
 /// Collection event types for compatibility with collector-core
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CollectionEvent {
     /// Process monitoring events
     Process(ProcessEvent),
@@ -655,49 +673,57 @@ impl CorrelationFilter {
     }
 
     /// Add a correlation ID to filter
+    #[must_use]
     pub fn with_correlation_id(mut self, id: String) -> Self {
         self.correlation_ids.push(id);
         self
     }
 
     /// Add a correlation pattern to filter
+    #[must_use]
     pub fn with_pattern(mut self, pattern: String) -> Self {
         self.correlation_patterns.push(pattern);
         self
     }
 
     /// Add a parent correlation ID to filter
+    #[must_use]
     pub fn with_parent_id(mut self, id: String) -> Self {
         self.parent_correlation_ids.push(id);
         self
     }
 
     /// Add a root correlation ID to filter
+    #[must_use]
     pub fn with_root_id(mut self, id: String) -> Self {
         self.root_correlation_ids.push(id);
         self
     }
 
     /// Add a workflow stage to filter
+    #[must_use]
     pub fn with_stage(mut self, stage: String) -> Self {
         self.workflow_stages.push(stage);
         self
     }
 
     /// Add a required tag to filter
+    #[must_use]
     pub fn with_required_tag(mut self, key: String, value: String) -> Self {
         self.required_tags.insert(key, value);
         self
     }
 
     /// Add an optional tag to filter (any match)
+    #[must_use]
     pub fn with_any_tag(mut self, key: String, value: String) -> Self {
         self.any_tags.insert(key, value);
         self
     }
 
     /// Set sequence range
-    pub fn with_sequence_range(mut self, min: Option<u64>, max: Option<u64>) -> Self {
+    #[must_use]
+    pub const fn with_sequence_range(mut self, min: Option<u64>, max: Option<u64>) -> Self {
         self.min_sequence = min;
         self.max_sequence = max;
         self
@@ -791,5 +817,151 @@ impl CorrelationFilter {
 impl Default for CorrelationFilter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new,
+    clippy::redundant_type_annotations,
+    clippy::unnecessary_map_or,
+    clippy::manual_assert,
+    clippy::single_match_else
+)]
+mod tests {
+    use super::*;
+
+    // --- truncate_to_byte_boundary ---
+
+    #[test]
+    fn test_truncate_ascii_within_limit() {
+        let s = "hello";
+        assert_eq!(truncate_to_byte_boundary(s, 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_ascii_at_exact_limit() {
+        let s = "hello";
+        assert_eq!(truncate_to_byte_boundary(s, 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_ascii_exceeds_limit() {
+        let s = "hello world";
+        assert_eq!(truncate_to_byte_boundary(s, 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_empty_string() {
+        assert_eq!(truncate_to_byte_boundary("", 10), "");
+    }
+
+    #[test]
+    fn test_truncate_multibyte_emoji_safe() {
+        // Each emoji is 4 bytes (e.g. U+1F600). A limit of 5 must not split mid-char.
+        let s = "😀😀😀"; // 12 bytes total
+        let result = truncate_to_byte_boundary(s, 5);
+        // 5 bytes would land mid-emoji; we should get only the first emoji (4 bytes).
+        assert_eq!(result, "😀");
+        assert!(result.is_char_boundary(result.len()));
+    }
+
+    #[test]
+    fn test_truncate_multibyte_emoji_exact_boundary() {
+        // Limit falls exactly on a char boundary (8 bytes = 2 emojis).
+        let s = "😀😀😀";
+        let result = truncate_to_byte_boundary(s, 8);
+        assert_eq!(result, "😀😀");
+    }
+
+    #[test]
+    fn test_truncate_cjk_characters() {
+        // CJK characters are 3 bytes each in UTF-8.
+        let s = "日本語テスト"; // 6 chars × 3 bytes = 18 bytes
+        let result = truncate_to_byte_boundary(s, 7);
+        // 7 bytes: fits 2 full CJK chars (6 bytes); byte 6 is a valid boundary.
+        assert_eq!(result, "日本");
+        assert!(result.is_char_boundary(result.len()));
+    }
+
+    // --- CorrelationMetadata::new() truncation ---
+
+    #[test]
+    fn test_new_truncates_long_correlation_id_safely() {
+        // Build a string that is longer than 256 bytes using multi-byte chars.
+        // Each '🔑' is 4 bytes; 65 of them = 260 bytes > 256.
+        let long_id: String = "🔑".repeat(65);
+        assert!(long_id.len() > 256);
+
+        let meta = CorrelationMetadata::new(long_id);
+        assert!(meta.correlation_id.len() <= 256);
+        // Must be valid UTF-8 (no panic on indexing confirms it, but let's be explicit).
+        assert!(std::str::from_utf8(meta.correlation_id.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn test_with_parent_truncates_all_ids_safely() {
+        let long: String = "中".repeat(100); // 100 × 3 bytes = 300 bytes > 256
+        assert!(long.len() > 256);
+
+        let meta = CorrelationMetadata::with_parent(long.clone(), long.clone(), long.clone());
+        assert!(meta.correlation_id.len() <= 256);
+        assert!(
+            meta.parent_correlation_id
+                .as_ref()
+                .map_or(true, |s| s.len() <= 256)
+        );
+        assert!(meta.root_correlation_id.len() <= 256);
+        for s in [
+            &meta.correlation_id,
+            meta.parent_correlation_id.as_deref().unwrap_or(""),
+            &meta.root_correlation_id,
+        ] {
+            assert!(std::str::from_utf8(s.as_bytes()).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_with_stage_truncates_long_stage_safely() {
+        let long_stage: String = "🎯".repeat(40); // 40 × 4 bytes = 160 bytes > 128
+        assert!(long_stage.len() > 128);
+
+        let meta = CorrelationMetadata::new("test".to_string()).with_stage(long_stage);
+        let stage = meta.workflow_stage.expect("stage should be set");
+        assert!(stage.len() <= 128);
+        assert!(std::str::from_utf8(stage.as_bytes()).is_ok());
     }
 }

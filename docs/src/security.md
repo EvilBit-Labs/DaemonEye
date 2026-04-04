@@ -152,10 +152,13 @@ impl IntegrityChecker {
 
 Multiple layers of SQL injection prevention:
 
-1. **AST Validation**: Parse and validate SQL queries
-2. **Prepared Statements**: Use parameterized queries
-3. **Sandboxed Execution**: Isolated query execution
-4. **Input Sanitization**: Clean and validate all inputs
+1. **AST Validation**: Parse and validate SQL queries \[Implemented — `sqlparser` AST enforced at rule load time; SELECT-only with banned function list\]
+2. **Prepared Statements**: Use parameterized queries [Implemented]
+3. **Sandboxed Execution**: Isolated query execution [Planned]
+4. **Input Sanitization**: Clean and validate all inputs [Implemented]
+
+> [!NOTE]
+> The detection rule execution engine (`detection/mod.rs`) currently uses category-based pattern matching rather than SQL evaluation. Full SQL-based execution against process data is [Planned].
 
 ```rust,ignore
 use rusqlite::Connection;
@@ -414,7 +417,7 @@ DaemonEye helps meet various security standards:
 1. **Audit Logging**:
 
    - Comprehensive event logging
-   - Certificate Transparency-style audit ledger
+   - BLAKE3 hash-chained audit ledger [Implemented]; Merkle tree inclusion proofs \[In Progress — `generate_inclusion_proof()` is stubbed\]
    - Long-term retention
 
 2. **Access Controls**:

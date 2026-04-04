@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use daemoneye_lib::{alerting, config, detection, models, storage, telemetry};
+use daemoneye_lib::{alerting, config, detection, storage, telemetry};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
@@ -254,20 +254,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // =========================================================================
 
     // Initialize detection engine
-    let mut detection_engine = detection::DetectionEngine::new();
+    let detection_engine = detection::DetectionEngine::new();
 
-    // Create a sample detection rule
-    let rule = models::DetectionRule::new(
-        "rule-1".to_owned(),
-        "Test Rule".to_owned(),
-        "Test detection rule".to_owned(),
-        "SELECT * FROM processes WHERE name = 'test'".to_owned(),
-        "test".to_owned(),
-        models::AlertSeverity::Medium,
-    );
-
-    // Load the rule
-    detection_engine.load_rule(rule)?;
+    // TODO(#006): Load detection rules from the database via `storage::DatabaseManager::get_all_rules`
+    // once the redb storage layer is implemented (Task 8). Until then, the detection engine starts
+    // with no rules loaded. Rules should be persisted through the database and reloaded on startup.
 
     // Initialize alert manager
     let mut alert_manager = alerting::AlertManager::new();

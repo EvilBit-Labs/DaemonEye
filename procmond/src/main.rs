@@ -321,7 +321,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         // Create event channel for the actor's output
-        let (event_tx, mut event_rx) = mpsc::channel::<CollectionEvent>(1000);
+        let (event_tx, event_rx) = mpsc::channel::<CollectionEvent>(1000);
 
         // Clone handles for shutdown task
         let shutdown_handle = actor_handle.clone();
@@ -385,6 +385,8 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Spawn task to consume events from the actor (logging only for now)
         let event_consumer_task = tokio::spawn(async move {
             let mut event_count = 0_u64;
+            #[allow(clippy::shadow_same)]
+            let mut event_rx = event_rx;
             while let Some(event) = event_rx.recv().await {
                 event_count = event_count.saturating_add(1);
                 if event_count.is_multiple_of(100) {
@@ -398,7 +400,8 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     CollectionEvent::Network(_)
                     | CollectionEvent::Filesystem(_)
                     | CollectionEvent::Performance(_)
-                    | CollectionEvent::TriggerRequest(_) => {
+                    | CollectionEvent::TriggerRequest(_)
+                    | _ => {
                         tracing::trace!("Received non-process event");
                     }
                 }

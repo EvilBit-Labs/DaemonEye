@@ -1,3 +1,53 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::dbg_macro,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_lossless,
+    clippy::pattern_type_mismatch,
+    clippy::non_ascii_literal,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::let_underscore_must_use,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::used_underscore_binding,
+    clippy::redundant_clone,
+    clippy::explicit_iter_loop,
+    clippy::integer_division,
+    clippy::modulo_arithmetic,
+    clippy::unseparated_literal_suffix,
+    clippy::doc_markdown,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::float_cmp,
+    clippy::unreadable_literal,
+    clippy::semicolon_outside_block,
+    clippy::semicolon_inside_block,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::redundant_type_annotations,
+    clippy::significant_drop_tightening,
+    clippy::redundant_else,
+    clippy::match_same_arms,
+    clippy::ignore_without_reason,
+    dead_code,
+    unused_imports
+)]
 //! Integration tests for RPC call patterns
 //!
 //! These tests validate the RPC patterns for collector lifecycle management,
@@ -548,7 +598,7 @@ async fn test_config_validate_only_via_rpc() {
         std::path::PathBuf::from(temp_dir.path()),
     ));
     let service =
-        CollectorRpcService::with_config_manager("svc".to_string(), capabilities, pm, cm, None);
+        CollectorRpcService::with_config_manager("svc".to_string(), capabilities, pm, &cm, None);
 
     // Validate-only update
     let mut changes = std::collections::HashMap::new();
@@ -627,7 +677,7 @@ async fn test_hot_reload_notification_published() {
         "svc".to_string(),
         capabilities,
         pm,
-        cm,
+        &cm,
         Some(broker.clone()),
     );
 
@@ -735,7 +785,7 @@ async fn test_config_change_triggers_restart_path() {
         "svc".to_string(),
         capabilities,
         pm.clone(),
-        cm,
+        &cm,
         None,
     );
 
@@ -1040,9 +1090,8 @@ async fn test_rpc_call_through_broker() -> Result<()> {
     let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning,
+    // so the service is ready to receive messages immediately.
 
     // Create health check request
     let request = RpcRequest::health_check(
@@ -1090,9 +1139,7 @@ async fn test_rpc_call_with_lifecycle_operation() -> Result<()> {
     let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning.
 
     // Create start request
     let lifecycle_request = CollectorLifecycleRequest::start("test-collector", None);
@@ -1210,9 +1257,7 @@ async fn test_rpc_response_correlation() -> Result<()> {
     let (_temp_dir, broker, _client) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning.
 
     // Send multiple concurrent requests
     let mut handles = Vec::new();
@@ -1256,9 +1301,7 @@ async fn test_multiple_rpc_clients() -> Result<()> {
     let (_temp_dir, broker, _) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning.
 
     // Create multiple clients
     let client1 = CollectorRpcClient::new("control.collector.test", broker.clone()).await?;
@@ -1316,9 +1359,7 @@ async fn test_rpc_client_shutdown() -> Result<()> {
     let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning.
 
     // Make a successful request first
     let request = RpcRequest::health_check(
@@ -1362,7 +1403,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 /// Setup test process manager with mock binaries
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 fn setup_test_process_manager() -> (Arc<CollectorProcessManager>, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
@@ -2064,7 +2105,8 @@ async fn test_restart_required_changes_pid() -> Result<()> {
         .await
         .expect("Failed to start collector");
 
-    // Wait for process to stabilize
+    // Intentional: the OS process needs time to reach a running state before
+    // querying its PID. No channel-based alternative is available here.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Get initial PID
@@ -2092,7 +2134,7 @@ async fn test_restart_required_changes_pid() -> Result<()> {
         "test-service".to_string(),
         capabilities,
         pm.clone(),
-        cm,
+        &cm,
         None,
     );
 
@@ -2116,7 +2158,8 @@ async fn test_restart_required_changes_pid() -> Result<()> {
     let response = service.handle_request(request).await;
     assert_eq!(response.status, RpcStatus::Success);
 
-    // Wait for restart to complete
+    // Intentional: the OS process manager needs time to kill the old process,
+    // spawn the replacement, and update its internal state. No channel available.
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Get new PID
@@ -2187,7 +2230,8 @@ async fn test_hot_reload_notification_and_pid_stable() -> Result<()> {
         .await
         .expect("Failed to start collector");
 
-    // Wait for process to stabilize
+    // Intentional: the OS process needs time to reach a running state before
+    // querying its PID. No channel-based alternative is available here.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Get initial PID
@@ -2215,7 +2259,7 @@ async fn test_hot_reload_notification_and_pid_stable() -> Result<()> {
         "test-service".to_string(),
         capabilities,
         pm.clone(),
-        cm,
+        &cm,
         Some(broker.clone()),
     );
 
@@ -2252,7 +2296,8 @@ async fn test_hot_reload_notification_and_pid_stable() -> Result<()> {
         "Expected hot-reload notification to be published"
     );
 
-    // Wait a moment for any potential restart
+    // Intentional: allowing time for a spurious restart to manifest, so we can
+    // assert that the PID has not changed (hot-reload must not restart the process).
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Get current PID and verify it hasn't changed
@@ -2333,7 +2378,7 @@ async fn test_config_update_rollback_on_failure() -> Result<()> {
         "test-service".to_string(),
         capabilities,
         pm.clone(),
-        cm.clone(),
+        &cm,
         None,
     );
 

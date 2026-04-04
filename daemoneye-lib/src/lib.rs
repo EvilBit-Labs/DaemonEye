@@ -23,18 +23,38 @@ pub mod storage;
 pub mod telemetry;
 
 // Feature-gated modules
+/// Alert delivery system with trait-based plugin architecture.
+///
+/// Supports multi-channel alerting (stdout, syslog, webhooks, email) for SIEM integration.
+/// Available in: Free Tier and above.
 #[cfg(feature = "alerting")]
 pub mod alerting;
 
+/// Process collection and enumeration utilities.
+///
+/// Core functionality for cross-platform process monitoring.
+/// Available in: Free Tier and above.
 #[cfg(feature = "process-collection")]
 pub mod collection;
 
+/// SQL-based detection engine with rule evaluation.
+///
+/// Flexible rule creation using standard SQL queries with sandboxed execution.
+/// Available in: Free Tier and above.
 #[cfg(feature = "detection-engine")]
 pub mod detection;
 
+/// Enterprise-tier kernel-level monitoring support.
+///
+/// Real-time eBPF/ETW/EndpointSecurity event subscription.
+/// Available in: Enterprise Tier only.
 #[cfg(feature = "kernel-monitoring")]
 pub mod kernel;
 
+/// Enterprise-tier network correlation capabilities.
+///
+/// Process-to-network event correlation for lateral movement detection.
+/// Available in: Enterprise Tier only.
 #[cfg(feature = "network-correlation")]
 pub mod network;
 

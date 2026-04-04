@@ -20,6 +20,13 @@ pub enum CryptoError {
     Key(String),
 }
 
+/// Current hash format version.
+///
+/// Version history:
+/// - `1`: Original colon-delimited format (epoch-seconds timestamp). Deprecated.
+/// - `2`: Length-prefixed canonical encoding (RFC 3339 timestamp with sub-second precision).
+pub const HASH_VERSION: u8 = 2;
+
 /// BLAKE3 hash computation for audit trails.
 pub struct Blake3Hasher;
 
@@ -58,6 +65,73 @@ pub struct AuditEntry {
 }
 
 impl AuditEntry {
+    /// Encode a single variable-length field using length-prefixed encoding.
+    ///
+    /// The format is `<decimal-byte-length>:<field-value>`. This is unambiguous
+    /// regardless of what characters appear inside the field value, because the
+    /// decoder consumes exactly the declared number of bytes and never splits on
+    /// the separator character.
+    fn encode_field(field: &str) -> String {
+        format!("{}:{}", field.len(), field)
+    }
+
+    /// Compute the canonical hash-input string for this entry (format version 2).
+    ///
+    /// Each variable-length field is length-prefixed as `<byte-length>:<value>` so
+    /// that fields containing `:` cannot produce collisions. The fixed-width
+    /// `sequence` field is written as-is with a trailing `:` separator. The
+    /// RFC 3339 timestamp is treated as a variable-length field to preserve
+    /// sub-second precision.
+    ///
+    /// Format: `v2:<seq>:<len(ts)>:<ts><len(actor)>:<actor><len(action)>:<action><len(ph)>:<ph><len(prev)>:<prev>`
+    pub fn compute_entry_hash_input(
+        sequence: u64,
+        timestamp: &chrono::DateTime<chrono::Utc>,
+        actor: &str,
+        action: &str,
+        payload_hash: &str,
+        previous_hash: Option<&str>,
+    ) -> String {
+        let ts = timestamp.to_rfc3339();
+        let prev = previous_hash.unwrap_or("");
+        format!(
+            "v{}:{}:{}{}{}{}{}",
+            HASH_VERSION,
+            sequence,
+            Self::encode_field(&ts),
+            Self::encode_field(actor),
+            Self::encode_field(action),
+            Self::encode_field(payload_hash),
+            Self::encode_field(prev),
+        )
+    }
+
+    /// Compute the legacy (v1) hash-input string for backward-compatible verification.
+    ///
+    /// The v1 format was a colon-delimited string using Unix epoch-seconds timestamps.
+    /// It is ambiguous when `actor` or `action` contain `:` but is retained here
+    /// solely to verify entries that were written before the v2 format was introduced.
+    // Used by verify_integrity for backward-compatible ledger verification.
+    #[allow(dead_code)]
+    fn compute_entry_hash_input_v1(
+        sequence: u64,
+        timestamp: &chrono::DateTime<chrono::Utc>,
+        actor: &str,
+        action: &str,
+        payload_hash: &str,
+        previous_hash: Option<&str>,
+    ) -> String {
+        format!(
+            "{}:{}:{}:{}:{}:{}",
+            sequence,
+            timestamp.timestamp(),
+            actor,
+            action,
+            payload_hash,
+            previous_hash.unwrap_or("")
+        )
+    }
+
     /// Create a new audit entry.
     pub fn new(
         sequence: u64,
@@ -69,17 +143,14 @@ impl AuditEntry {
         let payload_hash = Blake3Hasher::hash(payload);
         let timestamp = chrono::Utc::now();
 
-        // Create entry data for hashing
-        let entry_data = format!(
-            "{}:{}:{}:{}:{}:{}",
+        let entry_data = Self::compute_entry_hash_input(
             sequence,
-            timestamp.timestamp(),
-            actor,
-            action,
-            payload_hash,
-            previous_hash.as_deref().unwrap_or("")
+            &timestamp,
+            &actor,
+            &action,
+            &payload_hash,
+            previous_hash.as_deref(),
         );
-
         let entry_hash = Blake3Hasher::hash_string(&entry_data);
 
         Self {
@@ -131,22 +202,38 @@ impl AuditLedger {
     }
 
     /// Verify the integrity of the audit ledger.
+    ///
+    /// First attempts verification using the current v2 (length-prefixed) hash format.
+    /// If that fails, falls back to the legacy v1 (colon-delimited, epoch-seconds)
+    /// format so that ledgers written before the v2 format was introduced can still
+    /// be verified.
     pub fn verify_integrity(&self) -> Result<(), CryptoError> {
         for (i, entry) in self.entries.iter().enumerate() {
-            // Verify the entry hash
-            let entry_data = format!(
-                "{}:{}:{}:{}:{}:{}",
+            // Try current v2 format first.
+            let entry_data_v2 = AuditEntry::compute_entry_hash_input(
                 entry.sequence,
-                entry.timestamp.timestamp(),
-                entry.actor,
-                entry.action,
-                entry.payload_hash,
-                entry.previous_hash.as_deref().unwrap_or("")
+                &entry.timestamp,
+                &entry.actor,
+                &entry.action,
+                &entry.payload_hash,
+                entry.previous_hash.as_deref(),
             );
+            let expected_v2 = Blake3Hasher::hash_string(&entry_data_v2);
 
-            let expected_hash = Blake3Hasher::hash_string(&entry_data);
-            if entry.entry_hash != expected_hash {
-                return Err(CryptoError::Hash(format!("Hash mismatch at entry {i}")));
+            if entry.entry_hash != expected_v2 {
+                // Fall back to legacy v1 format before declaring a mismatch.
+                let entry_data_v1 = AuditEntry::compute_entry_hash_input_v1(
+                    entry.sequence,
+                    &entry.timestamp,
+                    &entry.actor,
+                    &entry.action,
+                    &entry.payload_hash,
+                    entry.previous_hash.as_deref(),
+                );
+                let expected_v1 = Blake3Hasher::hash_string(&entry_data_v1);
+                if entry.entry_hash != expected_v1 {
+                    return Err(CryptoError::Hash(format!("Hash mismatch at entry {i}")));
+                }
             }
 
             // Verify chain continuity
@@ -184,6 +271,42 @@ impl Default for AuditLedger {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
 
@@ -232,5 +355,104 @@ mod tests {
         }
 
         assert!(ledger.verify_integrity().is_err());
+    }
+
+    #[test]
+    fn test_compute_entry_hash_input_uses_rfc3339() {
+        // Use a fixed timestamp with nanosecond sub-second precision.
+        let ts = chrono::DateTime::from_timestamp_nanos(1_700_000_000_123_456_789);
+        let input = AuditEntry::compute_entry_hash_input(0, &ts, "actor", "action", "phash", None);
+        // The RFC 3339 representation of this timestamp includes sub-second digits.
+        assert!(
+            input.contains('.'),
+            "hash input should include sub-second precision"
+        );
+        // v2 format starts with "v2:<sequence>:".
+        assert!(
+            input.starts_with("v2:0:"),
+            "hash input should start with version and sequence number"
+        );
+        // All field values appear verbatim in the encoded output.
+        assert!(input.contains("actor"), "hash input should contain actor");
+        assert!(input.contains("action"), "hash input should contain action");
+        assert!(
+            input.contains("phash"),
+            "hash input should contain payload hash"
+        );
+    }
+
+    #[test]
+    fn test_compute_entry_hash_input_colon_in_field_is_unambiguous() {
+        // Fields containing ":" must produce different outputs than the same content
+        // split at the colon boundary.
+        let ts = chrono::Utc::now();
+        // actor = "a:b", action = "c"  vs  actor = "a", action = "b:c"
+        let input1 = AuditEntry::compute_entry_hash_input(0, &ts, "a:b", "c", "ph", None);
+        let input2 = AuditEntry::compute_entry_hash_input(0, &ts, "a", "b:c", "ph", None);
+        assert_ne!(
+            input1, input2,
+            "colon inside a field must not produce a collision"
+        );
+    }
+
+    #[test]
+    fn test_compute_entry_hash_input_with_previous_hash() {
+        let ts = chrono::Utc::now();
+        let prev = "abc123";
+        let input = AuditEntry::compute_entry_hash_input(1, &ts, "a", "b", "c", Some(prev));
+        // The previous hash value must appear verbatim somewhere in the output.
+        assert!(
+            input.contains(prev),
+            "hash input should contain the previous hash value"
+        );
+    }
+
+    #[test]
+    fn test_hash_input_deterministic_for_same_timestamp() {
+        // Given the same inputs, the hash input string must be identical.
+        let ts = chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp");
+        let a = AuditEntry::compute_entry_hash_input(5, &ts, "actor", "action", "ph", None);
+        let b = AuditEntry::compute_entry_hash_input(5, &ts, "actor", "action", "ph", None);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_verify_integrity_accepts_legacy_v1_entries() {
+        // Build an entry whose hash was computed with the old v1 colon-delimited
+        // format so we can confirm backward-compatible verification still works.
+        let actor = "legacy-actor".to_owned();
+        let action = "legacy-action".to_owned();
+        let payload = b"legacy payload";
+        let payload_hash = Blake3Hasher::hash(payload);
+        let timestamp =
+            chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp");
+
+        let v1_input = format!(
+            "{}:{}:{}:{}:{}:{}",
+            0_u64,
+            timestamp.timestamp(),
+            actor,
+            action,
+            payload_hash,
+            ""
+        );
+        let v1_hash = Blake3Hasher::hash_string(&v1_input);
+
+        let legacy_entry = AuditEntry {
+            sequence: 0,
+            timestamp,
+            actor,
+            action,
+            payload_hash,
+            previous_hash: None,
+            entry_hash: v1_hash,
+        };
+
+        let mut ledger = AuditLedger::new();
+        ledger.entries.push(legacy_entry);
+        assert!(
+            ledger.verify_integrity().is_ok(),
+            "legacy v1 entries must still pass integrity verification"
+        );
     }
 }

@@ -2,24 +2,27 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
-/// Topic hierarchy management for DaemonEye event bus
+/// Topic hierarchy management for `DaemonEye` event bus
 ///
 /// Provides structured topic naming, validation, and wildcard matching
 /// for multi-collector communication patterns.
+// `topic_type` field intentionally starts with the struct name for call-site clarity.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Topic {
     /// Full topic name (e.g., "events.process.lifecycle")
     name: String,
-    /// Topic segments split by '.' (e.g., ["events", "process", "lifecycle"])
+    /// Topic segments split by `.` (e.g., `["events", "process", "lifecycle"]`)
     segments: Vec<String>,
     /// Topic domain (events, control, system, debug)
     domain: TopicDomain,
-    /// Topic type classification
+    /// Classification of the topic (named `topic_type` for clarity at call sites)
     topic_type: TopicType,
 }
 
 /// Topic domain classification
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TopicDomain {
     /// Data flow topics (events.*)
     Events,
@@ -33,6 +36,7 @@ pub enum TopicDomain {
 
 /// Topic type classification for access control and routing
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TopicType {
     /// Process-related topics
     Process,
@@ -63,6 +67,7 @@ pub struct TopicPattern {
 
 /// Pattern segment types for wildcard matching
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PatternSegment {
     /// Exact match segment
     Literal(String),
@@ -74,6 +79,7 @@ pub enum PatternSegment {
 
 /// Topic validation and parsing errors
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TopicError {
     #[error("Invalid topic format: {0}")]
     InvalidFormat(String),
@@ -92,7 +98,7 @@ pub enum TopicError {
 impl Topic {
     /// Maximum topic depth (number of segments)
     /// Supports up to 5 levels for collector-specific task topics:
-    /// control.collector.task.{collector_type}.{collector_id}
+    /// `control.collector.task.{collector_type}.{collector_id`}
     pub const MAX_DEPTH: usize = 5;
 
     /// Reserved topic prefixes that cannot be used by applications
@@ -102,17 +108,23 @@ impl Topic {
     pub fn new(name: &str) -> Result<Self, TopicError> {
         Self::validate_topic_name(name)?;
 
-        let segments: Vec<String> = name.split('.').map(|s| s.to_string()).collect();
+        let segments: Vec<String> = name
+            .split('.')
+            .map(std::borrow::ToOwned::to_owned)
+            .collect();
 
         if segments.len() > Self::MAX_DEPTH {
             return Err(TopicError::TooDeep(segments.len()));
         }
 
+        // SAFETY: validate_topic_name above verified name is non-empty, so at least one
+        // segment exists after splitting on '.'.
+        #[allow(clippy::indexing_slicing)]
         let domain = Self::parse_domain(&segments[0])?;
         let topic_type = Self::parse_topic_type(&segments);
 
-        Ok(Topic {
-            name: name.to_string(),
+        Ok(Self {
+            name: name.to_owned(),
             segments,
             domain,
             topic_type,
@@ -122,7 +134,7 @@ impl Topic {
     /// Validate topic name format and characters
     fn validate_topic_name(name: &str) -> Result<(), TopicError> {
         if name.is_empty() {
-            return Err(TopicError::InvalidFormat("empty topic name".to_string()));
+            return Err(TopicError::InvalidFormat("empty topic name".to_owned()));
         }
 
         // Check for reserved prefixes
@@ -156,7 +168,7 @@ impl Topic {
             "control" => Ok(TopicDomain::Control),
             "system" => Ok(TopicDomain::System),
             "debug" => Ok(TopicDomain::Debug),
-            _ => Err(TopicError::UnknownDomain(first_segment.to_string())),
+            _ => Err(TopicError::UnknownDomain(first_segment.to_owned())),
         }
     }
 
@@ -166,6 +178,8 @@ impl Topic {
             return TopicType::Generic;
         }
 
+        // SAFETY: The `len() < 2` check above ensures index 1 exists.
+        #[allow(clippy::indexing_slicing)]
         match segments[1].as_str() {
             "process" => TopicType::Process,
             "network" => TopicType::Network,
@@ -189,27 +203,27 @@ impl Topic {
     }
 
     /// Get topic domain
-    pub fn domain(&self) -> &TopicDomain {
+    pub const fn domain(&self) -> &TopicDomain {
         &self.domain
     }
 
     /// Get topic type
-    pub fn topic_type(&self) -> &TopicType {
+    pub const fn topic_type(&self) -> &TopicType {
         &self.topic_type
     }
 
     /// Check if this is an event topic
-    pub fn is_event_topic(&self) -> bool {
+    pub const fn is_event_topic(&self) -> bool {
         matches!(self.domain, TopicDomain::Events)
     }
 
     /// Check if this is a control topic
-    pub fn is_control_topic(&self) -> bool {
+    pub const fn is_control_topic(&self) -> bool {
         matches!(self.domain, TopicDomain::Control)
     }
 
     /// Get the topic depth (number of segments)
-    pub fn depth(&self) -> usize {
+    pub const fn depth(&self) -> usize {
         self.segments.len()
     }
 }
@@ -222,21 +236,22 @@ impl TopicPattern {
             .map(|segment| match segment {
                 "+" => PatternSegment::SingleWildcard,
                 "#" => PatternSegment::MultiWildcard,
-                s => PatternSegment::Literal(s.to_string()),
+                s => PatternSegment::Literal(s.to_owned()),
             })
             .collect();
 
         // Validate that multi-level wildcard is only at the end
+        let last_idx = segments.len().saturating_sub(1);
         for (i, segment) in segments.iter().enumerate() {
-            if matches!(segment, PatternSegment::MultiWildcard) && i != segments.len() - 1 {
+            if matches!(segment, PatternSegment::MultiWildcard) && i != last_idx {
                 return Err(TopicError::InvalidFormat(
-                    "Multi-level wildcard (#) must be at the end".to_string(),
+                    "Multi-level wildcard (#) must be at the end".to_owned(),
                 ));
             }
         }
 
-        Ok(TopicPattern {
-            pattern: pattern.to_string(),
+        Ok(Self {
+            pattern: pattern.to_owned(),
             segments,
         })
     }
@@ -248,37 +263,42 @@ impl TopicPattern {
 
     /// Check if pattern matches topic segments
     fn matches_segments(&self, topic_segments: &[String]) -> bool {
-        let mut pattern_idx = 0;
-        let mut topic_idx = 0;
+        let mut pattern_idx = 0_usize;
+        let mut topic_idx = 0_usize;
 
-        while pattern_idx < self.segments.len() && topic_idx < topic_segments.len() {
-            match &self.segments[pattern_idx] {
-                PatternSegment::Literal(literal) => {
-                    if literal != &topic_segments[topic_idx] {
-                        return false;
+        // All indexing below is safe: the while condition guards both indices,
+        // and the final index at L+24 is guarded by `pattern_idx < self.segments.len()`.
+        #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+        {
+            while pattern_idx < self.segments.len() && topic_idx < topic_segments.len() {
+                match self.segments[pattern_idx] {
+                    PatternSegment::Literal(ref literal) => {
+                        if literal != &topic_segments[topic_idx] {
+                            return false;
+                        }
+                        pattern_idx += 1;
+                        topic_idx += 1;
                     }
-                    pattern_idx += 1;
-                    topic_idx += 1;
-                }
-                PatternSegment::SingleWildcard => {
-                    // Single wildcard matches exactly one segment
-                    pattern_idx += 1;
-                    topic_idx += 1;
-                }
-                PatternSegment::MultiWildcard => {
-                    // Multi-level wildcard matches remaining segments (zero or more)
-                    return true;
+                    PatternSegment::SingleWildcard => {
+                        // Single wildcard matches exactly one segment
+                        pattern_idx += 1;
+                        topic_idx += 1;
+                    }
+                    PatternSegment::MultiWildcard => {
+                        // Multi-level wildcard matches remaining segments (zero or more)
+                        return true;
+                    }
                 }
             }
-        }
 
-        // If we've consumed all topic segments but pattern has remaining segments
-        // Check if the remaining pattern segment is a MultiWildcard (matches zero segments)
-        if topic_idx == topic_segments.len()
-            && pattern_idx < self.segments.len()
-            && matches!(self.segments[pattern_idx], PatternSegment::MultiWildcard)
-        {
-            return true;
+            // If we've consumed all topic segments but pattern has remaining segments
+            // Check if the remaining pattern segment is a MultiWildcard (matches zero segments)
+            if topic_idx == topic_segments.len()
+                && pattern_idx < self.segments.len()
+                && matches!(self.segments[pattern_idx], PatternSegment::MultiWildcard)
+            {
+                return true;
+            }
         }
 
         // Check if we consumed all pattern segments and topic segments
@@ -295,7 +315,7 @@ impl FromStr for Topic {
     type Err = TopicError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Topic::new(s)
+        Self::new(s)
     }
 }
 
@@ -303,7 +323,7 @@ impl FromStr for TopicPattern {
     type Err = TopicError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        TopicPattern::new(s)
+        Self::new(s)
     }
 }
 
@@ -353,7 +373,7 @@ impl TopicMatcher {
     ) -> Result<(), TopicError> {
         let topic_pattern = TopicPattern::new(pattern)?;
         self.subscriptions
-            .entry(subscriber_id.to_string())
+            .entry(subscriber_id.to_owned())
             .or_default()
             .push(topic_pattern);
         Ok(())
@@ -383,14 +403,14 @@ impl TopicMatcher {
 
     /// Record a message publication
     pub fn record_publication(&mut self, topic: &str) {
-        let stats = self.topic_stats.entry(topic.to_string()).or_default();
-        stats.messages_published += 1;
+        let stats = self.topic_stats.entry(topic.to_owned()).or_default();
+        stats.messages_published = stats.messages_published.saturating_add(1);
     }
 
     /// Record a message delivery
     pub fn record_delivery(&mut self, topic: &str) {
-        let stats = self.topic_stats.entry(topic.to_string()).or_default();
-        stats.messages_delivered += 1;
+        let stats = self.topic_stats.entry(topic.to_owned()).or_default();
+        stats.messages_delivered = stats.messages_delivered.saturating_add(1);
     }
 
     /// Get statistics for a topic
@@ -399,7 +419,7 @@ impl TopicMatcher {
     }
 
     /// Get all topic statistics
-    pub fn get_all_stats(&self) -> &HashMap<String, TopicStats> {
+    pub const fn get_all_stats(&self) -> &HashMap<String, TopicStats> {
         &self.topic_stats
     }
 
@@ -413,32 +433,32 @@ impl TopicMatcher {
         self.topic_stats.len()
     }
 
-    /// Find subscribers for a topic (alias for get_matching_subscribers)
+    /// Find subscribers for a topic (alias for `get_matching_subscribers`)
     pub fn find_subscribers(&self, topic: &str) -> Result<Vec<String>, TopicError> {
         self.get_matching_subscribers(topic)
     }
 
-    /// Subscribe a subscriber to a pattern (alias for add_subscription)
+    /// Subscribe a subscriber to a pattern (alias for `add_subscription`)
     pub fn subscribe(
         &mut self,
         pattern: &str,
-        subscriber_id: impl ToString,
+        subscriber_id: &impl ToString,
     ) -> Result<(), TopicError> {
         self.add_subscription(&subscriber_id.to_string(), pattern)
     }
 
-    /// Unsubscribe a subscriber (alias for remove_subscriber)
-    pub fn unsubscribe(&mut self, subscriber_id: impl ToString) -> Result<(), TopicError> {
+    /// Unsubscribe a subscriber (alias for `remove_subscriber`)
+    pub fn unsubscribe(&mut self, subscriber_id: &impl ToString) -> Result<(), TopicError> {
         self.remove_subscriber(&subscriber_id.to_string());
         Ok(())
     }
 
-    /// Get subscriber count (alias for get_subscriber_count)
+    /// Get subscriber count (alias for `get_subscriber_count`)
     pub fn subscriber_count(&self) -> usize {
         self.get_subscriber_count()
     }
 
-    /// Get pattern count (alias for get_topic_count)
+    /// Get pattern count (alias for `get_topic_count`)
     pub fn pattern_count(&self) -> usize {
         self.get_topic_count()
     }
@@ -459,6 +479,7 @@ pub struct TopicRegistry {
 
 /// Access control levels for topics
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TopicAccessLevel {
     /// Public topics accessible to all components
     Public,
@@ -480,37 +501,35 @@ impl TopicRegistry {
     fn initialize_default_access_control(&mut self) {
         // Public topics (broad access)
         self.access_control
-            .insert("control.health.+".to_string(), TopicAccessLevel::Public);
+            .insert("control.health.+".to_owned(), TopicAccessLevel::Public);
         self.access_control
-            .insert("events.+.anomaly".to_string(), TopicAccessLevel::Public);
+            .insert("events.+.anomaly".to_owned(), TopicAccessLevel::Public);
         self.access_control
-            .insert("events.+.security".to_string(), TopicAccessLevel::Public);
+            .insert("events.+.security".to_owned(), TopicAccessLevel::Public);
 
         // Restricted topics (component-specific)
         self.access_control.insert(
-            "control.collector.config".to_string(),
+            "control.collector.config".to_owned(),
             TopicAccessLevel::Restricted,
         );
         self.access_control.insert(
-            "control.agent.orchestration".to_string(),
+            "control.agent.orchestration".to_owned(),
             TopicAccessLevel::Restricted,
         );
-        self.access_control.insert(
-            "events.+.metadata".to_string(),
-            TopicAccessLevel::Restricted,
-        );
+        self.access_control
+            .insert("events.+.metadata".to_owned(), TopicAccessLevel::Restricted);
 
         // Privileged topics (authenticated only)
         self.access_control.insert(
-            "control.collector.lifecycle".to_string(),
+            "control.collector.lifecycle".to_owned(),
             TopicAccessLevel::Privileged,
         );
         self.access_control.insert(
-            "control.agent.policy".to_string(),
+            "control.agent.policy".to_owned(),
             TopicAccessLevel::Privileged,
         );
         self.access_control
-            .insert("control.+.config".to_string(), TopicAccessLevel::Privileged);
+            .insert("control.+.config".to_owned(), TopicAccessLevel::Privileged);
     }
 
     /// Register a component as a publisher for a topic or pattern
@@ -523,7 +542,7 @@ impl TopicRegistry {
             // If it contains wildcards, register as a pattern
             if topic.contains('+') || topic.contains('#') {
                 self.publisher_patterns
-                    .entry(component.to_string())
+                    .entry(component.to_owned())
                     .or_default()
                     .insert(pattern);
                 return Ok(());
@@ -533,9 +552,9 @@ impl TopicRegistry {
         // Otherwise, register as an exact topic
         let topic_obj = Topic::new(topic)?;
         self.publishers
-            .entry(component.to_string())
+            .entry(component.to_owned())
             .or_default()
-            .insert(topic_obj.name().to_string());
+            .insert(topic_obj.name().to_owned());
         Ok(())
     }
 
@@ -545,11 +564,11 @@ impl TopicRegistry {
         component: &str,
         pattern: &str,
     ) -> Result<(), TopicError> {
-        let pattern = TopicPattern::new(pattern)?;
+        let topic_pattern = TopicPattern::new(pattern)?;
         self.subscribers
-            .entry(component.to_string())
+            .entry(component.to_owned())
             .or_default()
-            .insert(pattern);
+            .insert(topic_pattern);
         Ok(())
     }
 
@@ -577,11 +596,9 @@ impl TopicRegistry {
 
     /// Check if a component can subscribe to a topic
     pub fn can_subscribe(&self, component: &str, topic: &Topic) -> bool {
-        if let Some(patterns) = self.subscribers.get(component) {
-            patterns.iter().any(|pattern| pattern.matches(topic))
-        } else {
-            false
-        }
+        self.subscribers
+            .get(component)
+            .is_some_and(|patterns| patterns.iter().any(|p| p.matches(topic)))
     }
 
     /// Get access level for a topic
@@ -617,6 +634,42 @@ impl TopicRegistry {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
 

@@ -101,7 +101,7 @@ flowchart LR
 - **Privilege Separation**: Only procmond runs elevated when necessary
 - **IPC**: Protobuf over Unix sockets/named pipes with CRC32 validation
 - **No Inbound Network**: Outbound-only for alert delivery
-- **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only
+- **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only \[Implemented: rule load-time validation; rule execution engine is a placeholder — see `detection/mod.rs`\]
 
 ---
 
@@ -162,6 +162,8 @@ flowchart LR
 - **map_err_ignore**: Name ignored variables in closures (`|_elapsed|` not `|_|`)
 - **as_conversions**: Add `#[allow(clippy::as_conversions)]` with safety comment for intentional casts
 - **Async in tracing macros**: Never `.await` inside `info!`/`debug!`/`warn!`/`error!` - causes `future_not_send`. Extract value first.
+- **string_slice**: Denied — use `split_once('=')` or `char_indices()` instead of `&s[..pos]` on user input
+- **items_after_statements**: All `const` declarations must be at function top, not after `return` statements
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Formatting**: `rustfmt` with 119 char line length
 - **Rustdoc**: Escape brackets in paths like `/proc/\[pid\]/stat` to avoid broken link warnings
@@ -189,18 +191,18 @@ flowchart LR
 
 - Least privilege: Components run with minimal permissions
 - Automatic privilege drop after initialization
-- SQL injection prevention: AST validation, prepared statements only
+- SQL injection prevention: AST validation at rule load time [Implemented]; SQL-based rule execution \[Planned — engine currently uses pattern matching, see `detection/mod.rs`\]
 - Credentials: Environment variables or OS keychain, never hardcoded
 - No inbound network: Outbound-only for alerts
-- Audit trail: Merkle tree with BLAKE3 integrity
+- Audit trail: BLAKE3 hash-chained audit ledger [Implemented]; Merkle tree inclusion proofs \[In Progress — `generate_inclusion_proof()` returns empty vec, see `crypto.rs`\]
 
 ### Enterprise Features
 
-- mTLS with certificate chain validation
-- SLSA Level 3 provenance, Cosign signatures
-- Merkle tree with inclusion proofs
-- Sandboxed detection engine (read-only DB)
-- Query whitelist (SELECT only with approved functions)
+- mTLS with certificate chain validation [Planned]
+- SLSA Level 3 provenance, Cosign signatures [Planned]
+- Merkle tree with inclusion proofs \[In Progress — chain hashing implemented; inclusion proof generation stubbed in `crypto.rs`\]
+- Sandboxed detection engine (read-only DB) [Planned]
+- Query whitelist (SELECT only with approved functions) [Implemented for rule validation; not yet enforced at execution time]
 
 ### Integer Overflow Protection
 
@@ -239,7 +241,8 @@ Use `checked_*`, `saturating_*`, or explicit `wrapping_*` for security-sensitive
 - Validate early, reject with actionable errors
 - Use typed parsers over regex
 - Length limits on all variable-length inputs
-- SQL: AST validation with `sqlparser`
+- **Socket path limit**: Unix `sockaddr_un.sun_path` is 108 bytes with NUL — usable limit is 107, not 255
+- SQL: AST validation with `sqlparser` \[Implemented at rule load time; execution-time enforcement is [Planned]\]
 
 ### Newtype Safety
 
@@ -297,6 +300,7 @@ DaemonEye/
 │       └── storage.rs      # Database (redb)
 ├── collector-core/         # Collector framework
 ├── tests/                  # Integration tests
+├── docs/solutions/         # Documented solutions (YAML frontmatter, by category)
 └── .kiro/                  # Steering docs & specs
 ```
 
@@ -310,9 +314,9 @@ pub trait ProcessCollectionService: Send + Sync {
 
 #[async_trait]
 pub trait AlertSink: Send + Sync {
-    async fn send(&self, alert: &Alert) -> Result<DeliveryResult, Box<dyn Error + Send + Sync>>;
-    async fn health_check(&self) -> HealthStatus;
+    async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError>;
     fn name(&self) -> &str;
+    async fn health_check(&self) -> Result<(), AlertingError>;
 }
 ```
 
@@ -423,9 +427,9 @@ pub struct Cli {
 ### Configuration Precedence
 
 1. Command-line flags
-2. Environment variables (`PROCMOND_*`)
-3. User config (`~/.config/procmond/config.yaml`)
-4. System config (`/etc/procmond/config.yaml`)
+2. Environment variables (component-namespaced: `DAEMONEYE_AGENT_*`, `DAEMONEYE_CLI_*`, `PROCMOND_*`)
+3. User config (`~/.config/daemoneye/config.toml`)
+4. System config (`/etc/daemoneye/config.toml`)
 5. Embedded defaults
 
 ---

@@ -3,15 +3,19 @@
 //! This module provides a high-throughput event bus that can handle
 //! millions of events per second with minimal latency using crossbeam's optimized
 //! channels. Note that while the core event routing uses lock-free crossbeam channels,
-//! subscriber management and statistics tracking use blocking synchronization (RwLock).
+//! subscriber management uses blocking synchronization (`RwLock`). Statistics counters
+//! use lock-free atomics on the hot path and are flushed to the stats struct only
+//! on read, avoiding write-lock contention per event.
+
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
+#![allow(clippy::items_after_statements)]
 
 use crate::{event::CollectionEvent, source::SourceCaps};
 use anyhow::Result;
 use async_trait::async_trait;
-use crossbeam::{
-    channel::{Receiver, Sender, TrySendError, bounded},
-    utils::Backoff,
-};
+use crossbeam::channel::{Receiver, Sender, TrySendError, bounded};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -56,7 +60,7 @@ pub struct HighPerformanceEventBusConfig {
 impl Default for HighPerformanceEventBusConfig {
     fn default() -> Self {
         Self {
-            channel_capacity: 1024 * 1024,         // 1M events
+            channel_capacity: 8192,                // 8K events
             per_subscriber_channel_capacity: 1024, // 1K events per subscriber
             max_subscribers: 1000,
             backpressure_strategy: BackpressureStrategy::Blocking,
@@ -72,6 +76,7 @@ impl Default for HighPerformanceEventBusConfig {
 
 /// Backpressure handling strategies.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum BackpressureStrategy {
     /// Block publishers when ring buffer is full
     Blocking,
@@ -86,7 +91,7 @@ pub trait HighPerformanceEventBus: Send + Sync {
     async fn publish(&self, event: CollectionEvent, correlation_id: String) -> Result<()>;
 
     /// Subscribe to events with the given capabilities.
-    async fn subscribe(&self, subscription: EventSubscription) -> Result<Receiver<BusEvent>>;
+    async fn subscribe(&self, subscription: EventSubscription) -> Result<Receiver<Arc<BusEvent>>>;
 
     /// Get current bus statistics.
     async fn get_statistics(&self) -> EventBusStatistics;
@@ -160,7 +165,7 @@ pub struct EventBusStatistics {
 /// High-performance event bus implementation using crossbeam channels.
 pub struct HighPerformanceEventBusImpl {
     config: HighPerformanceEventBusConfig,
-    publisher: Sender<BusEvent>,
+    publisher: Sender<Arc<BusEvent>>,
     subscribers: Arc<parking_lot::RwLock<HashMap<String, SubscriberInfo>>>,
     statistics: Arc<parking_lot::RwLock<EventBusStatistics>>,
     shutdown_signal: Arc<AtomicBool>,
@@ -175,7 +180,7 @@ pub struct HighPerformanceEventBusImpl {
 #[derive(Debug)]
 struct SubscriberInfo {
     subscription: EventSubscription,
-    sender: Sender<BusEvent>,
+    sender: Sender<Arc<BusEvent>>,
     #[allow(dead_code)]
     last_delivery: SystemTime,
     #[allow(dead_code)]
@@ -184,6 +189,7 @@ struct SubscriberInfo {
 
 impl HighPerformanceEventBusImpl {
     /// Creates a new high-performance event bus.
+    #[allow(clippy::unused_async)]
     pub async fn new(config: HighPerformanceEventBusConfig) -> Result<Self> {
         info!(
             "Creating high-performance event bus with channel capacity: {}",
@@ -191,7 +197,7 @@ impl HighPerformanceEventBusImpl {
         );
 
         // Create crossbeam bounded channel for high-performance event distribution
-        let (publisher, receiver) = bounded::<BusEvent>(config.channel_capacity);
+        let (publisher, receiver) = bounded::<Arc<BusEvent>>(config.channel_capacity);
 
         let statistics = EventBusStatistics {
             events_published: 0,
@@ -215,7 +221,6 @@ impl HighPerformanceEventBusImpl {
 
         // Clone the Arc references for the thread
         let subscribers_clone = Arc::clone(&subscribers);
-        let statistics_clone = Arc::clone(&statistics_arc);
         let shutdown_signal_clone = Arc::clone(&shutdown_signal);
         let delivery_counter_clone = Arc::clone(&delivery_counter);
         let drop_counter_clone = Arc::clone(&drop_counter);
@@ -225,15 +230,22 @@ impl HighPerformanceEventBusImpl {
         // Start the event routing task using crossbeam scope for safe concurrency
         let routing_handle = thread::spawn(move || {
             let _finished_guard = RoutingFinishedGuard::new(routing_finished_clone);
-            let backoff = Backoff::new();
+
+            // Use recv_timeout so the thread sleeps when idle instead of spin-waiting.
+            // The timeout allows periodic shutdown checks while avoiding busy-looping.
+            const RECV_TIMEOUT: Duration = Duration::from_millis(10);
 
             while !shutdown_signal_clone.load(Ordering::Acquire) {
-                // Use crossbeam's backoff for efficient spinning
-                if let Ok(bus_event) = receiver.try_recv() {
+                // Block efficiently until an event arrives or the timeout elapses
+                if let Ok(bus_event) = receiver.recv_timeout(RECV_TIMEOUT) {
+                    // Wrap the event in Arc once before distributing to all subscribers.
+                    // Each subscriber receives a cheap Arc clone rather than a deep copy.
+                    let arc_bus_event = Arc::new(bus_event);
+
                     // Collect subscriber information first, then release lock before blocking operations
                     let subscribers_to_notify: Vec<(
                         String,
-                        Sender<BusEvent>,
+                        Sender<Arc<BusEvent>>,
                         BackpressureStrategy,
                     )> = {
                         let subs = subscribers_clone.read();
@@ -241,15 +253,15 @@ impl HighPerformanceEventBusImpl {
                             .filter_map(|(subscriber_id, subscriber_info)| {
                                 // Apply capability filtering
                                 if !matches_capabilities(
-                                    &bus_event.event,
-                                    &subscriber_info.subscription.capabilities,
+                                    &arc_bus_event.event,
+                                    subscriber_info.subscription.capabilities,
                                 ) {
                                     return None;
                                 }
 
                                 // Apply event filtering if configured
                                 if let Some(filter) = &subscriber_info.subscription.event_filter
-                                    && !matches_filter(&bus_event.event, filter)
+                                    && !matches_filter(&arc_bus_event.event, filter)
                                 {
                                     return None;
                                 }
@@ -257,7 +269,7 @@ impl HighPerformanceEventBusImpl {
                                 // Apply correlation filtering if configured
                                 if let Some(correlation_id) =
                                     &subscriber_info.subscription.correlation_filter
-                                    && bus_event.correlation_id != *correlation_id
+                                    && arc_bus_event.correlation_id != *correlation_id
                                 {
                                     return None;
                                 }
@@ -284,8 +296,8 @@ impl HighPerformanceEventBusImpl {
                                 let mut backoff_delay = Duration::from_micros(10); // Start with a small delay
 
                                 while !sent && retries < config_clone.max_blocking_retries {
-                                    match sender.try_send(bus_event.clone()) {
-                                        Ok(_) => {
+                                    match sender.try_send(Arc::clone(&arc_bus_event)) {
+                                        Ok(()) => {
                                             delivered += 1;
                                             delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
                                             sent = true;
@@ -329,8 +341,8 @@ impl HighPerformanceEventBusImpl {
                             }
                             BackpressureStrategy::DropNewest => {
                                 // Try to send, if full drop the new event
-                                match sender.try_send(bus_event.clone()) {
-                                    Ok(_) => {
+                                match sender.try_send(Arc::clone(&arc_bus_event)) {
+                                    Ok(()) => {
                                         delivered += 1;
                                         delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
                                     }
@@ -357,14 +369,11 @@ impl HighPerformanceEventBusImpl {
                         }
                     }
 
-                    // Update statistics
-                    let mut stats = statistics_clone.write();
-                    stats.events_delivered += delivered;
-                    stats.events_dropped += dropped;
-                    stats.last_updated = SystemTime::now();
-                } else {
-                    // No events available, use backoff for efficient waiting
-                    backoff.snooze();
+                    // Atomic counters (delivery_counter_clone / drop_counter_clone) are
+                    // already incremented per-event above. The local `delivered` and `dropped`
+                    // variables are only used for per-batch bookkeeping here; they do not
+                    // need to be written to the stats RwLock on every event.
+                    let _ = (delivered, dropped); // silence unused-variable warnings
                 }
             }
         });
@@ -385,6 +394,7 @@ impl HighPerformanceEventBusImpl {
     }
 
     /// Starts the event bus background tasks.
+    #[allow(clippy::unused_async)]
     pub async fn start(&mut self) -> Result<()> {
         info!("Starting high-performance event bus");
         info!("High-performance event bus started successfully");
@@ -397,12 +407,12 @@ impl HighPerformanceEventBusImpl {
     }
 
     /// Creates a bus event from a collection event.
-    fn create_bus_event(&self, event: CollectionEvent, correlation_id: String) -> BusEvent {
+    fn create_bus_event(event: CollectionEvent, correlation_id: String) -> BusEvent {
         BusEvent {
             event_id: Uuid::new_v4().to_string(),
             event,
             correlation_id,
-            publisher_id: "high-performance-bus".to_string(),
+            publisher_id: "high-performance-bus".to_owned(),
             timestamp: SystemTime::now(),
             priority: 5, // Default priority
         }
@@ -410,7 +420,7 @@ impl HighPerformanceEventBusImpl {
 
     /// Checks if an event matches the given capabilities.
     #[allow(dead_code)]
-    fn matches_capabilities(&self, event: &CollectionEvent, capabilities: &SourceCaps) -> bool {
+    const fn matches_capabilities(event: &CollectionEvent, capabilities: SourceCaps) -> bool {
         match event {
             CollectionEvent::Process(_) => capabilities.contains(SourceCaps::PROCESS),
             CollectionEvent::Network(_) => capabilities.contains(SourceCaps::NETWORK),
@@ -422,17 +432,8 @@ impl HighPerformanceEventBusImpl {
 
     /// Checks if an event matches the given filter.
     #[allow(dead_code)]
-    fn matches_filter(&self, event: &CollectionEvent, filter: &EventFilter) -> bool {
+    fn matches_filter(event: &CollectionEvent, filter: &EventFilter) -> bool {
         matches_filter(event, filter)
-    }
-
-    /// Updates event bus statistics.
-    #[allow(dead_code)]
-    fn update_statistics(&self, delivered: u64, dropped: u64) {
-        let mut stats = self.statistics.write();
-        stats.events_delivered += delivered;
-        stats.events_dropped += dropped;
-        stats.last_updated = SystemTime::now();
     }
 
     /// Flushes atomic counters to statistics (called periodically to reduce lock contention).
@@ -457,14 +458,14 @@ impl HighPerformanceEventBusImpl {
 impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
     #[tracing::instrument(skip(self, event))]
     async fn publish(&self, event: CollectionEvent, correlation_id: String) -> Result<()> {
-        // Create bus event
-        let bus_event = self.create_bus_event(event, correlation_id);
+        // Create bus event and wrap it in Arc once to avoid per-retry clones.
+        let bus_event = Arc::new(Self::create_bus_event(event, correlation_id));
         let start_time = Instant::now();
         let mut backoff_delay = Duration::from_millis(1); // Initial backoff
 
         loop {
-            match self.publisher.try_send(bus_event.clone()) {
-                Ok(_) => {
+            match self.publisher.try_send(Arc::clone(&bus_event)) {
+                Ok(()) => {
                     // Update atomic counters only on successful send (lock-free)
                     self.event_counter.fetch_add(1, Ordering::Release);
                     return Ok(());
@@ -489,7 +490,7 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
         }
     }
 
-    async fn subscribe(&self, subscription: EventSubscription) -> Result<Receiver<BusEvent>> {
+    async fn subscribe(&self, subscription: EventSubscription) -> Result<Receiver<Arc<BusEvent>>> {
         let mut subscribers = self.subscribers.write();
 
         if subscribers.len() >= self.config.max_subscribers {
@@ -504,7 +505,8 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
         }
 
         // Create crossbeam bounded channel for this subscriber
-        let (sender, receiver) = bounded::<BusEvent>(self.config.per_subscriber_channel_capacity);
+        let (sender, receiver) =
+            bounded::<Arc<BusEvent>>(self.config.per_subscriber_channel_capacity);
 
         let subscriber_info = SubscriberInfo {
             subscription: subscription.clone(),
@@ -620,7 +622,7 @@ struct RoutingFinishedGuard {
 }
 
 impl RoutingFinishedGuard {
-    fn new(flag: Arc<AtomicBool>) -> Self {
+    const fn new(flag: Arc<AtomicBool>) -> Self {
         Self { flag }
     }
 }
@@ -632,7 +634,7 @@ impl Drop for RoutingFinishedGuard {
 }
 
 /// Helper function to check if an event matches capabilities.
-fn matches_capabilities(event: &CollectionEvent, capabilities: &SourceCaps) -> bool {
+const fn matches_capabilities(event: &CollectionEvent, capabilities: SourceCaps) -> bool {
     match event {
         CollectionEvent::Process(_) => capabilities.contains(SourceCaps::PROCESS),
         CollectionEvent::Network(_) => capabilities.contains(SourceCaps::NETWORK),
@@ -653,7 +655,7 @@ fn matches_filter(event: &CollectionEvent, filter: &EventFilter) -> bool {
             CollectionEvent::Performance(_) => "performance",
             CollectionEvent::TriggerRequest(_) => "trigger_request",
         };
-        if !filter.event_types.contains(&event_type.to_string()) {
+        if !filter.event_types.contains(&event_type.to_owned()) {
             return false;
         }
     }
@@ -661,6 +663,7 @@ fn matches_filter(event: &CollectionEvent, filter: &EventFilter) -> bool {
     // Check priority filtering (if event has priority)
     if let Some(min_priority) = filter.min_priority {
         // For now, assume all events have normal priority (2) unless they're trigger requests
+        #[allow(clippy::wildcard_enum_match_arm)]
         let event_priority = match event {
             CollectionEvent::TriggerRequest(trigger) => match trigger.priority {
                 crate::event::TriggerPriority::Low => 1,
@@ -686,6 +689,42 @@ fn matches_filter(event: &CollectionEvent, filter: &EventFilter) -> bool {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
     use crate::event::ProcessEvent;
@@ -696,7 +735,7 @@ mod tests {
         let config = HighPerformanceEventBusConfig::default();
         let event_bus = HighPerformanceEventBusImpl::new(config).await.unwrap();
 
-        assert_eq!(event_bus.config.channel_capacity, 1024 * 1024);
+        assert_eq!(event_bus.config.channel_capacity, 8192);
     }
 
     #[tokio::test]
@@ -712,7 +751,7 @@ mod tests {
 
         // Subscribe to process events
         let subscription = EventSubscription {
-            subscriber_id: "test-subscriber".to_string(),
+            subscriber_id: "test-subscriber".to_owned(),
             capabilities: SourceCaps::PROCESS,
             event_filter: None,
             correlation_filter: None,
@@ -725,14 +764,14 @@ mod tests {
         let process_event = CollectionEvent::Process(ProcessEvent {
             pid: 1234,
             ppid: Some(1000),
-            name: "test-process".to_string(),
-            executable_path: Some("/usr/bin/test".to_string()),
-            command_line: vec!["test-process".to_string(), "--arg".to_string()],
+            name: "test-process".to_owned(),
+            executable_path: Some("/usr/bin/test".to_owned()),
+            command_line: vec!["test-process".to_owned(), "--arg".to_owned()],
             start_time: Some(SystemTime::now()),
             cpu_usage: Some(0.5),
             memory_usage: Some(1024 * 1024),
-            executable_hash: Some("abc123".to_string()),
-            user_id: Some("1000".to_string()),
+            executable_hash: Some("abc123".to_owned()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp: SystemTime::now(),
@@ -740,7 +779,7 @@ mod tests {
         });
 
         event_bus
-            .publish(process_event, "test-correlation".to_string())
+            .publish(process_event, "test-correlation".to_owned())
             .await
             .unwrap();
 

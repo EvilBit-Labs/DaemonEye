@@ -7,9 +7,11 @@
 use async_trait::async_trait;
 use collector_core::ProcessEvent;
 use serde_json;
+use std::sync::Arc;
 use std::time::SystemTime;
 use sysinfo::{Pid, Process, System};
 use thiserror::Error;
+use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
 
 /// Errors that can occur during process collection.
@@ -238,14 +240,26 @@ impl Default for ProcessCollectorCapabilities {
 }
 
 /// Default cross-platform process collector using the sysinfo crate.
+///
+/// The `System` instance is kept alive across calls so that CPU usage measurements
+/// are accurate (sysinfo requires two snapshots to compute a delta) and so that
+/// the OS does not need to rebuild its process table on every collection cycle.
 pub struct SysinfoProcessCollector {
     config: ProcessCollectionConfig,
+    system: Arc<Mutex<System>>,
 }
 
 impl SysinfoProcessCollector {
     /// Creates a new sysinfo-based process collector with the specified configuration.
-    pub const fn new(config: ProcessCollectionConfig) -> Self {
-        Self { config }
+    ///
+    /// Initialises the `System` object once with `System::new_all()` so that the
+    /// first call to `collect_processes` already has a populated process table and
+    /// CPU usage deltas can be computed on subsequent calls.
+    pub fn new(config: ProcessCollectionConfig) -> Self {
+        Self {
+            config,
+            system: Arc::new(Mutex::new(System::new_all())),
+        }
     }
 
     /// Converts a sysinfo process to a `ProcessEvent` with comprehensive error handling.
@@ -446,83 +460,102 @@ impl ProcessCollector for SysinfoProcessCollector {
             "Starting process collection"
         );
 
-        // Perform process enumeration in a blocking task to avoid blocking the async runtime
-        let config = self.config.clone();
+        // Refresh the shared System in a blocking task to avoid blocking the async runtime.
+        // We hold the async mutex across the await point of spawn_blocking by locking first,
+        // then moving the std::sync guard equivalent via Arc into the blocking thread.
+        let system_arc = Arc::clone(&self.system);
+        let collect_enhanced = self.config.collect_enhanced_metadata;
         let enumeration_result = tokio::task::spawn_blocking(move || {
-            let mut system = System::new();
+            let mut system = system_arc.blocking_lock();
 
-            if config.collect_enhanced_metadata {
-                system.refresh_all();
-            } else {
-                system.refresh_processes_specifics(
-                    sysinfo::ProcessesToUpdate::All,
-                    true,
-                    sysinfo::ProcessRefreshKind::everything(),
-                );
+            system.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::All,
+                true,
+                sysinfo::ProcessRefreshKind::everything(),
+            );
+
+            if collect_enhanced {
+                // Refresh CPUs so that cpu_usage() deltas are current.
+                system.refresh_cpu_all();
             }
 
-            if system.processes().is_empty() {
+            let is_empty = system.processes().is_empty();
+            drop(system);
+
+            if is_empty {
                 return Err(ProcessCollectionError::SystemEnumerationFailed {
                     message: "No processes found during enumeration".to_owned(),
                 });
             }
 
-            Ok(system)
+            Ok(())
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
             message: format!("Process enumeration task failed: {e}"),
         })?;
 
-        let system = enumeration_result?;
+        enumeration_result?;
 
-        let mut events = Vec::new();
-        let mut stats = CollectionStats::default();
-        let mut processed_count: usize = 0;
+        // Lock to iterate — held only for the duration of the loop; no await points inside.
+        let (events, mut stats, processed_count) = {
+            let system = self.system.lock().await;
+            let mut inner_events = Vec::new();
+            let mut inner_stats = CollectionStats::default();
+            let mut inner_count: usize = 0;
 
-        // Process each process with individual error handling
-        for (pid, process) in system.processes() {
-            // Check if we've hit the maximum process limit
-            if self.config.max_processes > 0 && events.len() >= self.config.max_processes {
-                debug!(
-                    max_processes = self.config.max_processes,
-                    collected = events.len(),
-                    "Reached maximum process collection limit"
-                );
-                break;
-            }
-
-            processed_count = processed_count.saturating_add(1);
-
-            match self.convert_process_to_event(pid, process) {
-                Ok(event) => {
-                    events.push(event);
-                    stats.successful_collections = stats.successful_collections.saturating_add(1);
-                }
-                Err(ProcessCollectionError::ProcessAccessDenied {
-                    pid: denied_pid,
-                    message,
-                }) => {
-                    debug!(pid = denied_pid, reason = %message, "Process access denied");
-                    stats.inaccessible_processes = stats.inaccessible_processes.saturating_add(1);
-                }
-                Err(ProcessCollectionError::InvalidProcessData {
-                    pid: invalid_pid,
-                    message,
-                }) => {
-                    warn!(pid = invalid_pid, reason = %message, "Invalid process data");
-                    stats.invalid_processes = stats.invalid_processes.saturating_add(1);
-                }
-                Err(e) => {
-                    error!(
-                        pid = pid.as_u32(),
-                        error = %e,
-                        "Unexpected error during process conversion"
+            // Process each process with individual error handling
+            for (pid, process) in system.processes() {
+                // Check if we've hit the maximum process limit
+                if self.config.max_processes > 0 && inner_events.len() >= self.config.max_processes
+                {
+                    debug!(
+                        max_processes = self.config.max_processes,
+                        collected = inner_events.len(),
+                        "Reached maximum process collection limit"
                     );
-                    stats.invalid_processes = stats.invalid_processes.saturating_add(1);
+                    break;
+                }
+
+                inner_count = inner_count.saturating_add(1);
+
+                match self.convert_process_to_event(pid, process) {
+                    Ok(event) => {
+                        inner_events.push(event);
+                        inner_stats.successful_collections =
+                            inner_stats.successful_collections.saturating_add(1);
+                    }
+                    Err(ProcessCollectionError::ProcessAccessDenied {
+                        pid: denied_pid,
+                        message,
+                    }) => {
+                        debug!(pid = denied_pid, reason = %message, "Process access denied");
+                        inner_stats.inaccessible_processes =
+                            inner_stats.inaccessible_processes.saturating_add(1);
+                    }
+                    Err(ProcessCollectionError::InvalidProcessData {
+                        pid: invalid_pid,
+                        message,
+                    }) => {
+                        warn!(pid = invalid_pid, reason = %message, "Invalid process data");
+                        inner_stats.invalid_processes =
+                            inner_stats.invalid_processes.saturating_add(1);
+                    }
+                    Err(e) => {
+                        error!(
+                            pid = pid.as_u32(),
+                            error = %e,
+                            "Unexpected error during process conversion"
+                        );
+                        inner_stats.invalid_processes =
+                            inner_stats.invalid_processes.saturating_add(1);
+                    }
                 }
             }
-        }
+            // Explicitly drop the lock guard before returning from the block.
+            drop(system);
+            (inner_events, inner_stats, inner_count)
+        };
 
         stats.total_processes = processed_count;
         stats.collection_duration_ms =
@@ -548,24 +581,20 @@ impl ProcessCollector for SysinfoProcessCollector {
             "Collecting single process"
         );
 
-        // Perform single process lookup in a blocking task
-        let config = self.config.clone();
+        // Refresh only the requested PID — O(1) compared to refreshing all processes.
+        let system_arc = Arc::clone(&self.system);
         let lookup_result = tokio::task::spawn_blocking(move || {
-            let mut system = System::new();
-
-            if config.collect_enhanced_metadata {
-                system.refresh_all();
-            } else {
-                system.refresh_processes_specifics(
-                    sysinfo::ProcessesToUpdate::All,
-                    true,
-                    sysinfo::ProcessRefreshKind::everything(),
-                );
-            }
-
+            let mut system = system_arc.blocking_lock();
             let sysinfo_pid = Pid::from_u32(pid);
+
+            system.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[sysinfo_pid]),
+                true,
+                sysinfo::ProcessRefreshKind::everything(),
+            );
+
             if system.process(sysinfo_pid).is_some() {
-                Ok(system)
+                Ok(())
             } else {
                 Err(ProcessCollectionError::ProcessNotFound { pid })
             }
@@ -575,7 +604,9 @@ impl ProcessCollector for SysinfoProcessCollector {
             message: format!("Single process lookup task failed: {e}"),
         })?;
 
-        let system = lookup_result?;
+        lookup_result?;
+
+        let system = self.system.lock().await;
         let sysinfo_pid = Pid::from_u32(pid);
         system.process(sysinfo_pid).map_or(
             Err(ProcessCollectionError::ProcessNotFound { pid }),
@@ -587,8 +618,9 @@ impl ProcessCollector for SysinfoProcessCollector {
         debug!(collector = self.name(), "Performing health check");
 
         // Perform a quick health check by trying to enumerate a few processes
-        let health_result = tokio::task::spawn_blocking(|| {
-            let mut system = System::new();
+        let system_arc = Arc::clone(&self.system);
+        let health_result = tokio::task::spawn_blocking(move || {
+            let mut system = system_arc.blocking_lock();
             system.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::All,
                 true,
@@ -596,6 +628,8 @@ impl ProcessCollector for SysinfoProcessCollector {
             );
 
             let process_count = system.processes().len();
+            drop(system);
+
             if process_count == 0 {
                 return Err(ProcessCollectionError::SystemEnumerationFailed {
                     message: "No processes found during health check".to_owned(),

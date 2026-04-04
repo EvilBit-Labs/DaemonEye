@@ -76,3 +76,6 @@ harness = false
 [[bench]]
 name    = "ipc_performance"
 harness = false
+
+[lints]
+workspace = true

@@ -400,12 +400,6 @@ pub struct DatabaseStats {
     pub alerts: usize,
     pub system_info: usize,
     pub scans: usize,
-    // Legacy field names for API compatibility
-    pub process_count: usize,
-    pub rule_count: usize,
-    pub alert_count: usize,
-    pub system_info_count: usize,
-    pub scan_count: usize,
 }
 
 #[cfg(test)]
@@ -505,11 +499,11 @@ mod tests {
     #[test]
     fn test_database_stats_default() {
         let stats = DatabaseStats::default();
-        assert_eq!(stats.process_count, 0);
-        assert_eq!(stats.rule_count, 0);
-        assert_eq!(stats.alert_count, 0);
-        assert_eq!(stats.system_info_count, 0);
-        assert_eq!(stats.scan_count, 0);
+        assert_eq!(stats.processes, 0);
+        assert_eq!(stats.rules, 0);
+        assert_eq!(stats.alerts, 0);
+        assert_eq!(stats.system_info, 0);
+        assert_eq!(stats.scans, 0);
     }
 
     #[test]
@@ -520,18 +514,13 @@ mod tests {
             alerts: 5,
             system_info: 1,
             scans: 50,
-            process_count: 100,
-            rule_count: 10,
-            alert_count: 5,
-            system_info_count: 1,
-            scan_count: 50,
         };
 
-        assert_eq!(stats.process_count, 100);
-        assert_eq!(stats.rule_count, 10);
-        assert_eq!(stats.alert_count, 5);
-        assert_eq!(stats.system_info_count, 1);
-        assert_eq!(stats.scan_count, 50);
+        assert_eq!(stats.processes, 100);
+        assert_eq!(stats.rules, 10);
+        assert_eq!(stats.alerts, 5);
+        assert_eq!(stats.system_info, 1);
+        assert_eq!(stats.scans, 50);
     }
 
     #[test]
@@ -542,11 +531,6 @@ mod tests {
             alerts: 5,
             system_info: 1,
             scans: 50,
-            process_count: 100,
-            rule_count: 10,
-            alert_count: 5,
-            system_info_count: 1,
-            scan_count: 50,
         };
 
         let json = serde_json::to_string(&stats).expect("Failed to serialize stats");
@@ -693,7 +677,7 @@ mod tests {
 
         // Test that get_stats returns default values (currently stubbed)
         let stats = manager.get_stats().expect("Failed to get stats");
-        assert_eq!(stats.process_count, 0); // Currently stubbed to return 0
+        assert_eq!(stats.processes, 0); // Currently stubbed to return 0
     }
 
     #[test]
@@ -721,7 +705,7 @@ mod tests {
 
         // Test that we can call methods on the opened database
         let stats = open_manager.get_stats().expect("Failed to get stats");
-        assert_eq!(stats.process_count, 0);
+        assert_eq!(stats.processes, 0);
     }
 
     #[test]
@@ -877,18 +861,13 @@ mod tests {
             alerts: 25,
             system_info: 5,
             scans: 100,
-            process_count: 1000,
-            rule_count: 50,
-            alert_count: 25,
-            system_info_count: 5,
-            scan_count: 100,
         };
 
-        assert_eq!(stats.process_count, 1000);
-        assert_eq!(stats.rule_count, 50);
-        assert_eq!(stats.alert_count, 25);
-        assert_eq!(stats.system_info_count, 5);
-        assert_eq!(stats.scan_count, 100);
+        assert_eq!(stats.processes, 1000);
+        assert_eq!(stats.rules, 50);
+        assert_eq!(stats.alerts, 25);
+        assert_eq!(stats.system_info, 5);
+        assert_eq!(stats.scans, 100);
     }
 
     #[test]
@@ -899,11 +878,6 @@ mod tests {
             alerts: 5,
             system_info: 1,
             scans: 50,
-            process_count: 100,
-            rule_count: 10,
-            alert_count: 5,
-            system_info_count: 1,
-            scan_count: 50,
         };
 
         let cloned_stats = stats.clone();

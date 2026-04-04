@@ -46,9 +46,7 @@ async fn setup_test_broker() -> anyhow::Result<(TempDir, BrokerManager)> {
 
     let manager = BrokerManager::new(config);
     manager.start().await?;
-
-    // Wait for broker to be ready
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: manager.start() fully initializes the broker before returning.
 
     Ok((temp_dir, manager))
 }

@@ -1,3 +1,17 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::arithmetic_side_effects,
+    clippy::must_use_candidate,
+    clippy::let_underscore_must_use,
+    clippy::uninlined_format_args,
+    clippy::used_underscore_binding,
+    clippy::str_to_string,
+    clippy::unseparated_literal_suffix
+)]
 //! Performance benchmarks for daemoneye-eventbus
 
 use criterion::{Criterion, criterion_group, criterion_main};

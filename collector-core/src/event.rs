@@ -3,6 +3,9 @@
 //! This module defines the unified event model that supports multiple collection
 //! domains while maintaining type safety and extensibility.
 
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::pattern_type_mismatch)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -29,7 +32,7 @@ use std::time::SystemTime;
 /// let event = CollectionEvent::Process(ProcessEvent {
 ///     pid: 1234,
 ///     ppid: None,
-///     name: "example".to_string(),
+///     name: "example".to_owned(),
 ///     executable_path: None,
 ///     command_line: vec![],
 ///     start_time: None,
@@ -51,6 +54,7 @@ use std::time::SystemTime;
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum CollectionEvent {
     /// Process monitoring events
     Process(ProcessEvent),
@@ -121,7 +125,7 @@ pub struct ProcessEvent {
 ///
 /// Will contain information about network connections, traffic patterns,
 /// and security-relevant network activity.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NetworkEvent {
     /// Connection identifier
     pub connection_id: String,
@@ -153,7 +157,7 @@ pub struct NetworkEvent {
 ///
 /// Will contain information about file operations, access patterns,
 /// and security-relevant filesystem activity.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FilesystemEvent {
     /// File path
     pub path: String,
@@ -224,18 +228,18 @@ pub struct PerformanceEvent {
 /// use std::collections::HashMap;
 ///
 /// let trigger = TriggerRequest {
-///     trigger_id: "trigger_123".to_string(),
-///     target_collector: "binary-hasher".to_string(),
+///     trigger_id: "trigger_123".to_owned(),
+///     target_collector: "binary-hasher".to_owned(),
 ///     analysis_type: AnalysisType::BinaryHash,
 ///     priority: TriggerPriority::High,
 ///     target_pid: Some(1234),
-///     target_path: Some("/usr/bin/suspicious".to_string()),
-///     correlation_id: "corr_456".to_string(),
+///     target_path: Some("/usr/bin/suspicious".to_owned()),
+///     correlation_id: "corr_456".to_owned(),
 ///     metadata: HashMap::new(),
 ///     timestamp: SystemTime::now(),
 /// };
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TriggerRequest {
     /// Unique identifier for this trigger request
     pub trigger_id: String,
@@ -281,22 +285,22 @@ impl TriggerRequest {
     pub fn validate(&self) -> Result<(), String> {
         // Validate trigger_id
         if self.trigger_id.is_empty() {
-            return Err("trigger_id must be non-empty".to_string());
+            return Err("trigger_id must be non-empty".to_owned());
         }
 
         // Validate correlation_id
         if self.correlation_id.is_empty() {
-            return Err("correlation_id must be non-empty".to_string());
+            return Err("correlation_id must be non-empty".to_owned());
         }
 
         // Validate target_collector
         if self.target_collector.is_empty() {
-            return Err("target_collector must be non-empty".to_string());
+            return Err("target_collector must be non-empty".to_owned());
         }
 
         // Validate at least one target is present
         if self.target_pid.is_none() && self.target_path.is_none() {
-            return Err("at least one of target_pid or target_path must be present".to_string());
+            return Err("at least one of target_pid or target_path must be present".to_owned());
         }
 
         // Validate metadata size
@@ -317,6 +321,7 @@ impl TriggerRequest {
 /// from analysis collectors. Each type corresponds to a specific collector
 /// capability and analysis methodology.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AnalysisType {
     /// Binary hash computation and integrity verification
     BinaryHash,
@@ -342,6 +347,7 @@ pub enum AnalysisType {
 /// Priority determines the urgency of analysis and affects queue ordering
 /// and resource allocation in analysis collectors.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum TriggerPriority {
     /// Low priority - routine analysis
     Low,
@@ -358,40 +364,76 @@ pub enum TriggerPriority {
 
 impl CollectionEvent {
     /// Returns the timestamp of the event regardless of type.
-    pub fn timestamp(&self) -> SystemTime {
+    pub const fn timestamp(&self) -> SystemTime {
         match self {
-            CollectionEvent::Process(event) => event.timestamp,
-            CollectionEvent::Network(event) => event.timestamp,
-            CollectionEvent::Filesystem(event) => event.timestamp,
-            CollectionEvent::Performance(event) => event.timestamp,
-            CollectionEvent::TriggerRequest(event) => event.timestamp,
+            Self::Process(event) => event.timestamp,
+            Self::Network(event) => event.timestamp,
+            Self::Filesystem(event) => event.timestamp,
+            Self::Performance(event) => event.timestamp,
+            Self::TriggerRequest(event) => event.timestamp,
         }
     }
 
     /// Returns the event type as a string for logging and metrics.
-    pub fn event_type(&self) -> &'static str {
+    pub const fn event_type(&self) -> &'static str {
         match self {
-            CollectionEvent::Process(_) => "process",
-            CollectionEvent::Network(_) => "network",
-            CollectionEvent::Filesystem(_) => "filesystem",
-            CollectionEvent::Performance(_) => "performance",
-            CollectionEvent::TriggerRequest(_) => "trigger_request",
+            Self::Process(_) => "process",
+            Self::Network(_) => "network",
+            Self::Filesystem(_) => "filesystem",
+            Self::Performance(_) => "performance",
+            Self::TriggerRequest(_) => "trigger_request",
         }
     }
 
     /// Returns the associated process ID if available.
-    pub fn pid(&self) -> Option<u32> {
+    pub const fn pid(&self) -> Option<u32> {
         match self {
-            CollectionEvent::Process(event) => Some(event.pid),
-            CollectionEvent::Network(event) => event.pid,
-            CollectionEvent::Filesystem(event) => event.pid,
-            CollectionEvent::Performance(event) => event.pid,
-            CollectionEvent::TriggerRequest(event) => event.target_pid,
+            Self::Process(event) => Some(event.pid),
+            Self::Network(event) => event.pid,
+            Self::Filesystem(event) => event.pid,
+            Self::Performance(event) => event.pid,
+            Self::TriggerRequest(event) => event.target_pid,
         }
     }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
@@ -403,14 +445,14 @@ mod tests {
         let event = ProcessEvent {
             pid: 1234,
             ppid: Some(1),
-            name: "test_process".to_string(),
-            executable_path: Some("/usr/bin/test".to_string()),
-            command_line: vec!["test".to_string(), "--flag".to_string()],
+            name: "test_process".to_owned(),
+            executable_path: Some("/usr/bin/test".to_owned()),
+            command_line: vec!["test".to_owned(), "--flag".to_owned()],
             start_time: Some(timestamp),
             cpu_usage: Some(5.5),
             memory_usage: Some(1024 * 1024),
-            executable_hash: Some("abc123".to_string()),
-            user_id: Some("1000".to_string()),
+            executable_hash: Some("abc123".to_owned()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp,
@@ -430,7 +472,7 @@ mod tests {
         let process_event = ProcessEvent {
             pid: 1234,
             ppid: None,
-            name: "test".to_string(),
+            name: "test".to_owned(),
             executable_path: None,
             command_line: vec![],
             start_time: None,
@@ -454,11 +496,11 @@ mod tests {
     fn test_network_event_creation() {
         let timestamp = SystemTime::now();
         let event = NetworkEvent {
-            connection_id: "conn_123".to_string(),
-            source_addr: "192.168.1.100:12345".to_string(),
-            dest_addr: "10.0.0.1:80".to_string(),
-            protocol: "TCP".to_string(),
-            state: "ESTABLISHED".to_string(),
+            connection_id: "conn_123".to_owned(),
+            source_addr: "192.168.1.100:12345".to_owned(),
+            dest_addr: "10.0.0.1:80".to_owned(),
+            protocol: "TCP".to_owned(),
+            state: "ESTABLISHED".to_owned(),
             pid: Some(1234),
             bytes_sent: 1024,
             bytes_received: 2048,
@@ -474,16 +516,16 @@ mod tests {
     fn test_trigger_request_creation() {
         let timestamp = SystemTime::now();
         let mut metadata = HashMap::new();
-        metadata.insert("test_key".to_string(), "test_value".to_string());
+        metadata.insert("test_key".to_owned(), "test_value".to_owned());
 
         let trigger = TriggerRequest {
-            trigger_id: "trigger_123".to_string(),
-            target_collector: "binary-hasher".to_string(),
+            trigger_id: "trigger_123".to_owned(),
+            target_collector: "binary-hasher".to_owned(),
             analysis_type: AnalysisType::BinaryHash,
             priority: TriggerPriority::High,
             target_pid: Some(1234),
-            target_path: Some("/usr/bin/suspicious".to_string()),
-            correlation_id: "corr_456".to_string(),
+            target_path: Some("/usr/bin/suspicious".to_owned()),
+            correlation_id: "corr_456".to_owned(),
             metadata,
             timestamp,
         };
@@ -499,9 +541,9 @@ mod tests {
         assert_eq!(AnalysisType::BinaryHash, AnalysisType::BinaryHash);
         assert_ne!(AnalysisType::BinaryHash, AnalysisType::MemoryAnalysis);
 
-        let custom1 = AnalysisType::Custom("test".to_string());
-        let custom2 = AnalysisType::Custom("test".to_string());
-        let custom3 = AnalysisType::Custom("other".to_string());
+        let custom1 = AnalysisType::Custom("test".to_owned());
+        let custom2 = AnalysisType::Custom("test".to_owned());
+        let custom3 = AnalysisType::Custom("other".to_owned());
 
         assert_eq!(custom1, custom2);
         assert_ne!(custom1, custom3);
@@ -539,14 +581,14 @@ mod tests {
         let process_event = ProcessEvent {
             pid: 1234,
             ppid: Some(1),
-            name: "test".to_string(),
-            executable_path: Some("/bin/test".to_string()),
-            command_line: vec!["test".to_string()],
+            name: "test".to_owned(),
+            executable_path: Some("/bin/test".to_owned()),
+            command_line: vec!["test".to_owned()],
             start_time: Some(timestamp),
             cpu_usage: Some(1.5),
             memory_usage: Some(4096),
-            executable_hash: Some("hash123".to_string()),
-            user_id: Some("1000".to_string()),
+            executable_hash: Some("hash123".to_owned()),
+            user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
             timestamp,
