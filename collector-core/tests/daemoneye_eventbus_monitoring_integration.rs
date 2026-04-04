@@ -1,4 +1,3 @@
-#![cfg(feature = "eventbus-integration")]
 //! Integration tests for DaemonEye EventBus monitoring and statistics collection.
 //!
 //! This test suite verifies that the DaemonEye EventBus monitoring features

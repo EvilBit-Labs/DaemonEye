@@ -1,7 +1,7 @@
 //! # Collector Core Framework
 //!
-//! A reusable collection infrastructure that enables multiple monitoring components
-//! while maintaining shared operational foundation.
+//! The framework for building first-party and third-party collectors for DaemonEye.
+//! It intentionally depends on daemoneye-eventbus for IPC transport of collection events.
 //!
 //! ## Overview
 //!

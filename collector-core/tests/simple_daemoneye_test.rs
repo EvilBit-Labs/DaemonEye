@@ -1,4 +1,3 @@
-#![cfg(feature = "eventbus-integration")]
 #![allow(dead_code, unused_imports)]
 //! Simple test to verify DaemoneyeEventBus basic functionality.
 

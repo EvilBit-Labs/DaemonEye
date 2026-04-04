@@ -36,7 +36,7 @@ confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
-wildcards = 'allow'
+wildcards = 'deny'
 deny = [
     { crate = "git2", use-instead = "gix" },
     { crate = "openssl", use-instead = "rustls" },
@@ -44,7 +44,7 @@ deny = [
     "libssh2-sys",
     { crate = "cmake", use-instead = "cc" },
 ]
-skip = []
+skip = [  ]
 
 # Whitelist Windows dependency conflicts for cross-platform compatibility
 # These conflicts arise from different dependency chains:
@@ -81,7 +81,6 @@ skip-tree = [
     { name = "windows_x86_64_msvc", version = "=0.53.1" },
 ]
 
-
 [advisories]
 yanked = "deny"
 # Allow unmaintained crates from workspace but with explicit exceptions
@@ -91,16 +90,16 @@ unmaintained = "workspace"
 # cargo-deny relies on cargo-audit for advisory detection
 
 # No ignored advisories — all RUSTSEC issues resolved.
-ignore = []
+ignore = [  ]
 
 [sources]
 # Allow crates from crates.io
 unknown-registry = "deny"
-unknown-git = "deny"
-allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+unknown-git      = "deny"
+allow-registry   = [ "https://github.com/rust-lang/crates.io-index" ]
 
 [sources.allow-org]
 # Allow specific organizations for git sources if needed
-github = []
-gitlab = []
-bitbucket = []
+github    = [  ]
+gitlab    = [  ]
+bitbucket = [  ]

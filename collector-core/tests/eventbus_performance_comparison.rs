@@ -1,4 +1,3 @@
-#![cfg(feature = "eventbus-integration")]
 #![allow(dead_code, unused_imports)]
 //! Performance comparison tests between daemoneye-eventbus and crossbeam event distribution.
 //!
