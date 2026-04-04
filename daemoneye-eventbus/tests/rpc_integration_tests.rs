@@ -1040,9 +1040,8 @@ async fn test_rpc_call_through_broker() -> Result<()> {
     let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning,
+    // so the service is ready to receive messages immediately.
 
     // Create health check request
     let request = RpcRequest::health_check(
@@ -1090,9 +1089,7 @@ async fn test_rpc_call_with_lifecycle_operation() -> Result<()> {
     let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning.
 
     // Create start request
     let lifecycle_request = CollectorLifecycleRequest::start("test-collector", None);
@@ -1210,9 +1207,7 @@ async fn test_rpc_response_correlation() -> Result<()> {
     let (_temp_dir, broker, _client) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning.
 
     // Send multiple concurrent requests
     let mut handles = Vec::new();
@@ -1256,9 +1251,7 @@ async fn test_multiple_rpc_clients() -> Result<()> {
     let (_temp_dir, broker, _) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning.
 
     // Create multiple clients
     let client1 = CollectorRpcClient::new("control.collector.test", broker.clone()).await?;
@@ -1316,9 +1309,7 @@ async fn test_rpc_client_shutdown() -> Result<()> {
     let (_temp_dir, broker, client) = setup_test_broker_and_client().await?;
     let _service_handle =
         setup_test_service_handler(broker.clone(), "control.collector.test").await?;
-
-    // Give service handler time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // No sleep needed: setup_test_service_handler subscribes before returning.
 
     // Make a successful request first
     let request = RpcRequest::health_check(
@@ -2064,7 +2055,8 @@ async fn test_restart_required_changes_pid() -> Result<()> {
         .await
         .expect("Failed to start collector");
 
-    // Wait for process to stabilize
+    // Intentional: the OS process needs time to reach a running state before
+    // querying its PID. No channel-based alternative is available here.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Get initial PID
@@ -2116,7 +2108,8 @@ async fn test_restart_required_changes_pid() -> Result<()> {
     let response = service.handle_request(request).await;
     assert_eq!(response.status, RpcStatus::Success);
 
-    // Wait for restart to complete
+    // Intentional: the OS process manager needs time to kill the old process,
+    // spawn the replacement, and update its internal state. No channel available.
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Get new PID
@@ -2187,7 +2180,8 @@ async fn test_hot_reload_notification_and_pid_stable() -> Result<()> {
         .await
         .expect("Failed to start collector");
 
-    // Wait for process to stabilize
+    // Intentional: the OS process needs time to reach a running state before
+    // querying its PID. No channel-based alternative is available here.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Get initial PID
@@ -2252,7 +2246,8 @@ async fn test_hot_reload_notification_and_pid_stable() -> Result<()> {
         "Expected hot-reload notification to be published"
     );
 
-    // Wait a moment for any potential restart
+    // Intentional: allowing time for a spurious restart to manifest, so we can
+    // assert that the PID has not changed (hot-reload must not restart the process).
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Get current PID and verify it hasn't changed

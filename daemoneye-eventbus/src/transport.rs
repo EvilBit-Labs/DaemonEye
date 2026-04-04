@@ -577,15 +577,39 @@ impl TransportClient {
             )));
         }
 
-        // Calculate backoff delay
+        // Calculate backoff delay with safe numeric conversions.
+        // Cap reconnect_attempts to prevent powi overflow (2^62 fits in f64 without precision loss).
+        const MAX_BACKOFF_EXPONENT: u32 = 62;
+        // Cap to i32::MAX (well within u32 range) before narrowing for powi.
+        #[allow(clippy::as_conversions)]
+        // Safety: value is clamped to MAX_BACKOFF_EXPONENT (62) which fits i32
+        let exponent: i32 = self.reconnect_attempts.min(MAX_BACKOFF_EXPONENT) as i32;
+        // initial_reconnect_delay.as_millis() returns u128; cap to u64::MAX before converting.
+        let base_ms_u128 = self
+            .config
+            .initial_reconnect_delay
+            .as_millis()
+            .min(u128::from(u64::MAX));
+        // Safety: base_ms_u128 is clamped to u64::MAX; u64::MAX is exactly representable in f64
+        // (it rounds, but the result is finite), so the multiplication result is bounded.
+        #[allow(clippy::as_conversions)]
+        let base_ms_f64 = base_ms_u128 as f64;
+        let multiplied = base_ms_f64 * self.config.backoff_multiplier.powi(exponent);
+        // u64::MAX as f64 rounds up slightly but is still finite; used only as an upper bound.
+        #[allow(clippy::as_conversions)]
+        // Safety: constant cast, result is a finite f64 upper bound
+        let u64_max_f64: f64 = u64::MAX as f64;
+        // Guard against NaN / infinity before converting to u64.
+        let delay_ms: u64 = if multiplied.is_finite() && multiplied >= 0.0 {
+            // Cap to u64_max_f64 first so the as-cast cannot overflow.
+            #[allow(clippy::as_conversions)] // Safety: value is finite and bounded by u64_max_f64
+            let capped = multiplied.min(u64_max_f64) as u64;
+            capped
+        } else {
+            u64::MAX
+        };
         let delay = std::cmp::min(
-            Duration::from_millis(
-                (self.config.initial_reconnect_delay.as_millis() as f64
-                    * self
-                        .config
-                        .backoff_multiplier
-                        .powi(self.reconnect_attempts as i32)) as u64,
-            ),
+            Duration::from_millis(delay_ms),
             self.config.max_reconnect_delay,
         );
 

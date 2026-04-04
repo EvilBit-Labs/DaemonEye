@@ -18,9 +18,7 @@ async fn test_broker_creation_and_startup() {
         .await
         .unwrap();
     assert!(broker.start().await.is_ok());
-
-    // Give broker time to start
-    sleep(Duration::from_millis(100)).await;
+    // No sleep needed: broker.start() is fully synchronous and completes startup before returning.
 
     let stats = broker.statistics().await;
     assert_eq!(stats.messages_published, 0);
@@ -190,7 +188,7 @@ async fn test_statistics_tracking() {
         .await
         .unwrap();
 
-    // Give some time for uptime to be updated
+    // Intentional: allow wall-clock time to advance so uptime_seconds can be validated below.
     sleep(Duration::from_millis(100)).await;
 
     // Check updated stats

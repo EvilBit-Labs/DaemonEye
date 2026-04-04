@@ -1196,6 +1196,94 @@ mod tests {
         }
     }
 
+    /// Build a minimal `SocketConfig` that points at `socket_path` and carries the given token.
+    fn make_socket_config(socket_path: &str, auth_token: Option<String>) -> SocketConfig {
+        SocketConfig {
+            unix_path: socket_path.to_string(),
+            windows_pipe: socket_path.to_string(),
+            connection_limit: 100,
+            #[cfg(target_os = "freebsd")]
+            freebsd_path: None,
+            auth_token,
+            per_client_byte_limit: 10 * 1024 * 1024,
+            rate_limit_config: None,
+            correlation_config: None,
+        }
+    }
+
+    /// auth_enabled + valid token → add_client succeeds (connection accepted by running server).
+    #[tokio::test]
+    async fn test_auth_valid_token_connection_succeeds() {
+        let sock = "/tmp/test-auth-valid.sock";
+        let broker = DaemoneyeBroker::new_with_config(sock, true, 100)
+            .await
+            .expect("broker creation must succeed");
+        broker.start().await.expect("broker start must succeed");
+
+        // Retrieve the auto-generated token from the broker's config.
+        let valid_token = broker
+            .config()
+            .auth_token
+            .clone()
+            .expect("auth token must be set when auth_enabled is true");
+
+        let client_socket_config = make_socket_config(sock, Some(valid_token));
+        let result = broker
+            .add_client("auth-client-valid".to_string(), &client_socket_config)
+            .await;
+        assert!(
+            result.is_ok(),
+            "valid token should be accepted; got: {result:?}"
+        );
+    }
+
+    /// auth_enabled + invalid token → add_client is rejected before any socket connection.
+    #[tokio::test]
+    async fn test_auth_invalid_token_connection_rejected() {
+        let sock = "/tmp/test-auth-invalid.sock";
+        let broker = DaemoneyeBroker::new_with_config(sock, true, 100)
+            .await
+            .expect("broker creation must succeed");
+
+        let client_socket_config = make_socket_config(sock, Some("wrong-token".to_string()));
+        let result = broker
+            .add_client("auth-client-invalid".to_string(), &client_socket_config)
+            .await;
+        assert!(
+            result.is_err(),
+            "invalid token must be rejected; got: {result:?}"
+        );
+        let err_msg = result.expect_err("expected error").to_string();
+        assert!(
+            err_msg.contains("Authentication failed"),
+            "error should mention authentication failure; got: {err_msg}"
+        );
+    }
+
+    /// auth_enabled + no token → add_client is rejected (treated as invalid).
+    #[tokio::test]
+    async fn test_auth_no_token_connection_rejected() {
+        let sock = "/tmp/test-auth-none.sock";
+        let broker = DaemoneyeBroker::new_with_config(sock, true, 100)
+            .await
+            .expect("broker creation must succeed");
+
+        // Pass a SocketConfig with no auth token.
+        let client_socket_config = make_socket_config(sock, None);
+        let result = broker
+            .add_client("auth-client-none".to_string(), &client_socket_config)
+            .await;
+        assert!(
+            result.is_err(),
+            "missing token must be rejected; got: {result:?}"
+        );
+        let err_msg = result.expect_err("expected error").to_string();
+        assert!(
+            err_msg.contains("Authentication failed"),
+            "error should mention authentication failure; got: {err_msg}"
+        );
+    }
+
     #[tokio::test]
     async fn test_queue_manager_drain_on_reconnect() {
         let broker = DaemoneyeBroker::new_with_config("/tmp/test-queue-drain.sock", false, 100)
