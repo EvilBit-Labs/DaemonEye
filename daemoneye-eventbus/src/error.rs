@@ -1,12 +1,13 @@
-//! Error types for the DaemonEye EventBus
+//! Error types for the `DaemonEye` `EventBus`
 
 use thiserror::Error;
 
-/// Result type alias for EventBus operations
+/// Result type alias for `EventBus` operations
 pub type Result<T> = std::result::Result<T, EventBusError>;
 
-/// Errors that can occur in EventBus operations
+/// Errors that can occur in `EventBus` operations
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum EventBusError {
     /// Transport layer errors (socket, pipe, network)
     #[error("Transport error: {0}")]
@@ -101,12 +102,12 @@ impl EventBusError {
     }
 
     /// Check if this error is a timeout error
-    pub fn is_timeout(&self) -> bool {
+    pub const fn is_timeout(&self) -> bool {
         matches!(self, Self::Timeout(_))
     }
 
     /// Check if this error is an RPC error
-    pub fn is_rpc_error(&self) -> bool {
+    pub const fn is_rpc_error(&self) -> bool {
         matches!(self, Self::Rpc(_))
     }
 }

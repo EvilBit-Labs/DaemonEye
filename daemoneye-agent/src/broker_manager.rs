@@ -1224,13 +1224,17 @@ impl HealthProvider for BrokerManager {
                     daemoneye_eventbus::process_manager::HealthStatus::Unhealthy => {
                         HealthStatus::Unhealthy
                     }
-                    daemoneye_eventbus::process_manager::HealthStatus::Unknown => {
+                    daemoneye_eventbus::process_manager::HealthStatus::Unknown | _ => {
                         HealthStatus::Unknown
                     }
                 },
                 message: Some(format!("PID: {}, State: {:?}", status.pid, status.state)),
                 last_check: std::time::SystemTime::now(),
-                check_interval_seconds: self.process_manager.config.health_check_interval.as_secs(),
+                check_interval_seconds: self
+                    .process_manager
+                    .config()
+                    .health_check_interval
+                    .as_secs(),
             },
         );
 
@@ -1257,7 +1261,11 @@ impl HealthProvider for BrokerManager {
                     heartbeat_age, status.missed_heartbeats
                 )),
                 last_check: status.last_heartbeat,
-                check_interval_seconds: self.process_manager.config.health_check_interval.as_secs(),
+                check_interval_seconds: self
+                    .process_manager
+                    .config()
+                    .health_check_interval
+                    .as_secs(),
             },
         );
 
@@ -1511,7 +1519,7 @@ fn aggregate_worst_of<I: Iterator<Item = HealthStatus>>(iter: I) -> HealthStatus
             HealthStatus::Unresponsive => has_unresponsive = true,
             HealthStatus::Degraded => has_degraded = true,
             HealthStatus::Healthy => has_healthy = true,
-            HealthStatus::Unknown => {}
+            HealthStatus::Unknown | _ => {}
         }
     }
 

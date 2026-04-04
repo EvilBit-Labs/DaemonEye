@@ -3,6 +3,13 @@
 //! This module provides result collection, correlation, and aggregation from
 //! multiple collectors publishing to domain-specific topics.
 
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::as_conversions)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+
 use crate::event::CollectionEvent;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -49,6 +56,7 @@ pub struct CollectorResult {
 
 /// Aggregation status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AggregationStatus {
     /// Aggregation in progress
     Pending,
@@ -190,7 +198,7 @@ impl ResultAggregator {
             let senders = self.result_senders.read().await;
             if let Some(sender) = senders.get(correlation_id) {
                 // Ignore send errors (receiver may have been dropped)
-                let _ = sender.send(result.clone());
+                drop(sender.send(result.clone()));
             }
         }
 
@@ -224,8 +232,8 @@ impl ResultAggregator {
             // Clean up result sender when aggregation completes
             {
                 let mut senders = self.result_senders.write().await;
-                senders.remove(correlation_id);
-            }
+                senders.remove(correlation_id)
+            };
 
             let aggregated = self.finalize_aggregation(completed_aggregation).await?;
             Ok(Some(aggregated))
@@ -243,7 +251,7 @@ impl ResultAggregator {
 
         // Apply deduplication if enabled
         if self.config.enable_deduplication {
-            aggregation.results = self.deduplicate_results(aggregation.results);
+            aggregation.results = Self::deduplicate_results(aggregation.results);
         }
 
         // Apply ordering if enabled
@@ -279,9 +287,9 @@ impl ResultAggregator {
 
             if let Ok(elapsed) = start_time.elapsed() {
                 let elapsed_ms = elapsed.as_millis() as f64;
-                stats.avg_aggregation_time_ms = (stats.avg_aggregation_time_ms
-                    * (stats.aggregations_completed - 1) as f64
-                    + elapsed_ms)
+                stats.avg_aggregation_time_ms = stats
+                    .avg_aggregation_time_ms
+                    .mul_add((stats.aggregations_completed - 1) as f64, elapsed_ms)
                     / stats.aggregations_completed as f64;
             }
         }
@@ -296,7 +304,7 @@ impl ResultAggregator {
     }
 
     /// Deduplicate results based on collector ID and event content
-    fn deduplicate_results(&self, results: Vec<CollectorResult>) -> Vec<CollectorResult> {
+    fn deduplicate_results(results: Vec<CollectorResult>) -> Vec<CollectorResult> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -315,7 +323,7 @@ impl ResultAggregator {
                     json.hash(&mut hasher);
                 } else {
                     // Fallback: hash the debug representation if JSON serialization fails
-                    format!("{:?}", event).hash(&mut hasher);
+                    format!("{event:?}").hash(&mut hasher);
                 }
             }
 
@@ -353,8 +361,8 @@ impl ResultAggregator {
             // Clean up result sender
             {
                 let mut senders = self.result_senders.write().await;
-                senders.remove(&correlation_id);
-            }
+                senders.remove(&correlation_id)
+            };
 
             if let Some(aggregation) = pending.remove(&correlation_id) {
                 let mut aggregated = AggregatedResult {
@@ -368,7 +376,7 @@ impl ResultAggregator {
 
                 // Apply deduplication and ordering even for timed out results
                 if self.config.enable_deduplication {
-                    aggregated.results = self.deduplicate_results(aggregated.results);
+                    aggregated.results = Self::deduplicate_results(aggregated.results);
                 }
                 if self.config.enable_ordering {
                     aggregated.results.sort_by_key(|r| r.timestamp);
@@ -428,8 +436,8 @@ impl ResultAggregator {
         // Store sender for this aggregation
         {
             let mut senders = self.result_senders.write().await;
-            senders.insert(correlation_id, tx);
-        }
+            senders.insert(correlation_id, tx)
+        };
 
         Ok(rx)
     }
@@ -445,6 +453,42 @@ impl ResultAggregator {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
     use crate::event::ProcessEvent;
@@ -454,7 +498,7 @@ mod tests {
         let config = AggregationConfig::default();
         let aggregator = ResultAggregator::new(config);
 
-        let correlation_id = "test-correlation-1".to_string();
+        let correlation_id = "test-correlation-1".to_owned();
 
         // Start aggregation
         aggregator
@@ -491,7 +535,7 @@ mod tests {
         };
         let aggregator = ResultAggregator::new(config);
 
-        let correlation_id = "test-timeout-1".to_string();
+        let correlation_id = "test-timeout-1".to_owned();
 
         // Start aggregation
         aggregator
@@ -524,7 +568,7 @@ mod tests {
         };
         let aggregator = ResultAggregator::new(config);
 
-        let correlation_id = "test-dedup-1".to_string();
+        let correlation_id = "test-dedup-1".to_owned();
 
         // Start aggregation
         aggregator
@@ -538,10 +582,10 @@ mod tests {
 
         // Add duplicate results - result1 and result2 should be identical
         let result1 = CollectorResult {
-            collector_id: "collector-1".to_string(),
+            collector_id: "collector-1".to_owned(),
             events: vec![CollectionEvent::Process(ProcessEvent {
                 pid: 1234,
-                name: "test-process".to_string(),
+                name: "test-process".to_owned(),
                 command_line: vec![],
                 executable_path: None,
                 ppid: None,
@@ -562,10 +606,10 @@ mod tests {
 
         // Create an identical duplicate
         let result2 = CollectorResult {
-            collector_id: "collector-1".to_string(),
+            collector_id: "collector-1".to_owned(),
             events: vec![CollectionEvent::Process(ProcessEvent {
                 pid: 1234,
-                name: "test-process".to_string(),
+                name: "test-process".to_owned(),
                 command_line: vec![],
                 executable_path: None,
                 ppid: None,
@@ -606,10 +650,10 @@ mod tests {
 
     fn create_test_result(collector_id: &str) -> CollectorResult {
         CollectorResult {
-            collector_id: collector_id.to_string(),
+            collector_id: collector_id.to_owned(),
             events: vec![CollectionEvent::Process(ProcessEvent {
                 pid: 1234,
-                name: "test-process".to_string(),
+                name: "test-process".to_owned(),
                 command_line: vec![],
                 executable_path: None,
                 ppid: None,

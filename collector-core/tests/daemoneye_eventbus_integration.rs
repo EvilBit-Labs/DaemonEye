@@ -1,5 +1,53 @@
-#![cfg(feature = "eventbus-integration")]
-#![allow(dead_code, unused_imports)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::dbg_macro,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_lossless,
+    clippy::pattern_type_mismatch,
+    clippy::non_ascii_literal,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::let_underscore_must_use,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::used_underscore_binding,
+    clippy::redundant_clone,
+    clippy::explicit_iter_loop,
+    clippy::integer_division,
+    clippy::modulo_arithmetic,
+    clippy::unseparated_literal_suffix,
+    clippy::doc_markdown,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::float_cmp,
+    clippy::unreadable_literal,
+    clippy::semicolon_outside_block,
+    clippy::semicolon_inside_block,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::redundant_type_annotations,
+    clippy::significant_drop_tightening,
+    clippy::redundant_else,
+    clippy::match_same_arms,
+    clippy::ignore_without_reason,
+    dead_code,
+    unused_imports
+)]
 //! Integration tests for DaemoneyeEventBus with collector-core framework.
 
 use collector_core::{
@@ -81,8 +129,8 @@ async fn test_daemoneye_eventbus_integration() {
         .expect("Failed to receive event");
 
     // Verify the event
-    match received_event.event {
-        CollectionEvent::Process(ref proc_event) => {
+    match &received_event.event {
+        CollectionEvent::Process(proc_event) => {
             assert_eq!(proc_event.pid, 12345);
             assert_eq!(proc_event.name, "integration_test");
             assert_eq!(proc_event.ppid, Some(1));
@@ -170,8 +218,8 @@ async fn test_daemoneye_eventbus_trigger_requests() {
         .expect("Failed to receive trigger event");
 
     // Verify the trigger request
-    match received_event.event {
-        CollectionEvent::TriggerRequest(ref trigger) => {
+    match &received_event.event {
+        CollectionEvent::TriggerRequest(trigger) => {
             assert_eq!(trigger.trigger_id, "trigger-integration-123");
             assert_eq!(trigger.target_pid, Some(12345));
         }

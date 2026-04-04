@@ -1,6 +1,6 @@
-//! # DaemonEye EventBus
+//! # `DaemonEye` `EventBus`
 //!
-//! A cross-platform IPC event bus designed specifically for the DaemonEye monitoring system.
+//! A cross-platform IPC event bus designed specifically for the `DaemonEye` monitoring system.
 //! Provides pub/sub messaging with wildcard topic matching and embedded broker functionality.
 //!
 //! ## Features
@@ -123,17 +123,21 @@ pub use transport::{
     ManagedClient, SocketConfig, TransportClient, TransportManager, TransportServer,
 };
 
-/// EventBus trait for compatibility with collector-core
+/// `EventBus` trait for compatibility with collector-core
 #[allow(async_fn_in_trait)]
 pub trait EventBus: Send + Sync {
     /// Publishes an event to the event bus with correlation tracking.
     async fn publish(&mut self, event: CollectionEvent, correlation_id: String) -> Result<()>;
 
     /// Subscribes to events with filtering and capability matching.
+    ///
+    /// Returns a receiver yielding `Arc<BusEvent>` so that each subscriber
+    /// shares a single allocation of the event data rather than deep-cloning
+    /// the payload for every subscriber on the hot path.
     async fn subscribe(
         &mut self,
         subscription: EventSubscription,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>>;
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<std::sync::Arc<BusEvent>>>;
 
     /// Unsubscribes a subscriber from the event bus.
     async fn unsubscribe(&mut self, subscriber_id: &str) -> Result<()>;

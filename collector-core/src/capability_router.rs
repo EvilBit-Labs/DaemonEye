@@ -3,6 +3,10 @@
 //! This module provides capability advertisement, discovery, and dynamic routing
 //! for multi-collector coordination workflows.
 
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::pattern_type_mismatch)]
+
 use crate::source::SourceCaps;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -35,6 +39,7 @@ pub struct CollectorCapability {
 
 /// Collector health status for routing decisions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CollectorHealthStatus {
     /// Collector is healthy and accepting tasks
     Healthy,
@@ -91,8 +96,8 @@ impl CapabilityRouter {
         // Store capability
         {
             let mut capabilities = self.capabilities.write().await;
-            capabilities.insert(collector_id.clone(), capability);
-        }
+            capabilities.insert(collector_id.clone(), capability)
+        };
 
         // Update capability index
         {
@@ -100,8 +105,8 @@ impl CapabilityRouter {
             index
                 .entry(caps)
                 .or_insert_with(Vec::new)
-                .push(collector_id.clone());
-        }
+                .push(collector_id.clone())
+        };
 
         Ok(())
     }
@@ -111,13 +116,13 @@ impl CapabilityRouter {
         info!(collector_id = %collector_id, "Deregistering collector");
 
         // Remove from capabilities
-        let caps = {
+        let removed_caps = {
             let mut capabilities = self.capabilities.write().await;
             capabilities.remove(collector_id).map(|c| c.capabilities)
         };
 
         // Remove from capability index
-        if let Some(caps) = caps {
+        if let Some(caps) = removed_caps {
             let mut index = self.capability_index.write().await;
             if let Some(collectors) = index.get_mut(&caps) {
                 collectors.retain(|id| id != collector_id);
@@ -139,7 +144,7 @@ impl CapabilityRouter {
             debug!(collector_id = %collector_id, "Updated collector heartbeat");
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Collector not found: {}", collector_id))
+            Err(anyhow::anyhow!("Collector not found: {collector_id}"))
         }
     }
 
@@ -160,7 +165,7 @@ impl CapabilityRouter {
             );
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Collector not found: {}", collector_id))
+            Err(anyhow::anyhow!("Collector not found: {collector_id}"))
         }
     }
 
@@ -187,8 +192,7 @@ impl CapabilityRouter {
 
         if collectors.is_empty() {
             return Err(anyhow::anyhow!(
-                "No collectors available with required capabilities: {:?}",
-                required_caps
+                "No collectors available with required capabilities: {required_caps:?}"
             ));
         }
 
@@ -211,7 +215,7 @@ impl CapabilityRouter {
             .topic_patterns
             .first()
             .cloned()
-            .unwrap_or_else(|| "control.collector.generic".to_string());
+            .unwrap_or_else(|| "control.collector.generic".to_owned());
 
         // Collect fallback collectors
         let fallbacks: Vec<String> = collectors
@@ -340,6 +344,42 @@ pub struct RoutingStats {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
 
@@ -348,10 +388,10 @@ mod tests {
         let router = CapabilityRouter::new(Duration::from_secs(30));
 
         let capability = CollectorCapability {
-            collector_id: "procmond-1".to_string(),
-            collector_type: "procmond".to_string(),
+            collector_id: "procmond-1".to_owned(),
+            collector_type: "procmond".to_owned(),
             capabilities: SourceCaps::PROCESS | SourceCaps::REALTIME,
-            topic_patterns: vec!["control.collector.process".to_string()],
+            topic_patterns: vec!["control.collector.process".to_owned()],
             health_status: CollectorHealthStatus::Healthy,
             last_heartbeat: SystemTime::now(),
             metadata: HashMap::new(),
@@ -374,9 +414,9 @@ mod tests {
         for i in 1..=3 {
             let capability = CollectorCapability {
                 collector_id: format!("procmond-{}", i),
-                collector_type: "procmond".to_string(),
+                collector_type: "procmond".to_owned(),
                 capabilities: SourceCaps::PROCESS,
-                topic_patterns: vec!["control.collector.process".to_string()],
+                topic_patterns: vec!["control.collector.process".to_owned()],
                 health_status: CollectorHealthStatus::Healthy,
                 last_heartbeat: SystemTime::now(),
                 metadata: HashMap::new(),
@@ -396,10 +436,10 @@ mod tests {
 
         // Register healthy collector
         let healthy = CollectorCapability {
-            collector_id: "healthy-1".to_string(),
-            collector_type: "procmond".to_string(),
+            collector_id: "healthy-1".to_owned(),
+            collector_type: "procmond".to_owned(),
             capabilities: SourceCaps::PROCESS,
-            topic_patterns: vec!["control.collector.process".to_string()],
+            topic_patterns: vec!["control.collector.process".to_owned()],
             health_status: CollectorHealthStatus::Healthy,
             last_heartbeat: SystemTime::now(),
             metadata: HashMap::new(),
@@ -407,10 +447,10 @@ mod tests {
 
         // Register degraded collector
         let degraded = CollectorCapability {
-            collector_id: "degraded-1".to_string(),
-            collector_type: "procmond".to_string(),
+            collector_id: "degraded-1".to_owned(),
+            collector_type: "procmond".to_owned(),
             capabilities: SourceCaps::PROCESS,
-            topic_patterns: vec!["control.collector.process".to_string()],
+            topic_patterns: vec!["control.collector.process".to_owned()],
             health_status: CollectorHealthStatus::Degraded,
             last_heartbeat: SystemTime::now(),
             metadata: HashMap::new(),
@@ -429,10 +469,10 @@ mod tests {
         let router = CapabilityRouter::new(Duration::from_millis(100));
 
         let capability = CollectorCapability {
-            collector_id: "stale-1".to_string(),
-            collector_type: "procmond".to_string(),
+            collector_id: "stale-1".to_owned(),
+            collector_type: "procmond".to_owned(),
             capabilities: SourceCaps::PROCESS,
-            topic_patterns: vec!["control.collector.process".to_string()],
+            topic_patterns: vec!["control.collector.process".to_owned()],
             health_status: CollectorHealthStatus::Healthy,
             last_heartbeat: SystemTime::now() - Duration::from_secs(1),
             metadata: HashMap::new(),

@@ -688,7 +688,7 @@ These extensions will follow the established collector-core framework patterns a
   - Add schema registry integration for collector capability negotiation
   - Create reactive pipeline orchestrator for cascading analysis and auto-correlation
   - Integrate specialty collectors (YARA, PE analysis, network analysis) with SQL queries
-  - **Reference**: See #[[file:.kiro/specs/sql-to-ipc-detection-engine/tasks.md]] for complete implementation plan
+  - **Reference**: See #\[[file:.kiro/specs/sql-to-ipc-detection-engine/tasks.md]\] for complete implementation plan
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
 - [ ] 12.3 Integrate SQL-to-IPC engine with existing daemoneye-agent infrastructure
@@ -1119,7 +1119,7 @@ These extensions will follow the established collector-core framework patterns a
 - [ ] 12. **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
 
   - Complete SQL-to-IPC engine implementation (Task 6 above)
-  - Follow tasks 7.1-7.5 from #[[file:.kiro/specs/sql-to-ipc-detection-engine/tasks.md]]
+  - Follow tasks 7.1-7.5 from #\[[file:.kiro/specs/sql-to-ipc-detection-engine/tasks.md]\]
   - Return here for integration with core monitoring infrastructure _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
 
 The following collectors are planned for future implementation to extend the virtual table system:

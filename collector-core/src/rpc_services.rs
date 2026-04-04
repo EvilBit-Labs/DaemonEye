@@ -2,7 +2,16 @@
 //!
 //! This module provides RPC service integration for collector-core, enabling
 //! lifecycle operations (start, stop, restart, health checks) to be performed
-//! via RPC calls through the DaemonEye event bus.
+//! via RPC calls through the `DaemonEye` event bus.
+
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::as_conversions)]
+#![allow(clippy::pattern_type_mismatch)]
+#![allow(clippy::indexing_slicing)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::use_debug)]
+#![allow(clippy::unreachable)]
 
 use crate::collector::CollectorRuntime;
 use crate::performance::PerformanceMonitor;
@@ -49,8 +58,8 @@ pub struct RpcServiceConfig {
 impl Default for RpcServiceConfig {
     fn default() -> Self {
         Self {
-            collector_id: "collector".to_string(),
-            rpc_topic: "control.collector.collector".to_string(),
+            collector_id: "collector".to_owned(),
+            rpc_topic: "control.collector.collector".to_owned(),
             default_timeout: Duration::from_secs(30),
         }
     }
@@ -108,10 +117,10 @@ impl CollectorRpcServiceManager {
             max_concurrent_requests: 10,
             timeout_limits: TimeoutLimits {
                 min_timeout_ms: 1000,
-                max_timeout_ms: 300000,
+                max_timeout_ms: 300_000,
                 default_timeout_ms: 30000,
             },
-            supported_collectors: vec!["procmond".to_string()],
+            supported_collectors: vec!["procmond".to_owned()],
         };
 
         // Create process manager for the RPC service
@@ -207,7 +216,7 @@ impl CollectorRpcServiceManager {
         let mut message_receiver = broker
             .subscribe_raw(&rpc_topic, subscriber_id)
             .await
-            .map_err(|e| format!("Failed to subscribe to RPC topic: {}", e))?;
+            .map_err(|e| format!("Failed to subscribe to RPC topic: {e}"))?;
 
         info!(
             collector_id = %self.config.collector_id,
@@ -236,10 +245,9 @@ impl CollectorRpcServiceManager {
             // Signal readiness before entering the message processing loop
             // This ensures callers know the service is subscribed and ready
             eprintln!(
-                "RPC_SERVICE_LOOP: Ready signal sent, entering message loop for collector: {}",
-                config_collector_id
+                "RPC_SERVICE_LOOP: Ready signal sent, entering message loop for collector: {config_collector_id}"
             );
-            let _ = ready_tx.send(());
+            ready_tx.send(()).ok();
 
             while let Some(message) = message_receiver.recv().await {
                 eprintln!(
@@ -270,7 +278,7 @@ impl CollectorRpcServiceManager {
                         req
                     }
                     Err(e) => {
-                        eprintln!("RPC_SERVICE_LOOP: Failed to deserialize RPC request: {}", e);
+                        eprintln!("RPC_SERVICE_LOOP: Failed to deserialize RPC request: {e}");
                         error!("Failed to deserialize RPC request: {}", e);
                         continue;
                     }
@@ -292,6 +300,7 @@ impl CollectorRpcServiceManager {
                     let runtime_guard = runtime_ref.read().await;
                     if let Some(runtime) = runtime_guard.as_ref() {
                         let _runtime_inner = runtime.read().await;
+                        #[allow(clippy::wildcard_enum_match_arm)]
                         match request.operation {
                             RpcOperation::Start => {
                                 // Runtime is already started, return success
@@ -382,22 +391,21 @@ impl CollectorRpcServiceManager {
                                                         result_value,
                                                     ),
                                                 ),
-                                                Err(e) => Err(format!(
-                                                    "Failed to serialize result: {}",
-                                                    e
-                                                )),
+                                                Err(e) => {
+                                                    Err(format!("Failed to serialize result: {e}"))
+                                                }
                                             }
                                         }
-                                        Err(e) => Err(format!("Task execution failed: {}", e)),
+                                        Err(e) => Err(format!("Task execution failed: {e}")),
                                     }
                                 } else {
-                                    Err("No task handler registered".to_string())
+                                    Err("No task handler registered".to_owned())
                                 }
                             }
-                            Err(e) => Err(format!("Failed to deserialize task: {}", e)),
+                            Err(e) => Err(format!("Failed to deserialize task: {e}")),
                         }
                     } else {
-                        Err("Invalid payload for ExecuteTask".to_string())
+                        Err("Invalid payload for ExecuteTask".to_owned())
                     };
 
                     let execution_time = start_time.elapsed().unwrap_or_default();
@@ -423,7 +431,7 @@ impl CollectorRpcServiceManager {
                             status: daemoneye_eventbus::rpc::RpcStatus::Error,
                             payload: None,
                             error_details: Some(daemoneye_eventbus::rpc::RpcError {
-                                code: "EXECUTION_ERROR".to_string(),
+                                code: "EXECUTION_ERROR".to_owned(),
                                 message: msg,
                                 context: std::collections::HashMap::new(),
                                 category: daemoneye_eventbus::rpc::ErrorCategory::Internal,
@@ -470,10 +478,7 @@ impl CollectorRpcServiceManager {
 
                 // Determine response topic
                 let response_topic = format!("control.rpc.response.{}", request.client_id);
-                eprintln!(
-                    "RPC_SERVICE_LOOP: Will publish response to topic: {}",
-                    response_topic
-                );
+                eprintln!("RPC_SERVICE_LOOP: Will publish response to topic: {response_topic}");
 
                 // Serialize and publish response
                 let payload = match postcard::to_allocvec(&response) {
@@ -498,7 +503,7 @@ impl CollectorRpcServiceManager {
                             status: daemoneye_eventbus::rpc::RpcStatus::Error,
                             payload: None,
                             error_details: Some(daemoneye_eventbus::rpc::RpcError {
-                                code: "SERIALIZATION_ERROR".to_string(),
+                                code: "SERIALIZATION_ERROR".to_owned(),
                                 message: format!(
                                     "Failed to serialize RPC response for request {}: {}",
                                     request.request_id, serialization_error
@@ -542,14 +547,13 @@ impl CollectorRpcServiceManager {
                     .publish(&response_topic, &response.request_id, payload)
                     .await
                 {
-                    Ok(_) => {
+                    Ok(()) => {
                         eprintln!(
-                            "RPC_SERVICE_LOOP: Successfully published response to topic: {}",
-                            response_topic
+                            "RPC_SERVICE_LOOP: Successfully published response to topic: {response_topic}"
                         );
                     }
                     Err(e) => {
-                        eprintln!("RPC_SERVICE_LOOP: Failed to publish response: {}", e);
+                        eprintln!("RPC_SERVICE_LOOP: Failed to publish response: {e}");
                         error!(
                             request_id = %response.request_id,
                             topic = %response_topic,
@@ -563,7 +567,7 @@ impl CollectorRpcServiceManager {
 
         // Wait for the service to signal readiness before returning
         // This ensures the caller knows the service is actually receiving messages
-        let _ = ready_rx.await;
+        drop(ready_rx.await);
 
         *handle_guard = Some(handle);
         Ok(())
@@ -594,10 +598,7 @@ impl HealthProvider for CollectorHealthProvider {
         &self,
         collector_id: &str,
     ) -> std::result::Result<HealthCheckData, daemoneye_eventbus::ProcessManagerError> {
-        eprintln!(
-            "HEALTH_PROVIDER: get_collector_health called for collector_id={}",
-            collector_id
-        );
+        eprintln!("HEALTH_PROVIDER: get_collector_health called for collector_id={collector_id}");
 
         if collector_id != self.collector_id {
             eprintln!(
@@ -605,7 +606,7 @@ impl HealthProvider for CollectorHealthProvider {
                 collector_id, self.collector_id
             );
             return Err(daemoneye_eventbus::ProcessManagerError::ProcessNotFound(
-                collector_id.to_string(),
+                collector_id.to_owned(),
             ));
         }
 
@@ -623,14 +624,14 @@ impl HealthProvider for CollectorHealthProvider {
                 TelemetryHealthStatus::Healthy => HealthStatus::Healthy,
                 TelemetryHealthStatus::Degraded => HealthStatus::Degraded,
                 TelemetryHealthStatus::Unhealthy => HealthStatus::Unhealthy,
-                TelemetryHealthStatus::Unknown => HealthStatus::Unknown,
-                _ => HealthStatus::Unknown,
+                #[allow(clippy::wildcard_enum_match_arm)]
+                TelemetryHealthStatus::Unknown | _ => HealthStatus::Unknown,
             };
 
             components.insert(
-                "telemetry".to_string(),
+                "telemetry".to_owned(),
                 ComponentHealth {
-                    name: "telemetry".to_string(),
+                    name: "telemetry".to_owned(),
                     status: telemetry_status,
                     message: Some(format!("Status: {:?}", health_check.status)),
                     last_check: SystemTime::now(),
@@ -640,11 +641,11 @@ impl HealthProvider for CollectorHealthProvider {
 
             let telemetry_metrics = telemetry_guard.get_metrics();
             metrics.insert(
-                "operation_count".to_string(),
+                "operation_count".to_owned(),
                 telemetry_metrics.operation_count as f64,
             );
             metrics.insert(
-                "error_count".to_string(),
+                "error_count".to_owned(),
                 telemetry_metrics.error_count as f64,
             );
 
@@ -661,15 +662,15 @@ impl HealthProvider for CollectorHealthProvider {
             let perf_metrics = perf_monitor.collect_resource_metrics().await;
             eprintln!("HEALTH_PROVIDER: Got performance metrics");
             metrics.insert(
-                "cpu_percent".to_string(),
+                "cpu_percent".to_owned(),
                 perf_metrics.cpu.current_cpu_percent,
             );
             metrics.insert(
-                "memory_bytes".to_string(),
+                "memory_bytes".to_owned(),
                 perf_metrics.memory.current_memory_bytes as f64,
             );
             metrics.insert(
-                "events_per_second".to_string(),
+                "events_per_second".to_owned(),
                 perf_metrics.throughput.events_per_second,
             );
         }
@@ -681,13 +682,10 @@ impl HealthProvider for CollectorHealthProvider {
             let runtime_guard = runtime.read().await;
             eprintln!("HEALTH_PROVIDER: Got inner runtime lock");
             let stats = runtime_guard.get_runtime_stats();
+            metrics.insert("events_processed".to_owned(), stats.events_processed as f64);
+            metrics.insert("errors_total".to_owned(), stats.errors_total as f64);
             metrics.insert(
-                "events_processed".to_string(),
-                stats.events_processed as f64,
-            );
-            metrics.insert("errors_total".to_string(), stats.errors_total as f64);
-            metrics.insert(
-                "registered_sources".to_string(),
+                "registered_sources".to_owned(),
                 stats.registered_sources as f64,
             );
         }
@@ -700,12 +698,9 @@ impl HealthProvider for CollectorHealthProvider {
             .min()
             .unwrap_or(HealthStatus::Unknown);
 
-        eprintln!(
-            "HEALTH_PROVIDER: Returning health data with status={:?}",
-            overall_status
-        );
+        eprintln!("HEALTH_PROVIDER: Returning health data with status={overall_status:?}");
         Ok(HealthCheckData {
-            collector_id: collector_id.to_string(),
+            collector_id: collector_id.to_owned(),
             status: overall_status,
             components,
             metrics,
@@ -732,7 +727,7 @@ impl ConfigProvider for CollectorConfigProvider {
     > {
         if collector_id != self.collector_id {
             return Err(daemoneye_eventbus::ConfigManagerError::ConfigNotFound(
-                format!("Collector {} not found", collector_id),
+                format!("Collector {collector_id} not found"),
             ));
         }
 
@@ -749,7 +744,7 @@ impl ConfigProvider for CollectorConfigProvider {
     ) -> std::result::Result<ConfigUpdateResult, daemoneye_eventbus::ConfigManagerError> {
         if collector_id != self.collector_id {
             return Err(daemoneye_eventbus::ConfigManagerError::ConfigNotFound(
-                format!("Collector {} not found", collector_id),
+                format!("Collector {collector_id} not found"),
             ));
         }
 
@@ -841,7 +836,7 @@ impl RegistrationProvider for CollectorRegistrationProvider {
         collector_id: &str,
     ) -> std::result::Result<(), RegistrationError> {
         if collector_id != self.collector_id {
-            return Err(RegistrationError::NotFound(collector_id.to_string()));
+            return Err(RegistrationError::NotFound(collector_id.to_owned()));
         }
 
         // Heartbeat update is a no-op for this provider

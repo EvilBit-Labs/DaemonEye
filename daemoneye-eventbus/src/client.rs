@@ -1,4 +1,4 @@
-//! EventBus client implementation with topic management and reconnection logic.
+//! `EventBus` client implementation with topic management and reconnection logic.
 //!
 //! This module provides a high-level client interface for connecting to the
 //! daemoneye-eventbus broker with automatic reconnection, health monitoring,
@@ -19,7 +19,7 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-/// High-level EventBus client with topic management and reconnection
+/// High-level `EventBus` client with topic management and reconnection
 pub struct EventBusClient {
     /// Client identifier
     client_id: String,
@@ -77,7 +77,7 @@ pub struct ClientStats {
 }
 
 impl EventBusClient {
-    /// Create a new EventBus client
+    /// Create a new `EventBus` client
     pub async fn new(
         client_id: String,
         socket_config: SocketConfig,
@@ -113,6 +113,7 @@ impl EventBusClient {
     }
 
     /// Start background tasks for health monitoring and message processing
+    #[allow(clippy::unused_async)]
     async fn start_background_tasks(
         &mut self,
         shutdown_rx: tokio::sync::broadcast::Receiver<()>,
@@ -138,12 +139,12 @@ impl EventBusClient {
                                 Ok(false) => {
                                     warn!("Health check failed for client: {}", client_id);
                                     let mut stats_guard = stats.lock().await;
-                                    stats_guard.health_check_failures += 1;
+                                    stats_guard.health_check_failures = stats_guard.health_check_failures.saturating_add(1);
                                 }
                                 Err(e) => {
                                     error!("Health check error for client {}: {}", client_id, e);
                                     let mut stats_guard = stats.lock().await;
-                                    stats_guard.health_check_failures += 1;
+                                    stats_guard.health_check_failures = stats_guard.health_check_failures.saturating_add(1);
                                 }
                             }
                         }
@@ -181,7 +182,7 @@ impl EventBusClient {
                             match message_result {
                                 Ok(Ok(message_data)) => {
                                     // Deserialize and process message
-                                    match crate::message::Message::deserialize(&message_data) {
+                                    match crate::message::Message::from_bytes(&message_data) {
                                         Ok(message) => {
                                             // Handle different message types
                                             match message.message_type {
@@ -198,26 +199,23 @@ impl EventBusClient {
                                                 }
                                                 crate::message::MessageType::Control => {
                                                     // Update statistics for control messages
-                                                    {
-                                                        let mut stats_guard = stats.lock().await;
-                                                        stats_guard.messages_received += 1;
-                                                    }
+                                                    let mut sg = stats.lock().await;
+                                                    sg.messages_received = sg.messages_received.saturating_add(1);
+                                                    drop(sg);
                                                     debug!("Received control message for client: {}", client_id);
                                                 }
                                                 crate::message::MessageType::Heartbeat => {
                                                     // Update statistics for heartbeat messages
-                                                    {
-                                                        let mut stats_guard = stats.lock().await;
-                                                        stats_guard.messages_received += 1;
-                                                    }
+                                                    let mut sg = stats.lock().await;
+                                                    sg.messages_received = sg.messages_received.saturating_add(1);
+                                                    drop(sg);
                                                     debug!("Received heartbeat for client: {}", client_id);
                                                 }
                                                 crate::message::MessageType::Shutdown => {
                                                     // Update statistics before handling shutdown (to count shutdown messages)
-                                                    {
-                                                        let mut stats_guard = stats.lock().await;
-                                                        stats_guard.messages_received += 1;
-                                                    }
+                                                    let mut sg = stats.lock().await;
+                                                    sg.messages_received = sg.messages_received.saturating_add(1);
+                                                    drop(sg);
                                                     info!("Received shutdown message for client: {}", client_id);
                                                     break;
                                                 }
@@ -266,7 +264,7 @@ impl EventBusClient {
     ) -> Result<()> {
         // Validate topic
         let _topic_obj = Topic::new(topic)
-            .map_err(|e| EventBusError::topic(format!("Invalid topic '{}': {}", topic, e)))?;
+            .map_err(|e| EventBusError::topic(format!("Invalid topic '{topic}': {e}")))?;
 
         let correlation = correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
 
@@ -274,7 +272,7 @@ impl EventBusClient {
         let sequence = {
             let mut seq_guard = self.sequence.lock().await;
             let seq = *seq_guard;
-            *seq_guard += 1;
+            *seq_guard = seq_guard.saturating_add(1);
             seq
         };
 
@@ -285,25 +283,23 @@ impl EventBusClient {
         // Validate payload size
         if payload.len() > 1024 * 1024 {
             return Err(EventBusError::serialization(
-                "Payload exceeds 1MB limit".to_string(),
+                "Payload exceeds 1MB limit".to_owned(),
             ));
         }
 
         // Create message
-        let message = Message::event(topic.to_string(), correlation, payload, sequence);
-        let message_data = message.serialize()?;
+        let message = Message::event(topic.to_owned(), correlation, payload, sequence);
+        let message_data = message.to_bytes()?;
 
         // Send message — transport.send() acquires its own backpressure permit internally
-        {
-            let mut transport = self.transport.lock().await;
-            transport.send(&message_data).await?;
-        }
+        let send_result = self.transport.lock().await.send(&message_data).await;
+        send_result?;
 
         // Update statistics
         {
-            let mut stats = self.stats.lock().await;
-            stats.messages_published += 1;
-        }
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.messages_published = stats_guard.messages_published.saturating_add(1);
+        };
 
         debug!(
             "Published message to topic: {} (correlation: {})",
@@ -328,7 +324,7 @@ impl EventBusClient {
         // Validate payload size
         if payload.len() > 1024 * 1024 {
             return Err(EventBusError::transport(
-                "Payload exceeds 1MB limit".to_string(),
+                "Payload exceeds 1MB limit".to_owned(),
             ));
         }
 
@@ -338,19 +334,17 @@ impl EventBusClient {
         let sequence = {
             let mut seq_guard = self.sequence.lock().await;
             let seq = *seq_guard;
-            *seq_guard += 1;
+            *seq_guard = seq_guard.saturating_add(1);
             seq
         };
 
         // Create control message for topic-based routing
-        let message = Message::control(topic.to_string(), correlation_id, payload, sequence);
-        let message_data = message.serialize()?;
+        let message = Message::control(topic.to_owned(), correlation_id, payload, sequence);
+        let message_data = message.to_bytes()?;
 
         // Send message — transport.send() acquires its own backpressure permit internally
-        {
-            let mut transport = self.transport.lock().await;
-            transport.send(&message_data).await?;
-        }
+        let send_result = self.transport.lock().await.send(&message_data).await;
+        send_result?;
 
         debug!("Published control message to topic: {topic}");
         Ok(())
@@ -361,24 +355,22 @@ impl EventBusClient {
         // Validate payload
         if payload.len() > 1024 * 1024 {
             return Err(EventBusError::transport(
-                "Payload exceeds 1MB limit".to_string(),
+                "Payload exceeds 1MB limit".to_owned(),
             ));
         }
 
         // Route via broker control topic
-        let topic = format!("control.direct.{}", client_id);
+        let topic = format!("control.direct.{client_id}");
         let correlation_id = Uuid::new_v4().to_string();
 
         // Serialize message for broker routing
         let message =
             crate::message::Message::control(topic.clone(), correlation_id, payload.to_vec(), 0);
-        let message_data = message.serialize()?;
+        let message_data = message.to_bytes()?;
 
         // Send message — transport.send() acquires its own backpressure permit internally
-        {
-            let mut transport = self.transport.lock().await;
-            transport.send(&message_data).await?;
-        }
+        let send_result = self.transport.lock().await.send(&message_data).await;
+        send_result?;
 
         debug!("Sent direct message to client: {} via broker", client_id);
         Ok(())
@@ -394,12 +386,12 @@ impl EventBusClient {
         // Validate payload
         if payload.len() > 1024 * 1024 {
             return Err(EventBusError::transport(
-                "Payload exceeds 1MB limit".to_string(),
+                "Payload exceeds 1MB limit".to_owned(),
             ));
         }
 
         // Route via broker queue topic: queue.{client_id}.{topic}
-        let queue_topic = format!("queue.{}.{}", client_id, topic);
+        let queue_topic = format!("queue.{client_id}.{topic}");
         let correlation_id = Uuid::new_v4().to_string();
 
         // Serialize message for broker routing
@@ -409,13 +401,11 @@ impl EventBusClient {
             payload.to_vec(),
             0,
         );
-        let message_data = message.serialize()?;
+        let message_data = message.to_bytes()?;
 
         // Send message — transport.send() acquires its own backpressure permit internally
-        {
-            let mut transport = self.transport.lock().await;
-            transport.send(&message_data).await?;
-        }
+        let send_result = self.transport.lock().await.send(&message_data).await;
+        send_result?;
 
         debug!(
             "Enqueued message for client: {} on topic: {} via broker",
@@ -435,7 +425,7 @@ impl EventBusClient {
         // Validate topic patterns
         for pattern in &patterns {
             TopicPattern::new(pattern).map_err(|e| {
-                EventBusError::topic(format!("Invalid topic pattern '{}': {}", pattern, e))
+                EventBusError::topic(format!("Invalid topic pattern '{pattern}': {e}"))
             })?;
         }
 
@@ -450,19 +440,14 @@ impl EventBusClient {
             last_message: None,
         };
 
-        {
-            let mut subscriptions = self.subscriptions.write().await;
-            subscriptions.insert(subscription_id.clone(), subscription_info);
-        }
+        self.subscriptions
+            .write()
+            .await
+            .insert(subscription_id.clone(), subscription_info);
 
         // Update statistics
-        {
-            let mut stats = self.stats.lock().await;
-            stats.active_subscriptions = {
-                let subscriptions = self.subscriptions.read().await;
-                subscriptions.len()
-            };
-        }
+        let sub_count = self.subscriptions.read().await.len();
+        self.stats.lock().await.active_subscriptions = sub_count;
 
         info!(
             "Subscribed to patterns: {:?} (subscription: {})",
@@ -480,18 +465,14 @@ impl EventBusClient {
 
         if removed {
             // Update statistics
-            let mut stats = self.stats.lock().await;
-            stats.active_subscriptions = {
-                let subscriptions = self.subscriptions.read().await;
-                subscriptions.len()
-            };
+            let sub_count = self.subscriptions.read().await.len();
+            self.stats.lock().await.active_subscriptions = sub_count;
 
             info!("Unsubscribed: {}", subscription_id);
             Ok(())
         } else {
             Err(EventBusError::topic(format!(
-                "Subscription not found: {}",
-                subscription_id
+                "Subscription not found: {subscription_id}"
             )))
         }
     }
@@ -504,13 +485,13 @@ impl EventBusClient {
         };
 
         // Deserialize message
-        let message = Message::deserialize(&message_data)?;
+        let message = Message::from_bytes(&message_data)?;
 
         // Update statistics before handling message (to count shutdown messages)
         {
-            let mut stats = self.stats.lock().await;
-            stats.messages_received += 1;
-        }
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.messages_received = stats_guard.messages_received.saturating_add(1);
+        };
 
         // Handle different message types
         match message.message_type {
@@ -550,34 +531,29 @@ impl EventBusClient {
             correlation_metadata: message.correlation_metadata.clone(),
             bus_timestamp: message.timestamp,
             matched_pattern: message.topic.clone(),
-            subscriber_id: "".to_string(), // Will be set per subscription
+            subscriber_id: String::new(), // Will be set per subscription
         };
 
         // Find matching subscriptions
         let subscriptions_guard = subscriptions.read().await;
-        let mut delivered_count = 0;
+        let mut delivered_count = 0_usize;
 
         for (subscription_id, subscription_info) in subscriptions_guard.iter() {
             // Check if any pattern matches the topic
             let matches = subscription_info.patterns.iter().any(|pattern| {
-                if let Ok(topic_pattern) = TopicPattern::new(pattern) {
-                    if let Ok(topic_obj) = Topic::new(&message.topic) {
-                        topic_pattern.matches(&topic_obj)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+                TopicPattern::new(pattern).is_ok_and(|topic_pattern| {
+                    Topic::new(&message.topic)
+                        .is_ok_and(|topic_obj| topic_pattern.matches(&topic_obj))
+                })
             });
 
             if matches {
                 let mut event_copy = bus_event.clone();
-                event_copy.subscriber_id = subscription_id.clone();
+                event_copy.subscriber_id.clone_from(subscription_id);
 
                 match subscription_info.sender.try_send(event_copy) {
                     Ok(()) => {
-                        delivered_count += 1;
+                        delivered_count = delivered_count.saturating_add(1);
                     }
                     Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                         warn!(
@@ -599,8 +575,8 @@ impl EventBusClient {
         // Update statistics
         {
             let mut stats_guard = stats.lock().await;
-            stats_guard.messages_received += 1;
-        }
+            stats_guard.messages_received = stats_guard.messages_received.saturating_add(1);
+        };
 
         debug!("Delivered message to {} subscriptions", delivered_count);
         Ok(())
@@ -618,6 +594,7 @@ impl EventBusClient {
     }
 
     /// Handle control messages
+    #[allow(clippy::unused_async)]
     async fn handle_control_message(&self, message: Message) -> Result<()> {
         debug!("Received control message: {}", message.topic);
         // Control message handling can be extended as needed
@@ -628,17 +605,15 @@ impl EventBusClient {
     pub async fn reconnect(&self) -> Result<()> {
         info!("Reconnecting client: {}", self.client_id);
 
-        {
-            let mut transport = self.transport.lock().await;
-            transport.reconnect().await?;
-        }
+        let reconnect_result = self.transport.lock().await.reconnect().await;
+        reconnect_result?;
 
         // Update statistics
         {
-            let mut stats = self.stats.lock().await;
-            stats.reconnection_attempts += 1;
-            stats.last_connected = Some(Instant::now());
-        }
+            let mut stats_guard = self.stats.lock().await;
+            stats_guard.reconnection_attempts = stats_guard.reconnection_attempts.saturating_add(1);
+            stats_guard.last_connected = Some(Instant::now());
+        };
 
         info!("Successfully reconnected client: {}", self.client_id);
         Ok(())
@@ -654,10 +629,8 @@ impl EventBusClient {
         }
 
         // Update subscription count
-        stats.active_subscriptions = {
-            let subscriptions = self.subscriptions.read().await;
-            subscriptions.len()
-        };
+        let sub_count = self.subscriptions.read().await.len();
+        stats.active_subscriptions = sub_count;
 
         stats.clone()
     }
@@ -679,12 +652,12 @@ impl EventBusClient {
 
         // Send shutdown signal to background tasks
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
+            drop(shutdown_tx.send(()));
         }
 
         // Wait for background tasks to complete
         for handle in self.task_handles {
-            let _ = handle.await;
+            drop(handle.await);
         }
 
         // Close transport connection
@@ -699,6 +672,42 @@ impl EventBusClient {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
     use crate::message::ProcessEvent;

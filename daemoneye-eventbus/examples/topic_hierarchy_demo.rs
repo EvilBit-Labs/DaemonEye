@@ -1,3 +1,14 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::uninlined_format_args,
+    clippy::non_ascii_literal,
+    clippy::shadow_unrelated,
+    clippy::pattern_type_mismatch,
+    clippy::arithmetic_side_effects
+)]
+
 use daemoneye_eventbus::{Topic, TopicAccessLevel, TopicPattern, TopicRegistry};
 
 /// Demonstrates the topic hierarchy design for multi-collector communication
@@ -208,6 +219,8 @@ fn demonstrate_access_control(registry: &TopicRegistry) {
             TopicAccessLevel::Public => "PUBLIC",
             TopicAccessLevel::Restricted => "RESTRICTED",
             TopicAccessLevel::Privileged => "PRIVILEGED",
+            // TopicAccessLevel is #[non_exhaustive]; handle any future variants
+            _ => "UNKNOWN",
         };
         println!("  {} -> {} ({})", topic, level_str, description);
     }

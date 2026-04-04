@@ -102,7 +102,7 @@ fix:
     @{{ mise_exec }} cargo clippy --fix --allow-dirty --allow-staged
 
 # Quick development check
-check: pre-commit-run lint
+check: pre-commit-run lint test-check
 
 pre-commit-run:
     @{{ mise_exec }} pre-commit run -a
@@ -120,6 +120,9 @@ build:
 
 build-release:
     @{{ mise_exec }} cargo build --workspace --release
+
+test-check:
+    @{{ mise_exec }} cargo test --workspace --no-run
 
 test:
     @{{ mise_exec }} cargo nextest run --workspace --no-capture
@@ -260,7 +263,7 @@ coverage-check:
     @{{ mise_exec }} cargo llvm-cov nextest --workspace --profile coverage --lcov --output-path lcov.info --fail-under-lines 9.7
 
 # Full local CI parity check
-ci-check: pre-commit-run fmt-check lint-rust lint-rust-min test-ci build-release security-scan coverage-check goreleaser-check
+ci-check: check test-ci build-release security-scan coverage-check goreleaser-check
 
 # =============================================================================
 # DEVELOPMENT AND EXECUTION

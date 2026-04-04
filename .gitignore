@@ -139,3 +139,5 @@ docs/plans
 **/tessl__*
 **/*.local.md
 .tessl/tiles/
+**/*.local.*
+.context/**/*.md

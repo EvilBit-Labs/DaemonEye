@@ -34,18 +34,18 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 - **Memory Safety**: Built in Rust with `unsafe_code = "forbid"` policy
 - **Input Validation**: Comprehensive validation with detailed error messages
-- **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only
+- **SQL Injection Prevention**: AST validation with sqlparser at rule load time [Implemented]; SQL-based rule execution enforcement [Planned — engine currently uses category-based pattern matching]
 - **Credential Management**: Environment variables or OS keychain, never hardcode secrets
 - **Attack Surface Minimization**: No network listening, outbound-only connections
-- **Audit Trail**: Certificate Transparency-style audit ledger with BLAKE3 and Merkle trees
+- **Audit Trail**: BLAKE3 hash-chained audit ledger [Implemented]; Certificate Transparency-style Merkle tree inclusion proofs \[In Progress — stub returns empty vec in `crypto.rs`\]
 
 ### Advanced Security Features (Enterprise Tier)
 
-- **mTLS Authentication**: Certificate chain validation for enterprise components
-- **Code Signing**: SLSA Level 3 provenance, Cosign signatures
-- **Cryptographic Integrity**: Merkle tree with inclusion proofs and periodic checkpoints
-- **Sandboxed Execution**: Read-only database connections for detection engine
-- **Query Whitelist**: Only SELECT statements with approved functions allowed
+- **mTLS Authentication**: Certificate chain validation for enterprise components [Planned]
+- **Code Signing**: SLSA Level 3 provenance, Cosign signatures [Planned]
+- **Cryptographic Integrity**: Merkle tree with inclusion proofs and periodic checkpoints [In Progress — chain hashing implemented; inclusion proof generation stubbed]
+- **Sandboxed Execution**: Read-only database connections for detection engine [Planned]
+- **Query Whitelist**: Only SELECT statements with approved functions allowed [Implemented at rule load time; not yet enforced at execution time]
 
 ## Reporting a Vulnerability
 

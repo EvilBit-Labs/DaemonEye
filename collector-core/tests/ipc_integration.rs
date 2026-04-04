@@ -1,3 +1,52 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::dbg_macro,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_lossless,
+    clippy::pattern_type_mismatch,
+    clippy::non_ascii_literal,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::let_underscore_must_use,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::used_underscore_binding,
+    clippy::redundant_clone,
+    clippy::explicit_iter_loop,
+    clippy::integer_division,
+    clippy::modulo_arithmetic,
+    clippy::unseparated_literal_suffix,
+    clippy::doc_markdown,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::float_cmp,
+    clippy::unreadable_literal,
+    clippy::semicolon_outside_block,
+    clippy::semicolon_inside_block,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::redundant_type_annotations,
+    clippy::significant_drop_tightening,
+    clippy::redundant_else,
+    clippy::match_same_arms,
+    clippy::ignore_without_reason,
+    dead_code
+)]
 //! Integration tests for collector-core IPC functionality.
 //!
 //! These tests verify that the IPC integration preserves compatibility
@@ -59,7 +108,7 @@ async fn test_ipc_server_creation() {
     let config = CollectorConfig::default();
     let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS));
     let _ipc_server =
-        CollectorIpcServer::new(config, capabilities).expect("Failed to create IPC server");
+        CollectorIpcServer::new(&config, capabilities).expect("Failed to create IPC server");
 
     // Server creation should succeed without starting
     // This tests the basic setup without requiring actual IPC socket creation
@@ -70,7 +119,7 @@ async fn test_capability_negotiation() {
     let config = CollectorConfig::default();
     let capabilities = Arc::new(RwLock::new(SourceCaps::PROCESS | SourceCaps::REALTIME));
     let ipc_server =
-        CollectorIpcServer::new(config, capabilities).expect("Failed to create IPC server");
+        CollectorIpcServer::new(&config, capabilities).expect("Failed to create IPC server");
 
     // Test initial capabilities
     use daemoneye_lib::proto::MonitoringDomain;
