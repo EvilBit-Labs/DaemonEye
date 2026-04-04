@@ -548,7 +548,7 @@ async fn test_config_validate_only_via_rpc() {
         std::path::PathBuf::from(temp_dir.path()),
     ));
     let service =
-        CollectorRpcService::with_config_manager("svc".to_string(), capabilities, pm, cm, None);
+        CollectorRpcService::with_config_manager("svc".to_string(), capabilities, pm, &cm, None);
 
     // Validate-only update
     let mut changes = std::collections::HashMap::new();
@@ -627,7 +627,7 @@ async fn test_hot_reload_notification_published() {
         "svc".to_string(),
         capabilities,
         pm,
-        cm,
+        &cm,
         Some(broker.clone()),
     );
 
@@ -735,7 +735,7 @@ async fn test_config_change_triggers_restart_path() {
         "svc".to_string(),
         capabilities,
         pm.clone(),
-        cm,
+        &cm,
         None,
     );
 
@@ -2084,7 +2084,7 @@ async fn test_restart_required_changes_pid() -> Result<()> {
         "test-service".to_string(),
         capabilities,
         pm.clone(),
-        cm,
+        &cm,
         None,
     );
 
@@ -2209,7 +2209,7 @@ async fn test_hot_reload_notification_and_pid_stable() -> Result<()> {
         "test-service".to_string(),
         capabilities,
         pm.clone(),
-        cm,
+        &cm,
         Some(broker.clone()),
     );
 
@@ -2328,7 +2328,7 @@ async fn test_config_update_rollback_on_failure() -> Result<()> {
         "test-service".to_string(),
         capabilities,
         pm.clone(),
-        cm.clone(),
+        &cm,
         None,
     );
 
