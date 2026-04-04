@@ -81,7 +81,7 @@ futures-util = "0.3.32"
 
 # System information and IPC
 hostname-validator = "1.1.1"
-insta = { version = "1.46.3", features = ["filters"] }
+insta = { version = "1.47.1", features = ["filters"] }
 interprocess = { version = "2.4.0", features = ["tokio"] }
 parking_lot = "0.12.5"
 
