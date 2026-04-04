@@ -166,9 +166,10 @@ impl TransportServer {
     pub async fn new(config: SocketConfig) -> Result<Self> {
         let socket_path = config.get_socket_path();
 
-        // Clean up any existing socket file (Unix only)
+        // Clean up any existing socket file and ensure parent directory permissions (Unix only)
         #[cfg(unix)]
         {
+            use std::os::unix::fs::PermissionsExt;
             use std::path::Path;
 
             let socket_path_obj = Path::new(&socket_path);
@@ -180,6 +181,28 @@ impl TransportServer {
                         socket_path, e
                     );
                 }
+            }
+
+            // Ensure parent directory exists and restrict to owner-only (0o700)
+            if let Some(parent) = socket_path_obj.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    EventBusError::transport(format!(
+                        "Failed to create socket parent directory {}: {}",
+                        parent.display(),
+                        e
+                    ))
+                })?;
+                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).map_err(
+                    |e| {
+                        EventBusError::transport(format!(
+                            "Failed to set parent directory permissions on {}: {}",
+                            parent.display(),
+                            e
+                        ))
+                    },
+                )?;
             }
         }
 
@@ -200,6 +223,19 @@ impl TransportServer {
         let listener = opts.create_tokio().map_err(|e| {
             EventBusError::transport(format!("Failed to bind to socket {}: {}", socket_path, e))
         })?;
+
+        // Restrict socket permissions to owner-only (0o600) on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| {
+                    EventBusError::transport(format!(
+                        "Failed to set socket permissions on {}: {}",
+                        socket_path, e
+                    ))
+                })?;
+        }
 
         info!("Transport server created for: {}", socket_path);
         Ok(Self {
@@ -1294,6 +1330,55 @@ mod tests {
         assert!(path.contains("daemoneye-test"));
         #[cfg(windows)]
         assert!(path.contains("DaemonEye-test"));
+    }
+
+    /// Verify that the Unix socket is created with owner-only permissions (0o600)
+    /// and that a newly created parent directory receives 0o700 permissions.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_transport_server_socket_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        // Place the socket in a subdirectory that does not yet exist so we also
+        // exercise the parent-directory permission path.
+        let sub_dir = temp_dir.path().join("eventbus_sockets");
+        let socket_path = sub_dir.join("test-permissions.sock");
+
+        let socket_config = SocketConfig {
+            unix_path: socket_path.to_string_lossy().to_string(),
+            windows_pipe: socket_path.to_string_lossy().to_string(),
+            connection_limit: 100,
+            #[cfg(target_os = "freebsd")]
+            freebsd_path: None,
+            auth_token: None,
+            per_client_byte_limit: 10 * 1024 * 1024,
+            rate_limit_config: None,
+            correlation_config: None,
+        };
+
+        let _server = TransportServer::new(socket_config)
+            .await
+            .expect("failed to create transport server");
+
+        // Socket file must be 0o600 (owner read/write only)
+        let socket_meta = std::fs::metadata(&socket_path).expect("socket file should exist");
+        let socket_mode = socket_meta.permissions().mode() & 0o777;
+        assert_eq!(
+            socket_mode, 0o600,
+            "socket permissions should be 0o600, got {:#o}",
+            socket_mode
+        );
+
+        // Parent directory must be at most 0o700
+        let dir_meta = std::fs::metadata(&sub_dir).expect("parent directory should exist");
+        let dir_mode = dir_meta.permissions().mode() & 0o777;
+        assert_eq!(
+            dir_mode, 0o700,
+            "parent directory permissions should be 0o700, got {:#o}",
+            dir_mode
+        );
     }
 
     #[tokio::test]

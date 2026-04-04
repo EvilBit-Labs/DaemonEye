@@ -58,6 +58,30 @@ pub struct AuditEntry {
 }
 
 impl AuditEntry {
+    /// Compute the canonical hash-input string for this entry.
+    ///
+    /// Using RFC 3339 formatting preserves sub-second precision in the timestamp,
+    /// which prevents two entries created within the same second from producing
+    /// identical hash inputs when all other fields are equal.
+    pub fn compute_entry_hash_input(
+        sequence: u64,
+        timestamp: &chrono::DateTime<chrono::Utc>,
+        actor: &str,
+        action: &str,
+        payload_hash: &str,
+        previous_hash: Option<&str>,
+    ) -> String {
+        format!(
+            "{}:{}:{}:{}:{}:{}",
+            sequence,
+            timestamp.to_rfc3339(),
+            actor,
+            action,
+            payload_hash,
+            previous_hash.unwrap_or("")
+        )
+    }
+
     /// Create a new audit entry.
     pub fn new(
         sequence: u64,
@@ -69,17 +93,14 @@ impl AuditEntry {
         let payload_hash = Blake3Hasher::hash(payload);
         let timestamp = chrono::Utc::now();
 
-        // Create entry data for hashing
-        let entry_data = format!(
-            "{}:{}:{}:{}:{}:{}",
+        let entry_data = Self::compute_entry_hash_input(
             sequence,
-            timestamp.timestamp(),
-            actor,
-            action,
-            payload_hash,
-            previous_hash.as_deref().unwrap_or("")
+            &timestamp,
+            &actor,
+            &action,
+            &payload_hash,
+            previous_hash.as_deref(),
         );
-
         let entry_hash = Blake3Hasher::hash_string(&entry_data);
 
         Self {
@@ -133,15 +154,14 @@ impl AuditLedger {
     /// Verify the integrity of the audit ledger.
     pub fn verify_integrity(&self) -> Result<(), CryptoError> {
         for (i, entry) in self.entries.iter().enumerate() {
-            // Verify the entry hash
-            let entry_data = format!(
-                "{}:{}:{}:{}:{}:{}",
+            // Verify the entry hash using the shared canonical input builder.
+            let entry_data = AuditEntry::compute_entry_hash_input(
                 entry.sequence,
-                entry.timestamp.timestamp(),
-                entry.actor,
-                entry.action,
-                entry.payload_hash,
-                entry.previous_hash.as_deref().unwrap_or("")
+                &entry.timestamp,
+                &entry.actor,
+                &entry.action,
+                &entry.payload_hash,
+                entry.previous_hash.as_deref(),
             );
 
             let expected_hash = Blake3Hasher::hash_string(&entry_data);
@@ -232,5 +252,44 @@ mod tests {
         }
 
         assert!(ledger.verify_integrity().is_err());
+    }
+
+    #[test]
+    fn test_compute_entry_hash_input_uses_rfc3339() {
+        // Use a fixed timestamp with nanosecond sub-second precision.
+        let ts = chrono::DateTime::from_timestamp_nanos(1_700_000_000_123_456_789);
+        let input = AuditEntry::compute_entry_hash_input(0, &ts, "actor", "action", "phash", None);
+        // The RFC 3339 representation of this timestamp includes sub-second digits.
+        assert!(
+            input.contains('.'),
+            "hash input should include sub-second precision"
+        );
+        // Sanity-check: starts with sequence, contains actor/action fields.
+        // Note: RFC3339 timestamps contain colons, so simple split won't work.
+        assert!(
+            input.starts_with("0:"),
+            "hash input should start with sequence number"
+        );
+        assert!(
+            input.contains(":actor:action:phash:"),
+            "hash input should contain all fields"
+        );
+    }
+
+    #[test]
+    fn test_compute_entry_hash_input_with_previous_hash() {
+        let ts = chrono::Utc::now();
+        let prev = "abc123";
+        let input = AuditEntry::compute_entry_hash_input(1, &ts, "a", "b", "c", Some(prev));
+        assert!(input.ends_with(prev));
+    }
+
+    #[test]
+    fn test_hash_input_deterministic_for_same_timestamp() {
+        // Given the same inputs, the hash input string must be identical.
+        let ts = chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp");
+        let a = AuditEntry::compute_entry_hash_input(5, &ts, "actor", "action", "ph", None);
+        let b = AuditEntry::compute_entry_hash_input(5, &ts, "actor", "action", "ph", None);
+        assert_eq!(a, b);
     }
 }

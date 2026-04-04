@@ -357,8 +357,12 @@ pub fn is_sensitive_flag(token: &str) -> bool {
 
 /// Sanitize a command-line string by redacting values after sensitive flags.
 ///
-/// Scans for known sensitive flags and replaces the token immediately
-/// following each flag with `[REDACTED]`.
+/// Handles two forms of flag-value pairing:
+///
+/// 1. **Space-separated** – `--password secret123` → `--password [REDACTED]`
+/// 2. **Equals-separated** – `--password=secret123` → `--password=[REDACTED]`
+///
+/// Flag matching is case-insensitive in both forms.
 ///
 /// # Example
 ///
@@ -367,6 +371,9 @@ pub fn is_sensitive_flag(token: &str) -> bool {
 ///
 /// let result = sanitize_command_line("app --password secret123 --verbose");
 /// assert_eq!(result, "app --password [REDACTED] --verbose");
+///
+/// let result2 = sanitize_command_line("app --password=secret123 --verbose");
+/// assert_eq!(result2, "app --password=[REDACTED] --verbose");
 /// ```
 pub fn sanitize_command_line(cmd: &str) -> String {
     let tokens: Vec<&str> = cmd.split_whitespace().collect();
@@ -375,16 +382,26 @@ pub fn sanitize_command_line(cmd: &str) -> String {
 
     for token in &tokens {
         if redact_next {
-            result.push(REDACTED);
+            result.push(REDACTED.to_owned());
             redact_next = false;
         } else if SENSITIVE_FLAGS
             .iter()
             .any(|flag| token.eq_ignore_ascii_case(flag))
         {
-            result.push(token);
+            result.push((*token).to_owned());
             redact_next = true;
+        } else if let Some((flag_part, _value)) = token.split_once('=') {
+            // Handle --flag=value or -f=value style tokens
+            if SENSITIVE_FLAGS
+                .iter()
+                .any(|flag| flag_part.eq_ignore_ascii_case(flag))
+            {
+                result.push(format!("{flag_part}=[REDACTED]"));
+            } else {
+                result.push((*token).to_owned());
+            }
         } else {
-            result.push(token);
+            result.push((*token).to_owned());
         }
     }
 
@@ -529,6 +546,41 @@ mod tests {
         let cmd = "app --api-key abc123 --output file.txt";
         let result = sanitize_command_line(cmd);
         assert_eq!(result, "app --api-key [REDACTED] --output file.txt");
+    }
+
+    #[test]
+    fn test_sanitize_command_line_equals_password() {
+        let cmd = "app --password=secret123 --verbose";
+        let result = sanitize_command_line(cmd);
+        assert_eq!(result, "app --password=[REDACTED] --verbose");
+    }
+
+    #[test]
+    fn test_sanitize_command_line_equals_api_key() {
+        let cmd = "app --api-key=abc123 --output file.txt";
+        let result = sanitize_command_line(cmd);
+        assert_eq!(result, "app --api-key=[REDACTED] --output file.txt");
+    }
+
+    #[test]
+    fn test_sanitize_command_line_equals_short_flag() {
+        let cmd = "app -p=secret --verbose";
+        let result = sanitize_command_line(cmd);
+        assert_eq!(result, "app -p=[REDACTED] --verbose");
+    }
+
+    #[test]
+    fn test_sanitize_command_line_equals_case_insensitive() {
+        let cmd = "app --PASSWORD=topsecret --debug";
+        let result = sanitize_command_line(cmd);
+        assert_eq!(result, "app --PASSWORD=[REDACTED] --debug");
+    }
+
+    #[test]
+    fn test_sanitize_command_line_equals_non_sensitive_passthrough() {
+        let cmd = "app --output=file.txt --verbose";
+        let result = sanitize_command_line(cmd);
+        assert_eq!(result, "app --output=file.txt --verbose");
     }
 
     #[test]
