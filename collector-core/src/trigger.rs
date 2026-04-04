@@ -293,7 +293,8 @@ impl TriggerManager {
         self.validate_collector_capabilities(&capabilities)?;
 
         // Register with SQL evaluator
-        if let Ok(mut evaluator) = self.sql_evaluator.lock() {
+        {
+            let mut evaluator = lock_or_err!(self.sql_evaluator, "sql_evaluator")?;
             // Extract conditions that this collector can handle
             let conditions = lock_or_err!(self.conditions, "conditions")?;
             let collector_conditions: Vec<TriggerCondition> = conditions
@@ -317,9 +318,8 @@ impl TriggerManager {
         }
 
         // Store capabilities
-        if let Ok(mut caps) = self.collector_capabilities.lock() {
-            caps.insert(capabilities.collector_id.clone(), capabilities);
-        }
+        let mut caps = lock_or_err!(self.collector_capabilities, "collector_capabilities")?;
+        caps.insert(capabilities.collector_id.clone(), capabilities);
 
         Ok(())
     }
@@ -531,12 +531,13 @@ impl TriggerManager {
     }
 
     /// Dequeues the next trigger request for processing.
-    pub fn dequeue_trigger(&self) -> Option<TriggerRequest> {
-        if let Ok(mut queue) = self.trigger_queue.lock() {
-            queue.dequeue()
-        } else {
-            None
-        }
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the queue lock is poisoned.
+    pub fn dequeue_trigger(&self) -> Result<Option<TriggerRequest>, TriggerError> {
+        let mut queue = lock_or_err!(self.trigger_queue, "trigger_queue")?;
+        Ok(queue.dequeue())
     }
 
     /// Checks if the trigger queue is experiencing backpressure.
@@ -716,9 +717,8 @@ impl TriggerManager {
                 correlation_id: correlation_id.clone(),
             };
 
-            if let Ok(mut cache) = self.metadata_cache.lock() {
-                cache.insert(trigger_id.clone(), trigger_metadata);
-            }
+            let mut cache = lock_or_err!(self.metadata_cache, "metadata_cache")?;
+            cache.insert(trigger_id.clone(), trigger_metadata);
         }
 
         let request = TriggerRequest {
@@ -1226,17 +1226,19 @@ impl TriggerManager {
     /// Cleans up expired entries and resets counters.
     pub fn cleanup(&self) -> Result<(), TriggerError> {
         // Clean deduplication cache
-        if let Ok(mut cache) = self.deduplication_cache.lock() {
+        {
             let now = SystemTime::now();
             let dedup_window = Duration::from_secs(self.config.deduplication_window_secs);
+            let mut cache = lock_or_err!(self.deduplication_cache, "deduplication_cache")?;
             cache.retain(|_, timestamp| {
                 now.duration_since(*timestamp).unwrap_or(Duration::MAX) < dedup_window
             });
         }
 
         // Clean metadata cache with incremental eviction to reduce lock contention
-        if let Ok(cache) = self.metadata_cache.lock() {
-            let max_pending_triggers = self.config.max_pending_triggers;
+        let max_pending_triggers = self.config.max_pending_triggers;
+        let maybe_evict = {
+            let cache = lock_or_err!(self.metadata_cache, "metadata_cache")?;
 
             // Check if the cache size exceeds the maximum allowed
             if cache.len() > max_pending_triggers {
@@ -1255,26 +1257,31 @@ impl TriggerManager {
                 // Sort entries by generated_at time in ascending order (oldest first)
                 entries_to_sort.sort_by_key(|(_, generated_at)| *generated_at);
 
-                // Reacquire the lock to remove elements
-                if let Ok(mut cache) = self.metadata_cache.lock() {
-                    // Remove the oldest entries
-                    for i in 0..to_remove_count {
-                        if let Some((key, _)) = entries_to_sort.get(i) {
-                            cache.remove(key);
-                            debug!(
-                                trigger_id = %key,
-                                "Evicted old trigger metadata from cache due to size limit."
-                            );
-                        }
-                    }
-                    info!(
-                        current_size = cache.len(),
-                        max_size = max_pending_triggers,
-                        "Cleaned up trigger metadata cache, removed {} entries.",
-                        to_remove_count
+                Some((entries_to_sort, to_remove_count))
+            } else {
+                None
+            }
+        };
+
+        // Reacquire the lock to remove elements if eviction is needed
+        if let Some((entries_to_sort, to_remove_count)) = maybe_evict {
+            let mut cache = lock_or_err!(self.metadata_cache, "metadata_cache")?;
+            // Remove the oldest entries
+            for i in 0..to_remove_count {
+                if let Some((key, _)) = entries_to_sort.get(i) {
+                    cache.remove(key);
+                    debug!(
+                        trigger_id = %key,
+                        "Evicted old trigger metadata from cache due to size limit."
                     );
                 }
             }
+            info!(
+                current_size = cache.len(),
+                max_size = max_pending_triggers,
+                "Cleaned up trigger metadata cache, removed {} entries.",
+                to_remove_count
+            );
         }
 
         Ok(())

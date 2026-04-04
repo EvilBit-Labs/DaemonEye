@@ -47,15 +47,20 @@ impl AlertSink for MockAlertSink {
         // Simulate network latency
         tokio::time::sleep(tokio::time::Duration::from_millis(self.latency_ms)).await;
 
-        // For benchmarks, simulate success/failure by returning the result directly
-        // without error messages
-        Ok(DeliveryResult {
-            sink_name: self.name.clone(),
-            success: rand::random::<f64>() < self.success_rate,
-            delivered_at: chrono::Utc::now(),
-            error_message: None,
-            duration_ms: self.latency_ms,
-        })
+        // Simulate success/failure via the Result wrapper — the correct semantic.
+        // `Ok` means delivery succeeded; `Err` means it failed.
+        if rand::random::<f64>() < self.success_rate {
+            Ok(DeliveryResult {
+                sink_name: self.name.clone(),
+                delivered_at: chrono::Utc::now(),
+                duration_ms: self.latency_ms,
+            })
+        } else {
+            Err(daemoneye_lib::alerting::AlertingError::SinkError(format!(
+                "Simulated failure for sink {}",
+                self.name
+            )))
+        }
     }
 
     async fn health_check(&self) -> Result<(), daemoneye_lib::alerting::AlertingError> {
