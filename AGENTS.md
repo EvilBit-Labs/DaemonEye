@@ -310,9 +310,9 @@ pub trait ProcessCollectionService: Send + Sync {
 
 #[async_trait]
 pub trait AlertSink: Send + Sync {
-    async fn send(&self, alert: &Alert) -> Result<DeliveryResult, Box<dyn Error + Send + Sync>>;
-    async fn health_check(&self) -> HealthStatus;
+    async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError>;
     fn name(&self) -> &str;
+    async fn health_check(&self) -> Result<(), AlertingError>;
 }
 ```
 
