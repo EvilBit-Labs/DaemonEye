@@ -44,7 +44,7 @@ deny = [
     "libssh2-sys",
     { crate = "cmake", use-instead = "cc" },
 ]
-skip = [  ]
+skip = []
 
 # Whitelist Windows dependency conflicts for cross-platform compatibility
 # These conflicts arise from different dependency chains:
