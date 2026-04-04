@@ -134,7 +134,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tracing-test = "0.2.6"
 unidirs = "0.1.2"
-uuid = { version = "1.22.0", features = ["v4", "serde"] }
+uuid = { version = "1.23.0", features = ["v4", "serde"] }
 uzers = "0.12.2"
 whoami = "2.1.1"
 
