@@ -36,7 +36,7 @@ confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
-wildcards = 'deny'
+wildcards = 'allow'  # workspace path deps use * version; re-evaluate when publishing to crates.io
 deny = [
     { crate = "git2", use-instead = "gix" },
     { crate = "openssl", use-instead = "rustls" },

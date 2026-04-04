@@ -1,3 +1,14 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::uninlined_format_args,
+    clippy::non_ascii_literal,
+    clippy::shadow_unrelated,
+    clippy::pattern_type_mismatch,
+    clippy::arithmetic_side_effects
+)]
+
 use daemoneye_eventbus::{Topic, TopicAccessLevel, TopicPattern, TopicRegistry};
 
 /// Demonstrates the topic hierarchy design for multi-collector communication

@@ -1009,7 +1009,7 @@ impl CollectorProcessManager {
                         // Re-acquire lock to set Failed state and restore child
                         if let Some(proc) = self.processes.lock().await.get_mut(&collector_id_owned)
                         {
-                            proc.state = CollectorState::Failed(format!("Signal failed: {}", e));
+                            proc.state = CollectorState::Failed(format!("Signal failed: {e}"));
                             proc.child = Some(child);
                         }
                         return Err(e);
@@ -1091,7 +1091,7 @@ impl CollectorProcessManager {
                 Err(e) => {
                     // Re-acquire lock to set Failed state
                     if let Some(proc) = self.processes.lock().await.get_mut(&collector_id_owned) {
-                        proc.state = CollectorState::Failed(format!("Force signal failed: {}", e));
+                        proc.state = CollectorState::Failed(format!("Force signal failed: {e}"));
                     }
                     return Err(e);
                 }
@@ -1577,9 +1577,11 @@ impl CollectorProcessManager {
 /// Send a signal to a process (Unix only)
 #[cfg(all(unix, feature = "freebsd"))]
 fn send_signal(pid: u32, signal: Signal) -> Result<(), ProcessManagerError> {
+    #[allow(clippy::as_conversions, clippy::cast_possible_wrap)]
+    // pid u32→i32: valid for process IDs (max PID is well within i32 range)
     let nix_pid = Pid::from_raw(pid as i32);
     signal::kill(nix_pid, signal)
-        .map_err(|e| ProcessManagerError::TerminateFailed(format!("Failed to send signal: {}", e)))
+        .map_err(|e| ProcessManagerError::TerminateFailed(format!("Failed to send signal: {e}")))
 }
 
 #[cfg(all(unix, not(feature = "freebsd")))]
@@ -1593,6 +1595,42 @@ fn send_signal(_pid: u32, _signal: u32) -> Result<(), ProcessManagerError> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::str_to_string,
+    clippy::uninlined_format_args,
+    clippy::use_debug,
+    clippy::print_stdout,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse,
+    clippy::let_underscore_must_use,
+    clippy::items_after_statements,
+    clippy::wildcard_enum_match_arm,
+    clippy::non_ascii_literal,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::float_cmp,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::unreadable_literal,
+    clippy::unseparated_literal_suffix,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::pattern_type_mismatch,
+    clippy::ignore_without_reason,
+    clippy::redundant_else,
+    clippy::explicit_iter_loop,
+    clippy::match_same_arms,
+    clippy::significant_drop_tightening,
+    clippy::redundant_closure_for_method_calls,
+    clippy::equatable_if_let,
+    clippy::manual_string_new
+)]
 mod tests {
     use super::*;
 
