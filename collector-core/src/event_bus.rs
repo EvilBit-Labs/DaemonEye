@@ -45,7 +45,7 @@ pub trait EventBus: Send + Sync {
     async fn subscribe(
         &mut self,
         subscription: EventSubscription,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>>;
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Arc<BusEvent>>>;
 
     /// Unsubscribe from events
     async fn unsubscribe(&mut self, subscriber_id: &str) -> Result<()>;
@@ -530,7 +530,7 @@ struct SubscriberInfo {
     /// Event filtering configuration for daemoneye-eventbus
     pub event_filter: Option<EventFilter>,
     /// Event sender channel
-    pub sender: tokio::sync::mpsc::UnboundedSender<BusEvent>,
+    pub sender: tokio::sync::mpsc::UnboundedSender<Arc<BusEvent>>,
 }
 
 /// Local event bus implementation using topic-based routing with daemoneye-eventbus semantics
@@ -720,8 +720,9 @@ impl EventBus for LocalEventBus {
             "Publishing event to LocalEventBus with daemoneye-eventbus correlation metadata"
         );
 
-        // Create bus event with enhanced correlation metadata
-        let bus_event = BusEvent {
+        // Create bus event with enhanced correlation metadata and wrap in Arc once.
+        // Each subscriber receives a cheap Arc clone rather than a deep copy of the event.
+        let bus_event = Arc::new(BusEvent {
             id: Uuid::new_v4(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -734,7 +735,7 @@ impl EventBus for LocalEventBus {
                 metadata.insert("topic".to_string(), topic.to_string());
                 metadata
             },
-        };
+        });
 
         // Find matching subscribers and deliver events
         let mut delivered_count: u64 = 0;
@@ -777,7 +778,7 @@ impl EventBus for LocalEventBus {
                         };
 
                     if topic_filter_passed && correlation_filter_passed && event_filter_passed {
-                        if subscriber_info.sender.send(bus_event.clone()).is_ok() {
+                        if subscriber_info.sender.send(Arc::clone(&bus_event)).is_ok() {
                             delivered_count += 1;
                             tracing::debug!(
                                 subscriber_id = %subscriber_id,
@@ -828,7 +829,7 @@ impl EventBus for LocalEventBus {
     async fn subscribe(
         &mut self,
         subscription: EventSubscription,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>> {
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Arc<BusEvent>>> {
         let subscriber_id = subscription.subscriber_id.clone();
 
         // Check if we've reached the maximum number of subscribers
@@ -1774,7 +1775,7 @@ mod tests {
             .expect("process channel closed");
 
         assert!(matches!(
-            received_process.event,
+            &received_process.event,
             CollectionEvent::Process(_)
         ));
         assert_eq!(
@@ -1789,7 +1790,7 @@ mod tests {
             .expect("trigger channel closed");
 
         assert!(matches!(
-            received_trigger.event,
+            &received_trigger.event,
             CollectionEvent::TriggerRequest(_)
         ));
         assert_eq!(
@@ -2281,7 +2282,7 @@ mod tests {
             .expect("timeout waiting for matching event")
             .expect("channel closed");
 
-        assert!(matches!(received.event, CollectionEvent::Process(_)));
+        assert!(matches!(&received.event, CollectionEvent::Process(_)));
         assert_eq!(received.correlation_metadata.correlation_id, "filter-test");
 
         // Publish non-matching event
@@ -2534,7 +2535,11 @@ mod tests {
 
         // Verify eventbus metadata was created
         assert!(received.correlation_metadata.eventbus_metadata.is_some());
-        let eventbus_metadata = received.correlation_metadata.eventbus_metadata.unwrap();
+        let eventbus_metadata = received
+            .correlation_metadata
+            .eventbus_metadata
+            .clone()
+            .unwrap();
 
         // Verify topic chains
         assert_eq!(eventbus_metadata.topic_chains.len(), 1);

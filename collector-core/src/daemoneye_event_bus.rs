@@ -913,7 +913,7 @@ impl EventBus for DaemoneyeEventBus {
     async fn subscribe(
         &mut self,
         subscription: EventSubscription,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>> {
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Arc<BusEvent>>> {
         let daemoneye_subscription = Self::convert_subscription(&subscription);
         let subscriber_id = subscription.subscriber_id.clone();
 
@@ -956,7 +956,7 @@ impl EventBus for DaemoneyeEventBus {
                         continue;
                     }
                 };
-                if tx.send(collector_event).is_err() {
+                if tx.send(Arc::new(collector_event)).is_err() {
                     warn!(
                         subscriber_id = %subscriber_id_clone,
                         "Subscriber channel closed, stopping event forwarding"
@@ -1143,8 +1143,8 @@ mod tests {
             .unwrap();
 
         // Verify the event
-        match received_event.event {
-            CollectionEvent::Process(ref proc_event) => {
+        match &received_event.event {
+            CollectionEvent::Process(proc_event) => {
                 assert_eq!(proc_event.pid, 1234);
                 assert_eq!(proc_event.name, "test_process");
             }
@@ -1216,8 +1216,8 @@ mod tests {
             .unwrap();
 
         // Verify the trigger request (round-trip preservation)
-        match received_event.event {
-            CollectionEvent::TriggerRequest(ref trigger) => {
+        match &received_event.event {
+            CollectionEvent::TriggerRequest(trigger) => {
                 assert_eq!(trigger.trigger_id, "trigger-123");
                 assert_eq!(trigger.target_collector, "yara-collector");
                 assert!(matches!(trigger.analysis_type, AnalysisType::YaraScan));
@@ -1393,8 +1393,8 @@ mod tests {
             .expect("Timeout receiving immediate event")
             .unwrap();
 
-        match evt.event {
-            CollectionEvent::Process(ref p) => {
+        match &evt.event {
+            CollectionEvent::Process(p) => {
                 assert_eq!(p.pid, 42);
                 assert_eq!(p.name, "immediate");
             }

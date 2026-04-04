@@ -80,8 +80,8 @@ async fn test_daemoneye_eventbus_integration() {
         .expect("Failed to receive event");
 
     // Verify the event
-    match received_event.event {
-        CollectionEvent::Process(ref proc_event) => {
+    match &received_event.event {
+        CollectionEvent::Process(proc_event) => {
             assert_eq!(proc_event.pid, 12345);
             assert_eq!(proc_event.name, "integration_test");
             assert_eq!(proc_event.ppid, Some(1));
@@ -169,8 +169,8 @@ async fn test_daemoneye_eventbus_trigger_requests() {
         .expect("Failed to receive trigger event");
 
     // Verify the trigger request
-    match received_event.event {
-        CollectionEvent::TriggerRequest(ref trigger) => {
+    match &received_event.event {
+        CollectionEvent::TriggerRequest(trigger) => {
             assert_eq!(trigger.trigger_id, "trigger-integration-123");
             assert_eq!(trigger.target_pid, Some(12345));
         }

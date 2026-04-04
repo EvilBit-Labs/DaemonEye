@@ -85,7 +85,7 @@ pub trait HighPerformanceEventBus: Send + Sync {
     async fn publish(&self, event: CollectionEvent, correlation_id: String) -> Result<()>;
 
     /// Subscribe to events with the given capabilities.
-    async fn subscribe(&self, subscription: EventSubscription) -> Result<Receiver<BusEvent>>;
+    async fn subscribe(&self, subscription: EventSubscription) -> Result<Receiver<Arc<BusEvent>>>;
 
     /// Get current bus statistics.
     async fn get_statistics(&self) -> EventBusStatistics;
@@ -159,7 +159,7 @@ pub struct EventBusStatistics {
 /// High-performance event bus implementation using crossbeam channels.
 pub struct HighPerformanceEventBusImpl {
     config: HighPerformanceEventBusConfig,
-    publisher: Sender<BusEvent>,
+    publisher: Sender<Arc<BusEvent>>,
     subscribers: Arc<parking_lot::RwLock<HashMap<String, SubscriberInfo>>>,
     statistics: Arc<parking_lot::RwLock<EventBusStatistics>>,
     shutdown_signal: Arc<AtomicBool>,
@@ -174,7 +174,7 @@ pub struct HighPerformanceEventBusImpl {
 #[derive(Debug)]
 struct SubscriberInfo {
     subscription: EventSubscription,
-    sender: Sender<BusEvent>,
+    sender: Sender<Arc<BusEvent>>,
     #[allow(dead_code)]
     last_delivery: SystemTime,
     #[allow(dead_code)]
@@ -190,7 +190,7 @@ impl HighPerformanceEventBusImpl {
         );
 
         // Create crossbeam bounded channel for high-performance event distribution
-        let (publisher, receiver) = bounded::<BusEvent>(config.channel_capacity);
+        let (publisher, receiver) = bounded::<Arc<BusEvent>>(config.channel_capacity);
 
         let statistics = EventBusStatistics {
             events_published: 0,
@@ -231,10 +231,14 @@ impl HighPerformanceEventBusImpl {
             while !shutdown_signal_clone.load(Ordering::Acquire) {
                 // Block efficiently until an event arrives or the timeout elapses
                 if let Ok(bus_event) = receiver.recv_timeout(RECV_TIMEOUT) {
+                    // Wrap the event in Arc once before distributing to all subscribers.
+                    // Each subscriber receives a cheap Arc clone rather than a deep copy.
+                    let arc_bus_event = Arc::new(bus_event);
+
                     // Collect subscriber information first, then release lock before blocking operations
                     let subscribers_to_notify: Vec<(
                         String,
-                        Sender<BusEvent>,
+                        Sender<Arc<BusEvent>>,
                         BackpressureStrategy,
                     )> = {
                         let subs = subscribers_clone.read();
@@ -242,7 +246,7 @@ impl HighPerformanceEventBusImpl {
                             .filter_map(|(subscriber_id, subscriber_info)| {
                                 // Apply capability filtering
                                 if !matches_capabilities(
-                                    &bus_event.event,
+                                    &arc_bus_event.event,
                                     &subscriber_info.subscription.capabilities,
                                 ) {
                                     return None;
@@ -250,7 +254,7 @@ impl HighPerformanceEventBusImpl {
 
                                 // Apply event filtering if configured
                                 if let Some(filter) = &subscriber_info.subscription.event_filter
-                                    && !matches_filter(&bus_event.event, filter)
+                                    && !matches_filter(&arc_bus_event.event, filter)
                                 {
                                     return None;
                                 }
@@ -258,7 +262,7 @@ impl HighPerformanceEventBusImpl {
                                 // Apply correlation filtering if configured
                                 if let Some(correlation_id) =
                                     &subscriber_info.subscription.correlation_filter
-                                    && bus_event.correlation_id != *correlation_id
+                                    && arc_bus_event.correlation_id != *correlation_id
                                 {
                                     return None;
                                 }
@@ -285,7 +289,7 @@ impl HighPerformanceEventBusImpl {
                                 let mut backoff_delay = Duration::from_micros(10); // Start with a small delay
 
                                 while !sent && retries < config_clone.max_blocking_retries {
-                                    match sender.try_send(bus_event.clone()) {
+                                    match sender.try_send(Arc::clone(&arc_bus_event)) {
                                         Ok(_) => {
                                             delivered += 1;
                                             delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
@@ -330,7 +334,7 @@ impl HighPerformanceEventBusImpl {
                             }
                             BackpressureStrategy::DropNewest => {
                                 // Try to send, if full drop the new event
-                                match sender.try_send(bus_event.clone()) {
+                                match sender.try_send(Arc::clone(&arc_bus_event)) {
                                     Ok(_) => {
                                         delivered += 1;
                                         delivery_counter_clone.fetch_add(1, Ordering::Relaxed);
@@ -446,13 +450,13 @@ impl HighPerformanceEventBusImpl {
 impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
     #[tracing::instrument(skip(self, event))]
     async fn publish(&self, event: CollectionEvent, correlation_id: String) -> Result<()> {
-        // Create bus event
-        let bus_event = self.create_bus_event(event, correlation_id);
+        // Create bus event and wrap it in Arc once to avoid per-retry clones.
+        let bus_event = Arc::new(self.create_bus_event(event, correlation_id));
         let start_time = Instant::now();
         let mut backoff_delay = Duration::from_millis(1); // Initial backoff
 
         loop {
-            match self.publisher.try_send(bus_event.clone()) {
+            match self.publisher.try_send(Arc::clone(&bus_event)) {
                 Ok(_) => {
                     // Update atomic counters only on successful send (lock-free)
                     self.event_counter.fetch_add(1, Ordering::Release);
@@ -478,7 +482,7 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
         }
     }
 
-    async fn subscribe(&self, subscription: EventSubscription) -> Result<Receiver<BusEvent>> {
+    async fn subscribe(&self, subscription: EventSubscription) -> Result<Receiver<Arc<BusEvent>>> {
         let mut subscribers = self.subscribers.write();
 
         if subscribers.len() >= self.config.max_subscribers {
@@ -493,7 +497,8 @@ impl HighPerformanceEventBus for HighPerformanceEventBusImpl {
         }
 
         // Create crossbeam bounded channel for this subscriber
-        let (sender, receiver) = bounded::<BusEvent>(self.config.per_subscriber_channel_capacity);
+        let (sender, receiver) =
+            bounded::<Arc<BusEvent>>(self.config.per_subscriber_channel_capacity);
 
         let subscriber_info = SubscriberInfo {
             subscription: subscription.clone(),

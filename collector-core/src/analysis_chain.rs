@@ -413,7 +413,7 @@ pub struct AnalysisChainCoordinator {
     event_bus: Arc<RwLock<Option<Box<dyn EventBus + Send + Sync>>>>,
 
     /// Event subscription for receiving analysis results
-    result_subscription: Arc<Mutex<Option<mpsc::UnboundedReceiver<BusEvent>>>>,
+    result_subscription: Arc<Mutex<Option<mpsc::UnboundedReceiver<Arc<BusEvent>>>>>,
 
     /// Workflow execution statistics
     statistics: Arc<RwLock<WorkflowStatistics>>,

@@ -627,7 +627,7 @@ async fn test_behavioral_equivalence() {
             while received_events.len() < config.event_count {
                 match timeout(Duration::from_secs(2), receiver.recv()).await {
                     Ok(Some(event)) => {
-                        received_events.push(event.event);
+                        received_events.push(event.event.clone());
                     }
                     Ok(None) => break,
                     Err(_) => break,
@@ -690,7 +690,7 @@ async fn test_behavioral_equivalence() {
             while received_events.len() < config.event_count {
                 match timeout(Duration::from_secs(2), receiver.recv()).await {
                     Ok(Some(event)) => {
-                        received_events.push(event.event);
+                        received_events.push(event.event.clone());
                     }
                     Ok(None) => break,
                     Err(_) => break,

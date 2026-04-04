@@ -39,7 +39,7 @@ pub struct DaemoneyeBroker {
     config: SocketConfig,
     /// Subscriber senders for message delivery
     subscriber_senders:
-        Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<BusEvent>>>>,
+        Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<Arc<BusEvent>>>>>,
     /// Raw message subscribers for RPC (receive Message directly)
     raw_subscriber_senders:
         Arc<Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<Message>>>>,
@@ -560,19 +560,24 @@ impl DaemoneyeBroker {
         let collection_event_result: Result<CollectionEvent> =
             postcard::from_bytes(&payload).map_err(|e| EventBusError::serialization(e.to_string()));
 
+        // Generate a single event_id for this publish operation; each subscriber
+        // receives a clone of the same String rather than a fresh UUID allocation.
+        let bus_event_id = Uuid::new_v4().to_string();
+
         for subscriber_id in &subscribers {
             if let Some(sender) = senders_guard.get(subscriber_id) {
                 match &collection_event_result {
                     Ok(collection_event) => {
-                        // Successfully decoded - send BusEvent
-                        let bus_event = BusEvent {
-                            event_id: Uuid::new_v4().to_string(),
+                        // Successfully decoded - build and wrap BusEvent in Arc so the channel
+                        // transfer is a pointer copy rather than a deep clone of event data.
+                        let bus_event = Arc::new(BusEvent {
+                            event_id: bus_event_id.clone(),
                             event: collection_event.clone(),
                             correlation_metadata: message.correlation_metadata.clone(),
                             bus_timestamp: std::time::SystemTime::now(),
                             matched_pattern: topic.to_string(),
                             subscriber_id: subscriber_id.clone(),
-                        };
+                        });
 
                         if sender.send(bus_event).is_err() {
                             failed_senders.push(subscriber_id.clone());
@@ -941,7 +946,7 @@ pub struct DaemoneyeEventBus {
     #[allow(dead_code)]
     subscriber_id: Uuid,
     #[allow(dead_code)]
-    event_sender: mpsc::UnboundedSender<BusEvent>,
+    event_sender: mpsc::UnboundedSender<Arc<BusEvent>>,
 }
 
 impl DaemoneyeEventBus {
@@ -949,7 +954,7 @@ impl DaemoneyeEventBus {
     pub async fn from_broker(broker: DaemoneyeBroker) -> Result<Self> {
         let broker = Arc::new(broker);
         let subscriber_id = Uuid::new_v4();
-        let (event_sender, _event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, _event_receiver) = mpsc::unbounded_channel::<Arc<BusEvent>>();
 
         let event_bus = Self {
             broker: Arc::clone(&broker),
@@ -1012,7 +1017,7 @@ impl EventBus for DaemoneyeEventBus {
     async fn subscribe(
         &mut self,
         subscription: EventSubscription,
-    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<BusEvent>> {
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Arc<BusEvent>>> {
         // Extract topic patterns from subscription
         let patterns = if let Some(topic_patterns) = &subscription.topic_patterns {
             topic_patterns.clone()

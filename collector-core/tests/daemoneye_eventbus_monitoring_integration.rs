@@ -80,8 +80,8 @@ async fn test_daemoneye_eventbus_monitoring_integration() {
             .expect("Timeout waiting for event")
             .unwrap();
 
-        match received_event.event {
-            CollectionEvent::Process(ref proc_event) => {
+        match &received_event.event {
+            CollectionEvent::Process(proc_event) => {
                 assert_eq!(proc_event.pid, 5000 + i);
                 assert_eq!(proc_event.name, format!("integration_test_{}", i));
             }
