@@ -56,7 +56,7 @@ pub struct HighPerformanceEventBusConfig {
 impl Default for HighPerformanceEventBusConfig {
     fn default() -> Self {
         Self {
-            channel_capacity: 1024 * 1024,         // 1M events
+            channel_capacity: 8192,                // 8K events
             per_subscriber_channel_capacity: 1024, // 1K events per subscriber
             max_subscribers: 1000,
             backpressure_strategy: BackpressureStrategy::Blocking,
@@ -696,7 +696,7 @@ mod tests {
         let config = HighPerformanceEventBusConfig::default();
         let event_bus = HighPerformanceEventBusImpl::new(config).await.unwrap();
 
-        assert_eq!(event_bus.config.channel_capacity, 1024 * 1024);
+        assert_eq!(event_bus.config.channel_capacity, 8192);
     }
 
     #[tokio::test]

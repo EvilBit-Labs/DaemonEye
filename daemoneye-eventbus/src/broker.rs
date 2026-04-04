@@ -11,6 +11,7 @@ use crate::transport::{
 };
 use crate::{EventBus, EventBusStatistics};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::{debug, error, info, warn};
@@ -25,7 +26,7 @@ pub struct DaemoneyeBroker {
     /// Transport server for accepting connections
     transport_server: Arc<Mutex<Option<TransportServer>>>,
     /// Message sequence counter
-    sequence: Arc<Mutex<u64>>,
+    sequence: Arc<AtomicU64>,
     /// Statistics
     stats: Arc<Mutex<EventBusStatistics>>,
     /// Broker start time
@@ -114,7 +115,7 @@ impl DaemoneyeBroker {
             topic_matcher: Arc::new(RwLock::new(TopicMatcher::new())),
             client_manager: Arc::new(Mutex::new(client_manager)),
             transport_server: Arc::new(Mutex::new(None)),
-            sequence: Arc::new(Mutex::new(0)),
+            sequence: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(Mutex::new(EventBusStatistics::default())),
             start_time: Instant::now(),
             shutdown_tx,
@@ -503,10 +504,7 @@ impl DaemoneyeBroker {
                 .await;
         }
 
-        let mut seq_guard = self.sequence.lock().await;
-        let sequence = *seq_guard;
-        *seq_guard += 1;
-        drop(seq_guard);
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
 
         // Find subscribers for this topic
         let topic_matcher = self.topic_matcher.read().await;
@@ -656,10 +654,7 @@ impl DaemoneyeBroker {
         correlation_id: &str,
         payload: Vec<u8>,
     ) -> Result<()> {
-        let mut seq_guard = self.sequence.lock().await;
-        let sequence = *seq_guard;
-        *seq_guard += 1;
-        drop(seq_guard);
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
 
         // Find subscribers for this topic
         let topic_matcher = self.topic_matcher.read().await;
