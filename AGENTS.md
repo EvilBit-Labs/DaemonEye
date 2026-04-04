@@ -297,6 +297,7 @@ DaemonEye/
 │       └── storage.rs      # Database (redb)
 ├── collector-core/         # Collector framework
 ├── tests/                  # Integration tests
+├── docs/solutions/         # Documented solutions (YAML frontmatter, by category)
 └── .kiro/                  # Steering docs & specs
 ```
 
