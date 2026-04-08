@@ -63,6 +63,7 @@
 //! ```
 
 pub mod analysis_chain;
+pub mod binary_hasher;
 pub mod capability_router;
 pub mod collector;
 pub mod config;
@@ -91,6 +92,7 @@ pub use analysis_chain::{
     AnalysisWorkflowDefinition, StageStatus, WorkflowError, WorkflowErrorType, WorkflowExecution,
     WorkflowProgress, WorkflowStatistics, WorkflowStatus,
 };
+pub use binary_hasher::{BinaryHasherCollector, BinaryHasherConfig, MAX_TARGET_PATH_LEN};
 pub use capability_router::{
     CapabilityRouter, CollectorCapability, CollectorHealthStatus, RoutingDecision, RoutingStats,
 };
