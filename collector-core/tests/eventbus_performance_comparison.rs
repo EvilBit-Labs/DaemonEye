@@ -161,6 +161,7 @@ fn create_test_events(count: usize) -> Vec<CollectionEvent> {
                 cpu_usage: Some(1.0 + (i as f64 % 5.0)),
                 memory_usage: Some(1024 * 1024 + (i as u64 * 1024)),
                 executable_hash: Some(format!("hash_{:08x}", i)),
+                hash_algorithm: Some("sha256".to_owned()),
                 user_id: Some("1000".to_string()),
                 accessible: true,
                 file_exists: true,

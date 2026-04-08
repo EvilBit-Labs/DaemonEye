@@ -267,7 +267,8 @@ impl EventSource for ChaosEventSource {
                         start_time: Some(SystemTime::now()),
                         cpu_usage: Some(50.0),
                         memory_usage: Some(1024 * 1024 * 100), // 100MB
-                        executable_hash: Some("a".repeat(64)), // Large hash
+                        executable_hash: Some("a".repeat(64)),
+                        hash_algorithm: None, // Large hash
                         user_id: Some("1000".to_string()),
                         accessible: true,
                         file_exists: true,
@@ -287,6 +288,7 @@ impl EventSource for ChaosEventSource {
                         cpu_usage: Some(1.0),
                         memory_usage: Some(1024 * 1024),
                         executable_hash: Some("chaos_hash".to_string()),
+                        hash_algorithm: None,
                         user_id: Some("1000".to_string()),
                         accessible: true,
                         file_exists: true,

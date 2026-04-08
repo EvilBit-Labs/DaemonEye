@@ -142,6 +142,12 @@ pub struct ProcessMessageHandler {
     pub database: Arc<Mutex<storage::DatabaseManager>>,
     /// Process collector implementation for platform-agnostic process enumeration
     pub collector: Box<dyn ProcessCollector>,
+    /// Optional shared hash engine. When present AND the underlying
+    /// collector's configuration has `compute_executable_hashes = true`,
+    /// enumeration runs a post-pass via
+    /// [`process_collector::populate_executable_hashes`] to fill in
+    /// `executable_hash` and `hash_algorithm` on every event.
+    pub hasher: Option<Arc<daemoneye_lib::integrity::MultiAlgorithmHasher>>,
 }
 
 impl ProcessMessageHandler {
@@ -174,6 +180,7 @@ impl ProcessMessageHandler {
         Self {
             database,
             collector,
+            hasher: None,
         }
     }
 
@@ -210,7 +217,35 @@ impl ProcessMessageHandler {
         Self {
             database,
             collector,
+            hasher: None,
         }
+    }
+
+    /// Attach a shared hash engine. When set, enumeration results are
+    /// post-processed by
+    /// [`process_collector::populate_executable_hashes`] to fill
+    /// `executable_hash` and `hash_algorithm` on every `ProcessEvent`.
+    ///
+    /// Pass `None` to disable hashing. The typical construction flow is:
+    ///
+    /// ```rust,no_run
+    /// use procmond::ProcessMessageHandler;
+    /// use daemoneye_lib::integrity::{HasherConfig, MultiAlgorithmHasher};
+    /// use std::sync::Arc;
+    ///
+    /// # fn example(mut handler: ProcessMessageHandler) -> Result<(), Box<dyn std::error::Error>> {
+    /// let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default())?);
+    /// handler = handler.with_hasher(Some(hasher));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_hasher(
+        mut self,
+        hasher: Option<Arc<daemoneye_lib::integrity::MultiAlgorithmHasher>>,
+    ) -> Self {
+        self.hasher = hasher;
+        self
     }
 
     pub async fn handle_detection_task(
@@ -279,7 +314,27 @@ impl ProcessMessageHandler {
         let enumeration_result = self.collector.collect_processes().await;
 
         match enumeration_result {
-            Ok((process_events, collection_stats)) => {
+            Ok((mut process_events, collection_stats)) => {
+                // Post-enumeration hash population pass. This runs
+                // exactly once per scan and dedupes by executable path
+                // before hashing, so the amortized cost across 10k
+                // processes is typically 200-500 hashes (the number of
+                // unique executables on a real host). The engine's
+                // shared quick_cache then makes subsequent scans
+                // ~zero-cost in steady state.
+                if let Some(hasher) = self.hasher.as_ref() {
+                    let stats =
+                        process_collector::populate_executable_hashes(&mut process_events, hasher)
+                            .await;
+                    debug!(
+                        task_id = %task.task_id,
+                        unique_paths = stats.unique_paths,
+                        hashed = stats.hashed,
+                        failures = stats.failures,
+                        "hash population completed"
+                    );
+                }
+
                 debug!(
                     task_id = %task.task_id,
                     total_found = collection_stats.total_processes,
@@ -550,6 +605,7 @@ mod tests {
                     cpu_usage: Some(0.1),
                     memory_usage: Some(1024 * 1024),
                     executable_hash: Some("hash1".to_string()),
+                    hash_algorithm: None,
                     user_id: Some("0".to_string()),
                     accessible: true,
                     file_exists: true,
@@ -566,6 +622,7 @@ mod tests {
                     cpu_usage: Some(5.0),
                     memory_usage: Some(2048 * 1024),
                     executable_hash: Some("hash2".to_string()),
+                    hash_algorithm: None,
                     user_id: Some("1000".to_string()),
                     accessible: true,
                     file_exists: true,
@@ -582,6 +639,7 @@ mod tests {
                     cpu_usage: None,
                     memory_usage: None,
                     executable_hash: None,
+                    hash_algorithm: None,
                     user_id: None,
                     accessible: false,
                     file_exists: false,
@@ -825,6 +883,7 @@ mod tests {
             cpu_usage: Some(5.0),
             memory_usage: Some(1024 * 1024),
             executable_hash: Some("abc123".to_string()),
+            hash_algorithm: None,
             user_id: Some("1000".to_string()),
             accessible: true,
             file_exists: true,
@@ -992,6 +1051,7 @@ mod tests {
                 cpu_usage: Some(1.0),
                 memory_usage: Some(1024),
                 executable_hash: None,
+                hash_algorithm: None,
                 user_id: Some("0".to_string()),
                 accessible: true,
                 file_exists: true,
@@ -1008,6 +1068,7 @@ mod tests {
                 cpu_usage: None,
                 memory_usage: None,
                 executable_hash: None,
+                hash_algorithm: None,
                 user_id: None,
                 accessible: false,
                 file_exists: false,
@@ -1127,6 +1188,7 @@ mod tests {
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
+            hash_algorithm: None,
             user_id: None,
             accessible: false,
             file_exists: false,
@@ -1161,6 +1223,7 @@ mod tests {
             cpu_usage: Some(2.5),
             memory_usage: Some(4096),
             executable_hash: Some("abcdef123456".to_string()),
+            hash_algorithm: None,
             user_id: Some("1001".to_string()),
             accessible: true,
             file_exists: true,

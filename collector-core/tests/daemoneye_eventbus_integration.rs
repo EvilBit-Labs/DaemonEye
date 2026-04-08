@@ -109,6 +109,7 @@ async fn test_daemoneye_eventbus_integration() {
         cpu_usage: Some(5.5),
         memory_usage: Some(1024 * 1024), // 1MB
         executable_hash: Some("abc123def456".to_string()),
+        hash_algorithm: None,
         user_id: Some("1000".to_string()),
         accessible: true,
         file_exists: true,
@@ -286,6 +287,7 @@ async fn test_daemoneye_eventbus_multiple_subscribers() {
         cpu_usage: None,
         memory_usage: None,
         executable_hash: None,
+        hash_algorithm: None,
         user_id: None,
         accessible: true,
         file_exists: true,
@@ -399,6 +401,7 @@ async fn test_daemoneye_eventbus_performance_comparison() {
         cpu_usage: None,
         memory_usage: None,
         executable_hash: None,
+        hash_algorithm: None,
         user_id: None,
         accessible: true,
         file_exists: true,

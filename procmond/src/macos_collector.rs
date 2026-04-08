@@ -503,9 +503,10 @@ impl EnhancedMacOSCollector {
             None
         };
 
-        // Compute executable hash if requested
-        // TODO: Implement executable hashing - compute SHA-256 hash of executable file
+        // Executable hash populated in a post-enumeration pass on the
+        // collector level. See `populate_executable_hashes`.
         let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         let user_id = process.user_id().map(|u| u.to_string());
         let accessible = true; // If we can read process info, it's accessible
@@ -535,6 +536,7 @@ impl EnhancedMacOSCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,

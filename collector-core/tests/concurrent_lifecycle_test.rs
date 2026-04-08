@@ -171,6 +171,7 @@ impl EventSource for LifecycleTestSource {
                 cpu_usage: Some(0.5),
                 memory_usage: Some(512 * 1024),
                 executable_hash: Some("lifecycle_hash".to_string()),
+                hash_algorithm: None,
                 user_id: Some("1000".to_string()),
                 accessible: true,
                 file_exists: true,

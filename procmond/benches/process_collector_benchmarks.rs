@@ -94,6 +94,7 @@ impl BenchmarkProcessCollector {
             cpu_usage: Some(1.5 + (index as f64 * 0.1) % 10.0),
             memory_usage: Some(1_048_576_u64.saturating_add((index as u64).saturating_mul(4096))),
             executable_hash: Some(format!("hash_{:08x}", index)),
+            hash_algorithm: Some("sha256".to_owned()),
             user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,

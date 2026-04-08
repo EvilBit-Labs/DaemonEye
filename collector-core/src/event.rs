@@ -39,6 +39,7 @@ use std::time::SystemTime;
 ///     cpu_usage: None,
 ///     memory_usage: None,
 ///     executable_hash: None,
+///     hash_algorithm: None,
 ///     user_id: None,
 ///     accessible: true,
 ///     file_exists: true,
@@ -102,8 +103,29 @@ pub struct ProcessEvent {
     /// Memory usage in bytes
     pub memory_usage: Option<u64>,
 
-    /// SHA-256 hash of executable
+    /// Hex-encoded cryptographic hash of the executable file. Populated
+    /// when the collector was constructed with
+    /// `compute_executable_hashes = true` and the executable was readable.
+    /// See [`Self::hash_algorithm`] for the algorithm that produced this
+    /// value.
+    ///
+    /// `None` means one of:
+    /// - Hashing was disabled at the collector level
+    /// - The executable was inaccessible, deleted, oversized, or failed to
+    ///   open for reading
+    /// - Hash computation timed out or failed
+    ///
+    /// Consumers **must** compare `(executable_hash, hash_algorithm)` as a
+    /// tuple when checking for lifecycle drift. Comparing only the hex
+    /// string would silently alias if the canonical algorithm changes
+    /// across procmond versions.
     pub executable_hash: Option<String>,
+
+    /// Canonical lowercase name of the algorithm used for
+    /// [`Self::executable_hash`] (e.g. `"sha256"`, `"blake3"`). Always
+    /// `None` when `executable_hash` is `None`; always `Some` when it is
+    /// populated.
+    pub hash_algorithm: Option<String>,
 
     /// User ID running the process
     pub user_id: Option<String>,
@@ -452,6 +474,7 @@ mod tests {
             cpu_usage: Some(5.5),
             memory_usage: Some(1024 * 1024),
             executable_hash: Some("abc123".to_owned()),
+            hash_algorithm: None,
             user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,
@@ -479,6 +502,7 @@ mod tests {
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
+            hash_algorithm: None,
             user_id: None,
             accessible: true,
             file_exists: true,
@@ -588,6 +612,7 @@ mod tests {
             cpu_usage: Some(1.5),
             memory_usage: Some(4096),
             executable_hash: Some("hash123".to_owned()),
+            hash_algorithm: None,
             user_id: Some("1000".to_owned()),
             accessible: true,
             file_exists: true,

@@ -115,6 +115,7 @@ impl EventSource for SecurityTestSource {
                 cpu_usage: Some(0.05),
                 memory_usage: Some(512),
                 executable_hash: Some("secure123".to_string()),
+                hash_algorithm: None,
                 user_id: Some("1000".to_string()),
                 accessible: true,
                 file_exists: true,

@@ -38,6 +38,7 @@ pub fn create_test_event(pid: u32) -> ProcessEvent {
         cpu_usage: Some(1.5 + (pid as f64 * 0.1) % 10.0),
         memory_usage: Some(1_048_576_u64.saturating_add((pid as u64).saturating_mul(4096))),
         executable_hash: Some(format!("hash_{:08x}", pid)),
+        hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("1000".to_owned()),
         accessible: true,
         file_exists: true,
@@ -58,6 +59,7 @@ pub fn create_minimal_event(pid: u32) -> ProcessEvent {
         cpu_usage: None,
         memory_usage: None,
         executable_hash: None,
+        hash_algorithm: None,
         user_id: None,
         accessible: true,
         file_exists: true,
@@ -87,6 +89,7 @@ pub fn create_large_event(pid: u32) -> ProcessEvent {
             "sha256:{}",
             "a".repeat(64) // Realistic SHA-256 length
         )),
+        hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("root".to_owned()),
         accessible: true,
         file_exists: true,

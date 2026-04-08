@@ -626,6 +626,7 @@ mod tests {
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
+            hash_algorithm: None,
             user_id: None,
             accessible: true,
             file_exists: true,

@@ -6,13 +6,133 @@
 
 use async_trait::async_trait;
 use collector_core::ProcessEvent;
+use daemoneye_lib::integrity::{HashAlgorithm, HashComputer, HashResult, MultiAlgorithmHasher};
 use serde_json;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 use sysinfo::{Pid, Process, System};
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
+
+/// Populate `executable_hash` and `hash_algorithm` on a batch of
+/// [`ProcessEvent`]s by hashing each unique executable exactly once.
+///
+/// This runs as a post-enumeration pass so the synchronous per-process
+/// conversion path (`convert_process_to_event` in the OS collectors) can
+/// stay off the async runtime. The typical host has 200–500 unique
+/// executables behind 10,000 processes; dedup by
+/// `(canonical_path, mtime, size)` via the engine's shared
+/// [`daemoneye_lib::integrity::MultiAlgorithmHasher`] cache reduces
+/// worst-case cold-scan work by 20–50× compared to hashing per-process.
+///
+/// Errors for individual files are logged at `debug` (for
+/// permission-denied, which is normal for system processes) or `warn`
+/// (for everything else) and never propagated. `executable_hash` and
+/// `hash_algorithm` remain `None` for processes whose executable could
+/// not be hashed.
+///
+/// See `docs/plans/2026-04-07-001-feat-binary-hashing-integrity-plan.md`
+/// for the full architecture rationale, including why this is NOT inline
+/// in the per-process loop (the inline design would blow the 5 s / 10k
+/// process enumeration budget by 10–100×).
+pub async fn populate_executable_hashes(
+    events: &mut [ProcessEvent],
+    hasher: &Arc<MultiAlgorithmHasher>,
+) -> HashCoverageStats {
+    let mut stats = HashCoverageStats::default();
+    // Dedup by executable_path; the engine's quick_cache will further
+    // dedup across scans by `(canonical_path, mtime, size)`.
+    let mut unique_paths: HashMap<PathBuf, Option<(String, String)>> = HashMap::new();
+    for event in events.iter() {
+        if let Some(ref raw) = event.executable_path {
+            let path = PathBuf::from(raw);
+            unique_paths.entry(path).or_insert(None);
+        }
+    }
+
+    stats.unique_paths = unique_paths.len();
+
+    // Hash each unique path once. The inner path-denied/hash-failed
+    // logging is intentionally bland on the wire because this is an
+    // internal telemetry log, not a wire message.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "HashError is #[non_exhaustive]; downgrading to debug for forward-compat"
+    )]
+    for (unique_path, slot) in &mut unique_paths {
+        match hasher.compute(unique_path).await {
+            Ok(result) => {
+                if let Some(sha256_hex) = primary_hash_hex(&result) {
+                    *slot = Some((sha256_hex, HashAlgorithm::Sha256.wire_name().to_owned()));
+                    stats.hashed = stats.hashed.saturating_add(1);
+                } else {
+                    stats.failures = stats.failures.saturating_add(1);
+                }
+            }
+            Err(err) => {
+                // Permission-denied is normal for system processes; log at
+                // debug to avoid log spam. Everything else is warn.
+                match err {
+                    daemoneye_lib::integrity::HashError::PermissionDenied { .. } => {
+                        debug!(path = ?unique_path, error = %err, "hash skipped: permission denied");
+                    }
+                    _ => {
+                        warn!(path = ?unique_path, error = %err, "hash failed");
+                    }
+                }
+                stats.failures = stats.failures.saturating_add(1);
+            }
+        }
+    }
+
+    // Second pass: stamp the computed hashes onto every event sharing
+    // that executable path. We deliberately use method-chaining on
+    // `Option` rather than destructuring because
+    // `clippy::pattern_type_mismatch` and `clippy::needless_borrowed_reference`
+    // have contradictory preferences about how to destructure
+    // `&Option<(String, String)>`.
+    for event in events.iter_mut() {
+        let Some(raw) = event.executable_path.as_deref() else {
+            continue;
+        };
+        let path = PathBuf::from(raw);
+        if let Some(entry) = unique_paths.get(&path).and_then(Option::as_ref) {
+            event.executable_hash = Some(entry.0.clone());
+            event.hash_algorithm = Some(entry.1.clone());
+        }
+    }
+
+    stats
+}
+
+/// Extract the primary (SHA-256) hex string from a [`HashResult`].
+///
+/// Returns `None` if the SHA-256 hash is absent (which should not happen
+/// with the default hasher configuration, but callers must handle it
+/// gracefully). Non-authoritative results (file mutated mid-read) are
+/// still returned — consumers that need the integrity tag should use the
+/// engine directly.
+fn primary_hash_hex(result: &HashResult) -> Option<String> {
+    result.sha256().map(str::to_owned)
+}
+
+/// Aggregate statistics for a post-enumeration hash-population pass.
+///
+/// Emitted via the scan metadata so forensic consumers can distinguish
+/// "no hash because the feature was disabled" from "no hash because the
+/// file was inaccessible" — a forensically important distinction.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HashCoverageStats {
+    /// Number of unique executable paths seen across the scan.
+    pub unique_paths: usize,
+    /// Number of unique paths that were successfully hashed.
+    pub hashed: usize,
+    /// Number of unique paths where hashing failed.
+    pub failures: usize,
+}
 
 /// Errors that can occur during process collection.
 #[derive(Debug, Error)]
@@ -342,10 +462,13 @@ impl SysinfoProcessCollector {
             (None, None)
         };
 
-        // Compute executable hash if requested
-        // TODO: Implement executable hashing (issue #40)
-        // For now, we'll leave this as None until the hashing implementation is added
+        // Executable hash is populated in a post-enumeration pass (see
+        // `populate_executable_hashes` on the collector) so that the
+        // synchronous per-process conversion path stays off the async
+        // runtime. Leaving as None here; the post-pass rewrites events
+        // in place.
         let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         let user_id = process.user_id().map(|uid| uid.to_string());
         let accessible = true; // Process is accessible if we can enumerate it
@@ -361,6 +484,7 @@ impl SysinfoProcessCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,
@@ -855,9 +979,10 @@ impl FallbackProcessCollector {
         };
 
         // Compute executable hash if configured and path is available
-        // TODO: Implement executable hashing (issue #40)
-        // For now, we'll leave this as None until the hashing implementation is added
+        // Executable hash populated in post-enumeration pass; see
+        // `populate_executable_hashes`.
         let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         let user_id = process.user_id().map(|uid| uid.to_string());
         let accessible = true; // Process is accessible if we can enumerate it
@@ -873,6 +998,7 @@ impl FallbackProcessCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,
@@ -1238,6 +1364,131 @@ pub fn create_process_collector(config: ProcessCollectionConfig) -> Box<dyn Proc
 )]
 mod tests {
     use super::*;
+    use daemoneye_lib::integrity::HasherConfig;
+    use std::fs;
+    use tempfile::NamedTempFile;
+
+    // ── populate_executable_hashes ──────────────────────────────────────
+
+    fn new_event(pid: u32, exe: &str) -> ProcessEvent {
+        ProcessEvent {
+            pid,
+            ppid: None,
+            name: format!("proc-{pid}"),
+            executable_path: Some(exe.to_owned()),
+            command_line: Vec::new(),
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: None,
+            hash_algorithm: None,
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp: SystemTime::now(),
+            platform_metadata: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn populate_executable_hashes_fills_hash_and_algorithm() {
+        let tmp = NamedTempFile::new().unwrap();
+        fs::write(tmp.path(), b"post-enumeration hash pass").unwrap();
+        let path = tmp.path().to_string_lossy().into_owned();
+
+        let mut events = vec![new_event(1, &path), new_event(2, &path)];
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+
+        let stats = populate_executable_hashes(&mut events, &hasher).await;
+        assert_eq!(stats.unique_paths, 1, "should dedup to a single path");
+        assert_eq!(stats.hashed, 1);
+        assert_eq!(stats.failures, 0);
+
+        // Both events share the same executable path, so both should have
+        // identical hash + algorithm after the pass.
+        for event in &events {
+            assert_eq!(event.hash_algorithm.as_deref(), Some("sha256"));
+            assert!(
+                event
+                    .executable_hash
+                    .as_deref()
+                    .is_some_and(|h| h.len() == 64)
+            );
+        }
+        assert_eq!(events[0].executable_hash, events[1].executable_hash);
+    }
+
+    #[tokio::test]
+    async fn populate_executable_hashes_dedup_happens() {
+        // Two identical executables should be hashed exactly once even if
+        // referenced by 100 processes. The HashCoverageStats.unique_paths
+        // counter is the load-bearing assertion: it proves dedup worked.
+        let tmp = NamedTempFile::new().unwrap();
+        fs::write(tmp.path(), b"dedup test").unwrap();
+        let path = tmp.path().to_string_lossy().into_owned();
+
+        let mut events: Vec<ProcessEvent> = (0..100_u32).map(|pid| new_event(pid, &path)).collect();
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+
+        let stats = populate_executable_hashes(&mut events, &hasher).await;
+        assert_eq!(stats.unique_paths, 1);
+        assert_eq!(stats.hashed, 1);
+        // All 100 events get populated from the single hash.
+        assert!(events.iter().all(|e| e.executable_hash.is_some()));
+    }
+
+    #[tokio::test]
+    async fn populate_executable_hashes_missing_file_is_nonfatal() {
+        let mut events = vec![
+            new_event(1, "/definitely/does/not/exist/xyz"),
+            new_event(2, "/also/not/here"),
+        ];
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+
+        let stats = populate_executable_hashes(&mut events, &hasher).await;
+        assert_eq!(stats.unique_paths, 2);
+        assert_eq!(stats.hashed, 0);
+        assert_eq!(stats.failures, 2);
+        // Events remain intact with None hashes; enumeration is not failed.
+        for event in &events {
+            assert!(event.executable_hash.is_none());
+            assert!(event.hash_algorithm.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn populate_executable_hashes_skips_events_without_path() {
+        let event_with_path = {
+            let tmp = NamedTempFile::new().unwrap();
+            fs::write(tmp.path(), b"with path").unwrap();
+            let path = tmp.path().to_string_lossy().into_owned();
+            // Intentionally leak the NamedTempFile so the file persists
+            // through the test.
+            std::mem::forget(tmp);
+            new_event(1, &path)
+        };
+        let mut event_without_path = new_event(2, "ignored");
+        event_without_path.executable_path = None;
+
+        let mut events = vec![event_with_path, event_without_path];
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+        let stats = populate_executable_hashes(&mut events, &hasher).await;
+        assert_eq!(stats.unique_paths, 1);
+        assert!(events[0].executable_hash.is_some());
+        assert!(events[1].executable_hash.is_none());
+    }
+
+    #[tokio::test]
+    async fn populate_executable_hashes_empty_slice_is_noop() {
+        let mut events: Vec<ProcessEvent> = Vec::new();
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+        let stats = populate_executable_hashes(&mut events, &hasher).await;
+        assert_eq!(stats.unique_paths, 0);
+        assert_eq!(stats.hashed, 0);
+        assert_eq!(stats.failures, 0);
+    }
+
+    // ── Existing tests continue below ───────────────────────────────────
 
     #[tokio::test]
     async fn test_sysinfo_collector_creation() {
