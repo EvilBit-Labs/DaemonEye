@@ -71,6 +71,10 @@
     },
     "coding-agent-helpers/skeptic-verifier": {
       "version": "0.1.2"
+    },
+    "neonwatty/logo-designer-skill": {
+      "version": "60285dd8417d5194155d8c2e349e2f8b61ffe6ff",
+      "source": "https://github.com/neonwatty/logo-designer-skill"
     }
   }
 }
