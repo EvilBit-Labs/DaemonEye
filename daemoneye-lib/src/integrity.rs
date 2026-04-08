@@ -44,7 +44,9 @@
 //! # Example
 //!
 //! ```no_run
-//! use daemoneye_lib::integrity::{HasherConfig, HashAlgorithm, MultiAlgorithmHasher};
+//! use daemoneye_lib::integrity::{
+//!     HashAlgorithm, HashComputer, HasherConfig, MultiAlgorithmHasher,
+//! };
 //! use std::path::Path;
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {

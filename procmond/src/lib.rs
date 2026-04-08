@@ -417,6 +417,7 @@ impl ProcessMessageHandler {
     ///     cpu_usage: Some(5.0),
     ///     memory_usage: Some(1024 * 1024),
     ///     executable_hash: None,
+    ///     hash_algorithm: None,
     ///     user_id: Some("1000".to_string()),
     ///     accessible: true,
     ///     file_exists: true,

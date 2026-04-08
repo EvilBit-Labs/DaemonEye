@@ -1415,7 +1415,9 @@ mod tests {
                     .is_some_and(|h| h.len() == 64)
             );
         }
-        assert_eq!(events[0].executable_hash, events[1].executable_hash);
+        let first_hash = events.first().and_then(|e| e.executable_hash.clone());
+        let second_hash = events.get(1).and_then(|e| e.executable_hash.clone());
+        assert_eq!(first_hash, second_hash);
     }
 
     #[tokio::test]
@@ -1474,8 +1476,10 @@ mod tests {
         let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
         let stats = populate_executable_hashes(&mut events, &hasher).await;
         assert_eq!(stats.unique_paths, 1);
-        assert!(events[0].executable_hash.is_some());
-        assert!(events[1].executable_hash.is_none());
+        let first_has_hash = events.first().is_some_and(|e| e.executable_hash.is_some());
+        let second_has_hash = events.get(1).is_some_and(|e| e.executable_hash.is_some());
+        assert!(first_has_hash);
+        assert!(!second_has_hash);
     }
 
     #[tokio::test]
