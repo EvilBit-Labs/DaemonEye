@@ -78,11 +78,13 @@ dirs = "6.0.0"
 figment = { version = "0.10.19", features = ["toml", "json", "env"] }
 futures = "0.3.32"
 futures-util = "0.3.32"
+fuzzyhash = "0.2.2"
 
 # System information and IPC
 hostname-validator = "1.1.1"
 insta = { version = "1.47.2", features = ["filters"] }
 interprocess = { version = "2.4.0", features = ["tokio"] }
+md-5 = "0.11.0"
 parking_lot = "0.12.5"
 
 # Serialization
@@ -96,6 +98,9 @@ proptest = "1.11.0"
 prost = "0.14.3"
 prost-build = "0.14.3"
 prost-types = "0.14.3"
+
+# Bounded in-memory cache (hash result store)
+quick_cache = "0.6.21"
 rand = "0.10.0"
 
 # Database and storage
@@ -108,12 +113,17 @@ rs_merkle = "1.5.0"
 security-framework = "3.7.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+sha1 = "0.11.0"
 sha2 = "0.11.0"
+sha3 = "0.11.0"
 sqlparser = "0.61.0"
 
 sysinfo = "0.38.4"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
+
+# Fuzzy hashing (pure Rust, feature-gated behind fuzzy-hash)
+tlsh2 = { version = "1.1.0", default-features = false }
 tokio = { version = "1.51.0", features = [
     "rt",
     "rt-multi-thread",

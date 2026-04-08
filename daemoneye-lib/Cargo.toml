@@ -34,6 +34,14 @@ network-correlation = []
 # IPC transport features
 ipc = [] # Use interprocess transport (cross-platform)
 
+# Integrity / hashing features — see docs/plans/2026-04-07-001-feat-binary-hashing-integrity-plan.md
+# legacy-hashes: SHA-1 and MD5 (cryptographically broken, correlation-only)
+legacy-hashes = ["dep:sha1", "dep:md-5"]
+# sha3-hashes: SHA3-256 (cryptographically secure, ~5-10x slower than SHA-256)
+sha3-hashes = ["dep:sha3"]
+# fuzzy-hash: TLSH v4 primary + ssdeep-compat secondary (similarity hashing)
+fuzzy-hash = ["dep:tlsh2", "dep:fuzzyhash"]
+
 [dependencies]
 anyhow = { workspace = true }
 
@@ -74,6 +82,18 @@ serde = { workspace = true }
 # Serialization
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+
+# Optional: additional cryptographic hash backends for integrity verification
+sha1 = { workspace = true, optional = true }
+md-5 = { workspace = true, optional = true }
+sha3 = { workspace = true, optional = true }
+
+# Optional: fuzzy (similarity) hashing
+tlsh2 = { workspace = true, optional = true }
+fuzzyhash = { workspace = true, optional = true }
+
+# Shared bounded hash-result cache (inline path + triggered path share one instance)
+quick_cache = { workspace = true }
 
 # SQL parsing and validation
 sqlparser = { workspace = true, optional = true }
@@ -138,4 +158,8 @@ harness = false
 
 [[bench]]
 name = "ipc_client_validation_benchmarks"
+harness = false
+
+[[bench]]
+name = "integrity_operations"
 harness = false

@@ -16,6 +16,7 @@
 // Core modules (always available)
 pub mod config;
 pub mod crypto;
+pub mod integrity;
 pub mod ipc;
 pub mod models;
 pub mod proto;
