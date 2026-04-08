@@ -83,6 +83,7 @@ pub mod shutdown_coordinator;
 pub mod source;
 pub mod task_distributor;
 pub mod trigger;
+pub mod triggerable;
 
 // Re-export main types for convenience
 pub use analysis_chain::{
@@ -141,3 +142,4 @@ pub use trigger::{
     TriggerCapabilities, TriggerCondition, TriggerConfig, TriggerEmissionStats, TriggerManager,
     TriggerResourceLimits, TriggerStatistics,
 };
+pub use triggerable::{TriggerErrorKind, TriggerHandleError, TriggerableCollector};
