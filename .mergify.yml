@@ -161,3 +161,5 @@ merge_protections:
       - base = main
     success_conditions:
       - "#commits-behind <= 3"
+merge_protections_settings:
+  reporting_method: check-runs
