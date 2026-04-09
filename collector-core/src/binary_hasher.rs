@@ -14,33 +14,33 @@
 //!
 //! 1. **Mandatory allow-list with deny-on-empty**:
 //!    [`BinaryHasherConfig::allowed_roots`] must be non-empty. Requests for
-//!    paths outside every root return [`TriggerErrorKind::PathNotAllowed`].
+//!    paths outside every root return [`crate::triggerable::TriggerErrorKind::PathNotAllowed`].
 //!    [`BinaryHasherConfig::with_platform_defaults`] provides secure defaults
 //!    for Linux, macOS, and Windows.
 //!
 //! 2. **Path length cap**: requests with `target_path.len() > 4096` are
-//!    rejected with [`TriggerErrorKind::InvalidRequest`] before any I/O.
+//!    rejected with [`crate::triggerable::TriggerErrorKind::InvalidRequest`] before any I/O.
 //!
 //! 3. **Parent-traversal rejection**: paths containing `..` components are
 //!    rejected before canonicalization to prevent path-traversal primitives.
 //!
 //! 4. **Symlink rejection** (default): paths that resolve through a symbolic
 //!    link, Windows junction, or reparse point return
-//!    [`TriggerErrorKind::Unavailable`]. Operators can opt in to symlink
+//!    [`crate::triggerable::TriggerErrorKind::Unavailable`]. Operators can opt in to symlink
 //!    following via [`BinaryHasherConfig::with_follow_symlinks`], but the
 //!    resolved target must still pass the `allowed_roots` check.
 //!
 //! 5. **Canonicalization + prefix match**: the requested path is
 //!    canonicalized and then verified to be under one of the configured
-//!    roots. On Windows, the [`dunce`] crate's UNC normalization would be
+//!    roots. On Windows, the `dunce` crate's UNC normalization would be
 //!    used — since we do not yet depend on it, Windows support is a
 //!    documented follow-up.
 //!
 //! 6. **Wire-error sanitization**: internal errors carry rich context
 //!    (paths, reasons) for local `tracing::warn!` logs. At the trait
 //!    boundary they map through [`TriggerHandleError::kind`] to the closed
-//!    [`TriggerErrorKind`] enum.
-//!    [`TriggerErrorKind::Unavailable`] deliberately merges "permission
+//!    [`crate::triggerable::TriggerErrorKind`] enum.
+//!    [`crate::triggerable::TriggerErrorKind::Unavailable`] deliberately merges "permission
 //!    denied" and "not found" to prevent file-existence oracles.
 //!
 //! 7. **Critical priority does NOT bypass authorization**: priority
@@ -51,9 +51,13 @@
 //!
 //! - **TOCTOU-safe opens**: full defense against symlink-swap attacks
 //!   between `canonicalize()` and `File::open()` requires `cap-std` or
-//!   Linux `openat2(RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH)`. Not yet a
-//!   workspace dependency. The engine's stat-before / stat-after
-//!   [`HashIntegrity::FileChanged`] tag provides partial detection.
+//!   Linux `openat2(RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH)`. Scheduled for
+//!   Phase 3 of the P1 resolution plan
+//!   (`docs/plans/2026-04-09-001-refactor-binary-hashing-p1-resolutions-plan.md`).
+//!   The engine's stat-before / stat-after mutation check still fires a
+//!   [`HashError::Nonauthoritative`] at the engine boundary in the
+//!   meantime, so mid-read mutations are detected (though the initial
+//!   open still has a race window).
 //! - **Windows junction / reparse-point rejection**: requires calling the
 //!   Win32 `GetFileInformationByHandleEx` API via the `windows` crate; the
 //!   current stdlib-only path relies on `symlink_metadata().is_symlink()`
@@ -70,7 +74,7 @@ use std::time::{Duration, SystemTime};
 use tracing::{debug, info, warn};
 
 /// Hard cap on `TriggerRequest.target_path` length in bytes. Paths longer
-/// than this are rejected with [`TriggerErrorKind::InvalidRequest`] before
+/// than this are rejected with [`crate::triggerable::TriggerErrorKind::InvalidRequest`] before
 /// any I/O.
 pub const MAX_TARGET_PATH_LEN: usize = 4096;
 
@@ -445,11 +449,12 @@ impl TriggerableCollector for BinaryHasherCollector {
             metadata: HashMap::new(),
             completed_at: SystemTime::now(),
             execution_duration: hash_result.computation_time,
-            confidence: if hash_result.is_authoritative() {
-                1.0
-            } else {
-                0.5
-            },
+            // Post type-state refactor: a successful `HashResult` is always
+            // authoritative. Non-authoritative (mid-read mutation) cases are
+            // returned as `HashError::Nonauthoritative` by the engine and
+            // mapped to `TriggerErrorKind::Unavailable` via `map_hash_err`
+            // below, so this arm always observes a stable hash.
+            confidence: 1.0,
         })
     }
 
@@ -516,6 +521,13 @@ fn map_hash_err(err: HashError) -> TriggerHandleError {
         }
         HashError::Join(msg) => TriggerHandleError::Internal(format!("join: {msg}")),
         HashError::InvalidConfig(msg) => TriggerHandleError::Internal(format!("config: {msg}")),
+        // A mid-read mutation is a detection signal, not a caller error.
+        // Map to Unavailable (same bucket as NotFound/PermissionDenied) so
+        // wire-level responses do not leak the distinction. The audit-level
+        // telemetry for this event is emitted separately in Phase 4.
+        HashError::Nonauthoritative { path } => TriggerHandleError::Unavailable {
+            reason: format!("file mutated during hash: {}", path.display()),
+        },
         _ => TriggerHandleError::Internal("unrecognized HashError variant".to_owned()),
     }
 }

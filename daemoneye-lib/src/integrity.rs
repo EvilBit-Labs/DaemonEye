@@ -23,14 +23,20 @@
 //!   simultaneous hash operations across all callers. Both the inline
 //!   enumeration path and the on-demand triggered path share a single engine
 //!   instance so the combined load always respects the cap.
-//! - **TOCTOU tagging**: `(size, mtime)` are captured before and after the
-//!   read. If they drift, the result is tagged
-//!   [`HashIntegrity::FileChanged`] and downstream consumers must treat it as
-//!   non-authoritative.
+//! - **TOCTOU tagging at the engine boundary**: `(size, mtime)` are captured
+//!   before and after the read. If they drift, the engine returns
+//!   [`HashError::Nonauthoritative`] — a mid-read mutation is forensic
+//!   evidence, not a successful hash. Callers that need detection signal
+//!   should observe the `Nonauthoritative` error path specifically; callers
+//!   that just want a usable hash get type-state safety because
+//!   [`HashResult`] is unreachable in the error case.
 //! - **Shared cache**: a `quick_cache::sync::Cache` keyed by
-//!   `(PathBuf, SystemTime, u64)` is optionally held by the engine so the
-//!   inline and triggered paths return consistent data for the same file
-//!   snapshot.
+//!   `(PathBuf, SystemTime, u64)` is optionally held by the engine so that
+//!   both the inline enumeration path (procmond) and the on-demand triggered
+//!   path (`BinaryHasherCollector`) observe a consistent view of a file
+//!   snapshot. Cross-path cache hits are expected to be rare in steady state;
+//!   the primary value of sharing the engine is **single policy** (one
+//!   concurrency cap, one algorithm list, one size limit), not throughput.
 //!
 //! # Algorithm policy
 //!
@@ -135,7 +141,7 @@ pub const MAX_CONCURRENCY: usize = 16;
 pub enum HashAlgorithm {
     /// SHA-256 — NIST FIPS 180-4. Cryptographically secure. Primary integrity
     /// hash; the default value stored in
-    /// [`crate::models::process::ProcessInfo::executable_hash`].
+    /// [`crate::models::process::ProcessRecord::executable_hash`].
     Sha256,
     /// BLAKE3 — modern, very fast, cryptographically secure. Enabled by
     /// default; already a workspace dependency via the audit ledger chain.
@@ -218,21 +224,24 @@ impl fmt::Display for HashAlgorithm {
 // HashIntegrity
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Integrity tag recording whether the file was stable during the hash.
+/// Integrity tag on a successful [`HashResult`].
 ///
-/// Computed by comparing `(size, mtime)` before and after the streaming read.
-/// If they drift, the hashed bytes represent a mid-read snapshot that cannot
-/// be trusted for forensic or integrity-verification purposes.
+/// Post type-state refactor (deepening 2026-04-09), this enum has a single
+/// variant: every `Ok(HashResult)` is [`HashIntegrity::Stable`] by
+/// construction. Mid-read mutations are surfaced as
+/// [`HashError::Nonauthoritative`] at the engine boundary rather than
+/// flowing through the `Ok` path.
+///
+/// The enum is kept (rather than removing the field entirely) to preserve
+/// room for future non-failure integrity tags without another breaking
+/// change. It is `#[non_exhaustive]` so downstream match arms cannot
+/// assume single-variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum HashIntegrity {
     /// File metadata was consistent before and after the hash read.
     Stable,
-    /// File was modified between open and EOF. The hash reflects whatever
-    /// bytes were actually read and **must not** be used for integrity
-    /// decisions. Lifecycle diff logic must ignore `FileChanged` results.
-    FileChanged,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -259,8 +268,10 @@ pub struct HashResult {
     /// Broken hashes (MD5, SHA-1). **Correlation use only.** Must not drive
     /// trust or integrity decisions.
     pub legacy_hashes: BTreeMap<HashAlgorithm, String>,
-    /// Mid-read integrity tag. Callers must treat `FileChanged` results as
-    /// non-authoritative.
+    /// Integrity tag. Always [`HashIntegrity::Stable`] in the `Ok` path —
+    /// mid-read mutations are returned as [`HashError::Nonauthoritative`]
+    /// at the engine boundary, so a successful `HashResult` cannot carry
+    /// non-authoritative bytes.
     pub integrity: HashIntegrity,
     /// Wall-clock time spent computing the hash.
     pub computation_time: Duration,
@@ -339,6 +350,21 @@ pub enum HashError {
     /// Caller supplied a configuration that could not be satisfied.
     #[error("invalid hasher configuration: {0}")]
     InvalidConfig(String),
+    /// The file was mutated between the open-time and close-time metadata
+    /// snapshots. The hashed bytes are a mid-read sample and are
+    /// **not authoritative** — they must never be trusted for integrity
+    /// decisions or stamped into a lifecycle diff. Receiving this error is
+    /// a detection signal: a binary was modified while being hashed.
+    ///
+    /// This variant is returned by [`HashComputer::compute`] at the engine
+    /// boundary (not by a display-layer accessor) so type-state guarantees
+    /// that a successful `Ok(HashResult)` always carries stable bytes.
+    #[error("file mutated during hash: {path}")]
+    Nonauthoritative {
+        /// The path that was being hashed when the mid-read mutation was
+        /// detected.
+        path: PathBuf,
+    },
 }
 
 impl HashError {
@@ -699,10 +725,25 @@ type CacheKey = (PathBuf, SystemTime, u64);
 ///
 /// Single instance intended to be held behind `Arc` and shared between the
 /// inline enumeration path (procmond) and the on-demand triggered path
-/// (`BinaryHasherCollector`). Sharing the same instance guarantees:
+/// (`BinaryHasherCollector`). Sharing the same instance guarantees **single
+/// policy**: one concurrency cap, one algorithm list, one size/timeout
+/// contract — no matter which caller invokes `compute`. Cross-path cache
+/// hits are a small side benefit in steady state but are not the primary
+/// motivation.
 ///
-/// - Combined concurrent operations never exceed `max_concurrent`.
-/// - A cache hit from either path satisfies subsequent requests on the other.
+/// # Statelessness invariant
+///
+/// `MultiAlgorithmHasher` holds **no per-path state that bleeds between
+/// callers**. The bounded cache is keyed by `(path, mtime, size)` triples
+/// and is monotonic — a lookup never depends on who inserted the entry.
+/// No telemetry, rate limiter, or error log is keyed by path at the engine
+/// level. This matters because the same `Arc<MultiAlgorithmHasher>` backs
+/// both the kernel-sourced path (procmond process enumeration) and the
+/// untrusted triggered path (rule-initiated hash requests). If the engine
+/// were stateful across calls, a triggered-path caller could probe for
+/// sensitive file existence via timing side-channels on the shared `Arc`.
+/// Any future addition to this struct must preserve the invariant or scope
+/// its state per-call via an explicit context argument.
 pub struct MultiAlgorithmHasher {
     config: HasherConfig,
     permits: Arc<Semaphore>,
@@ -959,15 +1000,15 @@ fn hash_sync(
     let size_after = meta_after.len();
     let modified_after = meta_after.modified().ok();
 
-    let integrity = if size_after == file_size_before && modified_after == Some(modified_before) {
-        HashIntegrity::Stable
-    } else {
+    if size_after != file_size_before || modified_after != Some(modified_before) {
         warn!(
             path = ?path,
-            "file metadata changed during hash; marking FileChanged"
+            "file metadata changed during hash; returning Nonauthoritative"
         );
-        HashIntegrity::FileChanged
-    };
+        return Err(HashError::Nonauthoritative {
+            path: path.to_path_buf(),
+        });
+    }
 
     let (hashes, legacy_hashes) = hashers.finalize_into();
 
@@ -977,7 +1018,7 @@ fn hash_sync(
         modified_time: modified_before,
         hashes,
         legacy_hashes,
-        integrity,
+        integrity: HashIntegrity::Stable,
         computation_time: start.elapsed(),
     })
 }

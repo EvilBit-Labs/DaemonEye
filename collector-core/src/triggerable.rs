@@ -2,7 +2,7 @@
 //!
 //! Defines the [`TriggerableCollector`] trait — a reactive collector that
 //! responds to [`TriggerRequest`] events rather than producing events on its
-//! own schedule like an [`EventSource`] does. Triggered collectors are the
+//! own schedule like a [`crate::source::EventSource`] does. Triggered collectors are the
 //! extension point for on-demand analysis collectors such as the binary
 //! hasher, YARA scanner, or memory analyzer.
 //!
@@ -22,7 +22,7 @@
 //! # Response routing
 //!
 //! Responses flow via `oneshot::Sender<Result<AnalysisResult, _>>` held by
-//! the dispatcher, **not** as a new [`CollectionEvent`] variant. This:
+//! the dispatcher, **not** as a new [`crate::event::CollectionEvent`] variant. This:
 //!
 //! - Avoids polluting the fan-out event bus with responses that only matter
 //!   to the original requester.

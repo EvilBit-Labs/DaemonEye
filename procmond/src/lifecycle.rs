@@ -134,7 +134,7 @@ pub struct ProcessSnapshot {
     /// Canonical lowercase name of the algorithm that produced
     /// [`Self::executable_hash`] (e.g. `"sha256"`). Always `None` when
     /// `executable_hash` is `None`; always `Some` when it is populated.
-    /// The lifecycle diff at [`LifecycleTracker::detect_modified_fields`]
+    /// The lifecycle diff at `ProcessLifecycleTracker::diff_snapshots`
     /// compares `(executable_hash, hash_algorithm)` as a tuple so that
     /// switching the canonical algorithm is not a silent breaking change.
     pub hash_algorithm: Option<String>,
