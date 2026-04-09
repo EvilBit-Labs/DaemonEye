@@ -7,7 +7,10 @@
 use crate::{
     event_bus_connector::{EventBusConnector, ProcessEventType},
     lifecycle::{LifecycleTrackingConfig, ProcessLifecycleEvent, ProcessLifecycleTracker},
-    process_collector::{ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector},
+    process_collector::{
+        ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,
+        populate_executable_hashes,
+    },
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -16,7 +19,7 @@ use collector_core::{
     MonitorCollector as MonitorCollectorTrait, MonitorCollectorConfig, MonitorCollectorStats,
     MonitorCollectorStatsSnapshot, SourceCaps, TriggerManager,
 };
-use daemoneye_lib::{storage, telemetry::PerformanceTimer};
+use daemoneye_lib::{integrity::MultiAlgorithmHasher, storage, telemetry::PerformanceTimer};
 use std::{
     sync::{
         Arc,
@@ -373,6 +376,17 @@ pub struct ProcmondMonitorCollector {
     // Event Bus Integration
     /// EventBusConnector for publishing events to the broker with WAL integration.
     event_bus_connector: Option<EventBusConnector>,
+
+    /// Shared executable-hash engine, cloned from the composition root.
+    ///
+    /// `None` means `--compute-hashes` is disabled; `Some` means the
+    /// post-enumeration hash pass runs on every collection cycle. The
+    /// engine is shared via `Arc` with `ProcessEventSource` so that a
+    /// single policy (one concurrency cap, one algorithm list) applies
+    /// regardless of which mode procmond is running in. See
+    /// `MultiAlgorithmHasher` rustdoc for the statelessness invariant
+    /// that protects cross-trust-domain sharing.
+    hasher: Option<Arc<MultiAlgorithmHasher>>,
 }
 
 impl ProcmondMonitorCollector {
@@ -460,7 +474,32 @@ impl ProcmondMonitorCollector {
             pending_interval: None,
             // Event Bus Integration
             event_bus_connector: None,
+            hasher: None,
         })
+    }
+
+    /// Inject a shared executable-hash engine.
+    ///
+    /// The engine is cloned from the composition root in
+    /// `procmond/src/main.rs` and shared via `Arc` with any other holder
+    /// so that the concurrency cap, algorithm list, and size budget
+    /// apply as a single policy across the whole process. When `None`
+    /// (the default), the post-enumeration hash pass is skipped and
+    /// emitted events carry `executable_hash: None`.
+    #[must_use]
+    pub fn with_hasher(mut self, hasher: Option<Arc<MultiAlgorithmHasher>>) -> Self {
+        self.hasher = hasher;
+        self
+    }
+
+    /// Returns a clone of the shared hasher `Arc`, if any.
+    ///
+    /// Intended for integration tests that need to assert `Arc::ptr_eq`
+    /// across multiple holders. Production code should not read the
+    /// engine through this accessor.
+    #[must_use]
+    pub fn hasher(&self) -> Option<Arc<MultiAlgorithmHasher>> {
+        self.hasher.as_ref().map(Arc::clone)
     }
 
     /// Creates a new actor channel and handle.
@@ -878,7 +917,7 @@ impl ProcmondMonitorCollector {
         )
         .await;
 
-        let (process_events, _collection_stats) = match collection_result {
+        let (mut process_events, _collection_stats) = match collection_result {
             Ok(Ok((events, stats))) => (events, stats),
             Ok(Err(e)) => {
                 error!(error = %e, "Process collection failed");
@@ -891,6 +930,22 @@ impl ProcmondMonitorCollector {
                 return Err(anyhow::anyhow!("Process collection timeout"));
             }
         };
+
+        // Populate `executable_hash` and `hash_algorithm` via the
+        // shared hash engine when `--compute-hashes` is enabled. The
+        // post-enumeration pass deduplicates unique paths so the cost
+        // is per-unique-executable, not per-process. Runs before
+        // lifecycle diffing so hashes participate in
+        // `(executable_hash, hash_algorithm)` tuple comparisons.
+        if let Some(ref hasher) = self.hasher {
+            let hash_stats = populate_executable_hashes(&mut process_events, hasher).await;
+            debug!(
+                unique_paths = hash_stats.unique_paths,
+                hashed = hash_stats.hashed,
+                failures = hash_stats.failures,
+                "executable hash pass completed"
+            );
+        }
 
         // Perform lifecycle analysis to detect process starts, stops, and modifications
         let lifecycle_events = {

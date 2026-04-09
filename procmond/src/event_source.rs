@@ -6,10 +6,11 @@
 
 use crate::process_collector::{
     FallbackProcessCollector, ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,
+    populate_executable_hashes,
 };
 use async_trait::async_trait;
 use collector_core::{CollectionEvent, EventSource, SourceCaps};
-use daemoneye_lib::{storage, telemetry::PerformanceTimer};
+use daemoneye_lib::{integrity::MultiAlgorithmHasher, storage, telemetry::PerformanceTimer};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -101,6 +102,11 @@ pub struct ProcessEventSource {
     stats: ProcessSourceStats,
     /// Backpressure semaphore for event flow control
     backpressure_semaphore: Arc<Semaphore>,
+    /// Shared executable-hash engine. `None` means `--compute-hashes` is
+    /// disabled; `Some` means the post-enumeration hash pass will run.
+    /// The engine is shared via `Arc` with the actor-mode holder so that
+    /// combined concurrent operations always respect a single policy.
+    hasher: Option<Arc<MultiAlgorithmHasher>>,
 }
 
 /// Runtime statistics for process event source monitoring.
@@ -224,6 +230,7 @@ impl ProcessEventSource {
             collector,
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
+            hasher: None,
         }
     }
 
@@ -271,7 +278,35 @@ impl ProcessEventSource {
             collector,
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
+            hasher: None,
         }
+    }
+
+    /// Inject a shared executable-hash engine.
+    ///
+    /// The engine is used to populate `executable_hash` and
+    /// `hash_algorithm` fields on every collected `ProcessEvent` via a
+    /// post-enumeration pass. Callers pass the same `Arc` clone to
+    /// every holder in the process so that the engine's concurrency cap,
+    /// algorithm list, and size budget apply as a single policy.
+    ///
+    /// Construction is guarded at the composition root
+    /// (`procmond/src/main.rs`): when `--compute-hashes == true`, one
+    /// `Arc<MultiAlgorithmHasher>` is built and handed to every holder.
+    #[must_use]
+    pub fn with_hasher(mut self, hasher: Option<Arc<MultiAlgorithmHasher>>) -> Self {
+        self.hasher = hasher;
+        self
+    }
+
+    /// Returns a clone of the shared hasher `Arc`, if any.
+    ///
+    /// Intended for integration tests that need to assert
+    /// `Arc::ptr_eq` across multiple holders. Production code should not
+    /// read the engine through this accessor.
+    #[must_use]
+    pub fn hasher(&self) -> Option<Arc<MultiAlgorithmHasher>> {
+        self.hasher.as_ref().map(Arc::clone)
     }
 
     /// Creates a new process event source with a custom collector and configuration.
@@ -315,6 +350,7 @@ impl ProcessEventSource {
             collector,
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
+            hasher: None,
         }
     }
 
@@ -481,7 +517,7 @@ impl ProcessEventSource {
         )
         .await;
 
-        let (process_events, collection_stats) = match enumeration_result {
+        let (mut process_events, collection_stats) = match enumeration_result {
             Ok(Ok((events, stats))) => (events, stats),
             Ok(Err(e)) => {
                 error!(error = %e, "Process enumeration failed");
@@ -500,6 +536,21 @@ impl ProcessEventSource {
                 return Err((anyhow::anyhow!("Process enumeration timeout"), Vec::new()));
             }
         };
+
+        // Populate `executable_hash` via post-enumeration pass when a
+        // shared hash engine is attached. The pass deduplicates unique
+        // paths so the per-unique-file hash cost is incurred once even
+        // if many processes share an executable. Failures are logged
+        // but non-fatal — missing hashes are represented as `None`.
+        if let Some(ref hasher) = self.hasher {
+            let hash_stats = populate_executable_hashes(&mut process_events, hasher).await;
+            debug!(
+                unique_paths = hash_stats.unique_paths,
+                hashed = hash_stats.hashed,
+                failures = hash_stats.failures,
+                "executable hash pass completed"
+            );
+        }
 
         debug!(
             total_found = collection_stats.total_processes,

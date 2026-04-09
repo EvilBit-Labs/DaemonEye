@@ -2,7 +2,11 @@
 
 use clap::Parser;
 use collector_core::{CollectionEvent, Collector, CollectorConfig, CollectorRegistrationConfig};
-use daemoneye_lib::{config, storage, telemetry};
+use daemoneye_lib::{
+    config,
+    integrity::{HasherConfig, MultiAlgorithmHasher},
+    storage, telemetry,
+};
 use procmond::{
     ProcessEventSource, ProcessSourceConfig,
     event_bus_connector::EventBusConnector,
@@ -122,6 +126,45 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Database stats retrieved"
     );
 
+    // ========================================================================
+    // Composition root for the shared executable-hash engine.
+    //
+    // When `--compute-hashes` is enabled, construct exactly one
+    // `Arc<MultiAlgorithmHasher>` here and clone it into every holder
+    // (actor-mode `ProcmondMonitorCollector` and standalone-mode
+    // `ProcessEventSource`). Sharing the `Arc` guarantees a single
+    // policy (one concurrency cap, one algorithm list, one size
+    // budget) no matter which path the process runs through. See
+    // `daemoneye-lib::integrity::MultiAlgorithmHasher` rustdoc for the
+    // statelessness invariant that protects the shared `Arc` across
+    // trust domains.
+    //
+    // Per the Phase 1 plan (Discovery 1 defense): a startup assertion
+    // verifies that every holder receives the shared engine when the
+    // flag is set, so a regression that drops the wiring cannot
+    // silently return procmond to the pre-resolution no-op behavior.
+    // ========================================================================
+    let shared_hasher: Option<Arc<MultiAlgorithmHasher>> = if cli.compute_hashes {
+        match MultiAlgorithmHasher::new(HasherConfig::default()) {
+            Ok(engine) => {
+                info!(
+                    max_concurrent = engine.max_concurrent(),
+                    "Shared executable-hash engine constructed"
+                );
+                Some(Arc::new(engine))
+            }
+            Err(err) => {
+                error!(
+                    error = %err,
+                    "Failed to construct hash engine; disabling --compute-hashes"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Check for broker configuration via environment variable
     // DAEMONEYE_BROKER_SOCKET: If set, use actor mode with EventBusConnector
     // If not set, use standalone mode with collector-core
@@ -159,7 +202,20 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arc::clone(&db_manager),
             monitor_config,
             message_receiver,
-        )?;
+        )?
+        .with_hasher(shared_hasher.as_ref().map(Arc::clone));
+
+        // Startup invariant: if the user asked for hashing, the holder
+        // must have actually received the engine. This defends against
+        // the Discovery 1 regression where --compute-hashes was a
+        // silent no-op.
+        assert_eq!(
+            cli.compute_hashes,
+            collector.hasher().is_some(),
+            "--compute-hashes={} but actor-mode collector hasher={:?}; wiring broken",
+            cli.compute_hashes,
+            collector.hasher().is_some()
+        );
 
         // Initialize EventBusConnector with WAL directory
         let wal_dir = PathBuf::from(&cli.database).parent().map_or_else(
@@ -481,8 +537,19 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         };
 
-        // Create process event source
-        let process_source = ProcessEventSource::with_config(db_manager, process_config);
+        // Create process event source with shared hasher injected.
+        let process_source = ProcessEventSource::with_config(db_manager, process_config)
+            .with_hasher(shared_hasher.as_ref().map(Arc::clone));
+
+        // Startup invariant: defend against the Discovery 1 regression
+        // where --compute-hashes was a silent no-op in standalone mode.
+        assert_eq!(
+            cli.compute_hashes,
+            process_source.hasher().is_some(),
+            "--compute-hashes={} but standalone ProcessEventSource hasher={:?}; wiring broken",
+            cli.compute_hashes,
+            process_source.hasher().is_some()
+        );
 
         // Log RPC service status
         let registration_enabled = collector_config
