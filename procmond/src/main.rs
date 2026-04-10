@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use anyhow::Context as _;
 use clap::Parser;
 use collector_core::{CollectionEvent, Collector, CollectorConfig, CollectorRegistrationConfig};
 use daemoneye_lib::{
@@ -75,7 +76,7 @@ struct Cli {
 }
 
 #[tokio::main]
-pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn main() -> anyhow::Result<()> {
     // Parse CLI arguments first - this will handle --help and --version automatically
     let cli = Cli::parse();
 
@@ -139,34 +140,23 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // statelessness invariant that protects the shared `Arc` across
     // trust domains.
     //
-    // Per the Phase 1 plan (Discovery 1 defense): a startup assertion
-    // verifies that every holder receives the shared engine when the
-    // flag is set, so a regression that drops the wiring cannot
-    // silently return procmond to the pre-resolution no-op behavior.
+    // If engine construction fails when `--compute-hashes` is set, the
+    // error propagates immediately via `?` — there is no silent fallback.
     // ========================================================================
     let shared_hasher: Option<Arc<MultiAlgorithmHasher>> = if cli.compute_hashes {
-        match MultiAlgorithmHasher::new(HasherConfig::default()) {
-            Ok(engine) => {
-                let algos: Vec<_> = engine
-                    .supported_algorithms()
-                    .iter()
-                    .map(|a| a.wire_name())
-                    .collect::<Vec<_>>();
-                info!(
-                    max_concurrent = engine.max_concurrent(),
-                    algorithms = ?algos,
-                    "procmond.hash.subsystem enabled=true"
-                );
-                Some(Arc::new(engine))
-            }
-            Err(err) => {
-                error!(
-                    error = %err,
-                    "Failed to construct hash engine; disabling --compute-hashes"
-                );
-                None
-            }
-        }
+        let engine = MultiAlgorithmHasher::new(HasherConfig::default())
+            .context("failed to construct hash engine for --compute-hashes")?;
+        let algos: Vec<_> = engine
+            .supported_algorithms()
+            .iter()
+            .map(|a| a.wire_name())
+            .collect::<Vec<_>>();
+        info!(
+            max_concurrent = engine.max_concurrent(),
+            algorithms = ?algos,
+            "procmond.hash.subsystem enabled=true"
+        );
+        Some(Arc::new(engine))
     } else {
         None
     };
@@ -210,18 +200,6 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             message_receiver,
         )?
         .with_hasher(shared_hasher.as_ref().map(Arc::clone));
-
-        // Startup invariant: if the user asked for hashing, the holder
-        // must have actually received the engine. This defends against
-        // the Discovery 1 regression where --compute-hashes was a
-        // silent no-op.
-        assert_eq!(
-            cli.compute_hashes,
-            collector.hasher().is_some(),
-            "--compute-hashes={} but actor-mode collector hasher={:?}; wiring broken",
-            cli.compute_hashes,
-            collector.hasher().is_some()
-        );
 
         // Initialize EventBusConnector with WAL directory
         let wal_dir = PathBuf::from(&cli.database).parent().map_or_else(
@@ -546,16 +524,6 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Create process event source with shared hasher injected.
         let process_source = ProcessEventSource::with_config(db_manager, process_config)
             .with_hasher(shared_hasher.as_ref().map(Arc::clone));
-
-        // Startup invariant: defend against the Discovery 1 regression
-        // where --compute-hashes was a silent no-op in standalone mode.
-        assert_eq!(
-            cli.compute_hashes,
-            process_source.hasher().is_some(),
-            "--compute-hashes={} but standalone ProcessEventSource hasher={:?}; wiring broken",
-            cli.compute_hashes,
-            process_source.hasher().is_some()
-        );
 
         // Log RPC service status
         let registration_enabled = collector_config

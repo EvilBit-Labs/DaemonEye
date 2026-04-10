@@ -49,8 +49,18 @@ impl KernelResolvedExe {
     ///
     /// This MUST only be called with the return value of
     /// `sysinfo::Process::exe()` — never with user-supplied paths.
+    ///
+    /// # Panics (debug builds only)
+    ///
+    /// Asserts that `path` is absolute, catching misuse in development.
+    /// The assertion is compiled out in release builds.
     #[must_use]
-    pub const fn from_sysinfo_exe(path: PathBuf) -> Self {
+    pub fn from_sysinfo_exe(path: PathBuf) -> Self {
+        debug_assert!(
+            path.is_absolute(),
+            "KernelResolvedExe must be an absolute path; got {}",
+            path.display()
+        );
         Self(path)
     }
 
@@ -112,15 +122,26 @@ pub fn authorize_kernel_path(exe: &KernelResolvedExe) -> Result<std::fs::Metadat
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HashPassStats {
     /// Number of unique executable paths seen across the scan.
-    pub unique_paths: usize,
+    pub(crate) unique_paths: usize,
     /// Number of unique paths that were successfully hashed.
-    pub hashed: usize,
+    pub(crate) hashed: usize,
     /// Number of unique paths that failed authorization.
-    pub auth_failures: usize,
+    pub(crate) auth_failures: usize,
     /// Number of paths where the engine returned `Nonauthoritative`.
-    pub nonauthoritative: usize,
+    pub(crate) nonauthoritative: usize,
     /// Number of unique paths where hashing failed (I/O, timeout, etc.).
-    pub io_failures: usize,
+    pub(crate) io_failures: usize,
+}
+
+impl HashPassStats {
+    /// Total number of unique paths processed (successful and unsuccessful).
+    #[must_use]
+    pub const fn total_processed(&self) -> usize {
+        self.hashed
+            .saturating_add(self.auth_failures)
+            .saturating_add(self.nonauthoritative)
+            .saturating_add(self.io_failures)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,8 +200,8 @@ pub async fn populate_hashes(
     // Phase 3: Collect results into the lookup map + update stats.
     for (path, outcome) in results {
         match outcome {
-            HashOutcome::Hashed(hex, algo) => {
-                unique_paths.insert(path, Some((hex, algo)));
+            HashOutcome::Hashed { hex, algorithm } => {
+                unique_paths.insert(path, Some((hex, algorithm)));
                 stats.hashed = stats.hashed.saturating_add(1);
             }
             HashOutcome::AuthFailed => {
@@ -218,13 +239,21 @@ pub async fn populate_hashes(
         "hash pass completed"
     );
 
+    debug_assert_eq!(
+        stats.total_processed(),
+        stats.unique_paths,
+        "total_processed ({}) != unique_paths ({}): every unique path must have an outcome",
+        stats.total_processed(),
+        stats.unique_paths,
+    );
+
     stats
 }
 
 /// Outcome of a single hash attempt.
 enum HashOutcome {
-    /// Successfully hashed — contains (hex, algorithm_name).
-    Hashed(String, String),
+    /// Successfully hashed — contains the hex digest and algorithm name.
+    Hashed { hex: String, algorithm: String },
     /// Authorization rejected the path.
     AuthFailed,
     /// Engine detected mid-read mutation.
@@ -258,9 +287,22 @@ async fn hash_one(exe: &KernelResolvedExe, hasher: &MultiAlgorithmHasher) -> Has
 
     // Hash via the engine.
     match hasher.compute(exe.as_path()).await {
-        Ok(result) => primary_hash_hex(&result).map_or(HashOutcome::IoFailure, |hex| {
-            HashOutcome::Hashed(hex, HashAlgorithm::Sha256.wire_name().to_owned())
-        }),
+        Ok(result) => {
+            if let Some(hex) = primary_hash_hex(&result) {
+                HashOutcome::Hashed {
+                    hex,
+                    algorithm: HashAlgorithm::Sha256.wire_name().to_owned(),
+                }
+            } else {
+                let available: Vec<_> = result.hashes.keys().collect();
+                warn!(
+                    path = ?exe.as_path(),
+                    ?available,
+                    "hash result missing SHA-256; available algorithms listed"
+                );
+                HashOutcome::IoFailure
+            }
+        }
         Err(daemoneye_lib::integrity::HashError::Nonauthoritative { .. }) => {
             debug!(path = ?exe.as_path(), "hash: file mutated mid-read (nonauthoritative)");
             HashOutcome::Nonauthoritative
@@ -398,7 +440,10 @@ mod tests {
     #[test]
     fn auth_boundary_multi_byte_utf8() {
         // 4-byte emoji repeated to cross the boundary. Must not panic.
-        let emoji_path = PathBuf::from("\u{1F600}".repeat(1025)); // 4100 bytes
+        // Prefix with "/" so the path is absolute (required by debug_assert in
+        // KernelResolvedExe::from_sysinfo_exe). "/" + 1025 × 4 bytes = 4101 bytes
+        // which still exceeds MAX_EXECUTABLE_PATH_LEN (4096).
+        let emoji_path = PathBuf::from("/".to_owned() + &"\u{1F600}".repeat(1025));
         let exe = KernelResolvedExe::from_sysinfo_exe(emoji_path);
         let result = authorize_kernel_path(&exe);
         assert!(matches!(result, Err(AuthError::PathTooLong { .. })));
@@ -491,6 +536,34 @@ mod tests {
         assert_eq!(stats.unique_paths, 1);
         assert!(events.first().is_some_and(|e| e.executable_hash.is_some()));
         assert!(events.get(1).is_some_and(|e| e.executable_hash.is_none()));
+    }
+
+    #[tokio::test]
+    async fn populate_hashes_mixed_success_and_failure() {
+        // Two real files that will hash successfully, one nonexistent path
+        // that will fail auth (file not found → AuthFailed).
+        let tmp1 = NamedTempFile::new().unwrap();
+        fs::write(tmp1.path(), b"real binary one").unwrap();
+        let tmp2 = NamedTempFile::new().unwrap();
+        fs::write(tmp2.path(), b"real binary two").unwrap();
+
+        let path1 = tmp1.path().to_string_lossy().into_owned();
+        let path2 = tmp2.path().to_string_lossy().into_owned();
+
+        let mut events = vec![
+            new_event(1, &path1),
+            new_event(2, &path2),
+            new_event(3, "/definitely/does/not/exist/mixed-test"),
+        ];
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+
+        let stats = populate_hashes(&mut events, &hasher).await;
+        assert_eq!(stats.unique_paths, 3);
+        assert_eq!(stats.hashed, 2, "expected 2 successful hashes");
+        assert_eq!(
+            stats.auth_failures, 1,
+            "expected 1 auth failure for nonexistent path"
+        );
     }
 
     #[tokio::test]

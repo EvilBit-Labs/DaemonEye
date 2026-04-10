@@ -719,15 +719,25 @@ impl TriggerableCollector for BinaryHasherCollector {
 
     async fn health_check(&self) -> Result<(), TriggerHandleError> {
         // Health is good if at least one opened root is accessible.
+        // Collect per-root failure reasons so the aggregate error is
+        // actionable; each failing root is also logged individually at
+        // warn! so operators can identify which roots are inaccessible
+        // without parsing the combined error message.
+        let mut failures = Vec::new();
         for root in &self.opened_roots {
             let root_path = Path::new(root.display_path());
-            if std::fs::metadata(root_path).is_ok() {
-                return Ok(());
+            match std::fs::metadata(root_path) {
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    warn!(root = %root_path.display(), error = %err, "allowed root inaccessible");
+                    failures.push(format!("{}: {err}", root_path.display()));
+                }
             }
         }
-        Err(TriggerHandleError::Internal(
-            "no opened_roots are currently accessible".to_owned(),
-        ))
+        Err(TriggerHandleError::Internal(format!(
+            "no opened_roots accessible: {}",
+            failures.join(", ")
+        )))
     }
 }
 
@@ -760,6 +770,10 @@ fn map_auth_err(err: &AuthError) -> TriggerHandleError {
         AuthError::Io { .. } => TriggerHandleError::Unavailable {
             reason: format!("I/O error: {err}"),
         },
+        // Wildcard arm: catches any future AuthError variants added by
+        // upstream. When new variants are introduced they will silently
+        // route here as Internal — reviewers MUST add an explicit arm
+        // above to give them the correct TriggerHandleError mapping.
         _ => TriggerHandleError::Internal(format!("auth error: {err}")),
     }
 }
@@ -1097,5 +1111,34 @@ mod tests {
     fn named_temp_file_compiles() {
         // Sanity check that the dev-dep feature is available.
         let _tmp: NamedTempFile = NamedTempFile::new().unwrap();
+    }
+
+    // ── Regression: cap-std escape message stays stable across upgrades ──
+
+    /// Regression test for [`CAP_STD_ESCAPE_MESSAGE`].
+    ///
+    /// Opens an [`AllowedRoot`] on a tempdir, then calls
+    /// `root.handle().open("../../../etc/hosts")` directly — bypassing
+    /// `check_no_traversal` — to exercise the live cap-std confinement
+    /// boundary. The returned error message MUST contain
+    /// [`CAP_STD_ESCAPE_MESSAGE`]; if it does not, cap-std changed its
+    /// error text and [`authorize_confined_path`] will silently stop
+    /// mapping escapes to [`AuthError::CapStdEscape`].
+    #[test]
+    fn cap_std_escape_error_contains_expected_message() {
+        let dir = TempDir::new().unwrap();
+        let root = AllowedRoot::open(dir.path()).expect("should open tempdir as AllowedRoot");
+
+        // Attempt a path that escapes the sandbox. `check_no_traversal`
+        // is NOT called here so we reach cap-std's own escape detection.
+        let result = root.handle().open("../../../etc/hosts");
+        let err = result.expect_err("cap-std should reject path escaping the Dir sandbox");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(CAP_STD_ESCAPE_MESSAGE),
+            "cap-std escape error message changed — update CAP_STD_ESCAPE_MESSAGE.\n\
+             Expected to contain: {CAP_STD_ESCAPE_MESSAGE:?}\n\
+             Got: {msg:?}"
+        );
     }
 }
