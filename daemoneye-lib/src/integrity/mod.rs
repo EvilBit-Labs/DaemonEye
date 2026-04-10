@@ -228,16 +228,25 @@ impl fmt::Display for HashAlgorithm {
 
 /// Integrity tag on a successful [`HashResult`].
 ///
-/// Post type-state refactor (deepening 2026-04-09), this enum has a single
-/// variant: every `Ok(HashResult)` is [`HashIntegrity::Stable`] by
-/// construction. Mid-read mutations are surfaced as
-/// [`HashError::Nonauthoritative`] at the engine boundary rather than
-/// flowing through the `Ok` path.
+/// # Single-variant design (intentional)
 ///
-/// The enum is kept (rather than removing the field entirely) to preserve
-/// room for future non-failure integrity tags without another breaking
-/// change. It is `#[non_exhaustive]` so downstream match arms cannot
-/// assume single-variant.
+/// After the Nonauthoritative type-state refactor (2026-04-09) this enum
+/// intentionally has exactly one variant. The former `FileChanged` variant has
+/// been removed and its semantics moved to [`HashError::Nonauthoritative`]:
+/// mid-read mutations are now surfaced as an `Err` at the engine boundary
+/// rather than flowing through the `Ok` path as a degraded integrity tag.
+/// This means every `Ok(HashResult)` is [`HashIntegrity::Stable`] by
+/// construction — callers no longer need to inspect the tag to decide whether
+/// bytes are trustworthy.
+///
+/// # Forward-compatibility extension point
+///
+/// The enum is deliberately kept (rather than replaced by a unit struct or
+/// removed entirely) to preserve room for future non-failure integrity
+/// annotations — for example, a `SnapshotVerified` or `MerkleProofed` tag —
+/// without requiring a breaking API change. `#[non_exhaustive]` reinforces
+/// this intent: downstream `match` arms **must** include a wildcard arm so
+/// that adding new variants here never breaks consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]

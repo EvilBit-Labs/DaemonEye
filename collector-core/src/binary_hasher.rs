@@ -192,26 +192,60 @@ impl AllowedRoot {
 /// upgrades.
 pub const CAP_STD_ESCAPE_MESSAGE: &str = "a path led outside of the filesystem";
 
+/// Verify fingerprints for all allowed roots on macOS.
+///
+/// This MUST be called once before entering any per-file hash stream to
+/// detect bind-mount / volume swaps for all roots up front, rather than
+/// checking inside the per-file loop. Callers (e.g.
+/// [`BinaryHasherCollector::authorize`]) should invoke this before
+/// calling [`authorize_confined_path`].
+///
+/// On non-macOS platforms this is a no-op that always returns `Ok(())`.
+///
+/// # Errors
+///
+/// Returns [`AuthError::RootMountChanged`] if any root's `(st_dev, st_ino)`
+/// no longer matches the fingerprint recorded at open time, or
+/// [`AuthError::Io`] if the root metadata cannot be read.
+pub fn verify_all_fingerprints(roots: &[AllowedRoot]) -> Result<(), AuthError> {
+    #[cfg(target_os = "macos")]
+    for root in roots {
+        root.verify_fingerprint()?;
+    }
+    // Suppress unused-variable warning on non-macOS.
+    #[cfg(not(target_os = "macos"))]
+    let _ = roots;
+    Ok(())
+}
+
 /// Authorize and open a target path via cap-std `Dir` handles.
 ///
 /// Tries each allowed root in order. For each root:
-/// 1. On macOS, verify the root fingerprint.
-/// 2. Strip the root prefix from the target to get a relative path.
-/// 3. Open the relative path via `root.handle().open()`.
+/// 1. Strip the root prefix from the target to get a relative path.
+/// 2. Open the relative path via `root.handle().open()`.
+/// 3. Fetch metadata from the opened file handle (fstat — no second path stat).
+///
+/// Returns both the opened file and its metadata so callers can perform
+/// file-type and size checks without issuing a second path-based stat(2).
 ///
 /// If the path escapes (cap-std returns the escape error), this is
 /// mapped to [`AuthError::CapStdEscape`]. If no root matches, returns
 /// [`AuthError::PathNotAllowed`].
 ///
+/// **Fingerprint pre-check**: On macOS, callers MUST call
+/// [`verify_all_fingerprints`] once before entering the per-file stream.
+/// `authorize_confined_path` does NOT re-verify fingerprints to avoid
+/// redundant stat calls on every file in a batch.
+///
 /// # Errors
 ///
-/// Returns [`AuthError`] on escape, fingerprint mismatch, I/O errors,
-/// or if the path is not under any allowed root.
+/// Returns [`AuthError`] on escape, I/O errors, or if the path is not
+/// under any allowed root.
 pub fn authorize_confined_path(
     target: &Path,
     roots: &[AllowedRoot],
     follow_symlinks: bool,
-) -> Result<cap_std::fs::File, AuthError> {
+) -> Result<(cap_std::fs::File, cap_std::fs::Metadata), AuthError> {
     use daemoneye_lib::integrity::auth;
 
     // Pre-flight checks using shared predicates.
@@ -219,12 +253,33 @@ pub fn authorize_confined_path(
     auth::check_no_traversal(target)?;
 
     for root in roots {
-        // On macOS, verify the root hasn't been bind-mounted over.
-        #[cfg(target_os = "macos")]
-        root.verify_fingerprint()?;
-
-        // Try both the canonical and original root paths for strip_prefix.
-        // On macOS, /var → /private/var means the target might use either form.
+        // WHY two strip_prefix attempts?
+        //
+        // On macOS, `/var` is a symlink to `/private/var`. `AllowedRoot::open`
+        // calls `std::fs::canonicalize` on the configured root path, so the
+        // `Dir` handle is always opened against the real `/private/var/...`
+        // path and `display` (the `canonical_root` here) will always start
+        // with `/private/var`. However, process enumeration via `sysinfo` (or
+        // other OS APIs) may return the *un-resolved* `/var/...` form for the
+        // executable path, depending on how the kernel surfaces it.
+        //
+        // To bridge that gap we keep the pre-canonicalization path in
+        // `AllowedRoot::original` and try stripping both prefixes. If either
+        // matches we obtain a valid relative path and proceed.
+        //
+        // SECURITY: This dual-try is NOT a confinement bypass. `strip_prefix`
+        // only computes the *relative* path that is handed to cap-std's
+        // `Dir::open` / `Dir::open_with`. The confinement guarantee is
+        // enforced entirely by the kernel: the `Dir` fd was opened at
+        // `AllowedRoot::open` time (canonicalized, before any privilege drop),
+        // and all subsequent `open` calls are resolved *relative to that fd*.
+        // The kernel will refuse traversal outside the fd's subtree regardless
+        // of which string prefix we stripped. cap-std additionally detects any
+        // escape attempt and returns [`CAP_STD_ESCAPE_MESSAGE`], which we map
+        // to [`AuthError::CapStdEscape`] below.
+        //
+        // The `original` field on `AllowedRoot` exists specifically for this
+        // macOS `/var` ↔ `/private/var` compatibility case.
         let canonical_root = Path::new(root.display_path());
         let original_root = Path::new(&root.original);
         let relative = if let Ok(rel) = target.strip_prefix(canonical_root) {
@@ -263,7 +318,13 @@ pub fn authorize_confined_path(
         };
 
         match open_result {
-            Ok(file) => return Ok(file),
+            Ok(file) => {
+                let meta = file.metadata().map_err(|source| AuthError::Io {
+                    path: target.to_path_buf(),
+                    source,
+                })?;
+                return Ok((file, meta));
+            }
             Err(ref err) if err.to_string().contains(CAP_STD_ESCAPE_MESSAGE) => {
                 return Err(AuthError::CapStdEscape {
                     message: err.to_string(),
@@ -530,11 +591,16 @@ impl BinaryHasherCollector {
     /// Delegates to [`authorize_confined_path`] for TOCTOU-safe opens,
     /// then performs the file-type and size checks.
     ///
-    /// 1. Length cap + parent-traversal rejection (via shared predicates).
-    /// 2. cap-std confined open (TOCTOU-safe path resolution).
-    /// 3. File-type check (must be a regular file).
-    /// 4. Size check against `config.max_file_size`.
+    /// 1. On macOS, verify all root fingerprints once (before the per-file open).
+    /// 2. Length cap + parent-traversal rejection (via shared predicates).
+    /// 3. cap-std confined open (TOCTOU-safe path resolution).
+    /// 4. File-type check (must be a regular file).
+    /// 5. Size check against `config.max_file_size`.
     fn authorize(&self, raw: &str) -> Result<PathBuf, TriggerHandleError> {
+        // Verify all root fingerprints once before entering the per-file
+        // stream. On non-macOS this is a no-op.
+        verify_all_fingerprints(&self.opened_roots).map_err(|err| map_auth_err(&err))?;
+
         if raw.len() > MAX_TARGET_PATH_LEN {
             return Err(TriggerHandleError::PathTooLong { len: raw.len() });
         }
@@ -546,22 +612,14 @@ impl BinaryHasherCollector {
 
         let raw_path = Path::new(raw);
 
-        // Delegate to cap-std authorization.
-        let _file =
+        // Delegate to cap-std authorization. Returns the opened file handle
+        // and its metadata (via fstat) so we avoid a second path-based stat.
+        let (_file, meta) =
             authorize_confined_path(raw_path, &self.opened_roots, self.config.follow_symlinks)
                 .map_err(|err| map_auth_err(&err))?;
 
-        // When following symlinks, canonicalize to the resolved path so
-        // the engine hashes the real file (not the symlink). The cap-std
-        // open already proved confinement.
-        let resolved = if self.config.follow_symlinks {
-            std::fs::canonicalize(raw_path).map_err(|err| map_path_io_err("canonicalize", &err))?
-        } else {
-            raw_path.to_path_buf()
-        };
-
-        // File-type and size checks.
-        let meta = std::fs::metadata(&resolved).map_err(|err| map_path_io_err("metadata", &err))?;
+        // File-type and size checks use the metadata already obtained from
+        // the open file handle — no second stat(2) call needed.
         if !meta.is_file() {
             return Err(TriggerHandleError::Unavailable {
                 reason: "target is not a regular file".to_owned(),
@@ -573,6 +631,15 @@ impl BinaryHasherCollector {
                 limit: self.config.max_file_size,
             });
         }
+
+        // When following symlinks, canonicalize to the resolved path so
+        // the engine hashes the real file (not the symlink). The cap-std
+        // open already proved confinement.
+        let resolved = if self.config.follow_symlinks {
+            std::fs::canonicalize(raw_path).map_err(|err| map_path_io_err("canonicalize", &err))?
+        } else {
+            raw_path.to_path_buf()
+        };
 
         Ok(resolved)
     }

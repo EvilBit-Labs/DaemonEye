@@ -70,8 +70,10 @@ impl KernelResolvedExe {
 /// Runs the shared predicates from [`daemoneye_lib::integrity::auth`]:
 /// 1. Path length ≤ `MAX_EXECUTABLE_PATH_LEN` bytes.
 /// 2. No `..` traversal components.
-/// 3. File exists and is a regular file (`symlink_metadata`).
-/// 4. File size ≤ [`MAX_EXECUTABLE_FILE_SIZE`].
+/// 3. File exists (`symlink_metadata` succeeds).
+/// 4. File is not a symbolic link.
+/// 5. File is a regular file.
+/// 6. File size ≤ [`MAX_EXECUTABLE_FILE_SIZE`].
 ///
 /// # Errors
 ///
@@ -86,6 +88,12 @@ pub fn authorize_kernel_path(exe: &KernelResolvedExe) -> Result<std::fs::Metadat
         path: path.to_path_buf(),
         source,
     })?;
+
+    if metadata.file_type().is_symlink() {
+        return Err(AuthError::SymlinkRejected {
+            path: path.to_path_buf(),
+        });
+    }
 
     auth::check_regular_file(path, &metadata)?;
     auth::check_size(&metadata, MAX_EXECUTABLE_FILE_SIZE)?;
@@ -359,6 +367,20 @@ mod tests {
         fs::write(tmp.path(), b"test binary content").unwrap();
         let exe = KernelResolvedExe::from_sysinfo_exe(tmp.path().to_path_buf());
         assert!(authorize_kernel_path(&exe).is_ok());
+    }
+
+    #[test]
+    fn auth_rejects_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real_file");
+        let link = dir.path().join("symlink_to_real");
+        fs::write(&target, b"real binary content").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let exe = KernelResolvedExe::from_sysinfo_exe(link);
+        assert!(matches!(
+            authorize_kernel_path(&exe),
+            Err(AuthError::SymlinkRejected { .. })
+        ));
     }
 
     #[test]
