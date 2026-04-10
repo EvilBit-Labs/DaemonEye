@@ -6,11 +6,9 @@
 
 use crate::{
     event_bus_connector::{EventBusConnector, ProcessEventType},
+    hash_pass::populate_hashes,
     lifecycle::{LifecycleTrackingConfig, ProcessLifecycleEvent, ProcessLifecycleTracker},
-    process_collector::{
-        ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,
-        populate_executable_hashes,
-    },
+    process_collector::{ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector},
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -938,11 +936,13 @@ impl ProcmondMonitorCollector {
         // lifecycle diffing so hashes participate in
         // `(executable_hash, hash_algorithm)` tuple comparisons.
         if let Some(ref hasher) = self.hasher {
-            let hash_stats = populate_executable_hashes(&mut process_events, hasher).await;
+            let hash_stats = populate_hashes(&mut process_events, hasher).await;
             debug!(
                 unique_paths = hash_stats.unique_paths,
                 hashed = hash_stats.hashed,
-                failures = hash_stats.failures,
+                auth_failures = hash_stats.auth_failures,
+                io_failures = hash_stats.io_failures,
+                nonauthoritative = hash_stats.nonauthoritative,
                 "executable hash pass completed"
             );
         }

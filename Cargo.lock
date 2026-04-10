@@ -1620,6 +1620,7 @@ dependencies = [
  "criterion",
  "daemoneye-eventbus",
  "daemoneye-lib",
+ "futures",
  "insta",
  "postcard",
  "predicates",

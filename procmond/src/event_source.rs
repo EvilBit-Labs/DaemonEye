@@ -4,9 +4,9 @@
 //! and wraps the existing `ProcessMessageHandler` to integrate with the collector-core
 //! framework while preserving all existing functionality.
 
+use crate::hash_pass::populate_hashes;
 use crate::process_collector::{
     FallbackProcessCollector, ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,
-    populate_executable_hashes,
 };
 use async_trait::async_trait;
 use collector_core::{CollectionEvent, EventSource, SourceCaps};
@@ -543,11 +543,13 @@ impl ProcessEventSource {
         // if many processes share an executable. Failures are logged
         // but non-fatal — missing hashes are represented as `None`.
         if let Some(ref hasher) = self.hasher {
-            let hash_stats = populate_executable_hashes(&mut process_events, hasher).await;
+            let hash_stats = populate_hashes(&mut process_events, hasher).await;
             debug!(
                 unique_paths = hash_stats.unique_paths,
                 hashed = hash_stats.hashed,
-                failures = hash_stats.failures,
+                auth_failures = hash_stats.auth_failures,
+                io_failures = hash_stats.io_failures,
+                nonauthoritative = hash_stats.nonauthoritative,
                 "executable hash pass completed"
             );
         }

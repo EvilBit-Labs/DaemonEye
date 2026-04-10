@@ -3,6 +3,7 @@
 
 pub mod event_bus_connector;
 pub mod event_source;
+pub(crate) mod hash_pass;
 pub mod lifecycle;
 pub mod monitor_collector;
 pub mod process_collector;
@@ -145,7 +146,7 @@ pub struct ProcessMessageHandler {
     /// Optional shared hash engine. When present AND the underlying
     /// collector's configuration has `compute_executable_hashes = true`,
     /// enumeration runs a post-pass via
-    /// [`process_collector::populate_executable_hashes`] to fill in
+    /// `hash_pass::populate_hashes` to fill in
     /// `executable_hash` and `hash_algorithm` on every event.
     pub hasher: Option<Arc<daemoneye_lib::integrity::MultiAlgorithmHasher>>,
 }
@@ -223,7 +224,7 @@ impl ProcessMessageHandler {
 
     /// Attach a shared hash engine. When set, enumeration results are
     /// post-processed by
-    /// [`process_collector::populate_executable_hashes`] to fill
+    /// `hash_pass::populate_hashes` to fill
     /// `executable_hash` and `hash_algorithm` on every `ProcessEvent`.
     ///
     /// Pass `None` to disable hashing. The typical construction flow is:
@@ -323,14 +324,14 @@ impl ProcessMessageHandler {
                 // shared quick_cache then makes subsequent scans
                 // ~zero-cost in steady state.
                 if let Some(hasher) = self.hasher.as_ref() {
-                    let stats =
-                        process_collector::populate_executable_hashes(&mut process_events, hasher)
-                            .await;
+                    let stats = hash_pass::populate_hashes(&mut process_events, hasher).await;
                     debug!(
                         task_id = %task.task_id,
                         unique_paths = stats.unique_paths,
                         hashed = stats.hashed,
-                        failures = stats.failures,
+                        auth_failures = stats.auth_failures,
+                        io_failures = stats.io_failures,
+                        nonauthoritative = stats.nonauthoritative,
                         "hash population completed"
                     );
                 }

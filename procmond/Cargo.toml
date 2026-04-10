@@ -42,6 +42,7 @@ collector-core = { workspace = true }
 daemoneye-eventbus = { workspace = true }
 daemoneye-lib = { workspace = true }
 
+futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

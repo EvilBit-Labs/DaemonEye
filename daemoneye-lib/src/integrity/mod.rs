@@ -64,6 +64,8 @@
 //! # }
 //! ```
 
+pub mod auth;
+
 use quick_cache::sync::Cache;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
