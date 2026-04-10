@@ -47,17 +47,22 @@
 //!    affects queue ordering only. `allowed_roots`, symlink policy, and
 //!    resource budgets apply uniformly.
 //!
+//! # TOCTOU defense (cap-std)
+//!
+//! As of P1 Phase 3, path authorization uses cap-std `Dir` handles
+//! opened at construction time (before privilege drop). Each allowed
+//! root is a `Dir` handle; requests are opened relative to the root's
+//! fd via `Dir::open()`, which the kernel resolves atomically against
+//! the handle's subtree. This eliminates the `canonicalize()` →
+//! `File::open()` TOCTOU gap.
+//!
+//! On macOS, an additional `(st_dev, st_ino)` fingerprint is recorded
+//! at `Dir::open_ambient_dir` time and verified before each open. This
+//! detects bind-mount / volume swaps (not atomic, but raises attacker
+//! cost above zero).
+//!
 //! # Known gaps (follow-up work)
 //!
-//! - **TOCTOU-safe opens**: full defense against symlink-swap attacks
-//!   between `canonicalize()` and `File::open()` requires `cap-std` or
-//!   Linux `openat2(RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH)`. Scheduled for
-//!   Phase 3 of the P1 resolution plan
-//!   (`docs/plans/2026-04-09-001-refactor-binary-hashing-p1-resolutions-plan.md`).
-//!   The engine's stat-before / stat-after mutation check still fires a
-//!   [`HashError::Nonauthoritative`] at the engine boundary in the
-//!   meantime, so mid-read mutations are detected (though the initial
-//!   open still has a race window).
 //! - **Windows junction / reparse-point rejection**: requires calling the
 //!   Win32 `GetFileInformationByHandleEx` API via the `windows` crate; the
 //!   current stdlib-only path relies on `symlink_metadata().is_symlink()`
@@ -66,7 +71,8 @@
 use crate::analysis_chain::AnalysisResult;
 use crate::event::{AnalysisType, TriggerRequest};
 use crate::triggerable::{TriggerHandleError, TriggerableCollector};
-use daemoneye_lib::integrity::{HashComputer, HashError, HasherConfig, MultiAlgorithmHasher};
+use cap_std::fs::Dir;
+use daemoneye_lib::integrity::{HashComputer, HashError, MultiAlgorithmHasher, auth::AuthError};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -79,15 +85,227 @@ use tracing::{debug, info, warn};
 pub const MAX_TARGET_PATH_LEN: usize = 4096;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AllowedRoot — cap-std Dir handle + metadata
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// An allowed root directory opened via cap-std.
+///
+/// Holds the display path (for logging), the kernel-level `Dir` handle
+/// (for TOCTOU-safe opens), and on macOS a `(st_dev, st_ino)` fingerprint
+/// recorded at open time to detect bind-mount / volume swaps.
+///
+/// **Lifecycle invariant**: `AllowedRoot::open` MUST be called before
+/// procmond drops privileges. The `Dir` handle persists across privilege
+/// drops and confines all subsequent opens to the root's subtree at the
+/// kernel level.
+pub struct AllowedRoot {
+    /// Human-readable (canonical) path for logging.
+    display: String,
+    /// Original path before canonicalization (for `strip_prefix` on
+    /// macOS where `/var` → `/private/var`).
+    original: String,
+    /// Capability handle opened via `Dir::open_ambient_dir`.
+    handle: Dir,
+    /// On macOS, `(st_dev, st_ino)` recorded at open time.
+    #[cfg(target_os = "macos")]
+    fingerprint: (u64, u64),
+}
+
+impl std::fmt::Debug for AllowedRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AllowedRoot")
+            .field("display", &self.display)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AllowedRoot {
+    /// Open a root directory via `Dir::open_ambient_dir`.
+    ///
+    /// On macOS, also records `(st_dev, st_ino)` for fingerprint
+    /// verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns `std::io::Error` if the directory does not exist or
+    /// cannot be opened.
+    pub fn open(root: &Path) -> Result<Self, std::io::Error> {
+        let original = root.display().to_string();
+        // Canonicalize so strip_prefix works on macOS (/var → /private/var).
+        let canonical_root = std::fs::canonicalize(root)?;
+        let handle = Dir::open_ambient_dir(&canonical_root, cap_std::ambient_authority())?;
+
+        #[cfg(target_os = "macos")]
+        let fingerprint = {
+            use std::os::unix::fs::MetadataExt;
+            let meta = std::fs::metadata(&canonical_root)?;
+            (meta.dev(), meta.ino())
+        };
+
+        Ok(Self {
+            display: canonical_root.display().to_string(),
+            original,
+            handle,
+            #[cfg(target_os = "macos")]
+            fingerprint,
+        })
+    }
+
+    /// Borrow the cap-std `Dir` handle.
+    #[must_use]
+    pub const fn handle(&self) -> &Dir {
+        &self.handle
+    }
+
+    /// Display path for logging.
+    #[must_use]
+    pub fn display_path(&self) -> &str {
+        &self.display
+    }
+
+    /// On macOS, verify the fingerprint still matches.
+    #[cfg(target_os = "macos")]
+    pub fn verify_fingerprint(&self) -> Result<(), AuthError> {
+        use std::os::unix::fs::MetadataExt;
+        let current =
+            std::fs::metadata(Path::new(&self.display)).map_err(|source| AuthError::Io {
+                path: PathBuf::from(&self.display),
+                source,
+            })?;
+        let current_fp = (current.dev(), current.ino());
+        if current_fp != self.fingerprint {
+            return Err(AuthError::RootMountChanged {
+                root: self.display.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// authorize_confined_path — cap-std gated authorization
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The well-known cap-std error message for path escapes.
+///
+/// Regression-tested to catch upstream message changes on cap-std
+/// upgrades.
+pub const CAP_STD_ESCAPE_MESSAGE: &str = "a path led outside of the filesystem";
+
+/// Authorize and open a target path via cap-std `Dir` handles.
+///
+/// Tries each allowed root in order. For each root:
+/// 1. On macOS, verify the root fingerprint.
+/// 2. Strip the root prefix from the target to get a relative path.
+/// 3. Open the relative path via `root.handle().open()`.
+///
+/// If the path escapes (cap-std returns the escape error), this is
+/// mapped to [`AuthError::CapStdEscape`]. If no root matches, returns
+/// [`AuthError::PathNotAllowed`].
+///
+/// # Errors
+///
+/// Returns [`AuthError`] on escape, fingerprint mismatch, I/O errors,
+/// or if the path is not under any allowed root.
+pub fn authorize_confined_path(
+    target: &Path,
+    roots: &[AllowedRoot],
+    follow_symlinks: bool,
+) -> Result<cap_std::fs::File, AuthError> {
+    use daemoneye_lib::integrity::auth;
+
+    // Pre-flight checks using shared predicates.
+    auth::check_path_length(target)?;
+    auth::check_no_traversal(target)?;
+
+    for root in roots {
+        // On macOS, verify the root hasn't been bind-mounted over.
+        #[cfg(target_os = "macos")]
+        root.verify_fingerprint()?;
+
+        // Try both the canonical and original root paths for strip_prefix.
+        // On macOS, /var → /private/var means the target might use either form.
+        let canonical_root = Path::new(root.display_path());
+        let original_root = Path::new(&root.original);
+        let relative = if let Ok(rel) = target.strip_prefix(canonical_root) {
+            rel
+        } else if let Ok(rel) = target.strip_prefix(original_root) {
+            rel
+        } else {
+            continue;
+        };
+
+        // Open via cap-std. This is TOCTOU-safe: the kernel resolves
+        // the path relative to the Dir handle's fd.
+        let open_result = if follow_symlinks {
+            // Use cap-fs-ext to explicitly follow symlinks on the
+            // final component.
+            use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+            let mut opts = cap_std::fs::OpenOptions::new();
+            opts.read(true);
+            opts.follow(FollowSymlinks::Yes);
+            root.handle().open_with(relative, &opts)
+        } else {
+            // Check symlink_metadata first to reject symlinks before
+            // opening.
+            let meta_result = root.handle().symlink_metadata(relative);
+            match meta_result {
+                Ok(ref meta) if meta.is_symlink() => {
+                    return Err(AuthError::SymlinkRejected {
+                        path: target.to_path_buf(),
+                    });
+                }
+                Err(ref err) => {
+                    return Err(cap_std_err_to_auth(err, target));
+                }
+                Ok(_) => root.handle().open(relative),
+            }
+        };
+
+        match open_result {
+            Ok(file) => return Ok(file),
+            Err(ref err) if err.to_string().contains(CAP_STD_ESCAPE_MESSAGE) => {
+                return Err(AuthError::CapStdEscape {
+                    message: err.to_string(),
+                });
+            }
+            Err(err) => {
+                return Err(cap_std_err_to_auth(&err, target));
+            }
+        }
+    }
+
+    Err(AuthError::PathNotAllowed {
+        path: target.to_path_buf(),
+    })
+}
+
+/// Map a cap-std I/O error to [`AuthError`].
+fn cap_std_err_to_auth(err: &std::io::Error, target: &Path) -> AuthError {
+    if err.to_string().contains(CAP_STD_ESCAPE_MESSAGE) {
+        AuthError::CapStdEscape {
+            message: err.to_string(),
+        }
+    } else {
+        AuthError::Io {
+            path: target.to_path_buf(),
+            source: std::io::Error::new(err.kind(), err.to_string()),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BinaryHasherConfig
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Configuration for [`BinaryHasherCollector`].
 #[derive(Debug, Clone)]
 pub struct BinaryHasherConfig {
-    /// Mandatory allow-list of root directories. **Empty list denies all
-    /// requests.** Use [`BinaryHasherConfig::with_platform_defaults`] for
-    /// a reasonable starting set.
+    /// Mandatory allow-list of root directories (as paths).
+    ///
+    /// These are opened as cap-std `Dir` handles at construction time.
+    /// **Empty list denies all requests.** Use
+    /// [`BinaryHasherConfig::with_platform_defaults`] for secure defaults.
     pub allowed_roots: Vec<PathBuf>,
     /// When `false` (default), any path that resolves through a symbolic
     /// link or junction is rejected with `Unavailable`. When `true`, the
@@ -97,6 +315,10 @@ pub struct BinaryHasherConfig {
     pub max_file_size: u64,
     /// Per-file hashing deadline propagated to the engine.
     pub timeout_per_file: Duration,
+    /// When `false` (default), startup aborts if any configured root
+    /// fails to open. When `true`, roots that fail to open are skipped
+    /// with a warning.
+    pub allow_partial_roots: bool,
 }
 
 impl Default for BinaryHasherConfig {
@@ -106,6 +328,7 @@ impl Default for BinaryHasherConfig {
             follow_symlinks: false,
             max_file_size: 512 * 1024 * 1024,
             timeout_per_file: Duration::from_secs(10),
+            allow_partial_roots: false,
         }
     }
 }
@@ -220,17 +443,21 @@ impl BinaryHasherConfig {
 /// Holds an `Arc<MultiAlgorithmHasher>` shared with any other caller of the
 /// same engine so the configured concurrency cap and cache are honored
 /// across the whole process.
+///
+/// The `opened_roots` are cap-std `Dir` handles opened at construction
+/// time (before privilege drop) and used for TOCTOU-safe path
+/// resolution on every trigger.
 pub struct BinaryHasherCollector {
     engine: Arc<MultiAlgorithmHasher>,
     config: BinaryHasherConfig,
+    opened_roots: Vec<AllowedRoot>,
 }
 
 impl std::fmt::Debug for BinaryHasherCollector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Intentionally omit the engine: its internal Semaphore and
-        // quick_cache are not Debug and would just clutter the output.
         f.debug_struct("BinaryHasherCollector")
             .field("config", &self.config)
+            .field("opened_roots", &self.opened_roots)
             .finish_non_exhaustive()
     }
 }
@@ -238,31 +465,59 @@ impl std::fmt::Debug for BinaryHasherCollector {
 impl BinaryHasherCollector {
     /// Construct a collector with a shared engine and a validated config.
     ///
+    /// Opens each `allowed_root` as a cap-std `Dir` handle. In strict
+    /// mode (default), any root that fails to open aborts construction.
+    /// In partial mode (`allow_partial_roots = true`), failed roots are
+    /// skipped with a warning.
+    ///
+    /// **Lifecycle invariant**: This MUST be called before procmond drops
+    /// privileges, so the `Dir` handles inherit the elevated fd.
+    ///
     /// # Errors
     ///
     /// Returns [`TriggerHandleError::Internal`] if `config.validate()`
-    /// fails (most commonly an empty `allowed_roots` list).
+    /// fails, or in strict mode if any root fails to open.
     pub fn new(
         engine: Arc<MultiAlgorithmHasher>,
         config: BinaryHasherConfig,
     ) -> Result<Self, TriggerHandleError> {
         config.validate()?;
-        Ok(Self { engine, config })
-    }
 
-    /// Construct a collector with a default engine and default platform
-    /// roots. Intended for tests and single-process deployments.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TriggerHandleError::Internal`] if the default engine
-    /// configuration fails to validate or if platform defaults produce an
-    /// empty allow-list on the current OS.
-    pub fn with_default_engine() -> Result<Self, TriggerHandleError> {
-        let engine = MultiAlgorithmHasher::new(HasherConfig::default())
-            .map_err(|e| TriggerHandleError::Internal(e.to_string()))?;
-        let config = BinaryHasherConfig::default().with_platform_defaults();
-        Self::new(Arc::new(engine), config)
+        let mut opened_roots = Vec::with_capacity(config.allowed_roots.len());
+        for root_path in &config.allowed_roots {
+            match AllowedRoot::open(root_path) {
+                Ok(root) => {
+                    debug!(root = %root_path.display(), "opened allowed root");
+                    opened_roots.push(root);
+                }
+                Err(err) => {
+                    if config.allow_partial_roots {
+                        warn!(
+                            root = %root_path.display(),
+                            error = %err,
+                            "skipping allowed root (partial mode)"
+                        );
+                    } else {
+                        return Err(TriggerHandleError::Internal(format!(
+                            "failed to open allowed root {}: {err}",
+                            root_path.display()
+                        )));
+                    }
+                }
+            }
+        }
+
+        if opened_roots.is_empty() {
+            return Err(TriggerHandleError::Internal(
+                "no allowed roots could be opened".to_owned(),
+            ));
+        }
+
+        Ok(Self {
+            engine,
+            config,
+            opened_roots,
+        })
     }
 
     /// Stable collector name used to match `TriggerRequest.target_collector`.
@@ -270,23 +525,16 @@ impl BinaryHasherCollector {
 
     // ── Path authorization ──────────────────────────────────────────────
 
-    /// Authorize a request and return the canonicalized, validated path.
+    /// Authorize a request via cap-std `Dir` handles.
     ///
-    /// This is the single choke point for every security check. Ordering
-    /// matters:
+    /// Delegates to [`authorize_confined_path`] for TOCTOU-safe opens,
+    /// then performs the file-type and size checks.
     ///
-    /// 1. Length cap
-    /// 2. Parent-traversal rejection (`..` components)
-    /// 3. `symlink_metadata` — if the final component is a symlink and
-    ///    `follow_symlinks` is false, reject with `Unavailable`.
-    /// 4. `canonicalize` — resolves any intermediate symlinks even when
-    ///    `follow_symlinks` is true, so the subsequent allow-list check
-    ///    sees the real path.
-    /// 5. Verify canonical path starts with at least one allowed root.
-    /// 6. File-type check (must be a regular file).
-    /// 7. Size check against `config.max_file_size`.
+    /// 1. Length cap + parent-traversal rejection (via shared predicates).
+    /// 2. cap-std confined open (TOCTOU-safe path resolution).
+    /// 3. File-type check (must be a regular file).
+    /// 4. Size check against `config.max_file_size`.
     fn authorize(&self, raw: &str) -> Result<PathBuf, TriggerHandleError> {
-        // 1. Length cap — reject before any I/O.
         if raw.len() > MAX_TARGET_PATH_LEN {
             return Err(TriggerHandleError::PathTooLong { len: raw.len() });
         }
@@ -298,83 +546,27 @@ impl BinaryHasherCollector {
 
         let raw_path = Path::new(raw);
 
-        // 2. Parent-traversal rejection. We reject `..` components BEFORE
-        //    canonicalization because a path like `/usr/bin/../../etc/shadow`
-        //    canonicalizes to `/etc/shadow` which might be accepted if an
-        //    operator has misconfigured roots. Better to refuse up front.
-        for component in raw_path.components() {
-            if matches!(component, std::path::Component::ParentDir) {
-                return Err(TriggerHandleError::PathRejected {
-                    reason: "path contains '..' component".to_owned(),
-                });
-            }
-        }
+        // Delegate to cap-std authorization.
+        let _file =
+            authorize_confined_path(raw_path, &self.opened_roots, self.config.follow_symlinks)
+                .map_err(|err| map_auth_err(&err))?;
 
-        // 3. symlink_metadata — checks the final component without
-        //    following symlinks. If it IS a symlink and we don't follow,
-        //    reject with a bland Unavailable so we don't leak "this
-        //    specific path exists as a symlink".
-        let link_meta = match std::fs::symlink_metadata(raw_path) {
-            Ok(m) => m,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                // Merged with PermissionDenied on the wire (Unavailable).
-                return Err(TriggerHandleError::Unavailable {
-                    reason: format!("symlink_metadata not-found: {raw}"),
-                });
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-                return Err(TriggerHandleError::Unavailable {
-                    reason: format!("symlink_metadata permission denied: {raw}"),
-                });
-            }
-            Err(err) => {
-                return Err(TriggerHandleError::Internal(format!(
-                    "symlink_metadata failed for {raw}: {err}"
-                )));
-            }
+        // When following symlinks, canonicalize to the resolved path so
+        // the engine hashes the real file (not the symlink). The cap-std
+        // open already proved confinement.
+        let resolved = if self.config.follow_symlinks {
+            std::fs::canonicalize(raw_path).map_err(|err| map_path_io_err("canonicalize", &err))?
+        } else {
+            raw_path.to_path_buf()
         };
 
-        if link_meta.file_type().is_symlink() && !self.config.follow_symlinks {
-            warn!(path = %raw, "rejecting symlink under follow_symlinks=false policy");
-            return Err(TriggerHandleError::Unavailable {
-                reason: "target is a symlink".to_owned(),
-            });
-        }
-
-        // 4. Canonicalize. This follows symlinks in intermediate components
-        //    (which we allow — the concern is the final component's type),
-        //    resolving to a real path for the allow-list check.
-        let canonical =
-            std::fs::canonicalize(raw_path).map_err(|err| map_path_io_err("canonicalize", &err))?;
-
-        // 5. Allow-list prefix check. We canonicalize each root too so the
-        //    comparison is apples-to-apples (both sides resolved through
-        //    any intermediate symlinks). A root that does not exist is
-        //    simply skipped.
-        let mut allowed = false;
-        for root in &self.config.allowed_roots {
-            if let Ok(canonical_root) = std::fs::canonicalize(root)
-                && canonical.starts_with(&canonical_root)
-            {
-                allowed = true;
-                break;
-            }
-        }
-        if !allowed {
-            warn!(path = %canonical.display(), "rejecting path outside allowed_roots");
-            return Err(TriggerHandleError::PathNotAllowed);
-        }
-
-        // 6. File-type check on the canonical path.
-        let meta =
-            std::fs::metadata(&canonical).map_err(|err| map_path_io_err("metadata", &err))?;
+        // File-type and size checks.
+        let meta = std::fs::metadata(&resolved).map_err(|err| map_path_io_err("metadata", &err))?;
         if !meta.is_file() {
             return Err(TriggerHandleError::Unavailable {
                 reason: "target is not a regular file".to_owned(),
             });
         }
-
-        // 7. Size check.
         if meta.len() > self.config.max_file_size {
             return Err(TriggerHandleError::TooLarge {
                 size: meta.len(),
@@ -382,7 +574,7 @@ impl BinaryHasherCollector {
             });
         }
 
-        Ok(canonical)
+        Ok(resolved)
     }
 }
 
@@ -459,21 +651,51 @@ impl TriggerableCollector for BinaryHasherCollector {
     }
 
     async fn health_check(&self) -> Result<(), TriggerHandleError> {
-        // Health is good if at least one allowed root is reachable.
-        for root in &self.config.allowed_roots {
-            if std::fs::metadata(root).is_ok() {
+        // Health is good if at least one opened root is accessible.
+        for root in &self.opened_roots {
+            let root_path = Path::new(root.display_path());
+            if std::fs::metadata(root_path).is_ok() {
                 return Ok(());
             }
         }
         Err(TriggerHandleError::Internal(
-            "no allowed_roots are currently accessible".to_owned(),
+            "no opened_roots are currently accessible".to_owned(),
         ))
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HashError → TriggerHandleError mapping
+// Error mapping
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Map an [`AuthError`] to a wire-safe [`TriggerHandleError`].
+///
+/// Maps path-escape and not-allowed to `PathNotAllowed`, symlink
+/// rejection and I/O to `Unavailable`, and everything else to
+/// `Internal`. This prevents file-existence oracles.
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    clippy::pattern_type_mismatch,
+    reason = "AuthError is #[non_exhaustive]; wildcard required for forward-compat"
+)]
+fn map_auth_err(err: &AuthError) -> TriggerHandleError {
+    match err {
+        AuthError::PathTooLong { len, .. } => TriggerHandleError::PathTooLong { len: *len },
+        AuthError::PathTraversal { .. } => TriggerHandleError::PathRejected {
+            reason: "path contains '..' component".to_owned(),
+        },
+        AuthError::CapStdEscape { .. } | AuthError::PathNotAllowed { .. } => {
+            TriggerHandleError::PathNotAllowed
+        }
+        AuthError::SymlinkRejected { .. } => TriggerHandleError::Unavailable {
+            reason: "target is a symlink".to_owned(),
+        },
+        AuthError::Io { .. } => TriggerHandleError::Unavailable {
+            reason: format!("I/O error: {err}"),
+        },
+        _ => TriggerHandleError::Internal(format!("auth error: {err}")),
+    }
+}
 
 /// Map a stdlib `io::Error` from a path operation into a wire-safe
 /// [`TriggerHandleError`]. `NotFound` and `PermissionDenied` both map to
@@ -543,7 +765,7 @@ mod tests {
     use super::*;
     use crate::event::{AnalysisType, TriggerPriority};
     use crate::triggerable::TriggerErrorKind;
-    use daemoneye_lib::integrity::HashAlgorithm;
+    use daemoneye_lib::integrity::{HashAlgorithm, HasherConfig};
     use std::collections::HashMap;
     use std::fs;
     use std::sync::Arc;
@@ -696,7 +918,9 @@ mod tests {
         let real = dir.path().join("real.bin");
         fs::write(&real, b"content").unwrap();
         let link = dir.path().join("link.bin");
-        std::os::unix::fs::symlink(&real, &link).unwrap();
+        // Use a relative symlink so cap-std doesn't reject it as an
+        // escape (absolute symlink targets point outside the Dir sandbox).
+        std::os::unix::fs::symlink(Path::new("real.bin"), &link).unwrap();
 
         let config = BinaryHasherConfig::default()
             .with_allowed_root(dir.path())

@@ -29,6 +29,10 @@ postcard = { workspace = true }
 # Bitflags for capabilities
 bitflags = { workspace = true }
 
+# Capability-based filesystem access (TOCTOU-safe opens)
+cap-fs-ext = { workspace = true }
+cap-std    = { workspace = true }
+
 # High-performance concurrent data structures
 crossbeam = { workspace = true }
 

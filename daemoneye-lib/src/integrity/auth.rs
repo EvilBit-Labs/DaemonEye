@@ -76,6 +76,39 @@ pub enum AuthError {
         #[source]
         source: std::io::Error,
     },
+
+    /// cap-std rejected the open because the path escaped the `Dir` root.
+    ///
+    /// This fires when a symlink, bind-mount, or `..` traversal attempts
+    /// to reach outside the allowed root.
+    #[error("path escaped allowed root: {message}")]
+    CapStdEscape {
+        /// The cap-std error message (preserved for regression testing).
+        message: String,
+    },
+
+    /// Target is a symbolic link and the policy forbids following.
+    #[error("target is a symlink: {}", path.display())]
+    SymlinkRejected {
+        /// The path that is a symlink.
+        path: std::path::PathBuf,
+    },
+
+    /// Path is outside all configured allowed roots.
+    #[error("path not under any allowed root: {}", path.display())]
+    PathNotAllowed {
+        /// The path that failed the check.
+        path: std::path::PathBuf,
+    },
+
+    /// macOS: the allowed root's (`st_dev`, `st_ino`) fingerprint changed,
+    /// indicating a bind-mount or volume swap.
+    #[cfg(target_os = "macos")]
+    #[error("root mount point changed: {root}")]
+    RootMountChanged {
+        /// The root whose fingerprint no longer matches.
+        root: String,
+    },
 }
 
 /// Check that `path`'s byte length does not exceed `MAX_EXECUTABLE_PATH_LEN`.

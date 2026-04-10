@@ -56,6 +56,10 @@ blake3 = { version = "1.8.4", default-features = false, features = ["std"] }
 # Buffer and byte utilities
 bytes = "1.11.1"
 
+# Capability-based filesystem access (TOCTOU-safe opens)
+cap-fs-ext = "=4.0.2"
+cap-std = "=4.0.2"
+
 # Date/time and utilities
 chrono = { version = "0.4.44", features = ["serde"] }
 
