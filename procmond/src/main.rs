@@ -4,7 +4,7 @@ use clap::Parser;
 use collector_core::{CollectionEvent, Collector, CollectorConfig, CollectorRegistrationConfig};
 use daemoneye_lib::{
     config,
-    integrity::{HasherConfig, MultiAlgorithmHasher},
+    integrity::{HashComputer, HasherConfig, MultiAlgorithmHasher},
     storage, telemetry,
 };
 use procmond::{
@@ -147,9 +147,15 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shared_hasher: Option<Arc<MultiAlgorithmHasher>> = if cli.compute_hashes {
         match MultiAlgorithmHasher::new(HasherConfig::default()) {
             Ok(engine) => {
+                let algos: Vec<_> = engine
+                    .supported_algorithms()
+                    .iter()
+                    .map(|a| a.wire_name())
+                    .collect::<Vec<_>>();
                 info!(
                     max_concurrent = engine.max_concurrent(),
-                    "Shared executable-hash engine constructed"
+                    algorithms = ?algos,
+                    "procmond.hash.subsystem enabled=true"
                 );
                 Some(Arc::new(engine))
             }

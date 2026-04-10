@@ -27,7 +27,7 @@ use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, info, instrument, warn};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // KernelResolvedExe newtype
@@ -130,6 +130,7 @@ pub struct HashPassStats {
 /// - `buffer_unordered` parallelism (todo #010).
 ///
 /// Errors for individual files are logged and counted but never propagated.
+#[instrument(skip_all, fields(event_count = events.len()))]
 pub async fn populate_hashes(
     events: &mut [ProcessEvent],
     hasher: &Arc<MultiAlgorithmHasher>,
@@ -197,6 +198,17 @@ pub async fn populate_hashes(
             event.hash_algorithm = Some(entry.1.clone());
         }
     }
+
+    // Telemetry: emit coverage stats so operators can distinguish
+    // "feature disabled" from "files inaccessible".
+    info!(
+        unique_paths = stats.unique_paths,
+        hashed = stats.hashed,
+        auth_failures = stats.auth_failures,
+        nonauthoritative = stats.nonauthoritative,
+        io_failures = stats.io_failures,
+        "hash pass completed"
+    );
 
     stats
 }
