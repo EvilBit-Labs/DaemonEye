@@ -768,9 +768,9 @@ impl MultiAlgorithmHasher {
     ///
     /// The provided `config` is normalized so SHA-256 is always the first
     /// algorithm in `config.algorithms`. This matches the invariant enforced
-    /// by [`HasherSet::new`] — every `HashResult` produced by this engine
-    /// contains a SHA-256 digest regardless of what the caller requested.
-    /// Normalizing here ensures [`HashComputer::supported_algorithms`]
+    /// by the internal `HasherSet::new` — every `HashResult` produced by
+    /// this engine contains a SHA-256 digest regardless of what the caller
+    /// requested. Normalizing here ensures [`HashComputer::supported_algorithms`]
     /// returns the list that actually gets computed, so callers relying on
     /// that reflection do not receive a lie.
     ///
