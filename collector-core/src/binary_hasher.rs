@@ -356,9 +356,9 @@ pub fn authorize_confined_path(
 /// Walks the full [`std::error::Error::source`] chain so an escape
 /// detection stays correct even if cap-std upgrades start wrapping the
 /// leaf message inside a higher-level error. The
-/// [`cap_std_escape_error_contains_expected_message`] regression test
-/// pins the exact leaf message format so we get a loud signal when the
-/// upstream text drifts.
+/// `cap_std_escape_error_contains_expected_message` regression test
+/// (in this file's `tests` module) pins the exact leaf message format
+/// so we get a loud signal when the upstream text drifts.
 fn cap_std_err_to_auth(err: &std::io::Error, target: &Path) -> AuthError {
     if is_cap_std_escape(err) {
         return AuthError::CapStdEscape {
