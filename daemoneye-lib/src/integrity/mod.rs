@@ -697,17 +697,28 @@ impl HasherSet {
 // a cache hit could return the digest of a DIFFERENT inode that happened
 // to live at this path earlier with the same mtime+size.
 //
-// `FileIdentity` closes that gap by binding the key to the underlying file
-// identity: (dev, ino) on Unix, NTFS file index on Windows, and a unit
-// sentinel on other platforms. Combined with the fstat performed on the
-// held handle, a cache hit is now only reachable when the same path, with
-// the same mtime, size, AND underlying inode was previously hashed — i.e.
+// `FileIdentity` closes that gap by binding the key to the underlying
+// file identity: (dev, ino) on Unix, and a unit sentinel on non-Unix
+// platforms. Combined with the fstat performed on the held handle, a
+// cache hit on Unix is now only reachable when the same path, with the
+// same mtime, size, AND underlying inode was previously hashed — i.e.
 // the same file, not merely the same name.
+//
+// On Windows, `std::os::windows::fs::MetadataExt::file_index()` requires
+// the unstable `windows_by_handle` feature and is not available on
+// stable Rust. Rather than pulling in `windows-sys` just to call
+// `GetFileInformationByHandle` for this, Windows currently falls back
+// to the weaker (path, mtime, size) key. The TOCTOU-sensitive callers
+// (cap-std `BinaryHasherCollector` and procmond's `O_NOFOLLOW`-opened
+// enumeration path) still hash from a held fd, so an attacker racing
+// the path after authorization cannot change the bytes we actually
+// digest — they could only influence a cache lookup, which is already
+// disabled when `cache_capacity == 0`. Security-critical Windows
+// deployments should set `cache_capacity = 0` until a proper
+// file-index probe lands.
 #[cfg(unix)]
 type FileIdentity = (u64, u64); // (dev, ino)
-#[cfg(windows)]
-type FileIdentity = Option<u64>; // NTFS file index (may be unavailable)
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(unix))]
 type FileIdentity = ();
 
 type CacheKey = (PathBuf, SystemTime, u64, FileIdentity);
@@ -720,18 +731,10 @@ fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
     (metadata.dev(), metadata.ino())
 }
 
-#[cfg(windows)]
-fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
-    use std::os::windows::fs::MetadataExt;
-    metadata.file_index()
-}
-
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(unix))]
 fn file_identity(_metadata: &std::fs::Metadata) -> FileIdentity {
-    // Other platforms (e.g. wasi) have no portable file-identity primitive;
-    // fall back to the weaker (path, mtime, size) key by using a unit
-    // sentinel. Security-critical consumers on such platforms should
-    // disable the cache by setting cache_capacity = 0.
+    // Non-Unix platforms fall back to the weaker (path, mtime, size) key.
+    // See the CacheKey module comment above for the security rationale.
 }
 
 /// The default [`HashComputer`] implementation.
