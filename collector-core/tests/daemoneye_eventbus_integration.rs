@@ -109,7 +109,7 @@ async fn test_daemoneye_eventbus_integration() {
         cpu_usage: Some(5.5),
         memory_usage: Some(1024 * 1024), // 1MB
         executable_hash: Some("abc123def456".to_string()),
-        hash_algorithm: None,
+        hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("1000".to_string()),
         accessible: true,
         file_exists: true,

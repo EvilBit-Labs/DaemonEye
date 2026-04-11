@@ -5,15 +5,16 @@
 //! standalone `ProcessEventSource`, every holder ends up with the same
 //! underlying allocation (`Arc::ptr_eq`).
 //!
-//! This is the explicit defense against Discovery 1 from the P1
-//! resolution plan: prior to Phase 1B, `--compute-hashes` was a
-//! silent no-op because no composition site constructed an engine and
-//! threaded it into the production holders. The test asserts the
-//! wiring cannot regress to that state without a visible failure.
+//! This is the explicit defense against the "silent no-op" regression
+//! in the initial P1 binary-hashing implementation: before the
+//! composition-root refactor, `--compute-hashes` was silently a no-op
+//! because no single site constructed a `MultiAlgorithmHasher` and
+//! threaded it into both the actor-mode collector and the standalone
+//! event source. The test asserts the wiring cannot regress to that
+//! state without a visible failure.
 //!
-//! Related:
-//! - `docs/plans/2026-04-09-001-refactor-binary-hashing-p1-resolutions-plan.md`
-//! - `todos/013-pending-p1-shared-engine-composition-root.md`
+//! See also: `docs/solutions/security-issues/binary-hashing-authorization-and-toctou-fixes.md`
+//! for the full problem/solution writeup.
 
 #![allow(
     clippy::expect_used,

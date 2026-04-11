@@ -182,7 +182,7 @@ impl EventSource for SecurityTestSource {
                     cpu_usage: Some(0.1),
                     memory_usage: Some(1024),
                     executable_hash: Some("security_test_hash".to_string()),
-                    hash_algorithm: None,
+                    hash_algorithm: Some("sha256".to_owned()),
                     user_id: Some("1000".to_string()),
                     accessible: true,
                     file_exists: true,

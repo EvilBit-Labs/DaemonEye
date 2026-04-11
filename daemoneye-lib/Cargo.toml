@@ -34,9 +34,15 @@ network-correlation = []
 # IPC transport features
 ipc = [] # Use interprocess transport (cross-platform)
 
-# Integrity / hashing features — see docs/plans/2026-04-07-001-feat-binary-hashing-integrity-plan.md
-# legacy-hashes: SHA-1 and MD5 (cryptographically broken, correlation-only)
-legacy-hashes = ["dep:sha1", "dep:md-5"]
+# Integrity / hashing features
+#
+# Per AGENTS.md Cryptographic Standards: SHA-1 is forbidden. We deliberately
+# do NOT expose a `legacy-hashes` feature for SHA-1 or MD5, even gated, so
+# that broken primitives cannot be pulled into the build graph without an
+# explicit code change and security review. Any future need for weak hashes
+# (e.g. correlation with third-party data sources that only publish MD5)
+# must land as a separate, documented exception.
+#
 # sha3-hashes: SHA3-256 (cryptographically secure, ~5-10x slower than SHA-256)
 sha3-hashes = ["dep:sha3"]
 # fuzzy-hash: TLSH v4 primary + ssdeep-compat secondary (similarity hashing)
@@ -84,8 +90,6 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 
 # Optional: additional cryptographic hash backends for integrity verification
-sha1 = { workspace = true, optional = true }
-md-5 = { workspace = true, optional = true }
 sha3 = { workspace = true, optional = true }
 
 # Optional: fuzzy (similarity) hashing

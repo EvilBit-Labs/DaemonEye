@@ -16,6 +16,7 @@
 // Core modules (always available)
 pub mod config;
 pub mod crypto;
+/// Cryptographic integrity verification primitives, hashing engines, and path authorization checks.
 pub mod integrity;
 pub mod ipc;
 pub mod models;

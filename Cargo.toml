@@ -128,7 +128,7 @@ thiserror = "2.0.18"
 
 # Fuzzy hashing (pure Rust, feature-gated behind fuzzy-hash)
 tlsh2 = { version = "1.1.0", default-features = false }
-tokio = { version = "1.51.0", features = [
+tokio = { version = "1.51.1", features = [
     "rt",
     "rt-multi-thread",
     "net",

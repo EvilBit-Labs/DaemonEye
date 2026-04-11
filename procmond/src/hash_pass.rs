@@ -55,7 +55,7 @@ impl KernelResolvedExe {
     /// Asserts that `path` is absolute, catching misuse in development.
     /// The assertion is compiled out in release builds.
     #[must_use]
-    pub fn from_sysinfo_exe(path: PathBuf) -> Self {
+    pub(crate) fn from_sysinfo_exe(path: PathBuf) -> Self {
         debug_assert!(
             path.is_absolute(),
             "KernelResolvedExe must be an absolute path; got {}",
@@ -218,6 +218,12 @@ pub async fn populate_hashes(
 
     // Phase 4: Stamp hashes onto events.
     for event in events.iter_mut() {
+        // Reset any pre-existing hash state on the event. If we cannot
+        // authorize / hash the file this scan, we want the absence of a
+        // hash rather than a stale value from a prior run.
+        event.executable_hash = None;
+        event.hash_algorithm = None;
+
         let Some(raw) = event.executable_path.as_deref() else {
             continue;
         };
@@ -411,6 +417,7 @@ mod tests {
         assert!(authorize_kernel_path(&exe).is_ok());
     }
 
+    #[cfg(unix)]
     #[test]
     fn auth_rejects_symlink() {
         let dir = tempfile::tempdir().unwrap();
@@ -522,10 +529,11 @@ mod tests {
     async fn populate_hashes_skips_events_without_path() {
         let tmp = NamedTempFile::new().unwrap();
         fs::write(tmp.path(), b"with path").unwrap();
-        let path = tmp.path().to_string_lossy().into_owned();
-
-        // Leak the file so it persists through the test.
-        std::mem::forget(tmp);
+        // Persist the file on disk without leaking the fd. `.keep()`
+        // converts the temp file into a regular file at the same path
+        // and hands us back a `TempPath` we can drop safely.
+        let (_file, path_guard) = tmp.keep().unwrap();
+        let path = path_guard.to_string_lossy().into_owned();
 
         let mut event_without_path = new_event(2, "ignored");
         event_without_path.executable_path = None;
@@ -567,15 +575,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn populate_hashes_clears_stale_hashes_from_reused_events() {
+        // Simulate a reused ProcessEvent carrying hash state from a prior
+        // scan. If this scan cannot authorize the file (here: nonexistent
+        // path), populate_hashes MUST clear the stale values rather than
+        // leave them in place.
+        let mut event = new_event(1, "/definitely/does/not/exist/stale-test");
+        event.executable_hash = Some("stale".to_owned());
+        event.hash_algorithm = Some("md5".to_owned());
+
+        let mut events = vec![event];
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+        let stats = populate_hashes(&mut events, &hasher).await;
+
+        assert_eq!(stats.unique_paths, 1);
+        assert_eq!(stats.hashed, 0);
+        assert_eq!(stats.auth_failures, 1);
+        let first = events.first().unwrap();
+        assert!(
+            first.executable_hash.is_none(),
+            "stale executable_hash must be cleared"
+        );
+        assert!(
+            first.hash_algorithm.is_none(),
+            "stale hash_algorithm must be cleared"
+        );
+    }
+
+    #[tokio::test]
     async fn populate_hashes_parallel_multiple_files() {
         // Create multiple temp files to exercise buffer_unordered concurrency.
-        let files: Vec<_> = (0..10)
+        // Use `.keep()` to persist files without leaking fds.
+        let kept: Vec<_> = (0..10)
             .map(|i| {
                 let tmp = NamedTempFile::new().unwrap();
                 fs::write(tmp.path(), format!("binary-{i}")).unwrap();
-                let path = tmp.path().to_string_lossy().into_owned();
-                std::mem::forget(tmp);
-                path
+                tmp.keep().unwrap()
+            })
+            .collect();
+        let files: Vec<String> = kept
+            .iter()
+            .map(|tuple| {
+                let (_, ref p) = *tuple;
+                p.to_string_lossy().into_owned()
             })
             .collect();
 

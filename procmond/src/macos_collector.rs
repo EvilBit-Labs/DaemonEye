@@ -504,7 +504,7 @@ impl EnhancedMacOSCollector {
         };
 
         // Executable hash populated in a post-enumeration pass on the
-        // collector level. See `populate_executable_hashes`.
+        // collector level. See `hash_pass::populate_hashes`.
         let executable_hash: Option<String> = None;
         let hash_algorithm: Option<String> = None;
 

@@ -542,16 +542,37 @@ impl ProcessEventSource {
         // paths so the per-unique-file hash cost is incurred once even
         // if many processes share an executable. Failures are logged
         // but non-fatal — missing hashes are represented as `None`.
+        //
+        // The hash pass is bounded by an overall deadline so that a slow
+        // filesystem cannot stall a collection cycle past the configured
+        // interval. On timeout, we keep whatever hashes were already
+        // stamped (partial coverage is fine — downstream handles missing
+        // hashes) and log the truncation.
         if let Some(ref hasher) = self.hasher {
-            let hash_stats = populate_hashes(&mut process_events, hasher).await;
-            debug!(
-                unique_paths = hash_stats.unique_paths,
-                hashed = hash_stats.hashed,
-                auth_failures = hash_stats.auth_failures,
-                io_failures = hash_stats.io_failures,
-                nonauthoritative = hash_stats.nonauthoritative,
-                "executable hash pass completed"
-            );
+            const HASH_PASS_OVERALL_DEADLINE: Duration = Duration::from_secs(60);
+            match tokio::time::timeout(
+                HASH_PASS_OVERALL_DEADLINE,
+                populate_hashes(&mut process_events, hasher),
+            )
+            .await
+            {
+                Ok(hash_stats) => {
+                    debug!(
+                        unique_paths = hash_stats.unique_paths,
+                        hashed = hash_stats.hashed,
+                        auth_failures = hash_stats.auth_failures,
+                        io_failures = hash_stats.io_failures,
+                        nonauthoritative = hash_stats.nonauthoritative,
+                        "executable hash pass completed"
+                    );
+                }
+                Err(_elapsed) => {
+                    warn!(
+                        deadline_secs = HASH_PASS_OVERALL_DEADLINE.as_secs(),
+                        "hash population exceeded deadline; partial coverage recorded"
+                    );
+                }
+            }
         }
 
         debug!(

@@ -152,11 +152,10 @@ Treat `canonicalize()` + `open()` as a code smell. Replace with `Dir` handle ope
 
 ## Cross-References
 
-- Plan: `docs/plans/2026-04-09-001-refactor-binary-hashing-p1-resolutions-plan.md`
-- Original feature plan: `docs/plans/2026-04-07-001-feat-binary-hashing-integrity-plan.md`
 - CWE-135 learning: `docs/solutions/best-practices/rust-security-batch-cleanup-patterns-2026-04-04.md`
-- Engine statelessness invariant: `daemoneye-lib/src/integrity/mod.rs:736-748`
-- Cap-std TOCTOU defense docs: `collector-core/src/binary_hasher.rs:50-62`
-- Auth predicates module: `daemoneye-lib/src/integrity/auth.rs`
-- Hash pass module: `procmond/src/hash_pass.rs`
-- Resolved todos: `todos/002-resolved-p1-*`, `todos/010-resolved-p1-*`, `todos/011-resolved-p1-*`, `todos/013-resolved-p1-*`
+- Engine TOCTOU-safe entry point: `daemoneye-lib/src/integrity/mod.rs` — `MultiAlgorithmHasher::compute_from_file`
+- Cap-std TOCTOU defense module docs: `collector-core/src/binary_hasher.rs` module header
+- Shared auth predicates module: `daemoneye-lib/src/integrity/auth.rs`
+- Kernel-resolved hash pass: `procmond/src/hash_pass.rs`
+
+The original in-flight plan and todo tracker used during this PR lived under `docs/plans/` and `todos/`, both of which are gitignored — consult the PR description and the commit log of issue #40 for the full historical context if you need it.

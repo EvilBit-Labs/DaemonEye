@@ -2,9 +2,7 @@
 //!
 //! Streaming multi-algorithm hash engine for executables and critical system
 //! files. Produces a [`HashResult`] with cryptographically secure hashes
-//! (SHA-256, BLAKE3 by default; SHA-3-256 behind `sha3-hashes`) and optionally
-//! legacy hashes (SHA-1, MD5 behind `legacy-hashes`) stored separately so they
-//! cannot drive trust decisions.
+//! (SHA-256, BLAKE3 by default; SHA-3-256 behind `sha3-hashes`).
 //!
 //! # Design
 //!
@@ -41,11 +39,13 @@
 //! # Algorithm policy
 //!
 //! - **Default**: SHA-256 + BLAKE3 (both cryptographically secure).
-//! - **Opt-in via feature flags**: SHA-3-256 (`sha3-hashes`), SHA-1 and MD5
-//!   (`legacy-hashes`). SHA-1 and MD5 are broken for collision resistance and
-//!   live in [`HashResult::legacy_hashes`] — **never** in
-//!   [`HashResult::hashes`]. Downstream code must use
-//!   [`HashAlgorithm::is_cryptographically_secure`] to make trust decisions.
+//! - **Opt-in via feature flags**: SHA-3-256 (`sha3-hashes`).
+//! - **Deliberately unsupported**: SHA-1 and MD5. Per `DaemonEye`'s
+//!   cryptographic standards (see `AGENTS.md` — "never SHA-1"), weak hashes
+//!   are not compiled into the binary under any feature flag. Downstream
+//!   code must still use [`HashAlgorithm::is_cryptographically_secure`] to
+//!   gate trust decisions, so the API remains forward-compatible if a
+//!   future secure algorithm is ever added.
 //!
 //! # Example
 //!
@@ -81,10 +81,6 @@ use tracing::{debug, warn};
 
 use sha2::{Digest as Sha2Digest, Sha256};
 
-#[cfg(feature = "legacy-hashes")]
-use md5::Md5;
-#[cfg(feature = "legacy-hashes")]
-use sha1::Sha1;
 #[cfg(feature = "sha3-hashes")]
 use sha3::Sha3_256;
 
@@ -136,7 +132,11 @@ pub const MAX_CONCURRENCY: usize = 16;
 /// the discriminant order, and [`HashResult::hashes`] is a `BTreeMap` whose
 /// serialization depends on that ordering. Snapshot fixtures and the audit
 /// ledger's BLAKE3 hash chain indirectly depend on stable serialization.
-/// **Never reorder variants.** Appending new variants at the end is fine.
+/// **Never reorder variants and never change an existing discriminant
+/// value.** Appending new variants at the end with a fresh discriminant is
+/// fine. Explicit discriminants make the ordering immutable even if someone
+/// accidentally reshuffles the source lines.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 #[serde(rename_all = "kebab-case")]
@@ -144,43 +144,30 @@ pub enum HashAlgorithm {
     /// SHA-256 — NIST FIPS 180-4. Cryptographically secure. Primary integrity
     /// hash; the default value stored in
     /// [`crate::models::process::ProcessRecord::executable_hash`].
-    Sha256,
+    Sha256 = 0,
     /// BLAKE3 — modern, very fast, cryptographically secure. Enabled by
     /// default; already a workspace dependency via the audit ledger chain.
-    Blake3,
+    Blake3 = 1,
     /// SHA3-256 — NIST FIPS 202. Cryptographically secure. 5–10× slower than
     /// SHA-256 on CPUs with SHA-NI. Behind the `sha3-hashes` feature.
     #[cfg(feature = "sha3-hashes")]
-    Sha3_256,
-    /// SHA-1 — **BROKEN** for collision resistance. Present only for
-    /// correlation with legacy threat-intelligence feeds. Lives in
-    /// [`HashResult::legacy_hashes`], never in [`HashResult::hashes`]. Behind
-    /// the `legacy-hashes` feature.
-    #[cfg(feature = "legacy-hashes")]
-    Sha1,
-    /// MD5 — **BROKEN** for collision resistance. Same caveats as SHA-1.
-    #[cfg(feature = "legacy-hashes")]
-    Md5,
+    Sha3_256 = 2,
 }
 
 impl HashAlgorithm {
     /// Whether this algorithm may be used to make trust or integrity
-    /// decisions. Returns `false` for SHA-1 and MD5.
+    /// decisions. All currently-supported variants return `true`; the method
+    /// is kept so downstream code gates trust behind an explicit check and
+    /// so the return value can flip to `false` without an API break if a
+    /// weak algorithm is ever (re-)introduced.
     #[must_use]
     pub const fn is_cryptographically_secure(self) -> bool {
-        #[cfg_attr(
-            not(any(feature = "sha3-hashes", feature = "legacy-hashes")),
-            allow(clippy::match_same_arms)
-        )]
+        #[cfg_attr(not(feature = "sha3-hashes"), allow(clippy::match_same_arms))]
         match self {
             Self::Sha256 => true,
             Self::Blake3 => true,
             #[cfg(feature = "sha3-hashes")]
             Self::Sha3_256 => true,
-            #[cfg(feature = "legacy-hashes")]
-            Self::Sha1 => false,
-            #[cfg(feature = "legacy-hashes")]
-            Self::Md5 => false,
         }
     }
 
@@ -193,10 +180,6 @@ impl HashAlgorithm {
             Self::Blake3 => "blake3",
             #[cfg(feature = "sha3-hashes")]
             Self::Sha3_256 => "sha3-256",
-            #[cfg(feature = "legacy-hashes")]
-            Self::Sha1 => "sha1",
-            #[cfg(feature = "legacy-hashes")]
-            Self::Md5 => "md5",
         }
     }
 
@@ -208,10 +191,6 @@ impl HashAlgorithm {
             Self::Blake3 => 64,
             #[cfg(feature = "sha3-hashes")]
             Self::Sha3_256 => 64,
-            #[cfg(feature = "legacy-hashes")]
-            Self::Sha1 => 40,
-            #[cfg(feature = "legacy-hashes")]
-            Self::Md5 => 32,
         }
     }
 }
@@ -261,9 +240,10 @@ pub enum HashIntegrity {
 
 /// Result of a hashing operation. Immutable value type.
 ///
-/// Cryptographically secure hashes go in [`Self::hashes`]; legacy (broken)
-/// hashes go in [`Self::legacy_hashes`]. This structural separation prevents
-/// downstream code from accidentally using MD5 or SHA-1 for trust decisions.
+/// Only cryptographically secure hashes are ever populated in [`Self::hashes`].
+/// SHA-1 and MD5 are deliberately not supported by the engine, so the hash
+/// map can be trusted at the type level to hold only algorithms approved by
+/// `DaemonEye`'s cryptographic standards.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HashResult {
     /// Canonicalized file path (post-open, not raw input). May differ from
@@ -276,9 +256,6 @@ pub struct HashResult {
     /// Cryptographically secure hashes, hex-encoded. Safe for lifecycle
     /// diffing, detection rule evaluation, and audit ledger inclusion.
     pub hashes: BTreeMap<HashAlgorithm, String>,
-    /// Broken hashes (MD5, SHA-1). **Correlation use only.** Must not drive
-    /// trust or integrity decisions.
-    pub legacy_hashes: BTreeMap<HashAlgorithm, String>,
     /// Integrity tag. Always [`HashIntegrity::Stable`] in the `Ok` path —
     /// mid-read mutations are returned as [`HashError::Nonauthoritative`]
     /// at the engine boundary, so a successful `HashResult` cannot carry
@@ -578,10 +555,6 @@ enum HasherKind {
     Blake3(Box<blake3::Hasher>),
     #[cfg(feature = "sha3-hashes")]
     Sha3_256(Box<Sha3_256>),
-    #[cfg(feature = "legacy-hashes")]
-    Sha1(Box<Sha1>),
-    #[cfg(feature = "legacy-hashes")]
-    Md5(Box<Md5>),
 }
 
 impl HasherKind {
@@ -591,10 +564,6 @@ impl HasherKind {
             HashAlgorithm::Blake3 => Self::Blake3(Box::new(blake3::Hasher::new())),
             #[cfg(feature = "sha3-hashes")]
             HashAlgorithm::Sha3_256 => Self::Sha3_256(Box::new(Sha3_256::new())),
-            #[cfg(feature = "legacy-hashes")]
-            HashAlgorithm::Sha1 => Self::Sha1(Box::new(Sha1::new())),
-            #[cfg(feature = "legacy-hashes")]
-            HashAlgorithm::Md5 => Self::Md5(Box::new(Md5::new())),
         }
     }
 
@@ -604,10 +573,6 @@ impl HasherKind {
             Self::Blake3(_) => HashAlgorithm::Blake3,
             #[cfg(feature = "sha3-hashes")]
             Self::Sha3_256(_) => HashAlgorithm::Sha3_256,
-            #[cfg(feature = "legacy-hashes")]
-            Self::Sha1(_) => HashAlgorithm::Sha1,
-            #[cfg(feature = "legacy-hashes")]
-            Self::Md5(_) => HashAlgorithm::Md5,
         }
     }
 
@@ -623,16 +588,6 @@ impl HasherKind {
                 use sha3::Digest;
                 h.as_mut().update(data);
             }
-            #[cfg(feature = "legacy-hashes")]
-            Self::Sha1(ref mut h) => {
-                use sha1::Digest;
-                h.as_mut().update(data);
-            }
-            #[cfg(feature = "legacy-hashes")]
-            Self::Md5(ref mut h) => {
-                use md5::Digest;
-                h.as_mut().update(data);
-            }
         }
     }
 
@@ -643,16 +598,6 @@ impl HasherKind {
             #[cfg(feature = "sha3-hashes")]
             Self::Sha3_256(h) => {
                 use sha3::Digest;
-                bytes_to_hex((*h).finalize().as_slice())
-            }
-            #[cfg(feature = "legacy-hashes")]
-            Self::Sha1(h) => {
-                use sha1::Digest;
-                bytes_to_hex((*h).finalize().as_slice())
-            }
-            #[cfg(feature = "legacy-hashes")]
-            Self::Md5(h) => {
-                use md5::Digest;
                 bytes_to_hex((*h).finalize().as_slice())
             }
         }
@@ -671,6 +616,12 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
         // array is guaranteed in-bounds at the type level.
         let hi = (b >> 4) & 0x0f;
         let lo = b & 0x0f;
+        // Debug-only invariant check: both nibbles must be < 16 so that the
+        // get() calls below never hit the fallback branch.
+        debug_assert!(
+            usize::from(hi) < HEX_CHARS.len() && usize::from(lo) < HEX_CHARS.len(),
+            "hex nibble out of range"
+        );
         // `HEX_CHARS[idx]` where idx < 16 cannot panic; use get() + fallback
         // for belt-and-braces under clippy::indexing_slicing = "warn".
         out.push(char::from(*HEX_CHARS.get(usize::from(hi)).unwrap_or(&b'0')));
@@ -705,24 +656,23 @@ impl HasherSet {
         }
     }
 
-    fn finalize_into(
-        self,
-    ) -> (
-        BTreeMap<HashAlgorithm, String>,
-        BTreeMap<HashAlgorithm, String>,
-    ) {
+    fn finalize_into(self) -> BTreeMap<HashAlgorithm, String> {
         let mut secure: BTreeMap<HashAlgorithm, String> = BTreeMap::new();
-        let mut legacy: BTreeMap<HashAlgorithm, String> = BTreeMap::new();
         for h in self.hashers {
             let algo = h.algorithm();
+            // All engine-supported algorithms are cryptographically secure
+            // by construction (SHA-1 and MD5 are not compiled in). We still
+            // assert it at runtime as a defence-in-depth invariant so any
+            // future addition of a weak algorithm to the engine would trip
+            // this check before producing a trusted-looking result.
+            debug_assert!(
+                algo.is_cryptographically_secure(),
+                "HasherSet must only produce cryptographically secure hashes"
+            );
             let hex = h.finalize_hex();
-            if algo.is_cryptographically_secure() {
-                let _ = secure.insert(algo, hex);
-            } else {
-                let _ = legacy.insert(algo, hex);
-            }
+            let _ = secure.insert(algo, hex);
         }
-        (secure, legacy)
+        secure
     }
 }
 
@@ -730,6 +680,14 @@ impl HasherSet {
 // MultiAlgorithmHasher
 // ─────────────────────────────────────────────────────────────────────────────
 
+// NOTE: cache key uses (path, modified_time, file_size). SystemTime
+// resolution is platform-dependent — nanoseconds on Linux and APFS,
+// 100ns on Windows, but historically 1s on HFS+. On a 1s-resolution
+// filesystem, two writes to the same file within one second with
+// identical size could return a stale cached hash. APFS has been the
+// default on macOS since 10.13, so this is low risk for executables
+// in practice, but callers that hash short-lived intermediates on
+// older filesystems should disable the cache (cache_capacity = 0).
 type CacheKey = (PathBuf, SystemTime, u64);
 
 /// The default [`HashComputer`] implementation.
@@ -789,6 +747,12 @@ impl MultiAlgorithmHasher {
     /// trait method [`HashComputer::compute`] instead, which derives the
     /// deadline from `config.timeout_per_file`.
     ///
+    /// This path opens `path` ambiently via `std::fs::File::open`.
+    /// **TOCTOU-sensitive callers** (e.g. `BinaryHasherCollector`) must
+    /// use [`MultiAlgorithmHasher::compute_from_file_with_deadline`]
+    /// instead, passing a file descriptor they authorized through a
+    /// cap-std `Dir` handle.
+    ///
     /// # Errors
     ///
     /// Returns [`HashError`] on I/O failure, timeout, cancellation, or
@@ -798,12 +762,40 @@ impl MultiAlgorithmHasher {
         path: &Path,
         deadline: Instant,
     ) -> Result<HashResult, HashError> {
-        // 1. Stat the file (no symlink follow yet — that's a collector-layer
-        //    concern; here we just want size + mtime for the cache key and
-        //    the too-large check).
-        let metadata = tokio::fs::symlink_metadata(path)
+        // Open the file by path; delegate to the file-based entry point.
+        // This is the ambient-authority path used by procmond's
+        // kernel-resolved exe hashing (which has already gone through
+        // `authorize_kernel_path` and does not need cap-std confinement).
+        let file = std::fs::File::open(path).map_err(|e| HashError::from_io(path, e))?;
+        self.compute_from_file_with_deadline(path, file, deadline)
             .await
-            .map_err(|e| HashError::from_io(path, e))?;
+    }
+
+    /// Compute hashes from an **already-opened** file handle, with an
+    /// explicit deadline.
+    ///
+    /// TOCTOU-safe callers (e.g. `BinaryHasherCollector`) that authorize
+    /// a path via cap-std `Dir::open` pass the resulting file descriptor
+    /// here so the hash reads the inode that was authorized — not a path
+    /// that may have been swapped between authorization and hashing.
+    ///
+    /// `path` is used **only** for the [`HashResult::file_path`] field,
+    /// the cache key, and error context; it is never used to (re-)open
+    /// the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashError`] on I/O failure, timeout, cancellation, or
+    /// oversized files.
+    pub async fn compute_from_file_with_deadline(
+        &self,
+        path: &Path,
+        file: std::fs::File,
+        deadline: Instant,
+    ) -> Result<HashResult, HashError> {
+        // 1. fstat the handle (not the path) so mtime/size reflect the
+        //    inode we will actually hash.
+        let metadata = file.metadata().map_err(|e| HashError::from_io(path, e))?;
 
         if !metadata.is_file() {
             return Err(HashError::Io {
@@ -823,7 +815,8 @@ impl MultiAlgorithmHasher {
             .modified()
             .map_err(|e| HashError::from_io(path, e))?;
 
-        // 2. Cache lookup.
+        // 2. Cache lookup. Cache key uses the file's fstat-derived
+        //    (mtime, size) so reopening by path cannot evade a hit.
         let key: CacheKey = (path.to_path_buf(), modified_time, file_size);
         if let Some(cache) = self.cache.as_ref()
             && let Some(hit) = cache.get(&key)
@@ -851,6 +844,7 @@ impl MultiAlgorithmHasher {
         let hash_outcome = if file_size < SPAWN_BLOCKING_THRESHOLD {
             // Small file: hash inline on the current task.
             hash_sync(
+                file,
                 &path_owned,
                 deadline,
                 &cancel,
@@ -860,12 +854,15 @@ impl MultiAlgorithmHasher {
             )
         } else {
             // Large file: spawn_blocking with cooperative cancellation.
+            // The `File` is moved into the blocking task so it keeps
+            // ownership of the fd. `std::fs::File` is `Send + 'static`.
             let cancel_for_task = Arc::clone(&cancel);
             let path_for_task = path_owned.clone();
             let algorithms_for_task = algorithms.clone();
 
             let join = tokio::task::spawn_blocking(move || {
                 hash_sync(
+                    file,
                     &path_for_task,
                     deadline,
                     &cancel_for_task,
@@ -906,6 +903,29 @@ impl MultiAlgorithmHasher {
         }
         Ok(hash_result)
     }
+
+    /// Compute hashes from an already-opened file handle, using the
+    /// engine's configured per-file timeout.
+    ///
+    /// TOCTOU-safe entry point used by callers that authorize a path via
+    /// cap-std. See [`MultiAlgorithmHasher::compute_from_file_with_deadline`]
+    /// for details.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashError`] on I/O failure, timeout, cancellation, or
+    /// oversized files.
+    pub async fn compute_from_file(
+        &self,
+        path: &Path,
+        file: std::fs::File,
+    ) -> Result<HashResult, HashError> {
+        let deadline = Instant::now()
+            .checked_add(self.config.timeout_per_file)
+            .ok_or_else(|| HashError::InvalidConfig("deadline overflow".to_owned()))?;
+        self.compute_from_file_with_deadline(path, file, deadline)
+            .await
+    }
 }
 
 impl HashComputer for MultiAlgorithmHasher {
@@ -935,10 +955,20 @@ impl HashComputer for MultiAlgorithmHasher {
 /// 1. Directly (inline) for files smaller than [`SPAWN_BLOCKING_THRESHOLD`].
 /// 2. From inside `tokio::task::spawn_blocking` for larger files.
 ///
+/// The caller passes an already-opened `std::fs::File`. Callers that only
+/// have a path use [`open_and_hash_sync`] which opens the file first and
+/// delegates. TOCTOU-safe callers (e.g. `BinaryHasherCollector`) pass a
+/// file descriptor obtained via cap-std so the hash reads the inode that
+/// was authorized, not a path that may have been swapped.
+///
+/// `path` is used **only** for the [`HashResult::file_path`] field and for
+/// error context. It is never used to (re-)open the file.
+///
 /// The caller passes an `Arc<AtomicBool>` cancel flag. The outer async driver
 /// flips this flag when a deadline expires; the loop observes it on the next
 /// iteration and returns [`HashError::Cancelled`] or [`HashError::Timeout`].
 fn hash_sync(
+    mut file: std::fs::File,
     path: &Path,
     deadline: Instant,
     cancel: &AtomicBool,
@@ -948,7 +978,6 @@ fn hash_sync(
 ) -> Result<HashResult, HashError> {
     let start = Instant::now();
 
-    let mut file = std::fs::File::open(path).map_err(|e| HashError::from_io(path, e))?;
     let meta_before = file.metadata().map_err(|e| HashError::from_io(path, e))?;
 
     if !meta_before.is_file() {
@@ -1021,14 +1050,13 @@ fn hash_sync(
         });
     }
 
-    let (hashes, legacy_hashes) = hashers.finalize_into();
+    let hashes = hashers.finalize_into();
 
     Ok(HashResult {
         file_path: path.to_path_buf(),
         file_size: file_size_before,
         modified_time: modified_before,
         hashes,
-        legacy_hashes,
         integrity: HashIntegrity::Stable,
         computation_time: start.elapsed(),
     })
@@ -1053,11 +1081,6 @@ mod tests {
         assert!(HashAlgorithm::Blake3.is_cryptographically_secure());
         #[cfg(feature = "sha3-hashes")]
         assert!(HashAlgorithm::Sha3_256.is_cryptographically_secure());
-        #[cfg(feature = "legacy-hashes")]
-        {
-            assert!(!HashAlgorithm::Sha1.is_cryptographically_secure());
-            assert!(!HashAlgorithm::Md5.is_cryptographically_secure());
-        }
     }
 
     #[test]
@@ -1290,63 +1313,52 @@ mod tests {
         }
     }
 
-    // ── Legacy hashes are separated ─────────────────────────────────────
+    // ── compute_from_file (TOCTOU-safe entry point) ─────────────────────
 
-    #[cfg(feature = "legacy-hashes")]
     #[tokio::test]
-    async fn legacy_hashes_land_in_legacy_field() {
-        let cfg = HasherConfig::default().with_algorithms(vec![
-            HashAlgorithm::Sha256,
-            HashAlgorithm::Blake3,
-            HashAlgorithm::Sha1,
-            HashAlgorithm::Md5,
-        ]);
+    async fn compute_from_file_matches_compute_by_path() {
         let tmp = NamedTempFile::new().unwrap();
-        fs::write(tmp.path(), b"").unwrap();
-        let hasher = MultiAlgorithmHasher::new(cfg).unwrap();
-        let r = hasher.compute(tmp.path()).await.unwrap();
-        // Secure hashes present in .hashes.
-        assert!(r.hashes.contains_key(&HashAlgorithm::Sha256));
-        assert!(r.hashes.contains_key(&HashAlgorithm::Blake3));
-        // Legacy hashes in .legacy_hashes.
-        assert!(r.legacy_hashes.contains_key(&HashAlgorithm::Sha1));
-        assert!(r.legacy_hashes.contains_key(&HashAlgorithm::Md5));
-        // MD5 of empty string (RFC 1321 test vector).
-        assert_eq!(
-            r.legacy_hashes.get(&HashAlgorithm::Md5).unwrap(),
-            "d41d8cd98f00b204e9800998ecf8427e"
-        );
-        // SHA-1 of empty string (RFC 3174 test vector).
-        assert_eq!(
-            r.legacy_hashes.get(&HashAlgorithm::Sha1).unwrap(),
-            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-        );
+        fs::write(tmp.path(), b"toctou-safe hash").unwrap();
+        let hasher = MultiAlgorithmHasher::new(HasherConfig::default()).unwrap();
+
+        let by_path = hasher.compute(tmp.path()).await.unwrap();
+        let file = std::fs::File::open(tmp.path()).unwrap();
+        let by_file = hasher.compute_from_file(tmp.path(), file).await.unwrap();
+
+        assert_eq!(by_path.hashes, by_file.hashes);
+        assert_eq!(by_path.file_size, by_file.file_size);
     }
 
-    #[cfg(feature = "legacy-hashes")]
-    #[test]
-    fn legacy_hash_result_is_not_authoritative_for_trust() {
-        // Construct a HashResult with ONLY legacy hashes. The
-        // is_cryptographically_secure() check is what downstream code must
-        // consult before trusting a hash for integrity decisions.
-        let mut legacy: BTreeMap<HashAlgorithm, String> = BTreeMap::new();
-        let _ = legacy.insert(
-            HashAlgorithm::Md5,
-            "d41d8cd98f00b204e9800998ecf8427e".to_owned(),
+    #[tokio::test]
+    async fn compute_from_file_hashes_authorized_inode_even_if_path_swapped() {
+        // Simulates the TOCTOU scenario: authorize and open a file, then
+        // replace the path's contents before hashing. The engine must
+        // hash the inode we opened, not the new contents.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("target");
+        fs::write(&path, b"original authorized content").unwrap();
+
+        // Open BEFORE the swap (this is what cap-std does during authorization).
+        let file = std::fs::File::open(&path).unwrap();
+
+        // Attacker swaps the path contents (new inode via rename-over).
+        let decoy = dir.path().join("decoy");
+        fs::write(&decoy, b"attacker-injected content").unwrap();
+        std::fs::rename(&decoy, &path).unwrap();
+
+        let hasher = MultiAlgorithmHasher::new(HasherConfig::default()).unwrap();
+        let result = hasher.compute_from_file(&path, file).await.unwrap();
+
+        // The hash must match the ORIGINAL content we held an fd to.
+        let expected = MultiAlgorithmHasher::new(HasherConfig::default()).unwrap();
+        let control_tmp = NamedTempFile::new().unwrap();
+        fs::write(control_tmp.path(), b"original authorized content").unwrap();
+        let control = expected.compute(control_tmp.path()).await.unwrap();
+        assert_eq!(
+            result.sha256(),
+            control.sha256(),
+            "compute_from_file must hash the held inode, not re-open by path"
         );
-        let r = HashResult {
-            file_path: PathBuf::from("/nonexistent"),
-            file_size: 0,
-            modified_time: SystemTime::UNIX_EPOCH,
-            hashes: BTreeMap::new(),
-            legacy_hashes: legacy,
-            integrity: HashIntegrity::Stable,
-            computation_time: Duration::ZERO,
-        };
-        // Convenience accessors return None for the legacy-only case,
-        // forcing callers to consult legacy_hashes explicitly.
-        assert!(r.sha256().is_none());
-        assert!(r.blake3().is_none());
     }
 
     // ── BTreeMap iteration order is stable ──────────────────────────────

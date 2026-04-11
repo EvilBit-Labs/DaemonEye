@@ -72,7 +72,7 @@ use crate::analysis_chain::AnalysisResult;
 use crate::event::{AnalysisType, TriggerRequest};
 use crate::triggerable::{TriggerHandleError, TriggerableCollector};
 use cap_std::fs::Dir;
-use daemoneye_lib::integrity::{HashComputer, HashError, MultiAlgorithmHasher, auth::AuthError};
+use daemoneye_lib::integrity::{HashError, MultiAlgorithmHasher, auth::AuthError};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -197,16 +197,20 @@ pub const CAP_STD_ESCAPE_MESSAGE: &str = "a path led outside of the filesystem";
 /// This MUST be called once before entering any per-file hash stream to
 /// detect bind-mount / volume swaps for all roots up front, rather than
 /// checking inside the per-file loop. Callers (e.g.
-/// [`BinaryHasherCollector::authorize`]) should invoke this before
+/// `BinaryHasherCollector::authorize`) should invoke this before
 /// calling [`authorize_confined_path`].
 ///
 /// On non-macOS platforms this is a no-op that always returns `Ok(())`.
 ///
 /// # Errors
 ///
-/// Returns [`AuthError::RootMountChanged`] if any root's `(st_dev, st_ino)`
+/// Returns `AuthError::RootMountChanged` if any root's `(st_dev, st_ino)`
 /// no longer matches the fingerprint recorded at open time, or
-/// [`AuthError::Io`] if the root metadata cannot be read.
+/// `AuthError::Io` if the root metadata cannot be read.
+#[allow(
+    clippy::missing_const_for_fn,
+    reason = "not const on macOS where verify_fingerprint() is called"
+)]
 pub fn verify_all_fingerprints(roots: &[AllowedRoot]) -> Result<(), AuthError> {
     #[cfg(target_os = "macos")]
     for root in roots {
@@ -552,11 +556,22 @@ impl BinaryHasherCollector {
                     opened_roots.push(root);
                 }
                 Err(err) => {
-                    if config.allow_partial_roots {
+                    // Strict mode still treats NotFound as non-fatal so
+                    // `with_platform_defaults()` stays portable across CI
+                    // matrices (its rustdoc promises this). Other I/O
+                    // errors (permission denied, etc.) abort construction
+                    // unless partial mode is explicitly enabled.
+                    if config.allow_partial_roots || err.kind() == std::io::ErrorKind::NotFound {
+                        let reason = if err.kind() == std::io::ErrorKind::NotFound {
+                            "root missing"
+                        } else {
+                            "partial mode"
+                        };
                         warn!(
                             root = %root_path.display(),
                             error = %err,
-                            "skipping allowed root (partial mode)"
+                            reason,
+                            "skipping allowed root"
                         );
                     } else {
                         return Err(TriggerHandleError::Internal(format!(
@@ -586,17 +601,22 @@ impl BinaryHasherCollector {
 
     // ── Path authorization ──────────────────────────────────────────────
 
-    /// Authorize a request via cap-std `Dir` handles.
+    /// Authorize a request via cap-std `Dir` handles and return the
+    /// opened file handle together with the path used for recording.
     ///
-    /// Delegates to [`authorize_confined_path`] for TOCTOU-safe opens,
-    /// then performs the file-type and size checks.
+    /// **TOCTOU contract**: the returned `std::fs::File` is derived from
+    /// the cap-std confined open and MUST be passed directly to
+    /// [`MultiAlgorithmHasher::compute_from_file`]. Callers MUST NOT
+    /// reopen the returned `PathBuf` by path — doing so reintroduces the
+    /// authorization-to-hashing TOCTOU window that cap-std was added to
+    /// close.
     ///
     /// 1. On macOS, verify all root fingerprints once (before the per-file open).
     /// 2. Length cap + parent-traversal rejection (via shared predicates).
     /// 3. cap-std confined open (TOCTOU-safe path resolution).
-    /// 4. File-type check (must be a regular file).
-    /// 5. Size check against `config.max_file_size`.
-    fn authorize(&self, raw: &str) -> Result<PathBuf, TriggerHandleError> {
+    /// 4. File-type check (must be a regular file, via handle fstat).
+    /// 5. Size check against `config.max_file_size` (via handle fstat).
+    fn authorize(&self, raw: &str) -> Result<(std::fs::File, PathBuf), TriggerHandleError> {
         // Verify all root fingerprints once before entering the per-file
         // stream. On non-macOS this is a no-op.
         verify_all_fingerprints(&self.opened_roots).map_err(|err| map_auth_err(&err))?;
@@ -614,7 +634,7 @@ impl BinaryHasherCollector {
 
         // Delegate to cap-std authorization. Returns the opened file handle
         // and its metadata (via fstat) so we avoid a second path-based stat.
-        let (_file, meta) =
+        let (cap_file, meta) =
             authorize_confined_path(raw_path, &self.opened_roots, self.config.follow_symlinks)
                 .map_err(|err| map_auth_err(&err))?;
 
@@ -632,16 +652,24 @@ impl BinaryHasherCollector {
             });
         }
 
-        // When following symlinks, canonicalize to the resolved path so
-        // the engine hashes the real file (not the symlink). The cap-std
-        // open already proved confinement.
-        let resolved = if self.config.follow_symlinks {
+        // Convert the cap-std file handle to a plain `std::fs::File` that
+        // the engine's blocking reader can consume. The fd is preserved —
+        // hashing reads the inode that cap-std authorized, not whatever
+        // `raw_path` might resolve to after authorization.
+        let file = cap_file.into_std();
+
+        // For the `HashResult::file_path` record we use the canonical
+        // path when following symlinks (so operators see the resolved
+        // target in the audit record), and the raw path otherwise.
+        // SECURITY: this path is NEVER used to reopen the file. The
+        // engine hashes from `file` (the authorized fd) only.
+        let recorded_path = if self.config.follow_symlinks {
             std::fs::canonicalize(raw_path).map_err(|err| map_path_io_err("canonicalize", &err))?
         } else {
             raw_path.to_path_buf()
         };
 
-        Ok(resolved)
+        Ok((file, recorded_path))
     }
 }
 
@@ -682,13 +710,16 @@ impl TriggerableCollector for BinaryHasherCollector {
                 field: "target_path",
             })?;
 
-        let canonical = self.authorize(raw_path)?;
+        let (file, canonical) = self.authorize(raw_path)?;
 
-        // Delegate to the engine (which enforces its own concurrency cap,
-        // cache, TOCTOU tagging, cooperative cancellation, and timeout).
+        // Delegate to the engine using the authorized file descriptor
+        // (TOCTOU-safe — the engine reads from the inode we authorized,
+        // not a path that may have been replaced after cap-std resolution).
+        // The engine still enforces its own concurrency cap, cache,
+        // mid-read mutation detection, cooperative cancellation, and timeout.
         let hash_result = self
             .engine
-            .compute(&canonical)
+            .compute_from_file(&canonical, file)
             .await
             .map_err(map_hash_err)?;
 
@@ -719,18 +750,20 @@ impl TriggerableCollector for BinaryHasherCollector {
 
     async fn health_check(&self) -> Result<(), TriggerHandleError> {
         // Health is good if at least one opened root is accessible.
+        // Use the cap-std `Dir` handle's `dir_metadata()` for consistency
+        // with the TOCTOU-safe model — we stat the exact inode opened at
+        // construction time, not whatever the display path resolves to now.
         // Collect per-root failure reasons so the aggregate error is
         // actionable; each failing root is also logged individually at
         // warn! so operators can identify which roots are inaccessible
         // without parsing the combined error message.
         let mut failures = Vec::new();
         for root in &self.opened_roots {
-            let root_path = Path::new(root.display_path());
-            match std::fs::metadata(root_path) {
+            match root.handle().dir_metadata() {
                 Ok(_) => return Ok(()),
                 Err(err) => {
-                    warn!(root = %root_path.display(), error = %err, "allowed root inaccessible");
-                    failures.push(format!("{}: {err}", root_path.display()));
+                    warn!(root = %root.display_path(), error = %err, "allowed root inaccessible");
+                    failures.push(format!("{}: {err}", root.display_path()));
                 }
             }
         }

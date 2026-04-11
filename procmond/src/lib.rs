@@ -303,7 +303,8 @@ impl ProcessMessageHandler {
         &self,
         task: &DetectionTask,
     ) -> Result<DetectionResult, IpcError> {
-        use tracing::{debug, error};
+        use std::time::Duration;
+        use tracing::{debug, error, warn};
 
         debug!(
             task_id = %task.task_id,
@@ -323,17 +324,43 @@ impl ProcessMessageHandler {
                 // unique executables on a real host). The engine's
                 // shared quick_cache then makes subsequent scans
                 // ~zero-cost in steady state.
+                //
+                // Request-scoped timeout: the engine enforces a
+                // `timeout_per_file` on each hash, but 10k unique files
+                // × multi-second stalls on slow/hostile storage could
+                // still wedge the privileged collector indefinitely.
+                // Wrap the whole pass in an overall deadline so an
+                // `EnumerateProcesses` request always has a hard upper
+                // bound. On timeout we keep the events that were
+                // already stamped (partial coverage is fine — downstream
+                // handles missing hashes) and log the truncation.
                 if let Some(hasher) = self.hasher.as_ref() {
-                    let stats = hash_pass::populate_hashes(&mut process_events, hasher).await;
-                    debug!(
-                        task_id = %task.task_id,
-                        unique_paths = stats.unique_paths,
-                        hashed = stats.hashed,
-                        auth_failures = stats.auth_failures,
-                        io_failures = stats.io_failures,
-                        nonauthoritative = stats.nonauthoritative,
-                        "hash population completed"
-                    );
+                    const HASH_PASS_OVERALL_DEADLINE: Duration = Duration::from_secs(60);
+                    match tokio::time::timeout(
+                        HASH_PASS_OVERALL_DEADLINE,
+                        hash_pass::populate_hashes(&mut process_events, hasher),
+                    )
+                    .await
+                    {
+                        Ok(stats) => {
+                            debug!(
+                                task_id = %task.task_id,
+                                unique_paths = stats.unique_paths,
+                                hashed = stats.hashed,
+                                auth_failures = stats.auth_failures,
+                                io_failures = stats.io_failures,
+                                nonauthoritative = stats.nonauthoritative,
+                                "hash population completed"
+                            );
+                        }
+                        Err(_elapsed) => {
+                            warn!(
+                                task_id = %task.task_id,
+                                deadline_secs = HASH_PASS_OVERALL_DEADLINE.as_secs(),
+                                "hash population exceeded request deadline; partial coverage recorded"
+                            );
+                        }
+                    }
                 }
 
                 debug!(
@@ -477,8 +504,18 @@ impl ProcessMessageHandler {
             0
         };
 
-        // Check if executable hash exists before moving the value
-        let has_executable_hash = event.executable_hash.is_some();
+        // Propagate the hash_algorithm carried on the event unchanged.
+        // Invariant (enforced by `hash_pass::populate_hashes` and every
+        // `ProcessEvent` constructor): `executable_hash.is_some() ==
+        // hash_algorithm.is_some()`. We do NOT reinstate a "sha256"
+        // default here — doing so would mislabel non-SHA256 results
+        // (e.g. BLAKE3) on the wire, which is worse than an absent
+        // algorithm field.
+        debug_assert_eq!(
+            event.executable_hash.is_some(),
+            event.hash_algorithm.is_some(),
+            "ProcessEvent invariant violated: executable_hash and hash_algorithm must both be Some or both None"
+        );
 
         ProtoProcessRecord {
             pid: event.pid,
@@ -490,7 +527,7 @@ impl ProcessMessageHandler {
             cpu_usage: event.cpu_usage,
             memory_usage: event.memory_usage,
             executable_hash: event.executable_hash,
-            hash_algorithm: has_executable_hash.then(|| "sha256".to_owned()),
+            hash_algorithm: event.hash_algorithm,
             user_id: event.user_id,
             accessible: event.accessible,
             file_exists: event.file_exists,
@@ -607,7 +644,7 @@ mod tests {
                     cpu_usage: Some(0.1),
                     memory_usage: Some(1024 * 1024),
                     executable_hash: Some("hash1".to_string()),
-                    hash_algorithm: None,
+                    hash_algorithm: Some("sha256".to_owned()),
                     user_id: Some("0".to_string()),
                     accessible: true,
                     file_exists: true,
@@ -624,7 +661,7 @@ mod tests {
                     cpu_usage: Some(5.0),
                     memory_usage: Some(2048 * 1024),
                     executable_hash: Some("hash2".to_string()),
-                    hash_algorithm: None,
+                    hash_algorithm: Some("sha256".to_owned()),
                     user_id: Some("1000".to_string()),
                     accessible: true,
                     file_exists: true,
@@ -885,7 +922,7 @@ mod tests {
             cpu_usage: Some(5.0),
             memory_usage: Some(1024 * 1024),
             executable_hash: Some("abc123".to_string()),
-            hash_algorithm: None,
+            hash_algorithm: Some("sha256".to_owned()),
             user_id: Some("1000".to_string()),
             accessible: true,
             file_exists: true,
@@ -1225,7 +1262,7 @@ mod tests {
             cpu_usage: Some(2.5),
             memory_usage: Some(4096),
             executable_hash: Some("abcdef123456".to_string()),
-            hash_algorithm: None,
+            hash_algorithm: Some("sha256".to_owned()),
             user_id: Some("1001".to_string()),
             accessible: true,
             file_exists: true,

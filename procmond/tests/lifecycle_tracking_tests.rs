@@ -74,7 +74,7 @@ fn create_test_process_event(
         cpu_usage: Some(1.0),
         memory_usage: Some(1024 * 1024),
         executable_hash: Some("abc123".to_string()),
-        hash_algorithm: None,
+        hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("1000".to_string()),
         accessible: true,
         file_exists: true,
@@ -99,7 +99,7 @@ fn create_process_event_with_start_time(
         cpu_usage: Some(1.0),
         memory_usage: Some(1024 * 1024),
         executable_hash: Some("abc123".to_string()),
-        hash_algorithm: None,
+        hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("1000".to_string()),
         accessible: true,
         file_exists: true,
@@ -232,7 +232,7 @@ fn test_start_detection_event_has_correct_metadata() {
         cpu_usage: Some(5.5),
         memory_usage: Some(50 * 1024 * 1024), // 50 MB
         executable_hash: Some("sha256:abc123def456".to_string()),
-        hash_algorithm: None,
+        hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("1001".to_string()),
         accessible: true,
         file_exists: true,
@@ -1209,8 +1209,8 @@ fn test_snapshot_conversion_roundtrip() {
         start_time: Some(SystemTime::now() - Duration::from_secs(3600)),
         cpu_usage: Some(25.5),
         memory_usage: Some(256 * 1024 * 1024),
-        executable_hash: Some("sha256:fedcba987654321".to_string()),
-        hash_algorithm: None,
+        executable_hash: Some("fedcba987654321".to_string()),
+        hash_algorithm: Some("sha256".to_string()),
         user_id: Some("user123".to_string()),
         accessible: true,
         file_exists: true,
@@ -1234,6 +1234,7 @@ fn test_snapshot_conversion_roundtrip() {
     assert_eq!(original.cpu_usage, roundtrip.cpu_usage);
     assert_eq!(original.memory_usage, roundtrip.memory_usage);
     assert_eq!(original.executable_hash, roundtrip.executable_hash);
+    assert_eq!(original.hash_algorithm, roundtrip.hash_algorithm);
     assert_eq!(original.user_id, roundtrip.user_id);
     assert_eq!(original.accessible, roundtrip.accessible);
     assert_eq!(original.file_exists, roundtrip.file_exists);

@@ -80,7 +80,7 @@ fn create_test_process_event(pid: u32) -> ProcessEvent {
         cpu_usage: Some(1.0),
         memory_usage: Some(1024 * 1024),
         executable_hash: Some("abc123def456".to_string()),
-        hash_algorithm: None,
+        hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("1000".to_string()),
         accessible: true,
         file_exists: true,

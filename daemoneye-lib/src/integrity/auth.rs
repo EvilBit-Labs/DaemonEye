@@ -176,31 +176,40 @@ pub fn check_size(metadata: &std::fs::Metadata, limit: u64) -> Result<(), AuthEr
 
 /// Truncate a path to at most `max_bytes` for safe logging.
 ///
-/// Uses `char_indices` so the truncation point always falls on a valid
-/// UTF-8 boundary — never producing a partial multi-byte sequence (CWE-135).
-/// Non-UTF-8 paths are lossily converted first.
+/// Uses a per-`char` UTF-8-aware accumulator so the truncation point always
+/// falls on a valid code-point boundary — never producing a partial
+/// multi-byte sequence (CWE-135). Non-UTF-8 paths are lossily converted
+/// first. The returned string is guaranteed to be at most `max_bytes` bytes
+/// long, including the trailing `"..."` marker. When `max_bytes <= 3` and
+/// the path overflows the budget, the result is at most `max_bytes`
+/// characters of the ellipsis (never slicing mid-char).
 #[must_use]
 pub fn bytes_safe_display(path: &Path, max_bytes: usize) -> String {
     let lossy = path.to_string_lossy();
-    if lossy.len() <= max_bytes {
+    let byte_len = lossy.len();
+    if byte_len <= max_bytes {
         return lossy.into_owned();
     }
-    // Collect chars up to the byte budget, then join. This avoids
-    // string slicing (clippy::string_slice) and arithmetic on indices
-    // (clippy::arithmetic_side_effects).
-    let mut budget = max_bytes;
-    let truncated: String = lossy
-        .chars()
-        .take_while(|c| {
-            let clen = c.len_utf8();
-            if clen > budget {
-                return false;
-            }
-            budget = budget.saturating_sub(clen);
-            true
-        })
-        .collect();
-    format!("{truncated}...")
+    // Tiny budgets: return at most max_bytes bytes of ellipsis, never
+    // slicing mid-char. Each '.' is one byte so this is byte-safe.
+    if max_bytes <= 3 {
+        return "...".chars().take(max_bytes).collect();
+    }
+    // Reserve 3 bytes for the trailing ellipsis, then collect code points
+    // whose UTF-8 length fits in the remaining budget.
+    let budget = max_bytes.saturating_sub(3);
+    let mut truncated = String::with_capacity(max_bytes);
+    let mut used: usize = 0;
+    for ch in lossy.chars() {
+        let ch_len = ch.len_utf8();
+        if used.saturating_add(ch_len) > budget {
+            break;
+        }
+        truncated.push(ch);
+        used = used.saturating_add(ch_len);
+    }
+    truncated.push_str("...");
+    truncated
 }
 
 #[cfg(test)]
@@ -250,10 +259,26 @@ mod tests {
 
     #[test]
     fn bytes_safe_display_truncates_on_char_boundary() {
+        // 12-byte emoji path with budget 7: reserve 3 bytes for "...",
+        // leaving 4 bytes -> fits exactly one emoji (4 bytes) + "...".
         let path = PathBuf::from("\u{1F600}\u{1F600}\u{1F600}"); // 12 bytes
-        let display = bytes_safe_display(&path, 5);
-        // Should truncate to one emoji (4 bytes) + "..."
+        let display = bytes_safe_display(&path, 7);
         assert_eq!(display, "\u{1F600}...");
+        assert!(display.len() <= 7);
+    }
+
+    #[test]
+    fn bytes_safe_display_respects_max_bytes_budget() {
+        // Exhaustively check that output never exceeds max_bytes for a
+        // long multi-byte path across a range of budgets.
+        let path = PathBuf::from("\u{1F600}".repeat(50)); // 200 bytes
+        for max_bytes in 0..=64 {
+            let display = bytes_safe_display(&path, max_bytes);
+            assert!(
+                display.len() <= max_bytes,
+                "result `{display}` exceeded budget {max_bytes}",
+            );
+        }
     }
 
     #[test]
@@ -261,6 +286,27 @@ mod tests {
         let path = PathBuf::from("/bin/ls");
         let display = bytes_safe_display(&path, 100);
         assert_eq!(display, "/bin/ls");
+    }
+
+    #[test]
+    fn bytes_safe_display_tiny_budget_no_panic() {
+        // max_bytes <= 3 must return at most max_bytes characters of "..."
+        // without panicking or slicing mid-char.
+        let path = PathBuf::from("/very/long/path/for/logging");
+        assert_eq!(bytes_safe_display(&path, 0), "");
+        assert_eq!(bytes_safe_display(&path, 1), ".");
+        assert_eq!(bytes_safe_display(&path, 2), "..");
+        assert_eq!(bytes_safe_display(&path, 3), "...");
+    }
+
+    #[test]
+    fn bytes_safe_display_budget_four_is_ellipsis_only() {
+        // 4-byte budget reserves 3 for "...", leaving 1 byte. A 4-byte
+        // emoji cannot fit, so output is just "...".
+        let path = PathBuf::from("\u{1F600}\u{1F600}");
+        let display = bytes_safe_display(&path, 4);
+        assert_eq!(display, "...");
+        assert!(display.len() <= 4);
     }
 
     #[test]
