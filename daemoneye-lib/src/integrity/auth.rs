@@ -146,13 +146,37 @@ pub fn check_no_traversal(path: &Path) -> Result<(), AuthError> {
     Ok(())
 }
 
-/// Check that `metadata` describes a regular file.
+/// Check that `metadata` describes a regular file (and not a symlink).
+///
+/// Also rejects symlinks explicitly via `file_type().is_symlink()` so the
+/// no-symlink policy holds even if a caller accidentally passes
+/// [`std::fs::metadata`] (which follows symlinks) instead of
+/// [`std::fs::symlink_metadata`]. When the metadata comes from
+/// `symlink_metadata`, a symlink has `file_type().is_symlink() == true`
+/// and we return [`AuthError::SymlinkRejected`]. When it comes from
+/// `metadata`, the target's type is reported and a non-file target still
+/// trips the `!is_file()` branch below.
+///
+/// # Safety contract for callers
+///
+/// Callers that want to reject symlinks (the default no-follow policy in
+/// this workspace) **must** obtain `metadata` via
+/// [`std::fs::symlink_metadata`]. Passing regular `std::fs::metadata`
+/// would silently follow the symlink, so the target is checked instead
+/// of the link itself — this function cannot fully compensate for that
+/// at the type level because it receives metadata, not a path.
 ///
 /// # Errors
 ///
-/// Returns [`AuthError::NotRegularFile`] if the metadata is not for a
-/// regular file.
+/// Returns [`AuthError::SymlinkRejected`] if the metadata is for a
+/// symbolic link, or [`AuthError::NotRegularFile`] if it is not a
+/// regular file for any other reason.
 pub fn check_regular_file(path: &Path, metadata: &std::fs::Metadata) -> Result<(), AuthError> {
+    if metadata.file_type().is_symlink() {
+        return Err(AuthError::SymlinkRejected {
+            path: path.to_path_buf(),
+        });
+    }
     if !metadata.is_file() {
         return Err(AuthError::NotRegularFile {
             path: path.to_path_buf(),

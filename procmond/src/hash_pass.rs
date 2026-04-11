@@ -166,12 +166,14 @@ pub async fn populate_hashes(
 ) -> HashPassStats {
     let mut stats = HashPassStats::default();
 
-    // Phase 1: Dedup by executable_path.
-    let mut unique_paths: HashMap<PathBuf, Option<(String, String)>> = HashMap::new();
+    // Phase 1: Dedup by executable_path. Keyed by String (the raw field
+    // on ProcessEvent) so Phase 4's lookup never has to allocate a
+    // PathBuf per event — at 10k processes × 100 unique executables,
+    // that matters.
+    let mut unique_paths: HashMap<String, Option<(String, String)>> = HashMap::new();
     for event in events.iter() {
         if let Some(ref raw) = event.executable_path {
-            let path = PathBuf::from(raw);
-            unique_paths.entry(path).or_insert(None);
+            unique_paths.entry(raw.clone()).or_insert(None);
         }
     }
     stats.unique_paths = unique_paths.len();
@@ -180,17 +182,19 @@ pub async fn populate_hashes(
         return stats;
     }
 
-    // Phase 2: Authorize + hash in parallel via buffer_unordered.
+    // Phase 2: Authorize + hash in parallel via buffer_unordered. The
+    // String → PathBuf conversion happens once per unique executable
+    // (not once per event).
     let concurrency = hasher.max_concurrent();
     let engine = Arc::clone(hasher);
 
-    let results: Vec<(PathBuf, HashOutcome)> = stream::iter(unique_paths.keys().cloned())
-        .map(|path| {
+    let results: Vec<(String, HashOutcome)> = stream::iter(unique_paths.keys().cloned())
+        .map(|raw| {
             let h = Arc::clone(&engine);
             async move {
-                let exe = KernelResolvedExe::from_sysinfo_exe(path.clone());
+                let exe = KernelResolvedExe::from_sysinfo_exe(PathBuf::from(&raw));
                 let outcome = hash_one(&exe, &h).await;
-                (path, outcome)
+                (raw, outcome)
             }
         })
         .buffer_unordered(concurrency)
@@ -198,10 +202,10 @@ pub async fn populate_hashes(
         .await;
 
     // Phase 3: Collect results into the lookup map + update stats.
-    for (path, outcome) in results {
+    for (raw, outcome) in results {
         match outcome {
             HashOutcome::Hashed { hex, algorithm } => {
-                unique_paths.insert(path, Some((hex, algorithm)));
+                unique_paths.insert(raw, Some((hex, algorithm)));
                 stats.hashed = stats.hashed.saturating_add(1);
             }
             HashOutcome::AuthFailed => {
@@ -216,7 +220,8 @@ pub async fn populate_hashes(
         }
     }
 
-    // Phase 4: Stamp hashes onto events.
+    // Phase 4: Stamp hashes onto events. Uses `HashMap::get(&str)`
+    // (no PathBuf allocation) via `executable_path.as_deref()`.
     for event in events.iter_mut() {
         // Reset any pre-existing hash state on the event. If we cannot
         // authorize / hash the file this scan, we want the absence of a
@@ -227,8 +232,7 @@ pub async fn populate_hashes(
         let Some(raw) = event.executable_path.as_deref() else {
             continue;
         };
-        let path = PathBuf::from(raw);
-        if let Some(entry) = unique_paths.get(&path).and_then(Option::as_ref) {
+        if let Some(entry) = unique_paths.get(raw).and_then(Option::as_ref) {
             event.executable_hash = Some(entry.0.clone());
             event.hash_algorithm = Some(entry.1.clone());
         }
@@ -613,8 +617,11 @@ mod tests {
         // path), populate_hashes MUST clear the stale values rather than
         // leave them in place.
         let mut event = new_event(1, "/definitely/does/not/exist/stale-test");
-        event.executable_hash = Some("stale".to_owned());
-        event.hash_algorithm = Some("md5".to_owned());
+        // Seed with sentinel values that are obviously not produced by the
+        // real engine. The intent is to prove populate_hashes CLEARS any
+        // pre-existing state, not to test a particular algorithm label.
+        event.executable_hash = Some("stale-digest".to_owned());
+        event.hash_algorithm = Some("stale-algo".to_owned());
 
         let mut events = vec![event];
         let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());

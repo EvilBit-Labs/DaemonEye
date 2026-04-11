@@ -543,34 +543,48 @@ impl ProcessEventSource {
         // if many processes share an executable. Failures are logged
         // but non-fatal — missing hashes are represented as `None`.
         //
-        // The hash pass is bounded by an overall deadline so that a slow
-        // filesystem cannot stall a collection cycle past the configured
-        // interval. On timeout, we keep whatever hashes were already
-        // stamped (partial coverage is fine — downstream handles missing
-        // hashes) and log the truncation.
+        // The hash pass is bounded by the REMAINING portion of the
+        // overall `collection_timeout` budget, not a fresh fixed window.
+        // This preserves the contract that one `collect_processes` cycle
+        // (enumeration + hash pass) never runs past `collection_timeout`,
+        // which keeps scheduling stable under load. If enumeration
+        // consumed the entire budget, we skip the hash pass entirely
+        // rather than starve the interval. On timeout, partial coverage
+        // is logged and kept — downstream handles missing hashes as
+        // `None`.
         if let Some(ref hasher) = self.hasher {
-            const HASH_PASS_OVERALL_DEADLINE: Duration = Duration::from_secs(60);
-            match tokio::time::timeout(
-                HASH_PASS_OVERALL_DEADLINE,
-                populate_hashes(&mut process_events, hasher),
-            )
-            .await
-            {
-                Ok(hash_stats) => {
-                    debug!(
-                        unique_paths = hash_stats.unique_paths,
-                        hashed = hash_stats.hashed,
-                        auth_failures = hash_stats.auth_failures,
-                        io_failures = hash_stats.io_failures,
-                        nonauthoritative = hash_stats.nonauthoritative,
-                        "executable hash pass completed"
-                    );
-                }
-                Err(_elapsed) => {
-                    warn!(
-                        deadline_secs = HASH_PASS_OVERALL_DEADLINE.as_secs(),
-                        "hash population exceeded deadline; partial coverage recorded"
-                    );
+            let remaining_budget = self
+                .config
+                .collection_timeout
+                .saturating_sub(collection_start.elapsed());
+            if remaining_budget.is_zero() {
+                warn!(
+                    collection_timeout_secs = self.config.collection_timeout.as_secs(),
+                    "skipping hash population: collection_timeout budget exhausted by enumeration"
+                );
+            } else {
+                match tokio::time::timeout(
+                    remaining_budget,
+                    populate_hashes(&mut process_events, hasher),
+                )
+                .await
+                {
+                    Ok(hash_stats) => {
+                        debug!(
+                            unique_paths = hash_stats.unique_paths,
+                            hashed = hash_stats.hashed,
+                            auth_failures = hash_stats.auth_failures,
+                            io_failures = hash_stats.io_failures,
+                            nonauthoritative = hash_stats.nonauthoritative,
+                            "executable hash pass completed"
+                        );
+                    }
+                    Err(_elapsed) => {
+                        warn!(
+                            remaining_budget_ms = remaining_budget.as_millis(),
+                            "hash population exceeded remaining collection budget; partial coverage recorded"
+                        );
+                    }
                 }
             }
         }

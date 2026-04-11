@@ -935,16 +935,46 @@ impl ProcmondMonitorCollector {
         // is per-unique-executable, not per-process. Runs before
         // lifecycle diffing so hashes participate in
         // `(executable_hash, hash_algorithm)` tuple comparisons.
+        //
+        // Bounded by the REMAINING portion of the 30s cycle budget used
+        // by `collect_processes` above (see `CYCLE_BUDGET`). This keeps
+        // one actor cycle (enumeration + hash pass) from pinning the
+        // loop past the budget, which would delay GracefulShutdown,
+        // interval adjustments, and subsequent health traffic
+        // indefinitely on slow/hostile storage.
         if let Some(ref hasher) = self.hasher {
-            let hash_stats = populate_hashes(&mut process_events, hasher).await;
-            debug!(
-                unique_paths = hash_stats.unique_paths,
-                hashed = hash_stats.hashed,
-                auth_failures = hash_stats.auth_failures,
-                io_failures = hash_stats.io_failures,
-                nonauthoritative = hash_stats.nonauthoritative,
-                "executable hash pass completed"
-            );
+            const CYCLE_BUDGET: Duration = Duration::from_secs(30);
+            let remaining_budget = CYCLE_BUDGET.saturating_sub(collection_start.elapsed());
+            if remaining_budget.is_zero() {
+                warn!(
+                    cycle_budget_secs = CYCLE_BUDGET.as_secs(),
+                    "skipping hash population: cycle budget exhausted by enumeration"
+                );
+            } else {
+                match timeout(
+                    remaining_budget,
+                    populate_hashes(&mut process_events, hasher),
+                )
+                .await
+                {
+                    Ok(hash_stats) => {
+                        debug!(
+                            unique_paths = hash_stats.unique_paths,
+                            hashed = hash_stats.hashed,
+                            auth_failures = hash_stats.auth_failures,
+                            io_failures = hash_stats.io_failures,
+                            nonauthoritative = hash_stats.nonauthoritative,
+                            "executable hash pass completed"
+                        );
+                    }
+                    Err(_elapsed) => {
+                        warn!(
+                            remaining_budget_ms = remaining_budget.as_millis(),
+                            "hash population exceeded remaining cycle budget; partial coverage recorded"
+                        );
+                    }
+                }
+            }
         }
 
         // Perform lifecycle analysis to detect process starts, stops, and modifications

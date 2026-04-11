@@ -329,12 +329,10 @@ pub fn authorize_confined_path(
                 })?;
                 return Ok((file, meta));
             }
-            Err(ref err) if err.to_string().contains(CAP_STD_ESCAPE_MESSAGE) => {
-                return Err(AuthError::CapStdEscape {
-                    message: err.to_string(),
-                });
-            }
             Err(err) => {
+                // Delegate to the helper so escape detection walks the
+                // full source chain rather than only matching the leaf
+                // error's `to_string()`.
                 return Err(cap_std_err_to_auth(&err, target));
             }
         }
@@ -346,17 +344,39 @@ pub fn authorize_confined_path(
 }
 
 /// Map a cap-std I/O error to [`AuthError`].
+///
+/// Walks the full [`std::error::Error::source`] chain so an escape
+/// detection stays correct even if cap-std upgrades start wrapping the
+/// leaf message inside a higher-level error. The
+/// [`cap_std_escape_error_contains_expected_message`] regression test
+/// pins the exact leaf message format so we get a loud signal when the
+/// upstream text drifts.
 fn cap_std_err_to_auth(err: &std::io::Error, target: &Path) -> AuthError {
-    if err.to_string().contains(CAP_STD_ESCAPE_MESSAGE) {
-        AuthError::CapStdEscape {
+    if is_cap_std_escape(err) {
+        return AuthError::CapStdEscape {
             message: err.to_string(),
-        }
-    } else {
-        AuthError::Io {
-            path: target.to_path_buf(),
-            source: std::io::Error::new(err.kind(), err.to_string()),
-        }
+        };
     }
+    AuthError::Io {
+        path: target.to_path_buf(),
+        source: std::io::Error::new(err.kind(), err.to_string()),
+    }
+}
+
+/// Returns `true` if `err` or any wrapped cause contains
+/// [`CAP_STD_ESCAPE_MESSAGE`].
+fn is_cap_std_escape(err: &(dyn std::error::Error + 'static)) -> bool {
+    if err.to_string().contains(CAP_STD_ESCAPE_MESSAGE) {
+        return true;
+    }
+    let mut source = err.source();
+    while let Some(inner) = source {
+        if inner.to_string().contains(CAP_STD_ESCAPE_MESSAGE) {
+            return true;
+        }
+        source = inner.source();
+    }
+    false
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
