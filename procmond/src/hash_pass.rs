@@ -369,7 +369,20 @@ mod tests {
     }
 
     // ── authorize_kernel_path ─────────────────────────────────────────
+    //
+    // The following tests construct `KernelResolvedExe` from hardcoded
+    // Unix-style paths (`/usr/bin/...`, `/definitely/does/not/exist/...`).
+    // On Windows, `Path::is_absolute()` returns `false` for these because
+    // Windows requires a drive letter (`C:\...`) or UNC prefix, so the
+    // `debug_assert!(path.is_absolute())` inside
+    // `KernelResolvedExe::from_sysinfo_exe` would panic at test time.
+    //
+    // Gating with `#[cfg(unix)]` keeps the tests honest about what they
+    // exercise (Unix path-handling semantics) without weakening the
+    // production invariant on Windows, where sysinfo would yield
+    // `C:\Windows\System32\...`-style paths that are genuinely absolute.
 
+    #[cfg(unix)]
     #[test]
     fn auth_rejects_path_too_long() {
         let long_path = PathBuf::from("/".to_owned() + &"a".repeat(MAX_EXECUTABLE_PATH_LEN + 1));
@@ -380,6 +393,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn auth_rejects_traversal() {
         let exe = KernelResolvedExe::from_sysinfo_exe(PathBuf::from("/usr/bin/../sbin/evil"));
@@ -389,6 +403,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn auth_rejects_nonexistent() {
         let exe =
@@ -432,6 +447,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn auth_boundary_4096_bytes() {
         // Path of exactly 4096 bytes should pass length check (may fail
@@ -444,6 +460,7 @@ mod tests {
         assert!(!matches!(result, Err(AuthError::PathTooLong { .. })));
     }
 
+    #[cfg(unix)]
     #[test]
     fn auth_boundary_multi_byte_utf8() {
         // 4-byte emoji repeated to cross the boundary. Must not panic.

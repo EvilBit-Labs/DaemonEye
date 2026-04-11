@@ -762,6 +762,29 @@ impl MultiAlgorithmHasher {
         path: &Path,
         deadline: Instant,
     ) -> Result<HashResult, HashError> {
+        // Fast-fail on non-files BEFORE attempting to open. On Windows,
+        // `std::fs::File::open` on a directory returns `PermissionDenied`
+        // (CreateFile without FILE_FLAG_BACKUP_SEMANTICS), which would map
+        // to `HashError::PermissionDenied` — misleading for callers
+        // expecting "not a regular file". Pre-checking with
+        // `symlink_metadata` lets us surface `HashError::Io` with a clear
+        // message on every platform.
+        //
+        // Note: a second `fstat` still runs inside
+        // `compute_from_file_with_deadline` against the opened handle, so
+        // the authoritative size/mtime used for the cache key and the
+        // mid-read-mutation check are the file we actually read — not the
+        // path we stat'd first. This opening stat is a fast-fail only.
+        let pre_meta = tokio::fs::symlink_metadata(path)
+            .await
+            .map_err(|e| HashError::from_io(path, e))?;
+        if !pre_meta.is_file() {
+            return Err(HashError::Io {
+                path: path.to_path_buf(),
+                source: io::Error::other("path is not a regular file"),
+            });
+        }
+
         // Open the file by path; delegate to the file-based entry point.
         // This is the ambient-authority path used by procmond's
         // kernel-resolved exe hashing (which has already gone through
