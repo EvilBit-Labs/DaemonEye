@@ -130,16 +130,34 @@ pub fn authorize_kernel_path(
     };
     #[cfg(not(unix))]
     let file = {
-        // On non-Unix, check symlink_metadata before opening to reject
-        // symlinks. There is a narrow TOCTOU window here that we accept
-        // for platform parity; the opened-handle guarantee still holds
-        // for the regular-file case.
+        // On non-Unix (Windows in particular), `File::open` on a
+        // directory returns `PermissionDenied` (CreateFile without
+        // FILE_FLAG_BACKUP_SEMANTICS), which would mask the
+        // type-of-target classification. Pre-stat with
+        // `symlink_metadata` so we can:
+        //   1. reject symlinks atomically (relative to the next
+        //      open call) while still inside this function,
+        //   2. surface non-regular-file rejections as
+        //      `AuthError::NotRegularFile` for cross-platform parity
+        //      with the Unix `O_NOFOLLOW` path,
+        // before any open attempt.
+        //
+        // There is a narrow TOCTOU window between the stat and the
+        // open here that we accept for platform parity; security-
+        // critical Windows deployments should defer to the cap-std
+        // path in `BinaryHasherCollector` (which uses Dir handles
+        // opened before privilege drop) for forensic guarantees.
         let pre_meta = std::fs::symlink_metadata(path).map_err(|source| AuthError::Io {
             path: path.to_path_buf(),
             source,
         })?;
         if pre_meta.file_type().is_symlink() {
             return Err(AuthError::SymlinkRejected {
+                path: path.to_path_buf(),
+            });
+        }
+        if !pre_meta.is_file() {
+            return Err(AuthError::NotRegularFile {
                 path: path.to_path_buf(),
             });
         }
