@@ -56,6 +56,10 @@ blake3 = { version = "1.8.4", default-features = false, features = ["std"] }
 # Buffer and byte utilities
 bytes = "1.11.1"
 
+# Capability-based filesystem access (TOCTOU-safe opens)
+cap-fs-ext = "=4.0.2"
+cap-std = "=4.0.2"
+
 # Date/time and utilities
 chrono = { version = "0.4.44", features = ["serde"] }
 
@@ -83,6 +87,10 @@ futures-util = "0.3.32"
 hostname-validator = "1.1.1"
 insta = { version = "1.47.2", features = ["filters"] }
 interprocess = { version = "2.4.0", features = ["tokio"] }
+# Exact-pinned: libc exposes raw OS constants (O_NOFOLLOW, ELOOP, etc.)
+# that security-critical code in procmond relies on. See AGENTS.md
+# "Pin security-critical deps".
+libc = "=0.2.184"
 parking_lot = "0.12.5"
 
 # Serialization
@@ -96,6 +104,12 @@ proptest = "1.11.0"
 prost = "0.14.3"
 prost-build = "0.14.3"
 prost-types = "0.14.3"
+
+# Bounded in-memory cache (hash result store).
+# Exact-pinned per AGENTS.md "Pin security-critical deps" — this cache
+# holds authoritative hash results so a silent upstream change here
+# could affect integrity decisions.
+quick_cache = "=0.6.21"
 rand = "0.10.0"
 
 # Database and storage
@@ -109,12 +123,18 @@ security-framework = "3.7.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.11.0"
+# Exact-pinned: SHA-3 is a cryptographic primitive and must not change
+# silently under a caret update. See AGENTS.md "Pin security-critical deps".
+sha3 = "=0.11.0"
 sqlparser = "0.61.0"
 
 sysinfo = "0.38.4"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
-tokio = { version = "1.51.0", features = [
+# Exact-pinned: Tokio is the async runtime underpinning privilege
+# separation, IPC, and agent coordination. See AGENTS.md "Pin
+# security-critical deps".
+tokio = { version = "=1.51.1", features = [
     "rt",
     "rt-multi-thread",
     "net",

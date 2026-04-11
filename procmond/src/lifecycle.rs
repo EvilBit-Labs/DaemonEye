@@ -127,8 +127,17 @@ pub struct ProcessSnapshot {
     /// Memory usage in bytes at snapshot time
     pub memory_usage: Option<u64>,
 
-    /// SHA-256 hash of executable
+    /// Hex-encoded cryptographic hash of the executable. See
+    /// [`collector_core::ProcessEvent::executable_hash`] for details.
     pub executable_hash: Option<String>,
+
+    /// Canonical lowercase name of the algorithm that produced
+    /// [`Self::executable_hash`] (e.g. `"sha256"`). Always `None` when
+    /// `executable_hash` is `None`; always `Some` when it is populated.
+    /// The lifecycle diff at `ProcessLifecycleTracker::diff_snapshots`
+    /// compares `(executable_hash, hash_algorithm)` as a tuple so that
+    /// switching the canonical algorithm is not a silent breaking change.
+    pub hash_algorithm: Option<String>,
 
     /// User ID running the process
     pub user_id: Option<String>,
@@ -158,6 +167,7 @@ impl From<ProcessEvent> for ProcessSnapshot {
             cpu_usage: event.cpu_usage,
             memory_usage: event.memory_usage,
             executable_hash: event.executable_hash,
+            hash_algorithm: event.hash_algorithm,
             user_id: event.user_id,
             accessible: event.accessible,
             file_exists: event.file_exists,
@@ -179,6 +189,7 @@ impl From<ProcessSnapshot> for ProcessEvent {
             cpu_usage: snapshot.cpu_usage,
             memory_usage: snapshot.memory_usage,
             executable_hash: snapshot.executable_hash,
+            hash_algorithm: snapshot.hash_algorithm,
             user_id: snapshot.user_id,
             accessible: snapshot.accessible,
             file_exists: snapshot.file_exists,
@@ -628,8 +639,22 @@ impl ProcessLifecycleTracker {
             }
         }
 
-        // Check executable hash changes
-        if previous.executable_hash != current.executable_hash
+        // Check executable hash changes. Compare (hash, algorithm) as a
+        // TUPLE so switching the canonical algorithm across procmond
+        // versions is not a silent breaking change — if algo changes but
+        // hex doesn't, we still report the drift and let the audit
+        // pipeline decide how to interpret it. The is_some() guards
+        // prevent false-positive diffs when hashing transitions from
+        // disabled to enabled across scan cycles.
+        let prev_pair = (
+            previous.executable_hash.as_deref(),
+            previous.hash_algorithm.as_deref(),
+        );
+        let curr_pair = (
+            current.executable_hash.as_deref(),
+            current.hash_algorithm.as_deref(),
+        );
+        if prev_pair != curr_pair
             && previous.executable_hash.is_some()
             && current.executable_hash.is_some()
         {
@@ -818,6 +843,7 @@ mod tests {
             cpu_usage: Some(1.0),
             memory_usage: Some(1024 * 1024),
             executable_hash: Some("abc123".to_string()),
+            hash_algorithm: Some("sha256".to_owned()),
             user_id: Some("1000".to_string()),
             accessible: true,
             file_exists: true,

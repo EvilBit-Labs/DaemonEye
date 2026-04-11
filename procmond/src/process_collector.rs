@@ -342,10 +342,12 @@ impl SysinfoProcessCollector {
             (None, None)
         };
 
-        // Compute executable hash if requested
-        // TODO: Implement executable hashing (issue #40)
-        // For now, we'll leave this as None until the hashing implementation is added
+        // Executable hash is populated in a post-enumeration pass (see
+        // `hash_pass::populate_hashes`) so that the synchronous per-process
+        // conversion path stays off the async runtime. Leaving as None
+        // here; the post-pass rewrites events in place.
         let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         let user_id = process.user_id().map(|uid| uid.to_string());
         let accessible = true; // Process is accessible if we can enumerate it
@@ -361,6 +363,7 @@ impl SysinfoProcessCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,
@@ -854,10 +857,10 @@ impl FallbackProcessCollector {
             (None, None, None)
         };
 
-        // Compute executable hash if configured and path is available
-        // TODO: Implement executable hashing (issue #40)
-        // For now, we'll leave this as None until the hashing implementation is added
+        // Executable hash populated in a post-enumeration pass; see
+        // `hash_pass::populate_hashes`.
         let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         let user_id = process.user_id().map(|uid| uid.to_string());
         let accessible = true; // Process is accessible if we can enumerate it
@@ -873,6 +876,7 @@ impl FallbackProcessCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,

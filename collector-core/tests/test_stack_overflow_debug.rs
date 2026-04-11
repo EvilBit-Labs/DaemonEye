@@ -145,6 +145,7 @@ impl EventSource for SimpleTestSource {
                 cpu_usage: Some(1.0),
                 memory_usage: Some(1024 * 1024),
                 executable_hash: Some(format!("hash_{}", i)),
+                hash_algorithm: Some("sha256".to_owned()),
                 user_id: Some("1000".to_string()),
                 accessible: true,
                 file_exists: true,

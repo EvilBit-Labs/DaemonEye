@@ -4,12 +4,13 @@
 //! and wraps the existing `ProcessMessageHandler` to integrate with the collector-core
 //! framework while preserving all existing functionality.
 
+use crate::hash_pass::populate_hashes;
 use crate::process_collector::{
     FallbackProcessCollector, ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,
 };
 use async_trait::async_trait;
 use collector_core::{CollectionEvent, EventSource, SourceCaps};
-use daemoneye_lib::{storage, telemetry::PerformanceTimer};
+use daemoneye_lib::{integrity::MultiAlgorithmHasher, storage, telemetry::PerformanceTimer};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -101,6 +102,11 @@ pub struct ProcessEventSource {
     stats: ProcessSourceStats,
     /// Backpressure semaphore for event flow control
     backpressure_semaphore: Arc<Semaphore>,
+    /// Shared executable-hash engine. `None` means `--compute-hashes` is
+    /// disabled; `Some` means the post-enumeration hash pass will run.
+    /// The engine is shared via `Arc` with the actor-mode holder so that
+    /// combined concurrent operations always respect a single policy.
+    hasher: Option<Arc<MultiAlgorithmHasher>>,
 }
 
 /// Runtime statistics for process event source monitoring.
@@ -224,6 +230,7 @@ impl ProcessEventSource {
             collector,
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
+            hasher: None,
         }
     }
 
@@ -271,7 +278,35 @@ impl ProcessEventSource {
             collector,
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
+            hasher: None,
         }
+    }
+
+    /// Inject a shared executable-hash engine.
+    ///
+    /// The engine is used to populate `executable_hash` and
+    /// `hash_algorithm` fields on every collected `ProcessEvent` via a
+    /// post-enumeration pass. Callers pass the same `Arc` clone to
+    /// every holder in the process so that the engine's concurrency cap,
+    /// algorithm list, and size budget apply as a single policy.
+    ///
+    /// Construction is guarded at the composition root
+    /// (`procmond/src/main.rs`): when `--compute-hashes == true`, one
+    /// `Arc<MultiAlgorithmHasher>` is built and handed to every holder.
+    #[must_use]
+    pub fn with_hasher(mut self, hasher: Option<Arc<MultiAlgorithmHasher>>) -> Self {
+        self.hasher = hasher;
+        self
+    }
+
+    /// Returns a clone of the shared hasher `Arc`, if any.
+    ///
+    /// Intended for integration tests that need to assert
+    /// `Arc::ptr_eq` across multiple holders. Production code should not
+    /// read the engine through this accessor.
+    #[must_use]
+    pub fn hasher(&self) -> Option<Arc<MultiAlgorithmHasher>> {
+        self.hasher.as_ref().map(Arc::clone)
     }
 
     /// Creates a new process event source with a custom collector and configuration.
@@ -315,6 +350,7 @@ impl ProcessEventSource {
             collector,
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
+            hasher: None,
         }
     }
 
@@ -481,7 +517,7 @@ impl ProcessEventSource {
         )
         .await;
 
-        let (process_events, collection_stats) = match enumeration_result {
+        let (mut process_events, collection_stats) = match enumeration_result {
             Ok(Ok((events, stats))) => (events, stats),
             Ok(Err(e)) => {
                 error!(error = %e, "Process enumeration failed");
@@ -500,6 +536,96 @@ impl ProcessEventSource {
                 return Err((anyhow::anyhow!("Process enumeration timeout"), Vec::new()));
             }
         };
+
+        // Fail-loud check: `compute_executable_hashes = true` requires
+        // an injected hasher. Without both, events ship with `None` hashes
+        // forever — another silent no-op. We log on every scan (not only
+        // once) so the mismatch can't be swallowed by a short test run.
+        if self.config.compute_executable_hashes && self.hasher.is_none() {
+            warn!(
+                "compute_executable_hashes=true but no hasher is injected via .with_hasher(); \
+                 events will ship with hash_algorithm=None and no hashing will occur"
+            );
+        }
+
+        // Populate `executable_hash` via post-enumeration pass when a
+        // shared hash engine is attached. The pass deduplicates unique
+        // paths so the per-unique-file hash cost is incurred once even
+        // if many processes share an executable. Failures are logged
+        // but non-fatal — missing hashes are represented as `None`.
+        //
+        // The hash pass is bounded by the REMAINING portion of the
+        // overall `collection_timeout` budget, not a fresh fixed window.
+        // This preserves the contract that one `collect_processes` cycle
+        // (enumeration + hash pass) never runs past `collection_timeout`,
+        // which keeps scheduling stable under load. If enumeration
+        // consumed the entire budget, we skip the hash pass entirely
+        // rather than starve the interval. On timeout, partial coverage
+        // is logged and kept — downstream handles missing hashes as
+        // `None`.
+        //
+        // Also shutdown-aware: if `shutdown_signal` flips during the
+        // hash pass, we race `populate_hashes` against a cancellation
+        // poller so a stalled filesystem cannot delay `stop()` for up
+        // to the full remaining budget.
+        if let Some(ref hasher) = self.hasher {
+            if shutdown_signal.load(Ordering::Relaxed) {
+                debug!("shutdown requested, skipping hash population");
+            } else {
+                let remaining_budget = self
+                    .config
+                    .collection_timeout
+                    .saturating_sub(collection_start.elapsed());
+                if remaining_budget.is_zero() {
+                    warn!(
+                        collection_timeout_secs = self.config.collection_timeout.as_secs(),
+                        "skipping hash population: collection_timeout budget exhausted by enumeration"
+                    );
+                } else {
+                    let hash_future = populate_hashes(&mut process_events, hasher);
+                    let shutdown_watcher = {
+                        let signal = Arc::clone(shutdown_signal);
+                        async move {
+                            loop {
+                                if signal.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
+                        }
+                    };
+                    tokio::select! {
+                        biased;
+                        () = shutdown_watcher => {
+                            warn!(
+                                "shutdown signaled during hash population; \
+                                 in-flight outcomes discarded, committed outcomes preserved"
+                            );
+                        }
+                        hash_result = tokio::time::timeout(remaining_budget, hash_future) => {
+                            match hash_result {
+                                Ok(hash_stats) => {
+                                    debug!(
+                                        unique_paths = hash_stats.unique_paths,
+                                        hashed = hash_stats.hashed,
+                                        auth_failures = hash_stats.auth_failures,
+                                        io_failures = hash_stats.io_failures,
+                                        nonauthoritative = hash_stats.nonauthoritative,
+                                        "executable hash pass completed"
+                                    );
+                                }
+                                Err(_elapsed) => {
+                                    warn!(
+                                        remaining_budget_ms = remaining_budget.as_millis(),
+                                        "hash population exceeded remaining collection budget; partial coverage recorded"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         debug!(
             total_found = collection_stats.total_processes,
@@ -1272,6 +1398,7 @@ mod tests {
                 cpu_usage: None,
                 memory_usage: None,
                 executable_hash: None,
+                hash_algorithm: None,
                 user_id: None,
                 accessible: true,
                 file_exists: false,
@@ -1288,6 +1415,7 @@ mod tests {
                 cpu_usage: None,
                 memory_usage: None,
                 executable_hash: None,
+                hash_algorithm: None,
                 user_id: None,
                 accessible: true,
                 file_exists: false,
@@ -1398,6 +1526,7 @@ mod tests {
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
+            hash_algorithm: None,
             user_id: None,
             accessible: true,
             file_exists: false,

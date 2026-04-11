@@ -109,6 +109,7 @@ impl SimpleEventGenerator {
             cpu_usage: Some(10.0 + id as f64),
             memory_usage: Some(1024 * (id + 1) as u64),
             executable_hash: Some(hash),
+            hash_algorithm: Some("sha256".to_owned()),
             user_id: Some("1000".to_string()),
             accessible: true,
             file_exists: true,

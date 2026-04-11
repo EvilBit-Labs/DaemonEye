@@ -63,6 +63,7 @@
 //! ```
 
 pub mod analysis_chain;
+pub mod binary_hasher;
 pub mod capability_router;
 pub mod collector;
 pub mod config;
@@ -83,6 +84,7 @@ pub mod shutdown_coordinator;
 pub mod source;
 pub mod task_distributor;
 pub mod trigger;
+pub mod triggerable;
 
 // Re-export main types for convenience
 pub use analysis_chain::{
@@ -90,6 +92,7 @@ pub use analysis_chain::{
     AnalysisWorkflowDefinition, StageStatus, WorkflowError, WorkflowErrorType, WorkflowExecution,
     WorkflowProgress, WorkflowStatistics, WorkflowStatus,
 };
+pub use binary_hasher::{BinaryHasherCollector, BinaryHasherConfig, MAX_TARGET_PATH_LEN};
 pub use capability_router::{
     CapabilityRouter, CollectorCapability, CollectorHealthStatus, RoutingDecision, RoutingStats,
 };
@@ -141,3 +144,4 @@ pub use trigger::{
     TriggerCapabilities, TriggerCondition, TriggerConfig, TriggerEmissionStats, TriggerManager,
     TriggerResourceLimits, TriggerStatistics,
 };
+pub use triggerable::{TriggerErrorKind, TriggerHandleError, TriggerableCollector};

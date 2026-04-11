@@ -1067,13 +1067,11 @@ impl WindowsProcessCollector {
             None
         };
 
-        // Compute executable hash if requested
-        let executable_hash = if self.base_config.compute_executable_hashes {
-            // TODO: Implement executable hashing (issue #40)
-            None
-        } else {
-            None
-        };
+        // Executable hash populated in a post-enumeration pass (see
+        // `hash_pass::populate_hashes`). Invariant:
+        // `executable_hash.is_some() == hash_algorithm.is_some()`.
+        let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         let user_id = process.user_id().map(|u| u.to_string());
         let accessible = true; // If we can read process info, it's accessible
@@ -1097,6 +1095,7 @@ impl WindowsProcessCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,

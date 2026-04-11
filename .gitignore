@@ -141,3 +141,4 @@ docs/plans
 .tessl/tiles/
 **/*.local.*
 .context/**/*.md
+todos/

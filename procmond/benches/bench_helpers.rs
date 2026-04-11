@@ -37,7 +37,10 @@ pub fn create_test_event(pid: u32) -> ProcessEvent {
         start_time: Some(now),
         cpu_usage: Some(1.5 + (pid as f64 * 0.1) % 10.0),
         memory_usage: Some(1_048_576_u64.saturating_add((pid as u64).saturating_mul(4096))),
-        executable_hash: Some(format!("hash_{:08x}", pid)),
+        // Use a realistic 64-hex-char SHA-256 string (no algorithm prefix) to
+        // match production wire format produced by `hash_pass::primary_hash_hex`.
+        executable_hash: Some("0".repeat(64)),
+        hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("1000".to_owned()),
         accessible: true,
         file_exists: true,
@@ -58,6 +61,7 @@ pub fn create_minimal_event(pid: u32) -> ProcessEvent {
         cpu_usage: None,
         memory_usage: None,
         executable_hash: None,
+        hash_algorithm: None,
         user_id: None,
         accessible: true,
         file_exists: true,
@@ -83,10 +87,10 @@ pub fn create_large_event(pid: u32) -> ProcessEvent {
         start_time: Some(now),
         cpu_usage: Some(99.9),
         memory_usage: Some(1_073_741_824), // 1 GB
-        executable_hash: Some(format!(
-            "sha256:{}",
-            "a".repeat(64) // Realistic SHA-256 length
-        )),
+        // Realistic 64-hex-char SHA-256 string (no algorithm prefix), matching
+        // the production wire format produced by `hash_pass::primary_hash_hex`.
+        executable_hash: Some("a".repeat(64)),
+        hash_algorithm: Some("sha256".to_owned()),
         user_id: Some("root".to_owned()),
         accessible: true,
         file_exists: true,

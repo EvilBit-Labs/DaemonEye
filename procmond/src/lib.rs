@@ -3,6 +3,7 @@
 
 pub mod event_bus_connector;
 pub mod event_source;
+pub(crate) mod hash_pass;
 pub mod lifecycle;
 pub mod monitor_collector;
 pub mod process_collector;
@@ -142,6 +143,22 @@ pub struct ProcessMessageHandler {
     pub database: Arc<Mutex<storage::DatabaseManager>>,
     /// Process collector implementation for platform-agnostic process enumeration
     pub collector: Box<dyn ProcessCollector>,
+    /// Optional shared hash engine. This field is the **authoritative**
+    /// enable flag for executable hashing on this handler: if `Some`,
+    /// enumeration runs a post-pass via `hash_pass::populate_hashes` to
+    /// fill `executable_hash` / `hash_algorithm` on every event; if
+    /// `None`, those fields always stay `None`.
+    ///
+    /// The composition root (`procmond/src/main.rs`) constructs the
+    /// engine only when `--compute-hashes == true` is set on the CLI,
+    /// and threads the same `Arc` into every holder (`ProcessEventSource`,
+    /// `ProcmondMonitorCollector`, and this handler). Programmatic
+    /// callers MUST follow the same contract: pass `Some(engine)` IFF
+    /// hashing is actually desired. The handler does not cross-check
+    /// the underlying collector's `ProcessCollectionConfig` — `hasher`
+    /// is the single source of truth so a mismatch cannot degrade
+    /// into the silent no-op resolved in P1 #013.
+    pub hasher: Option<Arc<daemoneye_lib::integrity::MultiAlgorithmHasher>>,
 }
 
 impl ProcessMessageHandler {
@@ -174,6 +191,7 @@ impl ProcessMessageHandler {
         Self {
             database,
             collector,
+            hasher: None,
         }
     }
 
@@ -210,7 +228,35 @@ impl ProcessMessageHandler {
         Self {
             database,
             collector,
+            hasher: None,
         }
+    }
+
+    /// Attach a shared hash engine. When set, enumeration results are
+    /// post-processed by
+    /// `hash_pass::populate_hashes` to fill
+    /// `executable_hash` and `hash_algorithm` on every `ProcessEvent`.
+    ///
+    /// Pass `None` to disable hashing. The typical construction flow is:
+    ///
+    /// ```rust,no_run
+    /// use procmond::ProcessMessageHandler;
+    /// use daemoneye_lib::integrity::{HasherConfig, MultiAlgorithmHasher};
+    /// use std::sync::Arc;
+    ///
+    /// # fn example(mut handler: ProcessMessageHandler) -> Result<(), Box<dyn std::error::Error>> {
+    /// let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default())?);
+    /// handler = handler.with_hasher(Some(hasher));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_hasher(
+        mut self,
+        hasher: Option<Arc<daemoneye_lib::integrity::MultiAlgorithmHasher>>,
+    ) -> Self {
+        self.hasher = hasher;
+        self
     }
 
     pub async fn handle_detection_task(
@@ -267,7 +313,8 @@ impl ProcessMessageHandler {
         &self,
         task: &DetectionTask,
     ) -> Result<DetectionResult, IpcError> {
-        use tracing::{debug, error};
+        use std::time::Duration;
+        use tracing::{debug, error, warn};
 
         debug!(
             task_id = %task.task_id,
@@ -279,7 +326,53 @@ impl ProcessMessageHandler {
         let enumeration_result = self.collector.collect_processes().await;
 
         match enumeration_result {
-            Ok((process_events, collection_stats)) => {
+            Ok((mut process_events, collection_stats)) => {
+                // Post-enumeration hash population pass. This runs
+                // exactly once per scan and dedupes by executable path
+                // before hashing, so the amortized cost across 10k
+                // processes is typically 200-500 hashes (the number of
+                // unique executables on a real host). The engine's
+                // shared quick_cache then makes subsequent scans
+                // ~zero-cost in steady state.
+                //
+                // Request-scoped timeout: the engine enforces a
+                // `timeout_per_file` on each hash, but 10k unique files
+                // × multi-second stalls on slow/hostile storage could
+                // still wedge the privileged collector indefinitely.
+                // Wrap the whole pass in an overall deadline so an
+                // `EnumerateProcesses` request always has a hard upper
+                // bound. On timeout we keep the events that were
+                // already stamped (partial coverage is fine — downstream
+                // handles missing hashes) and log the truncation.
+                if let Some(hasher) = self.hasher.as_ref() {
+                    const HASH_PASS_OVERALL_DEADLINE: Duration = Duration::from_secs(60);
+                    match tokio::time::timeout(
+                        HASH_PASS_OVERALL_DEADLINE,
+                        hash_pass::populate_hashes(&mut process_events, hasher),
+                    )
+                    .await
+                    {
+                        Ok(stats) => {
+                            debug!(
+                                task_id = %task.task_id,
+                                unique_paths = stats.unique_paths,
+                                hashed = stats.hashed,
+                                auth_failures = stats.auth_failures,
+                                io_failures = stats.io_failures,
+                                nonauthoritative = stats.nonauthoritative,
+                                "hash population completed"
+                            );
+                        }
+                        Err(_elapsed) => {
+                            warn!(
+                                task_id = %task.task_id,
+                                deadline_secs = HASH_PASS_OVERALL_DEADLINE.as_secs(),
+                                "hash population exceeded request deadline; partial coverage recorded"
+                            );
+                        }
+                    }
+                }
+
                 debug!(
                     task_id = %task.task_id,
                     total_found = collection_stats.total_processes,
@@ -362,6 +455,7 @@ impl ProcessMessageHandler {
     ///     cpu_usage: Some(5.0),
     ///     memory_usage: Some(1024 * 1024),
     ///     executable_hash: None,
+    ///     hash_algorithm: None,
     ///     user_id: Some("1000".to_string()),
     ///     accessible: true,
     ///     file_exists: true,
@@ -420,8 +514,18 @@ impl ProcessMessageHandler {
             0
         };
 
-        // Check if executable hash exists before moving the value
-        let has_executable_hash = event.executable_hash.is_some();
+        // Propagate the hash_algorithm carried on the event unchanged.
+        // Invariant (enforced by `hash_pass::populate_hashes` and every
+        // `ProcessEvent` constructor): `executable_hash.is_some() ==
+        // hash_algorithm.is_some()`. We do NOT reinstate a "sha256"
+        // default here — doing so would mislabel non-SHA256 results
+        // (e.g. BLAKE3) on the wire, which is worse than an absent
+        // algorithm field.
+        debug_assert_eq!(
+            event.executable_hash.is_some(),
+            event.hash_algorithm.is_some(),
+            "ProcessEvent invariant violated: executable_hash and hash_algorithm must both be Some or both None"
+        );
 
         ProtoProcessRecord {
             pid: event.pid,
@@ -433,7 +537,7 @@ impl ProcessMessageHandler {
             cpu_usage: event.cpu_usage,
             memory_usage: event.memory_usage,
             executable_hash: event.executable_hash,
-            hash_algorithm: has_executable_hash.then(|| "sha256".to_owned()),
+            hash_algorithm: event.hash_algorithm,
             user_id: event.user_id,
             accessible: event.accessible,
             file_exists: event.file_exists,
@@ -550,6 +654,7 @@ mod tests {
                     cpu_usage: Some(0.1),
                     memory_usage: Some(1024 * 1024),
                     executable_hash: Some("hash1".to_string()),
+                    hash_algorithm: Some("sha256".to_owned()),
                     user_id: Some("0".to_string()),
                     accessible: true,
                     file_exists: true,
@@ -566,6 +671,7 @@ mod tests {
                     cpu_usage: Some(5.0),
                     memory_usage: Some(2048 * 1024),
                     executable_hash: Some("hash2".to_string()),
+                    hash_algorithm: Some("sha256".to_owned()),
                     user_id: Some("1000".to_string()),
                     accessible: true,
                     file_exists: true,
@@ -582,6 +688,7 @@ mod tests {
                     cpu_usage: None,
                     memory_usage: None,
                     executable_hash: None,
+                    hash_algorithm: None,
                     user_id: None,
                     accessible: false,
                     file_exists: false,
@@ -825,6 +932,7 @@ mod tests {
             cpu_usage: Some(5.0),
             memory_usage: Some(1024 * 1024),
             executable_hash: Some("abc123".to_string()),
+            hash_algorithm: Some("sha256".to_owned()),
             user_id: Some("1000".to_string()),
             accessible: true,
             file_exists: true,
@@ -992,6 +1100,7 @@ mod tests {
                 cpu_usage: Some(1.0),
                 memory_usage: Some(1024),
                 executable_hash: None,
+                hash_algorithm: None,
                 user_id: Some("0".to_string()),
                 accessible: true,
                 file_exists: true,
@@ -1008,6 +1117,7 @@ mod tests {
                 cpu_usage: None,
                 memory_usage: None,
                 executable_hash: None,
+                hash_algorithm: None,
                 user_id: None,
                 accessible: false,
                 file_exists: false,
@@ -1127,6 +1237,7 @@ mod tests {
             cpu_usage: None,
             memory_usage: None,
             executable_hash: None,
+            hash_algorithm: None,
             user_id: None,
             accessible: false,
             file_exists: false,
@@ -1161,6 +1272,7 @@ mod tests {
             cpu_usage: Some(2.5),
             memory_usage: Some(4096),
             executable_hash: Some("abcdef123456".to_string()),
+            hash_algorithm: Some("sha256".to_owned()),
             user_id: Some("1001".to_string()),
             accessible: true,
             file_exists: true,

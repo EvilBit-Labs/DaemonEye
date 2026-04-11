@@ -50,6 +50,7 @@ fn create_test_event(pid: u32) -> ProcessEvent {
         cpu_usage: Some(1.0),
         memory_usage: Some(4096),
         executable_hash: None,
+        hash_algorithm: None,
         user_id: Some("1000".to_string()),
         accessible: true,
         file_exists: true,

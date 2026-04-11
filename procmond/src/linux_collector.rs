@@ -642,9 +642,12 @@ impl LinuxProcessCollector {
             .and_then(|s| s.parse::<u64>().ok())
             .and_then(|jiffies| self.calculate_start_time(jiffies));
 
-        // Compute executable hash if requested
-        // TODO: Implement executable hashing (issue #40)
+        // Executable hash populated in a post-enumeration pass (see
+        // `hash_pass::populate_hashes`) so that the synchronous
+        // per-process conversion path stays off the async runtime.
+        // Invariant: `executable_hash.is_some() == hash_algorithm.is_some()`.
         let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         // Serialize enhanced metadata for platform_metadata field
         let platform_metadata = if self.base_config.collect_enhanced_metadata {
@@ -672,6 +675,7 @@ impl LinuxProcessCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,
@@ -826,6 +830,18 @@ impl ProcessCollector for LinuxProcessCollector {
         Ok((events, stats))
     }
 
+    /// Collect a single process by PID.
+    ///
+    /// **Note**: this API does NOT run the post-enumeration hash pass,
+    /// so the returned `ProcessEvent` always has `executable_hash = None`
+    /// / `hash_algorithm = None` regardless of
+    /// [`ProcessCollectionConfig::compute_executable_hashes`]. The hash
+    /// pass is a batch operation (it dedupes across all collected
+    /// events) and runs in the multi-process path only. Callers that
+    /// need the hash for a single PID should invoke
+    /// `crate::hash_pass::populate_hashes` explicitly with a slice
+    /// containing the returned event plus an injected
+    /// `Arc<MultiAlgorithmHasher>`.
     async fn collect_process(&self, pid: u32) -> ProcessCollectionResult<ProcessEvent> {
         debug!(
             collector = self.name(),
@@ -947,9 +963,11 @@ impl LinuxProcessCollector {
             (None, None, None)
         };
 
-        // Compute executable hash if requested
-        // TODO: Implement executable hashing (issue #40)
+        // Executable hash populated in a post-enumeration pass (see
+        // `hash_pass::populate_hashes`). Invariant:
+        // `executable_hash.is_some() == hash_algorithm.is_some()`.
         let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         let user_id = process.user_id().map(|uid| uid.to_string());
         let accessible = true;
@@ -984,6 +1002,7 @@ impl LinuxProcessCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,
