@@ -642,9 +642,12 @@ impl LinuxProcessCollector {
             .and_then(|s| s.parse::<u64>().ok())
             .and_then(|jiffies| self.calculate_start_time(jiffies));
 
-        // Compute executable hash if requested
-        // TODO: Implement executable hashing (issue #40)
+        // Executable hash populated in a post-enumeration pass (see
+        // `hash_pass::populate_hashes`) so that the synchronous
+        // per-process conversion path stays off the async runtime.
+        // Invariant: `executable_hash.is_some() == hash_algorithm.is_some()`.
         let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         // Serialize enhanced metadata for platform_metadata field
         let platform_metadata = if self.base_config.collect_enhanced_metadata {
@@ -672,6 +675,7 @@ impl LinuxProcessCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,
@@ -947,9 +951,11 @@ impl LinuxProcessCollector {
             (None, None, None)
         };
 
-        // Compute executable hash if requested
-        // TODO: Implement executable hashing (issue #40)
+        // Executable hash populated in a post-enumeration pass (see
+        // `hash_pass::populate_hashes`). Invariant:
+        // `executable_hash.is_some() == hash_algorithm.is_some()`.
         let executable_hash: Option<String> = None;
+        let hash_algorithm: Option<String> = None;
 
         let user_id = process.user_id().map(|uid| uid.to_string());
         let accessible = true;
@@ -984,6 +990,7 @@ impl LinuxProcessCollector {
             cpu_usage,
             memory_usage,
             executable_hash,
+            hash_algorithm,
             user_id,
             accessible,
             file_exists,

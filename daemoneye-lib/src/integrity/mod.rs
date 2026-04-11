@@ -1,7 +1,7 @@
 //! Cryptographic integrity verification (binary hashing).
 //!
 //! Streaming multi-algorithm hash engine for executables and critical system
-//! files. Produces a [`HashResult`] with cryptographically secure hashes
+//! files. Produces a `HashResult` with cryptographically secure hashes
 //! (SHA-256, BLAKE3 by default; SHA-3-256 behind `sha3-hashes`).
 //!
 //! # Design
@@ -12,7 +12,7 @@
 //!   `spawn_blocking` tasks — the blocking thread would keep running and hold
 //!   its semaphore permit until the loop completes naturally. See
 //!   <https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html>.
-//! - **Size-threshold dispatch**: files smaller than [`SPAWN_BLOCKING_THRESHOLD`]
+//! - **Size-threshold dispatch**: files smaller than `SPAWN_BLOCKING_THRESHOLD`
 //!   are hashed inline on the current task (pure CPU, ~microseconds). Larger
 //!   files go through `tokio::task::spawn_blocking`. This mirrors how
 //!   `tokio::fs` makes the same tradeoff internally.
@@ -23,11 +23,11 @@
 //!   instance so the combined load always respects the cap.
 //! - **TOCTOU tagging at the engine boundary**: `(size, mtime)` are captured
 //!   before and after the read. If they drift, the engine returns
-//!   [`HashError::Nonauthoritative`] — a mid-read mutation is forensic
+//!   `HashError::Nonauthoritative` — a mid-read mutation is forensic
 //!   evidence, not a successful hash. Callers that need detection signal
 //!   should observe the `Nonauthoritative` error path specifically; callers
 //!   that just want a usable hash get type-state safety because
-//!   [`HashResult`] is unreachable in the error case.
+//!   `HashResult` is unreachable in the error case.
 //! - **Shared cache**: a `quick_cache::sync::Cache` keyed by
 //!   `(PathBuf, SystemTime, u64)` is optionally held by the engine so that
 //!   both the inline enumeration path (procmond) and the on-demand triggered
@@ -43,7 +43,7 @@
 //! - **Deliberately unsupported**: SHA-1 and MD5. Per `DaemonEye`'s
 //!   cryptographic standards (see `AGENTS.md` — "never SHA-1"), weak hashes
 //!   are not compiled into the binary under any feature flag. Downstream
-//!   code must still use [`HashAlgorithm::is_cryptographically_secure`] to
+//!   code must still use `HashAlgorithm::is_cryptographically_secure` to
 //!   gate trust decisions, so the API remains forward-compatible if a
 //!   future secure algorithm is ever added.
 //!
@@ -952,21 +952,23 @@ impl HashComputer for MultiAlgorithmHasher {
 /// This function is the only place in the engine that actually reads from
 /// disk. It is called:
 ///
-/// 1. Directly (inline) for files smaller than [`SPAWN_BLOCKING_THRESHOLD`].
+/// 1. Directly (inline) for files smaller than `SPAWN_BLOCKING_THRESHOLD`.
 /// 2. From inside `tokio::task::spawn_blocking` for larger files.
 ///
-/// The caller passes an already-opened `std::fs::File`. Callers that only
-/// have a path use [`open_and_hash_sync`] which opens the file first and
-/// delegates. TOCTOU-safe callers (e.g. `BinaryHasherCollector`) pass a
-/// file descriptor obtained via cap-std so the hash reads the inode that
-/// was authorized, not a path that may have been swapped.
+/// The caller passes an already-opened `std::fs::File`. The public entry
+/// points [`MultiAlgorithmHasher::compute_with_deadline`] (path-based) and
+/// [`MultiAlgorithmHasher::compute_from_file_with_deadline`] (fd-based)
+/// both funnel into this routine. TOCTOU-safe callers (e.g.
+/// `BinaryHasherCollector`) pass a file descriptor obtained via cap-std so
+/// the hash reads the inode that was authorized, not a path that may have
+/// been swapped.
 ///
-/// `path` is used **only** for the [`HashResult::file_path`] field and for
+/// `path` is used **only** for the `HashResult::file_path` field and for
 /// error context. It is never used to (re-)open the file.
 ///
 /// The caller passes an `Arc<AtomicBool>` cancel flag. The outer async driver
 /// flips this flag when a deadline expires; the loop observes it on the next
-/// iteration and returns [`HashError::Cancelled`] or [`HashError::Timeout`].
+/// iteration and returns `HashError::Cancelled` or `HashError::Timeout`.
 fn hash_sync(
     mut file: std::fs::File,
     path: &Path,
