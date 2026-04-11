@@ -839,7 +839,7 @@ impl ProcessCollector for LinuxProcessCollector {
     /// pass is a batch operation (it dedupes across all collected
     /// events) and runs in the multi-process path only. Callers that
     /// need the hash for a single PID should invoke
-    /// [`crate::hash_pass::populate_hashes`] explicitly with a slice
+    /// `crate::hash_pass::populate_hashes` explicitly with a slice
     /// containing the returned event plus an injected
     /// `Arc<MultiAlgorithmHasher>`.
     async fn collect_process(&self, pid: u32) -> ProcessCollectionResult<ProcessEvent> {
