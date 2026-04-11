@@ -344,9 +344,13 @@ fn primary_hash_hex(result: &HashResult) -> Option<String> {
 )]
 mod tests {
     use super::*;
-    use daemoneye_lib::integrity::{HasherConfig, auth::MAX_EXECUTABLE_PATH_LEN};
+    use daemoneye_lib::integrity::HasherConfig;
     use std::fs;
     use tempfile::NamedTempFile;
+
+    // Only needed by the `#[cfg(unix)]` path-length boundary tests below.
+    #[cfg(unix)]
+    use daemoneye_lib::integrity::auth::MAX_EXECUTABLE_PATH_LEN;
 
     fn new_event(pid: u32, exe: &str) -> ProcessEvent {
         ProcessEvent {
