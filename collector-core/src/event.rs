@@ -384,6 +384,26 @@ pub enum TriggerPriority {
     Critical,
 }
 
+impl ProcessEvent {
+    /// Validate the `(executable_hash, hash_algorithm)` paired
+    /// invariant: both fields must be `Some` together or `None`
+    /// together. A mismatch indicates wire-format drift or a buggy
+    /// constructor and should be treated as data corruption by
+    /// downstream consumers.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` with a human-readable message if the invariant
+    /// is violated.
+    pub const fn validate_hash_tuple(&self) -> Result<(), &'static str> {
+        if self.executable_hash.is_some() != self.hash_algorithm.is_some() {
+            return Err("ProcessEvent invariant violated: executable_hash and \
+                 hash_algorithm must both be Some or both None");
+        }
+        Ok(())
+    }
+}
+
 impl CollectionEvent {
     /// Returns the timestamp of the event regardless of type.
     pub const fn timestamp(&self) -> SystemTime {
@@ -487,6 +507,90 @@ mod tests {
         assert_eq!(event.name, "test_process");
         assert!(event.accessible);
         assert!(event.file_exists);
+    }
+
+    #[test]
+    fn test_validate_hash_tuple_inconsistent_rejected() {
+        let timestamp = SystemTime::now();
+        // hash without algorithm -> invariant violated
+        let bad_hash_only = ProcessEvent {
+            pid: 1,
+            ppid: None,
+            name: "bad".to_owned(),
+            executable_path: None,
+            command_line: vec![],
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: Some("abc".to_owned()),
+            hash_algorithm: None,
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp,
+            platform_metadata: None,
+        };
+        assert!(bad_hash_only.validate_hash_tuple().is_err());
+
+        // algorithm without hash -> invariant violated
+        let bad_algo_only = ProcessEvent {
+            pid: 2,
+            ppid: None,
+            name: "bad".to_owned(),
+            executable_path: None,
+            command_line: vec![],
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: None,
+            hash_algorithm: Some("sha256".to_owned()),
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp,
+            platform_metadata: None,
+        };
+        assert!(bad_algo_only.validate_hash_tuple().is_err());
+
+        // both None -> valid
+        let neither = ProcessEvent {
+            pid: 3,
+            ppid: None,
+            name: "ok".to_owned(),
+            executable_path: None,
+            command_line: vec![],
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: None,
+            hash_algorithm: None,
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp,
+            platform_metadata: None,
+        };
+        assert!(neither.validate_hash_tuple().is_ok());
+
+        // both Some -> valid
+        let both = ProcessEvent {
+            pid: 4,
+            ppid: None,
+            name: "ok".to_owned(),
+            executable_path: None,
+            command_line: vec![],
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: Some("abc".to_owned()),
+            hash_algorithm: Some("sha256".to_owned()),
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp,
+            platform_metadata: None,
+        };
+        assert!(both.validate_hash_tuple().is_ok());
     }
 
     #[test]

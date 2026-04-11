@@ -246,8 +246,12 @@ pub enum HashIntegrity {
 /// `DaemonEye`'s cryptographic standards.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HashResult {
-    /// Canonicalized file path (post-open, not raw input). May differ from
-    /// the caller's request if the caller passed a relative path.
+    /// File path the hash was computed against. This is the path that
+    /// was passed to `compute()` or `compute_from_file()` — it is NOT
+    /// canonicalized by the engine. Callers that want a canonical path
+    /// in the audit record must pass one themselves; the cap-std-based
+    /// `BinaryHasherCollector` already does this when `follow_symlinks`
+    /// is set.
     pub file_path: PathBuf,
     /// File size in bytes as observed at open time.
     pub file_size: u64,
@@ -1097,6 +1101,19 @@ fn hash_sync(
             return Err(HashError::Timeout);
         }
         if total_read > max_file_size {
+            // Distinguish growth-during-read from a file that was already
+            // over-budget. The pre-read size check has already gated
+            // `file_size_before <= max_file_size`, so any `total_read`
+            // that exceeds the cap is either (a) the file grew while we
+            // were reading it — a forensic mutation signal — or (b) the
+            // file was exactly at the cap and the final `read()` call
+            // returned a stale buffer (practically impossible, but treat
+            // it as a configuration error to be conservative).
+            if total_read > file_size_before {
+                return Err(HashError::Nonauthoritative {
+                    path: path.to_path_buf(),
+                });
+            }
             return Err(HashError::FileTooLarge {
                 size: total_read,
                 limit: max_file_size,

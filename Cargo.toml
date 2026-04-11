@@ -82,7 +82,6 @@ dirs = "6.0.0"
 figment = { version = "0.10.19", features = ["toml", "json", "env"] }
 futures = "0.3.32"
 futures-util = "0.3.32"
-fuzzyhash = "=0.2.2"
 
 # System information and IPC
 hostname-validator = "1.1.1"
@@ -132,11 +131,6 @@ sqlparser = "0.61.0"
 sysinfo = "0.38.4"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
-
-# Fuzzy hashing (pure Rust, feature-gated behind fuzzy-hash)
-# Exact-pinned: fuzzy-hash primitive, used for forensic similarity
-# comparisons. See AGENTS.md "Pin security-critical deps".
-tlsh2 = { version = "=1.1.0", default-features = false }
 # Exact-pinned: Tokio is the async runtime underpinning privilege
 # separation, IPC, and agent coordination. See AGENTS.md "Pin
 # security-critical deps".

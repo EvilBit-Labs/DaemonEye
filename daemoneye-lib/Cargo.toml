@@ -45,8 +45,6 @@ ipc = [] # Use interprocess transport (cross-platform)
 #
 # sha3-hashes: SHA3-256 (cryptographically secure, ~5-10x slower than SHA-256)
 sha3-hashes = ["dep:sha3"]
-# fuzzy-hash: TLSH v4 primary + ssdeep-compat secondary (similarity hashing)
-fuzzy-hash = ["dep:tlsh2", "dep:fuzzyhash"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -91,10 +89,6 @@ sha2 = { workspace = true }
 
 # Optional: additional cryptographic hash backends for integrity verification
 sha3 = { workspace = true, optional = true }
-
-# Optional: fuzzy (similarity) hashing
-tlsh2 = { workspace = true, optional = true }
-fuzzyhash = { workspace = true, optional = true }
 
 # Shared bounded hash-result cache (inline path + triggered path share one instance)
 quick_cache = { workspace = true }

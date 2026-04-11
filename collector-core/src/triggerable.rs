@@ -37,9 +37,9 @@
 //! error messages, syscall failures). When a response crosses any process
 //! or serialization boundary, those internals must be mapped to the closed
 //! [`TriggerErrorKind`] enum so they cannot leak filesystem layout, user
-//! data, or file-existence oracles to unauthorized subscribers. See the
-//! security section of
-//! `docs/plans/2026-04-07-001-feat-binary-hashing-integrity-plan.md`.
+//! data, or file-existence oracles to unauthorized subscribers. See
+//! `docs/solutions/security-issues/binary-hashing-authorization-and-toctou-fixes.md`
+//! for the full security model and trade-off rationale.
 
 use crate::analysis_chain::AnalysisResult;
 use crate::event::{AnalysisType, TriggerRequest};

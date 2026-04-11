@@ -735,7 +735,6 @@ dependencies = [
  "figment",
  "futures",
  "futures-util",
- "fuzzyhash",
  "insta",
  "interprocess",
  "predicates",
@@ -755,7 +754,6 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror",
- "tlsh2",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
@@ -1032,12 +1030,6 @@ dependencies = [
  "pin-project-lite",
  "slab",
 ]
-
-[[package]]
-name = "fuzzyhash"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f79db37cf4b2ca9a6b735f62ca679926ba0d233d47e164147298fd4fa4786db"
 
 [[package]]
 name = "generic-array"
@@ -2375,12 +2367,6 @@ dependencies = [
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "tlsh2"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7184dfffa0d05e10284df327c6cb52f0d62c5aa6c9a8b9236fa151d4361882f1"
 
 [[package]]
 name = "tokio"

@@ -217,48 +217,54 @@ pub async fn populate_hashes(
 ) -> HashPassStats {
     let mut stats = HashPassStats::default();
 
-    // Phase 1: Dedup by executable_path. Keyed by String (the raw field
-    // on ProcessEvent) so Phase 4's lookup never has to allocate a
-    // PathBuf per event — at 10k processes × 100 unique executables,
-    // that matters. Also resets stale hash state on every event up
-    // front so even if the caller cancels us before we commit any
-    // results, reused events never carry hashes from a prior scan.
-    let mut unique_paths: HashMap<String, Option<(String, String)>> = HashMap::new();
-    for event in events.iter_mut() {
+    // Phase 1: Dedup by executable_path AND build a path -> event_indices
+    // map. The map is what makes Phase 2 cancellation-safe: when each
+    // hash completes, we stamp every event index that shares that path
+    // DIRECTLY on the `&mut [ProcessEvent]` slice owned by the caller.
+    // Because the slice lives above us, those mutations survive even if
+    // our future is dropped by an outer `tokio::time::timeout`.
+    //
+    // Phase 1 also resets stale hash state on every event up front so
+    // even if the caller cancels us before any hash completes, reused
+    // events never carry hashes from a prior scan.
+    let mut path_to_indices: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, event) in events.iter_mut().enumerate() {
         event.executable_hash = None;
         event.hash_algorithm = None;
         if let Some(ref raw) = event.executable_path {
-            unique_paths.entry(raw.clone()).or_insert(None);
+            path_to_indices.entry(raw.clone()).or_default().push(idx);
         }
     }
-    stats.unique_paths = unique_paths.len();
+    stats.unique_paths = path_to_indices.len();
 
-    if unique_paths.is_empty() {
+    if path_to_indices.is_empty() {
         return stats;
     }
 
-    // Phase 2: Authorize + hash in parallel. Results are committed to
-    // `unique_paths` and `stats` incrementally as each hash finishes —
-    // NOT buffered into a Vec and processed in a second pass. If a
-    // caller wraps this future in `tokio::time::timeout`, cancellation
-    // at a `.next().await` yield point only loses in-flight hashes
-    // (at most `max_concurrent`); everything already completed survives
-    // into `unique_paths` and gets stamped in Phase 3 via the deferred
-    // cancellation-safe update of the `events` slice on the next
-    // resumption or drop.
+    // Phase 2: Authorize + hash in parallel. Results are stamped onto
+    // events as each hash finishes — NOT buffered into a Vec and
+    // processed in a separate phase. If a caller wraps this future in
+    // `tokio::time::timeout` (or cancels via select!), the loop body
+    // between two `next().await` yield points runs synchronously and
+    // commits its outcome to `events` before the next opportunity to
+    // be cancelled. Cancellation at a yield point loses ONLY the
+    // in-flight hashes (at most `max_concurrent`); every event whose
+    // hash completed before the yield is already stamped.
     //
-    // We commit inside the stream consumer loop using `while let
-    // Some(...) = stream.next().await` rather than `collect()` because
-    // the loop body runs synchronously between awaits — so every
-    // outcome we pull is fully committed before the next opportunity
-    // to be cancelled.
+    // The `local_stats` tally is also updated synchronously alongside
+    // the event stamping so the returned counters never disagree with
+    // the visible state of `events`. On cancel the function never
+    // returns and the caller cannot read these stats — but they CAN
+    // count `executable_hash.is_some()` on `events` to recover the
+    // partial-coverage figure.
     let concurrency = hasher.max_concurrent();
     let engine = Arc::clone(hasher);
 
     // Materialize the work list up front so the stream does not hold
-    // an immutable borrow on `unique_paths` across the loop body that
-    // later writes to it.
-    let work: Vec<String> = unique_paths.keys().cloned().collect();
+    // a borrow on `path_to_indices` across the loop body that mutates
+    // `events` (which itself doesn't borrow `path_to_indices`, but
+    // rust-analyzer is conservative about disjoint borrows).
+    let work: Vec<String> = path_to_indices.keys().cloned().collect();
     let mut hash_stream = stream::iter(work)
         .map(|raw| {
             let h = Arc::clone(&engine);
@@ -282,8 +288,17 @@ pub async fn populate_hashes(
     while let Some((raw, outcome)) = hash_stream.next().await {
         match outcome {
             HashOutcome::Hashed { hex, algorithm } => {
-                unique_paths.insert(raw, Some((hex, algorithm)));
                 stats.hashed = stats.hashed.saturating_add(1);
+                // Stamp every event sharing this path. Direct &mut on
+                // `events` — survives drop because the caller owns it.
+                if let Some(indices) = path_to_indices.get(&raw) {
+                    for &idx in indices {
+                        if let Some(event) = events.get_mut(idx) {
+                            event.executable_hash = Some(hex.clone());
+                            event.hash_algorithm = Some(algorithm.clone());
+                        }
+                    }
+                }
             }
             HashOutcome::AuthFailed => {
                 stats.auth_failures = stats.auth_failures.saturating_add(1);
@@ -297,20 +312,6 @@ pub async fn populate_hashes(
         }
     }
     drop(hash_stream);
-
-    // Phase 3: Stamp hashes onto events. Uses `HashMap::get(&str)`
-    // (no PathBuf allocation) via `executable_path.as_deref()`. Phase 1
-    // already cleared stale state, so any event without a successfully
-    // computed hash ends this function with `executable_hash = None`.
-    for event in events.iter_mut() {
-        let Some(raw) = event.executable_path.as_deref() else {
-            continue;
-        };
-        if let Some(entry) = unique_paths.get(raw).and_then(Option::as_ref) {
-            event.executable_hash = Some(entry.0.clone());
-            event.hash_algorithm = Some(entry.1.clone());
-        }
-    }
 
     // Telemetry: emit coverage stats so operators can distinguish
     // "feature disabled" from "files inaccessible".

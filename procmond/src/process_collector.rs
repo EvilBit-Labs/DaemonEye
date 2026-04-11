@@ -857,9 +857,8 @@ impl FallbackProcessCollector {
             (None, None, None)
         };
 
-        // Compute executable hash if configured and path is available
-        // Executable hash populated in post-enumeration pass; see
-        // `populate_executable_hashes`.
+        // Executable hash populated in a post-enumeration pass; see
+        // `hash_pass::populate_hashes`.
         let executable_hash: Option<String> = None;
         let hash_algorithm: Option<String> = None;
 
