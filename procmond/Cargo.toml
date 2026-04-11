@@ -56,6 +56,8 @@ uuid = { workspace = true }
 
 # Platform-specific dependencies
 [target.'cfg(unix)'.dependencies]
+# libc exposes O_NOFOLLOW / ELOOP for TOCTOU-safe exe open in hash_pass.
+libc = { workspace = true }
 uzers = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

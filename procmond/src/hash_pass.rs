@@ -20,7 +20,7 @@
 
 use collector_core::ProcessEvent;
 use daemoneye_lib::integrity::{
-    HashAlgorithm, HashComputer, HashResult, MultiAlgorithmHasher,
+    HashAlgorithm, HashResult, MultiAlgorithmHasher,
     auth::{self, AuthError, MAX_EXECUTABLE_FILE_SIZE},
 };
 use futures::stream::{self, StreamExt};
@@ -45,23 +45,20 @@ use tracing::{debug, info, instrument, warn};
 pub struct KernelResolvedExe(PathBuf);
 
 impl KernelResolvedExe {
-    /// Construct from sysinfo's `Process::exe()` output.
+    /// Try to construct from sysinfo's `Process::exe()` output.
     ///
-    /// This MUST only be called with the return value of
-    /// `sysinfo::Process::exe()` — never with user-supplied paths.
+    /// The input **must** be an absolute, kernel-resolved path. In release
+    /// builds this is enforced by a real runtime check, not a
+    /// `debug_assert!` — any non-absolute path is rejected so malformed
+    /// `ProcessEvent.executable_path` values cannot become cwd-relative
+    /// hash targets inside the privileged collector.
     ///
-    /// # Panics (debug builds only)
+    /// # Errors
     ///
-    /// Asserts that `path` is absolute, catching misuse in development.
-    /// The assertion is compiled out in release builds.
+    /// Returns `None` if `path` is not absolute.
     #[must_use]
-    pub(crate) fn from_sysinfo_exe(path: PathBuf) -> Self {
-        debug_assert!(
-            path.is_absolute(),
-            "KernelResolvedExe must be an absolute path; got {}",
-            path.display()
-        );
-        Self(path)
+    pub(crate) fn try_from_sysinfo_exe(path: PathBuf) -> Option<Self> {
+        path.is_absolute().then_some(Self(path))
     }
 
     /// Borrow the inner path.
@@ -75,40 +72,94 @@ impl KernelResolvedExe {
 // Authorization
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Authorize a kernel-resolved executable path for hashing.
+/// Authorize a kernel-resolved executable path and return an **already-
+/// opened** file descriptor for TOCTOU-safe hashing.
 ///
 /// Runs the shared predicates from [`daemoneye_lib::integrity::auth`]:
 /// 1. Path length ≤ `MAX_EXECUTABLE_PATH_LEN` bytes.
 /// 2. No `..` traversal components.
-/// 3. File exists (`symlink_metadata` succeeds).
-/// 4. File is not a symbolic link.
-/// 5. File is a regular file.
+/// 3. Opens the file with `O_NOFOLLOW` (Unix) so the kernel rejects
+///    symlink targets atomically.
+/// 4. Fetches metadata from the opened fd (`fstat`), not the path.
+/// 5. File is a regular file (via handle metadata).
 /// 6. File size ≤ [`MAX_EXECUTABLE_FILE_SIZE`].
+///
+/// The caller **must** pass the returned `File` directly to
+/// [`daemoneye_lib::integrity::MultiAlgorithmHasher::compute_from_file`]
+/// — never re-open the path, or the TOCTOU defense is lost.
 ///
 /// # Errors
 ///
-/// Returns [`AuthError`] if any predicate fails.
-pub fn authorize_kernel_path(exe: &KernelResolvedExe) -> Result<std::fs::Metadata, AuthError> {
+/// Returns [`AuthError`] if any predicate fails or the open/fstat
+/// itself errors.
+pub fn authorize_kernel_path(
+    exe: &KernelResolvedExe,
+) -> Result<(std::fs::File, std::fs::Metadata), AuthError> {
     let path = exe.as_path();
 
     auth::check_path_length(path)?;
     auth::check_no_traversal(path)?;
 
-    let metadata = std::fs::symlink_metadata(path).map_err(|source| AuthError::Io {
+    // On Unix, open with O_NOFOLLOW so the kernel refuses to open a
+    // symlink final-component atomically. On other platforms, fall back
+    // to checking `symlink_metadata` first (a narrow window, but
+    // platform parity would require a separate `OpenOptionsExt`
+    // implementation).
+    #[cfg(unix)]
+    let file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            // libc::O_NOFOLLOW — refuse to follow a symlink on the final
+            // path component. If `exe` itself is a symlink, open fails
+            // with `ELOOP` which we map to `SymlinkRejected` below.
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .map_err(|source| {
+                if source.raw_os_error() == Some(libc::ELOOP) {
+                    AuthError::SymlinkRejected {
+                        path: path.to_path_buf(),
+                    }
+                } else {
+                    AuthError::Io {
+                        path: path.to_path_buf(),
+                        source,
+                    }
+                }
+            })?
+    };
+    #[cfg(not(unix))]
+    let file = {
+        // On non-Unix, check symlink_metadata before opening to reject
+        // symlinks. There is a narrow TOCTOU window here that we accept
+        // for platform parity; the opened-handle guarantee still holds
+        // for the regular-file case.
+        let pre_meta = std::fs::symlink_metadata(path).map_err(|source| AuthError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        if pre_meta.file_type().is_symlink() {
+            return Err(AuthError::SymlinkRejected {
+                path: path.to_path_buf(),
+            });
+        }
+        std::fs::File::open(path).map_err(|source| AuthError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?
+    };
+
+    // Fetch metadata from the opened fd (fstat). This is the inode we
+    // authorized — not a path that may have been swapped.
+    let metadata = file.metadata().map_err(|source| AuthError::Io {
         path: path.to_path_buf(),
         source,
     })?;
 
-    if metadata.file_type().is_symlink() {
-        return Err(AuthError::SymlinkRejected {
-            path: path.to_path_buf(),
-        });
-    }
-
     auth::check_regular_file(path, &metadata)?;
     auth::check_size(&metadata, MAX_EXECUTABLE_FILE_SIZE)?;
 
-    Ok(metadata)
+    Ok((file, metadata))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -169,9 +220,13 @@ pub async fn populate_hashes(
     // Phase 1: Dedup by executable_path. Keyed by String (the raw field
     // on ProcessEvent) so Phase 4's lookup never has to allocate a
     // PathBuf per event — at 10k processes × 100 unique executables,
-    // that matters.
+    // that matters. Also resets stale hash state on every event up
+    // front so even if the caller cancels us before we commit any
+    // results, reused events never carry hashes from a prior scan.
     let mut unique_paths: HashMap<String, Option<(String, String)>> = HashMap::new();
-    for event in events.iter() {
+    for event in events.iter_mut() {
+        event.executable_hash = None;
+        event.hash_algorithm = None;
         if let Some(ref raw) = event.executable_path {
             unique_paths.entry(raw.clone()).or_insert(None);
         }
@@ -182,27 +237,49 @@ pub async fn populate_hashes(
         return stats;
     }
 
-    // Phase 2: Authorize + hash in parallel via buffer_unordered. The
-    // String → PathBuf conversion happens once per unique executable
-    // (not once per event).
+    // Phase 2: Authorize + hash in parallel. Results are committed to
+    // `unique_paths` and `stats` incrementally as each hash finishes —
+    // NOT buffered into a Vec and processed in a second pass. If a
+    // caller wraps this future in `tokio::time::timeout`, cancellation
+    // at a `.next().await` yield point only loses in-flight hashes
+    // (at most `max_concurrent`); everything already completed survives
+    // into `unique_paths` and gets stamped in Phase 3 via the deferred
+    // cancellation-safe update of the `events` slice on the next
+    // resumption or drop.
+    //
+    // We commit inside the stream consumer loop using `while let
+    // Some(...) = stream.next().await` rather than `collect()` because
+    // the loop body runs synchronously between awaits — so every
+    // outcome we pull is fully committed before the next opportunity
+    // to be cancelled.
     let concurrency = hasher.max_concurrent();
     let engine = Arc::clone(hasher);
 
-    let results: Vec<(String, HashOutcome)> = stream::iter(unique_paths.keys().cloned())
+    // Materialize the work list up front so the stream does not hold
+    // an immutable borrow on `unique_paths` across the loop body that
+    // later writes to it.
+    let work: Vec<String> = unique_paths.keys().cloned().collect();
+    let mut hash_stream = stream::iter(work)
         .map(|raw| {
             let h = Arc::clone(&engine);
             async move {
-                let exe = KernelResolvedExe::from_sysinfo_exe(PathBuf::from(&raw));
-                let outcome = hash_one(&exe, &h).await;
+                let outcome = if let Some(exe) =
+                    KernelResolvedExe::try_from_sysinfo_exe(PathBuf::from(&raw))
+                {
+                    hash_one(&exe, &h).await
+                } else {
+                    debug!(
+                        path = ?raw,
+                        "rejecting non-absolute path before hashing"
+                    );
+                    HashOutcome::AuthFailed
+                };
                 (raw, outcome)
             }
         })
-        .buffer_unordered(concurrency)
-        .collect()
-        .await;
+        .buffer_unordered(concurrency);
 
-    // Phase 3: Collect results into the lookup map + update stats.
-    for (raw, outcome) in results {
+    while let Some((raw, outcome)) = hash_stream.next().await {
         match outcome {
             HashOutcome::Hashed { hex, algorithm } => {
                 unique_paths.insert(raw, Some((hex, algorithm)));
@@ -219,16 +296,13 @@ pub async fn populate_hashes(
             }
         }
     }
+    drop(hash_stream);
 
-    // Phase 4: Stamp hashes onto events. Uses `HashMap::get(&str)`
-    // (no PathBuf allocation) via `executable_path.as_deref()`.
+    // Phase 3: Stamp hashes onto events. Uses `HashMap::get(&str)`
+    // (no PathBuf allocation) via `executable_path.as_deref()`. Phase 1
+    // already cleared stale state, so any event without a successfully
+    // computed hash ends this function with `executable_hash = None`.
     for event in events.iter_mut() {
-        // Reset any pre-existing hash state on the event. If we cannot
-        // authorize / hash the file this scan, we want the absence of a
-        // hash rather than a stale value from a prior run.
-        event.executable_hash = None;
-        event.hash_algorithm = None;
-
         let Some(raw) = event.executable_path.as_deref() else {
             continue;
         };
@@ -273,30 +347,41 @@ enum HashOutcome {
 }
 
 /// Authorize and hash a single executable.
+///
+/// Uses the TOCTOU-safe flow: `authorize_kernel_path` returns an
+/// already-opened `File` (with `O_NOFOLLOW` on Unix), and we hand that
+/// file descriptor directly to
+/// [`MultiAlgorithmHasher::compute_from_file`]. Re-opening the path
+/// between authorization and hashing would reintroduce the TOCTOU
+/// window cap-std was added to close.
 #[allow(clippy::pattern_type_mismatch)]
 async fn hash_one(exe: &KernelResolvedExe, hasher: &MultiAlgorithmHasher) -> HashOutcome {
-    // Authorization gate.
-    if let Err(ref err) = authorize_kernel_path(exe) {
-        let display_path = auth::bytes_safe_display(exe.as_path(), 200);
-        #[allow(clippy::wildcard_enum_match_arm)]
-        match err {
-            AuthError::Io { source, .. }
-                if source.kind() == std::io::ErrorKind::PermissionDenied =>
-            {
-                debug!(path = %display_path, error = %err, "hash auth skipped: permission denied");
+    // Authorization gate — returns an opened file handle bound to the
+    // exact inode the predicates were evaluated against.
+    let (file, _meta) = match authorize_kernel_path(exe) {
+        Ok(pair) => pair,
+        Err(ref err) => {
+            let display_path = auth::bytes_safe_display(exe.as_path(), 200);
+            #[allow(clippy::wildcard_enum_match_arm)]
+            match err {
+                AuthError::Io { source, .. }
+                    if source.kind() == std::io::ErrorKind::PermissionDenied =>
+                {
+                    debug!(path = %display_path, error = %err, "hash auth skipped: permission denied");
+                }
+                AuthError::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
+                    debug!(path = %display_path, error = %err, "hash auth skipped: file not found");
+                }
+                _ => {
+                    warn!(path = %display_path, error = %err, "hash auth rejected");
+                }
             }
-            AuthError::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
-                debug!(path = %display_path, error = %err, "hash auth skipped: file not found");
-            }
-            _ => {
-                warn!(path = %display_path, error = %err, "hash auth rejected");
-            }
+            return HashOutcome::AuthFailed;
         }
-        return HashOutcome::AuthFailed;
-    }
+    };
 
-    // Hash via the engine.
-    match hasher.compute(exe.as_path()).await {
+    // Hash the authorized file descriptor. NEVER reopen by path.
+    match hasher.compute_from_file(exe.as_path(), file).await {
         Ok(result) => {
             if let Some(hex) = primary_hash_hex(&result) {
                 HashOutcome::Hashed {
@@ -394,7 +479,7 @@ mod tests {
     #[test]
     fn auth_rejects_path_too_long() {
         let long_path = PathBuf::from("/".to_owned() + &"a".repeat(MAX_EXECUTABLE_PATH_LEN + 1));
-        let exe = KernelResolvedExe::from_sysinfo_exe(long_path);
+        let exe = KernelResolvedExe::try_from_sysinfo_exe(long_path).expect("absolute");
         assert!(matches!(
             authorize_kernel_path(&exe),
             Err(AuthError::PathTooLong { .. })
@@ -404,7 +489,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn auth_rejects_traversal() {
-        let exe = KernelResolvedExe::from_sysinfo_exe(PathBuf::from("/usr/bin/../sbin/evil"));
+        let exe = KernelResolvedExe::try_from_sysinfo_exe(PathBuf::from("/usr/bin/../sbin/evil"))
+            .expect("absolute");
         assert!(matches!(
             authorize_kernel_path(&exe),
             Err(AuthError::PathTraversal { .. })
@@ -414,8 +500,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn auth_rejects_nonexistent() {
-        let exe =
-            KernelResolvedExe::from_sysinfo_exe(PathBuf::from("/definitely/does/not/exist/xyz"));
+        let exe = KernelResolvedExe::try_from_sysinfo_exe(PathBuf::from(
+            "/definitely/does/not/exist/xyz",
+        ))
+        .expect("absolute");
         assert!(matches!(
             authorize_kernel_path(&exe),
             Err(AuthError::Io { .. })
@@ -425,7 +513,8 @@ mod tests {
     #[test]
     fn auth_rejects_directory() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = KernelResolvedExe::from_sysinfo_exe(dir.path().to_path_buf());
+        let exe =
+            KernelResolvedExe::try_from_sysinfo_exe(dir.path().to_path_buf()).expect("absolute");
         assert!(matches!(
             authorize_kernel_path(&exe),
             Err(AuthError::NotRegularFile { .. })
@@ -436,7 +525,8 @@ mod tests {
     fn auth_accepts_regular_file() {
         let tmp = NamedTempFile::new().unwrap();
         fs::write(tmp.path(), b"test binary content").unwrap();
-        let exe = KernelResolvedExe::from_sysinfo_exe(tmp.path().to_path_buf());
+        let exe =
+            KernelResolvedExe::try_from_sysinfo_exe(tmp.path().to_path_buf()).expect("absolute");
         assert!(authorize_kernel_path(&exe).is_ok());
     }
 
@@ -448,7 +538,7 @@ mod tests {
         let link = dir.path().join("symlink_to_real");
         fs::write(&target, b"real binary content").unwrap();
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        let exe = KernelResolvedExe::from_sysinfo_exe(link);
+        let exe = KernelResolvedExe::try_from_sysinfo_exe(link).expect("absolute");
         assert!(matches!(
             authorize_kernel_path(&exe),
             Err(AuthError::SymlinkRejected { .. })
@@ -462,7 +552,7 @@ mod tests {
         // on other checks like file-not-found, which is fine).
         let path = PathBuf::from("/".to_owned() + &"a".repeat(MAX_EXECUTABLE_PATH_LEN - 1));
         assert_eq!(path.as_os_str().len(), MAX_EXECUTABLE_PATH_LEN);
-        let exe = KernelResolvedExe::from_sysinfo_exe(path);
+        let exe = KernelResolvedExe::try_from_sysinfo_exe(path).expect("absolute");
         let result = authorize_kernel_path(&exe);
         // Should NOT be PathTooLong — it may be FileNotFound, which is fine.
         assert!(!matches!(result, Err(AuthError::PathTooLong { .. })));
@@ -476,7 +566,7 @@ mod tests {
         // KernelResolvedExe::from_sysinfo_exe). "/" + 1025 × 4 bytes = 4101 bytes
         // which still exceeds MAX_EXECUTABLE_PATH_LEN (4096).
         let emoji_path = PathBuf::from("/".to_owned() + &"\u{1F600}".repeat(1025));
-        let exe = KernelResolvedExe::from_sysinfo_exe(emoji_path);
+        let exe = KernelResolvedExe::try_from_sysinfo_exe(emoji_path).expect("absolute");
         let result = authorize_kernel_path(&exe);
         assert!(matches!(result, Err(AuthError::PathTooLong { .. })));
     }

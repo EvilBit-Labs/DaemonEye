@@ -33,7 +33,7 @@ use procmond::{
     process_collector::ProcessCollectionConfig,
 };
 use std::sync::Arc;
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 use tokio::sync::{Mutex, mpsc};
 
 /// Produce an in-memory-like `DatabaseManager` backed by a tempdir path.
@@ -41,12 +41,18 @@ use tokio::sync::{Mutex, mpsc};
 /// `storage::DatabaseManager::new` is the same entry point procmond uses
 /// at startup; giving it a tempdir path exercises the real constructor
 /// without touching `/var/lib/daemoneye`.
-fn test_db() -> Arc<Mutex<storage::DatabaseManager>> {
+///
+/// Returns the [`TempDir`] alongside the database handle so the
+/// underlying directory lives as long as the database — dropping the
+/// `TempDir` before the handle would delete the backing files out from
+/// under redb.
+fn test_db() -> (TempDir, Arc<Mutex<storage::DatabaseManager>>) {
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("procmond-test.db");
-    Arc::new(Mutex::new(
+    let db = Arc::new(Mutex::new(
         storage::DatabaseManager::new(path.display().to_string()).expect("db new"),
-    ))
+    ));
+    (dir, db)
 }
 
 #[tokio::test]
@@ -57,14 +63,16 @@ async fn shared_arc_hasher_is_ptr_eq_across_holders() {
         MultiAlgorithmHasher::new(HasherConfig::default()).expect("engine constructs cleanly"),
     );
 
-    // Inject into standalone-mode holder.
-    let db_for_source = test_db();
+    // Inject into standalone-mode holder. Keep `_tmp_source` alive to
+    // preserve the backing tempdir for the database files.
+    let (_tmp_source, db_for_source) = test_db();
     let event_source =
         ProcessEventSource::with_config(db_for_source, ProcessSourceConfig::default())
             .with_hasher(Some(Arc::clone(&engine)));
 
-    // Inject into actor-mode holder.
-    let db_for_actor = test_db();
+    // Inject into actor-mode holder. Keep `_tmp_actor` alive for the
+    // same reason.
+    let (_tmp_actor, db_for_actor) = test_db();
     let (_handle, rx) = ProcmondMonitorCollector::create_channel();
     let actor_config = ProcmondMonitorConfig {
         process_config: ProcessCollectionConfig {
@@ -102,16 +110,17 @@ async fn shared_arc_hasher_is_ptr_eq_across_holders() {
 async fn no_hasher_is_propagated_cleanly() {
     // When --compute-hashes is OFF, both holders must see `None`.
     // This guards against an accidental "default to Some" regression.
-    let db = test_db();
+    let (_tmp_source, db) = test_db();
     let source = ProcessEventSource::with_config(db, ProcessSourceConfig::default());
     assert!(
         source.hasher().is_none(),
         "ProcessEventSource::with_config must default to hasher: None"
     );
 
+    let (_tmp_actor, db_for_actor) = test_db();
     let (_handle, rx) = ProcmondMonitorCollector::create_channel();
     let actor_collector =
-        ProcmondMonitorCollector::new(test_db(), ProcmondMonitorConfig::default(), rx)
+        ProcmondMonitorCollector::new(db_for_actor, ProcmondMonitorConfig::default(), rx)
             .expect("actor constructs");
     assert!(
         actor_collector.hasher().is_none(),

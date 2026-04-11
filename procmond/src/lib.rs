@@ -143,11 +143,21 @@ pub struct ProcessMessageHandler {
     pub database: Arc<Mutex<storage::DatabaseManager>>,
     /// Process collector implementation for platform-agnostic process enumeration
     pub collector: Box<dyn ProcessCollector>,
-    /// Optional shared hash engine. When present AND the underlying
-    /// collector's configuration has `compute_executable_hashes = true`,
-    /// enumeration runs a post-pass via
-    /// `hash_pass::populate_hashes` to fill in
-    /// `executable_hash` and `hash_algorithm` on every event.
+    /// Optional shared hash engine. This field is the **authoritative**
+    /// enable flag for executable hashing on this handler: if `Some`,
+    /// enumeration runs a post-pass via `hash_pass::populate_hashes` to
+    /// fill `executable_hash` / `hash_algorithm` on every event; if
+    /// `None`, those fields always stay `None`.
+    ///
+    /// The composition root (`procmond/src/main.rs`) constructs the
+    /// engine only when `--compute-hashes == true` is set on the CLI,
+    /// and threads the same `Arc` into every holder (`ProcessEventSource`,
+    /// `ProcmondMonitorCollector`, and this handler). Programmatic
+    /// callers MUST follow the same contract: pass `Some(engine)` IFF
+    /// hashing is actually desired. The handler does not cross-check
+    /// the underlying collector's `ProcessCollectionConfig` — `hasher`
+    /// is the single source of truth so a mismatch cannot degrade
+    /// into the silent no-op resolved in P1 #013.
     pub hasher: Option<Arc<daemoneye_lib::integrity::MultiAlgorithmHasher>>,
 }
 

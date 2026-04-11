@@ -637,9 +637,10 @@ struct HasherSet {
 
 impl HasherSet {
     fn new(algorithms: &[HashAlgorithm]) -> Self {
-        let mut seen: Vec<HashAlgorithm> = Vec::with_capacity(algorithms.len().saturating_add(1));
-        // SHA-256 is always present.
-        seen.push(HashAlgorithm::Sha256);
+        // The caller (`MultiAlgorithmHasher`) normalizes its config to
+        // guarantee SHA-256 is always present at the head of `algorithms`,
+        // so we only need to deduplicate here — not inject SHA-256.
+        let mut seen: Vec<HashAlgorithm> = Vec::with_capacity(algorithms.len());
         for a in algorithms {
             if !seen.contains(a) {
                 seen.push(*a);
@@ -680,15 +681,58 @@ impl HasherSet {
 // MultiAlgorithmHasher
 // ─────────────────────────────────────────────────────────────────────────────
 
-// NOTE: cache key uses (path, modified_time, file_size). SystemTime
-// resolution is platform-dependent — nanoseconds on Linux and APFS,
-// 100ns on Windows, but historically 1s on HFS+. On a 1s-resolution
-// filesystem, two writes to the same file within one second with
-// identical size could return a stale cached hash. APFS has been the
-// default on macOS since 10.13, so this is low risk for executables
-// in practice, but callers that hash short-lived intermediates on
-// older filesystems should disable the cache (cache_capacity = 0).
-type CacheKey = (PathBuf, SystemTime, u64);
+// NOTE: cache key uses (path, modified_time, file_size, identity).
+//
+// SystemTime resolution is platform-dependent — nanoseconds on Linux and
+// APFS, 100ns on Windows, but historically 1s on HFS+. On a 1s-resolution
+// filesystem, two writes to the same file within one second with identical
+// size could otherwise return a stale cached hash.
+//
+// More importantly, (path, mtime, size) alone is **not** strong enough for
+// a security-sensitive hasher. An attacker who replaces a file with a
+// different inode — but preserves (mtime, size) at the same path — could
+// otherwise hit a stale cache entry and be returned the wrong digest. The
+// concern is acute for `compute_from_file_with_deadline`: the caller holds
+// an authorized fd for a specific inode, but without an identity component
+// a cache hit could return the digest of a DIFFERENT inode that happened
+// to live at this path earlier with the same mtime+size.
+//
+// `FileIdentity` closes that gap by binding the key to the underlying file
+// identity: (dev, ino) on Unix, NTFS file index on Windows, and a unit
+// sentinel on other platforms. Combined with the fstat performed on the
+// held handle, a cache hit is now only reachable when the same path, with
+// the same mtime, size, AND underlying inode was previously hashed — i.e.
+// the same file, not merely the same name.
+#[cfg(unix)]
+type FileIdentity = (u64, u64); // (dev, ino)
+#[cfg(windows)]
+type FileIdentity = Option<u64>; // NTFS file index (may be unavailable)
+#[cfg(not(any(unix, windows)))]
+type FileIdentity = ();
+
+type CacheKey = (PathBuf, SystemTime, u64, FileIdentity);
+
+/// Extract a platform-appropriate file identity component from metadata
+/// obtained by fstat'ing an opened handle.
+#[cfg(unix)]
+fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
+    use std::os::unix::fs::MetadataExt;
+    (metadata.dev(), metadata.ino())
+}
+
+#[cfg(windows)]
+fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
+    use std::os::windows::fs::MetadataExt;
+    metadata.file_index()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_identity(_metadata: &std::fs::Metadata) -> FileIdentity {
+    // Other platforms (e.g. wasi) have no portable file-identity primitive;
+    // fall back to the weaker (path, mtime, size) key by using a unit
+    // sentinel. Security-critical consumers on such platforms should
+    // disable the cache by setting cache_capacity = 0.
+}
 
 /// The default [`HashComputer`] implementation.
 ///
@@ -722,11 +766,22 @@ pub struct MultiAlgorithmHasher {
 impl MultiAlgorithmHasher {
     /// Construct a new hasher from a configuration.
     ///
+    /// The provided `config` is normalized so SHA-256 is always the first
+    /// algorithm in `config.algorithms`. This matches the invariant enforced
+    /// by [`HasherSet::new`] — every `HashResult` produced by this engine
+    /// contains a SHA-256 digest regardless of what the caller requested.
+    /// Normalizing here ensures [`HashComputer::supported_algorithms`]
+    /// returns the list that actually gets computed, so callers relying on
+    /// that reflection do not receive a lie.
+    ///
     /// # Errors
     ///
     /// Returns [`HashError::InvalidConfig`] if `config.validate()` fails.
-    pub fn new(config: HasherConfig) -> Result<Self, HashError> {
+    pub fn new(mut config: HasherConfig) -> Result<Self, HashError> {
         config.validate()?;
+        if !config.algorithms.contains(&HashAlgorithm::Sha256) {
+            config.algorithms.insert(0, HashAlgorithm::Sha256);
+        }
         let permits = Arc::new(Semaphore::new(config.max_concurrent));
         let cache =
             (config.cache_capacity > 0).then(|| Arc::new(Cache::new(config.cache_capacity)));
@@ -839,8 +894,11 @@ impl MultiAlgorithmHasher {
             .map_err(|e| HashError::from_io(path, e))?;
 
         // 2. Cache lookup. Cache key uses the file's fstat-derived
-        //    (mtime, size) so reopening by path cannot evade a hit.
-        let key: CacheKey = (path.to_path_buf(), modified_time, file_size);
+        //    (mtime, size, identity) so reopening by path cannot evade
+        //    a hit, and a same-path/same-mtime/same-size inode swap
+        //    cannot cause a stale hit against a different inode.
+        let identity = file_identity(&metadata);
+        let key: CacheKey = (path.to_path_buf(), modified_time, file_size, identity);
         if let Some(cache) = self.cache.as_ref()
             && let Some(hit) = cache.get(&key)
         {

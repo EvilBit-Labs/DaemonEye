@@ -1,11 +1,11 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::uninlined_format_args,
-    clippy::shadow_reuse,
-    clippy::as_conversions,
-    clippy::indexing_slicing
-)]
+// Benchmarks intentionally use `.expect(...)` for setup failures: a
+// benchmark harness that silently eats errors is worse than a loud panic,
+// and there is no user-facing error path to preserve. Scoped crate-wide
+// because nearly every function performs setup. Other clippy lints
+// (uninlined_format_args, shadow_reuse, as_conversions, indexing_slicing)
+// are NOT allowed here — if a future edit trips one, fix the code instead
+// of silencing the warning.
+#![allow(clippy::expect_used)]
 
 //! Criterion benchmarks for the `daemoneye_lib::integrity` module.
 //!

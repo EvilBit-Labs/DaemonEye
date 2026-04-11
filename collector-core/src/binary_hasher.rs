@@ -249,7 +249,7 @@ pub fn authorize_confined_path(
     target: &Path,
     roots: &[AllowedRoot],
     follow_symlinks: bool,
-) -> Result<(cap_std::fs::File, cap_std::fs::Metadata), AuthError> {
+) -> Result<(cap_std::fs::File, cap_std::fs::Metadata, PathBuf), AuthError> {
     use daemoneye_lib::integrity::auth;
 
     // Pre-flight checks using shared predicates.
@@ -327,7 +327,15 @@ pub fn authorize_confined_path(
                     path: target.to_path_buf(),
                     source,
                 })?;
-                return Ok((file, meta));
+                // Compose the audit-record path from the cap-std root's
+                // canonical display path joined with the relative path we
+                // just authorized. This avoids a second path-based stat
+                // (canonicalize) after the fd-based authorization, closing
+                // the cosmetic race where `recorded_path` could mismatch
+                // the inode actually hashed if the path was swapped
+                // between open and canonicalize.
+                let resolved = canonical_root.join(relative);
+                return Ok((file, meta, resolved));
             }
             Err(err) => {
                 // Delegate to the helper so escape detection walks the
@@ -652,9 +660,10 @@ impl BinaryHasherCollector {
 
         let raw_path = Path::new(raw);
 
-        // Delegate to cap-std authorization. Returns the opened file handle
-        // and its metadata (via fstat) so we avoid a second path-based stat.
-        let (cap_file, meta) =
+        // Delegate to cap-std authorization. Returns the opened file handle,
+        // its metadata (via fstat), and the composed (root + relative) path
+        // we just authorized — so we avoid a second path-based stat.
+        let (cap_file, meta, resolved) =
             authorize_confined_path(raw_path, &self.opened_roots, self.config.follow_symlinks)
                 .map_err(|err| map_auth_err(&err))?;
 
@@ -678,18 +687,15 @@ impl BinaryHasherCollector {
         // `raw_path` might resolve to after authorization.
         let file = cap_file.into_std();
 
-        // For the `HashResult::file_path` record we use the canonical
-        // path when following symlinks (so operators see the resolved
-        // target in the audit record), and the raw path otherwise.
+        // For the `HashResult::file_path` record we use the (root +
+        // relative) path derived at authorization time. This avoids a
+        // second path-based stat (`canonicalize`) which would reintroduce
+        // a cosmetic TOCTOU window where `recorded_path` could mismatch
+        // the inode actually hashed if the path was swapped between the
+        // cap-std open and the canonicalize.
         // SECURITY: this path is NEVER used to reopen the file. The
         // engine hashes from `file` (the authorized fd) only.
-        let recorded_path = if self.config.follow_symlinks {
-            std::fs::canonicalize(raw_path).map_err(|err| map_path_io_err("canonicalize", &err))?
-        } else {
-            raw_path.to_path_buf()
-        };
-
-        Ok((file, recorded_path))
+        Ok((file, resolved))
     }
 }
 
@@ -729,6 +735,22 @@ impl TriggerableCollector for BinaryHasherCollector {
             .ok_or(TriggerHandleError::MissingField {
                 field: "target_path",
             })?;
+
+        // Defense-in-depth: the dispatcher already routes by collector
+        // name, but a direct caller bypassing it could pass any
+        // `analysis_type`. Reject anything other than `BinaryHash` so we
+        // never echo a mislabeled payload back to the caller.
+        // `PathRejected` is used because its `kind()` maps to
+        // `TriggerErrorKind::InvalidRequest`, the closest wire-level
+        // semantic to "bad request".
+        if !matches!(request.analysis_type, AnalysisType::BinaryHash) {
+            return Err(TriggerHandleError::PathRejected {
+                reason: format!(
+                    "BinaryHasherCollector received unsupported analysis_type: {:?}",
+                    request.analysis_type
+                ),
+            });
+        }
 
         let (file, canonical) = self.authorize(raw_path)?;
 
@@ -823,30 +845,21 @@ fn map_auth_err(err: &AuthError) -> TriggerHandleError {
         AuthError::Io { .. } => TriggerHandleError::Unavailable {
             reason: format!("I/O error: {err}"),
         },
+        // macOS: bind-mount / volume swap since startup. The `kind()`
+        // mapping sends `Internal` over the wire; we intentionally use a
+        // generic message here that does NOT leak the affected root path
+        // (mount topology is sensitive) even though the local
+        // `TriggerHandleError::Internal` string is not currently exposed
+        // across the wire boundary.
+        #[cfg(target_os = "macos")]
+        AuthError::RootMountChanged { .. } => {
+            TriggerHandleError::Internal("allowed root mount changed since startup".to_owned())
+        }
         // Wildcard arm: catches any future AuthError variants added by
         // upstream. When new variants are introduced they will silently
         // route here as Internal — reviewers MUST add an explicit arm
         // above to give them the correct TriggerHandleError mapping.
         _ => TriggerHandleError::Internal(format!("auth error: {err}")),
-    }
-}
-
-/// Map a stdlib `io::Error` from a path operation into a wire-safe
-/// [`TriggerHandleError`]. `NotFound` and `PermissionDenied` both map to
-/// `Unavailable` to prevent file-existence oracles. The wildcard arm is
-/// required because `io::ErrorKind` is `#[non_exhaustive]` upstream.
-#[allow(
-    clippy::wildcard_enum_match_arm,
-    reason = "io::ErrorKind is #[non_exhaustive] upstream"
-)]
-fn map_path_io_err(op: &'static str, err: &std::io::Error) -> TriggerHandleError {
-    match err.kind() {
-        std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied => {
-            TriggerHandleError::Unavailable {
-                reason: format!("{op} failed: {err}"),
-            }
-        }
-        _ => TriggerHandleError::Internal(format!("{op} error: {err}")),
     }
 }
 
@@ -1103,6 +1116,26 @@ mod tests {
         let collector = make_collector(dir.path());
         let mut req = make_request("ignored");
         req.target_path = None;
+        let err = collector.handle_trigger(&req).await.unwrap_err();
+        assert_eq!(err.kind(), TriggerErrorKind::InvalidRequest);
+    }
+
+    // ── Defense-in-depth: analysis_type validation ──────────────────────
+
+    /// A direct caller bypassing the dispatcher must not be able to get
+    /// the collector to echo a mislabeled [`AnalysisResult`] by passing
+    /// a non-[`AnalysisType::BinaryHash`] value. The collector must
+    /// reject the request before doing any I/O or hashing.
+    #[tokio::test]
+    async fn handle_trigger_rejects_non_binary_hash_analysis_type() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("hello.bin");
+        fs::write(&file_path, b"hello binary hasher").unwrap();
+
+        let collector = make_collector(dir.path());
+        let mut req = make_request(file_path.to_string_lossy().into_owned());
+        req.analysis_type = AnalysisType::YaraScan;
+
         let err = collector.handle_trigger(&req).await.unwrap_err();
         assert_eq!(err.kind(), TriggerErrorKind::InvalidRequest);
     }
