@@ -519,6 +519,11 @@ mod tests {
         assert!(events.iter().all(|e| e.executable_hash.is_some()));
     }
 
+    // Uses Unix-style nonexistent paths that are NOT absolute on Windows,
+    // so `KernelResolvedExe::from_sysinfo_exe`'s `debug_assert!(is_absolute)`
+    // would fire at test time. The populate_hashes logic is platform-neutral;
+    // the production invariant is what differs.
+    #[cfg(unix)]
     #[tokio::test]
     async fn populate_hashes_missing_file_is_nonfatal() {
         let mut events = vec![
@@ -567,6 +572,9 @@ mod tests {
         assert!(events.get(1).is_some_and(|e| e.executable_hash.is_none()));
     }
 
+    // Mixes real (platform-neutral) temp files with a hardcoded Unix-style
+    // nonexistent path. Gated for the same reason as the other tests above.
+    #[cfg(unix)]
     #[tokio::test]
     async fn populate_hashes_mixed_success_and_failure() {
         // Two real files that will hash successfully, one nonexistent path
@@ -595,6 +603,9 @@ mod tests {
         );
     }
 
+    // Uses a hardcoded Unix-style nonexistent path. Gated for the same
+    // reason as the other tests above.
+    #[cfg(unix)]
     #[tokio::test]
     async fn populate_hashes_clears_stale_hashes_from_reused_events() {
         // Simulate a reused ProcessEvent carrying hash state from a prior
