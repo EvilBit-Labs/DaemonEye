@@ -21,6 +21,9 @@ pub mod macos_collector;
 #[cfg(target_os = "windows")]
 pub mod windows_collector;
 
+#[cfg(target_os = "freebsd")]
+pub mod freebsd_collector;
+
 pub use event_bus_connector::{
     BackpressureSignal, EventBusConnector, EventBusConnectorError, EventBusConnectorResult,
     ProcessEventType,
@@ -53,6 +56,9 @@ pub use macos_collector::{EnhancedMacOSCollector, MacOSCollectorConfig};
 
 #[cfg(target_os = "windows")]
 pub use windows_collector::{WindowsCollectorConfig, WindowsProcessCollector};
+
+#[cfg(target_os = "freebsd")]
+pub use freebsd_collector::{FreeBSDCollectorConfig, FreeBSDProcessCollector};
 
 // Re-export main functionality for testing
 pub use daemoneye_lib::proto::{

@@ -14,6 +14,9 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
 
+#[cfg(target_os = "freebsd")]
+use super::freebsd_collector::{FreeBSDCollectorConfig, FreeBSDProcessCollector};
+
 /// Errors that can occur during process collection.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -1214,8 +1217,14 @@ pub fn create_process_collector(config: ProcessCollectionConfig) -> Box<dyn Proc
             "Windows detected, using sysinfo collector (WindowsProcessCollector not yet implemented)"
         );
         Box::new(SysinfoProcessCollector::new(config))
+    } else if cfg!(target_os = "freebsd") {
+        // FreeBSD has a dedicated collector with platform-specific optimizations
+        debug!("FreeBSD detected, using FreeBSDProcessCollector");
+        Box::new(FreeBSDProcessCollector::new(
+            config,
+            FreeBSDCollectorConfig::default(),
+        ))
     } else if cfg!(any(
-        target_os = "freebsd",
         target_os = "openbsd",
         target_os = "netbsd",
         target_os = "dragonfly",
