@@ -418,7 +418,9 @@ impl ProcessCollector for FreeBSDProcessCollector {
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
             message: format!("Health check task failed: {e}"),
-        })?
+        })?;
+        health_result?;
+        Ok(())
     }
 }
 
