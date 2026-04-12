@@ -667,14 +667,34 @@ impl ProcessCollector for SysinfoProcessCollector {
 /// that don't have dedicated optimized implementations (FreeBSD, OpenBSD, NetBSD, etc.).
 /// It uses the sysinfo crate as the primary collection mechanism for maximum compatibility
 /// and implements graceful capability detection and feature availability reporting.
+///
+/// The `System` instance is kept alive across calls to improve performance and enable
+/// accurate CPU usage measurements (sysinfo requires two snapshots to compute deltas).
+///
+/// # Platform Support
+///
+/// This collector is primarily intended for:
+/// - OpenBSD, NetBSD, DragonFly BSD
+/// - Solaris, Illumos
+/// - AIX, Haiku
+/// - Other Unix-like systems without dedicated collectors
+///
+/// For Linux, macOS, Windows, and FreeBSD, use their respective specialized collectors
+/// via [`create_process_collector()`] instead.
 pub struct FallbackProcessCollector {
     config: ProcessCollectionConfig,
     platform_name: &'static str,
     detected_capabilities: ProcessCollectorCapabilities,
+    /// Reusable System instance for improved performance and accurate CPU measurements.
+    system: Arc<Mutex<System>>,
 }
 
 impl FallbackProcessCollector {
     /// Creates a new fallback process collector with platform detection.
+    ///
+    /// Initializes the `System` object once with `System::new_all()` so that the
+    /// first call to `collect_processes` already has a populated process table and
+    /// CPU usage deltas can be computed on subsequent calls.
     pub fn new(config: ProcessCollectionConfig) -> Self {
         let platform_name = Self::detect_platform();
         let detected_capabilities = Self::detect_capabilities(&config);
@@ -689,6 +709,7 @@ impl FallbackProcessCollector {
             config,
             platform_name,
             detected_capabilities,
+            system: Arc::new(Mutex::new(System::new_all())),
         }
     }
 
@@ -993,14 +1014,14 @@ impl ProcessCollector for FallbackProcessCollector {
             "Starting fallback process collection"
         );
 
-        // Perform process enumeration in a blocking task to avoid blocking the async runtime
-        let config = self.config.clone();
-        let platform_name = self.platform_name;
+        // Refresh the shared System in a blocking task to avoid blocking the async runtime.
+        let system_arc = Arc::clone(&self.system);
+        let collect_enhanced = self.detected_capabilities.enhanced_metadata;
         let enumeration_result = tokio::task::spawn_blocking(move || {
-            let mut system = System::new();
+            let mut system = system_arc.blocking_lock();
 
             // Try enhanced refresh first, fall back to basic if it fails
-            if config.collect_enhanced_metadata {
+            if collect_enhanced {
                 system.refresh_all();
             } else {
                 system.refresh_processes_specifics(
@@ -1012,79 +1033,88 @@ impl ProcessCollector for FallbackProcessCollector {
 
             if system.processes().is_empty() {
                 return Err(ProcessCollectionError::SystemEnumerationFailed {
-                    message: format!(
-                        "No processes found during enumeration on platform: {platform_name}"
-                    ),
+                    message: "No processes found during enumeration".to_owned(),
                 });
             }
 
-            Ok(system)
+            Ok(())
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
             message: format!("Process enumeration task failed: {e}"),
         })?;
 
-        let system = enumeration_result?;
+        enumeration_result?;
 
-        let mut events = Vec::new();
-        let mut stats = CollectionStats::default();
-        let mut processed_count: usize = 0;
+        // Lock to iterate — held only for the duration of the loop; no await points inside.
+        let (events, mut stats, processed_count) = {
+            let system = self.system.lock().await;
+            let mut inner_events = Vec::new();
+            let mut inner_stats = CollectionStats::default();
+            let mut inner_count: usize = 0;
 
-        // Process each process with individual error handling
-        for (pid, process) in system.processes() {
-            // Check if we've hit the maximum process limit
-            if self.config.max_processes > 0 && events.len() >= self.config.max_processes {
-                debug!(
-                    max_processes = self.config.max_processes,
-                    collected = events.len(),
-                    platform = self.platform_name,
-                    "Reached maximum process collection limit"
-                );
-                break;
-            }
-
-            processed_count = processed_count.saturating_add(1);
-            match self.convert_process_to_event(pid, process) {
-                Ok(event) => {
-                    events.push(event);
-                    stats.successful_collections = stats.successful_collections.saturating_add(1);
-                }
-                Err(ProcessCollectionError::ProcessAccessDenied {
-                    pid: denied_pid,
-                    message,
-                }) => {
+            // Process each process with individual error handling
+            for (pid, process) in system.processes() {
+                // Check if we've hit the maximum process limit
+                if self.config.max_processes > 0 && inner_events.len() >= self.config.max_processes {
                     debug!(
-                        pid = denied_pid,
-                        reason = %message,
+                        max_processes = self.config.max_processes,
+                        collected = inner_events.len(),
                         platform = self.platform_name,
-                        "Process access denied"
+                        "Reached maximum process collection limit"
                     );
-                    stats.inaccessible_processes = stats.inaccessible_processes.saturating_add(1);
+                    break;
                 }
-                Err(ProcessCollectionError::InvalidProcessData {
-                    pid: invalid_pid,
-                    message,
-                }) => {
-                    warn!(
-                        pid = invalid_pid,
-                        reason = %message,
-                        platform = self.platform_name,
-                        "Invalid process data"
-                    );
-                    stats.invalid_processes = stats.invalid_processes.saturating_add(1);
-                }
-                Err(e) => {
-                    error!(
-                        pid = pid.as_u32(),
-                        error = %e,
-                        platform = self.platform_name,
-                        "Unexpected error during process conversion"
-                    );
-                    stats.invalid_processes = stats.invalid_processes.saturating_add(1);
+
+                inner_count = inner_count.saturating_add(1);
+                match self.convert_process_to_event(pid, process) {
+                    Ok(event) => {
+                        inner_events.push(event);
+                        inner_stats.successful_collections =
+                            inner_stats.successful_collections.saturating_add(1);
+                    }
+                    Err(ProcessCollectionError::ProcessAccessDenied {
+                        pid: denied_pid,
+                        message,
+                    }) => {
+                        debug!(
+                            pid = denied_pid,
+                            reason = %message,
+                            platform = self.platform_name,
+                            "Process access denied"
+                        );
+                        inner_stats.inaccessible_processes =
+                            inner_stats.inaccessible_processes.saturating_add(1);
+                    }
+                    Err(ProcessCollectionError::InvalidProcessData {
+                        pid: invalid_pid,
+                        message,
+                    }) => {
+                        warn!(
+                            pid = invalid_pid,
+                            reason = %message,
+                            platform = self.platform_name,
+                            "Invalid process data"
+                        );
+                        inner_stats.invalid_processes =
+                            inner_stats.invalid_processes.saturating_add(1);
+                    }
+                    Err(e) => {
+                        error!(
+                            pid = pid.as_u32(),
+                            error = %e,
+                            platform = self.platform_name,
+                            "Unexpected error during process conversion"
+                        );
+                        inner_stats.invalid_processes =
+                            inner_stats.invalid_processes.saturating_add(1);
+                    }
                 }
             }
-        }
+            // Explicitly drop the lock guard before returning from the block.
+            drop(system);
+            (inner_events, inner_stats, inner_count)
+        };
 
         stats.total_processes = processed_count;
         stats.collection_duration_ms =
@@ -1112,12 +1142,13 @@ impl ProcessCollector for FallbackProcessCollector {
             "Collecting single process"
         );
 
-        // Perform single process lookup in a blocking task
-        let config = self.config.clone();
+        // Refresh only the requested PID using the shared System instance.
+        let system_arc = Arc::clone(&self.system);
+        let collect_enhanced = self.detected_capabilities.enhanced_metadata;
         let lookup_result = tokio::task::spawn_blocking(move || {
-            let mut system = System::new();
+            let mut system = system_arc.blocking_lock();
 
-            if config.collect_enhanced_metadata {
+            if collect_enhanced {
                 system.refresh_all();
             } else {
                 system.refresh_processes_specifics(
@@ -1129,7 +1160,7 @@ impl ProcessCollector for FallbackProcessCollector {
 
             let sysinfo_pid = Pid::from_u32(pid);
             if system.process(sysinfo_pid).is_some() {
-                Ok(system)
+                Ok(())
             } else {
                 Err(ProcessCollectionError::ProcessNotFound { pid })
             }
@@ -1139,12 +1170,39 @@ impl ProcessCollector for FallbackProcessCollector {
             message: format!("Single process lookup task failed: {e}"),
         })?;
 
-        let system = lookup_result?;
+        lookup_result?;
+
+        let system = self.system.lock().await;
         let sysinfo_pid = Pid::from_u32(pid);
-        system.process(sysinfo_pid).map_or(
-            Err(ProcessCollectionError::ProcessNotFound { pid }),
-            |process| self.convert_process_to_event(&sysinfo_pid, process),
-        )
+        system
+            .process(sysinfo_pid)
+            .map_or(
+                Err(ProcessCollectionError::ProcessNotFound { pid }),
+                |process| {
+                    let event = self.convert_process_to_event(&sysinfo_pid, process)?;
+
+                    // Apply skip policies to single process collection
+                    if self.config.skip_system_processes
+                        && self.is_system_process(&event.name, pid)
+                    {
+                        return Err(ProcessCollectionError::ProcessAccessDenied {
+                            pid,
+                            message: "System process skipped by configuration".to_owned(),
+                        });
+                    }
+
+                    if self.config.skip_kernel_threads
+                        && self.is_kernel_thread(&event.name, pid)
+                    {
+                        return Err(ProcessCollectionError::ProcessAccessDenied {
+                            pid,
+                            message: "Kernel thread skipped by configuration".to_owned(),
+                        });
+                    }
+
+                    Ok(event)
+                },
+            )
     }
 
     async fn health_check(&self) -> ProcessCollectionResult<()> {
@@ -1154,10 +1212,10 @@ impl ProcessCollector for FallbackProcessCollector {
             "Performing health check"
         );
 
-        // Perform a quick health check by trying to enumerate a few processes
-        let platform_name = self.platform_name;
+        // Perform a quick health check using the shared System instance.
+        let system_arc = Arc::clone(&self.system);
         let health_result = tokio::task::spawn_blocking(move || {
-            let mut system = System::new();
+            let mut system = system_arc.blocking_lock();
             system.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::All,
                 true,
@@ -1167,9 +1225,7 @@ impl ProcessCollector for FallbackProcessCollector {
             let process_count = system.processes().len();
             if process_count == 0 {
                 return Err(ProcessCollectionError::SystemEnumerationFailed {
-                    message: format!(
-                        "No processes found during health check on platform: {platform_name}"
-                    ),
+                    message: "No processes found during health check".to_owned(),
                 });
             }
 
@@ -1194,6 +1250,48 @@ impl ProcessCollector for FallbackProcessCollector {
 }
 
 /// Creates the appropriate process collector based on platform detection and configuration.
+///
+/// This function automatically detects the current operating system and returns
+/// the most appropriate process collector implementation. For platforms with
+/// dedicated collectors (Linux, macOS, Windows, FreeBSD), it returns specialized
+/// implementations with platform-specific optimizations. For other platforms,
+/// it returns a fallback collector that uses the sysinfo crate.
+///
+/// # Arguments
+///
+/// * `config` - Configuration options controlling collection behavior, filtering,
+///   and metadata collection preferences.
+///
+/// # Returns
+///
+/// Returns a `Box<dyn ProcessCollector>` that can be used for process enumeration.
+/// The caller owns the returned box and is responsible for its lifetime.
+///
+/// # Platform-Specific Behavior
+///
+/// - **Linux**: Uses `SysinfoProcessCollector` (Linux-specific collector planned for future)
+/// - **macOS**: Uses `SysinfoProcessCollector` (macOS-specific collector planned for future)
+/// - **Windows**: Uses `SysinfoProcessCollector` (Windows-specific collector planned for future)
+/// - **FreeBSD**: Uses `FreeBSDProcessCollector` with platform-specific sysctl/KVM access
+/// - **Other platforms**: Uses `FallbackProcessCollector` with generic sysinfo support
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use procmond::process_collector::{
+///     create_process_collector,
+///     ProcessCollectionConfig,
+/// };
+///
+/// # async fn example() {
+/// let config = ProcessCollectionConfig::default();
+/// let collector = create_process_collector(config);
+///
+/// // Use the collector for process enumeration
+/// let (events, stats) = collector.collect_processes().await.unwrap();
+/// println!("Collected {} processes", stats.successful_collections);
+/// # }
+/// ```
 pub fn create_process_collector(config: ProcessCollectionConfig) -> Box<dyn ProcessCollector> {
     // Platform detection and collector selection
     if cfg!(target_os = "linux") {
@@ -1219,11 +1317,16 @@ pub fn create_process_collector(config: ProcessCollectionConfig) -> Box<dyn Proc
         Box::new(SysinfoProcessCollector::new(config))
     } else if cfg!(target_os = "freebsd") {
         // FreeBSD has a dedicated collector with platform-specific optimizations
+        // Note: FreeBSDProcessCollector is only available when compiling for FreeBSD,
+        // so this branch is only compiled on FreeBSD targets via cfg!
         debug!("FreeBSD detected, using FreeBSDProcessCollector");
-        Box::new(FreeBSDProcessCollector::new(
-            config,
-            FreeBSDCollectorConfig::default(),
-        ))
+        #[cfg(target_os = "freebsd")]
+        {
+            Box::new(FreeBSDProcessCollector::new(
+                config,
+                FreeBSDCollectorConfig::default(),
+            ))
+        }
     } else if cfg!(any(
         target_os = "openbsd",
         target_os = "netbsd",

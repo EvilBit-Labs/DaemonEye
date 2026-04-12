@@ -7,9 +7,11 @@
 use async_trait::async_trait;
 use collector_core::ProcessEvent;
 use serde::Serialize;
+use std::sync::Arc;
 use std::time::SystemTime;
 use sysinfo::{Pid, Process, System};
 use thiserror::Error;
+use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 use crate::process_collector::{
@@ -64,12 +66,22 @@ impl Default for FreeBSDCollectorConfig {
 }
 
 /// FreeBSD-specific process collector using sysinfo with platform optimizations.
+///
+/// The `System` instance is kept alive across calls to improve performance and enable
+/// accurate CPU usage measurements (sysinfo requires two snapshots to compute deltas).
 pub struct FreeBSDProcessCollector {
     base_config: ProcessCollectionConfig,
     freebsd_config: FreeBSDCollectorConfig,
+    /// Reusable System instance for improved performance and accurate CPU measurements.
+    system: Arc<Mutex<System>>,
 }
 
 impl FreeBSDProcessCollector {
+    /// Creates a new FreeBSD-specific process collector with platform-specific optimizations.
+    ///
+    /// Initializes the `System` object once with `System::new_all()` so that the
+    /// first call to `collect_processes` already has a populated process table and
+    /// CPU usage deltas can be computed on subsequent calls.
     pub fn new(
         base_config: ProcessCollectionConfig,
         freebsd_config: FreeBSDCollectorConfig,
@@ -79,7 +91,11 @@ impl FreeBSDProcessCollector {
             detect_jails = freebsd_config.detect_jails,
             "Initialized FreeBSD process collector"
         );
-        Ok(Self { base_config, freebsd_config })
+        Ok(Self {
+            base_config,
+            freebsd_config,
+            system: Arc::new(Mutex::new(System::new_all())),
+        })
     }
 
     fn collect_freebsd_metadata(&self, pid: u32, process: &Process) -> FreeBSDProcessMetadata {
@@ -230,9 +246,11 @@ impl ProcessCollector for FreeBSDProcessCollector {
 
         debug!(collector = self.name(), "Starting FreeBSD process collection");
 
+        // Refresh the shared System in a blocking task to avoid blocking the async runtime.
+        let system_arc = Arc::clone(&self.system);
         let collect_enhanced = self.base_config.collect_enhanced_metadata;
         let enumeration_result = tokio::task::spawn_blocking(move || {
-            let mut system = System::new();
+            let mut system = system_arc.blocking_lock();
             system.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::All,
                 true,
@@ -246,44 +264,57 @@ impl ProcessCollector for FreeBSDProcessCollector {
                     message: "No processes found during enumeration on FreeBSD".to_owned(),
                 });
             }
-            Ok(system)
+            Ok(())
         })
         .await
         .map_err(|e| ProcessCollectionError::SystemEnumerationFailed {
             message: format!("Process enumeration task failed: {e}"),
         })?;
 
-        let system = enumeration_result?;
-        let mut events = Vec::new();
-        let mut stats = CollectionStats::default();
-        let mut processed_count: usize = 0;
+        enumeration_result?;
 
-        for (sysinfo_pid, process) in system.processes() {
-            let pid = sysinfo_pid.as_u32();
+        // Lock to iterate — held only for the duration of the loop; no await points inside.
+        let (events, mut stats, processed_count) = {
+            let system = self.system.lock().await;
+            let mut inner_events = Vec::new();
+            let mut inner_stats = CollectionStats::default();
+            let mut inner_count: usize = 0;
 
-            if self.base_config.max_processes > 0 && events.len() >= self.base_config.max_processes {
-                break;
+            for (sysinfo_pid, process) in system.processes() {
+                let pid = sysinfo_pid.as_u32();
+
+                if self.base_config.max_processes > 0
+                    && inner_events.len() >= self.base_config.max_processes
+                {
+                    break;
+                }
+
+                inner_count = inner_count.saturating_add(1);
+                let event = self.convert_sysinfo_to_event(pid, process);
+
+                // Apply skip policies: check before adding to results
+                let should_skip = if self.base_config.skip_system_processes
+                    && Self::is_system_process(&event.name, pid)
+                {
+                    true
+                } else {
+                    self.base_config.skip_kernel_threads
+                        && Self::is_kernel_thread(&event.name, &event.command_line)
+                };
+
+                if should_skip {
+                    inner_stats.inaccessible_processes =
+                        inner_stats.inaccessible_processes.saturating_add(1);
+                } else {
+                    inner_events.push(event);
+                    inner_stats.successful_collections =
+                        inner_stats.successful_collections.saturating_add(1);
+                }
             }
-
-            processed_count = processed_count.saturating_add(1);
-            let event = self.convert_sysinfo_to_event(pid, process);
-
-            let should_skip = if self.base_config.skip_system_processes
-                && Self::is_system_process(&event.name, pid)
-            {
-                true
-            } else {
-                self.base_config.skip_kernel_threads
-                    && Self::is_kernel_thread(&event.name, &event.command_line)
-            };
-
-            if should_skip {
-                stats.inaccessible_processes = stats.inaccessible_processes.saturating_add(1);
-            } else {
-                events.push(event);
-                stats.successful_collections = stats.successful_collections.saturating_add(1);
-            }
-        }
+            // Explicitly drop the lock guard before returning from the block.
+            drop(system);
+            (inner_events, inner_stats, inner_count)
+        };
 
         stats.total_processes = processed_count;
         stats.collection_duration_ms =
@@ -293,6 +324,7 @@ impl ProcessCollector for FreeBSDProcessCollector {
             collector = self.name(),
             total_processes = stats.total_processes,
             successful = stats.successful_collections,
+            inaccessible = stats.inaccessible_processes,
             duration_ms = stats.collection_duration_ms,
             "FreeBSD process collection completed"
         );
@@ -303,9 +335,11 @@ impl ProcessCollector for FreeBSDProcessCollector {
     async fn collect_process(&self, pid: u32) -> ProcessCollectionResult<ProcessEvent> {
         debug!(collector = self.name(), pid = pid, "Collecting single FreeBSD process");
 
+        // Refresh using the shared System instance.
+        let system_arc = Arc::clone(&self.system);
         let collect_enhanced = self.base_config.collect_enhanced_metadata;
         let lookup_result = tokio::task::spawn_blocking(move || {
-            let mut system = System::new();
+            let mut system = system_arc.blocking_lock();
             if collect_enhanced {
                 system.refresh_all();
             } else {
@@ -317,7 +351,7 @@ impl ProcessCollector for FreeBSDProcessCollector {
             }
             let sysinfo_pid = Pid::from_u32(pid);
             if system.process(sysinfo_pid).is_some() {
-                Ok(system)
+                Ok(())
             } else {
                 Err(ProcessCollectionError::ProcessNotFound { pid })
             }
@@ -327,21 +361,48 @@ impl ProcessCollector for FreeBSDProcessCollector {
             message: format!("Single process lookup task failed: {e}"),
         })?;
 
-        let system = lookup_result?;
+        lookup_result?;
+
+        let system = self.system.lock().await;
         let sysinfo_pid = Pid::from_u32(pid);
         system
             .process(sysinfo_pid)
             .map_or(
                 Err(ProcessCollectionError::ProcessNotFound { pid }),
-                |process| Ok(self.convert_sysinfo_to_event(pid, process)),
+                |process| {
+                    let event = self.convert_sysinfo_to_event(pid, process);
+
+                    // Apply skip policies to single process collection
+                    if self.base_config.skip_system_processes
+                        && Self::is_system_process(&event.name, pid)
+                    {
+                        return Err(ProcessCollectionError::ProcessAccessDenied {
+                            pid,
+                            message: "System process skipped by configuration".to_owned(),
+                        });
+                    }
+
+                    if self.base_config.skip_kernel_threads
+                        && Self::is_kernel_thread(&event.name, &event.command_line)
+                    {
+                        return Err(ProcessCollectionError::ProcessAccessDenied {
+                            pid,
+                            message: "Kernel thread skipped by configuration".to_owned(),
+                        });
+                    }
+
+                    Ok(event)
+                },
             )
     }
 
     async fn health_check(&self) -> ProcessCollectionResult<()> {
         debug!(collector = self.name(), "Performing FreeBSD health check");
 
-        tokio::task::spawn_blocking(|| {
-            let mut system = System::new();
+        // Perform health check using the shared System instance.
+        let system_arc = Arc::clone(&self.system);
+        let health_result = tokio::task::spawn_blocking(move || {
+            let mut system = system_arc.blocking_lock();
             system.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::All,
                 true,
