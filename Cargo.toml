@@ -110,7 +110,7 @@ prost-types = "0.14.3"
 # holds authoritative hash results so a silent upstream change here
 # could affect integrity decisions.
 quick_cache = "=0.6.21"
-rand = "0.10.0"
+rand = "0.10.1"
 
 # Database and storage
 redb = "4.0.0"
