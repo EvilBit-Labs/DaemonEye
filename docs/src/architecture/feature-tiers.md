@@ -44,7 +44,7 @@ DaemonEye is offered in three distinct tiers, each designed to meet different or
 
 ## Business Tier (Commercial)
 
-**License**: $199/site (one-time) **Target**: Small to medium teams, consultancies, managed security services
+**License**: Per-site license (TBD) **Target**: Small to medium teams, consultancies, managed security services
 
 ### All Core Tier Features Plus
 
@@ -112,7 +112,7 @@ DaemonEye is offered in three distinct tiers, each designed to meet different or
 
 ## Enterprise Tier (Commercial)
 
-**License**: $199/site (one-time) **Target**: Large enterprises, government agencies, critical infrastructure
+**License**: Custom pricing **Target**: Large enterprises, government agencies, critical infrastructure
 
 ### All Business Tier Features Plus
 
@@ -211,7 +211,7 @@ DaemonEye is offered in three distinct tiers, each designed to meet different or
 The DaemonEye project maintains a dual-license approach to balance open source accessibility with commercial sustainability:
 
 - **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
-- **Business Tier Features**: $199/site one-time license (Security Center, GUI, enhanced connectors, curated rules)
+- **Business Tier Features**: Per-site license, TBD (Security Center, GUI, enhanced connectors, curated rules)
 - **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
 
 ### **Feature Gating Implementation**
