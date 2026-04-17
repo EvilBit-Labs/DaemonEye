@@ -68,7 +68,7 @@ If you need help with DaemonEye:
 DaemonEye follows a dual-license strategy:
 
 - **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
-- **Business Tier Features**: $199/site one-time license (Security Center, GUI, enhanced connectors, curated rules)
+- **Business Tier Features**: Per-site license, TBD (Security Center, GUI, enhanced connectors, curated rules)
 - **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
 
 ---

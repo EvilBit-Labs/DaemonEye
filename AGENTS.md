@@ -1,8 +1,46 @@
 # DaemonEye Development Guide
 
-Operational commands and development workflows for **DaemonEye**.
+> *"We watch from the shadows — our eyes never close."*
 
-**Source of Truth**: Technical requirements in [.kiro/steering/](./kiro/steering/) and [.kiro/specs/](./kiro/specs/).
+## Mission
+
+DaemonEye is a **silent observability and hunt layer** for sensitive, restricted, and air-gapped environments. It turns endpoints into stealth honeypots: passive by default, surgically traceable on demand, and cryptographically auditable. Telemetry never leaves customer control unless explicitly exported by an operator.
+
+**This repository** contains the open-source Community tier — the agent-side foundation that all higher tiers build upon:
+
+- **procmond** — privileged process collector, audit ledger, binary hashing
+- **daemoneye-agent** — detection orchestrator, alert delivery, event bus
+- **daemoneye-cli** — operator query interface and rule management
+- **daemoneye-lib** — shared library (config, models, storage, detection, crypto)
+- **collector-core** — SDK for building new collectors in any language (see [ADR-0003])
+
+The Business and Enterprise tiers (separate codebases) add Security Center (SC), Proxy nodes (PX), GUI, federation, kernel telemetry, and compliance modules. The agent-side components in this repo are designed to participate in the full architecture — protobuf IPC contracts, capability negotiation, and store-and-forward patterns are built in from the start so the Community tier is not a stripped-down afterthought but the real foundation.
+
+### Core use-case: ShadowHunt
+
+The cornerstone scenario DaemonEye is built around:
+
+1. **Passive baseline** — procmond collects lightweight process metadata, parent/child relationships, and connection tuples into the local store (redb)
+2. **Heuristic trigger** — a detection rule (e.g., `Apache → bash spawn`) fires in the agent or Security Center
+3. **Silent trace** — a TraceCommand targets the root PID and descendants for focused tracing without host-visible artifacts
+4. **Focused capture** — fork/exec, cmdline snapshots, file metadata, socket events — all cryptographically signed
+5. **Cross-host stitching** — if a traced process connects to a remote host running DaemonEye, the trace fans out via shared trace_id
+6. **Analyst review** — lineage graphs, replayable timeline, forensic SQL queries, signed export packages
+7. **Manual action** — analysts decide containment or continued surveillance; DaemonEye avoids automated enforcement
+
+Every architectural decision in this repo — privilege separation, protobuf IPC, hash-chained audit ledger, SQL-based detection DSL, collector-core SDK — exists to serve this workflow.
+
+### Principles
+
+| Principle                | Description                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| **Customer sovereignty** | All telemetry owned by the customer; no automatic egress to external services |
+| **Silent observation**   | Default mode is passive; rules and traces generate no host-visible artifacts  |
+| **Auditable forensics**  | All events Ed25519-signed, recorded in write-only audit ledger                |
+| **Air-gap friendly**     | Fully functional offline; signed bundles for rule and update distribution     |
+| **Privacy defaults**     | Command args masked by default; RBAC for trace initiation                     |
+
+**Source of Truth**: Technical requirements in [.kiro/steering/](./kiro/steering/) and [.kiro/specs/](./kiro/specs/). Design origin: [ShadowHunt Concept] in Confluence (ES space).
 
 ---
 
@@ -66,9 +104,9 @@ Commit style: [.github/commit-instructions.md](.github/commit-instructions.md)
 
 ## Architecture Overview
 
-DaemonEye implements **three-component security architecture** with strict privilege separation:
+DaemonEye implements **three-component security architecture** with strict privilege separation. This repo contains the agent-side components (solid lines below); Security Center and Proxy nodes are separate codebases in paid tiers (dashed lines).
 
-### Components
+### Components (this repo)
 
 | Component           | Privileges                  | Network       | Database            | Function                     |
 | ------------------- | --------------------------- | ------------- | ------------------- | ---------------------------- |
@@ -76,25 +114,32 @@ DaemonEye implements **three-component security architecture** with strict privi
 | **daemoneye-agent** | Minimal                     | Outbound-only | Read/write (events) | Detection orchestrator       |
 | **daemoneye-cli**   | Minimal                     | None          | Read-only           | Operator CLI                 |
 | **daemoneye-lib**   | N/A                         | N/A           | N/A                 | Shared library               |
-| **collector-core**  | N/A                         | N/A           | N/A                 | Collector framework          |
+| **collector-core**  | N/A                         | N/A           | N/A                 | Collector SDK                |
 
-### Deployment Tiers
-
-- **Free**: Standalone (procmond + daemoneye-agent + daemoneye-cli)
-- **Business**: + Security Center + Enterprise integrations ($199/site)
-- **Enterprise**: + Kernel monitoring + Federated architecture + Advanced SIEM
+### Full deployment architecture
 
 ```mermaid
 flowchart LR
-    subgraph "Host System"
+    subgraph "Host (this repo)"
         P[procmond] -->|IPC protobuf| A[daemoneye-agent]
         A -->|reads/writes| DB1[(Event Store)]
         P -->|writes| DB2[(Audit Ledger)]
         C[daemoneye-cli] -->|reads| DB1 & DB2
     end
     A -->|outbound alerts| EXT[(Alert Sinks)]
-    A -.->|mTLS| SC[Security Center]
+    A -.->|mTLS events up| PX[Proxy Node]
+    PX -.->|mTLS batched| SC[Security Center]
+    SC -.->|TraceCommand down| PX
+    PX -.->|TraceCommand down| A
 ```
+
+### Deployment Tiers
+
+| Tier                      | Components                                   | Scope                                                                        |
+| ------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Community** (this repo) | procmond + daemoneye-agent + daemoneye-cli   | Standalone host monitoring, local detection, alert delivery                  |
+| **Business**              | + Security Center + Proxy nodes + GUI        | Fleet management, proxy tree (AG→PX→SC), curated rule packs, SIEM connectors |
+| **Enterprise**            | + Kernel telemetry + Federation + Compliance | eBPF/ETW/ESF collectors, multi-site federation, STIX/TAXII, SSO/LDAP         |
 
 ### Security Boundaries
 
@@ -575,3 +620,6 @@ When generating code:
 ## Agent Rules <!-- tessl-managed -->
 
 @.tessl/RULES.md follow the [instructions](.tessl/RULES.md)
+
+[adr-0003]: https://evilbitlabs.atlassian.net/wiki/spaces/ES/pages/5767187/ADR+0003+Polyglot+Collector+SDK+Strategy
+[shadowhunt concept]: https://evilbitlabs.atlassian.net/wiki/spaces/ES/pages/1802386/ShadowHunt+Concept
