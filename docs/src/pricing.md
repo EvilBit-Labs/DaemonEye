@@ -16,7 +16,7 @@ ProcMonD is the privileged process monitoring component of the DaemonEye package
 
 ## Free / Homelab
 
-**$0 — Always Free** For hackers, homelabbers, and operators who want clean visibility without SaaS strings.
+**Always Free** For hackers, homelabbers, and operators who want clean visibility without SaaS strings.
 
 - Full daemon (Rust core)
 - SQL rule engine (DIY + community rules)
@@ -31,14 +31,14 @@ _For the lab. For your side projects. For free, forever._
 
 ## Business
 
-**Flat License — $199/site** For small teams and consultancies who need more polish and integrations. One-time fee, no subscription.
+**Per-site license (TBD)** For small teams and consultancies who need more polish and integrations. One-time fee, no subscription.
 
 - Everything in Free
 - Curated **rule packs** (malware TTPs, suspicious parent/child, process hollowing)
 - Output connectors: Splunk HEC, Elastic, Kafka
 - Container / K8s DaemonSet deployment
 - Export to CEF, JSON, or STIX-lite
-- Optional GUI frontend ($19 per seat)
+- Optional GUI frontend (per-seat add-on, TBD)
 - Signed installers (MSI/DMG, ready to deploy)
 
 _Professional-grade monitoring you can actually run offline._
@@ -47,7 +47,7 @@ _Professional-grade monitoring you can actually run offline._
 
 ## Enterprise
 
-**Org License — Let's Talk** For SOCs, IR teams, and industrial/government environments where process visibility is non-negotiable. (Pricing starts in the low 4-figures, one-time license. Optional paid update packs.)
+**Org License — Let's Talk** For SOCs, IR teams, and industrial/government environments where process visibility is non-negotiable. (Custom pricing, one-time license. Optional paid update packs.)
 
 - Everything in Business
 - **eBPF integration** for kernel-level visibility

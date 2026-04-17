@@ -28,7 +28,7 @@ Detect and alert on suspicious system activity through continuous process monito
 - Local process monitoring and detection
 - Basic alerting and data export
 
-### Business Tier ($199/site)
+### Business Tier
 
 - **Security Center**: Centralized management and aggregation
 - **Enterprise Integrations**: Splunk, Elasticsearch, Kafka connectors

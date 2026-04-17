@@ -35,7 +35,7 @@ body:
           description: Which deployment tier would this feature belong to?
           options:
               - Free Tier (Core functionality)
-              - Business Tier ($199/site)
+              - Business Tier
               - Enterprise Tier (Custom pricing)
               - All Tiers
               - Not sure
