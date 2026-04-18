@@ -2614,9 +2614,9 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "unidirs"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a93c94ee9b12aeb67d6455e3c991df1da11b7037ac9814d7cb4efe671a803f0c"
+checksum = "7eff61b0db9834db688c174dde33450e6747999d9a14e44d77045838a81774ab"
 dependencies = [
  "camino",
  "directories",
