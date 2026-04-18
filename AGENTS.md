@@ -551,6 +551,16 @@ Files: `daemoneye-lib/src/storage.rs`, `procmond/src/collector.rs`, `benches/`
 - [ ] ACID guarantees maintained
 - [ ] Document characteristics
 
+### Open-Core Hygiene (any PR touching docs, specs, or AGENTS.md)
+
+DaemonEye is the Community tier of an open-core product. Content for commercial tiers lives in separate private codebases and Confluence — not here.
+
+- [ ] No paid-tier feature enumerations (Business/Enterprise specifics, Security Center internals, fleet-management details, STIX/TAXII, federation)
+- [ ] No internal-only URLs (private Confluence hyperlinks, Jira ticket IDs, internal Slack references, pricing specifics)
+- [ ] No references to deleted files (sweep for `pricing.md`, `feature-tiers.md`, `business-tier.md`, `enterprise-tier.md`, `product_strategy.md`, `spec/product.md`, `spec/procmond/`)
+- [ ] Boundary-acknowledgement footnotes preferred over erasure ("commercial tiers extend this foundation, sold separately, not in this repo")
+- [ ] **Never delete a repo doc without first verifying the Confluence copy fully matches** — see [docs/solutions/workflow-issues/open-core-hygiene-confluence-migration-2026-04-18.md](./docs/solutions/workflow-issues/open-core-hygiene-confluence-migration-2026-04-18.md) for the eight-phase workflow
+
 ---
 
 ## Code Generation Guidelines
