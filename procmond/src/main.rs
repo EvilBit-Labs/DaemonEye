@@ -23,6 +23,13 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
+/// Maximum time procmond waits for `BeginMonitoring` after subscribing
+/// to control topics before falling back to standalone collection.
+/// Chosen empirically: 60s is long enough for a slow agent boot on
+/// contested hardware, short enough that operators notice when the
+/// agent is genuinely unreachable (END-297 review REL-001 / ADV-004).
+const BEGIN_MONITORING_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Parse and validate the collection interval argument.
 ///
 /// Ensures the interval is within acceptable bounds (5-3600 seconds).
@@ -273,6 +280,7 @@ pub async fn main() -> anyhow::Result<()> {
 
         // Perform registration with daemoneye-agent
         info!("Registering with daemoneye-agent");
+        let mut registration_failed = false;
         match registration_manager.register().await {
             Ok(response) => {
                 info!(
@@ -283,12 +291,14 @@ pub async fn main() -> anyhow::Result<()> {
                 );
             }
             Err(e) => {
-                // Log warning but continue - procmond can operate without registration
-                // in standalone/development scenarios
+                // Log warning and force standalone mode - an unregistered collector
+                // won't receive an agent BeginMonitoring broadcast, so subscribe-then-wait
+                // would block forever (END-297 review COR-003).
                 warn!(
                     error = %e,
-                    "Registration failed, continuing in standalone mode"
+                    "Registration failed, forcing standalone mode"
                 );
+                registration_failed = true;
             }
         }
 
@@ -412,8 +422,9 @@ pub async fn main() -> anyhow::Result<()> {
         // `broadcast_begin_monitoring` is triggered by `transition_to_steady_state`
         // which happens after all expected collectors register; the heartbeat
         // task below re-asserts registration so a re-broadcast is also possible.
-        let standalone_mode =
-            cli.standalone || std::env::var("PROCMOND_STANDALONE").ok().as_deref() == Some("1");
+        let standalone_mode = cli.standalone
+            || std::env::var("PROCMOND_STANDALONE").ok().as_deref() == Some("1")
+            || registration_failed;
 
         // Build the set of control topics procmond must receive on:
         // - `control.collector.lifecycle`  : agent-broadcast BeginMonitoring
@@ -449,12 +460,26 @@ pub async fn main() -> anyhow::Result<()> {
             };
 
             match subscribe_result {
-                Ok((_events_rx, control_rx)) => {
-                    info!(
+                Ok((mut events_rx, control_rx)) => {
+                    // debug! (not info!): subscription topology with per-collector IDs
+                    // should stay out of default-level logs that may ship to less-trusted
+                    // SIEM pipelines (END-297 review SEC-004).
+                    debug!(
                         subscriber_id = %subscriber_id,
                         topics = ?control_topics,
                         "Subscribed to control topics; waiting for BeginMonitoring"
                     );
+                    info!("Subscribed to control topics; waiting for BeginMonitoring");
+                    // Drain task: subscribe_with_control returns (events_rx, control_rx)
+                    // but procmond only uses the control channel. Consume and discard
+                    // anything that arrives on events_rx so the channel doesn't backpressure
+                    // or produce warn! spam for closed-sender (END-297 review COR-001).
+                    tokio::spawn(async move {
+                        while events_rx.recv().await.is_some() {
+                            // Discard: procmond's subscription exists solely for control
+                            // delivery; event traffic on these topics is agent-owned.
+                        }
+                    });
                     control_rx_opt = Some(control_rx);
                 }
                 Err(sub_err) => {
@@ -483,21 +508,58 @@ pub async fn main() -> anyhow::Result<()> {
         let lifecycle_topic_task = lifecycle_topic.clone();
         let lifecycle_wait_task = control_rx_opt.map(|mut control_rx| {
             tokio::spawn(async move {
-                while let Some(msg) = control_rx.recv().await {
-                    if msg.topic == lifecycle_topic_task {
-                        info!(
-                            topic = %msg.topic,
-                            "Received lifecycle control message - transitioning to Running"
-                        );
-                        if let Err(e) = wait_actor_handle.begin_monitoring() {
-                            error!(
-                                error = %e,
-                                "Failed to send BeginMonitoring command after lifecycle signal"
+                loop {
+                    match tokio::time::timeout(
+                        BEGIN_MONITORING_WAIT_TIMEOUT,
+                        control_rx.recv(),
+                    )
+                    .await
+                    {
+                        Ok(Some(msg)) => {
+                            if msg.topic == lifecycle_topic_task {
+                                info!(
+                                    topic = %msg.topic,
+                                    "Received lifecycle control message - transitioning to Running"
+                                );
+                                if let Err(e) = wait_actor_handle.begin_monitoring() {
+                                    error!(
+                                        error = %e,
+                                        "Failed to send BeginMonitoring command after lifecycle signal"
+                                    );
+                                }
+                                return;
+                            }
+                            debug!(
+                                topic = %msg.topic,
+                                "Received non-lifecycle control message while waiting"
                             );
                         }
-                        break;
+                        Ok(None) => {
+                            error!(
+                                "Control channel closed before BeginMonitoring received - falling back to standalone collection"
+                            );
+                            if let Err(e) = wait_actor_handle.begin_monitoring() {
+                                error!(
+                                    error = %e,
+                                    "Failed to send BeginMonitoring command after channel-closed fallback"
+                                );
+                            }
+                            return;
+                        }
+                        Err(_elapsed) => {
+                            error!(
+                                timeout_secs = BEGIN_MONITORING_WAIT_TIMEOUT.as_secs(),
+                                "Timed out waiting for BeginMonitoring - falling back to standalone collection"
+                            );
+                            if let Err(e) = wait_actor_handle.begin_monitoring() {
+                                error!(
+                                    error = %e,
+                                    "Failed to send BeginMonitoring command after timeout fallback"
+                                );
+                            }
+                            return;
+                        }
                     }
-                    debug!(topic = %msg.topic, "Received non-lifecycle control message while waiting");
                 }
             })
         });

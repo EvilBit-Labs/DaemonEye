@@ -51,7 +51,7 @@ use tokio::runtime::Runtime;
 ///
 /// This threshold is machine-checked by [`latency_p99_slo`]. Changing it requires
 /// updating the ticket and the acceptance-evidence artifact.
-/// Ticket: END-297 <https://evilbitlabs.atlassian.net/browse/END-297>
+/// Ticket: END-297
 const LATENCY_P99_SLO: Duration = Duration::from_millis(1);
 
 /// Number of warmup iterations discarded before p99 measurement begins.
@@ -366,7 +366,13 @@ fn latency_p99_slo(c: &mut Criterion) {
         // For N=10k samples this is O(N log N) ~ negligible vs. the measured
         // round-trips themselves.
         samples.sort_unstable();
-        let p99_index = (samples.len() * 99) / 100;
+        // Nearest-rank p99: for 0-indexed samples, the p99 boundary is at
+        // index ceil(N * 0.99) - 1. For N=10000 this is 9899 (the 9900th element).
+        let p99_index = samples
+            .len()
+            .saturating_mul(99)
+            .div_ceil(100)
+            .saturating_sub(1);
         let p99_nanos = samples.get(p99_index).copied().unwrap();
         let p99 = Duration::from_nanos(p99_nanos);
 

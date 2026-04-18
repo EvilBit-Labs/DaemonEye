@@ -222,8 +222,7 @@ impl EventBusClient {
                                                     .await
                                                     {
                                                         debug!(
-                                                            "Error delivering control message for client {}: {}",
-                                                            client_id, e
+                                                            "Error delivering control message for client {client_id}: {e}"
                                                         );
                                                     }
                                                 }
@@ -545,9 +544,11 @@ impl EventBusClient {
         let sub_count = self.subscriptions.read().await.len();
         self.stats.lock().await.active_subscriptions = sub_count;
 
-        info!(
-            "Subscribed (control={}) to patterns: {:?} (subscription: {})",
-            include_control, patterns, subscription_id
+        // debug! (not info!): subscription topology including per-collector IDs
+        // should not appear in default-level logs that may ship to less-trusted
+        // SIEM pipelines (END-297 review SEC-004).
+        debug!(
+            "Subscribed (control={include_control}) to patterns: {patterns:?} (subscription: {subscription_id})"
         );
         Ok((event_rx, control_rx))
     }
@@ -636,12 +637,8 @@ impl EventBusClient {
 
         for (subscription_id, subscription_info) in subscriptions_guard.iter() {
             // Check if any pattern matches the topic
-            let matches = subscription_info.patterns.iter().any(|pattern| {
-                TopicPattern::new(pattern).is_ok_and(|topic_pattern| {
-                    Topic::new(&message.topic)
-                        .is_ok_and(|topic_obj| topic_pattern.matches(&topic_obj))
-                })
-            });
+            let matches =
+                Self::subscription_matches_topic(&subscription_info.patterns, &message.topic);
 
             if matches {
                 let mut event_copy = bus_event.clone();
@@ -676,6 +673,17 @@ impl EventBusClient {
 
         debug!("Delivered message to {} subscriptions", delivered_count);
         Ok(())
+    }
+
+    /// Return true when any of the subscription's topic patterns matches the
+    /// given topic string. Parsing errors on either side yield a non-match
+    /// (failing closed) rather than panicking.
+    fn subscription_matches_topic(patterns: &[String], topic: &str) -> bool {
+        patterns.iter().any(|pattern| {
+            TopicPattern::new(pattern).is_ok_and(|topic_pattern| {
+                Topic::new(topic).is_ok_and(|topic_obj| topic_pattern.matches(&topic_obj))
+            })
+        })
     }
 
     /// Handle event messages
@@ -729,14 +737,7 @@ impl EventBusClient {
             };
 
             // Match the incoming topic against the subscriber's patterns.
-            let matches = subscription_info.patterns.iter().any(|pattern| {
-                TopicPattern::new(pattern).is_ok_and(|topic_pattern| {
-                    Topic::new(&message.topic)
-                        .is_ok_and(|topic_obj| topic_pattern.matches(&topic_obj))
-                })
-            });
-
-            if !matches {
+            if !Self::subscription_matches_topic(&subscription_info.patterns, &message.topic) {
                 continue;
             }
 
@@ -746,24 +747,19 @@ impl EventBusClient {
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                     warn!(
-                        "Subscription {} control queue full, control message dropped",
-                        subscription_id
+                        "Subscription {subscription_id} control queue full, control message dropped"
                     );
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     warn!(
-                        "Subscription {} control channel closed; control message not delivered",
-                        subscription_id
+                        "Subscription {subscription_id} control channel closed; control message not delivered"
                     );
                 }
             }
         }
         drop(subscriptions_guard);
 
-        debug!(
-            "Delivered control message to {} subscriptions",
-            delivered_count
-        );
+        debug!("Delivered control message to {delivered_count} subscriptions");
         Ok(())
     }
 
@@ -1006,15 +1002,16 @@ mod tests {
     fn make_subscription_info(
         patterns: Vec<String>,
         control_sender: Option<mpsc::Sender<Message>>,
-    ) -> SubscriptionInfo {
-        let (event_tx, _event_rx) = mpsc::channel::<BusEvent>(1000);
-        SubscriptionInfo {
+    ) -> (SubscriptionInfo, mpsc::Receiver<BusEvent>) {
+        let (event_tx, event_rx) = mpsc::channel::<BusEvent>(1000);
+        let info = SubscriptionInfo {
             patterns,
             sender: event_tx,
             control_sender,
             created_at: Instant::now(),
             last_message: None,
-        }
+        };
+        (info, event_rx)
     }
 
     /// Happy path (Unit 1): A subscriber that opts into Control delivery
@@ -1027,7 +1024,7 @@ mod tests {
 
         // Set up a subscriber that opted in to Control delivery.
         let (control_tx, mut control_rx) = mpsc::channel::<Message>(10);
-        let info = make_subscription_info(
+        let (info, _event_rx) = make_subscription_info(
             vec!["control.collector.lifecycle".to_string()],
             Some(control_tx),
         );
@@ -1063,7 +1060,8 @@ mod tests {
             Arc::new(RwLock::new(HashMap::new()));
 
         // Set up a subscriber with NO control_sender (legacy default).
-        let info = make_subscription_info(vec!["control.collector.lifecycle".to_string()], None);
+        let (info, mut event_rx) =
+            make_subscription_info(vec!["control.collector.lifecycle".to_string()], None);
         subscriptions
             .write()
             .await
@@ -1080,6 +1078,19 @@ mod tests {
         EventBusClient::handle_control_message_internal(&subscriptions, &message, "test-client")
             .await
             .expect("handler tolerates legacy subscribers");
+
+        // Strengthened assertion (END-297 review T-004): verify the Control
+        // envelope did not leak onto the Event channel. `try_recv` returning
+        // `TryRecvError::Empty` confirms the channel is open but no message
+        // was delivered — a bug that routed Control to the event path would
+        // have produced `TryRecvError::Full` semantics (message received).
+        assert!(
+            matches!(
+                event_rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ),
+            "Control message must not leak onto the Event channel for opt-out subscribers"
+        );
     }
 
     /// Edge case (Unit 1): A Control message on a topic that does not match
@@ -1092,7 +1103,8 @@ mod tests {
 
         // Subscriber opts in but only for a DIFFERENT topic pattern.
         let (control_tx, mut control_rx) = mpsc::channel::<Message>(10);
-        let info = make_subscription_info(vec!["events.process.+".to_string()], Some(control_tx));
+        let (info, _event_rx) =
+            make_subscription_info(vec!["events.process.+".to_string()], Some(control_tx));
         subscriptions
             .write()
             .await
@@ -1126,7 +1138,8 @@ mod tests {
             Arc::new(RwLock::new(HashMap::new()));
 
         let (control_tx, mut control_rx) = mpsc::channel::<Message>(10);
-        let info = make_subscription_info(vec!["events.process.+".to_string()], Some(control_tx));
+        let (info, _event_rx) =
+            make_subscription_info(vec!["events.process.+".to_string()], Some(control_tx));
         subscriptions
             .write()
             .await
