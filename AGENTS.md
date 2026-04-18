@@ -92,11 +92,12 @@ Commit style: [.github/commit-instructions.md](.github/commit-instructions.md)
 6. **Testing Required**: All code changes must include appropriate tests.
 7. **Linter Restrictions**: Never remove clippy restrictions or `deny` attributes.
 8. **File Size Limit**: Keep source files under 500-600 lines when possible.
+9. **AI Disclosure**: Always disclose AI usage in PR descriptions, following the AI Usage Policy [AI Usage Policy](AI_POLICY.md). Be transparent, but brief — no need to list every prompt, just the tools used (e.g., "Used Claude Code (`Claude Opus 4.7 (1M Context)`) for initial draft of detection engine refactor. All code reviewed and tested.").
 
 ### Rule Precedence
 
-1. Project Rules (.cursor/rules/, AGENTS.md, GEMINI.md)
-2. Steering Documents (.kiro/steering/)
+1. Project Rules (AGENTS.md)
+2. Steering Documents (specs/, .kiro/steering/)
 3. Technical Specifications (.kiro/specs/)
 4. Embedded defaults
 
