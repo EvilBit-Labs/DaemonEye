@@ -1028,10 +1028,63 @@ impl EventBusConnector {
             correlation_filter: None,
             topic_patterns: Some(topic_patterns),
             enable_wildcards: true,
+            include_control: false,
         };
 
         client
             .subscribe(subscription)
+            .await
+            .map_err(|e| EventBusConnectorError::EventBus(e.to_string()))
+    }
+
+    /// Subscribe to topic patterns on the broker with opt-in Control delivery.
+    ///
+    /// Returns a `(event_rx, control_rx)` tuple of parallel receivers.
+    /// `control_rx` carries raw [`daemoneye_eventbus::Message`] envelopes for
+    /// `MessageType::Control` messages on matching topics — used by procmond
+    /// to receive lifecycle signals (`BeginMonitoring`) and per-collector RPC
+    /// requests from the agent.
+    ///
+    /// See [`EventSubscription::include_control`](daemoneye_eventbus::EventSubscription::include_control)
+    /// for the wire-level semantics.
+    ///
+    /// # Arguments
+    ///
+    /// * `subscriber_id` - Unique identifier for this subscription
+    /// * `topic_patterns` - Topic patterns to subscribe to (supports wildcards)
+    ///
+    /// # Errors
+    ///
+    /// - `EventBusConnectorError::Connection` if not connected
+    /// - `EventBusConnectorError::EventBus` if subscription fails
+    pub async fn subscribe_with_control(
+        &self,
+        subscriber_id: &str,
+        topic_patterns: Vec<String>,
+    ) -> EventBusConnectorResult<(
+        tokio::sync::mpsc::Receiver<daemoneye_eventbus::BusEvent>,
+        tokio::sync::mpsc::Receiver<daemoneye_eventbus::Message>,
+    )> {
+        let client = self.client.as_ref().ok_or_else(|| {
+            EventBusConnectorError::Connection("Not connected to broker".to_owned())
+        })?;
+
+        let subscription = daemoneye_eventbus::EventSubscription {
+            subscriber_id: subscriber_id.to_owned(),
+            capabilities: daemoneye_eventbus::SourceCaps {
+                event_types: vec!["control".to_owned()],
+                collectors: vec![],
+                max_priority: 0,
+            },
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(topic_patterns),
+            enable_wildcards: true,
+            include_control: true,
+        };
+
+        client
+            .subscribe_with_control(subscription)
             .await
             .map_err(|e| EventBusConnectorError::EventBus(e.to_string()))
     }

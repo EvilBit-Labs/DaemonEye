@@ -117,7 +117,7 @@ For complete topic hierarchy documentation, see [docs/topic-hierarchy.md](docs/t
 - **Message Throughput**: 10,000+ messages per second
 - **Connection Overhead**: Minimal with connection pooling
 - **Memory Usage**: Bounded with configurable limits
-- **Latency**: Sub-millisecond for local IPC
+- **Latency**: \<1ms p99 for local IPC, asserted by a dedicated criterion bench in `benches/ipc_performance.rs`
 
 ## Cross-Platform Support
 

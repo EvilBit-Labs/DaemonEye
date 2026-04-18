@@ -451,6 +451,11 @@ impl DaemoneyeEventBus {
             }),
             topic_patterns: subscription.topic_patterns.clone(),
             enable_wildcards: subscription.enable_wildcards,
+            // collector-core subscriptions do not opt into Control delivery —
+            // this bridge layer only wires Event subscriptions into the
+            // daemoneye-eventbus `subscribe()` API. See END-297 for the
+            // opt-in path via `subscribe_with_control`.
+            include_control: false,
         }
     }
 

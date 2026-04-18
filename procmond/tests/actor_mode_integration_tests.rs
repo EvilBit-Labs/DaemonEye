@@ -410,6 +410,34 @@ async fn test_heartbeat_skipped_when_not_registered() {
 }
 
 /// Verifies that RegistrationManager and RpcServiceHandler share the same EventBusConnector.
+/// Error path (Unit 1 / END-297): `subscribe_with_control` fails with a
+/// connection error when the EventBusConnector is not connected to a broker.
+/// This is the path procmond uses in main.rs to detect unreachable brokers
+/// and fall back to the standalone escape hatch rather than silently
+/// starting collection without coordination.
+#[tokio::test]
+async fn test_subscribe_with_control_fails_when_not_connected() {
+    let (connector, _temp_dir) = create_isolated_connector().await;
+
+    // Connector is created but never connected — simulates broker unreachable.
+    let result = connector
+        .subscribe_with_control(
+            "procmond-test",
+            vec!["control.collector.lifecycle".to_string()],
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "subscribe_with_control must return an error when not connected to a broker"
+    );
+    let err_msg = result.err().unwrap().to_string();
+    assert!(
+        err_msg.contains("Not connected") || err_msg.contains("Connection"),
+        "Error message should signal a connection problem (got: {err_msg})"
+    );
+}
+
 #[tokio::test]
 async fn test_shared_event_bus_between_components() {
     let (actor_handle, _rx) = create_test_actor();

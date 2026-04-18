@@ -145,6 +145,7 @@ async fn test_event_subscription() {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.process.*".to_string()]),
         enable_wildcards: true,
+        include_control: false,
     };
 
     // Subscribe
@@ -247,5 +248,55 @@ async fn test_statistics_tracking() {
     assert!(
         updated_stats.uptime_seconds < 10,
         "Uptime should be reasonable for a short test"
+    );
+}
+
+/// Unit 1 / END-297: Verify `EventSubscription::include_control` threads
+/// through to the serialized form (postcard round-trip preserves the field).
+///
+/// This guards against a later `#[serde(default)]` regression that would
+/// silently drop the flag on the wire and break control delivery.
+#[tokio::test]
+async fn test_event_subscription_serialization_preserves_include_control() {
+    // Build subscription with include_control=true.
+    let sub = EventSubscription {
+        subscriber_id: "round-trip".to_string(),
+        capabilities: SourceCaps {
+            event_types: vec!["control".to_string()],
+            collectors: vec![],
+            max_priority: 0,
+        },
+        event_filter: None,
+        correlation_filter: None,
+        topic_patterns: Some(vec!["control.collector.lifecycle".to_string()]),
+        enable_wildcards: true,
+        include_control: true,
+    };
+
+    let encoded = postcard::to_allocvec(&sub).expect("encode subscription");
+    let decoded: EventSubscription = postcard::from_bytes(&encoded).expect("decode subscription");
+    assert!(
+        decoded.include_control,
+        "include_control=true must survive postcard round-trip"
+    );
+
+    // And the legacy default path.
+    let legacy = EventSubscription {
+        include_control: false,
+        ..sub.clone()
+    };
+    let encoded2 = postcard::to_allocvec(&legacy).expect("encode");
+    let decoded2: EventSubscription = postcard::from_bytes(&encoded2).expect("decode");
+    assert!(!decoded2.include_control);
+}
+
+/// Unit 1 / END-297: `EventSubscription::default()` produces a legacy-safe
+/// subscription that does NOT opt into Control delivery.
+#[test]
+fn test_event_subscription_default_does_not_opt_into_control() {
+    let sub = EventSubscription::default();
+    assert!(
+        !sub.include_control,
+        "Default EventSubscription must remain legacy (Event-only) to preserve compatibility"
     );
 }

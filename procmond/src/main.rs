@@ -73,6 +73,10 @@ struct Cli {
     /// Enable executable hashing
     #[arg(long)]
     compute_hashes: bool,
+
+    /// Start monitoring immediately without waiting for an agent `BeginMonitoring` signal (also: `PROCMOND_STANDALONE=1`)
+    #[arg(long)]
+    standalone: bool,
 }
 
 #[tokio::main]
@@ -394,22 +398,109 @@ pub async fn main() -> anyhow::Result<()> {
             }
         });
 
-        // Begin monitoring immediately on startup.
+        // Subscribe-then-wait flow: subscribe to the lifecycle control topic
+        // and wait for the agent's BeginMonitoring signal before transitioning
+        // to Running state. Falls back to immediate-start if the `--standalone`
+        // CLI flag is set, the `PROCMOND_STANDALONE=1` environment variable is
+        // set, or if the subscription to the broker fails.
         //
-        // The collector does not wait for an explicit "begin monitoring" command
-        // from the agent. This makes procmond usable in isolation and in test
-        // environments without requiring the full agent/broker stack.
-        //
-        // TODO: Once daemoneye-eventbus supports control message subscriptions
-        // (MessageType::Control delivery to subscribers), add a control transport
-        // task here that subscribes to `control.collector.lifecycle` for
-        // BeginMonitoring signals and `control.collector.procmond` for RPC
-        // requests (HealthCheck, UpdateConfig, etc.). The current EventBusClient
-        // subscription mechanism only delivers MessageType::Event, not Control.
-        info!("Starting collection immediately on startup");
-        if let Err(e) = actor_handle.begin_monitoring() {
-            error!(error = %e, "Failed to send BeginMonitoring command");
+        // Registration-ordering note (ADR referenced in END-297 evidence):
+        // subscribe AFTER registration succeeds but BEFORE we signal the agent
+        // that we are ready via the next heartbeat — the subscription must be
+        // active when the agent broadcasts BeginMonitoring, otherwise the
+        // message is lost (eventbus README: at-most-once delivery). The agent's
+        // `broadcast_begin_monitoring` is triggered by `transition_to_steady_state`
+        // which happens after all expected collectors register; the heartbeat
+        // task below re-asserts registration so a re-broadcast is also possible.
+        let standalone_mode =
+            cli.standalone || std::env::var("PROCMOND_STANDALONE").ok().as_deref() == Some("1");
+
+        // Build the set of control topics procmond must receive on:
+        // - `control.collector.lifecycle`  : agent-broadcast BeginMonitoring
+        // - `control.collector.{id}`       : per-collector RPC requests
+        //   (e.g. HealthCheck, UpdateConfig) — handled by RpcServiceHandler
+        let lifecycle_topic = "control.collector.lifecycle".to_owned();
+        let collector_control_topic =
+            format!("control.collector.{}", registration_manager.collector_id());
+        let control_topics = vec![lifecycle_topic.clone(), collector_control_topic.clone()];
+
+        let mut control_rx_opt: Option<tokio::sync::mpsc::Receiver<daemoneye_eventbus::Message>> =
+            None;
+
+        if standalone_mode {
+            info!(
+                standalone = true,
+                "Standalone escape hatch active - starting collection immediately without waiting for agent"
+            );
+            if let Err(e) = actor_handle.begin_monitoring() {
+                error!(error = %e, "Failed to send BeginMonitoring command");
+            }
+        } else {
+            // Subscribe to control topics. If the broker is unreachable, log
+            // loudly and fall back to standalone so we never silently start
+            // collecting without coordination (see END-297 plan,
+            // "System-Wide Impact -> Error propagation").
+            let subscriber_id = format!("procmond-{}", registration_manager.collector_id());
+            let subscribe_result = {
+                let bus_guard = event_bus.read().await;
+                bus_guard
+                    .subscribe_with_control(&subscriber_id, control_topics.clone())
+                    .await
+            };
+
+            match subscribe_result {
+                Ok((_events_rx, control_rx)) => {
+                    info!(
+                        subscriber_id = %subscriber_id,
+                        topics = ?control_topics,
+                        "Subscribed to control topics; waiting for BeginMonitoring"
+                    );
+                    control_rx_opt = Some(control_rx);
+                }
+                Err(sub_err) => {
+                    warn!(
+                        error = %sub_err,
+                        topics = ?control_topics,
+                        "Failed to subscribe to control topics - falling back to standalone escape hatch"
+                    );
+                    // Loud fallback: start monitoring immediately, but record
+                    // the reason so operators see it in logs.
+                    if let Err(bm_err) = actor_handle.begin_monitoring() {
+                        error!(error = %bm_err, "Failed to send BeginMonitoring command after fallback");
+                    }
+                }
+            }
         }
+
+        // Spawn the lifecycle wait task (only if we have a control receiver).
+        // It waits for any control message on `control.collector.lifecycle`
+        // — any message on that topic is interpreted as BeginMonitoring for
+        // now (the current agent broadcasts a single BeginMonitoring JSON
+        // payload). Future message types on this topic should be filtered
+        // by inspecting the payload, which is intentionally left permissive
+        // here for forward compatibility.
+        let wait_actor_handle = actor_handle.clone();
+        let lifecycle_topic_task = lifecycle_topic.clone();
+        let lifecycle_wait_task = control_rx_opt.map(|mut control_rx| {
+            tokio::spawn(async move {
+                while let Some(msg) = control_rx.recv().await {
+                    if msg.topic == lifecycle_topic_task {
+                        info!(
+                            topic = %msg.topic,
+                            "Received lifecycle control message - transitioning to Running"
+                        );
+                        if let Err(e) = wait_actor_handle.begin_monitoring() {
+                            error!(
+                                error = %e,
+                                "Failed to send BeginMonitoring command after lifecycle signal"
+                            );
+                        }
+                        break;
+                    }
+                    debug!(topic = %msg.topic, "Received non-lifecycle control message while waiting");
+                }
+            })
+        });
 
         // Keep RPC service reference alive for future control transport integration
         let _rpc_service = rpc_service;
@@ -470,6 +561,13 @@ pub async fn main() -> anyhow::Result<()> {
         // Clean up heartbeat task
         heartbeat_task.abort();
         info!("Heartbeat task aborted");
+
+        // Clean up lifecycle wait task (if it is still running — e.g. shutdown
+        // fired before BeginMonitoring arrived).
+        if let Some(wait_task) = lifecycle_wait_task {
+            wait_task.abort();
+            info!("Lifecycle wait task aborted");
+        }
 
         // Wait for event consumer to exit naturally (channel sender is dropped)
         // Use a timeout to avoid hanging indefinitely

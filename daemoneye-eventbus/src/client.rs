@@ -49,6 +49,14 @@ struct SubscriptionInfo {
     patterns: Vec<String>,
     /// Event sender (bounded for backpressure)
     sender: mpsc::Sender<BusEvent>,
+    /// Optional control-message sender (bounded for backpressure)
+    ///
+    /// Populated when the subscription was created via
+    /// [`EventBusClient::subscribe_with_control`] with
+    /// [`EventSubscription::include_control`] set to `true`.
+    /// `None` preserves legacy behavior — Control messages are dropped
+    /// at the client-side filter and never surface to the subscriber.
+    control_sender: Option<mpsc::Sender<Message>>,
     /// Subscription timestamp (for future metrics)
     #[allow(dead_code)]
     created_at: Instant,
@@ -203,6 +211,21 @@ impl EventBusClient {
                                                     sg.messages_received = sg.messages_received.saturating_add(1);
                                                     drop(sg);
                                                     debug!("Received control message for client: {}", client_id);
+                                                    // Deliver to opted-in subscribers.
+                                                    // Ignore errors — delivery is best-effort and
+                                                    // legacy subscribers simply do not opt in.
+                                                    if let Err(e) = Self::handle_control_message_internal(
+                                                        &subscriptions,
+                                                        &message,
+                                                        &client_id,
+                                                    )
+                                                    .await
+                                                    {
+                                                        debug!(
+                                                            "Error delivering control message for client {}: {}",
+                                                            client_id, e
+                                                        );
+                                                    }
                                                 }
                                                 crate::message::MessageType::Heartbeat => {
                                                     // Update statistics for heartbeat messages
@@ -415,6 +438,11 @@ impl EventBusClient {
     }
 
     /// Subscribe to topic patterns with backpressure support
+    ///
+    /// Delivers only [`MessageType::Event`] envelopes. To also receive
+    /// [`MessageType::Control`] envelopes use
+    /// [`subscribe_with_control`](Self::subscribe_with_control) with
+    /// [`EventSubscription::include_control`] set to `true`.
     pub async fn subscribe(
         &self,
         subscription: EventSubscription,
@@ -436,6 +464,7 @@ impl EventBusClient {
         let subscription_info = SubscriptionInfo {
             patterns: patterns.clone(),
             sender: tx,
+            control_sender: None,
             created_at: Instant::now(),
             last_message: None,
         };
@@ -454,6 +483,73 @@ impl EventBusClient {
             patterns, subscription_id
         );
         Ok(rx)
+    }
+
+    /// Subscribe to topic patterns and opt into [`MessageType::Control`] delivery.
+    ///
+    /// Returns a tuple `(event_rx, control_rx)` of parallel bounded receivers:
+    /// - `event_rx` carries [`BusEvent`] envelopes decoded from `MessageType::Event`
+    ///   messages, matching the default behavior of [`subscribe`](Self::subscribe).
+    /// - `control_rx` carries raw [`Message`] envelopes for `MessageType::Control`
+    ///   messages whose topic matches one of the subscription's topic patterns.
+    ///
+    /// If [`EventSubscription::include_control`] is `false`, the returned
+    /// `control_rx` is closed immediately and receives no messages — callers
+    /// who do not opt in should use [`subscribe`](Self::subscribe) instead.
+    ///
+    /// Both receivers use bounded 1000-slot channels for backpressure. Full
+    /// channels drop messages with a `warn!` log rather than blocking the
+    /// background message-processing task.
+    pub async fn subscribe_with_control(
+        &self,
+        subscription: EventSubscription,
+    ) -> Result<(mpsc::Receiver<BusEvent>, mpsc::Receiver<Message>)> {
+        let subscription_id = subscription.subscriber_id.clone();
+        let patterns = subscription.topic_patterns.clone().unwrap_or_default();
+        let include_control = subscription.include_control;
+
+        // Validate topic patterns
+        for pattern in &patterns {
+            TopicPattern::new(pattern).map_err(|e| {
+                EventBusError::topic(format!("Invalid topic pattern '{pattern}': {e}"))
+            })?;
+        }
+
+        // Create bounded channels for backpressure (default: 1000 messages)
+        let (event_tx, event_rx) = mpsc::channel(1000);
+        let (control_tx, control_rx) = mpsc::channel(1000);
+
+        // Store subscription info
+        let subscription_info = SubscriptionInfo {
+            patterns: patterns.clone(),
+            sender: event_tx,
+            control_sender: if include_control {
+                Some(control_tx)
+            } else {
+                // Drop the control sender so the paired receiver closes
+                // immediately — legacy callers that did not opt in observe
+                // exactly the same behavior as `subscribe()`.
+                drop(control_tx);
+                None
+            },
+            created_at: Instant::now(),
+            last_message: None,
+        };
+
+        self.subscriptions
+            .write()
+            .await
+            .insert(subscription_id.clone(), subscription_info);
+
+        // Update statistics
+        let sub_count = self.subscriptions.read().await.len();
+        self.stats.lock().await.active_subscriptions = sub_count;
+
+        info!(
+            "Subscribed (control={}) to patterns: {:?} (subscription: {})",
+            include_control, patterns, subscription_id
+        );
+        Ok((event_rx, control_rx))
     }
 
     /// Unsubscribe from topics
@@ -593,11 +689,81 @@ impl EventBusClient {
         .await
     }
 
-    /// Handle control messages
-    #[allow(clippy::unused_async)]
+    /// Handle control messages (synchronous entry point).
+    ///
+    /// Delegates to [`handle_control_message_internal`](Self::handle_control_message_internal)
+    /// so the background task and public entry points share delivery logic.
     async fn handle_control_message(&self, message: Message) -> Result<()> {
         debug!("Received control message: {}", message.topic);
-        // Control message handling can be extended as needed
+        Self::handle_control_message_internal(&self.subscriptions, &message, &self.client_id).await
+    }
+
+    /// Deliver a [`MessageType::Control`] message to matching opted-in
+    /// subscribers via their control channel.
+    ///
+    /// Subscriptions with `control_sender = None` are skipped — that is the
+    /// legacy path where Control messages are silently dropped to preserve
+    /// source compatibility for callers that only use [`subscribe`](Self::subscribe).
+    ///
+    /// A full control channel logs a `warn!` and drops the message rather
+    /// than blocking the background receive task. A closed control channel
+    /// is logged at `warn!` and the stale subscription is not auto-removed
+    /// here (unsubscribe is the caller's responsibility).
+    async fn handle_control_message_internal(
+        subscriptions: &Arc<RwLock<HashMap<String, SubscriptionInfo>>>,
+        message: &Message,
+        _client_id: &str,
+    ) -> Result<()> {
+        // Guard: only deliver Control envelopes through this path.
+        if message.message_type != MessageType::Control {
+            return Ok(());
+        }
+
+        let subscriptions_guard = subscriptions.read().await;
+        let mut delivered_count = 0_usize;
+
+        for (subscription_id, subscription_info) in subscriptions_guard.iter() {
+            // Skip subscribers that did not opt into Control delivery.
+            let Some(ref control_sender) = subscription_info.control_sender else {
+                continue;
+            };
+
+            // Match the incoming topic against the subscriber's patterns.
+            let matches = subscription_info.patterns.iter().any(|pattern| {
+                TopicPattern::new(pattern).is_ok_and(|topic_pattern| {
+                    Topic::new(&message.topic)
+                        .is_ok_and(|topic_obj| topic_pattern.matches(&topic_obj))
+                })
+            });
+
+            if !matches {
+                continue;
+            }
+
+            match control_sender.try_send(message.clone()) {
+                Ok(()) => {
+                    delivered_count = delivered_count.saturating_add(1);
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    warn!(
+                        "Subscription {} control queue full, control message dropped",
+                        subscription_id
+                    );
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    warn!(
+                        "Subscription {} control channel closed; control message not delivered",
+                        subscription_id
+                    );
+                }
+            }
+        }
+        drop(subscriptions_guard);
+
+        debug!(
+            "Delivered control message to {} subscriptions",
+            delivered_count
+        );
         Ok(())
     }
 
@@ -826,9 +992,288 @@ mod tests {
             correlation_filter: None,
             topic_patterns: Some(vec!["events.#.invalid".to_string()]),
             enable_wildcards: true,
+            include_control: false,
         };
 
         let result = client.subscribe(subscription).await;
         assert!(result.is_err());
+    }
+
+    /// Build a `SubscriptionInfo` with the given topic patterns and optional
+    /// control sender. Used by the control-delivery unit tests below to
+    /// exercise `handle_control_message_internal` without wiring a full
+    /// transport stack.
+    fn make_subscription_info(
+        patterns: Vec<String>,
+        control_sender: Option<mpsc::Sender<Message>>,
+    ) -> SubscriptionInfo {
+        let (event_tx, _event_rx) = mpsc::channel::<BusEvent>(1000);
+        SubscriptionInfo {
+            patterns,
+            sender: event_tx,
+            control_sender,
+            created_at: Instant::now(),
+            last_message: None,
+        }
+    }
+
+    /// Happy path (Unit 1): A subscriber that opts into Control delivery
+    /// receives Control messages on matching topics with correlation metadata
+    /// intact.
+    #[tokio::test]
+    async fn test_control_message_delivered_when_opted_in() {
+        let subscriptions: Arc<RwLock<HashMap<String, SubscriptionInfo>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        // Set up a subscriber that opted in to Control delivery.
+        let (control_tx, mut control_rx) = mpsc::channel::<Message>(10);
+        let info = make_subscription_info(
+            vec!["control.collector.lifecycle".to_string()],
+            Some(control_tx),
+        );
+        subscriptions
+            .write()
+            .await
+            .insert("test-sub".to_string(), info);
+
+        // Build a Control message on the subscribed topic with known correlation.
+        let message = Message::control(
+            "control.collector.lifecycle".to_string(),
+            "corr-xyz".to_string(),
+            b"{\"type\":\"BeginMonitoring\"}".to_vec(),
+            42,
+        );
+
+        EventBusClient::handle_control_message_internal(&subscriptions, &message, "test-client")
+            .await
+            .expect("delivery should succeed");
+
+        let delivered = control_rx.recv().await.expect("should receive control msg");
+        assert_eq!(delivered.topic, "control.collector.lifecycle");
+        assert_eq!(delivered.correlation_metadata.correlation_id, "corr-xyz");
+        assert_eq!(delivered.message_type, MessageType::Control);
+    }
+
+    /// Edge case (Unit 1): A subscriber that did NOT opt into Control delivery
+    /// does not receive Control messages. Legacy Event-only subscribers are
+    /// unaffected by the new field.
+    #[tokio::test]
+    async fn test_control_message_not_delivered_when_not_opted_in() {
+        let subscriptions: Arc<RwLock<HashMap<String, SubscriptionInfo>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        // Set up a subscriber with NO control_sender (legacy default).
+        let info = make_subscription_info(vec!["control.collector.lifecycle".to_string()], None);
+        subscriptions
+            .write()
+            .await
+            .insert("legacy-sub".to_string(), info);
+
+        let message = Message::control(
+            "control.collector.lifecycle".to_string(),
+            "corr-legacy".to_string(),
+            Vec::new(),
+            7,
+        );
+
+        // Should not error; legacy subscriber is simply skipped.
+        EventBusClient::handle_control_message_internal(&subscriptions, &message, "test-client")
+            .await
+            .expect("handler tolerates legacy subscribers");
+    }
+
+    /// Edge case (Unit 1): A Control message on a topic that does not match
+    /// the subscriber's patterns is not delivered even if the subscriber
+    /// opted into Control delivery.
+    #[tokio::test]
+    async fn test_control_message_topic_filter_still_applies_when_opted_in() {
+        let subscriptions: Arc<RwLock<HashMap<String, SubscriptionInfo>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        // Subscriber opts in but only for a DIFFERENT topic pattern.
+        let (control_tx, mut control_rx) = mpsc::channel::<Message>(10);
+        let info = make_subscription_info(vec!["events.process.+".to_string()], Some(control_tx));
+        subscriptions
+            .write()
+            .await
+            .insert("events-only-sub".to_string(), info);
+
+        // Publish a Control message on a non-matching topic.
+        let message = Message::control(
+            "control.collector.lifecycle".to_string(),
+            "corr-noisy".to_string(),
+            Vec::new(),
+            5,
+        );
+
+        EventBusClient::handle_control_message_internal(&subscriptions, &message, "test-client")
+            .await
+            .unwrap();
+
+        // Receiver should have nothing — the topic filter gated the delivery.
+        assert!(
+            control_rx.try_recv().is_err(),
+            "control msg on unrelated topic must not leak through topic filter"
+        );
+    }
+
+    /// Edge case (Unit 1): `handle_control_message_internal` is a no-op for
+    /// Event-type messages. This guards against future refactors that might
+    /// accidentally duplicate Event delivery via the control path.
+    #[tokio::test]
+    async fn test_control_handler_ignores_event_messages() {
+        let subscriptions: Arc<RwLock<HashMap<String, SubscriptionInfo>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let (control_tx, mut control_rx) = mpsc::channel::<Message>(10);
+        let info = make_subscription_info(vec!["events.process.+".to_string()], Some(control_tx));
+        subscriptions
+            .write()
+            .await
+            .insert("guard-sub".to_string(), info);
+
+        // Event-typed message — should NEVER flow through control channel.
+        let message = Message::event(
+            "events.process.new".to_string(),
+            "corr-event".to_string(),
+            Vec::new(),
+            1,
+        );
+
+        EventBusClient::handle_control_message_internal(&subscriptions, &message, "test-client")
+            .await
+            .unwrap();
+
+        assert!(
+            control_rx.try_recv().is_err(),
+            "control handler must not forward Event-type messages"
+        );
+    }
+
+    /// Integration-style (Unit 1): `subscribe_with_control` wires the
+    /// returned `control_rx` to the per-subscription `control_sender` so the
+    /// background task's delivery path reaches it.
+    #[tokio::test]
+    async fn test_subscribe_with_control_round_trip_when_opted_in() {
+        let temp_dir = tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-control-opt-in.sock");
+        let socket_config = SocketConfig {
+            unix_path: socket_path.to_string_lossy().to_string(),
+            windows_pipe: socket_path.to_string_lossy().to_string(),
+            connection_limit: 100,
+            #[cfg(target_os = "freebsd")]
+            freebsd_path: None,
+            auth_token: None,
+            per_client_byte_limit: 10 * 1024 * 1024,
+            rate_limit_config: None,
+            correlation_config: None,
+        };
+
+        let _server = TransportServer::new(socket_config.clone()).await.unwrap();
+
+        let client = EventBusClient::new(
+            "test-client".to_string(),
+            socket_config,
+            ClientConfig::default(),
+        )
+        .await
+        .unwrap();
+
+        let subscription = EventSubscription {
+            subscriber_id: "opt-in-sub".to_string(),
+            capabilities: crate::message::SourceCaps::default(),
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(vec!["control.collector.lifecycle".to_string()]),
+            enable_wildcards: true,
+            include_control: true,
+        };
+
+        let (_events_rx, mut control_rx) = client
+            .subscribe_with_control(subscription)
+            .await
+            .expect("subscribe_with_control should succeed");
+
+        // Simulate an inbound Control message by directly invoking the
+        // same entry point the background task uses.
+        let message = Message::control(
+            "control.collector.lifecycle".to_string(),
+            "round-trip-corr".to_string(),
+            b"BeginMonitoring".to_vec(),
+            99,
+        );
+        client.handle_control_message(message).await.unwrap();
+
+        let delivered = control_rx.recv().await.expect("should receive msg");
+        assert_eq!(
+            delivered.correlation_metadata.correlation_id,
+            "round-trip-corr"
+        );
+    }
+
+    /// Integration-style (Unit 1): `subscribe_with_control` with
+    /// `include_control=false` returns a closed control receiver and never
+    /// delivers Control messages — matches the behavior of `subscribe()`.
+    #[tokio::test]
+    async fn test_subscribe_with_control_closed_channel_when_not_opted_in() {
+        let temp_dir = tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test-control-legacy.sock");
+        let socket_config = SocketConfig {
+            unix_path: socket_path.to_string_lossy().to_string(),
+            windows_pipe: socket_path.to_string_lossy().to_string(),
+            connection_limit: 100,
+            #[cfg(target_os = "freebsd")]
+            freebsd_path: None,
+            auth_token: None,
+            per_client_byte_limit: 10 * 1024 * 1024,
+            rate_limit_config: None,
+            correlation_config: None,
+        };
+
+        let _server = TransportServer::new(socket_config.clone()).await.unwrap();
+
+        let client = EventBusClient::new(
+            "test-client".to_string(),
+            socket_config,
+            ClientConfig::default(),
+        )
+        .await
+        .unwrap();
+
+        let subscription = EventSubscription {
+            subscriber_id: "no-opt-sub".to_string(),
+            capabilities: crate::message::SourceCaps::default(),
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(vec!["control.collector.lifecycle".to_string()]),
+            enable_wildcards: true,
+            include_control: false,
+        };
+
+        let (_events_rx, mut control_rx) = client
+            .subscribe_with_control(subscription)
+            .await
+            .expect("subscribe_with_control should still succeed for legacy");
+
+        // Fire a control message — should NOT land on the channel.
+        let message = Message::control(
+            "control.collector.lifecycle".to_string(),
+            "legacy-corr".to_string(),
+            Vec::new(),
+            1,
+        );
+        client.handle_control_message(message).await.unwrap();
+
+        // The channel should be closed (paired sender was dropped in
+        // subscribe_with_control because include_control=false) — so any
+        // recv() after the drop returns None promptly.
+        assert!(
+            matches!(
+                control_rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected
+                    | tokio::sync::mpsc::error::TryRecvError::Empty)
+            ),
+            "control channel should be closed or empty for non-opted-in subscriber"
+        );
     }
 }

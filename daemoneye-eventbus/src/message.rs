@@ -589,7 +589,25 @@ pub struct TriggerRequest {
 }
 
 /// Event subscription configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// A subscription declares which topics a consumer wants to receive messages
+/// on. By default, only [`MessageType::Event`] envelopes are delivered to the
+/// subscriber's channel — legacy behavior that keeps typed `CollectionEvent`
+/// consumers free of RPC/lifecycle noise.
+///
+/// To receive [`MessageType::Control`] envelopes (lifecycle commands such as
+/// `BeginMonitoring`, per-collector RPC requests, etc.) set
+/// [`include_control`](Self::include_control) to `true` AND call
+/// [`EventBusClient::subscribe_with_control`](crate::EventBusClient::subscribe_with_control),
+/// which returns a parallel [`tokio::sync::mpsc::Receiver`] of raw
+/// [`Message`] envelopes. The legacy [`EventBusClient::subscribe`](crate::EventBusClient::subscribe)
+/// method never delivers Control messages, preserving source- and
+/// behavior-compatibility for existing subscribers.
+///
+/// `include_control` defaults to `false` so existing call sites remain
+/// source-compatible; new callers should use struct-update syntax with
+/// [`Default`] to pick up future fields without churn.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventSubscription {
     /// Unique identifier for the subscriber
     pub subscriber_id: String,
@@ -603,10 +621,20 @@ pub struct EventSubscription {
     pub topic_patterns: Option<Vec<String>>,
     /// Enable wildcarding support for topic patterns
     pub enable_wildcards: bool,
+    /// Opt into delivery of [`MessageType::Control`] envelopes on matching topics.
+    ///
+    /// When `false` (default) Control messages are silently dropped by the
+    /// client so legacy event-only consumers keep their current behavior.
+    /// When `true`, the subscribed topic patterns are tracked for Control
+    /// delivery and callers should use
+    /// [`EventBusClient::subscribe_with_control`](crate::EventBusClient::subscribe_with_control)
+    /// to obtain the parallel Control receiver.
+    #[serde(default)]
+    pub include_control: bool,
 }
 
 /// Source capabilities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceCaps {
     /// Supported event types
     pub event_types: Vec<String>,

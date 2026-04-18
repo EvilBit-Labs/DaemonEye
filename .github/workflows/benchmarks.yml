@@ -114,3 +114,41 @@ jobs:
                   name: load-test-results
                   path: load-test-output.txt
                   retention-days: 30
+
+    # END-297 acceptance-criterion gate: local-IPC round-trip p99 latency < 1ms.
+    # See daemoneye-eventbus/benches/ipc_performance.rs::latency_p99_slo.
+    # Gated on Linux and macOS only; Windows and FreeBSD are informational per
+    # the END-297 plan (Key Technical Decisions) and the AGENTS.md OS support
+    # matrix.
+    eventbus-latency-slo:
+        strategy:
+            fail-fast: false
+            matrix:
+                os:
+                    - ubuntu-latest
+                    - macos-latest
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+              with:
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Run END-297 latency p99 SLO bench (<1ms)
+              # Filter anchored with ^...$ so it matches only the SLO bench ID
+              # and not the pre-existing `latency/*` bench IDs in the same file.
+              run: |
+                  set -o pipefail
+                  mise x -- cargo bench --package daemoneye-eventbus --bench ipc_performance -- '^latency_p99_slo$' 2>&1 | tee eventbus-latency-slo.txt
+
+            - name: Upload latency SLO results
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              if: always()
+              with:
+                  name: eventbus-latency-slo-${{ matrix.os }}
+                  path: eventbus-latency-slo.txt
+                  retention-days: 30
