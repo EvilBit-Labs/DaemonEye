@@ -27,7 +27,6 @@ DaemonEye uses a multi-container architecture:
 - **procmond**: Privileged process monitoring daemon
 - **daemoneye-agent**: User-space orchestrator and alerting
 - **daemoneye-cli**: Command-line interface and management
-- **Security Center**: Web-based management interface (Business/Enterprise tiers)
 
 ## Container Images
 
@@ -51,10 +50,6 @@ docker pull daemoneye/daemoneye-agent:1.0.0
 # CLI interface
 docker pull daemoneye/daemoneye-cli:latest
 docker pull daemoneye/daemoneye-cli:1.0.0
-
-# Security Center (Business/Enterprise)
-docker pull daemoneye/security-center:latest
-docker pull daemoneye/security-center:1.0.0
 ```
 
 **Planned Image Tags**:

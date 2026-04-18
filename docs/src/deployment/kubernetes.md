@@ -25,7 +25,6 @@ DaemonEye is designed to run efficiently on Kubernetes, providing:
 - **procmond**: DaemonSet for process monitoring on each node
 - **daemoneye-agent**: Deployment for alerting and orchestration
 - **daemoneye-cli**: Job/CronJob for management tasks
-- **Security Center**: Deployment for web-based management (Business/Enterprise)
 
 ## Prerequisites
 

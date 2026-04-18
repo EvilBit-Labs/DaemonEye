@@ -16,18 +16,6 @@ The core monitoring system provides real-time process monitoring and threat dete
 
 [Read Core Monitoring Documentation →](./technical/core-monitoring.md)
 
-## Business Tier Features
-
-Business tier features extend the core monitoring with additional capabilities including the Security Center, enhanced integrations, and curated rule packs.
-
-[Read Business Tier Documentation →](./technical/business-tier.md)
-
-## Enterprise Tier Features
-
-Enterprise tier features provide advanced monitoring capabilities including kernel monitoring, network event monitoring, and federated security center architecture.
-
-[Read Enterprise Tier Documentation →](./technical/enterprise-tier.md)
-
 ## Platform-Specific Process Collectors
 
 DaemonEye provides platform-specific process collectors that leverage native operating system capabilities for enhanced monitoring and security analysis.

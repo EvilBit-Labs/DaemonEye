@@ -48,12 +48,6 @@ This guide provides comprehensive installation instructions for DaemonEye across
 - Disk: 10GB+ free space
 - Network: Stable internet connection
 
-**Enhanced Features** (Enterprise Tier):
-
-- Linux: Kernel 4.7+ for eBPF support
-- Windows: Windows 7+ for ETW support
-- macOS: 10.15+ for EndpointSecurity support
-
 ## Installation Methods
 
 ### Method 1: Pre-built Binaries (Recommended)
