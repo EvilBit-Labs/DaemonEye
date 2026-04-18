@@ -84,7 +84,7 @@ Commit style: [.github/commit-instructions.md](.github/commit-instructions.md)
 
 ### Behavior Guidelines
 
-1. **No Auto-Commits**: Never commit without explicit permission. Always present diffs for approval.
+1. **No Merging**: Never merge without a passing CI check and code review approval on a PR. This must be performed by a human maintainer, not an AI assistant.
 2. **Security-First**: All changes must maintain least privilege and undergo security review.
 3. **Zero-Warnings Policy**: `cargo clippy -- -D warnings` with no exceptions.
 4. **Operator-Centric**: Prioritize workflows efficient in contested/airgapped environments.
