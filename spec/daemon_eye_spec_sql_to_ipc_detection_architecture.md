@@ -1264,7 +1264,7 @@ This approach maintains full SQLite dialect compatibility while adding DaemonEye
 
 ## 9) Storage & Execution Model
 
-> **Superseded by [ADR-0006 — Detection Query Execution (redb + DataFusion)](https://evilbitlabs.atlassian.net/wiki/spaces/ES/pages/7733260) (2026-04-17).**
+> **Superseded by ADR-0006 — Detection Query Execution (redb + DataFusion) (2026-04-17).**
 >
 > The "custom operator pipeline" direction in §9.2 is retained below for historical context and for its redb schema / indexing guidance (§11.6–11.7), which remains authoritative. However, Phase 2 SQL execution is no longer a hand-rolled operator pipeline — it is Apache DataFusion layered over redb via per-collector `TableProvider` implementations. See ADR-0006 for rationale, alternatives considered (sled, GlueSQL, Turso, rusqlite/duckdb, Polars), and the compile-time contract between the dialect lowering stage and DataFusion-compatible SQL.
 >
