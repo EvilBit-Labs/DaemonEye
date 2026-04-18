@@ -584,9 +584,9 @@ When generating code:
 | Architecture        | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                             |
 | Technology          | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                                       |
 | Product             | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                                 |
-| Core Requirements   | [.kiro/specs/DaemonEye-core-monitoring/requirements.md](./.kiro/specs/DaemonEye-core-monitoring/requirements.md)         |
-| Business Features   | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md)               |
-| Enterprise Features | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md)           |
+| Core Requirements   | [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md)         |
+| Business Features   | _spec pending_                                                                                                           |
+| Enterprise Features | _spec pending_                                                                                                           |
 | Development         | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                         |
 | SQL-to-IPC Pipeline | [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](./spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md) |
 
