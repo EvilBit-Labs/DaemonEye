@@ -145,9 +145,8 @@ DaemonEye implements a **three-component security architecture** with strict pri
 #### Multi-Channel Alerting
 
 - **Local Outputs**: stdout, syslog, file output
-- **Network Outputs**: webhooks, email, Kafka
-- **SIEM Integration**: Splunk HEC, Elasticsearch, CEF format
-- **Enterprise Integration**: STIX/TAXII feeds, federated Security Centers
+- **Network Outputs**: webhooks, email
+- **SIEM Integration**: CEF format for alert forwarding
 
 #### Certificate Transparency Audit Logging
 
@@ -218,9 +217,8 @@ DaemonEye implements a **three-component security architecture** with strict pri
 ### **Scalability**
 
 - **Single Agent**: Monitor 10,000+ processes with minimal overhead
-- **Fleet Management**: Support for 1,000+ agents per Security Center
-- **Regional Centers**: Aggregate data from multiple regional deployments
-- **Enterprise Federation**: Hierarchical data aggregation and query distribution
+
+Fleet-level aggregation and federation are commercial-tier concerns, handled outside this repo.
 
 ## Security Principles
 

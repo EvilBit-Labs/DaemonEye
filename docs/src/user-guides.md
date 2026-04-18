@@ -442,18 +442,13 @@ integrations:
     cef:
       enabled: true
       output_file: /var/log/daemoneye/cef.log
-      cef_version: "1.0"
-      device_vendor: "DaemonEye"
-      device_product: "Process Monitor"
+      cef_version: '1.0'
+      device_vendor: DaemonEye
+      device_product: Process Monitor
 
-# STIX Export
-integrations:
-  export:
-    stix:
-      enabled: true
-      output_file: /var/log/daemoneye/stix.json
-      stix_version: "2.1"
 ```
+
+Additional export formats (STIX/TAXII and others) are available in commercial tiers.
 
 ### Performance Tuning
 
