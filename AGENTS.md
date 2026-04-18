@@ -12,16 +12,16 @@ DaemonEye is a **silent observability and hunt layer** for sensitive, restricted
 - **daemoneye-agent** — detection orchestrator, alert delivery, event bus
 - **daemoneye-cli** — operator query interface and rule management
 - **daemoneye-lib** — shared library (config, models, storage, detection, crypto)
-- **collector-core** — SDK for building new collectors in any language (see [ADR-0003])
+- **collector-core** — SDK for building new collectors in any language
 
-The Business and Enterprise tiers (separate codebases) add Security Center (SC), Proxy nodes (PX), GUI, federation, kernel telemetry, and compliance modules. The agent-side components in this repo are designed to participate in the full architecture — protobuf IPC contracts, capability negotiation, and store-and-forward patterns are built in from the start so the Community tier is not a stripped-down afterthought but the real foundation.
+DaemonEye also ships in higher commercial tiers (sold separately, not in this repo). The Community tier is designed to participate in that larger architecture — protobuf IPC contracts, capability negotiation, and store-and-forward patterns are built in from the start so this repo is the real foundation, not a stripped-down afterthought. See evilbitlabs.io for commercial details.
 
 ### Core use-case: ShadowHunt
 
 The cornerstone scenario DaemonEye is built around:
 
 1. **Passive baseline** — procmond collects lightweight process metadata, parent/child relationships, and connection tuples into the local store (redb)
-2. **Heuristic trigger** — a detection rule (e.g., `Apache → bash spawn`) fires in the agent or Security Center
+2. **Heuristic trigger** — a detection rule (e.g., `Apache → bash spawn`) fires in the agent
 3. **Silent trace** — a TraceCommand targets the root PID and descendants for focused tracing without host-visible artifacts
 4. **Focused capture** — fork/exec, cmdline snapshots, file metadata, socket events — all cryptographically signed
 5. **Cross-host stitching** — if a traced process connects to a remote host running DaemonEye, the trace fans out via shared trace_id
@@ -40,7 +40,7 @@ Every architectural decision in this repo — privilege separation, protobuf IPC
 | **Air-gap friendly**     | Fully functional offline; signed bundles for rule and update distribution     |
 | **Privacy defaults**     | Command args masked by default; RBAC for trace initiation                     |
 
-**Source of Truth**: Technical requirements in [.kiro/steering/](./kiro/steering/) and [.kiro/specs/](./kiro/specs/). Design origin: [ShadowHunt Concept] in Confluence (ES space).
+**Source of Truth**: Technical requirements for the Community tier live in `spec/` and `.kiro/specs/daemoneye-core-monitoring/`. Higher-tier designs are maintained privately and are not part of this repo.
 
 ---
 
@@ -92,11 +92,12 @@ Commit style: [.github/commit-instructions.md](.github/commit-instructions.md)
 6. **Testing Required**: All code changes must include appropriate tests.
 7. **Linter Restrictions**: Never remove clippy restrictions or `deny` attributes.
 8. **File Size Limit**: Keep source files under 500-600 lines when possible.
+9. **AI Disclosure**: Always disclose AI usage in PR descriptions, following the AI Usage Policy [AI Usage Policy](AI_POLICY.md). Be transparent, but brief — no need to list every prompt, just the tools used (e.g., "Used Claude Code (`Claude Opus 4.7 (1M Context)`) for initial draft of detection engine refactor. All code reviewed and tested.").
 
 ### Rule Precedence
 
-1. Project Rules (.cursor/rules/, AGENTS.md, GEMINI.md)
-2. Steering Documents (.kiro/steering/)
+1. Project Rules (AGENTS.md)
+2. Steering Documents (specs/, .kiro/steering/)
 3. Technical Specifications (.kiro/specs/)
 4. Embedded defaults
 
@@ -104,7 +105,7 @@ Commit style: [.github/commit-instructions.md](.github/commit-instructions.md)
 
 ## Architecture Overview
 
-DaemonEye implements **three-component security architecture** with strict privilege separation. This repo contains the agent-side components (solid lines below); Security Center and Proxy nodes are separate codebases in paid tiers (dashed lines).
+DaemonEye implements a **three-component security architecture** with strict privilege separation. This repo contains the host-side components. Commercial tiers extend this foundation with fleet management and centralized aggregation; those components live in separate private codebases and are not described here.
 
 ### Components (this repo)
 
@@ -116,7 +117,7 @@ DaemonEye implements **three-component security architecture** with strict privi
 | **daemoneye-lib**   | N/A                         | N/A           | N/A                 | Shared library               |
 | **collector-core**  | N/A                         | N/A           | N/A                 | Collector SDK                |
 
-### Full deployment architecture
+### Deployment architecture
 
 ```mermaid
 flowchart LR
@@ -127,19 +128,10 @@ flowchart LR
         C[daemoneye-cli] -->|reads| DB1 & DB2
     end
     A -->|outbound alerts| EXT[(Alert Sinks)]
-    A -.->|mTLS events up| PX[Proxy Node]
-    PX -.->|mTLS batched| SC[Security Center]
-    SC -.->|TraceCommand down| PX
-    PX -.->|TraceCommand down| A
+    A -.->|optional upstream| UP[External tiers]
 ```
 
-### Deployment Tiers
-
-| Tier                      | Components                                   | Scope                                                                        |
-| ------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
-| **Community** (this repo) | procmond + daemoneye-agent + daemoneye-cli   | Standalone host monitoring, local detection, alert delivery                  |
-| **Business**              | + Security Center + Proxy nodes + GUI        | Fleet management, proxy tree (AG→PX→SC), curated rule packs, SIEM connectors |
-| **Enterprise**            | + Kernel telemetry + Federation + Compliance | eBPF/ETW/ESF collectors, multi-site federation, STIX/TAXII, SSO/LDAP         |
+The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound IPC contract is designed to support upstream aggregation in commercial deployments. The upstream components are not part of this repo.
 
 ### Security Boundaries
 
@@ -236,18 +228,19 @@ flowchart LR
 
 - Least privilege: Components run with minimal permissions
 - Automatic privilege drop after initialization
-- SQL injection prevention: AST validation at rule load time [Implemented]; SQL-based rule execution \[Planned — engine currently uses pattern matching, see `detection/mod.rs`\]
+- SQL injection prevention: AST validation at rule load time [Implemented]; SQL-based rule execution \[Planned — engine currently uses pattern matching, see `detection/mod.rs`\]. Pipeline is two-phase: sqlparser lowers the custom dialect (spec §4.10) at rule-compile time into (a) protobuf collection tasks and (b) derived standard SQL; the runtime executor only sees the derived SQL, never the original dialect.
 - Credentials: Environment variables or OS keychain, never hardcoded
 - No inbound network: Outbound-only for alerts
 - Audit trail: BLAKE3 hash-chained audit ledger [Implemented]; Merkle tree inclusion proofs \[In Progress — `generate_inclusion_proof()` returns empty vec, see `crypto.rs`\]
 
-### Enterprise Features
+### Planned Hardening (Community)
 
-- mTLS with certificate chain validation [Planned]
 - SLSA Level 3 provenance, Cosign signatures [Planned]
 - Merkle tree with inclusion proofs \[In Progress — chain hashing implemented; inclusion proof generation stubbed in `crypto.rs`\]
 - Sandboxed detection engine (read-only DB) [Planned]
 - Query whitelist (SELECT only with approved functions) [Implemented for rule validation; not yet enforced at execution time]
+
+> Fleet-level transport security (mTLS between host agents and upstream aggregators) is handled in the commercial tiers, not in this repo.
 
 ### Integer Overflow Protection
 
@@ -496,7 +489,7 @@ pub struct Cli {
 - GitHub Actions: Linux, macOS, Windows matrix
 - Rust: stable, beta, MSRV (1.91+)
 - Checks: fmt, clippy strict, tests, benchmarks
-- Security: Dependency scanning, SLSA (Enterprise)
+- Security: Dependency scanning, SLSA provenance
 
 ### Security Scanners
 
@@ -558,6 +551,16 @@ Files: `daemoneye-lib/src/storage.rs`, `procmond/src/collector.rs`, `benches/`
 - [ ] ACID guarantees maintained
 - [ ] Document characteristics
 
+### Open-Core Hygiene (any PR touching docs, specs, or AGENTS.md)
+
+DaemonEye is the Community tier of an open-core product. Content for commercial tiers lives in separate private codebases and Confluence — not here.
+
+- [ ] No paid-tier feature enumerations (Business/Enterprise specifics, Security Center internals, fleet-management details, STIX/TAXII, federation)
+- [ ] No internal-only URLs (private Confluence hyperlinks, Jira ticket IDs, internal Slack references, pricing specifics)
+- [ ] No references to deleted files (sweep for `pricing.md`, `feature-tiers.md`, `business-tier.md`, `enterprise-tier.md`, `product_strategy.md`, `spec/product.md`, `spec/procmond/`)
+- [ ] Boundary-acknowledgement footnotes preferred over erasure ("commercial tiers extend this foundation, sold separately, not in this repo")
+- [ ] **Never delete a repo doc without first verifying the Confluence copy fully matches** — see [docs/solutions/workflow-issues/open-core-hygiene-confluence-migration-2026-04-18.md](./docs/solutions/workflow-issues/open-core-hygiene-confluence-migration-2026-04-18.md) for the eight-phase workflow
+
 ---
 
 ## Code Generation Guidelines
@@ -579,15 +582,14 @@ When generating code:
 
 ## Source-of-Truth Map
 
-| Section             | Source                                                                                                           |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Architecture        | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                     |
-| Technology          | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                               |
-| Product             | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                         |
-| Core Requirements   | [.kiro/specs/DaemonEye-core-monitoring/requirements.md](./.kiro/specs/DaemonEye-core-monitoring/requirements.md) |
-| Business Features   | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md)       |
-| Enterprise Features | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md)   |
-| Development         | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                 |
+| Section             | Source                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Architecture        | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                             |
+| Technology          | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                                       |
+| Product             | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                                 |
+| Core Requirements   | [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md)         |
+| Development         | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                         |
+| SQL-to-IPC Pipeline | [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](./spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md) |
 
 ### Cross-References
 
@@ -599,19 +601,16 @@ When generating code:
 
 ## Glossary
 
-| Term   | Definition                                             |
-| ------ | ------------------------------------------------------ |
-| AST    | Abstract Syntax Tree (SQL validation)                  |
-| BLAKE3 | Cryptographic hash for audit trails                    |
-| CEF    | Common Event Format                                    |
-| eBPF   | Extended Berkeley Packet Filter                        |
-| ETW    | Event Tracing for Windows                              |
-| IPC    | Inter-Process Communication                            |
-| mTLS   | Mutual Transport Layer Security                        |
-| redb   | Pure Rust embedded database                            |
-| SLSA   | Supply-chain Levels for Software Artifacts             |
-| STIX   | Structured Threat Information eXpression               |
-| TAXII  | Trusted Automated eXchange of Intelligence Information |
+| Term   | Definition                                 |
+| ------ | ------------------------------------------ |
+| AST    | Abstract Syntax Tree (SQL validation)      |
+| BLAKE3 | Cryptographic hash for audit trails        |
+| CEF    | Common Event Format                        |
+| eBPF   | Extended Berkeley Packet Filter            |
+| ETW    | Event Tracing for Windows                  |
+| IPC    | Inter-Process Communication                |
+| redb   | Pure Rust embedded database                |
+| SLSA   | Supply-chain Levels for Software Artifacts |
 
 ---
 
@@ -620,6 +619,3 @@ When generating code:
 ## Agent Rules <!-- tessl-managed -->
 
 @.tessl/RULES.md follow the [instructions](.tessl/RULES.md)
-
-[adr-0003]: https://evilbitlabs.atlassian.net/wiki/spaces/ES/pages/5767187/ADR+0003+Polyglot+Collector+SDK+Strategy
-[shadowhunt concept]: https://evilbitlabs.atlassian.net/wiki/spaces/ES/pages/1802386/ShadowHunt+Concept

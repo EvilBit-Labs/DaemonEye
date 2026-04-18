@@ -368,9 +368,8 @@ message DetectionResult {
 
 ### **External Communication**
 
-- **Alert Delivery**: Outbound-only network connections
-- **SIEM Integration**: HTTPS, mTLS, webhook protocols
-- **Security Center**: mTLS with certificate authentication
+- **Alert Delivery**: Outbound-only network connections to configured sinks
+- **SIEM Integration**: HTTPS + webhook protocols for alert forwarding
 
 ## Error Handling Strategy
 

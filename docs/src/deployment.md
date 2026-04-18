@@ -86,38 +86,7 @@ graph TB
 
 #### Multi-Node Deployment
 
-For large environments with multiple monitoring targets:
-
-```mermaid
-graph TB
-    subgraph "Node 1"
-        A1[<b>ProcMonD</b>]
-        B1[<b>daemoneye-agent</b>]
-        A1 <--> B1
-    end
-
-    subgraph "Node 2"
-        A2[<b>ProcMonD</b>]
-        B2[<b>daemoneye-agent</b>]
-        A2 <--> B2
-    end
-
-    subgraph "Node 3"
-        A3[<b>ProcMonD</b>]
-        B3[<b>daemoneye-agent</b>]
-        A3 <--> B3
-    end
-
-    subgraph "Central Management"
-        C[<b>Security Center</b>]
-        D[<b>Database</b>]
-        C <--> D
-    end
-
-    B1 --> C
-    B2 --> C
-    B3 --> C
-```
+Each host runs the same single-node topology independently. Fleet-wide aggregation across nodes is handled by commercial tiers and is outside the scope of this repo.
 
 #### Container Deployment
 

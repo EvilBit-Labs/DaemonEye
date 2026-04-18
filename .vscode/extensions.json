@@ -1,0 +1,15 @@
+{
+    "recommendations": [
+        "rust-lang.rust-analyzer",
+        "dustypomerleau.rust-syntax",
+        "redhat.vscode-yaml",
+        "mikestead.dotenv",
+        "editorconfig.editorconfig",
+        "tamasfe.even-better-toml",
+        "skellock.just",
+        "llvm-vs-code-extensions.lldb-dap",
+        "yzhang.markdown-all-in-one",
+        "hverlin.mise-vscode",
+        "vsls-contrib.codetour"
+    ]
+}

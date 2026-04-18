@@ -65,11 +65,7 @@ If you need help with DaemonEye:
 
 ## License
 
-DaemonEye follows a dual-license strategy:
-
-- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
-- **Business Tier Features**: Per-site license, TBD (Security Center, GUI, enhanced connectors, curated rules)
-- **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
+The DaemonEye components in this repository — procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib — are licensed under Apache 2.0. Commercial extensions ship separately; see evilbitlabs.io for details.
 
 ---
 

@@ -10,8 +10,6 @@ This guide provides comprehensive information about configuring DaemonEye for di
 - [Alerting Configuration](#alerting-configuration)
 - [Database Configuration](#database-configuration)
 - [Platform-Specific Configuration](#platform-specific-configuration)
-- [Business Tier Configuration](#business-tier-configuration)
-- [Enterprise Tier Configuration](#enterprise-tier-configuration)
 - [Environment Variables](#environment-variables)
 - [Configuration Examples](#configuration-examples)
 - [Troubleshooting](#troubleshooting)
@@ -215,35 +213,9 @@ alerting:
       from: daemoneye@example.com
       to: [security@example.com]
       subject: 'DaemonEye Alert: {severity} - {title}'
-
-    # Splunk HEC sink (Business Tier)
-    - type: splunk_hec
-      enabled: false
-      endpoint: https://splunk.example.com:8088/services/collector
-      token: ${SPLUNK_HEC_TOKEN}
-      index: daemoneye
-      source_type: daemoneye:alert
-      sourcetype: daemoneye:alert
-
-    # Elasticsearch sink (Business Tier)
-    - type: elasticsearch
-      enabled: false
-      hosts: [https://elastic.example.com:9200]
-      username: ${ELASTIC_USERNAME}
-      password: ${ELASTIC_PASSWORD}
-      index_pattern: daemoneye-{YYYY.MM.DD}
-      pipeline: daemoneye-alerts
-
-    # Kafka sink (Business Tier)
-    - type: kafka
-      enabled: false
-      brokers: [kafka.example.com:9092]
-      topic: daemoneye.alerts
-      security_protocol: SASL_SSL
-      sasl_mechanism: PLAIN
-      sasl_username: ${KAFKA_USERNAME}
-      sasl_password: ${KAFKA_PASSWORD}
 ```
+
+Additional sink types (Splunk HEC, Elasticsearch, Kafka, and others) are available in commercial tiers.
 
 ### Alert Filtering
 
@@ -310,15 +282,6 @@ database:
 ```yaml
 platform:
   linux:
-    # Enable eBPF monitoring (Enterprise Tier)
-    enable_ebpf: false
-
-    # eBPF program path
-    ebpf_program_path: /usr/lib/daemoneye/daemoneye_monitor.o
-
-    # eBPF ring buffer size
-    ebpf_ring_buffer_size: 1048576  # 1MB
-
     # Enable process namespace monitoring
     enable_namespace_monitoring: true
 
@@ -326,7 +289,7 @@ platform:
     enable_cgroup_monitoring: true
 
     # Process collection method
-    collection_method: sysinfo    # sysinfo, ebpf, hybrid
+    collection_method: sysinfo
 
     # Privilege requirements
     privileges:
@@ -340,23 +303,13 @@ platform:
       privilege_drop_timeout_secs: 30
 ```
 
+Kernel-level collection (eBPF) is available in commercial tiers.
+
 ### Windows Configuration
 
 ```yaml
 platform:
   windows:
-    # Enable ETW monitoring (Enterprise Tier)
-    enable_etw: false
-
-    # ETW session name
-    etw_session_name: DaemonEye
-
-    # ETW buffer size in KB
-    etw_buffer_size_kb: 64
-
-    # ETW maximum buffers
-    etw_max_buffers: 100
-
     # Enable registry monitoring
     enable_registry_monitoring: false
 
@@ -364,7 +317,7 @@ platform:
     enable_filesystem_monitoring: false
 
     # Process collection method
-    collection_method: sysinfo    # sysinfo, etw, hybrid
+    collection_method: sysinfo
 
     # Privilege requirements
     privileges:
@@ -375,20 +328,13 @@ platform:
       drop_privileges: true
 ```
 
+Kernel-level collection (ETW) is available in commercial tiers.
+
 ### macOS Configuration
 
 ```yaml
 platform:
   macos:
-    # Enable EndpointSecurity monitoring (Enterprise Tier)
-    enable_endpoint_security: false
-
-    # EndpointSecurity event types
-    es_event_types:
-      - ES_EVENT_TYPE_NOTIFY_EXEC
-      - ES_EVENT_TYPE_NOTIFY_FORK
-      - ES_EVENT_TYPE_NOTIFY_EXIT
-
     # Enable file system monitoring
     enable_filesystem_monitoring: false
 
@@ -396,7 +342,7 @@ platform:
     enable_network_monitoring: false
 
     # Process collection method
-    collection_method: sysinfo    # sysinfo, endpoint_security, hybrid
+    collection_method: sysinfo
 
     # Privilege requirements
     privileges:
@@ -407,255 +353,7 @@ platform:
       drop_privileges: true
 ```
 
-## Business Tier Configuration
-
-### Security Center
-
-```yaml
-business_tier:
-  # License configuration
-  license:
-    # License key
-    key: ${DAEMONEYE_LICENSE_KEY}
-
-    # License validation endpoint (optional)
-    validation_endpoint:
-
-    # Offline validation only
-    offline_only: true
-
-  # Security Center configuration
-  security_center:
-    # Enable Security Center
-    enabled: false
-
-    # Security Center endpoint
-    endpoint: https://security-center.example.com:8443
-
-    # Client certificate path
-    client_cert_path: /etc/daemoneye/agent.crt
-
-    # Client key path
-    client_key_path: /etc/daemoneye/agent.key
-
-    # CA certificate path
-    ca_cert_path: /etc/daemoneye/ca.crt
-
-    # Connection timeout in seconds
-    connection_timeout_secs: 30
-
-    # Heartbeat interval in seconds
-    heartbeat_interval_secs: 30
-
-    # Retry configuration
-    retry:
-      max_attempts: 3
-      base_delay_ms: 1000
-      max_delay_ms: 30000
-      backoff_multiplier: 2.0
-```
-
-### Rule Packs
-
-```yaml
-business_tier:
-  # Rule pack configuration
-  rule_packs:
-    # Enable automatic updates
-    auto_update: true
-
-    # Update interval in hours
-    update_interval_hours: 24
-
-    # Rule pack sources
-    sources:
-      - name: official
-        url: https://rules.daemoneye.com/packs/
-        signature_key: ed25519:public-key
-        enabled: true
-
-      - name: custom
-        url: https://internal-rules.company.com/
-        signature_key: ed25519:custom-key
-        enabled: true
-
-    # Local rule pack directory
-    local_directory: /etc/daemoneye/rule-packs
-
-    # Signature validation
-    signature_validation:
-      enabled: true
-      strict_mode: true
-      allowed_keys: [ed25519:official-key, ed25519:custom-key]
-```
-
-### Enhanced Connectors
-
-```yaml
-business_tier:
-  # Enhanced output connectors
-  enhanced_connectors:
-    # Splunk HEC connector
-    splunk_hec:
-      enabled: false
-      endpoint: https://splunk.example.com:8088/services/collector
-      token: ${SPLUNK_HEC_TOKEN}
-      index: daemoneye
-      source_type: daemoneye:alert
-      sourcetype: daemoneye:alert
-      batch_size: 100
-      batch_timeout_ms: 5000
-
-    # Elasticsearch connector
-    elasticsearch:
-      enabled: false
-      hosts: [https://elastic.example.com:9200]
-      username: ${ELASTIC_USERNAME}
-      password: ${ELASTIC_PASSWORD}
-      index_pattern: daemoneye-{YYYY.MM.DD}
-      pipeline: daemoneye-alerts
-      batch_size: 1000
-      batch_timeout_ms: 10000
-
-    # Kafka connector
-    kafka:
-      enabled: false
-      brokers: [kafka.example.com:9092]
-      topic: daemoneye.alerts
-      security_protocol: SASL_SSL
-      sasl_mechanism: PLAIN
-      sasl_username: ${KAFKA_USERNAME}
-      sasl_password: ${KAFKA_PASSWORD}
-      batch_size: 100
-      batch_timeout_ms: 5000
-```
-
-## Enterprise Tier Configuration
-
-### Kernel Monitoring
-
-```yaml
-enterprise_tier:
-  # Kernel monitoring configuration
-  kernel_monitoring:
-    # Enable kernel monitoring
-    enabled: false
-
-    # Monitoring method
-    method: auto    # auto, ebpf, etw, endpoint_security, disabled
-
-    # eBPF configuration (Linux)
-    ebpf:
-      enabled: false
-      program_path: /usr/lib/daemoneye/daemoneye_monitor.o
-      ring_buffer_size: 2097152  # 2MB
-      max_events_per_second: 10000
-
-    # ETW configuration (Windows)
-    etw:
-      enabled: false
-      session_name: DaemonEye
-      buffer_size_kb: 128
-      max_buffers: 200
-      providers:
-        - name: Microsoft-Windows-Kernel-Process
-          guid: 22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716
-          level: 5
-          keywords: 0xFFFFFFFFFFFFFFFF
-
-    # EndpointSecurity configuration (macOS)
-    endpoint_security:
-      enabled: false
-      event_types:
-        - ES_EVENT_TYPE_NOTIFY_EXEC
-        - ES_EVENT_TYPE_NOTIFY_FORK
-        - ES_EVENT_TYPE_NOTIFY_EXIT
-        - ES_EVENT_TYPE_NOTIFY_OPEN
-        - ES_EVENT_TYPE_NOTIFY_CLOSE
-```
-
-### Federation
-
-```yaml
-enterprise_tier:
-  # Federation configuration
-  federation:
-    # Enable federation
-    enabled: false
-
-    # Federation tier
-    tier: agent    # agent, regional, primary
-
-    # Regional Security Center
-    regional_center:
-      endpoint: https://regional-center.example.com:8443
-      certificate_path: /etc/daemoneye/regional.crt
-      key_path: /etc/daemoneye/regional.key
-
-    # Primary Security Center
-    primary_center:
-      endpoint: https://primary-center.example.com:8443
-      certificate_path: /etc/daemoneye/primary.crt
-      key_path: /etc/daemoneye/primary.key
-
-    # Data synchronization
-    sync:
-      # Sync interval in minutes
-      interval_minutes: 5
-
-      # Sync batch size
-      batch_size: 1000
-
-      # Enable compression
-      compression: true
-
-      # Enable encryption
-      encryption: true
-```
-
-### STIX/TAXII Integration
-
-```yaml
-enterprise_tier:
-  # STIX/TAXII configuration
-  stix_taxii:
-    # Enable STIX/TAXII integration
-    enabled: false
-
-    # TAXII servers
-    servers:
-      - name: threat-intel-server
-        url: https://threat-intel.example.com/taxii2/
-        username: ${TAXII_USERNAME}
-        password: ${TAXII_PASSWORD}
-        collections: [malware-indicators, attack-patterns]
-
-    # Polling configuration
-    polling:
-      # Poll interval in minutes
-      interval_minutes: 60
-
-      # Maximum indicators per poll
-      max_indicators: 10000
-
-      # Indicator confidence threshold
-      min_confidence: 50
-
-    # Indicator conversion
-    conversion:
-      # Convert STIX indicators to detection rules
-      auto_convert: true
-
-      # Rule template for converted indicators
-      rule_template: stix-indicator-{id}
-
-      # Rule severity mapping
-      severity_mapping:
-        low: low
-        medium: medium
-        high: high
-        critical: critical
-```
+Kernel-level collection (EndpointSecurity) is available in commercial tiers.
 
 ## Environment Variables
 
@@ -681,41 +379,6 @@ export DAEMONEYE_WEBHOOK_TOKEN=your-webhook-token
 export DAEMONEYE_ENABLE_EBPF=false
 export DAEMONEYE_ENABLE_ETW=false
 export DAEMONEYE_ENABLE_ENDPOINT_SECURITY=false
-```
-
-### Business Tier Variables
-
-```bash
-# Security Center
-export DAEMONEYE_SECURITY_CENTER_ENABLED=false
-export DAEMONEYE_SECURITY_CENTER_ENDPOINT=https://security-center.example.com:8443
-export DAEMONEYE_CLIENT_CERT_PATH=/etc/daemoneye/agent.crt
-export DAEMONEYE_CLIENT_KEY_PATH=/etc/daemoneye/agent.key
-
-# Enhanced connectors
-export SPLUNK_HEC_TOKEN=your-splunk-token
-export ELASTIC_USERNAME=your-elastic-username
-export ELASTIC_PASSWORD=your-elastic-password
-export KAFKA_USERNAME=your-kafka-username
-export KAFKA_PASSWORD=your-kafka-password
-```
-
-### Enterprise Tier Variables
-
-```bash
-# Kernel monitoring
-export DAEMONEYE_KERNEL_MONITORING_ENABLED=false
-export DAEMONEYE_EBPF_ENABLED=false
-export DAEMONEYE_ETW_ENABLED=false
-export DAEMONEYE_ENDPOINT_SECURITY_ENABLED=false
-
-# Federation
-export DAEMONEYE_FEDERATION_ENABLED=false
-export DAEMONEYE_REGIONAL_CENTER_ENDPOINT=https://regional.example.com:8443
-
-# STIX/TAXII
-export TAXII_USERNAME=your-taxii-username
-export TAXII_PASSWORD=your-taxii-password
 ```
 
 ## Configuration Examples

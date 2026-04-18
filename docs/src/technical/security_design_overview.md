@@ -405,56 +405,7 @@ DaemonEye supports all standard government data classification levels with appro
 - Audit logging of all data access
 - Principle of least privilege for data access
 
-### Business Tier Data Protection Features
-
-**Centralized Data Management**:
-
-- **Security Center**: Centralized aggregation and management of data from multiple agents
-- **mTLS Authentication**: Mutual TLS with certificate chain validation for secure agent connections
-- **Certificate Management**: Automated certificate provisioning and rotation
-- **Role-Based Access Control**: Granular permissions for different user roles
-
-**Enhanced Data Export**:
-
-- **Standard Format Support**: CEF (Common Event Format), structured JSON, and STIX-lite exports
-- **SIEM Integration**: Native connectors for Splunk, Elasticsearch, and Kafka
-- **Data Portability**: Comprehensive export capabilities for data migration and analysis
-
-**Code Signing and Integrity**:
-
-- **Signed Installers**: MSI installers for Windows and DMG packages for macOS with valid code signing certificates
-- **Enterprise Deployment**: Proper metadata for enterprise deployment tools
-- **Security Validation**: Operating system security validation without warnings
-
-### Enterprise Tier Data Protection Features
-
-**Advanced Cryptographic Security**:
-
-- **SLSA Level 3 Provenance**: Complete software supply chain attestation
-- **Cosign Signatures**: Hardware security module-backed code signing
-- **Software Bill of Materials (SBOM)**: Complete dependency and component inventory
-- **Signature Verification**: Mandatory signature verification before execution
-
-**Federated Data Architecture**:
-
-- **Multi-Tier Security Centers**: Hierarchical data aggregation across geographic regions
-- **Federated Storage**: Distributed data storage with local and global aggregation
-- **Data Sovereignty**: Regional data residency compliance
-- **Cross-Region Replication**: Secure data replication with integrity verification
-
-**Advanced Compliance and Threat Intelligence**:
-
-- **STIX/TAXII Integration**: Automated threat intelligence feed consumption and processing
-- **Compliance Framework Mappings**: NIST, ISO 27001, CIS framework mappings
-- **Quarterly Rule Packs**: Curated threat intelligence updates with automated rule deployment
-- **Compliance Reporting**: Automated compliance reporting and evidence collection
-
-**Kernel-Level Data Protection**:
-
-- **Real-Time Event Processing**: Sub-millisecond processing of kernel-level events
-- **Network Correlation**: Process-to-network event correlation for lateral movement detection
-- **Memory Analysis**: Advanced memory analysis capabilities for sophisticated attack detection
-- **Platform-Specific Monitoring**: eBPF (Linux), ETW (Windows), EndpointSecurity (macOS) integration
+Commercial tiers extend data protection with centralized aggregation (mTLS, RBAC, federated architecture), advanced threat-intelligence integration, and kernel-level collection. Those components are out of scope for this repo.
 
 ### Compliance Features
 
@@ -482,43 +433,7 @@ DaemonEye supports all standard government data classification levels with appro
 - Respond: Incident response and forensics
 - Recover: Business continuity and restoration
 
-**Business Tier Compliance Features**:
-
-**Enhanced Audit and Reporting**:
-
-- **Centralized Audit Logs**: Aggregated audit logs from multiple agents
-- **Automated Compliance Reporting**: Scheduled compliance reports and dashboards
-- **Data Retention Management**: Centralized data retention policy enforcement
-- **Audit Trail Integrity**: Cryptographic verification of audit log integrity across the fleet
-
-**Enterprise Integration Compliance**:
-
-- **SIEM Integration**: Native compliance with major SIEM platforms (Splunk, Elasticsearch, QRadar)
-- **Standard Format Support**: CEF, STIX-lite, and other compliance-standard formats
-- **Data Lineage Tracking**: Complete data lineage from collection to reporting
-
-**Enterprise Tier Compliance Features**:
-
-**Advanced Compliance Frameworks**:
-
-- **NIST SP 800-53**: Complete security controls mapping and implementation
-- **ISO 27001**: Information security management system compliance
-- **CIS Controls**: Center for Internet Security controls implementation
-- **FedRAMP**: Federal Risk and Authorization Management Program compliance
-
-**Threat Intelligence and Advanced Monitoring**:
-
-- **STIX/TAXII Integration**: Automated threat intelligence feed consumption
-- **Compliance Mappings**: Real-time mapping of detection events to compliance controls
-- **Advanced SIEM Integration**: Full STIX/TAXII support with compliance mappings
-- **Quarterly Threat Updates**: Automated deployment of curated threat intelligence rule packs
-
-**Hardened Security and Supply Chain**:
-
-- **SLSA Level 3 Provenance**: Complete software supply chain attestation
-- **Cosign Signatures**: Hardware security module-backed code signing
-- **Software Bill of Materials (SBOM)**: Complete dependency and component inventory
-- **Supply Chain Security**: End-to-end supply chain security verification
+Commercial tiers add centralized audit aggregation, compliance-framework mappings (NIST, ISO 27001, CIS, FedRAMP), advanced SIEM connectors, automated threat-intelligence feeds, and hardened supply-chain signing (SLSA, Cosign, SBOM). Those capabilities are out of scope for this repo.
 
 **FISMA Compliance**:
 
@@ -920,7 +835,7 @@ For IC environments, DaemonEye provides:
 
 - Automated audit log generation with cryptographic integrity
 - Built-in compliance reporting capabilities
-- Standard format exports (CEF, STIX-lite) for SIEM integration
+- CEF export for SIEM integration (additional formats available in commercial tiers)
 - Comprehensive documentation for ATO packages
 
 **Enhanced Security Posture**:
@@ -1023,7 +938,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 - **Vendor Implementation**: Device authentication for agent connections
 - **Product Requirements**: Implement device certificates, mutual TLS, and device identity verification
-- **Implementation Notes**: Include certificate management, device enrollment, and authentication protocols. Already planned: mTLS authentication and certificate management for Business/Enterprise tiers. Additional work needed: device authentication for agent connections and device identity verification.
+- **Implementation Notes**: Include certificate management, device enrollment, and authentication protocols. Device authentication for agent connections and device identity verification remain open items for this repo.
 
 **IA-4 (Identifier Management)**:
 
@@ -1097,7 +1012,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 - **Vendor Implementation**: Secure acquisition process
 - **Product Requirements**: Implement secure distribution, verification, and installation procedures
-- **Implementation Notes**: Include code signing, package verification, and secure distribution. Already planned: code signing and integrity verification for Business/Enterprise tiers. Additional work needed: secure acquisition process and package verification.
+- **Implementation Notes**: Include code signing, package verification, and secure distribution. Code signing and integrity verification remain open items for this repo. Additional work needed: secure acquisition process and package verification.
 
 **SA-5 (Information System Documentation)**:
 
@@ -1145,13 +1060,13 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 - **Vendor Implementation**: Tamper resistance and detection
 - **Product Requirements**: Implement tamper detection, integrity verification, and protection mechanisms
-- **Implementation Notes**: Include integrity checking, tamper detection, and protection mechanisms. Already planned: code signing verification and integrity checking for Business/Enterprise tiers. Additional work needed: enhanced tamper detection and protection mechanisms.
+- **Implementation Notes**: Include integrity checking, tamper detection, and protection mechanisms. Code signing verification and integrity checking remain open items for this repo. Additional work needed: enhanced tamper detection and protection mechanisms.
 
 **SA-19 (Component Authenticity)**:
 
 - **Vendor Implementation**: Component authenticity verification
 - **Product Requirements**: Implement component verification, authenticity checking, and validation
-- **Implementation Notes**: Include signature verification, authenticity validation, and integrity checking. Already planned: code signing and integrity verification for Business/Enterprise tiers. Additional work needed: component authenticity verification and validation.
+- **Implementation Notes**: Include signature verification, authenticity validation, and integrity checking. Code signing and integrity verification remain open items for this repo. Additional work needed: component authenticity verification and validation.
 
 **SA-20 (Customized Development of Critical Components)**:
 
@@ -1229,19 +1144,19 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-16 (Transmission of Security Attributes)**:
 
-- **Vendor Implementation**: Transmit security attributes with all DaemonEye data and communications. **Already Planned**: Data classification support is specified in product.md. **Additional Required**: Enhanced security attribute transmission and formal security attribute documentation.
+- **Vendor Implementation**: Transmit security attributes with all DaemonEye data and communications. Data classification support is an open item for this repo. **Additional Required**: Enhanced security attribute transmission and formal security attribute documentation.
 - **Product Requirements**: Include data classification, sensitivity labels, and security markings in all transmissions
 - **Implementation Notes**: Embed security attributes in protobuf messages, database records, and alert payloads
 
 **SC-17 (Public Key Infrastructure Certificates)**:
 
-- **Vendor Implementation**: Implement PKI certificate management for DaemonEye components. **Already Planned**: mTLS authentication and certificate management are specified in product.md for Business/Enterprise tiers. **Additional Required**: Enhanced PKI certificate management and formal PKI documentation.
+- **Vendor Implementation**: Implement PKI certificate management for DaemonEye components. PKI and certificate management are out of scope for this repo. **Additional Required**: Enhanced PKI certificate management and formal PKI documentation.
 - **Product Requirements**: Support certificate-based authentication, mutual TLS, and certificate validation
 - **Implementation Notes**: Include certificate generation, validation, rotation, and revocation for agent authentication and alert delivery
 
 **SC-18 (Mobile Code)**:
 
-- **Vendor Implementation**: Control mobile code execution in DaemonEye environment. **Already Planned**: Code signing verification is specified in product.md for Business/Enterprise tiers. **Additional Required**: Enhanced mobile code controls and formal mobile code documentation.
+- **Vendor Implementation**: Control mobile code execution in DaemonEye environment. **Additional Required**: Enhanced mobile code controls and formal mobile code documentation.
 - **Product Requirements**: Implement controls for mobile code execution and validation
 - **Implementation Notes**: Include code signing verification, execution sandboxing, and mobile code validation
 
@@ -1279,7 +1194,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-24 (Fail in Known State)**:
 
-- **Vendor Implementation**: Ensure DaemonEye fails in a known, secure state. **Already Planned**: Graceful degradation and fail-safe design are specified in product.md. **Additional Required**: Enhanced fail-safe mechanisms and formal fail-safe documentation.
+- **Vendor Implementation**: Ensure DaemonEye fails in a known, secure state. **Additional Required**: Enhanced fail-safe mechanisms and formal fail-safe documentation.
 - **Product Requirements**: Implement fail-safe mechanisms that maintain security boundaries during failures
 - **Implementation Notes**: Include graceful shutdown procedures, secure state preservation, and recovery from known states
 
@@ -1321,7 +1236,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-32 (Information System Partitioning)**:
 
-- **Vendor Implementation**: Implement system partitioning in DaemonEye architecture. **Already Planned**: Process isolation and separate databases are specified in product.md and tech.md. **Additional Required**: Enhanced system partitioning and formal partitioning documentation.
+- **Vendor Implementation**: Implement system partitioning in DaemonEye architecture. **Additional Required**: Enhanced system partitioning and formal partitioning documentation.
 - **Product Requirements**: Ensure logical and physical separation of different security domains
 - **Implementation Notes**: Use process isolation, separate databases, and controlled data flow between partitions
 
@@ -1333,7 +1248,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-34 (Modifiable Components)**:
 
-- **Vendor Implementation**: Control modification of DaemonEye components. **Already Planned**: Code signing verification and integrity checking are specified in product.md for Business/Enterprise tiers. **Additional Required**: Enhanced tamper detection and formal modification control documentation.
+- **Vendor Implementation**: Control modification of DaemonEye components. **Additional Required**: Enhanced tamper detection and formal modification control documentation.
 - **Product Requirements**: Implement tamper detection, code signing verification, and modification controls
 - **Implementation Notes**: Include integrity checking, signature verification, and protection against unauthorized modifications
 
@@ -1345,13 +1260,13 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-36 (Distributed Processing and Storage)**:
 
-- **Vendor Implementation**: Support distributed processing and storage for DaemonEye. **Already Planned**: Federated security centers and distributed data storage are specified in product.md for Enterprise tier. **Additional Required**: Enhanced distributed processing and formal distributed architecture documentation.
+- **Vendor Implementation**: Support distributed processing and storage for DaemonEye. **Additional Required**: Enhanced distributed processing and formal distributed architecture documentation.
 - **Product Requirements**: Implement distributed architecture with secure communication and data consistency
 - **Implementation Notes**: Include federated security centers, distributed data storage, and secure inter-node communication
 
 **SC-37 (Out-of-Band Channels)**:
 
-- **Vendor Implementation**: Support out-of-band communication channels for DaemonEye. **Already Planned**: Bundle-based configuration distribution for airgapped systems is specified in product.md. **Additional Required**: Enhanced out-of-band channels and formal out-of-band documentation.
+- **Vendor Implementation**: Support out-of-band communication channels for DaemonEye. **Additional Required**: Enhanced out-of-band channels and formal out-of-band documentation.
 - **Product Requirements**: Implement alternative communication methods for critical operations
 - **Implementation Notes**: Include secure out-of-band alert delivery, administrative access, and emergency communication channels
 
@@ -1377,7 +1292,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-42 (Sensor Capability and Data)**:
 
-- **Vendor Implementation**: Implement sensor capabilities and data protection for DaemonEye. **Already Planned**: Process monitoring sensors and data collection security are specified in product.md and tech.md. **Additional Required**: Enhanced sensor capabilities and formal sensor documentation.
+- **Vendor Implementation**: Implement sensor capabilities and data protection for DaemonEye. **Additional Required**: Enhanced sensor capabilities and formal sensor documentation.
 - **Product Requirements**: Provide sensor data collection, processing, and protection capabilities
 - **Implementation Notes**: Include process monitoring sensors, data collection security, and sensor data integrity verification
 
@@ -1395,25 +1310,25 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-45 (System Time Synchronization)**:
 
-- **Vendor Implementation**: Ensure time synchronization for DaemonEye components. **Already Planned**: Millisecond-precision timestamps are specified in product.md. **Additional Required**: Enhanced time synchronization and formal time synchronization documentation.
+- **Vendor Implementation**: Ensure time synchronization for DaemonEye components. **Additional Required**: Enhanced time synchronization and formal time synchronization documentation.
 - **Product Requirements**: Implement accurate time synchronization and time-based security controls
 - **Implementation Notes**: Include NTP synchronization, time validation, and timestamp integrity verification
 
 **SC-46 (Cross-Service Attack Prevention)**:
 
-- **Vendor Implementation**: Prevent cross-service attacks in DaemonEye. **Already Planned**: Service isolation and access controls are specified in product.md and tech.md. **Additional Required**: Enhanced cross-service attack prevention and formal attack prevention documentation.
+- **Vendor Implementation**: Prevent cross-service attacks in DaemonEye. **Additional Required**: Enhanced cross-service attack prevention and formal attack prevention documentation.
 - **Product Requirements**: Implement isolation and protection between different services and components
 - **Implementation Notes**: Include service isolation, access controls, and monitoring for cross-service attack attempts
 
 **SC-47 (Alternate Communications Paths)**:
 
-- **Vendor Implementation**: Provide alternate communication paths for DaemonEye. **Already Planned**: Multiple alert delivery channels are specified in product.md. **Additional Required**: Enhanced alternate communication paths and formal communication path documentation.
+- **Vendor Implementation**: Provide alternate communication paths for DaemonEye. **Additional Required**: Enhanced alternate communication paths and formal communication path documentation.
 - **Product Requirements**: Implement redundant communication channels and failover mechanisms
 - **Implementation Notes**: Include multiple alert delivery channels, backup communication methods, and automatic failover
 
 **SC-48 (Application Partitioning)**:
 
-- **Vendor Implementation**: Implement application partitioning for DaemonEye security. **Already Planned**: Component isolation and data separation are specified in product.md and tech.md. **Additional Required**: Enhanced application partitioning and formal partitioning documentation.
+- **Vendor Implementation**: Implement application partitioning for DaemonEye security. **Additional Required**: Enhanced application partitioning and formal partitioning documentation.
 
 - **Product Requirements**: Ensure logical separation of application components and data
 
@@ -1427,13 +1342,13 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-50 (Software-Enforced Separation)**:
 
-- **Vendor Implementation**: Implement software-enforced separation in DaemonEye. **Already Planned**: Process isolation and access control enforcement are specified in product.md and tech.md. **Additional Required**: Enhanced software-enforced separation and formal separation documentation.
+- **Vendor Implementation**: Implement software-enforced separation in DaemonEye. **Additional Required**: Enhanced software-enforced separation and formal separation documentation.
 - **Product Requirements**: Use software controls to enforce security boundaries and separation
 - **Implementation Notes**: Include process isolation, memory protection, and access control enforcement
 
 **SC-51 (Hardware-Based Security)**:
 
-- **Vendor Implementation**: Leverage hardware-based security features for DaemonEye. **Already Planned**: HSM integration and TPM support are specified in product.md for Enterprise tier. **Additional Required**: Enhanced hardware-based security and formal hardware security documentation.
+- **Vendor Implementation**: Leverage hardware-based security features for DaemonEye. **Additional Required**: Enhanced hardware-based security and formal hardware security documentation.
 - **Product Requirements**: Utilize hardware security modules and trusted platform modules where available
 - **Implementation Notes**: Include HSM integration, TPM support, and hardware-based key storage
 
@@ -1457,19 +1372,19 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 **SC-55 (Enforceable Access Control)**:
 
-- **Vendor Implementation**: Implement enforceable access control for DaemonEye. **Already Planned**: Access control enforcement is specified in product.md and tech.md. **Additional Required**: Enhanced access control and formal access control documentation.
+- **Vendor Implementation**: Implement enforceable access control for DaemonEye. **Additional Required**: Enhanced access control and formal access control documentation.
 - **Product Requirements**: Provide mandatory access controls and enforcement mechanisms
 - **Implementation Notes**: Include role-based access control, mandatory access controls, and access enforcement
 
 **SC-56 (Enforceable Execution Domains)**:
 
-- **Vendor Implementation**: Implement enforceable execution domains for DaemonEye. **Already Planned**: Execution isolation and domain separation are specified in product.md and tech.md. **Additional Required**: Enhanced execution domains and formal execution domain documentation.
+- **Vendor Implementation**: Implement enforceable execution domains for DaemonEye. **Additional Required**: Enhanced execution domains and formal execution domain documentation.
 - **Product Requirements**: Control execution environments and domain boundaries
 - **Implementation Notes**: Include execution isolation, domain separation, and execution environment controls
 
 **SC-57 (Data Location)**:
 
-- **Vendor Implementation**: Control data location for DaemonEye. **Already Planned**: Data residency controls are specified in product.md for Enterprise tier. **Additional Required**: Enhanced data location controls and formal data location documentation.
+- **Vendor Implementation**: Control data location for DaemonEye. **Additional Required**: Enhanced data location controls and formal data location documentation.
 - **Product Requirements**: Implement data residency controls and location restrictions
 - **Implementation Notes**: Include data location tracking, residency controls, and geographic restrictions
 
