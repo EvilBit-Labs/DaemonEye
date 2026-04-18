@@ -247,18 +247,7 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 ## License Model
 
-### **Dual-License Strategy**
-
-- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
-- **Business Tier Features**: Per-site license, TBD (Security Center, GUI, enhanced connectors, curated rules)
-- **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
-
-### **Feature Gating**
-
-- Compile-time feature gates for tier-specific functionality
-- Runtime license validation with cryptographic signatures
-- Graceful degradation when license is invalid or expired
-- Site restriction validation for license compliance
+The DaemonEye components in this repository are licensed under Apache 2.0. Commercial extensions (with their own licensing) ship separately; see evilbitlabs.io for details.
 
 ## Getting Started
 
