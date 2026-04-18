@@ -236,7 +236,7 @@ flowchart LR
 
 - Least privilege: Components run with minimal permissions
 - Automatic privilege drop after initialization
-- SQL injection prevention: AST validation at rule load time [Implemented]; SQL-based rule execution \[Planned — engine currently uses pattern matching, see `detection/mod.rs`\]
+- SQL injection prevention: AST validation at rule load time [Implemented]; SQL-based rule execution \[Planned — engine currently uses pattern matching, see `detection/mod.rs`\]. Pipeline is two-phase: sqlparser lowers the custom dialect (spec §4.10) at rule-compile time into (a) protobuf collection tasks and (b) derived standard SQL; the runtime executor only sees the derived SQL, never the original dialect.
 - Credentials: Environment variables or OS keychain, never hardcoded
 - No inbound network: Outbound-only for alerts
 - Audit trail: BLAKE3 hash-chained audit ledger [Implemented]; Merkle tree inclusion proofs \[In Progress — `generate_inclusion_proof()` returns empty vec, see `crypto.rs`\]
@@ -579,15 +579,16 @@ When generating code:
 
 ## Source-of-Truth Map
 
-| Section             | Source                                                                                                           |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Architecture        | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                     |
-| Technology          | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                               |
-| Product             | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                         |
-| Core Requirements   | [.kiro/specs/DaemonEye-core-monitoring/requirements.md](./.kiro/specs/DaemonEye-core-monitoring/requirements.md) |
-| Business Features   | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md)       |
-| Enterprise Features | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md)   |
-| Development         | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                 |
+| Section             | Source                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Architecture        | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                             |
+| Technology          | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                                       |
+| Product             | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                                 |
+| Core Requirements   | [.kiro/specs/DaemonEye-core-monitoring/requirements.md](./.kiro/specs/DaemonEye-core-monitoring/requirements.md)         |
+| Business Features   | [.kiro/specs/business-tier-features/requirements.md](./.kiro/specs/business-tier-features/requirements.md)               |
+| Enterprise Features | [.kiro/specs/enterprise-tier-features/requirements.md](./.kiro/specs/enterprise-tier-features/requirements.md)           |
+| Development         | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                         |
+| SQL-to-IPC Pipeline | [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](./spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md) |
 
 ### Cross-References
 
