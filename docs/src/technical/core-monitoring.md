@@ -63,71 +63,7 @@ impl ProcessCollector {
 
 #### Platform-Specific Enhancements
 
-**Linux eBPF Integration (Enterprise Tier)**:
-
-```rust,ignore
-#[cfg(target_os = "linux")]
-pub struct EbpfProcessCollector {
-    base_collector: ProcessCollector,
-    ebpf_monitor: Option<EbpfMonitor>,
-}
-
-impl EbpfProcessCollector {
-    pub async fn enumerate_processes(&self) -> Result<Vec<ProcessRecord>> {
-        // Use eBPF for real-time process events if available
-        if let Some(ebpf) = &self.ebpf_monitor {
-            return self.enumerate_with_ebpf(ebpf).await;
-        }
-
-        // Fallback to sysinfo
-        self.base_collector.enumerate_processes().await
-    }
-}
-```
-
-**Windows ETW Integration (Enterprise Tier)**:
-
-```rust,ignore
-#[cfg(target_os = "windows")]
-pub struct EtwProcessCollector {
-    base_collector: ProcessCollector,
-    etw_monitor: Option<EtwMonitor>,
-}
-
-impl EtwProcessCollector {
-    pub async fn enumerate_processes(&self) -> Result<Vec<ProcessRecord>> {
-        // Use ETW for enhanced process monitoring if available
-        if let Some(etw) = &self.etw_monitor {
-            return self.enumerate_with_etw(etw).await;
-        }
-
-        // Fallback to sysinfo
-        self.base_collector.enumerate_processes().await
-    }
-}
-```
-
-**macOS EndpointSecurity Integration (Enterprise Tier)**:
-
-```rust,ignore
-#[cfg(target_os = "macos")]
-pub struct EndpointSecurityProcessCollector {
-    base_collector: ProcessCollector,
-    es_monitor: Option<EndpointSecurityMonitor>,
-}
-
-impl EndpointSecurityProcessCollector {
-    pub async fn enumerate_processes(&self) -> Result<Vec<ProcessRecord>> {
-        // Use EndpointSecurity for real-time monitoring if available
-        if let Some(es) = &self.es_monitor {
-            return self.enumerate_with_endpoint_security(es).await;
-        }
-
-        // Fallback to sysinfo
-        self.base_collector.enumerate_processes().await
-    }
-}
-```
+Kernel-level collection (eBPF on Linux, ETW on Windows, EndpointSecurity on macOS) is handled by commercial tiers, not by this repo. The Community tier uses user-space collection via `sysinfo` across all platforms.
 
 ### Executable Integrity Verification
 

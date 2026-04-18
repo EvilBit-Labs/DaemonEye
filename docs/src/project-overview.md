@@ -145,9 +145,8 @@ DaemonEye implements a **three-component security architecture** with strict pri
 #### Multi-Channel Alerting
 
 - **Local Outputs**: stdout, syslog, file output
-- **Network Outputs**: webhooks, email, Kafka
-- **SIEM Integration**: Splunk HEC, Elasticsearch, CEF format
-- **Enterprise Integration**: STIX/TAXII feeds, federated Security Centers
+- **Network Outputs**: webhooks, email
+- **SIEM Integration**: CEF format for alert forwarding
 
 #### Certificate Transparency Audit Logging
 
@@ -218,9 +217,8 @@ DaemonEye implements a **three-component security architecture** with strict pri
 ### **Scalability**
 
 - **Single Agent**: Monitor 10,000+ processes with minimal overhead
-- **Fleet Management**: Support for 1,000+ agents per Security Center
-- **Regional Centers**: Aggregate data from multiple regional deployments
-- **Enterprise Federation**: Hierarchical data aggregation and query distribution
+
+Fleet-level aggregation and federation are commercial-tier concerns, handled outside this repo.
 
 ## Security Principles
 
@@ -247,18 +245,7 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 ## License Model
 
-### **Dual-License Strategy**
-
-- **Core Components**: Apache 2.0 licensed (procmond, daemoneye-agent, daemoneye-cli, daemoneye-lib)
-- **Business Tier Features**: Per-site license, TBD (Security Center, GUI, enhanced connectors, curated rules)
-- **Enterprise Tier Features**: Custom pricing (kernel monitoring, federation, STIX/TAXII integration)
-
-### **Feature Gating**
-
-- Compile-time feature gates for tier-specific functionality
-- Runtime license validation with cryptographic signatures
-- Graceful degradation when license is invalid or expired
-- Site restriction validation for license compliance
+The DaemonEye components in this repository are licensed under Apache 2.0. Commercial extensions (with their own licensing) ship separately; see evilbitlabs.io for details.
 
 ## Getting Started
 
