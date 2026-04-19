@@ -612,11 +612,10 @@ pub struct TriggerRequest {
 /// Cross-crate `struct-literal` construction (including FRU) is forbidden
 /// for non-exhaustive types, which means adding the attribute requires
 /// introducing a builder or `with_*` setter API for external consumers
-/// (collector-core's bridge, tests, benches). That refactor is tracked as
-/// follow-up work in the `EventSubscription` bullet of the "Post-Merge
-/// Follow-ups" section of `daemoneye-eventbus/docs/END-297-acceptance-evidence.md`.
-/// In the meantime, always construct via `..Default::default()` so future
-/// field additions cause the smallest possible diff.
+/// (collector-core's bridge, tests, benches). That refactor is deferred
+/// as local follow-up work. In the meantime, always construct via
+/// `..Default::default()` so future field additions cause the smallest
+/// possible diff.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventSubscription {
     /// Unique identifier for the subscriber
@@ -629,7 +628,18 @@ pub struct EventSubscription {
     pub correlation_filter: Option<CorrelationFilter>,
     /// Optional explicit topic patterns
     pub topic_patterns: Option<Vec<String>>,
-    /// Enable wildcarding support for topic patterns
+    /// Advisory flag reserved for a future wildcard-enforcement policy.
+    ///
+    /// The client-side subscription matcher in `client.rs` currently parses
+    /// `+` and `#` wildcards unconditionally via
+    /// [`crate::TopicPattern`], so this field has no runtime effect
+    /// today — callers get wildcard matching regardless of the value.
+    /// Setting it to `true` is therefore the honest default until
+    /// enforcement lands.
+    ///
+    /// A follow-up will either (a) gate wildcard parsing on this flag and
+    /// reject wildcard-containing patterns when `false`, or (b) remove the
+    /// field entirely in favor of an always-on semantics.
     pub enable_wildcards: bool,
     /// Opt into delivery of [`MessageType::Control`] envelopes on matching topics.
     ///

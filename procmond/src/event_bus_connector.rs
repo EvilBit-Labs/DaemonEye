@@ -952,7 +952,7 @@ impl EventBusConnector {
             let signaled = client_arc.shutdown_signal();
             if !signaled {
                 debug!(
-                    "EventBusClient shutdown signal could not be delivered (already signaled or no receivers)"
+                    "EventBusClient shutdown signal not delivered - no active receivers (background tasks already exited)"
                 );
             }
             match Arc::into_inner(client_arc) {

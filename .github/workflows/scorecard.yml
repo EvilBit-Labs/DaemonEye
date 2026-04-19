@@ -59,8 +59,6 @@ jobs:
                   # For private repositories:
                   #   - `publish_results` will always be set to `false`, regardless
                   #     of the value entered here.
-                  # Disabled because OSSF workflow verification currently rejects
-                  # github/codeql-action/upload-sarif as an "imposter commit".
                   publish_results: true
                   # (Optional) Uncomment file_mode if you have a .gitattributes with files marked export-ignore
                   # file_mode: git

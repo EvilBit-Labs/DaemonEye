@@ -30,21 +30,18 @@ use tracing::{debug, error, info, warn};
 /// agent is genuinely unreachable (END-297 review REL-001 / ADV-004).
 const BEGIN_MONITORING_WAIT_TIMEOUT: Duration = Duration::from_mins(1);
 
-/// Typed reason for each call to [`begin_monitoring_or_exit`] so logs have a
-/// consistent, misspelling-proof label and the helper can distinguish
-/// "one-shot signal" paths (must succeed or exit) from "degraded-fallback"
-/// paths (backpressure is recoverable).
+/// Typed reason for each call to [`begin_monitoring_or_exit`]. Used purely as
+/// a log label so error output is consistent and misspelling-proof across the
+/// five call sites; the helper itself no longer branches on the variant — all
+/// paths are treated as fatal on any actor error (see the function docstring).
 #[derive(Debug, Clone, Copy)]
 enum BeginMonitoringReason {
-    /// Operator-opted standalone mode. This path runs only once on startup;
-    /// if the actor cannot receive `BeginMonitoring`, there is no retry.
+    /// Operator-opted standalone mode (CLI flag or `PROCMOND_STANDALONE=1`).
     StandaloneMode,
     /// Agent's `BeginMonitoring` broadcast arrived on
-    /// `control.collector.lifecycle`. At-most-once delivery — there is no
-    /// retry, so any failure to transition is terminal.
+    /// `control.collector.lifecycle`.
     LifecycleSignal,
     /// Subscribe-with-control failed; falling back to immediate collection.
-    /// The actor is already in a degraded coordination state.
     BrokerUnreachable,
     /// Control channel closed before a lifecycle message arrived; falling
     /// back to standalone collection.
@@ -55,14 +52,6 @@ enum BeginMonitoringReason {
 }
 
 impl BeginMonitoringReason {
-    /// One-shot paths cannot retry: the signal that brought us here has been
-    /// consumed (agent broadcast, operator flag check). On these paths every
-    /// actor error must be fatal, including `ChannelFull` — otherwise procmond
-    /// silently hangs in `WaitingForAgent` forever.
-    const fn is_one_shot(self) -> bool {
-        matches!(self, Self::StandaloneMode | Self::LifecycleSignal)
-    }
-
     const fn as_str(self) -> &'static str {
         match self {
             Self::StandaloneMode => "standalone-mode",
@@ -80,27 +69,24 @@ impl std::fmt::Display for BeginMonitoringReason {
     }
 }
 
-/// Send `BeginMonitoring` to the actor, exiting the process on any error
-/// that cannot be safely recovered on this specific path.
+/// Send `BeginMonitoring` to the actor, exiting the process on *any* error.
 ///
-/// Continuing to run when the collection pipeline is broken would leave
-/// procmond alive as a zombie: the binary is up, the supervisor (systemd,
-/// kubelet) sees a healthy process, but zero events are collected. That is
-/// exactly the failure mode `ShadowHunt` is supposed to detect on monitored
-/// hosts. Exiting non-zero lets the supervisor restart us.
+/// `begin_monitoring()` performs a one-time state transition from
+/// `WaitingForAgent` -> `Running`. It is called exactly once per procmond
+/// lifetime from each of the five call sites below, and none of those sites
+/// has a retry loop — once this function returns without exiting, the actor
+/// has either transitioned or it never will.
 ///
-/// Error-handling policy is **default-fatal**:
+/// That makes the error-handling policy uniformly fatal: if the actor cannot
+/// receive this signal for any reason (`ChannelFull`, `ChannelClosed`,
+/// `ResponseDropped`, or a future `#[non_exhaustive]` variant), procmond
+/// would hang in `WaitingForAgent` forever while the binary stays alive and
+/// the supervisor (systemd, kubelet, etc.) reports it as healthy — the exact
+/// zombie failure mode `ShadowHunt` is designed to catch on monitored hosts.
+/// Exiting non-zero hands the problem to the supervisor, which restarts us.
 ///
-/// - [`ActorError::ChannelFull`] is the only explicitly-transient variant,
-///   and only on **degraded-fallback** paths (where the signal may be
-///   retried by a later collector cycle or a supervisor restart). On
-///   one-shot paths (see [`BeginMonitoringReason::is_one_shot`]), even
-///   `ChannelFull` is fatal — the signal is at-most-once, and dropping it
-///   would produce a zombie.
-/// - Every other variant — `ChannelClosed`, `ResponseDropped`, future
-///   `#[non_exhaustive]` additions — is fatal. The safer posture for a
-///   security-critical collector is to restart on anything unrecognized
-///   rather than silently continue.
+/// The typed `reason` parameter is retained purely for log labeling so the
+/// five call sites produce consistent, misspelling-proof log output.
 #[allow(
     clippy::exit,
     reason = "Three of the five call sites execute inside a tokio::spawn task \
@@ -118,27 +104,12 @@ fn begin_monitoring_or_exit(handle: &procmond::ActorHandle, reason: BeginMonitor
         Err(e) => e,
     };
 
-    // Default-fatal: only explicit transient ChannelFull on non-one-shot
-    // paths is allowed to log-and-continue. Everything else exits.
-    let is_recoverable_transient =
-        matches!(err, procmond::ActorError::ChannelFull { .. }) && !reason.is_one_shot();
-
-    if is_recoverable_transient {
-        error!(
-            error = %err,
-            reason = %reason,
-            "Actor channel backpressured on {reason} fallback - signal dropped, \
-             actor will resume on next collection cycle"
-        );
-        return;
-    }
-
     error!(
         error = %err,
         reason = %reason,
-        one_shot = reason.is_one_shot(),
-        "Fatal actor error after {reason} - collection pipeline is broken. \
-         procmond exiting so the supervisor can restart."
+        "Fatal actor error after {reason} - begin_monitoring() is a one-shot \
+         transition with no retry, so any failure (including ChannelFull) leaves \
+         procmond hung in WaitingForAgent. Exiting so the supervisor can restart."
     );
     std::process::exit(1);
 }
@@ -561,10 +532,7 @@ pub async fn main() -> anyhow::Result<()> {
         // it to this receiver would cause RPC messages to be consumed and
         // silently discarded by the lifecycle wait task (END-297 review
         // COR-002 / COR-004). RPC-over-bus delivery is a follow-up and will
-        // live on its own subscription owned by `RpcServiceHandler`; see the
-        // END-297 plan (`docs/plans/2026-04-18-001-feat-close-end-297-message-broker-plan.md`)
-        // and the acceptance-evidence artifact
-        // (`daemoneye-eventbus/docs/END-297-acceptance-evidence.md`).
+        // live on its own subscription owned by `RpcServiceHandler`.
         let lifecycle_topic = "control.collector.lifecycle".to_owned();
         let control_topics = vec![lifecycle_topic.clone()];
 
