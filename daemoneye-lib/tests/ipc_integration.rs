@@ -205,7 +205,7 @@ mod tests {
                         "Server connection test failed (attempt {retries}/{max_retries}): {e}, retrying in {retry_delay:?}"
                     );
                     tokio::time::sleep(retry_delay).await;
-                    retry_delay = std::cmp::min(retry_delay * 2, Duration::from_millis(1000));
+                    retry_delay = std::cmp::min(retry_delay * 2, Duration::from_secs(1));
                 }
                 Err(_) => {
                     retries += 1;
@@ -219,7 +219,7 @@ mod tests {
                         "Server connection test timed out (attempt {retries}/{max_retries}), retrying in {retry_delay:?}"
                     );
                     tokio::time::sleep(retry_delay).await;
-                    retry_delay = std::cmp::min(retry_delay * 2, Duration::from_millis(1000));
+                    retry_delay = std::cmp::min(retry_delay * 2, Duration::from_secs(1));
                 }
             }
         }

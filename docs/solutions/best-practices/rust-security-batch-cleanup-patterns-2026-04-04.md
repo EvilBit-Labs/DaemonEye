@@ -142,3 +142,4 @@ These findings affect a security monitoring tool where integrity, correctness, a
 - GitHub issue #42: Implement Tamper-Evident Audit Logging System with BLAKE3
 - GitHub issue #50: Implement Comprehensive Security Testing Framework
 - `.kiro/steering/security.md`: Security validation guidelines (source of truth)
+- [rust-async-arc-rwlock-await-holding-lock-pattern-2026-04-18.md](rust-async-arc-rwlock-await-holding-lock-pattern-2026-04-18.md) — companion doc covering the `Arc<Inner>` wrapping pattern when a lock is genuinely needed (complements the "replace lock with cheaper primitive" guidance here)

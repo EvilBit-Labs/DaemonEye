@@ -77,6 +77,7 @@ use daemoneye_eventbus::{
 };
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -274,7 +275,12 @@ pub struct EventBusConnector {
     wal: WriteAheadLog,
 
     /// EventBus client for broker communication (None when disconnected).
-    client: Option<EventBusClient>,
+    ///
+    /// Wrapped in `Arc` so callers holding the connector behind a `RwLock` can
+    /// clone the client handle out of a brief read-lock acquisition and do
+    /// async work (subscribe, publish) without holding the lock across `.await`.
+    /// See [`client_arc`](Self::client_arc).
+    client: Option<Arc<EventBusClient>>,
 
     /// In-memory buffer for events when disconnected.
     buffer: VecDeque<BufferedEvent>,
@@ -430,9 +436,11 @@ impl EventBusConnector {
         };
 
         // Attempt to connect
-        let client = EventBusClient::new(self.client_id.clone(), socket_config, client_config)
-            .await
-            .map_err(|e| EventBusConnectorError::Connection(e.to_string()))?;
+        let client = Arc::new(
+            EventBusClient::new(self.client_id.clone(), socket_config, client_config)
+                .await
+                .map_err(|e| EventBusConnectorError::Connection(e.to_string()))?,
+        );
 
         self.client = Some(client);
         self.connected = true;
@@ -520,7 +528,7 @@ impl EventBusConnector {
 
         match EventBusClient::new(self.client_id.clone(), socket_config, client_config).await {
             Ok(client) => {
-                self.client = Some(client);
+                self.client = Some(Arc::new(client));
                 self.connected = true;
                 self.reconnect_attempts = 0;
                 self.last_reconnect_attempt = None;
@@ -930,11 +938,35 @@ impl EventBusConnector {
             debug!(flushed = flushed, "Flushed buffer before shutdown");
         }
 
-        // Close the client connection
-        if let Some(client) = self.client.take()
-            && let Err(e) = client.shutdown().await
-        {
-            error!(error = %e, "Error during client shutdown");
+        // Close the client connection. The client is held behind `Arc` so other
+        // tasks can briefly clone it for async work without holding our lock.
+        //
+        // Strategy: always fire the non-consuming `shutdown_signal()` first so
+        // background tasks exit immediately regardless of outstanding clones.
+        // Then try `Arc::into_inner` to reclaim ownership for the full
+        // consuming `shutdown().await` (which also awaits task JoinHandles and
+        // closes the transport). If clones remain, the signal has already
+        // stopped the background tasks; the struct itself is dropped when the
+        // last clone drops.
+        if let Some(client_arc) = self.client.take() {
+            let signaled = client_arc.shutdown_signal();
+            if !signaled {
+                debug!(
+                    "EventBusClient shutdown signal not delivered - no active receivers (background tasks already exited)"
+                );
+            }
+            match Arc::into_inner(client_arc) {
+                Some(client) => {
+                    if let Err(e) = client.shutdown().await {
+                        error!(error = %e, "Error during client shutdown");
+                    }
+                }
+                None => {
+                    warn!(
+                        "EventBusClient has outstanding Arc references; skipped consuming shutdown, but background tasks received the shutdown signal and will exit"
+                    );
+                }
+            }
         }
 
         self.connected = false;
@@ -994,6 +1026,19 @@ impl EventBusConnector {
         self.buffer.len()
     }
 
+    /// Clone the current broker client handle without holding the connector lock.
+    ///
+    /// Callers that hold the connector behind `Arc<RwLock<...>>` should acquire
+    /// the read guard, call this to obtain an owned `Arc<EventBusClient>`, and
+    /// drop the guard before issuing any async broker calls. This satisfies the
+    /// workspace `clippy::await_holding_lock = "deny"` rule.
+    ///
+    /// Returns `None` when disconnected.
+    #[must_use]
+    pub fn client_arc(&self) -> Option<Arc<EventBusClient>> {
+        self.client.clone()
+    }
+
     /// Subscribe to topic patterns on the broker.
     ///
     /// Returns a receiver for bus events matching the given topic patterns.
@@ -1028,10 +1073,63 @@ impl EventBusConnector {
             correlation_filter: None,
             topic_patterns: Some(topic_patterns),
             enable_wildcards: true,
+            include_control: false,
         };
 
         client
             .subscribe(subscription)
+            .await
+            .map_err(|e| EventBusConnectorError::EventBus(e.to_string()))
+    }
+
+    /// Subscribe to topic patterns on the broker with opt-in Control delivery.
+    ///
+    /// Returns a `(event_rx, control_rx)` tuple of parallel receivers.
+    /// `control_rx` carries raw [`daemoneye_eventbus::Message`] envelopes for
+    /// `MessageType::Control` messages on matching topics — used by procmond
+    /// to receive lifecycle signals (`BeginMonitoring`) and per-collector RPC
+    /// requests from the agent.
+    ///
+    /// See [`EventSubscription::include_control`](daemoneye_eventbus::EventSubscription::include_control)
+    /// for the wire-level semantics.
+    ///
+    /// # Arguments
+    ///
+    /// * `subscriber_id` - Unique identifier for this subscription
+    /// * `topic_patterns` - Topic patterns to subscribe to (supports wildcards)
+    ///
+    /// # Errors
+    ///
+    /// - `EventBusConnectorError::Connection` if not connected
+    /// - `EventBusConnectorError::EventBus` if subscription fails
+    pub async fn subscribe_with_control(
+        &self,
+        subscriber_id: &str,
+        topic_patterns: Vec<String>,
+    ) -> EventBusConnectorResult<(
+        tokio::sync::mpsc::Receiver<daemoneye_eventbus::BusEvent>,
+        tokio::sync::mpsc::Receiver<daemoneye_eventbus::Message>,
+    )> {
+        let client = self.client.as_ref().ok_or_else(|| {
+            EventBusConnectorError::Connection("Not connected to broker".to_owned())
+        })?;
+
+        let subscription = daemoneye_eventbus::EventSubscription {
+            subscriber_id: subscriber_id.to_owned(),
+            capabilities: daemoneye_eventbus::SourceCaps {
+                event_types: vec!["control".to_owned()],
+                collectors: vec![],
+                max_priority: 0,
+            },
+            event_filter: None,
+            correlation_filter: None,
+            topic_patterns: Some(topic_patterns),
+            enable_wildcards: true,
+            include_control: true,
+        };
+
+        client
+            .subscribe_with_control(subscription)
             .await
             .map_err(|e| EventBusConnectorError::EventBus(e.to_string()))
     }

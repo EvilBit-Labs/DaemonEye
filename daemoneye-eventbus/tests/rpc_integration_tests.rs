@@ -464,7 +464,7 @@ async fn test_graceful_shutdown_request() {
         "test-client".to_string(),
         shutdown::shutdown_topic("test-collector"),
         shutdown_req,
-        Duration::from_secs(60),
+        Duration::from_mins(1),
     );
 
     // Handle request
@@ -1514,7 +1514,7 @@ async fn test_rpc_start_collector_with_process_manager() -> Result<()> {
         operation: CollectorOperation::Start,
         payload: RpcPayload::Lifecycle(lifecycle_req),
         timestamp: now,
-        deadline: now.checked_add(Duration::from_millis(10000)).unwrap_or(now),
+        deadline: now.checked_add(Duration::from_secs(10)).unwrap_or(now),
         correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     }; // Start collector
     let response = service.handle_request(request.clone()).await;
@@ -1588,7 +1588,7 @@ async fn test_rpc_stop_collector_with_process_manager() -> Result<()> {
         operation: CollectorOperation::Stop,
         payload: RpcPayload::Lifecycle(lifecycle_req),
         timestamp: now,
-        deadline: now.checked_add(Duration::from_millis(10000)).unwrap_or(now),
+        deadline: now.checked_add(Duration::from_secs(10)).unwrap_or(now),
         correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
@@ -1664,7 +1664,7 @@ async fn test_rpc_restart_collector_with_process_manager() -> Result<()> {
         operation: CollectorOperation::Restart,
         payload: RpcPayload::Lifecycle(lifecycle_req),
         timestamp: now,
-        deadline: now.checked_add(Duration::from_millis(15000)).unwrap_or(now),
+        deadline: now.checked_add(Duration::from_secs(15)).unwrap_or(now),
         correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
@@ -1745,7 +1745,7 @@ async fn test_rpc_health_check_with_running_collector() -> Result<()> {
         operation: CollectorOperation::HealthCheck,
         payload: RpcPayload::Generic(payload_map),
         timestamp: now,
-        deadline: now.checked_add(Duration::from_millis(5000)).unwrap_or(now),
+        deadline: now.checked_add(Duration::from_secs(5)).unwrap_or(now),
         correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
@@ -1803,7 +1803,7 @@ async fn test_rpc_health_check_with_stopped_collector() -> Result<()> {
         operation: CollectorOperation::HealthCheck,
         payload: RpcPayload::Empty,
         timestamp: now,
-        deadline: now.checked_add(Duration::from_millis(5000)).unwrap_or(now),
+        deadline: now.checked_add(Duration::from_secs(5)).unwrap_or(now),
         correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
@@ -1880,7 +1880,7 @@ async fn test_rpc_pause_collector_with_process_manager() -> Result<()> {
         operation: CollectorOperation::Pause,
         payload: RpcPayload::Lifecycle(lifecycle_req),
         timestamp: now,
-        deadline: now.checked_add(Duration::from_millis(5000)).unwrap_or(now),
+        deadline: now.checked_add(Duration::from_secs(5)).unwrap_or(now),
         correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 
@@ -1967,7 +1967,7 @@ async fn test_rpc_resume_collector_with_process_manager() -> Result<()> {
         operation: CollectorOperation::Resume,
         payload: RpcPayload::Lifecycle(lifecycle_req),
         timestamp: now,
-        deadline: now.checked_add(Duration::from_millis(5000)).unwrap_or(now),
+        deadline: now.checked_add(Duration::from_secs(5)).unwrap_or(now),
         correlation_metadata: RpcCorrelationMetadata::new(Uuid::new_v4().to_string()),
     };
 

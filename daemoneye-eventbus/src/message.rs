@@ -589,7 +589,34 @@ pub struct TriggerRequest {
 }
 
 /// Event subscription configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// A subscription declares which topics a consumer wants to receive messages
+/// on. By default, only [`MessageType::Event`] envelopes are delivered to the
+/// subscriber's channel — legacy behavior that keeps typed `CollectionEvent`
+/// consumers free of RPC/lifecycle noise.
+///
+/// To receive [`MessageType::Control`] envelopes (lifecycle commands such as
+/// `BeginMonitoring`, per-collector RPC requests, etc.) set
+/// [`include_control`](Self::include_control) to `true` AND call
+/// [`EventBusClient::subscribe_with_control`](crate::EventBusClient::subscribe_with_control),
+/// which returns a parallel [`tokio::sync::mpsc::Receiver`] of raw
+/// [`Message`] envelopes. The legacy [`EventBusClient::subscribe`](crate::EventBusClient::subscribe)
+/// method never delivers Control messages, preserving source- and
+/// behavior-compatibility for existing subscribers.
+///
+/// `include_control` defaults to `false` so existing call sites remain
+/// source-compatible; new callers should use struct-update syntax with
+/// [`Default`] to pick up future fields without churn.
+///
+/// Note: this struct is **not** currently marked `#[non_exhaustive]`.
+/// Cross-crate `struct-literal` construction (including FRU) is forbidden
+/// for non-exhaustive types, which means adding the attribute requires
+/// introducing a builder or `with_*` setter API for external consumers
+/// (collector-core's bridge, tests, benches). That refactor is deferred
+/// as local follow-up work. In the meantime, always construct via
+/// `..Default::default()` so future field additions cause the smallest
+/// possible diff.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventSubscription {
     /// Unique identifier for the subscriber
     pub subscriber_id: String,
@@ -601,12 +628,33 @@ pub struct EventSubscription {
     pub correlation_filter: Option<CorrelationFilter>,
     /// Optional explicit topic patterns
     pub topic_patterns: Option<Vec<String>>,
-    /// Enable wildcarding support for topic patterns
+    /// Advisory flag reserved for a future wildcard-enforcement policy.
+    ///
+    /// The client-side subscription matcher in `client.rs` currently parses
+    /// `+` and `#` wildcards unconditionally via
+    /// [`crate::TopicPattern`], so this field has no runtime effect
+    /// today — callers get wildcard matching regardless of the value.
+    /// Setting it to `true` is therefore the honest default until
+    /// enforcement lands.
+    ///
+    /// A follow-up will either (a) gate wildcard parsing on this flag and
+    /// reject wildcard-containing patterns when `false`, or (b) remove the
+    /// field entirely in favor of an always-on semantics.
     pub enable_wildcards: bool,
+    /// Opt into delivery of [`MessageType::Control`] envelopes on matching topics.
+    ///
+    /// When `false` (default) Control messages are silently dropped by the
+    /// client so legacy event-only consumers keep their current behavior.
+    /// When `true`, the subscribed topic patterns are tracked for Control
+    /// delivery and callers should use
+    /// [`EventBusClient::subscribe_with_control`](crate::EventBusClient::subscribe_with_control)
+    /// to obtain the parallel Control receiver.
+    #[serde(default)]
+    pub include_control: bool,
 }
 
 /// Source capabilities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceCaps {
     /// Supported event types
     pub event_types: Vec<String>,

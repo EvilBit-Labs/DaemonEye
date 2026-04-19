@@ -13,5 +13,6 @@ Options:
       --max-processes <MAX_PROCESSES>  Maximum processes to collect per cycle (0 = unlimited) [default: 0]
       --enhanced-metadata              Enable enhanced metadata collection
       --compute-hashes                 Enable executable hashing
+      --standalone                     Start monitoring immediately without waiting for an agent `BeginMonitoring` signal (also: `PROCMOND_STANDALONE=1`)
   -h, --help                           Print help
   -V, --version                        Print version

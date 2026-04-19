@@ -1351,7 +1351,7 @@ mod tests {
         // Test without real-time capability with slow collection interval
         let slow_config = ProcmondMonitorConfig {
             base_config: MonitorCollectorConfig {
-                collection_interval: Duration::from_secs(60),
+                collection_interval: Duration::from_mins(1),
                 ..Default::default()
             },
             ..Default::default()
@@ -1481,7 +1481,7 @@ mod tests {
         // Create updated config with new interval
         let new_config = ProcmondMonitorConfig {
             base_config: MonitorCollectorConfig {
-                collection_interval: Duration::from_secs(60),
+                collection_interval: Duration::from_mins(1),
                 ..Default::default()
             },
             ..Default::default()
@@ -1498,7 +1498,7 @@ mod tests {
         // Verify config was applied
         assert_eq!(
             collector.config.base_config.collection_interval,
-            Duration::from_secs(60)
+            Duration::from_mins(1)
         );
 
         drop(handle);
@@ -1539,7 +1539,7 @@ mod tests {
         // Test maximum reasonable interval
         let max_config = ProcmondMonitorConfig {
             base_config: MonitorCollectorConfig {
-                collection_interval: Duration::from_secs(3600),
+                collection_interval: Duration::from_hours(1),
                 ..Default::default()
             },
             ..Default::default()
@@ -1677,14 +1677,14 @@ mod tests {
         let handle = ActorHandle::new(tx);
 
         // Send adjust interval message
-        let result = handle.adjust_interval(Duration::from_secs(60));
+        let result = handle.adjust_interval(Duration::from_mins(1));
         assert!(result.is_ok());
 
         // Verify the message was received
         let msg = rx.recv().await.unwrap();
         match msg {
             ActorMessage::AdjustInterval { new_interval } => {
-                assert_eq!(new_interval, Duration::from_secs(60));
+                assert_eq!(new_interval, Duration::from_mins(1));
             }
             other => panic!("Expected AdjustInterval message, got: {other:?}"),
         }
@@ -1700,7 +1700,7 @@ mod tests {
         let _ = handle.adjust_interval(Duration::from_secs(30));
 
         // Next call should fail
-        let result = handle.adjust_interval(Duration::from_secs(60));
+        let result = handle.adjust_interval(Duration::from_mins(1));
         assert!(result.is_err());
     }
 
@@ -1945,7 +1945,7 @@ mod tests {
 
         let new_config = ProcmondMonitorConfig {
             base_config: MonitorCollectorConfig {
-                collection_interval: Duration::from_secs(60),
+                collection_interval: Duration::from_mins(1),
                 ..Default::default()
             },
             ..Default::default()
@@ -2052,12 +2052,12 @@ mod tests {
         let (mut collector, _handle) = create_collector_with_channel(db_manager, config).unwrap();
 
         let msg = ActorMessage::AdjustInterval {
-            new_interval: Duration::from_secs(60),
+            new_interval: Duration::from_mins(1),
         };
         let should_exit = collector.handle_message(msg);
 
         assert!(!should_exit);
-        assert_eq!(collector.pending_interval, Some(Duration::from_secs(60)));
+        assert_eq!(collector.pending_interval, Some(Duration::from_mins(1)));
     }
 
     // ============================================================================
@@ -2572,7 +2572,7 @@ mod tests {
         // Test UpdateConfig variant with valid config
         let new_config = ProcmondMonitorConfig {
             base_config: MonitorCollectorConfig {
-                collection_interval: Duration::from_secs(60),
+                collection_interval: Duration::from_mins(1),
                 ..Default::default()
             },
             ..Default::default()

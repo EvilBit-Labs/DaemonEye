@@ -92,7 +92,7 @@ impl Default for CollectorConfig {
             max_event_sources: 16,
             event_buffer_size: 1000,
             shutdown_timeout: Duration::from_secs(30),
-            health_check_interval: Duration::from_secs(60),
+            health_check_interval: Duration::from_mins(1),
             startup_timeout: Duration::from_secs(10),
             enable_debug_logging: false,
             max_batch_size: 100,
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(config.max_event_sources, 16);
         assert_eq!(config.event_buffer_size, 1000);
         assert_eq!(config.shutdown_timeout, Duration::from_secs(30));
-        assert_eq!(config.health_check_interval, Duration::from_secs(60));
+        assert_eq!(config.health_check_interval, Duration::from_mins(1));
         assert_eq!(config.startup_timeout, Duration::from_secs(10));
         assert!(!config.enable_debug_logging);
         assert_eq!(config.max_batch_size, 100);
@@ -626,14 +626,14 @@ mod tests {
         let config = CollectorConfig::new()
             .with_max_event_sources(32)
             .with_event_buffer_size(2000)
-            .with_shutdown_timeout(Duration::from_secs(60))
-            .with_health_check_interval(Duration::from_secs(120))
+            .with_shutdown_timeout(Duration::from_mins(1))
+            .with_health_check_interval(Duration::from_mins(2))
             .with_debug_logging(true);
 
         assert_eq!(config.max_event_sources, 32);
         assert_eq!(config.event_buffer_size, 2000);
-        assert_eq!(config.shutdown_timeout, Duration::from_secs(60));
-        assert_eq!(config.health_check_interval, Duration::from_secs(120));
+        assert_eq!(config.shutdown_timeout, Duration::from_mins(1));
+        assert_eq!(config.health_check_interval, Duration::from_mins(2));
         assert!(config.enable_debug_logging);
     }
 

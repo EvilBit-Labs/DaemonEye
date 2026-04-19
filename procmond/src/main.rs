@@ -23,6 +23,97 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
+/// Maximum time procmond waits for `BeginMonitoring` after subscribing
+/// to control topics before falling back to standalone collection.
+/// Chosen empirically: 60s is long enough for a slow agent boot on
+/// contested hardware, short enough that operators notice when the
+/// agent is genuinely unreachable (END-297 review REL-001 / ADV-004).
+const BEGIN_MONITORING_WAIT_TIMEOUT: Duration = Duration::from_mins(1);
+
+/// Typed reason for each call to [`begin_monitoring_or_exit`]. Used purely as
+/// a log label so error output is consistent and misspelling-proof across the
+/// five call sites; the helper itself no longer branches on the variant — all
+/// paths are treated as fatal on any actor error (see the function docstring).
+#[derive(Debug, Clone, Copy)]
+enum BeginMonitoringReason {
+    /// Operator-opted standalone mode (CLI flag or `PROCMOND_STANDALONE=1`).
+    StandaloneMode,
+    /// Agent's `BeginMonitoring` broadcast arrived on
+    /// `control.collector.lifecycle`.
+    LifecycleSignal,
+    /// Subscribe-with-control failed; falling back to immediate collection.
+    BrokerUnreachable,
+    /// Control channel closed before a lifecycle message arrived; falling
+    /// back to standalone collection.
+    ChannelClosed,
+    /// Wait deadline elapsed before `BeginMonitoring` arrived; falling back
+    /// to standalone collection.
+    WaitTimeout,
+}
+
+impl BeginMonitoringReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::StandaloneMode => "standalone-mode",
+            Self::LifecycleSignal => "lifecycle-signal",
+            Self::BrokerUnreachable => "broker-unreachable",
+            Self::ChannelClosed => "channel-closed",
+            Self::WaitTimeout => "wait-timeout",
+        }
+    }
+}
+
+impl std::fmt::Display for BeginMonitoringReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Send `BeginMonitoring` to the actor, exiting the process on *any* error.
+///
+/// `begin_monitoring()` performs a one-time state transition from
+/// `WaitingForAgent` -> `Running`. It is called exactly once per procmond
+/// lifetime from each of the five call sites below, and none of those sites
+/// has a retry loop — once this function returns without exiting, the actor
+/// has either transitioned or it never will.
+///
+/// That makes the error-handling policy uniformly fatal: if the actor cannot
+/// receive this signal for any reason (`ChannelFull`, `ChannelClosed`,
+/// `ResponseDropped`, or a future `#[non_exhaustive]` variant), procmond
+/// would hang in `WaitingForAgent` forever while the binary stays alive and
+/// the supervisor (systemd, kubelet, etc.) reports it as healthy — the exact
+/// zombie failure mode `ShadowHunt` is designed to catch on monitored hosts.
+/// Exiting non-zero hands the problem to the supervisor, which restarts us.
+///
+/// The typed `reason` parameter is retained purely for log labeling so the
+/// five call sites produce consistent, misspelling-proof log output.
+#[allow(
+    clippy::exit,
+    reason = "Three of the five call sites execute inside a tokio::spawn task \
+     (the lifecycle_wait_task), where returning Err propagates nowhere and \
+     has no effect on process exit status. Using std::process::exit gives a \
+     uniform failure shape across both main-task and spawned-task call \
+     sites; supervisors observe a non-zero exit and restart procmond. \
+     std::process::exit skips destructor runs, but WAL writes are committed \
+     before events leave the actor (see event_bus_connector.rs) so buffered \
+     events are recoverable on next startup via replay_wal()."
+)]
+fn begin_monitoring_or_exit(handle: &procmond::ActorHandle, reason: BeginMonitoringReason) {
+    let err = match handle.begin_monitoring() {
+        Ok(()) => return,
+        Err(e) => e,
+    };
+
+    error!(
+        error = %err,
+        reason = %reason,
+        "Fatal actor error after {reason} - begin_monitoring() is a one-shot \
+         transition with no retry, so any failure (including ChannelFull) leaves \
+         procmond hung in WaitingForAgent. Exiting so the supervisor can restart."
+    );
+    std::process::exit(1);
+}
+
 /// Parse and validate the collection interval argument.
 ///
 /// Ensures the interval is within acceptable bounds (5-3600 seconds).
@@ -73,6 +164,10 @@ struct Cli {
     /// Enable executable hashing
     #[arg(long)]
     compute_hashes: bool,
+
+    /// Start monitoring immediately without waiting for an agent `BeginMonitoring` signal (also: `PROCMOND_STANDALONE=1`)
+    #[arg(long)]
+    standalone: bool,
 }
 
 #[tokio::main]
@@ -135,10 +230,10 @@ pub async fn main() -> anyhow::Result<()> {
     // (actor-mode `ProcmondMonitorCollector` and standalone-mode
     // `ProcessEventSource`). Sharing the `Arc` guarantees a single
     // policy (one concurrency cap, one algorithm list, one size
-    // budget) no matter which path the process runs through. See
-    // `daemoneye-lib::integrity::MultiAlgorithmHasher` rustdoc for the
-    // statelessness invariant that protects the shared `Arc` across
-    // trust domains.
+    // budget) no matter which path the process runs through. The
+    // hasher is `Send + Sync` and holds no per-request mutable state
+    // (see `daemoneye-lib::integrity::MultiAlgorithmHasher` rustdoc),
+    // so a single `Arc` is safe to share across worker tasks.
     //
     // If engine construction fails when `--compute-hashes` is set, the
     // error propagates immediately via `?` — there is no silent fallback.
@@ -269,6 +364,7 @@ pub async fn main() -> anyhow::Result<()> {
 
         // Perform registration with daemoneye-agent
         info!("Registering with daemoneye-agent");
+        let mut registration_failed = false;
         match registration_manager.register().await {
             Ok(response) => {
                 info!(
@@ -279,19 +375,23 @@ pub async fn main() -> anyhow::Result<()> {
                 );
             }
             Err(e) => {
-                // Log warning but continue - procmond can operate without registration
-                // in standalone/development scenarios
+                // Log warning and force standalone mode - an unregistered collector
+                // won't receive an agent BeginMonitoring broadcast, so subscribe-then-wait
+                // would block forever (END-297 review COR-003).
                 warn!(
                     error = %e,
-                    "Registration failed, continuing in standalone mode"
+                    "Registration failed, forcing standalone mode"
                 );
+                registration_failed = true;
             }
         }
 
-        // Start heartbeat task (only publishes when registered)
-        let heartbeat_task =
-            RegistrationManager::spawn_heartbeat_task(Arc::clone(&registration_manager));
-        info!("Heartbeat task started");
+        // Heartbeat task is spawned AFTER the control subscription is established
+        // below. Tokio's `interval::tick()` fires immediately on first poll, so
+        // if the heartbeat were spawned here it could publish a ready signal
+        // before our `control.collector.lifecycle` subscription is registered
+        // with the broker, causing an agent `BeginMonitoring` broadcast to be
+        // delivered to zero subscribers (END-297 PR #178 review, copilot).
 
         // ========================================================================
         // Initialize RPC Service Handler
@@ -394,22 +494,218 @@ pub async fn main() -> anyhow::Result<()> {
             }
         });
 
-        // Begin monitoring immediately on startup.
+        // Subscribe-then-wait flow: subscribe to the lifecycle control topic
+        // and wait for the agent's BeginMonitoring signal before transitioning
+        // to Running state. Falls back to immediate-start if the `--standalone`
+        // CLI flag is set, the `PROCMOND_STANDALONE=1` environment variable is
+        // set, or if the subscription to the broker fails.
         //
-        // The collector does not wait for an explicit "begin monitoring" command
-        // from the agent. This makes procmond usable in isolation and in test
-        // environments without requiring the full agent/broker stack.
+        // Startup-ordering invariant (END-297 plan
+        // `docs/plans/2026-04-18-001-feat-close-end-297-message-broker-plan.md`):
+        // the lifecycle subscription must be active when the agent publishes
+        // `BeginMonitoring`, otherwise the message is lost (eventbus README:
+        // at-most-once delivery). The agent triggers
+        // `broadcast_begin_monitoring` from `transition_to_steady_state`,
+        // which fires after all expected collectors register.
         //
-        // TODO: Once daemoneye-eventbus supports control message subscriptions
-        // (MessageType::Control delivery to subscribers), add a control transport
-        // task here that subscribes to `control.collector.lifecycle` for
-        // BeginMonitoring signals and `control.collector.procmond` for RPC
-        // requests (HealthCheck, UpdateConfig, etc.). The current EventBusClient
-        // subscription mechanism only delivers MessageType::Event, not Control.
-        info!("Starting collection immediately on startup");
-        if let Err(e) = actor_handle.begin_monitoring() {
-            error!(error = %e, "Failed to send BeginMonitoring command");
+        // Heartbeats don't directly trigger the broadcast today — no code path
+        // in `daemoneye-agent/src/broker_manager.rs` routes heartbeat arrival
+        // into `broadcast_begin_monitoring`; the broadcast is only fired from
+        // `transition_to_steady_state` after `wait_for_collectors_ready`
+        // returns. The spawn ordering below is therefore **defensive only**:
+        // the subscribe/spawn order could be reversed today without breaking
+        // correctness. It's maintained as a safeguard against future agent
+        // changes that might route heartbeats into the broadcast trigger.
+        // The heartbeat task is spawned AFTER the subscribe block completes —
+        // see the `spawn_heartbeat_task` call below.
+        let standalone_mode = cli.standalone
+            || std::env::var("PROCMOND_STANDALONE").ok().as_deref() == Some("1")
+            || registration_failed;
+
+        // Build the set of control topics procmond must receive on in this
+        // subscription. Only `control.collector.lifecycle` is wired here —
+        // it carries the agent-broadcast BeginMonitoring signal that this
+        // task is waiting for.
+        //
+        // The per-collector RPC topic `control.collector.{id}` (HealthCheck,
+        // UpdateConfig, etc.) is intentionally NOT subscribed here. Adding
+        // it to this receiver would cause RPC messages to be consumed and
+        // silently discarded by the lifecycle wait task (END-297 review
+        // COR-002 / COR-004). RPC-over-bus delivery is a follow-up and will
+        // live on its own subscription owned by `RpcServiceHandler`.
+        let lifecycle_topic = "control.collector.lifecycle".to_owned();
+        let control_topics = vec![lifecycle_topic.clone()];
+
+        let mut control_rx_opt: Option<tokio::sync::mpsc::Receiver<daemoneye_eventbus::Message>> =
+            None;
+
+        if standalone_mode {
+            info!(
+                standalone = true,
+                "Standalone escape hatch active - starting collection immediately without waiting for agent"
+            );
+            begin_monitoring_or_exit(&actor_handle, BeginMonitoringReason::StandaloneMode);
+        } else {
+            // Subscribe to control topics. If the broker is unreachable, log
+            // loudly and fall back to standalone so we never silently start
+            // collecting without coordination (see END-297 plan,
+            // "System-Wide Impact -> Error propagation").
+            //
+            // Acquire the read guard only long enough to clone an owned
+            // `Arc<EventBusClient>`, then drop the guard before the async
+            // subscribe call — this satisfies the workspace
+            // `clippy::await_holding_lock = "deny"` rule.
+            let subscriber_id = format!("procmond-{}", registration_manager.collector_id());
+            let client_arc = {
+                let bus_guard = event_bus.read().await;
+                bus_guard.client_arc()
+            };
+            let subscribe_result = match client_arc {
+                Some(client) => {
+                    let subscription = daemoneye_eventbus::EventSubscription {
+                        subscriber_id: subscriber_id.clone(),
+                        capabilities: daemoneye_eventbus::SourceCaps {
+                            event_types: vec!["control".to_owned()],
+                            collectors: vec![],
+                            max_priority: 0,
+                        },
+                        event_filter: None,
+                        correlation_filter: None,
+                        topic_patterns: Some(control_topics.clone()),
+                        enable_wildcards: true,
+                        include_control: true,
+                    };
+                    client
+                        .subscribe_with_control(subscription)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("subscribe_with_control failed on {subscriber_id}: {e}")
+                        })
+                }
+                None => Err(anyhow::anyhow!(
+                    "EventBusConnector is not connected to broker; cannot subscribe to control topics for {subscriber_id}"
+                )),
+            };
+
+            match subscribe_result {
+                Ok((mut events_rx, control_rx)) => {
+                    // debug! (not info!): subscription topology with per-collector IDs
+                    // should stay out of default-level logs that may ship to less-trusted
+                    // SIEM pipelines (END-297 review SEC-004).
+                    debug!(
+                        subscriber_id = %subscriber_id,
+                        topics = ?control_topics,
+                        "Subscribed to control topics; waiting for BeginMonitoring"
+                    );
+                    info!("Subscribed to control topics; waiting for BeginMonitoring");
+                    // Drain task: subscribe_with_control returns (events_rx, control_rx)
+                    // but procmond only uses the control channel. Consume and discard
+                    // anything that arrives on events_rx so the channel doesn't backpressure
+                    // or produce warn! spam for closed-sender (END-297 review COR-001).
+                    tokio::spawn(async move {
+                        while events_rx.recv().await.is_some() {
+                            // Discard: procmond's subscription exists solely for control
+                            // delivery; event traffic on these topics is agent-owned.
+                        }
+                    });
+                    control_rx_opt = Some(control_rx);
+                }
+                Err(sub_err) => {
+                    warn!(
+                        error = %sub_err,
+                        topics = ?control_topics,
+                        "Failed to subscribe to control topics - falling back to standalone escape hatch"
+                    );
+                    // Loud fallback: start monitoring immediately, but record
+                    // the reason so operators see it in logs.
+                    begin_monitoring_or_exit(
+                        &actor_handle,
+                        BeginMonitoringReason::BrokerUnreachable,
+                    );
+                }
+            }
         }
+
+        // Now that the control subscription is registered (or we have
+        // deliberately fallen back to standalone), it is safe to start the
+        // heartbeat task. Starting it earlier could cause the first tick to
+        // publish a ready-state heartbeat before the subscription landed with
+        // the broker, losing the agent's `BeginMonitoring` broadcast.
+        let heartbeat_task =
+            RegistrationManager::spawn_heartbeat_task(Arc::clone(&registration_manager));
+        info!("Heartbeat task started");
+
+        // Spawn the lifecycle wait task (only if we have a control receiver).
+        // It waits for any control message on `control.collector.lifecycle`
+        // — any message on that topic is interpreted as BeginMonitoring for
+        // now (the current agent broadcasts a single BeginMonitoring JSON
+        // payload). Future message types on this topic should be filtered
+        // by inspecting the payload, which is intentionally left permissive
+        // here for forward compatibility.
+        //
+        // Defensive guard: because this subscription only requests
+        // `control.collector.lifecycle`, we should never observe any other
+        // topic on this receiver. If we do, it indicates a broker routing
+        // bug and is logged at `warn!` rather than silently discarded.
+        let wait_actor_handle = actor_handle.clone();
+        let lifecycle_topic_task = lifecycle_topic.clone();
+        let lifecycle_wait_task = control_rx_opt.map(|mut control_rx| {
+            tokio::spawn(async move {
+                // Single absolute deadline for the whole wait — a chatty control
+                // stream cannot reset the window by delivering non-lifecycle
+                // messages (END-297 PR #178 review, coderabbitai).
+                // `checked_add` and then `unwrap_or(now)` guards against the
+                // pathological far-future overflow case required by clippy's
+                // `arithmetic_side_effects = deny`.
+                let now = tokio::time::Instant::now();
+                let deadline = now
+                    .checked_add(BEGIN_MONITORING_WAIT_TIMEOUT)
+                    .unwrap_or(now);
+                loop {
+                    match tokio::time::timeout_at(deadline, control_rx.recv()).await {
+                        Ok(Some(msg)) => {
+                            if msg.topic == lifecycle_topic_task {
+                                info!(
+                                    topic = %msg.topic,
+                                    "Received lifecycle control message - transitioning to Running"
+                                );
+                                begin_monitoring_or_exit(
+                                    &wait_actor_handle,
+                                    BeginMonitoringReason::LifecycleSignal,
+                                );
+                                return;
+                            }
+                            warn!(
+                                topic = %msg.topic,
+                                expected_topic = %lifecycle_topic_task,
+                                "Received unexpected control topic on lifecycle subscription - ignoring (broker routing bug?)"
+                            );
+                        }
+                        Ok(None) => {
+                            error!(
+                                "Control channel closed before BeginMonitoring received - falling back to standalone collection"
+                            );
+                            begin_monitoring_or_exit(
+                                &wait_actor_handle,
+                                BeginMonitoringReason::ChannelClosed,
+                            );
+                            return;
+                        }
+                        Err(_elapsed) => {
+                            error!(
+                                timeout_secs = BEGIN_MONITORING_WAIT_TIMEOUT.as_secs(),
+                                "Timed out waiting for BeginMonitoring - falling back to standalone collection"
+                            );
+                            begin_monitoring_or_exit(
+                                &wait_actor_handle,
+                                BeginMonitoringReason::WaitTimeout,
+                            );
+                            return;
+                        }
+                    }
+                }
+            })
+        });
 
         // Keep RPC service reference alive for future control transport integration
         let _rpc_service = rpc_service;
@@ -471,6 +767,13 @@ pub async fn main() -> anyhow::Result<()> {
         heartbeat_task.abort();
         info!("Heartbeat task aborted");
 
+        // Clean up lifecycle wait task (if it is still running — e.g. shutdown
+        // fired before BeginMonitoring arrived).
+        if let Some(wait_task) = lifecycle_wait_task {
+            wait_task.abort();
+            info!("Lifecycle wait task aborted");
+        }
+
         // Wait for event consumer to exit naturally (channel sender is dropped)
         // Use a timeout to avoid hanging indefinitely
         match tokio::time::timeout(Duration::from_secs(5), event_consumer_task).await {
@@ -495,7 +798,7 @@ pub async fn main() -> anyhow::Result<()> {
             .with_max_event_sources(1)
             .with_event_buffer_size(1000)
             .with_shutdown_timeout(Duration::from_secs(30))
-            .with_health_check_interval(Duration::from_secs(60))
+            .with_health_check_interval(Duration::from_mins(1))
             .with_telemetry(true)
             .with_debug_logging(cli.log_level == "debug");
 

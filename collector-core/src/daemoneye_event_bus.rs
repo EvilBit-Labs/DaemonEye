@@ -451,6 +451,11 @@ impl DaemoneyeEventBus {
             }),
             topic_patterns: subscription.topic_patterns.clone(),
             enable_wildcards: subscription.enable_wildcards,
+            // collector-core subscriptions do not opt into Control delivery —
+            // this bridge layer only wires Event subscriptions into the
+            // daemoneye-eventbus `subscribe()` API. See END-297 for the
+            // opt-in path via `subscribe_with_control`.
+            include_control: false,
         }
     }
 
@@ -1629,7 +1634,7 @@ mod tests {
             HealthStatus::Healthy | HealthStatus::Starting
         ));
         // Uptime might be 0 in fast tests
-        assert!(detailed_metrics.broker_health.uptime < Duration::from_secs(3600));
+        assert!(detailed_metrics.broker_health.uptime < Duration::from_hours(1));
         assert!(detailed_metrics.broker_health.active_connections >= 1);
         assert!(detailed_metrics.broker_health.message_throughput >= 0.0);
 
@@ -1685,7 +1690,7 @@ mod tests {
             HealthStatus::Healthy | HealthStatus::Starting
         ));
         // Uptime might be 0 in fast tests
-        assert!(health_status.uptime < Duration::from_secs(3600));
+        assert!(health_status.uptime < Duration::from_hours(1));
         assert_eq!(health_status.active_connections, 0); // No subscribers yet
         assert!(health_status.message_throughput >= 0.0);
         assert_eq!(health_status.error_rate, 0.0); // No errors expected
@@ -1860,7 +1865,7 @@ mod tests {
         assert_eq!(stats.events_delivered, 0);
         assert_eq!(stats.active_subscribers, 0);
         // Uptime might be 0 in fast tests
-        assert!(stats.uptime < Duration::from_secs(3600));
+        assert!(stats.uptime < Duration::from_hours(1));
 
         // Create subscription and publish event
         let subscription = EventSubscription {

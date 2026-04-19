@@ -70,7 +70,7 @@ fn create_test_process_event(
         name: name.to_string(),
         executable_path: executable_path.map(|s| s.to_string()),
         command_line: command_line.iter().map(|s| s.to_string()).collect(),
-        start_time: Some(SystemTime::now() - Duration::from_secs(60)),
+        start_time: Some(SystemTime::now() - Duration::from_mins(1)),
         cpu_usage: Some(1.0),
         memory_usage: Some(1024 * 1024),
         executable_hash: Some("abc123".to_string()),
@@ -468,7 +468,7 @@ fn test_stop_detection_runtime_duration_calculated() {
     let mut tracker = ProcessLifecycleTracker::new(config);
 
     // Create process with known start time
-    let process_start_time = SystemTime::now() - Duration::from_secs(120); // Started 2 minutes ago
+    let process_start_time = SystemTime::now() - Duration::from_mins(2);
     let initial_processes = vec![create_process_event_with_start_time(
         500,
         "long_running_process",
@@ -1206,7 +1206,7 @@ fn test_snapshot_conversion_roundtrip() {
             "--arg1".to_string(),
             "--arg2=value".to_string(),
         ],
-        start_time: Some(SystemTime::now() - Duration::from_secs(3600)),
+        start_time: Some(SystemTime::now() - Duration::from_hours(1)),
         cpu_usage: Some(25.5),
         memory_usage: Some(256 * 1024 * 1024),
         executable_hash: Some("fedcba987654321".to_string()),

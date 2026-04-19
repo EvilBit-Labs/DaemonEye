@@ -785,7 +785,7 @@ mod tests {
             .unwrap();
 
         // Wait for the event to be delivered using crossbeam channel
-        tokio::time::timeout(Duration::from_millis(1000), async {
+        tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 if let Ok(event) = event_queue.try_recv() {
                     break event;

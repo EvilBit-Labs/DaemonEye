@@ -571,7 +571,7 @@ mod tests {
         let mut collector = TelemetryCollector::new("test-component".to_owned());
 
         // Record a slow operation (> 5000ms)
-        collector.record_operation(Duration::from_millis(6000));
+        collector.record_operation(Duration::from_secs(6));
 
         let health_check = collector.health_check();
         assert_eq!(health_check.status, HealthStatus::Degraded);

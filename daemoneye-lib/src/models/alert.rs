@@ -383,7 +383,7 @@ impl Alert {
     /// println!("alert age: {}s", age);
     /// ```
     pub fn age_seconds(&self) -> u64 {
-        self.timestamp.elapsed().map(|d| d.as_secs()).unwrap_or(0)
+        self.timestamp.elapsed().map_or(0, |d| d.as_secs())
     }
 
     /// Check if the alert is recent (within the specified threshold).

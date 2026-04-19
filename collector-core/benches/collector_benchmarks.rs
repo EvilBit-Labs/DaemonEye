@@ -454,7 +454,7 @@ fn bench_performance_monitoring_overhead(c: &mut Criterion) {
             PerformanceConfig {
                 enabled: true,
                 enable_trigger_latency_tracking: false,
-                collection_interval: Duration::from_secs(60),
+                collection_interval: Duration::from_mins(1),
                 ..Default::default()
             },
         ),

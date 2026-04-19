@@ -1,6 +1,23 @@
 name: Benchmarks
 
 on:
+    # The eventbus-latency-slo job gates PRs on the END-297 local-IPC round-trip
+    # p99 latency SLO (<1ms). Scoped to paths that can plausibly affect IPC
+    # latency so we don't run a bench on every PR. Other jobs in this workflow
+    # (benchmarks, load-tests) remain workflow_dispatch-only and are gated by
+    # per-job `if` conditions below; they are informational and expensive to
+    # run on every PR.
+    pull_request:
+        branches: [ main ]
+        paths:
+            - "daemoneye-eventbus/**"
+            - "collector-core/**"
+            - ".github/workflows/benchmarks.yml"
+            # Toolchain or workspace-level dep changes can shift Tokio/compiler
+            # behavior and move p99 without touching the eventbus crate itself.
+            - "Cargo.toml"
+            - "Cargo.lock"
+            - "rust-toolchain.toml"
     workflow_dispatch:
         inputs:
             suite:
@@ -30,12 +47,15 @@ env:
 
 jobs:
     benchmarks:
+        # Informational benchmark suite; runs only on manual dispatch to avoid
+        # spending PR CI time on non-gating criterion runs.
+        if: github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
         timeout-minutes: 15
         steps:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
@@ -45,7 +65,8 @@ jobs:
               uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: target/criterion
-                  key: criterion-baseline-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+                  key: criterion-baseline-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml',
+                      'Cargo.lock') }}
 
             - name: Run benchmarks
               env:
@@ -80,10 +101,11 @@ jobs:
               if: github.ref == 'refs/heads/main'
               with:
                   path: target/criterion
-                  key: criterion-baseline-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+                  key: criterion-baseline-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml',
+                      'Cargo.lock') }}
 
             - name: Upload benchmark results
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               if: always()
               with:
                   name: benchmark-results
@@ -91,12 +113,14 @@ jobs:
                   retention-days: 30
 
     load-tests:
+        # Informational load tests; runs only on manual dispatch.
+        if: github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
         timeout-minutes: 10
         steps:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
@@ -113,4 +137,51 @@ jobs:
               with:
                   name: load-test-results
                   path: load-test-output.txt
+                  retention-days: 30
+
+    # END-297 acceptance-criterion gate: local-IPC round-trip p99 latency < 1ms.
+    # See daemoneye-eventbus/benches/ipc_performance.rs::latency_p99_slo.
+    # Gated on Linux and macOS only; Windows and FreeBSD are informational per
+    # the END-297 plan (Key Technical Decisions) and the AGENTS.md OS support
+    # matrix.
+    eventbus-latency-slo:
+        strategy:
+            fail-fast: false
+            matrix:
+                os:
+                    - ubuntu-latest
+                    - macos-latest
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+              with:
+                  install: true
+                  cache: true
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            # Cache `target/` across runs so the cold-build time doesn't eat the
+            # 15-minute job timeout. Key includes the OS and Cargo.lock so the
+            # cache invalidates on toolchain/dep changes.
+            - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+              with:
+                  shared-key: eventbus-latency-slo-${{ matrix.os }}
+                  cache-targets: "true"
+                  cache-all-crates: "true"
+
+            - name: Run END-297 latency p99 SLO bench (<1ms)
+              # Filter anchored with ^...$ so it matches only the SLO bench ID
+              # and not the pre-existing `latency/*` bench IDs in the same file.
+              run: |
+                  set -o pipefail
+                  mise x -- cargo bench --package daemoneye-eventbus --bench ipc_performance -- '^latency_p99_slo$' 2>&1 | tee eventbus-latency-slo.txt
+
+            - name: Upload latency SLO results
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              if: always()
+              with:
+                  name: eventbus-latency-slo-${{ matrix.os }}
+                  path: eventbus-latency-slo.txt
                   retention-days: 30

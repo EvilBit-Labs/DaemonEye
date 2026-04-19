@@ -84,15 +84,16 @@ Commit style: [.github/commit-instructions.md](.github/commit-instructions.md)
 
 ### Behavior Guidelines
 
-1. **No Auto-Commits**: Never commit without explicit permission. Always present diffs for approval.
-2. **Security-First**: All changes must maintain least privilege and undergo security review.
-3. **Zero-Warnings Policy**: `cargo clippy -- -D warnings` with no exceptions.
-4. **Operator-Centric**: Prioritize workflows efficient in contested/airgapped environments.
-5. **Documentation**: Mermaid for diagrams, relative links, maintain link hygiene.
-6. **Testing Required**: All code changes must include appropriate tests.
-7. **Linter Restrictions**: Never remove clippy restrictions or `deny` attributes.
-8. **File Size Limit**: Keep source files under 500-600 lines when possible.
-9. **AI Disclosure**: Always disclose AI usage in PR descriptions, following the AI Usage Policy [AI Usage Policy](AI_POLICY.md). Be transparent, but brief — no need to list every prompt, just the tools used (e.g., "Used Claude Code (`Claude Opus 4.7 (1M Context)`) for initial draft of detection engine refactor. All code reviewed and tested.").
+01. **No Merging**: Never merge without a passing CI check and code review approval on a PR. This must be performed by a human maintainer, not an AI assistant.
+02. **No Auto-Commits**: Never commit without explicit permission. Always present diffs for approval before staging or committing. This applies to every AI assistant regardless of tooling.
+03. **Security-First**: All changes must maintain least privilege and undergo security review.
+04. **Zero-Warnings Policy**: `cargo clippy -- -D warnings` with no exceptions.
+05. **Operator-Centric**: Prioritize workflows efficient in contested/airgapped environments.
+06. **Documentation**: Mermaid for diagrams, relative links, maintain link hygiene.
+07. **Testing Required**: All code changes must include appropriate tests.
+08. **Linter Restrictions**: Never remove clippy restrictions or `deny` attributes.
+09. **File Size Limit**: Keep source files under 500-600 lines when possible.
+10. **AI Disclosure**: Always disclose AI usage in PR descriptions, following the AI Usage Policy [AI Usage Policy](AI_POLICY.md). Be transparent, but brief — no need to list every prompt, just the tools used (e.g., "Used Claude Code (`Claude Opus 4.7 (1M Context)`) for initial draft of detection engine refactor. All code reviewed and tested.").
 
 ### Rule Precedence
 

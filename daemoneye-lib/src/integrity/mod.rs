@@ -420,8 +420,7 @@ pub struct HasherConfig {
 impl Default for HasherConfig {
     fn default() -> Self {
         let max_concurrent = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(MIN_CONCURRENCY)
+            .map_or(MIN_CONCURRENCY, std::num::NonZero::get)
             .clamp(MIN_CONCURRENCY, MAX_CONCURRENCY);
         Self {
             algorithms: vec![HashAlgorithm::Sha256, HashAlgorithm::Blake3],

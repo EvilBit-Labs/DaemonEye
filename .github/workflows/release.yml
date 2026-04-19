@@ -27,18 +27,18 @@ jobs:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   fetch-depth: 0
-            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@1.91.0
+              uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
               with:
+                  toolchain: stable
                   targets: >-
-                      x86_64-unknown-linux-gnu,
-                      aarch64-unknown-linux-gnu
+                      x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
 
             - name: Install cross-compilation dependencies
               run: |
@@ -46,7 +46,7 @@ jobs:
                   sudo apt-get install -y gcc-aarch64-linux-gnu
 
             - name: Run GoReleaser
-              uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
+              uses: goreleaser/goreleaser-action@e24998b8b67b290c2fa8b7c14fcfa7de2c5c9b8c # v7.1.0
               with:
                   distribution: goreleaser
                   version: "~> v2"
@@ -61,21 +61,21 @@ jobs:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   fetch-depth: 0
-            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@1.91.0
+              uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
               with:
+                  toolchain: stable
                   targets: >-
-                      x86_64-apple-darwin,
-                      aarch64-apple-darwin
+                      x86_64-apple-darwin, aarch64-apple-darwin
 
             - name: Run GoReleaser
-              uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
+              uses: goreleaser/goreleaser-action@e24998b8b67b290c2fa8b7c14fcfa7de2c5c9b8c # v7.1.0
               with:
                   distribution: goreleaser
                   version: "~> v2"
@@ -91,21 +91,21 @@ jobs:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   fetch-depth: 0
-            - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@1.91.0
+              uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
               with:
+                  toolchain: stable
                   targets: >-
-                      x86_64-pc-windows-msvc,
-                      aarch64-pc-windows-msvc
+                      x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
 
             - name: Run GoReleaser
-              uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
+              uses: goreleaser/goreleaser-action@e24998b8b67b290c2fa8b7c14fcfa7de2c5c9b8c # v7.1.0
               with:
                   distribution: goreleaser
                   version: "~> v2"

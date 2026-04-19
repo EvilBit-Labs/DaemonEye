@@ -237,7 +237,7 @@ pub struct LifecycleTrackingConfig {
 impl Default for LifecycleTrackingConfig {
     fn default() -> Self {
         Self {
-            max_snapshot_age: Duration::from_secs(300), // 5 minutes
+            max_snapshot_age: Duration::from_mins(5),
             min_process_lifetime: Duration::from_millis(100),
             detect_pid_reuse: true,
             track_command_line_changes: true,
@@ -734,7 +734,7 @@ impl ProcessLifecycleTracker {
                 )?;
 
             // This is a simple heuristic - in practice, you might want to check actual system uptime
-            if age > Duration::from_secs(365 * 24 * 3600) {
+            if age > Duration::from_hours(365 * 24) {
                 // More than a year
                 return Ok(Some(ProcessLifecycleEvent::Suspicious {
                     process: Box::new(snapshot.clone()),
@@ -839,7 +839,7 @@ mod tests {
             name: name.to_string(),
             executable_path: Some(format!("/usr/bin/{}", name)),
             command_line: vec![name.to_string()],
-            start_time: Some(SystemTime::now() - Duration::from_secs(60)),
+            start_time: Some(SystemTime::now() - Duration::from_mins(1)),
             cpu_usage: Some(1.0),
             memory_usage: Some(1024 * 1024),
             executable_hash: Some("abc123".to_string()),

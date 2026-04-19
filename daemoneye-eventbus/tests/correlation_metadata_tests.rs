@@ -431,6 +431,7 @@ async fn test_multi_collector_workflow_correlation() {
         ),
         topic_patterns: Some(vec!["events.process.*".to_string()]),
         enable_wildcards: true,
+        include_control: false,
     };
 
     let _receiver = event_bus.subscribe(subscription).await.unwrap();
