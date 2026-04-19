@@ -1,8 +1,9 @@
-// Integration tests are code inside #[cfg(test)] by convention; a few
-// workspace-level lints are standard to relax at the test-file level so we
-// can write expressive, easy-to-read assertions without noise. The set below
-// is minimised to lints that trip genuinely benign patterns in this file
-// (matches common practice across the crate's test files; see PR #178 review).
+// This file is an integration test — it compiles as its own binary crate
+// under `tests/` (no `#[cfg(test)]` wrapping). A few workspace-level lints
+// are standard to relax at the test-file level so we can write expressive,
+// easy-to-read assertions without noise. The set below is minimised to
+// lints that trip genuinely benign patterns in this file (matches common
+// practice across the crate's test files; see PR #178 review).
 #![allow(
     clippy::unwrap_used,             // Tests panic on unexpected Err; that's the diagnostic.
     clippy::expect_used,             // Same rationale as unwrap_used.
@@ -172,9 +173,12 @@ fn drain_now(
     out
 }
 
-/// Wait for `target` messages across two receivers, budgeted by `RECV_TIMEOUT`.
-/// Returns the per-receiver counts. Uses `tokio::select!` so whichever
-/// receiver has a message ready is serviced first — order-independent.
+/// Wait for `target` messages across `N` receivers, budgeted by `RECV_TIMEOUT`.
+/// Returns the per-receiver counts. Polls each receiver with `try_recv()` and
+/// drains all immediately-available messages; if no receiver has anything
+/// ready, sleeps briefly before retrying so the test stays responsive
+/// without busy-looping. Delivery order across receivers is not guaranteed,
+/// so this helper is order-independent by design.
 async fn collect_until<const N: usize>(
     receivers: &mut [&mut mpsc::UnboundedReceiver<daemoneye_eventbus::Message>; N],
     target: usize,

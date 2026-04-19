@@ -302,10 +302,12 @@ pub async fn main() -> anyhow::Result<()> {
             }
         }
 
-        // Start heartbeat task (only publishes when registered)
-        let heartbeat_task =
-            RegistrationManager::spawn_heartbeat_task(Arc::clone(&registration_manager));
-        info!("Heartbeat task started");
+        // Heartbeat task is spawned AFTER the control subscription is established
+        // below. Tokio's `interval::tick()` fires immediately on first poll, so
+        // if the heartbeat were spawned here it could publish a ready signal
+        // before our `control.collector.lifecycle` subscription is registered
+        // with the broker, causing an agent `BeginMonitoring` broadcast to be
+        // delivered to zero subscribers (END-297 PR #178 review, copilot).
 
         // ========================================================================
         // Initialize RPC Service Handler
@@ -414,14 +416,16 @@ pub async fn main() -> anyhow::Result<()> {
         // CLI flag is set, the `PROCMOND_STANDALONE=1` environment variable is
         // set, or if the subscription to the broker fails.
         //
-        // Registration-ordering note (ADR referenced in END-297 evidence):
-        // subscribe AFTER registration succeeds but BEFORE we signal the agent
-        // that we are ready via the next heartbeat — the subscription must be
+        // Startup-ordering invariant (ADR referenced in END-297 evidence):
+        // subscribe AFTER registration succeeds but BEFORE the heartbeat task
+        // starts publishing ready-state pulses. The subscription must be
         // active when the agent broadcasts BeginMonitoring, otherwise the
         // message is lost (eventbus README: at-most-once delivery). The agent's
-        // `broadcast_begin_monitoring` is triggered by `transition_to_steady_state`
-        // which happens after all expected collectors register; the heartbeat
-        // task below re-asserts registration so a re-broadcast is also possible.
+        // `broadcast_begin_monitoring` is triggered by
+        // `transition_to_steady_state`, which happens after all expected
+        // collectors register. The heartbeat task is therefore spawned AFTER
+        // the subscribe block completes — see the `spawn_heartbeat_task` call
+        // below.
         let standalone_mode = cli.standalone
             || std::env::var("PROCMOND_STANDALONE").ok().as_deref() == Some("1")
             || registration_failed;
@@ -533,6 +537,15 @@ pub async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+
+        // Now that the control subscription is registered (or we have
+        // deliberately fallen back to standalone), it is safe to start the
+        // heartbeat task. Starting it earlier could cause the first tick to
+        // publish a ready-state heartbeat before the subscription landed with
+        // the broker, losing the agent's `BeginMonitoring` broadcast.
+        let heartbeat_task =
+            RegistrationManager::spawn_heartbeat_task(Arc::clone(&registration_manager));
+        info!("Heartbeat task started");
 
         // Spawn the lifecycle wait task (only if we have a control receiver).
         // It waits for any control message on `control.collector.lifecycle`

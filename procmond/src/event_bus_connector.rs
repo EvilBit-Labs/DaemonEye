@@ -940,12 +940,21 @@ impl EventBusConnector {
 
         // Close the client connection. The client is held behind `Arc` so other
         // tasks can briefly clone it for async work without holding our lock.
-        // At shutdown we try to unwrap the `Arc` to consume the owned client
-        // (required by `EventBusClient::shutdown(mut self)`). If any outstanding
-        // clones remain (e.g. an in-flight subscribe), `Arc::into_inner` returns
-        // `None` and we fall back to simply dropping our handle — the client's
-        // background tasks exit when the shutdown signal channel closes.
+        //
+        // Strategy: always fire the non-consuming `shutdown_signal()` first so
+        // background tasks exit immediately regardless of outstanding clones.
+        // Then try `Arc::into_inner` to reclaim ownership for the full
+        // consuming `shutdown().await` (which also awaits task JoinHandles and
+        // closes the transport). If clones remain, the signal has already
+        // stopped the background tasks; the struct itself is dropped when the
+        // last clone drops.
         if let Some(client_arc) = self.client.take() {
+            let signaled = client_arc.shutdown_signal();
+            if !signaled {
+                debug!(
+                    "EventBusClient shutdown signal could not be delivered (already signaled or no receivers)"
+                );
+            }
             match Arc::into_inner(client_arc) {
                 Some(client) => {
                     if let Err(e) = client.shutdown().await {
@@ -954,7 +963,7 @@ impl EventBusConnector {
                 }
                 None => {
                     warn!(
-                        "EventBusClient has outstanding Arc references; skipping explicit shutdown - background tasks will exit when the Arc drops"
+                        "EventBusClient has outstanding Arc references; skipped consuming shutdown, but background tasks received the shutdown signal and will exit"
                     );
                 }
             }

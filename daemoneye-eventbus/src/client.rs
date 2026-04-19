@@ -808,6 +808,25 @@ impl EventBusClient {
         transport.is_alive().await
     }
 
+    /// Signal background tasks to shut down without consuming the client.
+    ///
+    /// Sends on the internal broadcast channel so background receive/heartbeat
+    /// tasks exit at their next loop iteration. Safe to call when the client
+    /// is shared via `Arc` — the broadcast `Sender::send(&self)` signature does
+    /// not require ownership.
+    ///
+    /// Returns `true` if the signal was delivered, `false` if the client has
+    /// already been signaled (the `Option` was previously taken by a consuming
+    /// `shutdown()` call) or the broadcast channel had no live receivers.
+    ///
+    /// Callers that also want to await background-task completion should use
+    /// the consuming [`shutdown`](Self::shutdown) method after this signal.
+    pub fn shutdown_signal(&self) -> bool {
+        self.shutdown_tx
+            .as_ref()
+            .is_some_and(|tx| tx.send(()).is_ok())
+    }
+
     /// Shutdown the client
     pub async fn shutdown(mut self) -> Result<()> {
         info!("Shutting down EventBus client: {}", self.client_id);
