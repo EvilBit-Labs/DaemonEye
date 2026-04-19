@@ -420,7 +420,7 @@ async fn test_config_update_applies_changes() {
         ActorMessage::UpdateConfig { config, respond_to } => {
             assert_eq!(
                 config.base_config.collection_interval,
-                Duration::from_secs(60)
+                Duration::from_mins(1)
             );
             assert_eq!(config.process_config.max_processes, 500);
             assert!(config.process_config.collect_enhanced_metadata);
@@ -825,7 +825,7 @@ async fn test_expired_deadline_returns_timeout() {
         target: "control.collector.procmond".to_string(),
         operation: CollectorOperation::HealthCheck,
         payload: RpcPayload::Empty,
-        timestamp: SystemTime::now() - Duration::from_secs(60),
+        timestamp: SystemTime::now() - Duration::from_mins(1),
         deadline: SystemTime::now() - Duration::from_secs(30), // Past deadline
         correlation_metadata: RpcCorrelationMetadata::new("corr-expired".to_string()),
     };
@@ -1114,7 +1114,7 @@ async fn test_custom_handler_configuration() {
         collector_id: "custom-collector".to_string(),
         control_topic: "custom.control.topic".to_string(),
         response_topic_prefix: "custom.response".to_string(),
-        default_timeout: Duration::from_secs(60),
+        default_timeout: Duration::from_mins(1),
         max_concurrent_requests: 20,
     };
 

@@ -207,7 +207,7 @@ fn test_recovery_action_from_degraded_status() {
 fn test_recovery_action_from_failed_status() {
     let status = HeartbeatStatus::Failed {
         missed_count: MAX_MISSED_HEARTBEATS,
-        time_since_last: Duration::from_secs(120),
+        time_since_last: Duration::from_mins(2),
     };
 
     // Failed status should trigger graceful shutdown (skip health check)

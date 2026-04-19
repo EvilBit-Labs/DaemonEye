@@ -2,12 +2,12 @@ name: CI
 
 on:
     push:
-        branches: [main]
+        branches: [ main ]
     pull_request:
-        branches: [main]
+        branches: [ main ]
     workflow_dispatch:
 
-# Restrict permissions to minimum required (principle of least privilege)
+        # Restrict permissions to minimum required (principle of least privilege)
 permissions:
     contents: read
 
@@ -38,7 +38,7 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Ensure rustfmt and clippy are installed
-              run: rustup component add rustfmt clippy
+              run: mise x -- rustup component add rustfmt clippy
 
             - name: Check formatting
               run: just lint-rust
@@ -114,7 +114,7 @@ jobs:
     coverage:
         runs-on: ubuntu-latest
         timeout-minutes: 30
-        needs: [test, test-cross-platform, quality]
+        needs: [ test, test-cross-platform, quality ]
         steps:
             - name: Checkout repository
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -138,8 +138,3 @@ jobs:
                   fail_ci_if_error: false
                   token: ${{ secrets.CODECOV_TOKEN }}
                   slug: EvilBit-Labs/daemoneye
-            - name: Upload to Qlty
-              uses: qltysh/qlty-action/coverage@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0
-              with:
-                  token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
-                  files: target/lcov.info

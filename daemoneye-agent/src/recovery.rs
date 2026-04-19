@@ -29,7 +29,7 @@ const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 const FORCE_KILL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Default timeout for restart.
-const RESTART_TIMEOUT: Duration = Duration::from_secs(60);
+const RESTART_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// Recovery actions in escalating order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

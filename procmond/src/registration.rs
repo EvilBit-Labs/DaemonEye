@@ -908,9 +908,9 @@ mod tests {
         );
 
         // After setting assigned interval, uses that instead
-        *manager.assigned_heartbeat_interval.write().await = Some(Duration::from_secs(60));
+        *manager.assigned_heartbeat_interval.write().await = Some(Duration::from_mins(1));
         let updated_interval = manager.effective_heartbeat_interval().await;
-        assert_eq!(updated_interval, Duration::from_secs(60));
+        assert_eq!(updated_interval, Duration::from_mins(1));
     }
 
     #[tokio::test]
@@ -1799,7 +1799,7 @@ mod tests {
             collector_type: "custom-type".to_owned(),
             version: "2.0.0".to_owned(),
             capabilities: vec!["cap1".to_owned(), "cap2".to_owned()],
-            heartbeat_interval: Duration::from_secs(60),
+            heartbeat_interval: Duration::from_mins(1),
             registration_timeout: Duration::from_secs(20),
             max_retries: 5,
             attributes: HashMap::new(),
@@ -1809,7 +1809,7 @@ mod tests {
         assert_eq!(config.collector_type, "custom-type");
         assert_eq!(config.version, "2.0.0");
         assert_eq!(config.capabilities.len(), 2);
-        assert_eq!(config.heartbeat_interval, Duration::from_secs(60));
+        assert_eq!(config.heartbeat_interval, Duration::from_mins(1));
         assert_eq!(config.registration_timeout, Duration::from_secs(20));
         assert_eq!(config.max_retries, 5);
     }

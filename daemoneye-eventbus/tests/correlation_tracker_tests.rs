@@ -136,7 +136,7 @@ async fn test_event_history_bounded() {
     let config = CorrelationTrackerConfig {
         max_history_size: 3,
         max_active_workflows: 100,
-        workflow_timeout: Duration::from_secs(300),
+        workflow_timeout: Duration::from_mins(5),
     };
     let tracker = CorrelationTracker::new(config);
 
@@ -285,7 +285,7 @@ async fn test_zero_history_size_does_not_loop() {
     let config = CorrelationTrackerConfig {
         max_history_size: 0,
         max_active_workflows: 100,
-        workflow_timeout: Duration::from_secs(300),
+        workflow_timeout: Duration::from_mins(5),
     };
     let tracker = CorrelationTracker::new(config);
 

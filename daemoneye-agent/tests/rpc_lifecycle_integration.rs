@@ -213,7 +213,7 @@ async fn test_cross_process_rpc_workflow() -> anyhow::Result<()> {
 
     // Intentional: waiting for the spawned collector process to complete its
     // async registration handshake with the broker before probing via RPC.
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Verify collector is registered by checking RPC client can be created
     let _rpc_client = broker_manager.get_rpc_client(collector_id).await?;

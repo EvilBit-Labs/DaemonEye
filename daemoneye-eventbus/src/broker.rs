@@ -1207,6 +1207,7 @@ mod tests {
             correlation_filter: None,
             topic_patterns: Some(vec!["events.process.*".to_string()]),
             enable_wildcards: true,
+            include_control: false,
         };
         let receiver = event_bus.subscribe(subscription).await.unwrap();
         // Verify receiver is open and ready to receive messages

@@ -553,7 +553,7 @@ async fn test_cross_platform_timeout_behavior() {
 
     server.set_handler(|task: DetectionTask| async move {
         // Simulate slow processing
-        sleep(Duration::from_millis(2000)).await;
+        sleep(Duration::from_secs(2)).await;
 
         Ok(DetectionResult {
             task_id: task.task_id,

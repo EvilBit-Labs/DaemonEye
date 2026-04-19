@@ -15,8 +15,8 @@ This checklist provides a quick reference for validating the daemoneye-eventbus 
 **Validation Commands**:
 
 ```bash
-# Verify topic hierarchy
-grep -r "pub const" daemoneye-eventbus/src/topics.rs | wc -l  # Should show 26+ topics
+# Verify topic hierarchy (35 named topic constants + 1 `pub const fn new`)
+grep -r "pub const" daemoneye-eventbus/src/topics.rs | wc -l  # Should show 36
 
 # Run integration tests
 cargo test -p daemoneye-eventbus --test task_distribution_integration
@@ -41,7 +41,7 @@ grep "pub enum CollectorOperation" daemoneye-eventbus/src/rpc.rs -A 20
 cargo test -p daemoneye-eventbus --test rpc_integration_tests
 
 # Check documentation completeness
-wc -l daemoneye-eventbus/docs/rpc-patterns.md  # Should show 627 lines
+wc -l daemoneye-eventbus/docs/rpc-patterns.md  # Should show 631 lines
 ```
 
 ### Requirement 15.3: Event coordination and task distribution
@@ -63,7 +63,7 @@ grep "pub enum RoutingStrategy" daemoneye-eventbus/src/task_distribution.rs -A 1
 cargo test -p daemoneye-eventbus task_distribution
 
 # Check documentation
-wc -l daemoneye-eventbus/docs/task-distribution.md  # Should show 248 lines
+wc -l daemoneye-eventbus/docs/task-distribution.md  # Should show 250 lines
 ```
 
 ### Requirement 15.4: Result aggregation and correlation across collectors
@@ -173,8 +173,8 @@ cargo test -p daemoneye-eventbus health
 **Validation Commands**:
 
 ```bash
-# Count event topics
-grep "pub const" daemoneye-eventbus/src/topics.rs | grep "events\." | wc -l  # Should be 17
+# Count event topic constants (17 named topics + 4 `ALL` wildcard aliases)
+grep "pub const" daemoneye-eventbus/src/topics.rs | grep "events\." | wc -l  # Should be 21
 
 # Verify all process topics
 grep "pub mod process" daemoneye-eventbus/src/topics.rs -A 30
@@ -189,8 +189,8 @@ grep "pub mod process" daemoneye-eventbus/src/topics.rs -A 30
 **Validation Commands**:
 
 ```bash
-# Count control topics
-grep "pub const" daemoneye-eventbus/src/topics.rs | grep "control\." | wc -l  # Should be 9
+# Count control topic constants (9 named topics + 3 `ALL` wildcard aliases + 2 shutdown constants)
+grep "pub const" daemoneye-eventbus/src/topics.rs | grep "control\." | wc -l  # Should be 14
 
 # Verify all control topics
 grep "pub mod collector" daemoneye-eventbus/src/topics.rs -A 20
@@ -304,8 +304,8 @@ grep "pub fn matches" daemoneye-eventbus/src/message.rs -A 50
 - [x] GetCapabilities - Capability discovery
 - [x] GracefulShutdown - Coordinated graceful shutdown
 - [x] ForceShutdown - Emergency shutdown
-- [x] Pause - Stubbed, documented as planned
-- [x] Resume - Stubbed, documented as planned
+- [x] Pause - Delegates to `ProcessManager::pause_collector`
+- [x] Resume - Delegates to `ProcessManager::resume_collector`
 
 **Validation Commands**:
 
@@ -319,7 +319,7 @@ cargo test -p daemoneye-eventbus rpc
 
 ### Documentation Quality
 
-- [x] 627 lines in docs/rpc-patterns.md
+- [x] 631 lines in docs/rpc-patterns.md
 - [x] Mermaid sequence diagrams for communication flows
 - [x] Complete request/response examples with Rust code
 - [x] Error handling patterns with retry and circuit breaker
@@ -354,8 +354,8 @@ grep "```rust" daemoneye-eventbus/docs/rpc-patterns.md | wc -l  # Should have ex
 # Verify interprocess dependency
 grep "interprocess" daemoneye-eventbus/Cargo.toml
 
-# Check for unsafe code
-grep -r "unsafe" daemoneye-eventbus/src/ | grep -v "#\[deny(unsafe_code)\]" | wc -l  # Should be 0
+# Check for unsafe blocks (doc-comment references to "unsafe" are not unsafe code)
+grep -rn "^[^/]*unsafe[[:space:]]*[{]" daemoneye-eventbus/src/ | wc -l  # Should be 0
 ```
 
 ### Platform Testing
@@ -484,14 +484,15 @@ grep "MAX_RESULTS_PER_CORRELATION" daemoneye-eventbus/src/result_aggregation.rs
 ### Core Documentation Files
 
 - [x] README.md (242 lines) - Overview, features, usage examples
-- [x] IMPLEMENTATION_SUMMARY.md (245 lines) - RPC implementation summary
-- [x] docs/rpc-patterns.md (627 lines) - Comprehensive RPC documentation
+- [x] IMPLEMENTATION_SUMMARY.md (252 lines) - RPC implementation summary
+- [x] docs/rpc-patterns.md (631 lines) - Comprehensive RPC documentation
 - [x] docs/topic-hierarchy.md (286 lines) - Complete topic hierarchy
-- [x] docs/correlation-metadata.md (404 lines) - Correlation tracking guide
-- [x] docs/task-distribution.md (248 lines) - Task distribution guide
+- [x] docs/correlation-metadata.md (403 lines) - Correlation tracking guide
+- [x] docs/task-distribution.md (250 lines) - Task distribution guide
 - [x] docs/integration-guide.md - Integration instructions
 - [x] docs/message-schemas.md - Message format documentation
 - [x] docs/process-management.md - Process lifecycle management
+- [x] docs/topic-hierarchy-design.md - Topic hierarchy design rationale
 
 **Validation Commands**:
 
@@ -558,7 +559,7 @@ cargo test -p collector-core daemoneye_eventbus_integration
 
 ## Summary
 
-**Overall Status**: ✅ 95% Complete, Fully Operational
+**Overall Status**: ✅ Complete, Fully Operational
 
 **Requirements Satisfied**: 9/9 (100%)
 
@@ -579,9 +580,8 @@ cargo test -p collector-core daemoneye_eventbus_integration
 - Comprehensive test coverage
 - Well-documented APIs
 
-**Minor Issues**: 2
+**Minor Issues**: 1
 
-- ⚠️ Pause/Resume operations stubbed (documented as planned)
-- ⚠️ Some dead code attributes for future features
+- ⚠️ Some dead code attributes for future features (`CollectorStatus::ShuttingDown`, deduplication cache fields)
 
 **Recommendation**: ✅ Ready for integration with daemoneye-agent and collector-core

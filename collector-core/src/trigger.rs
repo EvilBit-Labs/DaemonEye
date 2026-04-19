@@ -547,16 +547,12 @@ impl TriggerManager {
     pub fn is_backpressure_active(&self) -> bool {
         self.trigger_queue
             .lock()
-            .map(|queue| queue.is_backpressure_active())
-            .unwrap_or(false)
+            .is_ok_and(|queue| queue.is_backpressure_active())
     }
 
     /// Returns the current queue depth.
     pub fn get_queue_depth(&self) -> usize {
-        self.trigger_queue
-            .lock()
-            .map(|queue| queue.len())
-            .unwrap_or(0)
+        self.trigger_queue.lock().map_or(0, |queue| queue.len())
     }
 
     /// Returns collector capabilities for a specific collector.
@@ -594,8 +590,7 @@ impl TriggerManager {
     pub fn is_trigger_tracked(&self, trigger_id: &str) -> bool {
         self.timeout_tracker
             .lock()
-            .map(|tracker| tracker.contains_key(trigger_id))
-            .unwrap_or(false)
+            .is_ok_and(|tracker| tracker.contains_key(trigger_id))
     }
 
     /// Evaluates trigger conditions against process event data.
@@ -1162,7 +1157,7 @@ impl TriggerManager {
 
     /// Returns current trigger statistics for monitoring.
     pub fn get_statistics(&self) -> Result<TriggerStatistics, TriggerError> {
-        let pending_count = self.pending_count.lock().map(|count| *count).unwrap_or(0);
+        let pending_count = self.pending_count.lock().map_or(0, |count| *count);
 
         // Batch lock acquisitions to minimize lock contention
         let (
@@ -1176,18 +1171,12 @@ impl TriggerManager {
             let dedup_cache_size = self
                 .deduplication_cache
                 .lock()
-                .map(|cache| cache.len())
-                .unwrap_or(0);
-            let rate_limit_states = self
-                .rate_limits
-                .lock()
-                .map(|limits| limits.len())
-                .unwrap_or(0);
+                .map_or(0, |cache| cache.len());
+            let rate_limit_states = self.rate_limits.lock().map_or(0, |limits| limits.len());
             let registered_capabilities = self
                 .collector_capabilities
                 .lock()
-                .map(|caps| caps.len())
-                .unwrap_or(0);
+                .map_or(0, |caps| caps.len());
             let queue_stats = self
                 .trigger_queue
                 .lock()
@@ -2727,8 +2716,8 @@ mod tests {
             let mut tracker = manager.timeout_tracker.lock().unwrap();
             let expired_timeout = TriggerTimeout {
                 target_collector: trigger.target_collector.clone(),
-                emitted_at: SystemTime::now() - Duration::from_secs(60), // 1 minute ago
-                timeout_duration: Duration::from_secs(30),               // 30 second timeout
+                emitted_at: SystemTime::now() - Duration::from_mins(1),
+                timeout_duration: Duration::from_secs(30), // 30 second timeout
                 correlation_id: trigger.correlation_id.clone(),
             };
             tracker.insert(trigger_id.clone(), expired_timeout);

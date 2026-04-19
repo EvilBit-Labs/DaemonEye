@@ -93,11 +93,11 @@ impl Default for AnalysisChainConfig {
     fn default() -> Self {
         Self {
             max_concurrent_workflows: 50,
-            default_stage_timeout: Duration::from_secs(300), // 5 minutes
-            max_workflow_timeout: Duration::from_secs(1800), // 30 minutes
+            default_stage_timeout: Duration::from_mins(5),
+            max_workflow_timeout: Duration::from_mins(30),
             max_retry_attempts: 3,
             retry_base_delay: Duration::from_secs(2),
-            max_retry_delay: Duration::from_secs(60),
+            max_retry_delay: Duration::from_mins(1),
             status_monitoring_interval: Duration::from_secs(30),
             max_completed_workflows: 100,
             enable_debug_logging: false,
@@ -794,8 +794,7 @@ impl AnalysisChainCoordinator {
                         .duration_since(execution.started_at)
                         .unwrap_or(Duration::from_secs(0));
 
-                    if elapsed > Duration::from_secs(600) {
-                        // 10 minutes
+                    if elapsed > Duration::from_mins(10) {
                         warn!(
                             execution_id = %execution_id,
                             workflow_id = %execution.workflow_definition.workflow_id,

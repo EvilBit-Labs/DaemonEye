@@ -345,7 +345,7 @@ impl ProcessMessageHandler {
                 // already stamped (partial coverage is fine — downstream
                 // handles missing hashes) and log the truncation.
                 if let Some(hasher) = self.hasher.as_ref() {
-                    const HASH_PASS_OVERALL_DEADLINE: Duration = Duration::from_secs(60);
+                    const HASH_PASS_OVERALL_DEADLINE: Duration = Duration::from_mins(1);
                     match tokio::time::timeout(
                         HASH_PASS_OVERALL_DEADLINE,
                         hash_pass::populate_hashes(&mut process_events, hasher),
@@ -641,7 +641,7 @@ mod tests {
         /// Creates a new mock collector with test process data.
         pub fn new() -> Self {
             let now = SystemTime::now();
-            let start_time = now - std::time::Duration::from_secs(3600);
+            let start_time = now - std::time::Duration::from_hours(1);
 
             let processes = vec![
                 ProcessEvent {
@@ -920,7 +920,7 @@ mod tests {
 
         // Create a test ProcessEvent
         let now = SystemTime::now();
-        let start_time = now - std::time::Duration::from_secs(3600); // 1 hour ago
+        let start_time = now - std::time::Duration::from_hours(1);
 
         let event = ProcessEvent {
             pid: 1234,

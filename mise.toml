@@ -1,11 +1,11 @@
 # Several tools are set to "latest" to ensure they are using the idiomatic version file.
 [tools]
-cargo-binstall              = "1.17.9"
+cargo-binstall              = "latest"
 cargo-insta                 = "1.47.2"
 "cargo:cargo-audit"         = "0.22.1"
-"cargo:cargo-deny"          = "0.19.0"
+"cargo:cargo-deny"          = "0.19.4"
 "cargo:cargo-llvm-cov"      = "0.8.5"
-"cargo:cargo-nextest"       = "0.9.132"
+"cargo:cargo-nextest"       = "0.9.133"
 "cargo:mdbook"              = "0.5.2"
 "cargo:mdbook-linkcheck"    = "0.7.7"
 "cargo:mdbook-tabs"         = "0.3.4"
@@ -16,13 +16,13 @@ cargo-insta                 = "1.47.2"
 "cargo:mdbook-i18n-helpers" = "0.4.0"
 just                        = "latest"
 python                      = "latest"
-rust                        = { version = "latest", components = "llvm-tools,cargo,rustfmt,clippy", profile = "default" }
-"cargo:cargo-outdated"      = "0.17.0"
+rust                        = { version = "1.95.0", components = "llvm-tools,cargo,rustfmt,clippy", profile = "default" }
+"cargo:cargo-outdated"      = "0.19.0"
 "cargo:cargo-release"       = "1.1.2"
 "cargo:cargo-auditable"     = "0.7.4"
 "cargo:cargo-cyclonedx"     = "0.5.9"
 "pipx:mdformat"             = { version = "1.0.0", uvx_args = "--with mdformat-gfm --with mdformat-config --with mdformat-footnote --with mdformat-front-matters --with mdformat-simple-breaks --with mdformat-web --with mdformat-gfm-alerts --with mdformat-toc" }
-prettier                    = "3.8.1"
+prettier                    = "3.8.3"
 actionlint                  = "1.7.12"
 lychee                      = "0.23.0"
 markdownlint-cli2           = "0.22.0"
@@ -31,7 +31,7 @@ protoc                      = "34.0"
 zig                         = "latest"
 "cargo:cargo-zigbuild"      = "latest"
 bun                         = "latest"
-goreleaser                  = "latest"
+goreleaser                  = "2.15.3"
 "pipx:pre-commit"           = "latest"
 
 # Many of these settings are defaults, but we are explicit in case they change in the future and to make it clear to users what is enabled.

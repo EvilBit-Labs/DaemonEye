@@ -291,14 +291,14 @@ async fn test_config_builder_pattern() {
     let config = CollectorConfig::new()
         .with_max_event_sources(32)
         .with_event_buffer_size(2000)
-        .with_shutdown_timeout(Duration::from_secs(60))
-        .with_health_check_interval(Duration::from_secs(120))
+        .with_shutdown_timeout(Duration::from_mins(1))
+        .with_health_check_interval(Duration::from_mins(2))
         .with_debug_logging(true);
 
     assert_eq!(config.max_event_sources, 32);
     assert_eq!(config.event_buffer_size, 2000);
-    assert_eq!(config.shutdown_timeout, Duration::from_secs(60));
-    assert_eq!(config.health_check_interval, Duration::from_secs(120));
+    assert_eq!(config.shutdown_timeout, Duration::from_mins(1));
+    assert_eq!(config.health_check_interval, Duration::from_mins(2));
     assert!(config.enable_debug_logging);
 
     // Validate the built config

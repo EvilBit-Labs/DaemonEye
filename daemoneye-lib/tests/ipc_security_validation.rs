@@ -188,7 +188,7 @@ async fn test_connection_limits_enforcement() {
             let conn_num = counter.fetch_add(1, Ordering::SeqCst);
 
             // Hold connection open to test limits
-            sleep(Duration::from_millis(1000)).await;
+            sleep(Duration::from_secs(1)).await;
 
             Ok(DetectionResult {
                 task_id: task.task_id,
@@ -534,7 +534,7 @@ async fn test_timeout_dos_resistance() {
 
             // First few requests are slow (potential DoS)
             if request_num < 3 {
-                sleep(Duration::from_millis(2000)).await; // Exceed timeout
+                sleep(Duration::from_secs(2)).await; // Exceed timeout
             }
 
             Ok(DetectionResult {

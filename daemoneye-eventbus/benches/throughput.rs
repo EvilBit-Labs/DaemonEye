@@ -50,6 +50,7 @@ fn create_test_subscription() -> EventSubscription {
         correlation_filter: None,
         topic_patterns: Some(vec!["events.process.*".to_string()]),
         enable_wildcards: true,
+        include_control: false,
     }
 }
 

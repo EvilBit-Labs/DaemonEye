@@ -708,7 +708,7 @@ async fn test_timeout_handling() {
 
     server.set_handler(|task: DetectionTask| async move {
         // Simulate slow processing that exceeds timeout
-        sleep(Duration::from_millis(2000)).await;
+        sleep(Duration::from_secs(2)).await;
 
         Ok(DetectionResult {
             task_id: task.task_id,

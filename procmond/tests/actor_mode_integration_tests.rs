@@ -38,7 +38,9 @@ use collector_core::event::ProcessEvent;
 use daemoneye_eventbus::rpc::{
     CollectorOperation, RpcCorrelationMetadata, RpcPayload, RpcRequest, RpcStatus,
 };
-use procmond::event_bus_connector::{BackpressureSignal, EventBusConnector, ProcessEventType};
+use procmond::event_bus_connector::{
+    BackpressureSignal, EventBusConnector, EventBusConnectorError, ProcessEventType,
+};
 use procmond::monitor_collector::{ACTOR_CHANNEL_CAPACITY, ActorHandle, ActorMessage};
 use procmond::registration::{RegistrationConfig, RegistrationManager, RegistrationState};
 use procmond::rpc_service::{RpcServiceConfig, RpcServiceHandler};
@@ -346,7 +348,7 @@ async fn test_deadline_exceeded_returns_immediately() {
         target: "control.collector.procmond".to_string(),
         operation: CollectorOperation::HealthCheck,
         payload: RpcPayload::Empty,
-        timestamp: SystemTime::now() - Duration::from_secs(60),
+        timestamp: SystemTime::now() - Duration::from_mins(1),
         deadline: SystemTime::now() - Duration::from_secs(30), // Past deadline
         correlation_metadata: RpcCorrelationMetadata::new("test-expired".to_string()),
     };
@@ -410,6 +412,29 @@ async fn test_heartbeat_skipped_when_not_registered() {
 }
 
 /// Verifies that RegistrationManager and RpcServiceHandler share the same EventBusConnector.
+/// Error path (Unit 1 / END-297): `subscribe_with_control` fails with a
+/// connection error when the EventBusConnector is not connected to a broker.
+/// This is the path procmond uses in main.rs to detect unreachable brokers
+/// and fall back to the standalone escape hatch rather than silently
+/// starting collection without coordination.
+#[tokio::test]
+async fn test_subscribe_with_control_fails_when_not_connected() {
+    let (connector, _temp_dir) = create_isolated_connector().await;
+
+    // Connector is created but never connected — simulates broker unreachable.
+    let result = connector
+        .subscribe_with_control(
+            "procmond-test",
+            vec!["control.collector.lifecycle".to_string()],
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(EventBusConnectorError::Connection(_))),
+        "expected Connection error variant, got: {result:?}"
+    );
+}
+
 #[tokio::test]
 async fn test_shared_event_bus_between_components() {
     let (actor_handle, _rx) = create_test_actor();

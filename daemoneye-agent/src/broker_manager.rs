@@ -2162,7 +2162,7 @@ mod tests {
         manager
             .set_collectors_config(CollectorsConfig::default())
             .await;
-        assert_eq!(manager.get_startup_timeout().await, Duration::from_secs(60));
+        assert_eq!(manager.get_startup_timeout().await, Duration::from_mins(1));
 
         // With collectors, use max timeout
         let collectors_config = CollectorsConfig {

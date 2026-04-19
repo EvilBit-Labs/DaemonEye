@@ -286,7 +286,7 @@ The broker tracks the following statistics:
 
 ### Latency
 
-- **Local IPC**: Sub-millisecond latency
+- **Local IPC**: \<1ms p99 for local IPC, validated in CI on Linux and macOS by a dedicated criterion benchmark. Windows and FreeBSD are informational only (not gated in CI).
 - **Message Routing**: < 100μs per message
 - **Correlation Lookup**: < 10μs per filter
 
@@ -362,6 +362,7 @@ let subscription = EventSubscription {
     ),
     topic_patterns: Some(vec!["events.process.#".to_string()]),
     enable_wildcards: true,
+    include_control: false,  // default: only receive Event messages
 };
 
 let mut receiver = event_bus.subscribe(subscription).await?;
@@ -369,6 +370,33 @@ let mut receiver = event_bus.subscribe(subscription).await?;
 // Receive events
 while let Some(bus_event) = receiver.recv().await {
     println!("Received event: {:?}", bus_event);
+}
+```
+
+To also receive control messages (lifecycle commands, task assignments):
+
+```rust,ignore
+let subscription = EventSubscription {
+    subscriber_id: "agent-aware-collector".to_string(),
+    // ... other fields
+    topic_patterns: Some(vec!["control.collector.lifecycle".to_string()]),
+    include_control: true,
+    ..Default::default()
+};
+
+let (mut event_rx, mut control_rx) = event_bus.subscribe_with_control(subscription).await?;
+
+// Receive events and control messages on parallel channels
+loop {
+    tokio::select! {
+        Some(bus_event) = event_rx.recv() => {
+            println!("Received event: {:?}", bus_event);
+        }
+        Some(control_msg) = control_rx.recv() => {
+            println!("Received control message: {:?}", control_msg);
+        }
+        else => break,
+    }
 }
 ```
 
