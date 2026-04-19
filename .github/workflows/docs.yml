@@ -2,9 +2,9 @@ name: Deploy Documentation
 
 on:
     push:
-        branches: [main]
+        branches: [ main ]
     pull_request:
-        branches: [main]
+        branches: [ main ]
     workflow_dispatch:
 
 permissions:
@@ -24,15 +24,15 @@ jobs:
     build:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
-            - uses: jdx/mise-action@v3
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Setup mdBook
-              uses: jontze/action-mdbook@v4
+              uses: jontze/action-mdbook@6c0be56d14c4bf16861b00af61f50ff7400ce502 # v4.0.0
               with:
                   token: ${{ secrets.GITHUB_TOKEN }}
                   mdbook-version: latest
@@ -41,29 +41,30 @@ jobs:
                   use-admonish: true
 
             - name: Install cargo-binstall
-              uses: cargo-bins/cargo-binstall@main
+              uses: cargo-bins/cargo-binstall@dc19f1e48450eefe5a29b8da6c6b00a87d730b37 # v1.18.1
 
             - name: Install mdbook plugins
-              run: cargo binstall mdbook-tabs mdbook-i18n-helpers mdbook-yml-header mdbook-image-size --no-confirm
+              run: cargo binstall mdbook-tabs mdbook-i18n-helpers mdbook-yml-header
+                  mdbook-image-size --no-confirm
 
             - name: Build rustdoc
               run: |
-                  cargo doc --no-deps --document-private-items --target-dir target
+                  mise x -- cargo doc --no-deps --document-private-items --target-dir target
                   mkdir -p docs/book/api
                   cp -r target/doc/* docs/book/api/
 
             - name: Build mdBook
               run: |
                   cd docs
-                  mdbook build
+                  mise x -- mdbook build
 
             - name: Setup Pages
               if: github.ref == 'refs/heads/main'
-              uses: actions/configure-pages@v5
+              uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
             - name: Upload artifact
               if: github.ref == 'refs/heads/main'
-              uses: actions/upload-pages-artifact@v4
+              uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
               with:
                   path: docs/book
 
@@ -77,4 +78,4 @@ jobs:
         steps:
             - name: Deploy to GitHub Pages
               id: deployment
-              uses: actions/deploy-pages@v4
+              uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
