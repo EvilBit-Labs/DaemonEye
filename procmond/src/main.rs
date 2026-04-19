@@ -426,14 +426,22 @@ pub async fn main() -> anyhow::Result<()> {
             || std::env::var("PROCMOND_STANDALONE").ok().as_deref() == Some("1")
             || registration_failed;
 
-        // Build the set of control topics procmond must receive on:
-        // - `control.collector.lifecycle`  : agent-broadcast BeginMonitoring
-        // - `control.collector.{id}`       : per-collector RPC requests
-        //   (e.g. HealthCheck, UpdateConfig) — handled by RpcServiceHandler
+        // Build the set of control topics procmond must receive on in this
+        // subscription. Only `control.collector.lifecycle` is wired here —
+        // it carries the agent-broadcast BeginMonitoring signal that this
+        // task is waiting for.
+        //
+        // The per-collector RPC topic `control.collector.{id}` (HealthCheck,
+        // UpdateConfig, etc.) is intentionally NOT subscribed here. Adding
+        // it to this receiver would cause RPC messages to be consumed and
+        // silently discarded by the lifecycle wait task (END-297 review
+        // COR-002 / COR-004). RPC-over-bus delivery is a follow-up and will
+        // live on its own subscription owned by `RpcServiceHandler`; see the
+        // END-297 plan (`docs/plans/2026-04-18-001-feat-close-end-297-message-broker-plan.md`)
+        // and the acceptance-evidence artifact
+        // (`daemoneye-eventbus/docs/END-297-acceptance-evidence.md`).
         let lifecycle_topic = "control.collector.lifecycle".to_owned();
-        let collector_control_topic =
-            format!("control.collector.{}", registration_manager.collector_id());
-        let control_topics = vec![lifecycle_topic.clone(), collector_control_topic.clone()];
+        let control_topics = vec![lifecycle_topic.clone()];
 
         let mut control_rx_opt: Option<tokio::sync::mpsc::Receiver<daemoneye_eventbus::Message>> =
             None;
@@ -504,6 +512,11 @@ pub async fn main() -> anyhow::Result<()> {
         // payload). Future message types on this topic should be filtered
         // by inspecting the payload, which is intentionally left permissive
         // here for forward compatibility.
+        //
+        // Defensive guard: because this subscription only requests
+        // `control.collector.lifecycle`, we should never observe any other
+        // topic on this receiver. If we do, it indicates a broker routing
+        // bug and is logged at `warn!` rather than silently discarded.
         let wait_actor_handle = actor_handle.clone();
         let lifecycle_topic_task = lifecycle_topic.clone();
         let lifecycle_wait_task = control_rx_opt.map(|mut control_rx| {
@@ -529,9 +542,10 @@ pub async fn main() -> anyhow::Result<()> {
                                 }
                                 return;
                             }
-                            debug!(
+                            warn!(
                                 topic = %msg.topic,
-                                "Received non-lifecycle control message while waiting"
+                                expected_topic = %lifecycle_topic_task,
+                                "Received unexpected control topic on lifecycle subscription - ignoring (broker routing bug?)"
                             );
                         }
                         Ok(None) => {

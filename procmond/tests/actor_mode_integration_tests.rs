@@ -38,7 +38,9 @@ use collector_core::event::ProcessEvent;
 use daemoneye_eventbus::rpc::{
     CollectorOperation, RpcCorrelationMetadata, RpcPayload, RpcRequest, RpcStatus,
 };
-use procmond::event_bus_connector::{BackpressureSignal, EventBusConnector, ProcessEventType};
+use procmond::event_bus_connector::{
+    BackpressureSignal, EventBusConnector, EventBusConnectorError, ProcessEventType,
+};
 use procmond::monitor_collector::{ACTOR_CHANNEL_CAPACITY, ActorHandle, ActorMessage};
 use procmond::registration::{RegistrationConfig, RegistrationManager, RegistrationState};
 use procmond::rpc_service::{RpcServiceConfig, RpcServiceHandler};
@@ -428,13 +430,8 @@ async fn test_subscribe_with_control_fails_when_not_connected() {
         .await;
 
     assert!(
-        result.is_err(),
-        "subscribe_with_control must return an error when not connected to a broker"
-    );
-    let err_msg = result.err().unwrap().to_string();
-    assert!(
-        err_msg.contains("Not connected") || err_msg.contains("Connection"),
-        "Error message should signal a connection problem (got: {err_msg})"
+        matches!(result, Err(EventBusConnectorError::Connection(_))),
+        "expected Connection error variant, got: {result:?}"
     );
 }
 

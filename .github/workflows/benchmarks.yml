@@ -1,6 +1,18 @@
 name: Benchmarks
 
 on:
+    # The eventbus-latency-slo job gates PRs on the END-297 local-IPC round-trip
+    # p99 latency SLO (<1ms). Scoped to paths that can plausibly affect IPC
+    # latency so we don't run a bench on every PR. Other jobs in this workflow
+    # (benchmarks, load-tests) remain workflow_dispatch-only and are gated by
+    # per-job `if` conditions below; they are informational and expensive to
+    # run on every PR.
+    pull_request:
+        branches: [main]
+        paths:
+            - "daemoneye-eventbus/**"
+            - "collector-core/**"
+            - ".github/workflows/benchmarks.yml"
     workflow_dispatch:
         inputs:
             suite:
@@ -30,6 +42,9 @@ env:
 
 jobs:
     benchmarks:
+        # Informational benchmark suite; runs only on manual dispatch to avoid
+        # spending PR CI time on non-gating criterion runs.
+        if: github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
         timeout-minutes: 15
         steps:
@@ -91,6 +106,8 @@ jobs:
                   retention-days: 30
 
     load-tests:
+        # Informational load tests; runs only on manual dispatch.
+        if: github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
         timeout-minutes: 10
         steps:
