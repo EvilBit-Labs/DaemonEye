@@ -1,6 +1,6 @@
 # Several tools are set to "latest" to ensure they are using the idiomatic version file.
 [tools]
-cargo-binstall              = "1.18.1"
+cargo-binstall              = "latest"
 cargo-insta                 = "1.47.2"
 "cargo:cargo-audit"         = "0.22.1"
 "cargo:cargo-deny"          = "0.19.4"
@@ -31,7 +31,7 @@ protoc                      = "34.0"
 zig                         = "latest"
 "cargo:cargo-zigbuild"      = "latest"
 bun                         = "latest"
-goreleaser                  = "latest"
+goreleaser                  = "2.15.3"
 "pipx:pre-commit"           = "latest"
 
 # Many of these settings are defaults, but we are explicit in case they change in the future and to make it clear to users what is enabled.
