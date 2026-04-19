@@ -607,6 +607,15 @@ pub struct TriggerRequest {
 /// `include_control` defaults to `false` so existing call sites remain
 /// source-compatible; new callers should use struct-update syntax with
 /// [`Default`] to pick up future fields without churn.
+///
+/// Note: this struct is **not** currently marked `#[non_exhaustive]`.
+/// Cross-crate `struct-literal` construction (including FRU) is forbidden
+/// for non-exhaustive types, which means adding the attribute requires
+/// introducing a builder or `with_*` setter API for external consumers
+/// (collector-core's bridge, tests, benches). That refactor is tracked as
+/// follow-up work — see `docs/todos/end-297-type-design-polish.md`. In the
+/// meantime, always construct via `..Default::default()` so future field
+/// additions cause the smallest possible diff.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventSubscription {
     /// Unique identifier for the subscriber

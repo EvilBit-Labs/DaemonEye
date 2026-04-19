@@ -30,6 +30,44 @@ use tracing::{debug, error, info, warn};
 /// agent is genuinely unreachable (END-297 review REL-001 / ADV-004).
 const BEGIN_MONITORING_WAIT_TIMEOUT: Duration = Duration::from_mins(1);
 
+/// Send `BeginMonitoring` to the actor, treating `ChannelClosed` (the actor
+/// task has died) as a fatal condition that requires process exit.
+///
+/// Continuing to run after `ChannelClosed` would leave procmond alive as a
+/// zombie: the binary is up, the supervisor (systemd, kubelet) sees a healthy
+/// process, but zero events are collected. That is exactly the failure mode
+/// `ShadowHunt` is supposed to detect on monitored hosts. Exiting with a
+/// non-zero code lets the supervisor restart us.
+///
+/// `ChannelFull` and other error variants are logged and returned: they are
+/// transient or recoverable and shouldn't trigger process exit.
+#[allow(
+    clippy::exit,
+    reason = "A dead actor channel means the collection pipeline is broken. Procmond \
+     cannot continue usefully, and returning Err to main() would mean a clean exit \
+     that supervisors interpret as success and won't restart."
+)]
+fn begin_monitoring_or_exit(handle: &procmond::ActorHandle, fallback_reason: &str) {
+    match handle.begin_monitoring() {
+        Ok(()) => {}
+        Err(procmond::ActorError::ChannelClosed) => {
+            error!(
+                fallback_reason = %fallback_reason,
+                "Actor channel is closed after {fallback_reason} fallback - collection pipeline is dead. \
+                 procmond exiting so the supervisor can restart."
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            error!(
+                error = %e,
+                fallback_reason = %fallback_reason,
+                "Failed to send BeginMonitoring command after {fallback_reason} fallback"
+            );
+        }
+    }
+}
+
 /// Parse and validate the collection interval argument.
 ///
 /// Ensures the interval is within acceptable bounds (5-3600 seconds).
@@ -146,10 +184,10 @@ pub async fn main() -> anyhow::Result<()> {
     // (actor-mode `ProcmondMonitorCollector` and standalone-mode
     // `ProcessEventSource`). Sharing the `Arc` guarantees a single
     // policy (one concurrency cap, one algorithm list, one size
-    // budget) no matter which path the process runs through. See
-    // `daemoneye-lib::integrity::MultiAlgorithmHasher` rustdoc for the
-    // statelessness invariant that protects the shared `Arc` across
-    // trust domains.
+    // budget) no matter which path the process runs through. The
+    // hasher is `Send + Sync` and holds no per-request mutable state
+    // (see `daemoneye-lib::integrity::MultiAlgorithmHasher` rustdoc),
+    // so a single `Arc` is safe to share across worker tasks.
     //
     // If engine construction fails when `--compute-hashes` is set, the
     // error propagates immediately via `?` — there is no silent fallback.
@@ -416,16 +454,20 @@ pub async fn main() -> anyhow::Result<()> {
         // CLI flag is set, the `PROCMOND_STANDALONE=1` environment variable is
         // set, or if the subscription to the broker fails.
         //
-        // Startup-ordering invariant (ADR referenced in END-297 evidence):
-        // subscribe AFTER registration succeeds but BEFORE the heartbeat task
-        // starts publishing ready-state pulses. The subscription must be
-        // active when the agent broadcasts BeginMonitoring, otherwise the
-        // message is lost (eventbus README: at-most-once delivery). The agent's
-        // `broadcast_begin_monitoring` is triggered by
-        // `transition_to_steady_state`, which happens after all expected
-        // collectors register. The heartbeat task is therefore spawned AFTER
-        // the subscribe block completes — see the `spawn_heartbeat_task` call
-        // below.
+        // Startup-ordering invariant (END-297 plan
+        // `docs/plans/2026-04-18-001-feat-close-end-297-message-broker-plan.md`):
+        // the lifecycle subscription must be active when the agent publishes
+        // `BeginMonitoring`, otherwise the message is lost (eventbus README:
+        // at-most-once delivery). The agent triggers
+        // `broadcast_begin_monitoring` from `transition_to_steady_state`,
+        // which fires after all expected collectors register.
+        //
+        // Heartbeats don't directly trigger the broadcast, but spawning the
+        // heartbeat task before the subscription is registered is a defensive
+        // hazard: any future change that has the agent react to a heartbeat
+        // by broadcasting `BeginMonitoring` would silently lose the message.
+        // The heartbeat task is therefore spawned AFTER the subscribe block
+        // completes — see the `spawn_heartbeat_task` call below.
         let standalone_mode = cli.standalone
             || std::env::var("PROCMOND_STANDALONE").ok().as_deref() == Some("1")
             || registration_failed;
@@ -455,9 +497,7 @@ pub async fn main() -> anyhow::Result<()> {
                 standalone = true,
                 "Standalone escape hatch active - starting collection immediately without waiting for agent"
             );
-            if let Err(e) = actor_handle.begin_monitoring() {
-                error!(error = %e, "Failed to send BeginMonitoring command");
-            }
+            begin_monitoring_or_exit(&actor_handle, "standalone-mode");
         } else {
             // Subscribe to control topics. If the broker is unreachable, log
             // loudly and fall back to standalone so we never silently start
@@ -531,9 +571,7 @@ pub async fn main() -> anyhow::Result<()> {
                     );
                     // Loud fallback: start monitoring immediately, but record
                     // the reason so operators see it in logs.
-                    if let Err(bm_err) = actor_handle.begin_monitoring() {
-                        error!(error = %bm_err, "Failed to send BeginMonitoring command after fallback");
-                    }
+                    begin_monitoring_or_exit(&actor_handle, "broker-unreachable");
                 }
             }
         }
@@ -581,12 +619,10 @@ pub async fn main() -> anyhow::Result<()> {
                                     topic = %msg.topic,
                                     "Received lifecycle control message - transitioning to Running"
                                 );
-                                if let Err(e) = wait_actor_handle.begin_monitoring() {
-                                    error!(
-                                        error = %e,
-                                        "Failed to send BeginMonitoring command after lifecycle signal"
-                                    );
-                                }
+                                begin_monitoring_or_exit(
+                                    &wait_actor_handle,
+                                    "lifecycle-signal",
+                                );
                                 return;
                             }
                             warn!(
@@ -599,12 +635,10 @@ pub async fn main() -> anyhow::Result<()> {
                             error!(
                                 "Control channel closed before BeginMonitoring received - falling back to standalone collection"
                             );
-                            if let Err(e) = wait_actor_handle.begin_monitoring() {
-                                error!(
-                                    error = %e,
-                                    "Failed to send BeginMonitoring command after channel-closed fallback"
-                                );
-                            }
+                            begin_monitoring_or_exit(
+                                &wait_actor_handle,
+                                "channel-closed",
+                            );
                             return;
                         }
                         Err(_elapsed) => {
@@ -612,12 +646,10 @@ pub async fn main() -> anyhow::Result<()> {
                                 timeout_secs = BEGIN_MONITORING_WAIT_TIMEOUT.as_secs(),
                                 "Timed out waiting for BeginMonitoring - falling back to standalone collection"
                             );
-                            if let Err(e) = wait_actor_handle.begin_monitoring() {
-                                error!(
-                                    error = %e,
-                                    "Failed to send BeginMonitoring command after timeout fallback"
-                                );
-                            }
+                            begin_monitoring_or_exit(
+                                &wait_actor_handle,
+                                "wait-timeout",
+                            );
                             return;
                         }
                     }

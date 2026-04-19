@@ -815,9 +815,12 @@ impl EventBusClient {
     /// is shared via `Arc` — the broadcast `Sender::send(&self)` signature does
     /// not require ownership.
     ///
-    /// Returns `true` if the signal was delivered, `false` if the client has
-    /// already been signaled (the `Option` was previously taken by a consuming
-    /// `shutdown()` call) or the broadcast channel had no live receivers.
+    /// Returns `true` if the signal was delivered. Returns `false` only when
+    /// no live receivers are subscribed to the broadcast channel — for example
+    /// because background tasks have already exited and closed their receivers.
+    /// (The "already taken by a consuming `shutdown()` call" case cannot be
+    /// observed here: this method takes `&self`, so any caller holding such a
+    /// reference proves that `shutdown(self)` has not yet consumed the client.)
     ///
     /// Callers that also want to await background-task completion should use
     /// the consuming [`shutdown`](Self::shutdown) method after this signal.
@@ -1102,7 +1105,7 @@ mod tests {
         // envelope did not leak onto the Event channel. `try_recv` returning
         // `TryRecvError::Empty` confirms the channel is open but no message
         // was delivered — a bug that routed Control to the event path would
-        // have produced `TryRecvError::Full` semantics (message received).
+        // instead have produced `Ok(_)` with a delivered message.
         assert!(
             matches!(
                 event_rx.try_recv(),

@@ -390,10 +390,10 @@ fn latency_p99_slo(c: &mut Criterion) {
             LATENCY_P99_SLO,
         );
 
-        // Gate the SLO assertion on Linux and macOS only; Windows and FreeBSD are
-        // informational per AGENTS.md OS support matrix and the END-297 plan
-        // (Key Technical Decisions § "Gate the benchmark SLO check only on
-        // x86_64 Linux + macOS for now").
+        // Gate the SLO assertion on Linux and macOS only (any architecture —
+        // the observed p99 on macOS aarch64 is already in the ~21µs range).
+        // Windows and FreeBSD remain informational per AGENTS.md OS support
+        // matrix and the END-297 plan.
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             assert!(
