@@ -585,7 +585,7 @@ url = "https://github.com/astral-sh/python-build-standalone/releases/download/20
 provenance = "github-attestations"
 
 [[tools.rust]]
-version = "stable"
+version = "1.95.0"
 backend = "core:rust"
 
 [[tools.zig]]
