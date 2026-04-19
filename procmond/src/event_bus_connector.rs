@@ -77,6 +77,7 @@ use daemoneye_eventbus::{
 };
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -274,7 +275,12 @@ pub struct EventBusConnector {
     wal: WriteAheadLog,
 
     /// EventBus client for broker communication (None when disconnected).
-    client: Option<EventBusClient>,
+    ///
+    /// Wrapped in `Arc` so callers holding the connector behind a `RwLock` can
+    /// clone the client handle out of a brief read-lock acquisition and do
+    /// async work (subscribe, publish) without holding the lock across `.await`.
+    /// See [`client_arc`](Self::client_arc).
+    client: Option<Arc<EventBusClient>>,
 
     /// In-memory buffer for events when disconnected.
     buffer: VecDeque<BufferedEvent>,
@@ -430,9 +436,11 @@ impl EventBusConnector {
         };
 
         // Attempt to connect
-        let client = EventBusClient::new(self.client_id.clone(), socket_config, client_config)
-            .await
-            .map_err(|e| EventBusConnectorError::Connection(e.to_string()))?;
+        let client = Arc::new(
+            EventBusClient::new(self.client_id.clone(), socket_config, client_config)
+                .await
+                .map_err(|e| EventBusConnectorError::Connection(e.to_string()))?,
+        );
 
         self.client = Some(client);
         self.connected = true;
@@ -520,7 +528,7 @@ impl EventBusConnector {
 
         match EventBusClient::new(self.client_id.clone(), socket_config, client_config).await {
             Ok(client) => {
-                self.client = Some(client);
+                self.client = Some(Arc::new(client));
                 self.connected = true;
                 self.reconnect_attempts = 0;
                 self.last_reconnect_attempt = None;
@@ -930,11 +938,26 @@ impl EventBusConnector {
             debug!(flushed = flushed, "Flushed buffer before shutdown");
         }
 
-        // Close the client connection
-        if let Some(client) = self.client.take()
-            && let Err(e) = client.shutdown().await
-        {
-            error!(error = %e, "Error during client shutdown");
+        // Close the client connection. The client is held behind `Arc` so other
+        // tasks can briefly clone it for async work without holding our lock.
+        // At shutdown we try to unwrap the `Arc` to consume the owned client
+        // (required by `EventBusClient::shutdown(mut self)`). If any outstanding
+        // clones remain (e.g. an in-flight subscribe), `Arc::into_inner` returns
+        // `None` and we fall back to simply dropping our handle — the client's
+        // background tasks exit when the shutdown signal channel closes.
+        if let Some(client_arc) = self.client.take() {
+            match Arc::into_inner(client_arc) {
+                Some(client) => {
+                    if let Err(e) = client.shutdown().await {
+                        error!(error = %e, "Error during client shutdown");
+                    }
+                }
+                None => {
+                    warn!(
+                        "EventBusClient has outstanding Arc references; skipping explicit shutdown - background tasks will exit when the Arc drops"
+                    );
+                }
+            }
         }
 
         self.connected = false;
@@ -992,6 +1015,19 @@ impl EventBusConnector {
     /// Get number of buffered events.
     pub fn buffered_event_count(&self) -> usize {
         self.buffer.len()
+    }
+
+    /// Clone the current broker client handle without holding the connector lock.
+    ///
+    /// Callers that hold the connector behind `Arc<RwLock<...>>` should acquire
+    /// the read guard, call this to obtain an owned `Arc<EventBusClient>`, and
+    /// drop the guard before issuing any async broker calls. This satisfies the
+    /// workspace `clippy::await_holding_lock = "deny"` rule.
+    ///
+    /// Returns `None` when disconnected.
+    #[must_use]
+    pub fn client_arc(&self) -> Option<Arc<EventBusClient>> {
+        self.client.clone()
     }
 
     /// Subscribe to topic patterns on the broker.

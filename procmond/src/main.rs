@@ -459,12 +459,41 @@ pub async fn main() -> anyhow::Result<()> {
             // loudly and fall back to standalone so we never silently start
             // collecting without coordination (see END-297 plan,
             // "System-Wide Impact -> Error propagation").
+            //
+            // Acquire the read guard only long enough to clone an owned
+            // `Arc<EventBusClient>`, then drop the guard before the async
+            // subscribe call — this satisfies the workspace
+            // `clippy::await_holding_lock = "deny"` rule.
             let subscriber_id = format!("procmond-{}", registration_manager.collector_id());
-            let subscribe_result = {
+            let client_arc = {
                 let bus_guard = event_bus.read().await;
-                bus_guard
-                    .subscribe_with_control(&subscriber_id, control_topics.clone())
-                    .await
+                bus_guard.client_arc()
+            };
+            let subscribe_result = match client_arc {
+                Some(client) => {
+                    let subscription = daemoneye_eventbus::EventSubscription {
+                        subscriber_id: subscriber_id.clone(),
+                        capabilities: daemoneye_eventbus::SourceCaps {
+                            event_types: vec!["control".to_owned()],
+                            collectors: vec![],
+                            max_priority: 0,
+                        },
+                        event_filter: None,
+                        correlation_filter: None,
+                        topic_patterns: Some(control_topics.clone()),
+                        enable_wildcards: true,
+                        include_control: true,
+                    };
+                    client
+                        .subscribe_with_control(subscription)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("subscribe_with_control failed on {subscriber_id}: {e}")
+                        })
+                }
+                None => Err(anyhow::anyhow!(
+                    "EventBusConnector is not connected to broker; cannot subscribe to control topics for {subscriber_id}"
+                )),
             };
 
             match subscribe_result {
@@ -521,13 +550,18 @@ pub async fn main() -> anyhow::Result<()> {
         let lifecycle_topic_task = lifecycle_topic.clone();
         let lifecycle_wait_task = control_rx_opt.map(|mut control_rx| {
             tokio::spawn(async move {
+                // Single absolute deadline for the whole wait — a chatty control
+                // stream cannot reset the window by delivering non-lifecycle
+                // messages (END-297 PR #178 review, coderabbitai).
+                // `checked_add` and then `unwrap_or(now)` guards against the
+                // pathological far-future overflow case required by clippy's
+                // `arithmetic_side_effects = deny`.
+                let now = tokio::time::Instant::now();
+                let deadline = now
+                    .checked_add(BEGIN_MONITORING_WAIT_TIMEOUT)
+                    .unwrap_or(now);
                 loop {
-                    match tokio::time::timeout(
-                        BEGIN_MONITORING_WAIT_TIMEOUT,
-                        control_rx.recv(),
-                    )
-                    .await
-                    {
+                    match tokio::time::timeout_at(deadline, control_rx.recv()).await {
                         Ok(Some(msg)) => {
                             if msg.topic == lifecycle_topic_task {
                                 info!(
