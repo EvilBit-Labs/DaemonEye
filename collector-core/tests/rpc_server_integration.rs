@@ -227,7 +227,7 @@ async fn test_health_check_response() -> anyhow::Result<()> {
 
     // Wait for collector to start, register, and RPC service to be ready
     eprintln!("TEST: Waiting for collector to start (2 seconds)");
-    tokio::time::sleep(Duration::from_millis(2000)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     eprintln!("TEST: Done waiting");
 
     // Create RPC client
@@ -289,7 +289,7 @@ async fn test_lifecycle_operation_handling() -> anyhow::Result<()> {
     });
 
     // Wait for collector to start, register, and RPC service to be ready
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Create RPC client
     let rpc_client = CollectorRpcClient::new(
@@ -360,7 +360,7 @@ async fn test_graceful_shutdown_via_rpc() -> anyhow::Result<()> {
     });
 
     // Wait for collector to start, register, and RPC service to be ready
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Create RPC client
     let rpc_client = CollectorRpcClient::new(

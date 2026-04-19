@@ -1006,7 +1006,7 @@ impl EventSource for ProcessEventSource {
                                 // Wait longer before next attempt
                                 #[allow(clippy::arithmetic_side_effects)] // Safe: consecutive_failures is bounded
                                 let backoff_duration = FAILURE_BACKOFF_BASE * consecutive_failures;
-                                let max_backoff = Duration::from_secs(60);
+                                let max_backoff = Duration::from_mins(1);
                                 let actual_backoff = std::cmp::min(backoff_duration, max_backoff);
 
                                 warn!(
@@ -1494,7 +1494,7 @@ mod tests {
 
         // Slow collection should not include REALTIME capability
         let slow_config = ProcessSourceConfig {
-            collection_interval: Duration::from_secs(60),
+            collection_interval: Duration::from_mins(1),
             ..Default::default()
         };
         let slow_source = ProcessEventSource::with_config(db_manager, slow_config);
@@ -1683,7 +1683,7 @@ mod tests {
         // Should complete reasonably quickly even with timeout
         // Allow more time on slower systems or under load
         assert!(
-            shutdown_duration < Duration::from_secs(60),
+            shutdown_duration < Duration::from_mins(1),
             "Shutdown should be fast, took {:?}",
             shutdown_duration
         );

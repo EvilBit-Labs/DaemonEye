@@ -773,7 +773,7 @@ async fn test_concurrent_interval_adjustments() {
     let intervals = vec![
         Duration::from_secs(30),
         Duration::from_secs(45),
-        Duration::from_secs(60),
+        Duration::from_mins(1),
         Duration::from_secs(30), // Back to original
     ];
 

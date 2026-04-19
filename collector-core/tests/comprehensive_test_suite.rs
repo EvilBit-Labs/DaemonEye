@@ -358,7 +358,7 @@ async fn test_comprehensive_multi_source_integration() {
     // Run collector for comprehensive testing
     let start_time = Instant::now();
     let collector_handle = tokio::spawn(async move {
-        let result = timeout(Duration::from_millis(2000), collector.run()).await;
+        let result = timeout(Duration::from_secs(2), collector.run()).await;
         match result {
             Ok(Ok(())) => info!("Collector completed successfully"),
             Ok(Err(e)) => warn!("Collector failed: {}", e),

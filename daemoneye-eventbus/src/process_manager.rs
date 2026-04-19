@@ -215,7 +215,7 @@ impl Default for ProcessManagerConfig {
             collector_binaries: HashMap::new(),
             default_graceful_timeout: Duration::from_secs(30),
             default_force_timeout: Duration::from_secs(5),
-            health_check_interval: Duration::from_secs(60),
+            health_check_interval: Duration::from_mins(1),
             enable_auto_restart: false,
             heartbeat_timeout_multiplier: 3,
         }
@@ -792,18 +792,15 @@ impl CollectorProcessManager {
                     .unwrap_or(Duration::from_secs(0));
 
                 // Calculate expected heartbeats missed based on elapsed time.
-                // Use millisecond precision and guard against sub-interval rounding to avoid division by zero.
+                // `checked_div` returns None when the divisor is zero, which collapses
+                // to the "no intervals missed yet" case via `unwrap_or(0)`.
                 let intervals_missed: u64 = {
                     let interval_ms = heartbeat_interval.as_millis();
-                    if interval_ms == 0 {
-                        0
-                    } else {
-                        let elapsed_ms = elapsed_since_heartbeat.as_millis();
-                        // SAFETY: both values are u128 millisecond counts; quotient fits u64 in practice.
-                        #[allow(clippy::arithmetic_side_effects, clippy::integer_division)]
-                        let n = elapsed_ms / interval_ms;
-                        u64::try_from(n).unwrap_or(u64::MAX)
-                    }
+                    let elapsed_ms = elapsed_since_heartbeat.as_millis();
+                    // SAFETY: both values are u128 millisecond counts; the quotient
+                    // fits u64 in practice and we saturate on overflow.
+                    let n = elapsed_ms.checked_div(interval_ms).unwrap_or(0);
+                    u64::try_from(n).unwrap_or(u64::MAX)
                 };
 
                 // Increment heartbeat sequence

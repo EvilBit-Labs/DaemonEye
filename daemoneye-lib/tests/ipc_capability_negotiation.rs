@@ -227,7 +227,7 @@ async fn test_capability_refresh_timing() {
     );
 
     // Initially should need refresh (never checked)
-    assert!(endpoint.needs_capability_refresh(Duration::from_secs(300)));
+    assert!(endpoint.needs_capability_refresh(Duration::from_mins(5)));
 
     // Update capabilities
     endpoint.update_capabilities(CollectionCapabilities {
@@ -236,7 +236,7 @@ async fn test_capability_refresh_timing() {
     });
 
     // Should not need refresh immediately after update
-    assert!(!endpoint.needs_capability_refresh(Duration::from_secs(300)));
+    assert!(!endpoint.needs_capability_refresh(Duration::from_mins(5)));
 
     // Should need refresh with very short max age (wait a bit first)
     tokio::time::sleep(Duration::from_millis(2)).await;

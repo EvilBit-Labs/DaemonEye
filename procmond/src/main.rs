@@ -28,7 +28,7 @@ use tracing::{debug, error, info, warn};
 /// Chosen empirically: 60s is long enough for a slow agent boot on
 /// contested hardware, short enough that operators notice when the
 /// agent is genuinely unreachable (END-297 review REL-001 / ADV-004).
-const BEGIN_MONITORING_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+const BEGIN_MONITORING_WAIT_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// Parse and validate the collection interval argument.
 ///
@@ -716,7 +716,7 @@ pub async fn main() -> anyhow::Result<()> {
             .with_max_event_sources(1)
             .with_event_buffer_size(1000)
             .with_shutdown_timeout(Duration::from_secs(30))
-            .with_health_check_interval(Duration::from_secs(60))
+            .with_health_check_interval(Duration::from_mins(1))
             .with_telemetry(true)
             .with_debug_logging(cli.log_level == "debug");
 

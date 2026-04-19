@@ -41,7 +41,7 @@ pub struct ShutdownConfig {
 impl Default for ShutdownConfig {
     fn default() -> Self {
         Self {
-            graceful_timeout: Duration::from_secs(60),
+            graceful_timeout: Duration::from_mins(1),
             forced_timeout: Duration::from_secs(10),
             sequence_delay: Duration::from_millis(500),
             enable_parallel_shutdown: true,

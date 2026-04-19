@@ -45,10 +45,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     // Test mode: exit early to keep existing integration test semantics (set DAEMONEYE_AGENT_TEST_MODE=1)
-    if std::env::var("DAEMONEYE_AGENT_TEST_MODE")
-        .map(|v| v == "1")
-        .unwrap_or(false)
-    {
+    if std::env::var("DAEMONEYE_AGENT_TEST_MODE").is_ok_and(|v| v == "1") {
         #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
         {
             println!("daemoneye-agent started successfully")

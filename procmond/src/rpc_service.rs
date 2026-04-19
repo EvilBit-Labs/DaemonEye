@@ -1024,7 +1024,7 @@ mod tests {
 
         assert_eq!(
             config.base_config.collection_interval,
-            Duration::from_secs(60)
+            Duration::from_mins(1)
         );
         assert_eq!(config.process_config.max_processes, 500);
         assert!(config.process_config.compute_executable_hashes);
@@ -1092,7 +1092,7 @@ mod tests {
             target: "control.collector.procmond".to_string(),
             operation: CollectorOperation::HealthCheck,
             payload: RpcPayload::Empty,
-            timestamp: SystemTime::now() - Duration::from_secs(60),
+            timestamp: SystemTime::now() - Duration::from_mins(1),
             deadline: SystemTime::now() - Duration::from_secs(30), // Past deadline
             correlation_metadata: RpcCorrelationMetadata::new("corr-expired".to_string()),
         };
@@ -1256,7 +1256,7 @@ mod tests {
             collector_id: "my-collector".to_owned(),
             control_topic: "custom.topic".to_owned(),
             response_topic_prefix: "custom.response".to_owned(),
-            default_timeout: Duration::from_secs(60),
+            default_timeout: Duration::from_mins(1),
             max_concurrent_requests: 20,
         };
         let handler = RpcServiceHandler::new(actor_handle, event_bus, config.clone());
@@ -1265,7 +1265,7 @@ mod tests {
         assert_eq!(retrieved_config.collector_id, "my-collector");
         assert_eq!(retrieved_config.control_topic, "custom.topic");
         assert_eq!(retrieved_config.response_topic_prefix, "custom.response");
-        assert_eq!(retrieved_config.default_timeout, Duration::from_secs(60));
+        assert_eq!(retrieved_config.default_timeout, Duration::from_mins(1));
         assert_eq!(retrieved_config.max_concurrent_requests, 20);
     }
 
@@ -1510,7 +1510,7 @@ mod tests {
                 // Verify the config was built correctly
                 assert_eq!(
                     config.base_config.collection_interval,
-                    Duration::from_secs(60)
+                    Duration::from_mins(1)
                 );
                 assert_eq!(config.process_config.max_processes, 500);
                 assert!(config.process_config.collect_enhanced_metadata);
@@ -2113,7 +2113,7 @@ mod tests {
             target: "control.collector.procmond".to_string(),
             operation: CollectorOperation::HealthCheck,
             payload: RpcPayload::Empty,
-            timestamp: SystemTime::now() - Duration::from_secs(60),
+            timestamp: SystemTime::now() - Duration::from_mins(1),
             deadline: SystemTime::now() - Duration::from_secs(30), // Already expired
             correlation_metadata: RpcCorrelationMetadata::new("corr-stats-timeout".to_string()),
         };
@@ -2319,7 +2319,7 @@ mod tests {
 
         // Long default timeout
         let config = RpcServiceConfig {
-            default_timeout: Duration::from_secs(60),
+            default_timeout: Duration::from_mins(1),
             ..RpcServiceConfig::default()
         };
         let handler = RpcServiceHandler::new(actor_handle, event_bus, config);

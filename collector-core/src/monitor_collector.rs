@@ -81,7 +81,7 @@ impl MonitorCollectorConfig {
             anyhow::bail!("Max events in flight must be between 1 and 100,000 for memory safety");
         }
 
-        if self.shutdown_timeout > Duration::from_secs(300) {
+        if self.shutdown_timeout > Duration::from_mins(5) {
             anyhow::bail!("Shutdown timeout must not exceed 5 minutes");
         }
 

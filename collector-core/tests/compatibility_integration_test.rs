@@ -622,7 +622,7 @@ async fn test_configuration_compatibility() {
         .with_component_name("procmond".to_string())
         .with_max_event_sources(16) // Match existing default
         .with_event_buffer_size(1000) // Match existing default
-        .with_health_check_interval(Duration::from_secs(60)); // Match existing default
+        .with_health_check_interval(Duration::from_mins(1)); // Match existing default
 
     // Verify configuration validation
     assert!(

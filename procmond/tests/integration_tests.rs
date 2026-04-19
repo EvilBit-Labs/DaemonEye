@@ -71,14 +71,14 @@ impl TestDatabase {
 /// Creates a test configuration optimized for integration testing.
 fn create_test_config() -> ProcessSourceConfig {
     ProcessSourceConfig {
-        collection_interval: Duration::from_millis(1000), // More realistic interval
-        collect_enhanced_metadata: false,                 // Disabled for speed in tests
-        max_processes_per_cycle: 10,                      // Very small limit for testing
-        compute_executable_hashes: false,                 // Disabled for speed
+        collection_interval: Duration::from_secs(1), // More realistic interval
+        collect_enhanced_metadata: false,            // Disabled for speed in tests
+        max_processes_per_cycle: 10,                 // Very small limit for testing
+        compute_executable_hashes: false,            // Disabled for speed
         max_events_in_flight: 50,
         collection_timeout: Duration::from_secs(10), // Longer timeout
         shutdown_timeout: Duration::from_secs(5),
-        max_backpressure_wait: Duration::from_millis(1000),
+        max_backpressure_wait: Duration::from_secs(1),
         event_batch_size: 5,
         batch_timeout: Duration::from_millis(500),
     }

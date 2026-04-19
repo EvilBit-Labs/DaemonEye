@@ -612,8 +612,8 @@ impl ConnectionPool {
             connections: HashMap::new(),
             max_connections_per_endpoint,
             max_total_connections,
-            max_idle_time: Duration::from_secs(300), // 5 minutes
-            max_lifetime: Duration::from_secs(3600), // 1 hour
+            max_idle_time: Duration::from_mins(5),
+            max_lifetime: Duration::from_hours(1),
             connection_semaphore: Arc::new(Semaphore::new(max_total_connections)),
         }
     }
@@ -948,7 +948,7 @@ impl ResilientIpcClient {
 
     /// Refresh capabilities for all endpoints that need it
     pub async fn refresh_capabilities(&self) -> IpcResult<()> {
-        let capability_refresh_interval = Duration::from_secs(300); // 5 minutes
+        let capability_refresh_interval = Duration::from_mins(5);
         let endpoints_to_refresh = {
             let endpoints = self.endpoints.read().await;
             endpoints

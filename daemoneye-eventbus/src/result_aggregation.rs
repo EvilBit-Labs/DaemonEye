@@ -88,8 +88,8 @@ impl Default for AggregationConfig {
     fn default() -> Self {
         Self {
             max_pending_results: 10000,
-            deduplication_window: Duration::from_secs(300),
-            correlation_timeout: Duration::from_secs(60),
+            deduplication_window: Duration::from_mins(5),
+            correlation_timeout: Duration::from_mins(1),
             backpressure_threshold: 8000,
             health_check_interval: Duration::from_secs(10),
         }
@@ -468,7 +468,7 @@ impl ResultAggregator {
                     for (collector_id, status) in health_map.iter_mut() {
                         // Check if collector has been inactive
                         if let Ok(elapsed) = now.duration_since(status.last_success)
-                            && elapsed > Duration::from_secs(60)
+                            && elapsed > Duration::from_mins(1)
                         {
                             // Mark as unhealthy if no results for 60 seconds
                             if status.health != CollectorHealth::Unhealthy
@@ -532,7 +532,7 @@ impl ResultAggregator {
         let deduplication_window = self.config.deduplication_window;
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            let mut interval = tokio::time::interval(Duration::from_mins(1));
             loop {
                 interval.tick().await;
 

@@ -33,7 +33,7 @@ impl Default for CorrelationTrackerConfig {
         Self {
             max_history_size: 10_000,
             max_active_workflows: 1_000,
-            workflow_timeout: Duration::from_secs(300),
+            workflow_timeout: Duration::from_mins(5),
         }
     }
 }

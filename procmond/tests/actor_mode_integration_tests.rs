@@ -348,7 +348,7 @@ async fn test_deadline_exceeded_returns_immediately() {
         target: "control.collector.procmond".to_string(),
         operation: CollectorOperation::HealthCheck,
         payload: RpcPayload::Empty,
-        timestamp: SystemTime::now() - Duration::from_secs(60),
+        timestamp: SystemTime::now() - Duration::from_mins(1),
         deadline: SystemTime::now() - Duration::from_secs(30), // Past deadline
         correlation_metadata: RpcCorrelationMetadata::new("test-expired".to_string()),
     };

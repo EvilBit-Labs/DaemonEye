@@ -40,7 +40,7 @@ fn create_test_process_event(
         name: name.to_string(),
         executable_path: executable_path.map(|s| s.to_string()),
         command_line: command_line.iter().map(|s| s.to_string()).collect(),
-        start_time: Some(SystemTime::now() - Duration::from_secs(60)),
+        start_time: Some(SystemTime::now() - Duration::from_mins(1)),
         cpu_usage: Some(1.0),
         memory_usage: Some(1024 * 1024),
         executable_hash: Some("abc123".to_string()),
