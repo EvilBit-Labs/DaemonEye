@@ -13,6 +13,11 @@ on:
             - "daemoneye-eventbus/**"
             - "collector-core/**"
             - ".github/workflows/benchmarks.yml"
+            # Toolchain or workspace-level dep changes can shift Tokio/compiler
+            # behavior and move p99 without touching the eventbus crate itself.
+            - "Cargo.toml"
+            - "Cargo.lock"
+            - "rust-toolchain.toml"
     workflow_dispatch:
         inputs:
             suite:

@@ -1277,16 +1277,16 @@ mod tests {
         );
         client.handle_control_message(message).await.unwrap();
 
-        // The channel should be closed (paired sender was dropped in
-        // subscribe_with_control because include_control=false) — so any
-        // recv() after the drop returns None promptly.
+        // The channel must be CLOSED (not just empty) — subscribe_with_control
+        // drops the paired sender when include_control=false. A blocking `recv()`
+        // on a closed channel returns None promptly, which is the stronger
+        // assertion the opt-out contract requires (PR #178 review).
+        // `Message` doesn't impl PartialEq, so pattern-match instead of assert_eq!.
+        let recv_result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), control_rx.recv()).await;
         assert!(
-            matches!(
-                control_rx.try_recv(),
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected
-                    | tokio::sync::mpsc::error::TryRecvError::Empty)
-            ),
-            "control channel should be closed or empty for non-opted-in subscriber"
+            matches!(recv_result, Ok(None)),
+            "control channel must be closed (not just empty) for non-opted-in subscriber; got {recv_result:?}"
         );
     }
 }

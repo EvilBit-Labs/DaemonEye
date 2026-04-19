@@ -387,12 +387,15 @@ let subscription = EventSubscription {
 let (mut event_rx, mut control_rx) = event_bus.subscribe_with_control(subscription).await?;
 
 // Receive events and control messages on parallel channels
-tokio::select! {
-    Some(bus_event) = event_rx.recv() => {
-        println!("Received event: {:?}", bus_event);
-    }
-    Some(control_msg) = control_rx.recv() => {
-        println!("Received control message: {:?}", control_msg);
+loop {
+    tokio::select! {
+        Some(bus_event) = event_rx.recv() => {
+            println!("Received event: {:?}", bus_event);
+        }
+        Some(control_msg) = control_rx.recv() => {
+            println!("Received control message: {:?}", control_msg);
+        }
+        else => break,
     }
 }
 ```

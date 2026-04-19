@@ -1,51 +1,22 @@
+// Integration tests are code inside #[cfg(test)] by convention; a few
+// workspace-level lints are standard to relax at the test-file level so we
+// can write expressive, easy-to-read assertions without noise. The set below
+// is minimised to lints that trip genuinely benign patterns in this file
+// (matches common practice across the crate's test files; see PR #178 review).
 #![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::print_stdout,
-    clippy::use_debug,
-    clippy::dbg_macro,
-    clippy::shadow_unrelated,
-    clippy::shadow_reuse,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_lossless,
-    clippy::pattern_type_mismatch,
-    clippy::non_ascii_literal,
-    clippy::str_to_string,
-    clippy::uninlined_format_args,
-    clippy::let_underscore_must_use,
-    clippy::must_use_candidate,
-    clippy::missing_const_for_fn,
-    clippy::used_underscore_binding,
-    clippy::redundant_clone,
-    clippy::explicit_iter_loop,
-    clippy::integer_division,
-    clippy::modulo_arithmetic,
-    clippy::unseparated_literal_suffix,
-    clippy::doc_markdown,
-    clippy::clone_on_ref_ptr,
-    clippy::indexing_slicing,
-    clippy::items_after_statements,
-    clippy::wildcard_enum_match_arm,
-    clippy::float_cmp,
-    clippy::unreadable_literal,
-    clippy::semicolon_outside_block,
-    clippy::semicolon_inside_block,
-    clippy::redundant_closure_for_method_calls,
-    clippy::equatable_if_let,
-    clippy::manual_string_new,
-    clippy::case_sensitive_file_extension_comparisons,
-    clippy::redundant_type_annotations,
-    clippy::significant_drop_tightening,
-    clippy::redundant_else,
-    clippy::match_same_arms,
-    clippy::ignore_without_reason,
-    dead_code
+    clippy::unwrap_used,             // Tests panic on unexpected Err; that's the diagnostic.
+    clippy::expect_used,             // Same rationale as unwrap_used.
+    clippy::panic,                   // Test-only assertions that panic on bad state.
+    clippy::arithmetic_side_effects, // Test iteration counters and expected-value math.
+    clippy::as_conversions,          // Small numeric casts in test data.
+    clippy::cast_possible_truncation,// Same as as_conversions.
+    clippy::cast_sign_loss,          // Same.
+    clippy::indexing_slicing,        // Fixed-size test fixtures indexed directly.
+    clippy::items_after_statements,  // Test-local const declarations near their use.
+    clippy::ignore_without_reason,   // #[ignore] markers used in this file carry rationale in docstrings.
+    clippy::shadow_unrelated,        // Test scenarios re-use short binding names (e.g. `stats`) across phases for readability.
+    clippy::doc_markdown,             // Integration-test docstrings reference protobuf-style identifiers and plain text labels.
+    dead_code                         // Test helpers used in a subset of tests.
 )]
 //! End-to-end multi-collector coordination tests (END-297 Unit 4).
 //!
