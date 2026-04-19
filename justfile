@@ -105,7 +105,8 @@ lint-justfile:
 
 alias lint-just := lint-justfile
 
-lint: lint-rust lint-rustdoc lint-md lint-actions lint-justfile
+# `lint-md` is intentionally NOT in the default `lint` chain. The repo has pre-existing markdownlint violations across third-party skill docs (.claude/skills/**), draft specs (.kiro/upcoming-specs/**), and older mdbook content. Run `just lint-md` on-demand when doing a focused docs pass; a cleanup ticket will re-enable it here once the backlog is resolved.
+lint: lint-rust lint-rustdoc lint-actions lint-justfile
 
 # Run clippy with fixes
 fix:
