@@ -613,9 +613,10 @@ pub struct TriggerRequest {
 /// for non-exhaustive types, which means adding the attribute requires
 /// introducing a builder or `with_*` setter API for external consumers
 /// (collector-core's bridge, tests, benches). That refactor is tracked as
-/// follow-up work — see `docs/todos/end-297-type-design-polish.md`. In the
-/// meantime, always construct via `..Default::default()` so future field
-/// additions cause the smallest possible diff.
+/// follow-up work in the `EventSubscription` bullet of the "Post-Merge
+/// Follow-ups" section of `daemoneye-eventbus/docs/END-297-acceptance-evidence.md`.
+/// In the meantime, always construct via `..Default::default()` so future
+/// field additions cause the smallest possible diff.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventSubscription {
     /// Unique identifier for the subscriber

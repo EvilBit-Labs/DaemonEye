@@ -30,42 +30,117 @@ use tracing::{debug, error, info, warn};
 /// agent is genuinely unreachable (END-297 review REL-001 / ADV-004).
 const BEGIN_MONITORING_WAIT_TIMEOUT: Duration = Duration::from_mins(1);
 
-/// Send `BeginMonitoring` to the actor, treating `ChannelClosed` (the actor
-/// task has died) as a fatal condition that requires process exit.
-///
-/// Continuing to run after `ChannelClosed` would leave procmond alive as a
-/// zombie: the binary is up, the supervisor (systemd, kubelet) sees a healthy
-/// process, but zero events are collected. That is exactly the failure mode
-/// `ShadowHunt` is supposed to detect on monitored hosts. Exiting with a
-/// non-zero code lets the supervisor restart us.
-///
-/// `ChannelFull` and other error variants are logged and returned: they are
-/// transient or recoverable and shouldn't trigger process exit.
-#[allow(
-    clippy::exit,
-    reason = "A dead actor channel means the collection pipeline is broken. Procmond \
-     cannot continue usefully, and returning Err to main() would mean a clean exit \
-     that supervisors interpret as success and won't restart."
-)]
-fn begin_monitoring_or_exit(handle: &procmond::ActorHandle, fallback_reason: &str) {
-    match handle.begin_monitoring() {
-        Ok(()) => {}
-        Err(procmond::ActorError::ChannelClosed) => {
-            error!(
-                fallback_reason = %fallback_reason,
-                "Actor channel is closed after {fallback_reason} fallback - collection pipeline is dead. \
-                 procmond exiting so the supervisor can restart."
-            );
-            std::process::exit(1);
-        }
-        Err(e) => {
-            error!(
-                error = %e,
-                fallback_reason = %fallback_reason,
-                "Failed to send BeginMonitoring command after {fallback_reason} fallback"
-            );
+/// Typed reason for each call to [`begin_monitoring_or_exit`] so logs have a
+/// consistent, misspelling-proof label and the helper can distinguish
+/// "one-shot signal" paths (must succeed or exit) from "degraded-fallback"
+/// paths (backpressure is recoverable).
+#[derive(Debug, Clone, Copy)]
+enum BeginMonitoringReason {
+    /// Operator-opted standalone mode. This path runs only once on startup;
+    /// if the actor cannot receive `BeginMonitoring`, there is no retry.
+    StandaloneMode,
+    /// Agent's `BeginMonitoring` broadcast arrived on
+    /// `control.collector.lifecycle`. At-most-once delivery — there is no
+    /// retry, so any failure to transition is terminal.
+    LifecycleSignal,
+    /// Subscribe-with-control failed; falling back to immediate collection.
+    /// The actor is already in a degraded coordination state.
+    BrokerUnreachable,
+    /// Control channel closed before a lifecycle message arrived; falling
+    /// back to standalone collection.
+    ChannelClosed,
+    /// Wait deadline elapsed before `BeginMonitoring` arrived; falling back
+    /// to standalone collection.
+    WaitTimeout,
+}
+
+impl BeginMonitoringReason {
+    /// One-shot paths cannot retry: the signal that brought us here has been
+    /// consumed (agent broadcast, operator flag check). On these paths every
+    /// actor error must be fatal, including `ChannelFull` — otherwise procmond
+    /// silently hangs in `WaitingForAgent` forever.
+    const fn is_one_shot(self) -> bool {
+        matches!(self, Self::StandaloneMode | Self::LifecycleSignal)
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::StandaloneMode => "standalone-mode",
+            Self::LifecycleSignal => "lifecycle-signal",
+            Self::BrokerUnreachable => "broker-unreachable",
+            Self::ChannelClosed => "channel-closed",
+            Self::WaitTimeout => "wait-timeout",
         }
     }
+}
+
+impl std::fmt::Display for BeginMonitoringReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Send `BeginMonitoring` to the actor, exiting the process on any error
+/// that cannot be safely recovered on this specific path.
+///
+/// Continuing to run when the collection pipeline is broken would leave
+/// procmond alive as a zombie: the binary is up, the supervisor (systemd,
+/// kubelet) sees a healthy process, but zero events are collected. That is
+/// exactly the failure mode `ShadowHunt` is supposed to detect on monitored
+/// hosts. Exiting non-zero lets the supervisor restart us.
+///
+/// Error-handling policy is **default-fatal**:
+///
+/// - [`ActorError::ChannelFull`] is the only explicitly-transient variant,
+///   and only on **degraded-fallback** paths (where the signal may be
+///   retried by a later collector cycle or a supervisor restart). On
+///   one-shot paths (see [`BeginMonitoringReason::is_one_shot`]), even
+///   `ChannelFull` is fatal — the signal is at-most-once, and dropping it
+///   would produce a zombie.
+/// - Every other variant — `ChannelClosed`, `ResponseDropped`, future
+///   `#[non_exhaustive]` additions — is fatal. The safer posture for a
+///   security-critical collector is to restart on anything unrecognized
+///   rather than silently continue.
+#[allow(
+    clippy::exit,
+    reason = "Three of the five call sites execute inside a tokio::spawn task \
+     (the lifecycle_wait_task), where returning Err propagates nowhere and \
+     has no effect on process exit status. Using std::process::exit gives a \
+     uniform failure shape across both main-task and spawned-task call \
+     sites; supervisors observe a non-zero exit and restart procmond. \
+     std::process::exit skips destructor runs, but WAL writes are committed \
+     before events leave the actor (see event_bus_connector.rs) so buffered \
+     events are recoverable on next startup via replay_wal()."
+)]
+fn begin_monitoring_or_exit(handle: &procmond::ActorHandle, reason: BeginMonitoringReason) {
+    let err = match handle.begin_monitoring() {
+        Ok(()) => return,
+        Err(e) => e,
+    };
+
+    // Default-fatal: only explicit transient ChannelFull on non-one-shot
+    // paths is allowed to log-and-continue. Everything else exits.
+    let is_recoverable_transient =
+        matches!(err, procmond::ActorError::ChannelFull { .. }) && !reason.is_one_shot();
+
+    if is_recoverable_transient {
+        error!(
+            error = %err,
+            reason = %reason,
+            "Actor channel backpressured on {reason} fallback - signal dropped, \
+             actor will resume on next collection cycle"
+        );
+        return;
+    }
+
+    error!(
+        error = %err,
+        reason = %reason,
+        one_shot = reason.is_one_shot(),
+        "Fatal actor error after {reason} - collection pipeline is broken. \
+         procmond exiting so the supervisor can restart."
+    );
+    std::process::exit(1);
 }
 
 /// Parse and validate the collection interval argument.
@@ -462,12 +537,16 @@ pub async fn main() -> anyhow::Result<()> {
         // `broadcast_begin_monitoring` from `transition_to_steady_state`,
         // which fires after all expected collectors register.
         //
-        // Heartbeats don't directly trigger the broadcast, but spawning the
-        // heartbeat task before the subscription is registered is a defensive
-        // hazard: any future change that has the agent react to a heartbeat
-        // by broadcasting `BeginMonitoring` would silently lose the message.
-        // The heartbeat task is therefore spawned AFTER the subscribe block
-        // completes — see the `spawn_heartbeat_task` call below.
+        // Heartbeats don't directly trigger the broadcast today — no code path
+        // in `daemoneye-agent/src/broker_manager.rs` routes heartbeat arrival
+        // into `broadcast_begin_monitoring`; the broadcast is only fired from
+        // `transition_to_steady_state` after `wait_for_collectors_ready`
+        // returns. The spawn ordering below is therefore **defensive only**:
+        // the subscribe/spawn order could be reversed today without breaking
+        // correctness. It's maintained as a safeguard against future agent
+        // changes that might route heartbeats into the broadcast trigger.
+        // The heartbeat task is spawned AFTER the subscribe block completes —
+        // see the `spawn_heartbeat_task` call below.
         let standalone_mode = cli.standalone
             || std::env::var("PROCMOND_STANDALONE").ok().as_deref() == Some("1")
             || registration_failed;
@@ -497,7 +576,7 @@ pub async fn main() -> anyhow::Result<()> {
                 standalone = true,
                 "Standalone escape hatch active - starting collection immediately without waiting for agent"
             );
-            begin_monitoring_or_exit(&actor_handle, "standalone-mode");
+            begin_monitoring_or_exit(&actor_handle, BeginMonitoringReason::StandaloneMode);
         } else {
             // Subscribe to control topics. If the broker is unreachable, log
             // loudly and fall back to standalone so we never silently start
@@ -571,7 +650,10 @@ pub async fn main() -> anyhow::Result<()> {
                     );
                     // Loud fallback: start monitoring immediately, but record
                     // the reason so operators see it in logs.
-                    begin_monitoring_or_exit(&actor_handle, "broker-unreachable");
+                    begin_monitoring_or_exit(
+                        &actor_handle,
+                        BeginMonitoringReason::BrokerUnreachable,
+                    );
                 }
             }
         }
@@ -621,7 +703,7 @@ pub async fn main() -> anyhow::Result<()> {
                                 );
                                 begin_monitoring_or_exit(
                                     &wait_actor_handle,
-                                    "lifecycle-signal",
+                                    BeginMonitoringReason::LifecycleSignal,
                                 );
                                 return;
                             }
@@ -637,7 +719,7 @@ pub async fn main() -> anyhow::Result<()> {
                             );
                             begin_monitoring_or_exit(
                                 &wait_actor_handle,
-                                "channel-closed",
+                                BeginMonitoringReason::ChannelClosed,
                             );
                             return;
                         }
@@ -648,7 +730,7 @@ pub async fn main() -> anyhow::Result<()> {
                             );
                             begin_monitoring_or_exit(
                                 &wait_actor_handle,
-                                "wait-timeout",
+                                BeginMonitoringReason::WaitTimeout,
                             );
                             return;
                         }
