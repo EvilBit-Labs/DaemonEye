@@ -588,6 +588,10 @@ provenance = "github-attestations"
 version = "1.95.0"
 backend = "core:rust"
 
+[tools.rust.options]
+components = "cargo,clippy,llvm-tools,rustfmt"
+profile = "default"
+
 [[tools.zig]]
 version = "0.16.0"
 backend = "core:zig"
