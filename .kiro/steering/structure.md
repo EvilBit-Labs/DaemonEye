@@ -2,7 +2,7 @@
 
 ## Workspace Organization
 
-DaemonEye uses a **privilege-separated runtime architecture** within a six-crate workspace (three binaries plus three supporting library crates):
+DaemonEye follows a **three-component security architecture** with strict privilege separation:
 
 ```text
 DaemonEye/
@@ -43,8 +43,7 @@ DaemonEye/
 ### daemoneye-lib/ (Shared Core)
 
 - **Purpose**: Common functionality shared across all components
-- **Always-on modules**: config, crypto, integrity, ipc, models, proto, storage, telemetry
-- **Feature-gated modules**: alerting (`alerting`), collection (`process-collection`), detection (`detection-engine`), kernel (`kernel-monitoring`), network (`network-correlation`); the kernel and network modules back commercial-tier collectors and are gated off by default in this repo
+- **Modules**: config, models, storage, detection, alerting, crypto, telemetry
 - **Security**: Trait-based abstractions with security boundaries
 
 ### collector-core/ (Collector SDK)
