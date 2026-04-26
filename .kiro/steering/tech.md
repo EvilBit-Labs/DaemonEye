@@ -126,29 +126,16 @@ just run-daemoneye-agent --config /path   # Run orchestrator agent
 ### Process Enumeration
 
 - **Phase 1**: sysinfo crate for unified cross-platform baseline
-- **Phase 2**: Platform-specific enhancements (eBPF, ETW, EndpointSecurity)
-- **Phase 3**: Kernel-level real-time monitoring (Enterprise tier)
+- **Phase 2**: Platform-specific enhancements (Planned)
 - **Fallback**: Graceful degradation when enhanced features unavailable
 
-### Kernel Monitoring (Enterprise Tier)
-
-- **Linux**: eBPF programs for real-time process and syscall monitoring
-- **Windows**: ETW integration for kernel events and registry monitoring
-- **macOS**: EndpointSecurity framework for process and file system events
-- **Network**: Platform-specific network event correlation
+> Kernel-level monitoring (eBPF / ETW / EndpointSecurity) is provided by commercial tier collectors that are sold separately, not in this repo.
 
 ### Privilege Management
 
 - **Linux**: CAP_SYS_PTRACE, immediate capability dropping
 - **Windows**: SeDebugPrivilege, token restriction after init
 - **macOS**: Minimal entitlements, sandbox compatibility
-
-### Enterprise Security Features
-
-- **Authentication**: mTLS with certificate chain validation
-- **Code Signing**: SLSA Level 3 provenance, Cosign signatures
-- **Compliance**: NIST, ISO 27001, CIS framework mappings
-- **Threat Intelligence**: STIX/TAXII integration, quarterly rule packs
 
 ## Testing Strategy
 

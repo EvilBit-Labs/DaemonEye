@@ -2,23 +2,19 @@
 
 ## Workspace Organization
 
-DaemonEye follows a **three-component security architecture** with strict privilege separation, extensible to multi-tier deployments:
+DaemonEye follows a **three-component security architecture** with strict privilege separation:
 
 ```text
 DaemonEye/
-├── procmond/         # Privileged Process Collector
-├── daemoneye-agent/    # User-Space Orchestrator
-├── daemoneye-cli/      # Command-Line Interface
-├── daemoneye-lib/     # Shared Library Components
-├── security-center/  # Centralized Management (Business/Enterprise)
-└── project_spec/     # Project Documentation
+├── procmond/             # Privileged Process Collector
+├── daemoneye-agent/      # User-Space Orchestrator
+├── daemoneye-cli/        # Command-Line Interface
+├── daemoneye-lib/        # Shared Library Components
+├── collector-core/       # Collector SDK (EventSource trait, runtime, IPC)
+└── daemoneye-eventbus/   # Embedded broker for cross-process pub/sub and RPC
 ```
 
-**Deployment Tiers:**
-
-- **Free Tier**: Standalone agents (procmond + daemoneye-agent + daemoneye-cli)
-- **Business Tier**: + Security Center + Enterprise integrations
-- **Enterprise Tier**: + Kernel monitoring + Federated architecture + Advanced SIEM
+> This repository contains the Community tier. Commercial tiers (fleet management, GUI, federation, kernel-level collectors) extend this foundation and are sold separately, not in this repo. See evilbitlabs.io for commercial details.
 
 ## Component Responsibilities
 
@@ -47,15 +43,19 @@ DaemonEye/
 ### daemoneye-lib/ (Shared Core)
 
 - **Purpose**: Common functionality shared across all components
-- **Modules**: config, models, storage, detection, alerting, crypto, telemetry, kernel, network
+- **Modules**: config, models, storage, detection, alerting, crypto, telemetry
 - **Security**: Trait-based abstractions with security boundaries
 
-### security-center/ (Centralized Management)
+### collector-core/ (Collector SDK)
 
-- **Purpose**: Centralized aggregation and management for Business/Enterprise tiers
-- **Security**: mTLS authentication, certificate management, role-based access
-- **Features**: Fleet management, rule distribution, data aggregation, web GUI
-- **Deployment**: Optional component for multi-agent environments
+- **Purpose**: SDK providing shared operational infrastructure for collectors (`EventSource` trait, `Collector` runtime, capability negotiation, lifecycle management, IPC contracts)
+- **Contract**: Protobuf IPC (`ipc.proto`, `eventbus.proto`) — language-neutral boundary
+
+### daemoneye-eventbus/ (Embedded Broker)
+
+- **Purpose**: Cross-process pub/sub and RPC broker embedded inside daemoneye-agent
+- **Features**: Topic hierarchy with wildcard subscriptions, correlation metadata, RPC patterns for collector lifecycle management
+- **Transport**: Unix domain sockets (Linux/macOS), named pipes (Windows)
 
 ## Coding Standards
 
@@ -133,24 +133,12 @@ Hierarchical configuration with clear precedence:
 - **alert_deliveries**: Delivery tracking with retry information
 - **audit_ledger**: Tamper-evident cryptographic chain
 
-### Business/Enterprise Tables
-
-- **agents**: Agent registration and status tracking
-- **agent_connections**: mTLS connection management and certificates
-- **fleet_events**: Centralized event aggregation from multiple agents
-- **rule_packs**: Curated rule pack management and distribution
-- **compliance_mappings**: Compliance framework mappings (NIST, ISO 27001, CIS)
-- **network_events**: Network activity correlation (Enterprise tier)
-- **kernel_events**: Kernel-level event monitoring (Enterprise tier)
-
 ### Access Patterns
 
 - **Event Store**: redb with concurrent access and ACID transactions
 - **Audit Ledger**: redb with write-only access for procmond
 - **Detection Queries**: Read-only database connections for rule execution
 - **Indexing**: Optimized for time-series queries and rule execution
-- **Federated Storage**: Hierarchical data aggregation across Security Centers
-- **Real-time Events**: Kernel-level event streaming (Enterprise tier)
 
 ### IPC Protocol
 
