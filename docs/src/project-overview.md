@@ -96,10 +96,7 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 ### **Organizational Context**
 
-- **Small Teams**: Core tier for basic process monitoring
-- **Consultancies**: Business tier for client management and reporting
-- **Enterprises**: Enterprise tier for large-scale, federated deployments
-- **Government/Military**: Airgapped environments with strict compliance requirements
+This repository ships the agent-side Community tier. It is appropriate for individual operators, security researchers, homelabs, and small teams that want sovereign process visibility without a SaaS tether or central server. Larger deployments (centralized fleet management, multi-site aggregation, kernel-level collection) are served by commercial tiers that extend this foundation and are sold separately, not in this repo.
 
 ## Key Features
 
@@ -137,10 +134,11 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 #### Cross-Platform Support
 
-- **Linux**: Native process enumeration with eBPF integration (Enterprise tier)
-- **macOS**: EndpointSecurity framework integration (Enterprise tier)
-- **Windows**: ETW integration and Windows API access (Enterprise tier)
-- **Container Support**: Kubernetes DaemonSet deployment
+- **Linux**: Native process enumeration via `sysinfo` and procfs
+- **macOS**: Native process enumeration via `sysinfo` and platform APIs
+- **Windows**: Native process enumeration via `sysinfo` and platform APIs
+
+> Kernel-level integrations (eBPF on Linux, ETW on Windows, EndpointSecurity on macOS) are provided by commercial-tier collectors, sold separately, not in this repo.
 
 #### Multi-Channel Alerting
 
