@@ -39,13 +39,14 @@ DaemonEye implements a **three-component security architecture** with strict pri
 - **Attack Surface Minimization**: No network listening, outbound-only connections
 - **Audit Trail**: BLAKE3 hash-chained audit ledger [Implemented]; Certificate Transparency-style Merkle tree inclusion proofs \[In Progress — stub returns empty vec in `crypto.rs`\]
 
-### Advanced Security Features (Enterprise Tier)
+### Planned Hardening (Community Tier)
 
-- **mTLS Authentication**: Certificate chain validation for enterprise components [Planned]
-- **Code Signing**: SLSA Level 3 provenance, Cosign signatures [Planned]
 - **Cryptographic Integrity**: Merkle tree with inclusion proofs and periodic checkpoints [In Progress — chain hashing implemented; inclusion proof generation stubbed]
+- **Code Signing**: SLSA Level 3 provenance, Cosign signatures [Planned]
 - **Sandboxed Execution**: Read-only database connections for detection engine [Planned]
 - **Query Whitelist**: Only SELECT statements with approved functions allowed [Implemented at rule load time; not yet enforced at execution time]
+
+> Fleet-level transport security (mTLS between host agents and upstream aggregators) is provided by commercial tiers, sold separately, not in this repo.
 
 ## Reporting a Vulnerability
 
