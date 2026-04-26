@@ -258,10 +258,12 @@ The DaemonEye components in this repository are licensed under Apache 2.0. Comme
 
 ### **Next Steps**
 
-- Read the [Architecture Overview](./architecture-overview.md) to understand the system design
-- Follow the [Getting Started Guide](./getting-started.md) for detailed setup instructions
-- Review the [Operator Guide](../user-guides/operator-guide.md) for day-to-day usage
-- Explore the [Configuration Guide](../user-guides/configuration.md) for advanced configuration
+- Read the [Architecture Overview](./architecture.md) to understand the system design
+- Follow the [Getting Started Guide](./getting-started.md) for prerequisites and orientation
+- Review the [Technical Documentation](./technical.md) for implementation specifications
+- Consult the [Security](./security.md) section for the threat model and security boundaries
+
+> **Note:** Operator and configuration guides will be published with the v1.0.0 release.
 
 ---
 
