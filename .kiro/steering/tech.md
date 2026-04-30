@@ -129,7 +129,7 @@ just run-daemoneye-agent --config /path   # Run orchestrator agent
 - **Phase 2**: Platform-specific enhancements (Planned)
 - **Fallback**: Graceful degradation when enhanced features unavailable
 
-> Kernel-level monitoring (eBPF / ETW / EndpointSecurity) is provided by commercial tier collectors that are sold separately, not in this repo.
+> Kernel-level monitoring (eBPF / ETW / EndpointSecurity) is provided by commercial-tier collectors that are sold separately, not in this repo.
 
 ### Privilege Management
 
