@@ -164,12 +164,12 @@ Additional OS/environment variables may be referenced in tests for compatibility
 - **Windows**: IPC over named pipes via the `interprocess` crate, using protobuf messages.
 - **Event bus**: `daemoneye-eventbus` is local-only pub/sub between collectors and the agent on the same host. Topics are hierarchical and messages carry correlation metadata.
 - **Embedded broker**: `daemoneye-agent` runs the EventBus broker in-process. Workflow tracking and forensic correlation are built on top of it.
-- **RPC services**: Collector lifecycle (start, stop, restart, health checks) is exposed over RPC on the bus with request timeouts and correlation IDs.
+- **RPC services**: Collector lifecycle (start, stop, restart, health checks) is exposed over RPC on the bus with request timeouts and correlation IDs. The bus is local-only on a single host; for transport security, authn/authz, and fleet-level deployment responsibilities, see [SECURITY.md](SECURITY.md).
 - **Multi-collector coordination**: Tasks are distributed by topic and routed by collector capability; results are aggregated across collector types.
 
 ## Documentation
 
-- Docs sources live under ./docs (mdBook). Build locally with `just docs-install` then `mdbook build docs`.
+- Docs sources live under ./docs (mdBook). Build locally with `mise install` (which installs `mdbook` and its plugins per `mise.toml`) then `mdbook build docs`.
 
 ## License
 

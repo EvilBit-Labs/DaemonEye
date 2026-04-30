@@ -134,7 +134,7 @@ This repository ships the agent-side Community tier. It is appropriate for indiv
 
 #### Cross-Platform Support
 
-- **Linux**: Native process enumeration via `sysinfo` and procfs
+- **Linux**: Native process enumeration via `sysinfo` (procfs access through the sysinfo abstraction; the workspace does not depend on the `procfs` crate directly)
 - **macOS**: Native process enumeration via `sysinfo` and platform APIs
 - **Windows**: Native process enumeration via `sysinfo` and platform APIs
 

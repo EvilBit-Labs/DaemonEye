@@ -11,11 +11,11 @@ DaemonEye is an agent-centric system monitoring tool designed for cybersecurity 
 - **Real-time Process Monitoring**: Continuous monitoring of system processes with minimal performance impact
 - **SQL-Based Detection**: Detection rules expressed in a SQL-like DSL with AST validation
 - **Cross-Platform Support**: Linux and Windows primary; macOS and FreeBSD secondary
-- **Audit-Grade Integrity**: BLAKE3 hash-chained audit ledger; Ed25519-signed events
+- **Audit-Grade Integrity**: BLAKE3 hash-chained audit ledger with Merkle-proof support (Ed25519 event signing is planned, not yet implemented)
 - **Air-Gap Friendly**: Fully functional offline; no automatic egress
 - **Security-Focused**: Built with security best practices and minimal attack surface
 
-DaemonEye is distributed as open-core. This repository contains the Community tier — the agent-side foundation. Commercial tiers (fleet management, GUI, federation, kernel-level collectors) extend this foundation and are sold separately through evilbitlabs.io; they are not in this repo.
+DaemonEye is distributed as open-core. This repository contains the Community tier — the agent-side foundation. Commercial-tier offerings (fleet management, GUI, federation, kernel-level collectors) extend this foundation and are sold separately through evilbitlabs.io; they are not in this repo.
 
 ## Three-Component Security Architecture
 
