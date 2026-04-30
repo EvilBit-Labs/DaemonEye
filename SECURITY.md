@@ -9,42 +9,41 @@ DaemonEye follows semantic versioning (SemVer) with security updates provided fo
 | 0.1.x   | :white_check_mark: | Current development version        |
 | < 0.1   | :x:                | Pre-release versions not supported |
 
-**Note**: As DaemonEye is currently in pre-1.0 development, we focus security updates on the latest 0.1.x series. Once we reach 1.0, we will support the current major version and one previous major version.
+DaemonEye is in pre-1.0 development, so security updates target the latest 0.1.x series. After 1.0, we will support the current major version and one previous major version.
 
 ## Security Architecture
 
-DaemonEye implements a **three-component security architecture** with strict privilege separation:
+DaemonEye is split into three binaries with strict privilege separation, plus a shared library:
 
-- **procmond**: Privileged process collector with minimal attack surface
-- **daemoneye-agent**: User-space orchestrator for detection and alerting
-- **daemoneye-cli**: Command-line interface for operators
-- **daemoneye-lib**: Shared library providing core functionality
+- **procmond**: privileged process collector. Runs elevated only as long as it needs to.
+- **daemoneye-agent**: user-space orchestrator for detection and alert delivery.
+- **daemoneye-cli**: read-only operator interface.
+- **daemoneye-lib**: shared library (config, models, storage, detection, crypto). No direct privileges of its own.
 
 ### Security Principles
 
-- **Principle of Least Privilege**: Components run with minimal required permissions
-- **Privilege Separation**: Only procmond runs with elevated privileges when necessary
-- **Defense in Depth**: Multiple security layers and validation points
-- **Zero Trust**: No implicit trust between components or external systems
-- **Audit Trail**: Certificate Transparency-style Merkle tree with cryptographic integrity
+- **Least privilege**: Components run with the minimum permissions they need. procmond is the only component that ever runs elevated, and it drops privileges after collection setup.
+- **Privilege separation**: procmond writes only to the audit ledger; daemoneye-agent reads the audit ledger and reads/writes the event store; daemoneye-cli is read-only.
+- **Validated IPC**: Inter-process messages use protobuf with CRC32 framing checks. There are no inbound network listeners; alert delivery is outbound-only.
+- **Audit trail**: Events are recorded in a BLAKE3 hash-chained ledger. A Certificate Transparency-style Merkle tree with inclusion proofs is in progress.
 
 ## Security Features
 
 ### Core Security Controls
 
-- **Memory Safety**: Built in Rust with `unsafe_code = "forbid"` policy
-- **Input Validation**: Comprehensive validation with detailed error messages
-- **SQL Injection Prevention**: AST validation with sqlparser at rule load time [Implemented]; SQL-based rule execution enforcement [Planned — engine currently uses category-based pattern matching]
-- **Credential Management**: Environment variables or OS keychain, never hardcode secrets
-- **Attack Surface Minimization**: No network listening, outbound-only connections
-- **Audit Trail**: BLAKE3 hash-chained audit ledger [Implemented]; Certificate Transparency-style Merkle tree inclusion proofs \[In Progress — stub returns empty vec in `crypto.rs`\]
+- **Memory safety**: Built in Rust with `unsafe_code = "forbid"` at the workspace level.
+- **Input validation**: External inputs (CLI args, config files, IPC messages, SQL rules) are validated at boundaries and rejected with actionable errors.
+- **SQL injection prevention**: AST validation via sqlparser at rule load time [Implemented]. Execution-time enforcement of the SELECT-only/whitelist policy is [Planned]; the current engine uses category-based pattern matching.
+- **Credential handling**: Secrets come from environment variables or the OS keychain. Nothing is hardcoded.
+- **Attack surface**: No inbound network listeners. Alert delivery is outbound-only.
+- **Audit trail**: BLAKE3 hash-chained audit ledger [Implemented]. Certificate Transparency-style Merkle tree inclusion proofs are [In Progress]; the generator currently returns an empty vec in `crypto.rs`.
 
 ### Planned Hardening (Community Tier)
 
-- **Cryptographic Integrity**: Merkle tree with inclusion proofs and periodic checkpoints [In Progress — chain hashing implemented; inclusion proof generation stubbed]
-- **Code Signing**: SLSA Level 3 provenance, Cosign signatures [Planned]
-- **Sandboxed Execution**: Read-only database connections for detection engine [Planned]
-- **Query Whitelist**: Only SELECT statements with approved functions allowed [Implemented at rule load time; not yet enforced at execution time]
+- **Cryptographic integrity**: Merkle tree with inclusion proofs and periodic checkpoints. [In Progress]; chain hashing is implemented, inclusion proof generation is stubbed.
+- **Code signing**: SLSA Level 3 provenance and Cosign signatures on releases. [Planned]
+- **Sandboxed execution**: read-only database connections for the detection engine. [Planned]
+- **Query whitelist**: SELECT-only with an approved-function list. [Implemented at rule load time; not yet enforced at execution time]
 
 > Fleet-level transport security (mTLS between host agents and upstream aggregators) is provided by commercial tiers, sold separately, not in this repo.
 
@@ -52,62 +51,49 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 ### How to Report
 
-**For security vulnerabilities in DaemonEye, please report them privately to:**
+To report a security vulnerability in DaemonEye, contact us privately:
 
-- **Email**: <support@evilbitlabs.io>
-- **PGP Key**: [Available on our website](https://evilbitlabs.io/security)
-- **Subject**: `[SECURITY] DaemonEye Vulnerability Report`
+- Email: <support@evilbitlabs.io>
+- PGP key: [available on our website](https://evilbitlabs.io/security)
+- Subject line: `[SECURITY] DaemonEye Vulnerability Report`
 
 ### What to Include
 
-Please include the following information in your report:
+In your report, please include:
 
-1. **Description**: Clear description of the vulnerability
-2. **Impact**: Potential security impact and affected components
-3. **Reproduction**: Steps to reproduce the issue (if applicable)
-4. **Environment**: OS, architecture, and DaemonEye version
-5. **Timeline**: Any disclosure timeline requirements
-6. **Contact**: Your preferred contact method for follow-up
+1. **Description**: what the vulnerability is and which component(s) are affected.
+2. **Impact**: what an attacker could do with it, and what data or capabilities are at risk.
+3. **Reproduction**: steps to reproduce, if you have them.
+4. **Environment**: OS, architecture, and DaemonEye version (`daemoneye-cli --version`).
+5. **Timeline**: any disclosure timeline you need from us.
+6. **Contact**: how you would like us to follow up.
 
 ### Response Timeline
 
-- **Initial Response**: Within 48 hours of report receipt
-- **Status Updates**: Weekly updates during investigation
-- **Resolution**: Target resolution within 30 days for critical issues
-- **Disclosure**: Coordinated disclosure following resolution
+- Initial acknowledgment: within 48 hours of receipt.
+- Status updates: weekly while the report is under investigation.
+- Resolution target: 30 days for critical issues.
+- Disclosure: coordinated with the patch release.
 
 ### What to Expect
 
-**If Accepted:**
+If we accept the report, you will get credit in the resulting advisory (if you want it) and early access to patches before public release.
 
-- Acknowledgment within 48 hours
-- Regular status updates during investigation
-- Credit in security advisories (if desired)
-- Early access to patches before public release
-
-**If Declined:**
-
-- Clear explanation of why the issue doesn't qualify
-- Suggestions for alternative reporting channels if applicable
-- Option to appeal the decision
+If we decline, we will explain why and point you to a more appropriate reporting channel where one exists.
 
 ## Security Best Practices
 
-### For Users
+### For Operators
 
-- **Keep Updated**: Always run the latest version of DaemonEye
-- **Secure Configuration**: Use strong authentication and encryption
-- **Monitor Logs**: Regularly review audit logs for anomalies
-- **Principle of Least Privilege**: Run components with minimal required permissions
-- **Network Security**: Ensure secure communication channels for alert delivery
+- Run with the minimum privileges DaemonEye needs. procmond will request elevated privileges at startup if it has to and drop them after collection setup.
+- Review the audit ledger periodically; tampering is detectable through the BLAKE3 chain.
+- Keep DaemonEye updated. Advisories are published in the channels listed below.
 
 ### For Developers
 
-- **Code Review**: All security-related changes require thorough review
-- **Testing**: Comprehensive security testing including fuzzing and penetration testing
-- **Dependencies**: Regular security audits of dependencies
-- **Documentation**: Document security considerations and threat models
-- **Training**: Regular security training and awareness
+- Security-relevant changes get reviewed before merge.
+- CI runs `cargo audit` and `cargo deny check` on every commit, with no allow-listed advisories. New advisories fail the build.
+- Security-critical components (input parsers, IPC framing, SQL validation) are covered by unit tests; fuzzing of these components is planned.
 
 ## Security Advisories
 
@@ -119,29 +105,23 @@ Security advisories are published at:
 
 ## Responsible Disclosure
 
-We follow responsible disclosure practices:
-
-1. **Private Reporting**: Report vulnerabilities privately first
-2. **Reasonable Time**: Allow reasonable time for fixes before public disclosure
-3. **Coordinated Release**: Coordinate public disclosure with patch availability
-4. **Credit**: Provide appropriate credit to security researchers
-5. **No Retaliation**: We will not pursue legal action against good-faith security research
+We work under coordinated disclosure: report privately first, give us reasonable time to ship a fix, and we will release the advisory together with the patch. Researchers who report in good faith get credit (if they want it) and will not be threatened with legal action.
 
 ## Accepted Risks (Dependencies)
 
-We have **no** outstanding accepted risks.
+We have no outstanding accepted risks.
 
 ### Advisory Resolution History
 
-**March 2026** — Resolved RUSTSEC-2023-0089 (atomic-polyfill unmaintained) and RUSTSEC-2025-0141 (bincode unmaintained) by disabling default features on the `postcard` dependency (`default-features = false`) and explicitly enabling only the required `alloc` feature. This removed `heapless` and `atomic-polyfill` from the dependency tree entirely. Both advisory ignore entries were removed from deny.toml.
+**March 2026.** Resolved RUSTSEC-2023-0089 (atomic-polyfill unmaintained) and RUSTSEC-2025-0141 (bincode unmaintained) by disabling default features on `postcard` (`default-features = false`) and enabling only the required `alloc` feature. This removed `heapless` and `atomic-polyfill` from the dependency tree entirely. Both advisory ignore entries were removed from `deny.toml`.
 
-**January 2025** — Resolved RUSTSEC-2024-0384 (`instant`) and RUSTSEC-2024-0436 (`paste`) by removing the third-party `busrt` broker dependency. With the introduction of the in-house `daemoneye-eventbus` crate, both advisories were eliminated from the workspace.
+**January 2025.** Resolved RUSTSEC-2024-0384 (`instant`) and RUSTSEC-2024-0436 (`paste`) by removing the third-party `busrt` broker. The replacement in-house `daemoneye-eventbus` crate eliminated both advisories from the workspace.
 
 ### Operational Controls
 
-- CI continues to enforce `cargo audit` and `cargo deny check` with zero allow-listed advisories.
-- We maintain a strict posture for all vulnerabilities and unsound advisories and will fail CI on new issues.
-- Tracking issues document any future exceptions should they become necessary.
+- CI enforces `cargo audit` and `cargo deny check` with no allow-listed advisories.
+- New vulnerabilities or unsound advisories fail CI; we do not silently ignore them.
+- If we ever need to accept a risk, the rationale, scope, and removal plan get tracked in a public issue.
 
 ## Security Contact
 
@@ -153,4 +133,4 @@ For general security questions or concerns:
 
 ---
 
-**Last Updated**: March 2026 **Next Review**: March 2027
+Last updated: March 2026. Next review: March 2027.
