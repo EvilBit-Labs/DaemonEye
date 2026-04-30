@@ -7,14 +7,14 @@ This directory contains the comprehensive documentation for DaemonEye, built usi
 The documentation is organized into the following sections:
 
 - **Introduction**: Overview and getting started
+- **Project Overview**: Detailed project information and value propositions
 - **Architecture**: System architecture and design principles
 - **Technical**: Technical specifications and implementation details
-- **User Guides**: Comprehensive user and operator guides
-- **API Reference**: Complete API documentation
-- **Deployment**: Installation and deployment guides
 - **Security**: Security considerations and best practices
 - **Testing**: Testing strategies and guidelines
 - **Contributing**: Contribution guidelines and development setup
+
+User Guides, API Reference, and Deployment documentation will be published with the v1.0.0 release.
 
 ## Building the Documentation
 

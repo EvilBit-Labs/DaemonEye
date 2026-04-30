@@ -522,13 +522,14 @@ daemoneye-agent --config /etc/daemoneye/config.yaml --log-level debug
 
 ## Next Steps
 
-Now that you have DaemonEye running:
+Now that you understand the prerequisites and architecture:
 
-1. **Read the [Operator Guide](../user-guides/operator-guide.md)** for detailed usage instructions
-2. **Explore [Configuration Guide](../user-guides/configuration.md)** for advanced configuration
-3. **Learn [Rule Development](../user-guides/rule-development.md)** for creating custom detection rules
-4. **Review [Security Architecture](../architecture/security-model.md)** for understanding the security model
-5. **Check [Deployment Guide](../deployment/installation.md)** for production deployment
+1. **Review the [Architecture](./architecture.md)** for the system overview
+2. **Read the [Technical Documentation](./technical.md)** for implementation details
+3. **Consult the [Security](./security.md) section** for the threat model and security boundaries
+4. **See [Contributing](./contributing.md)** if you want to build from source
+
+> **Note:** Operator, configuration, and deployment guides will be published with the v1.0.0 release. For the latest project status, see the repository README.
 
 ## Support
 

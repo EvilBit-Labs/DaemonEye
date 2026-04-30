@@ -1,12 +1,10 @@
 # DaemonEye
 
-Security-focused, high-performance process monitoring — implemented in Rust.
-
-Badges: CI, coverage, and maintainability are configured in the repo. See the badges at the top of this file when viewed on GitHub.
+Security-focused process monitoring, written in Rust.
 
 ## Overview
 
-DaemonEye is a Rust workspace with multiple components for collecting process information, orchestrating detections, and interacting via a CLI. The repository contains:
+DaemonEye is a Rust workspace that collects process information, runs detections against it, and exposes the results through a CLI. The repository contains:
 
 - **procmond**: Privileged process monitoring daemon built on collector-core framework (binary + library)
 - **daemoneye-agent**: User-space orchestrator with embedded EventBus broker and RPC service (binary)
@@ -15,7 +13,7 @@ DaemonEye is a Rust workspace with multiple components for collecting process in
 - **collector-core**: Extensible collection framework with EventSource trait (library)
 - **daemoneye-eventbus**: Cross-platform IPC event bus with embedded broker and RPC patterns (library)
 
-Security and reliability are emphasized via strict linting, no unsafe code, and comprehensive tests and benches.
+The workspace forbids unsafe code, treats clippy warnings as errors, and is covered by unit, property, and snapshot tests plus criterion benchmarks.
 
 ## Technology stack
 
@@ -63,11 +61,11 @@ DaemonEye/
   - Windows: `just setup && just install-tools`
   - Unix: `just setup && just install-tools`
 
-If you don’t use just, you can run the equivalent cargo commands shown below.
+If you don't use just, the equivalent cargo commands are listed below.
 
 ## Commit signing
 
-The workspace enables mandatory signed commits and a rebase-first sync strategy via VS Code settings. Follow the step-by-step instructions in [`docs/src/contributing.md`](docs/src/contributing.md#commit-signing-and-gpg-setup) to configure GPG, export your public key, and set up git before contributing.
+The workspace requires signed commits and uses a rebase-first sync strategy (configured via VS Code settings). See [`docs/src/contributing.md`](docs/src/contributing.md#commit-signing-and-gpg-setup) for GPG and git setup before contributing.
 
 ## Build and run
 
@@ -119,7 +117,7 @@ Collector-specific environment overrides (used by collector-core) are additional
 
 Agent-specific environment toggle (used in tests/dev):
 
-- DAEMONEYE_AGENT_TEST_MODE=1 — enables test mode paths in the agent
+- DAEMONEYE_AGENT_TEST_MODE=1: enables test mode paths in the agent
 
 Default configuration values are defined in code. See daemoneye-lib/src/config.rs and collector-core/src/config.rs for details and additional fields (database path, logging level/format, alert sinks, etc.).
 
@@ -154,25 +152,24 @@ Benchmarks use criterion. Run via `just bench` or `cargo bench`.
 
 Summary of notable env vars:
 
-- PROCMOND\_\* / DAEMONEYE_AGENT\_\* / DAEMONEYE_CLI\_\* — general config via Figment (use `__` for nested keys)
-- PROCMOND_COLLECTOR_MAX_EVENT_SOURCES, PROCMOND_COLLECTOR_EVENT_BUFFER_SIZE, PROCMOND_COLLECTOR_ENABLE_TELEMETRY, PROCMOND_COLLECTOR_DEBUG_LOGGING — collector-core overrides
-- DAEMONEYE_AGENT_TEST_MODE — agent test mode
+- PROCMOND\_\* / DAEMONEYE_AGENT\_\* / DAEMONEYE_CLI\_\*: general config via Figment (use `__` for nested keys)
+- PROCMOND_COLLECTOR_MAX_EVENT_SOURCES, PROCMOND_COLLECTOR_EVENT_BUFFER_SIZE, PROCMOND_COLLECTOR_ENABLE_TELEMETRY, PROCMOND_COLLECTOR_DEBUG_LOGGING: collector-core overrides
+- DAEMONEYE_AGENT_TEST_MODE: agent test mode
 
 Additional OS/environment variables may be referenced in tests for compatibility checks (e.g., HOSTNAME, USER, OS), but they are not required for normal operation.
 
 ## Platform notes
 
-- **Unix**: IPC is provided via Unix domain sockets using interprocess crate with protobuf messaging
-- **Windows**: IPC uses named pipes through interprocess crate with protobuf messaging
-- **Event Bus**: daemoneye-eventbus provides local IPC pub/sub messaging between collectors and agent on the same system with hierarchical topic routing and correlation metadata
-- **Embedded Broker**: daemoneye-agent runs an embedded EventBus broker for local collector coordination with support for workflow tracking and forensic analysis
-- **RPC Services**: Collector lifecycle management (start/stop/restart/health checks) via RPC patterns over the EventBus with timeout handling and correlation tracking
-- **Multi-Collector Coordination**: Topic-based task distribution and result aggregation across multiple collector types with capability-based routing
+- **Unix**: IPC over Unix domain sockets via the `interprocess` crate, using protobuf messages.
+- **Windows**: IPC over named pipes via the `interprocess` crate, using protobuf messages.
+- **Event bus**: `daemoneye-eventbus` is local-only pub/sub between collectors and the agent on the same host. Topics are hierarchical and messages carry correlation metadata.
+- **Embedded broker**: `daemoneye-agent` runs the EventBus broker in-process. Workflow tracking and forensic correlation are built on top of it.
+- **RPC services**: Collector lifecycle (start, stop, restart, health checks) is exposed over RPC on the bus with request timeouts and correlation IDs. The bus is local-only on a single host; for transport security, authn/authz, and fleet-level deployment responsibilities, see [SECURITY.md](SECURITY.md).
+- **Multi-collector coordination**: Tasks are distributed by topic and routed by collector capability; results are aggregated across collector types.
 
 ## Documentation
 
-- Docs sources live under ./docs (mdBook). Building locally: `just docs-install` then `mdbook build docs`.
-- Some deep links in older README versions may not exist yet. TODO: Audit and update docs links once the book structure stabilizes.
+- Docs sources live under ./docs (mdBook). Build locally with `mise install` (which installs `mdbook` and its plugins per `mise.toml`) then `mdbook build docs`.
 
 ## License
 
@@ -180,8 +177,10 @@ Apache License 2.0. See LICENSE for full text.
 
 ## Roadmap and status
 
-This README reflects the current repository configuration (workspace crates, tasks, and configs). Some features described in earlier drafts (e.g., certain alerting sinks or centralized management) may be in-progress.
+This README describes what is in the repository today (workspace crates, justfile tasks, configuration surface). Several features in the spec, including some alerting sinks and centralized management, are not yet implemented.
 
-- TODO: Document concrete command-line flags for each binary (once stabilized)
-- TODO: Add end-to-end quickstart with example config and sample output
-- TODO: Publish prebuilt binaries via GoReleaser and link here
+Open items for this README:
+
+- Document the concrete command-line flags for each binary once they stabilize.
+- Add an end-to-end quickstart with an example config and sample output.
+- Publish prebuilt binaries via GoReleaser and link them here.
