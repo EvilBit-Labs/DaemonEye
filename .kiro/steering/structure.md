@@ -2,7 +2,7 @@
 
 ## Workspace Organization
 
-DaemonEye follows a **three-component security architecture** with strict privilege separation:
+DaemonEye uses a **privilege-separated runtime architecture** within a six-crate workspace (three binaries plus three supporting library crates):
 
 ```text
 DaemonEye/
@@ -62,24 +62,16 @@ DaemonEye/
 
 ### Workspace Configuration
 
-- **Edition**: Rust 2024 (MSRV: 1.85+)
+- **Edition**: Rust 2024 (MSRV: 1.95+, per `Cargo.toml`'s workspace `rust-version`)
 - **Resolver**: Version 3 for enhanced dependency resolution
 - **Lints**: `unsafe_code = "forbid"`, `warnings = "deny"`
 - **Quality**: Zero-warnings policy enforced by CI
 - **AI Restrictions**: Never remove clippy restrictions or allow linters marked as `deny` without explicit permission
-- **Commit Message Style**: Always follow the commit message style in #\[[file:.github/commit-instructions.md]\].
+- **Commit Message Style**: Always follow the commit message style in [`.github/commit-instructions.md`](../../.github/commit-instructions.md).
 
 ### Module Organization
 
-```rust,ignore
-// Library structure pattern
-pub mod alerting; // Multi-channel alert delivery
-pub mod config; // Configuration management
-pub mod crypto;
-pub mod detection; // SQL-based detection engine
-pub mod models; // Core data structures
-pub mod storage; // Database abstractions // Cryptographic audit functions
-```
+For the actual `daemoneye-lib` module surface (always-on vs feature-gated), see the [daemoneye-lib/](#daemoneye-lib-shared-core) section above. New modules should follow the same pattern: always-on for cross-component utilities, feature-gated when the module pulls in optional subsystems (alerting sinks, kernel integrations, network correlation).
 
 ### Error Handling Pattern
 
@@ -118,9 +110,9 @@ All development tasks use the `just` command runner:
 Hierarchical configuration with clear precedence:
 
 1. Command-line flags (highest precedence)
-2. Environment variables (`DaemonEye_*`)
-3. User configuration files (`~/.config/DaemonEye/`)
-4. System configuration files (`/etc/DaemonEye/`)
+2. Environment variables, component-namespaced (`PROCMOND_*`, `DAEMONEYE_AGENT_*`, `DAEMONEYE_CLI_*`)
+3. User configuration files (`~/.config/daemoneye/`)
+4. System configuration files (`/etc/daemoneye/`)
 5. Embedded defaults (lowest precedence)
 
 ## Database Schema Design
@@ -185,12 +177,13 @@ src/
 
 ### Configuration Files
 
-- **System**: `/etc/DaemonEye/config.yaml`
-- **User**: `~/.config/DaemonEye/config.yaml`
+- **System**: `/etc/daemoneye/config.yaml`
+- **User**: `~/.config/daemoneye/config.yaml`
 - **Service**: Platform-specific service definitions in `scripts/service/`
 
 ### Documentation Structure
 
-- **Specifications**: `project_spec/` directory with comprehensive docs
-- **API Documentation**: Generated from code with `cargo doc`
-- **Operator Guide**: User-facing documentation in `docs/`
+- **Specifications and design notes**: `spec/` directory
+- **Steering documents**: `.kiro/steering/` (this file lives here)
+- **API documentation**: Generated from code with `cargo doc`
+- **mdBook content**: `docs/` holds the sources; build them with `mise install` then `mdbook build docs`

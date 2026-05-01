@@ -13,12 +13,14 @@ DaemonEye is in pre-1.0 development, so security updates target the latest 0.1.x
 
 ## Security Architecture
 
-DaemonEye is split into three binaries with strict privilege separation, plus a shared library:
+DaemonEye is split into three binaries with strict privilege separation, plus three supporting library crates. The full workspace inventory:
 
 - **procmond**: privileged process collector. Runs elevated only as long as it needs to.
 - **daemoneye-agent**: user-space orchestrator for detection and alert delivery.
 - **daemoneye-cli**: read-only operator interface.
 - **daemoneye-lib**: shared library (config, models, storage, detection, crypto). No direct privileges of its own.
+- **collector-core**: collector SDK consumed by procmond (`EventSource` trait, runtime, capability negotiation, IPC contracts). Runs in the calling process; no privileges of its own.
+- **daemoneye-eventbus**: embedded pub/sub + RPC broker hosted inside daemoneye-agent for local cross-process collector coordination. Local-only transport (Unix domain sockets on Linux/macOS, named pipes on Windows); no inbound network listeners.
 
 ### Security Principles
 
