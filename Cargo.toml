@@ -86,7 +86,7 @@ futures-util = "0.3.32"
 # System information and IPC
 hostname-validator = "1.1.1"
 insta = { version = "1.47.2", features = ["filters"] }
-interprocess = { version = "2.4.1", features = ["tokio"] }
+interprocess = { version = "2.4.2", features = ["tokio"] }
 # Exact-pinned: libc exposes raw OS constants (O_NOFOLLOW, ELOOP, etc.)
 # that security-critical code in procmond relies on. See AGENTS.md
 # "Pin security-critical deps".
