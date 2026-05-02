@@ -90,7 +90,7 @@ interprocess = { version = "2.4.1", features = ["tokio"] }
 # Exact-pinned: libc exposes raw OS constants (O_NOFOLLOW, ELOOP, etc.)
 # that security-critical code in procmond relies on. See AGENTS.md
 # "Pin security-critical deps".
-libc = "=0.2.185"
+libc = "=0.2.186"
 parking_lot = "0.12.5"
 
 # Serialization
