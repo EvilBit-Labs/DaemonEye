@@ -142,3 +142,4 @@ docs/plans
 **/*.local.*
 .context/
 todos/
+.claude/
