@@ -100,7 +100,7 @@ mod tests {
 ### Integration Test Organization
 
 1. **Unit Tests**: Test individual components with mocked dependencies
-2. **Integration Tests**: Use testcontainers for database operations
+2. **Integration Tests**: Use real redb instances with temporary files for database operations
 3. **End-to-End Tests**: Full system testing with sample data
 
 ## Contribution Checklists for Common Tasks

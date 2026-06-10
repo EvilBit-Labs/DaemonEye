@@ -2,7 +2,7 @@
 
 ## Language & Runtime
 
-- **Language**: Rust 2024 Edition (MSRV: 1.70+)
+- **Language**: Rust 2024 Edition (MSRV: 1.95+, per the workspace `rust-version` in Cargo.toml)
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Quality**: `warnings = "deny"` with zero-warnings policy
 - **Async Runtime**: Tokio with full feature set for I/O and task management
@@ -87,7 +87,7 @@ just run-daemoneye-agent --config /path   # Run orchestrator agent
 ### Build Configuration
 
 - **Profile**: Release builds with LTO, single codegen unit, stripped symbols
-- **Cross-platform**: Static binaries with embedded SQLite
+- **Cross-platform**: Static binaries with embedded redb database
 - **Packaging**: Platform-specific service files (systemd, launchd, Windows Service)
 
 ## Performance Requirements

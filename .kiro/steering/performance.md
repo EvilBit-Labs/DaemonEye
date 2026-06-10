@@ -120,7 +120,7 @@ let subscription = EventSubscription {
 
 - **Event Topics**: `events.process.*`, `events.network.*`, `events.filesystem.*`
 - **Control Topics**: `control.collector.*`, `control.health.*`
-- **Message Format**: Bincode serialization with correlation metadata
+- **Message Format**: postcard serialization with correlation metadata
 - **Backpressure**: 10,000+ messages/second throughput, sub-millisecond latency
 
 ## Configuration Hierarchy (Exact Order Required)
