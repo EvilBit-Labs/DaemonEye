@@ -139,6 +139,7 @@ docs/plans
 **/tessl__*
 **/*.local.md
 .tessl/tiles/
+.tessl/plugins/
 **/*.local.*
 .context/
 todos/
