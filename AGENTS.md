@@ -149,7 +149,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 
 | Category     | Technology                      |
 | ------------ | ------------------------------- |
-| Language     | Rust 2024 Edition (MSRV: 1.91+) |
+| Language     | Rust 2024 Edition (MSRV: 1.95+) |
 | Async        | Tokio                           |
 | Database     | redb (pure Rust embedded)       |
 | CLI          | clap v4 with derive             |
@@ -193,7 +193,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 
 ### Rust Requirements
 
-- **Edition**: Rust 2024 (MSRV: 1.91+)
+- **Edition**: Rust 2024 (MSRV: 1.95+)
 - **Linting**: `cargo clippy -- -D warnings` (zero warnings)
 - **Format args**: Use `{variable}` inlined syntax in `format!`/`anyhow!` macros (`clippy::uninlined_format_args`)
 - **If-else ordering**: Clippy prefers `==` checks first in if-else (`clippy::unnecessary_negation`)
@@ -391,7 +391,7 @@ cargo bench --baseline previous                        # Regression
 ### CI Matrix
 
 - Platforms: Linux, macOS, Windows
-- Rust: stable, beta, MSRV (1.91+)
+- Rust: stable, beta, MSRV (1.95+)
 - Architectures: x86_64, ARM64
 
 ---
@@ -488,7 +488,7 @@ pub struct Cli {
 ### Continuous Integration
 
 - GitHub Actions: Linux, macOS, Windows matrix
-- Rust: stable, beta, MSRV (1.91+)
+- Rust: stable, beta, MSRV (1.95+)
 - Checks: fmt, clippy strict, tests, benchmarks
 - Security: Dependency scanning, SLSA provenance
 
