@@ -1,10 +1,14 @@
 # Implementation Plan
 
+> **⚠️ ADR-0006 supersession notice (2026-06-09):** This document predates ADR-0006 (Apache DataFusion over redb TableProviders replaces the hand-rolled operator pipeline — see `spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md` §9/§11). Sections describing custom operator-pipeline execution (join executors, aggregation executors, cost estimators, SHJ→INLJ switching) are retained for historical context but are **non-normative**. The join-strategy material (INLJ/SHJ/MRC) survives only as physical-execution guidance under DataFusion. A rewrite pass against ADR-0006 is pending; see Open Questions.
+
 - [ ] 1. Set up SQL-to-IPC detection engine foundation and core parsing infrastructure
 
-- [ ] 1.1 Create sql-to-ipc-engine crate structure and dependencies
+  > Note: Tasks 1.1–1.5 refactor/replace the existing `daemoneye-lib/src/detection/sql_to_ipc.rs` (1,112 lines). The new typed `CollectionRequirements` supersedes the existing same-named struct; migration is covered by a dedicated bullet in task 1.5.
 
-  - Create new `sql-to-ipc-engine` module in daemoneye-lib with proper Cargo.toml dependencies
+- [ ] 1.1 Create sql-to-ipc-engine module in daemoneye-lib
+
+  - Create `sql_to_ipc_engine` module tree under daemoneye-lib/src/detection/ and add required dependencies to daemoneye-lib/Cargo.toml
   - Add sqlparser-rs, serde, and uuid dependencies with appropriate feature flags
   - Create basic module structure (parser, planner, executor, types) with public exports
   - Add workspace-level lints and ensure zero-warnings compilation
@@ -43,6 +47,7 @@
   - Implement projection extraction from SELECT clauses with column and alias handling
   - Create JOIN requirement extraction with join type and condition analysis
   - Add aggregation detection for GROUP BY and HAVING clauses
+  - Migrate callers of the existing `sql_to_ipc.rs` `CollectionRequirements` struct to the new typed structures and remove the superseded implementation
   - Write comprehensive tests for AST analysis with complex SQL queries
   - _Requirements: 1.1, 1.2, 1.3, 1.5_
 
@@ -171,6 +176,8 @@
 
 - [ ] 4.4 Build basic JoinExecutor with Index Nested Loop Join strategy
 
+  > Superseded by ADR-0006 — rewrite as DataFusion TableProvider / SessionContext integration before implementation.
+
   - Implement `JoinExecutor` struct with join strategy selection logic
   - Create Index Nested Loop Join (INLJ) implementation using secondary indexes
   - Add join key extraction and record merging for equi-joins
@@ -179,6 +186,8 @@
   - _Requirements: 4.1, 4.2, 4.3_
 
 - [ ] 4.5 Add MaterializedRelationCache for fast parent/child joins
+
+  > Superseded by ADR-0006 — rewrite as DataFusion TableProvider / SessionContext integration before implementation.
 
   - Implement `MaterializedRelationCache` (MRC) for parent process information
   - Create cache population and maintenance during process event ingestion
@@ -189,6 +198,8 @@
 
 - [ ] 4.6 Implement BoundedSymmetricHashJoin with cardinality caps
 
+  > Superseded by ADR-0006 — rewrite as DataFusion TableProvider / SessionContext integration before implementation.
+
   - Create `BoundedSymmetricHashJoin` with configurable memory limits
   - Add hash table population with cardinality caps and LRU eviction
   - Implement automatic fallback to INLJ when memory limits are exceeded
@@ -198,6 +209,8 @@
 
 - [ ] 4.7 Build AggregationExecutor with bounded hash aggregation
 
+  > Superseded by ADR-0006 — rewrite as DataFusion TableProvider / SessionContext integration before implementation.
+
   - Implement `AggregationExecutor` with GROUP BY and HAVING support
   - Create bounded hash aggregation with configurable memory limits
   - Add time window enforcement for aggregations to prevent unbounded state
@@ -206,6 +219,8 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 
 - [ ] 4.8 Create OperatorPipeline for coordinating complex query execution
+
+  > Superseded by ADR-0006 — rewrite as DataFusion TableProvider / SessionContext integration before implementation.
 
   - Implement `OperatorPipeline` that orchestrates scan, filter, join, and aggregation operations
   - Add pipeline operation sequencing based on query execution plan
@@ -424,7 +439,7 @@
 
 - [ ] 9.1 Create SQL-to-IPC engine integration interface for daemoneye-agent
 
-  - Create `SqlToIpcEngine` wrapper that implements existing `DetectionEngine` trait
+  - Extract a `DetectionEngine` trait from the existing detection engine struct's public API, implement it on the current struct for compatibility, then implement it on the new `SqlToIpcEngine` wrapper
   - Add configuration integration for SQL-to-IPC engine with existing daemoneye-agent config
   - Implement rule loading and validation using SQL-to-IPC parser instead of placeholder logic
   - Create integration layer that bridges SQL-to-IPC results with existing alert generation
@@ -442,8 +457,8 @@
 
 - [ ] 9.3 Integrate SQL-to-IPC with existing IPC client infrastructure
 
-  - Modify existing `IpcClientManager` to handle SQL-to-IPC generated detection tasks
-  - Add collector capability negotiation to existing IPC client connection workflow
+  - Extend `ResilientIpcClient` (daemoneye-lib/src/ipc/client.rs) to handle SQL-to-IPC generated detection tasks
+  - Add collector capability negotiation and schema-registry hooks to the daemoneye-eventbus embedded broker workflow (`BrokerManager` in daemoneye-agent/src/broker_manager.rs)
   - Integrate schema registry with existing collector discovery and connection management
   - Update existing IPC protocol handling to support supplemental rule data
   - Write integration tests for IPC client with SQL-to-IPC task generation and execution
@@ -498,6 +513,8 @@
 
 - [ ] 10.4 Add performance benchmarking with criterion
 
+  > Superseded by ADR-0006 — rewrite as DataFusion TableProvider / SessionContext integration before implementation.
+
   - Implement criterion benchmarks for SQL parsing and AST analysis performance
   - Create benchmarks for pushdown planning and query optimization with various complexity levels
   - Add join execution benchmarks comparing INLJ, SHJ, and MRC strategies
@@ -545,11 +562,16 @@
 
 - [ ] 11.4 Write system administration and deployment guide
 
+  - Document SQL-to-IPC engine configuration options and tuning parameters
   - Document SQL-to-IPC engine configuration and regex performance tuning
   - Create regex pattern authoring guidelines with performance best practices
   - Add troubleshooting guide for regex timeout and memory violations
   - Document regex monitoring and alerting configuration
   - Create example configurations for different deployment scenarios
+  - Create deployment guide for multi-collector environments with capacity planning
+  - Add monitoring setup guide with metrics collection and alerting configuration
+  - Document backup and recovery procedures for redb storage and configuration
+  - Create troubleshooting runbook for production issues and performance optimization
   - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 14.1, 14.2, 14.3, 14.4, 14.5_
 
 - [ ] 11.5 Create comprehensive user training tutorials and hands-on rule development guides
@@ -656,9 +678,12 @@
   - Create pattern performance profiling with execution time breakdown and bottleneck identification
   - Implement pattern usage analytics to identify frequently used patterns for precompilation
   - Write unit tests for pattern optimization, rewriting, and performance profiling
-  - _Requirements: 13.5, 14.4, 14.5_ options and tuning parameters
-  - Create deployment guide for multi-collector environments with capacity planning
-  - Add monitoring setup guide with metrics collection and alerting configuration
-  - Document backup and recovery procedures for redb storage and configuration
-  - Create troubleshooting runbook for production issues and performance optimization
-  - _Requirements: All requirements verification_
+  - _Requirements: 13.5, 14.4, 14.5_
+
+## Deferred / Open Questions
+
+### From 2026-06-09 design review
+
+- **Post-ADR-0006 rewrite:** tasks 4.4–4.8 and 10.4 need rewriting as DataFusion TableProvider/SessionContext work; requirement-ID traceability (sub-IDs like "3.1" that don't exist in the flat requirements doc) should be repaired in the same pass.
+- **MVP sequence:** the integration phase (9.x) — the actual deliverable — is sequenced last, behind Phases 5–6 which build for collectors that don't exist. Proposed v1.0 cut: Phase 1 + 3.1–3.3 + 4.1–4.3 + DataFusion integration + 7.1–7.2 + 9.1–9.2; gate Phases 2 (dynamic parts), 5, 6, 12.7–12.10 behind it.
+- **Metrics crate decision:** Task 8.1 adopts Prometheus types but no metrics crate is a workspace dependency; decide tracing-based spans vs adding a metrics crate.
