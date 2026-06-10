@@ -554,72 +554,64 @@ impl ProcessEventSource {
         // if many processes share an executable. Failures are logged
         // but non-fatal — missing hashes are represented as `None`.
         //
-        // The hash pass is bounded by the REMAINING portion of the
-        // overall `collection_timeout` budget, not a fresh fixed window.
-        // This preserves the contract that one `collect_processes` cycle
-        // (enumeration + hash pass) never runs past `collection_timeout`,
-        // which keeps scheduling stable under load. If enumeration
-        // consumed the entire budget, we skip the hash pass entirely
-        // rather than starve the interval. On timeout, partial coverage
-        // is logged and kept — downstream handles missing hashes as
-        // `None`.
+        // Decoupled from the R1 enumeration deadline (R2 AC4): enumeration has
+        // already completed and produced `process_events` above, so the hash
+        // pass runs on its OWN `collection_timeout` budget rather than whatever
+        // the enumeration left over. Consequences:
+        //   - A slow enumeration never starves hashing (it no longer competes
+        //     for the enumeration's leftover budget), and hashing latency never
+        //     shortens or extends the enumeration deadline.
+        //   - Cache reuse via the shared engine keeps steady-state cost low, so
+        //     in practice the pass returns well within budget after warmup.
+        // On timeout, partial coverage is logged and kept — downstream handles
+        // missing hashes as `None`.
         //
-        // Also shutdown-aware: if `shutdown_signal` flips during the
-        // hash pass, we race `populate_hashes` against a cancellation
-        // poller so a stalled filesystem cannot delay `stop()` for up
-        // to the full remaining budget.
+        // Also shutdown-aware: if `shutdown_signal` flips during the hash pass,
+        // we race `populate_hashes` against a cancellation poller so a stalled
+        // filesystem cannot delay `stop()` for up to the full budget.
         if let Some(ref hasher) = self.hasher {
             if shutdown_signal.load(Ordering::Relaxed) {
                 debug!("shutdown requested, skipping hash population");
             } else {
-                let remaining_budget = self
-                    .config
-                    .collection_timeout
-                    .saturating_sub(collection_start.elapsed());
-                if remaining_budget.is_zero() {
-                    warn!(
-                        collection_timeout_secs = self.config.collection_timeout.as_secs(),
-                        "skipping hash population: collection_timeout budget exhausted by enumeration"
-                    );
-                } else {
-                    let hash_future = populate_hashes(&mut process_events, hasher);
-                    let shutdown_watcher = {
-                        let signal = Arc::clone(shutdown_signal);
-                        async move {
-                            loop {
-                                if signal.load(Ordering::Relaxed) {
-                                    return;
-                                }
-                                tokio::time::sleep(Duration::from_millis(100)).await;
+                let hash_budget = self.config.collection_timeout;
+                let hash_future = populate_hashes(&mut process_events, hasher);
+                let shutdown_watcher = {
+                    let signal = Arc::clone(shutdown_signal);
+                    async move {
+                        loop {
+                            if signal.load(Ordering::Relaxed) {
+                                return;
                             }
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                         }
-                    };
-                    tokio::select! {
-                        biased;
-                        () = shutdown_watcher => {
-                            warn!(
-                                "shutdown signaled during hash population; \
-                                 in-flight outcomes discarded, committed outcomes preserved"
-                            );
-                        }
-                        hash_result = tokio::time::timeout(remaining_budget, hash_future) => {
-                            match hash_result {
-                                Ok(hash_stats) => {
-                                    debug!(
-                                        unique_paths = hash_stats.unique_paths,
-                                        hashed = hash_stats.hashed,
-                                        auth_failures = hash_stats.auth_failures,
-                                        io_failures = hash_stats.io_failures,
-                                        nonauthoritative = hash_stats.nonauthoritative,
-                                        "executable hash pass completed"
-                                    );
-                                }
-                                Err(_elapsed) => {
-                                    warn!(
-                                        remaining_budget_ms = remaining_budget.as_millis(),
-                                        "hash population exceeded remaining collection budget; partial coverage recorded"
-                                    );
-                                }
+                    }
+                };
+                tokio::select! {
+                    biased;
+                    () = shutdown_watcher => {
+                        warn!(
+                            "shutdown signaled during hash population; \
+                             in-flight outcomes discarded, committed outcomes preserved"
+                        );
+                    }
+                    hash_result = tokio::time::timeout(hash_budget, hash_future) => {
+                        match hash_result {
+                            Ok(hash_stats) => {
+                                debug!(
+                                    unique_paths = hash_stats.unique_paths,
+                                    hashed = hash_stats.hashed,
+                                    auth_failures = hash_stats.auth_failures,
+                                    io_failures = hash_stats.io_failures,
+                                    nonauthoritative = hash_stats.nonauthoritative,
+                                    ssdeep_failures = hash_stats.ssdeep_failures,
+                                    "executable hash pass completed"
+                                );
+                            }
+                            Err(_elapsed) => {
+                                warn!(
+                                    hash_budget_ms = hash_budget.as_millis(),
+                                    "hash population exceeded its budget; partial coverage recorded"
+                                );
                             }
                         }
                     }

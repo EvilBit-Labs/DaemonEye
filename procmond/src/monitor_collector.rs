@@ -936,43 +936,32 @@ impl ProcmondMonitorCollector {
         // lifecycle diffing so hashes participate in
         // `(executable_hash, hash_algorithm)` tuple comparisons.
         //
-        // Bounded by the REMAINING portion of the 30s cycle budget used
-        // by `collect_processes` above (see `CYCLE_BUDGET`). This keeps
-        // one actor cycle (enumeration + hash pass) from pinning the
-        // loop past the budget, which would delay GracefulShutdown,
-        // interval adjustments, and subsequent health traffic
-        // indefinitely on slow/hostile storage.
+        // Decoupled from the R1 enumeration deadline (R2 AC4): enumeration has
+        // already completed above, so the hash pass runs on its OWN `CYCLE_BUDGET`
+        // rather than the enumeration's leftover. A slow enumeration no longer
+        // starves hashing, and hashing latency no longer competes with the
+        // enumeration deadline. The independent budget still caps the pass so a
+        // stalled filesystem cannot pin the actor loop (delaying GracefulShutdown,
+        // interval adjustments, or health traffic) indefinitely.
         if let Some(ref hasher) = self.hasher {
             const CYCLE_BUDGET: Duration = Duration::from_secs(30);
-            let remaining_budget = CYCLE_BUDGET.saturating_sub(collection_start.elapsed());
-            if remaining_budget.is_zero() {
-                warn!(
-                    cycle_budget_secs = CYCLE_BUDGET.as_secs(),
-                    "skipping hash population: cycle budget exhausted by enumeration"
-                );
-            } else {
-                match timeout(
-                    remaining_budget,
-                    populate_hashes(&mut process_events, hasher),
-                )
-                .await
-                {
-                    Ok(hash_stats) => {
-                        debug!(
-                            unique_paths = hash_stats.unique_paths,
-                            hashed = hash_stats.hashed,
-                            auth_failures = hash_stats.auth_failures,
-                            io_failures = hash_stats.io_failures,
-                            nonauthoritative = hash_stats.nonauthoritative,
-                            "executable hash pass completed"
-                        );
-                    }
-                    Err(_elapsed) => {
-                        warn!(
-                            remaining_budget_ms = remaining_budget.as_millis(),
-                            "hash population exceeded remaining cycle budget; partial coverage recorded"
-                        );
-                    }
+            match timeout(CYCLE_BUDGET, populate_hashes(&mut process_events, hasher)).await {
+                Ok(hash_stats) => {
+                    debug!(
+                        unique_paths = hash_stats.unique_paths,
+                        hashed = hash_stats.hashed,
+                        auth_failures = hash_stats.auth_failures,
+                        io_failures = hash_stats.io_failures,
+                        nonauthoritative = hash_stats.nonauthoritative,
+                        ssdeep_failures = hash_stats.ssdeep_failures,
+                        "executable hash pass completed"
+                    );
+                }
+                Err(_elapsed) => {
+                    warn!(
+                        cycle_budget_ms = CYCLE_BUDGET.as_millis(),
+                        "hash population exceeded its budget; partial coverage recorded"
+                    );
                 }
             }
         }
