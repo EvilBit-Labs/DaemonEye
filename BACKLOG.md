@@ -18,7 +18,7 @@
 | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Foundation (workspace, data models, collector-core, eventbus, process collection, procmond integration) | ✅ done                                                                                                 |
 | Storage & IPC backbone                                                                                  | 🔄 partial — DB ops + agent/collector IPC remain                                                        |
-| SQL-to-IPC detection engine                                                                             | ❌ not started (depends on dedicated spec + ADR-0006 DataFusion)                                        |
+| SQL-to-IPC detection engine                                                                             | ❌ not started — spec merged into core spec 2026-06-09 (R17–R24, Task 7.1–7.10, ADR-0006 DataFusion)    |
 | Alerting delivery                                                                                       | 🔄 partial — gen + stdout/file + parallel delivery done; network sinks, reliability, correlation remain |
 | Audit ledger                                                                                            | ❌ not started (#42)                                                                                    |
 | Privilege & service management                                                                          | ❌ not started                                                                                          |
@@ -62,12 +62,19 @@ Already landed (see `tasks.md` for detail). Listed so the backlog shows the floo
 
 ### M3 — SQL-to-IPC detection engine (core value)
 
-> Umbrella **T7** integration marker. Depends on the dedicated `sql-to-ipc-detection-engine` spec; note that spec's `tasks.md` predates **ADR-0006 (DataFusion)** — see open questions.
+> Canonical breakdown: **T7.1–T7.10** in `tasks.md` (merged 2026-06-09 from the former `upcoming-specs/sql-to-ipc-detection-engine/`, rewritten per **ADR-0006 DataFusion**; governing requirements **R17–R21**). MVP gate order: 7.1 → 7.8; 7.9–7.10 parallel after 7.6. Folds the older T12.2/T12.3/T12.5 framing; T12.4 survives as the collector-side counterpart.
 
-- [ ] **T12.4** Extend collector-core for SQL-to-IPC task handling — `EventSource` accepts `DetectionTask`, capability advertisement, schema-registry integration, task validation. *R3.1, 3.2, 3.3, 3.5*
-- [ ] **T12.2** Build the SQL-to-IPC engine — SQL parsing, pushdown planning, two-layer execution, schema registry, reactive pipeline orchestrator (per dedicated spec). *R3.1, 3.2, 3.3, 3.5*
-- [ ] **T12.3** Integrate engine behind existing `DetectionEngine` trait in daemoneye-agent — replace placeholder execution, wire IPC client, preserve rule-file/config compatibility, comparison tests. *R3.1, 3.2, 3.3, 3.5*
-- [ ] **T12.5** Validate integration — e2e multi-collector rule tests, security testing for SQL parsing/pushdown, reactive-pipeline tests, baseline benchmarks. *R3.1, 3.2, 3.3, 3.5*
+- [ ] **T7.1** SQL analyzer module — refactor `daemoneye-lib/src/detection/sql_to_ipc.rs`, sqlparser AST validation, function allowlist, subquery depth limit, typed `CollectionRequirements` migration. *R3, R17*
+- [ ] **T7.2** Regex compile/cache — linear-time `regex` crate w/ size limits, AST-before-compile, pattern-keyed LRU, latency flag/disable + metrics. *R17*
+- [ ] **T7.3** Static schema catalog — authenticated startup registration (peer creds/spawn token), table-reference validation, re-validate/re-plan on descriptor change w/ unhealthy-rule surfacing. *R19*
+- [ ] **T7.4** Pushdown planner — capability-based protobuf `DetectionTask`s, conformance vectors (unverified ops run agent-side), TTL renewal + re-issue on collector re-registration. *R18*
+- [ ] **T7.5** redb detection storage — time-partitioned tables, fixed-width keys, multimap secondary indexes (spec §11.7), batch/group-commit writes. *R20*
+- [ ] **T7.6** DataFusion integration — per-collector redb `TableProvider`s w/ filter/projection pushdown, `SessionContext` allowlist + memory limits + cardinality caps, derived-SQL only, binary-size/memory gate vs \<100MB budget. *R3, R20*
+- [ ] **T7.7** Degradation markers & reliability — completeness markers ("no match" vs "could not fully evaluate"), disconnect handling, (task_id, seq_no) replay dedup w/ grace period, shed counting, seq-no recovery. *R20, R21*
+- [ ] **T7.8** Agent integration — extract `DetectionEngine` trait, replace placeholder detection path, wire `ResilientIpcClient` + `BrokerManager` capability negotiation. *R3, R18, R19*
+- [ ] **T7.9** Detection metrics & execution plans — tracing ecosystem (no Prometheus crate in v1.0), on-demand plan output. *R10*
+- [ ] **T7.10** Operator rule-authoring docs — dialect + documented-extension policy, first-rule tutorial, regex guidance, CLI rule testing. *R8, R17*
+- [ ] **T12.4** Extend collector-core for SQL-to-IPC task handling — `EventSource` accepts `DetectionTask`, capability advertisement, schema-registry integration, task validation (collector-side counterpart of T7.3/T7.4). *R18, R19*
 
 ### M4 — Alerting delivery (detection → operator)
 
@@ -137,8 +144,9 @@ Strategic extensions on the established collector-core + SQL-to-IPC patterns:
 - [ ] **F2** Filesystem collector (fsmond) — `file_events`, `file_metadata`
 - [ ] **F3** Performance collector (perfmond) — `system_metrics`, `resource_usage`
 - [ ] **F4** Triggerable collectors — binary hasher, memory analyzer, YARA scanner, PE analyzer
-- [ ] **F5** Specialty collectors for advanced pattern matching (YARA / network / PE analysis) — **depends on SQL-to-IPC engine (M3)**
-- [ ] **F6** Further SQL-to-IPC-dependent integration (tasks 7.1–7.5 of the upcoming spec)
+- [ ] **F5** Specialty collectors for advanced pattern matching (YARA / network / PE analysis) — **depends on SQL-to-IPC engine (M3)**; signing constraints per **R23**
+- [ ] **F6** Advanced cascade/correlation integration — AUTO JOIN (R22) and reactive cascading analysis (R24, bounded queues + depth-5 circuit breakers)
+- [ ] **F7** Sigma→SQL rule import converter — community detection-content interop (deliberate v1.0 exclusion; see requirements.md Open Questions)
 - [ ] **T16.3 (REPL slice)** Interactive query shell — syntax highlighting, auto-completion, command history
 
 ---
@@ -151,16 +159,16 @@ From the **2026-06-09 design review** (`tasks.md` › *Deferred / Open Questions
 - **Defer benchmarks & stress.** Most of T20 (except 20.1/20.3) and all of T23 target code that doesn't exist yet — placed in **M11**, after end-to-end integration.
 - **CLI REPL post-v1.0.** Interactive shell features of T16.3 are split out to the post-v1.0 roadmap; single-query execution stays in **M7**.
 - **Crossbeam end-state (resolved).** Full removal (R14 end-state option a). daemoneye-eventbus is the single routing layer; in-process needs use plain tokio channels. Crossbeam `HighPerformanceEventBus` is a sanctioned *transitional* hot path until the eventbus in-process route meets R14 AC4 — then removed (**T2.7 / M1**).
-- **SQL-to-IPC task ownership (open).** The `sql-to-ipc-detection-engine` spec's `tasks.md` predates **ADR-0006 (DataFusion)**. Decide who authors the post-ADR task breakdown and whether it replaces the existing upcoming-spec tasks before starting **M3**.
+- **SQL-to-IPC task ownership (resolved 2026-06-09).** The former `sql-to-ipc-detection-engine` upcoming-spec was merged into the core spec and deleted: requirements became **R17–R24**, the design lives in design.md's "Detection Engine (SQL-to-IPC, ADR-0006)" section, and the post-ADR task breakdown is **T7.1–T7.10** (reflected in M3 above).
 
 ### Duplicate / superseded task map
 
 `tasks.md` accreted overlapping items over time. This backlog uses the canonical task and folds the rest:
 
-| Area                 | Canonical               | Folded / superseded                     |
-| -------------------- | ----------------------- | --------------------------------------- |
-| Audit ledger         | **T10** (#42)           | T8 (superseded)                         |
-| SQL-to-IPC engine    | **T12.2–12.5**          | T7 (placeholder umbrella)               |
-| Alerting             | **T14.2 + T15 + T26.2** | T26.1 (≈ T14.2 + T15), T9 alerting bits |
-| Observability        | **T21** (#60)           | T27.1, T27.2                            |
-| CLI query/management | **T16.3 + T17**         | T9.1, T9.2                              |
+| Area                 | Canonical               | Folded / superseded                                                       |
+| -------------------- | ----------------------- | ------------------------------------------------------------------------- |
+| Audit ledger         | **T10** (#42)           | T8 (superseded)                                                           |
+| SQL-to-IPC engine    | **T7.1–7.10** (+T12.4)  | T12.2, T12.3, T12.5 (older framing); former upcoming-spec tasks (deleted) |
+| Alerting             | **T14.2 + T15 + T26.2** | T26.1 (≈ T14.2 + T15), T9 alerting bits                                   |
+| Observability        | **T21** (#60)           | T27.1, T27.2                                                              |
+| CLI query/management | **T16.3 + T17**         | T9.1, T9.2                                                                |
