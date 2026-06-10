@@ -1,10 +1,12 @@
 # Requirements Document
 
+> **⚠️ ADR-0006 supersession notice (2026-06-09):** This document predates ADR-0006 (Apache DataFusion over redb TableProviders replaces the hand-rolled operator pipeline — see `spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md` §9/§11). Sections describing custom operator-pipeline execution (join executors, aggregation executors, cost estimators, SHJ→INLJ switching) are retained for historical context but are **non-normative**. The join-strategy material (INLJ/SHJ/MRC) survives only as physical-execution guidance under DataFusion. A rewrite pass against ADR-0006 is pending; see Open Questions.
+
 ## Introduction
 
-The SQL-to-IPC Detection Engine represents a revolutionary approach to security monitoring that bridges the gap between familiar SQL-based detection rules and high-performance, distributed collection systems. This system enables security operators to write detection rules in standard SQL while automatically translating them into efficient, pushdown-optimized collection tasks for specialized collectors.
+The SQL-to-IPC Detection Engine builds on the SQL-over-endpoint-telemetry model proven by osquery, differentiating through automatic pushdown to privilege-separated collectors, reactive auto-collection, and offline/air-gap operation. This system enables security operators to write detection rules in standard SQL while automatically translating them into efficient, pushdown-optimized collection tasks for specialized collectors.
 
-The engine operates through a two-layer architecture: a Stream Layer for low-latency filtering where collectors push only needed records, and an Operator Pipeline Layer where SQL is parsed into logical plans and executed over redb for complex operations like joins and aggregations. This approach combines the familiarity of SQL with the performance benefits of purpose-built collection systems.
+The engine operates through a two-layer architecture: a Stream Layer for low-latency filtering where collectors push only needed records, and an agent-side execution layer where SQL is planned and executed by Apache DataFusion over redb-backed TableProviders (per ADR-0006) for complex operations like joins and aggregations. This approach combines the familiarity of SQL with the performance benefits of purpose-built collection systems.
 
 ## Requirements
 
@@ -19,6 +21,7 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 3. WHEN validating queries THEN the system SHALL only allow SELECT statements with approved functions (aggregations, string ops, date/time helpers)
 4. WHEN SQL contains forbidden constructs THEN the system SHALL reject the query with detailed error messages
 5. WHEN rules reference tables THEN the system SHALL validate against the registered collector schema catalog
+6. WHEN SQL contains subqueries THEN nesting depth SHALL be limited to a configurable maximum (default: 3), rejecting deeper queries with a clear error
 
 ### Requirement 2
 
@@ -28,9 +31,10 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 
 1. WHEN analyzing SQL AST THEN the system SHALL identify pushdown-eligible predicates (equality, inequality, LIKE, REGEXP)
 2. WHEN generating collection tasks THEN the system SHALL push projections and simple filters to collectors
-3. WHEN collectors cannot handle predicates THEN the system SHALL execute them in the agent's operator pipeline
+3. WHEN collectors cannot handle predicates THEN the system SHALL execute them in the agent-side execution engine (DataFusion per ADR-0006)
 4. WHEN multiple collectors are involved THEN the system SHALL coordinate collection tasks across all required sources
 5. WHEN pushdown is not possible THEN the system SHALL gracefully fall back to agent-side processing
+6. Pushed-down predicate evaluation SHALL be semantically equivalent to the agent's reference evaluation; collectors SHALL pass a conformance vector per advertised pushdown operation, and unverified operations SHALL execute agent-side
 
 ### Requirement 3
 
@@ -43,6 +47,8 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 3. WHEN schema changes THEN collectors SHALL update their descriptors and notify the agent
 4. WHEN planning queries THEN the agent SHALL validate table references against the current schema catalog
 5. WHEN capabilities are insufficient THEN the system SHALL provide clear error messages about unsupported operations
+6. WHEN a collector registers its schema descriptor THEN the agent SHALL authenticate the collector identity (socket peer credentials or pre-shared spawn token) before accepting the registration
+7. WHEN a collector's schema descriptor changes THEN the system SHALL re-validate and re-plan all enabled rules referencing affected tables; rules that no longer validate SHALL be marked unhealthy and surfaced to operators
 
 ### Requirement 4
 
@@ -52,9 +58,10 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 
 1. WHEN executing joins THEN the system SHALL use bounded memory with configurable cardinality caps
 2. WHEN performing aggregations THEN the system SHALL require explicit time windows to prevent unbounded state
-3. WHEN memory limits are reached THEN the system SHALL switch join strategies automatically (SHJ to INLJ)
+3. WHEN memory limits are reached THEN the system SHALL enforce bounded execution via the query engine's memory manager, degrading to partial results with diagnostics per AC 4.5
 4. WHEN processing large datasets THEN the system SHALL use secondary indexes for efficient lookups
 5. WHEN operations exceed limits THEN the system SHALL emit partial results with diagnostic metrics
+6. Aggregation state SHALL deduplicate replayed events by (task_id, seq_no) and define a late-event grace period after window close, counting later arrivals as late-discarded in metrics
 
 ### Requirement 5
 
@@ -62,11 +69,14 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 
 #### Acceptance Criteria
 
-1. WHEN SQL contains JOINs THEN the system SHALL automatically trigger collection of the second half of the join
+1. WHEN SQL contains plain JOINs THEN the system SHALL execute them over stored data, triggering collection only when explicitly requested via AUTO JOIN syntax; AUTO JOIN remains the opt-in always-collect path
 2. WHEN using AUTO JOIN syntax THEN the system SHALL always collect related data for specified relationships
 3. WHEN conditional auto-JOINs are specified THEN the system SHALL only collect when trigger conditions are met
 4. WHEN multiple auto-JOINs are defined THEN the system SHALL coordinate collection across all required sources
 5. WHEN auto-JOIN collection fails THEN the system SHALL continue with available data and log the failure
+6. WHEN AUTO JOIN triggers collection THEN the system SHALL enforce a configurable per-rule trigger budget, surfacing budget exhaustion as degraded detection
+7. WHEN parsing SQL containing AUTO JOIN or WHEN syntax THEN the extended constructs SHALL pass the same AST-level validation as standard SQL (SELECT-only, function allowlist, join-depth limits) before activation
+8. Cross-source correlation SHALL use a time-stable process identity (pid plus start_time or process UUID), with joins on recyclable keys constrained to the process lifetime window
 
 ### Requirement 6
 
@@ -79,6 +89,8 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 3. WHEN combining pattern matching with behavioral data THEN the system SHALL enable JOINs between specialty results and process data
 4. WHEN specialty analysis fails THEN the system SHALL continue with available data sources
 5. WHEN multiple pattern engines are available THEN the system SHALL coordinate analysis across all engines
+6. WHEN supplemental rule data contains eBPF programs THEN the system SHALL verify an Ed25519 signature on the bytecode against operator-provisioned keys before delivery to any collector, rejecting unsigned programs
+7. WHEN supplemental rule data contains YARA rules THEN the rules SHALL originate from a signed rule pack, with configurable max rule size and compilation timeout enforced at the agent
 
 ### Requirement 7
 
@@ -90,7 +102,7 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 2. WHEN JOIN requirements are detected THEN the system SHALL automatically initiate collection of missing data
 3. WHEN analysis results arrive THEN the system SHALL re-evaluate rules with the complete dataset
 4. WHEN cascading analysis is triggered THEN the system SHALL manage analysis queues with priority ordering
-5. WHEN analysis chains become too deep THEN the system SHALL apply circuit breakers to prevent resource exhaustion
+5. WHEN analysis chains become too deep THEN the system SHALL apply circuit breakers that enforce a configurable max cascade depth (default: 5), detect cycles via correlation-id lineage, and surface breaker activations as degraded-detection events; rule load SHALL reject statically-detectable trigger cycles
 
 ### Requirement 8
 
@@ -115,6 +127,7 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 3. WHEN data corruption is detected THEN the system SHALL validate checksums and request retransmission
 4. WHEN rate limits are exceeded THEN the system SHALL apply backpressure and throttle collection requests
 5. WHEN recovery is needed THEN the system SHALL replay missed events from last known good sequence numbers
+6. WHEN any rule evaluation or alert is produced while a contributing source is unavailable, a triggered collection failed, or limits forced partial results THEN the alert and rule-health status SHALL carry an explicit completeness/degradation marker visible via daemoneye-cli, distinguishing 'no match' from 'could not fully evaluate'
 
 ### Requirement 10
 
@@ -139,6 +152,7 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 3. WHEN JOINs are performed THEN the system SHALL optionally record correlation metadata for debugging
 4. WHEN data is collected THEN collectors SHALL log collection activities in tamper-evident audit logs
 5. WHEN investigations are needed THEN the system SHALL enable reconstruction of detection logic from audit trails
+6. WHEN recording execution metadata and correlation records THEN the system SHALL apply the project-wide field-masking policy (command-line arguments masked by default) to fields reproducing raw process event data
 
 ### Requirement 12
 
@@ -160,7 +174,7 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 
 1. WHEN SQL rules contain REGEXP operators THEN the system SHALL compile regex patterns at rule load time with configurable compilation timeouts
 2. WHEN regex patterns are compiled THEN the system SHALL cache compiled patterns with LRU eviction and configurable cache size limits
-3. WHEN executing regex operations THEN the system SHALL enforce per-pattern execution timeouts to prevent catastrophic backtracking
+3. WHEN compiling regex patterns THEN the system SHALL use a linear-time regex engine (Rust regex crate) with enforced compile-time size and complexity limits, eliminating catastrophic backtracking by construction
 4. WHEN regex patterns exceed complexity limits THEN the system SHALL reject patterns with clear error messages about performance constraints
 5. WHEN monitoring regex performance THEN the system SHALL track compilation time, execution time, memory usage, and cache hit rates
 
@@ -170,8 +184,18 @@ The engine operates through a two-layer architecture: a Stream Layer for low-lat
 
 #### Acceptance Criteria
 
-1. WHEN configuring regex limits THEN the system SHALL support per-pattern execution timeout (default: 10ms)
+1. WHEN configuring regex limits THEN the system SHALL support a per-pattern observed-latency threshold (default: 10ms) used to flag or disable slow patterns
 2. WHEN configuring regex limits THEN the system SHALL support pattern compilation timeout (default: 100ms)
 3. WHEN configuring regex limits THEN the system SHALL support memory limit per pattern (default: 1MB)
 4. WHEN patterns exceed configured limits THEN the system SHALL log performance violations and optionally disable problematic patterns
 5. WHEN monitoring regex operations THEN the system SHALL expose metrics for pattern performance, cache effectiveness, and rejection rates
+
+## Deferred / Open Questions
+
+### From 2026-06-09 design review
+
+- **Scope cuts for v1.0 (single collector, solo maintainer):** Requirement 3's dynamic registry (live updates, change notification) could reduce to static startup registration; Requirement 4/8's optimizer ACs (selectivity-based index selection, hot/cold index management) are query-optimizer machinery with no baseline data; Requirement 6 (YARA/eBPF) may belong in a post-v1.0 specialty-collector spec; Requirement 7's reactive cascade exceeds the two-stage ShadowHunt v1.0 flow (detect → TraceCommand); Requirement 12 is speculative extensibility. Decide the v1.0 cut and mark deferred requirements explicitly.
+- **Rule-content ecosystem interop:** target users maintain detection content in Sigma and similar formats; bespoke-SQL-only means zero usable community content at install. Deliberate positioning decision or roadmap gap?
+- **AUTO JOIN vs the "standard SQL" promise:** AUTO JOIN/WHEN are a proprietary dialect. Either reframe Requirement 1 as "SQLite dialect with documented DaemonEye extensions," or express auto-collection through planner-inferred metadata outside the SQL text.
+- **Rule evaluation model:** no requirement states when rules evaluate (per-event streaming vs scheduled batch vs window-close) or the event-to-alert latency target. Needs a requirement consistent with the \<100ms alert budget.
+- **Spec merge (decided 2026-06-09, execution pending):** This spec triplet will be merged into `.kiro/specs/daemoneye-core-monitoring/` as part of the pending ADR-0006 rewrite, in a dedicated session/PR — detection-engine requirements fold into the core spec as a numbered group (superseding the core R3 overlap), the design is rewritten DataFusion-first, tasks slot into the core sequence with an MVP gate, and this `upcoming-specs/` directory is then deleted. The open questions above are resolved during that merge.
