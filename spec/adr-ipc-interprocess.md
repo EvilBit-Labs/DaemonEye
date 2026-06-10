@@ -1,6 +1,6 @@
 # ADR: Migrate IPC Transport to Interprocess Crate
 
-**Status**: In Progress **Date**: 2025-09-18 **Authors**: UncleSp1d3r
+**Status**: Accepted (Phase 1 implemented; Phase 2 evaluation pending) **Date**: 2025-09-18 **Authors**: UncleSp1d3r
 
 ## Summary
 
@@ -238,7 +238,7 @@ Frame format (little-endian):
 
 - [Interprocess crate documentation](https://docs.rs/interprocess/)
 - [Tokio networking guide](https://tokio.rs/tokio/tutorial/streams)
-- [DaemonEye IPC requirements](../.kiro/specs/DaemonEye-core-monitoring/requirements.md)
+- [DaemonEye IPC requirements](../.kiro/specs/daemoneye-core-monitoring/requirements.md)
 - [Current IPC implementation](../procmond/src/ipc)
 
 ---

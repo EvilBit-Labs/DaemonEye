@@ -31,7 +31,7 @@ inclusion: always
 ### Cryptographic Requirements (Approved Only)
 
 - **BLAKE3** for hashing (already in use)
-- **ed25519-dalek** for signatures (already in use)
+- **ed25519-dalek** for signatures (approved; not yet a workspace dependency — add when implementing signing)
 - **rustls** for TLS (TLS 1.3 preferred, 1.2 minimum)
 - **getrandom** for entropy
 - **NEVER** implement custom cryptographic algorithms
@@ -80,7 +80,7 @@ let permit = semaphore.acquire().await?;
 
 ## Secret Handling (Required Pattern)
 
-**USE** `secrecy` and `zeroize` for all sensitive data:
+**USE** `secrecy` and `zeroize` for all sensitive data (approved pattern; neither crate is a workspace dependency yet — add when handling secrets):
 
 ```rust,ignore
 use secrecy::SecretString;
@@ -100,7 +100,7 @@ impl Drop for ApiKey {
 **APPROVED** crypto libraries only:
 
 - Hashing: `blake3` (in use), SHA2 family
-- Signatures: `ed25519-dalek` (in use)
+- Signatures: `ed25519-dalek` (approved; not yet a workspace dependency)
 - AEAD: `chacha20poly1305`, `aes-gcm`
 - TLS: `rustls` (TLS 1.3 preferred)
 - Entropy: `getrandom`

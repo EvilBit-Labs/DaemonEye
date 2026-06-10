@@ -1,5 +1,10 @@
 # Migration Strategy: Crossbeam to DaemonEye EventBus
 
+> [!IMPORTANT]
+> **Superseded end state (R14 resolution, 2026-06-09).** The R14 requirement was resolved in favor of **full crossbeam removal**: `daemoneye-eventbus` becomes the **single** event-routing layer, and remaining in-process needs use plain tokio channels. There is **no dual-bus end state**. The crossbeam `HighPerformanceEventBus` (`collector-core/src/high_performance_event_bus.rs`) is a sanctioned **transitional internal hot path only**, gated on the R14 AC4 no-regression performance budget, and is then **deleted (Task 2.7)**.
+>
+> Consequently, the **config-selectable dual bus** described below — `EventBusType::{Local, DaemonEye}`, `EventBusConfig`, `EventBusFactory`, "crossbeam fallback", and "migrate collectors back to crossbeam" — is **historical and not the end state**. Read the porting detail (trait signature changes, event/topic conversion, phase plan) as still useful, but reframe the destination as a **single bus**: crossbeam is removed rather than retained as a selectable option.
+
 ## Overview
 
 This document outlines the migration strategy from the current crossbeam-based event bus implementation to the daemoneye-eventbus message broker. The migration preserves existing event bus semantics while enabling multi-process communication and enhanced scalability.
@@ -294,6 +299,9 @@ impl DaemoneyeEventBusAdapter {
 
 ### Phase 4: Configuration Migration
 
+> [!NOTE]
+> Historical design. The `EventBusType`/`EventBusConfig`/`EventBusFactory` selector below was drafted when a config-selectable dual bus was under consideration. Per the R14 resolution (see the Superseded banner at the top), the end state is a **single** bus — crossbeam is removed, not exposed as a `"local"` option. Treat this section as the conversion-detail record, not the target configuration.
+
 Update collector-core configuration to use daemoneye-eventbus:
 
 ```rust,ignore
@@ -488,6 +496,9 @@ mod migration_tests {
 
 ### Rollback Strategy
 
+> [!NOTE]
+> Historical. Because the end state has **no dual bus** (R14 resolution), there is no `bus_type` switch and no per-collector "fall back to crossbeam" path. The supported safety net is the no-regression gate on the transitional hot path (R14 AC4) and ordinary version revert. The options below are retained only as a record of the original migration thinking.
+
 1. **Configuration-Based Rollback**: Switch `bus_type` to `"local"`
 2. **Gradual Rollback**: Migrate collectors back to crossbeam individually
 3. **Emergency Rollback**: Revert to previous collector-core version
@@ -517,4 +528,4 @@ mod migration_tests {
 
 ## Conclusion
 
-This migration strategy provides a comprehensive approach to replacing crossbeam channels with daemoneye-eventbus while maintaining full backward compatibility and operational stability. The phased approach allows for thorough testing and gradual rollout, minimizing risk while enabling the enhanced multi-process communication capabilities of the daemoneye-eventbus system.
+This migration strategy provides a comprehensive approach to replacing crossbeam channels with daemoneye-eventbus. Per the R14 resolution (see the Superseded banner at the top), the destination is a **single** event-routing layer: `daemoneye-eventbus` for cross-process messaging and plain tokio channels for in-process needs, with the transitional crossbeam hot path removed once the R14 AC4 no-regression budget is met. The conversion detail above (trait signature changes, event/topic mapping, phased porting) remains useful; the dual-bus selector and crossbeam-fallback sections are historical and not the end state.

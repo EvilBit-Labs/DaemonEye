@@ -306,7 +306,7 @@ The broker tracks the following statistics:
 
 ### Message Security
 
-- **Serialization**: Uses bincode for efficient binary protocol
+- **Serialization**: Uses postcard for efficient binary protocol
 - **Validation**: All incoming messages validated
 - **Size Limits**: Enforce maximum message sizes (1MB default)
 

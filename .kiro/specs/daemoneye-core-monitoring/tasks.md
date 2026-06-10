@@ -29,7 +29,7 @@ The following foundational components have been successfully implemented:
 
 - 🔄 RPC integration between daemoneye-agent and collectors
 - ❌ SQL-to-IPC detection engine (depends on separate spec)
-- ❌ Executable integrity verification (SHA-256 hashing)
+- 🔄 Executable integrity verification (SHA-256 hashing) — core hashing shipped (`HashComputer` trait, procmond `--compute-hashes`); benchmarks and inaccessible-executable validation remain
 - ❌ Audit ledger with tamper-evident logging
 - ❌ Multi-channel alerting system
 - ❌ Service management and deployment
@@ -49,7 +49,7 @@ The following foundational components have been successfully implemented:
   - ✅ Create end-to-end tests for complete Monitor Collector workflows
   - ✅ Write security tests for trigger validation and access control
   - _Requirements: 11.1, 11.2, 11.5_
-  - **Implementation**: `collector-core/tests/monitor_collector_comprehensive.rs` - 1,392 lines of comprehensive test coverage including unit tests, integration tests, property-based tests with proptest, chaos testing with failure injection, performance regression tests with baseline validation, end-to-end workflow tests, and security tests for trigger validation and access control.
+  - **Implementation**: The original `monitor_collector_comprehensive.rs` suite has since been refactored. Coverage now lives in `collector-core/tests/comprehensive_test_suite.rs`, `collector-core/tests/chaos_testing.rs`, `collector-core/tests/property_based_test.rs`, and `collector-core/tests/security_critical_test.rs`, plus procmond's `tests/` directory — including unit tests, integration tests, property-based tests with proptest, chaos testing with failure injection, performance regression tests with baseline validation, end-to-end workflow tests, and security tests for trigger validation and access control.
 
 - [x] 1.2 Add comprehensive cross-platform testing ✅ COMPLETED
 
@@ -62,7 +62,7 @@ The following foundational components have been successfully implemented:
 
 - [x] 1.3 Validate GitHub issue #89 performance and acceptance criteria ✅ COMPLETED
 
-  - ✅ **ARCHITECTURAL ISSUE IDENTIFIED AND RESOLVED**: Fixed stack overflow in `test_complete_monitor_workflow` test
+  - ✅ **ARCHITECTURAL ISSUE IDENTIFIED AND RESOLVED**: Fixed stack overflow in the complete-monitor-workflow test (suite since refactored; see Implementation note below)
   - ✅ **Root Cause**: Stack overflow was caused by improper shutdown handling when using `tokio::time::timeout` with `collector.run()`
   - ✅ **Solution**: Modified test to avoid waiting for collector task completion, preventing recursive shutdown issues
   - ✅ **Impact**: Test now passes without stack overflow, allowing continued development of Monitor Collector functionality
@@ -71,7 +71,7 @@ The following foundational components have been successfully implemented:
   - ✅ **Event Generation**: Basic event generation and triggering functionality validated
   - ✅ **Data Integration**: Collector-core pipeline integration confirmed working
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
-  - **Implementation**: Modified `test_complete_monitor_workflow` in `collector-core/tests/monitor_collector_comprehensive.rs` to use simplified approach that avoids the stack overflow issue while maintaining test coverage.
+  - **Implementation**: The workflow test was modified to use a simplified approach that avoids the stack overflow issue while maintaining test coverage. The Monitor Collector test suite has since been refactored; equivalent coverage now lives in `collector-core/tests/comprehensive_test_suite.rs`, `chaos_testing.rs`, `property_based_test.rs`, `security_critical_test.rs`, and procmond's `tests/` directory.
 
 - [x] 2. Migrate from crossbeam event bus to daemoneye-eventbus message broker
 
@@ -397,13 +397,17 @@ The following foundational components have been successfully implemented:
   - Add forensic correlation tracking for security investigations
   - _Requirements: 15.4, 16.3_
 
-- [ ] 3. Implement executable integrity verification with SHA-256 hashing
+- [ ] 2.7 Remove crossbeam HighPerformanceEventBus after eventbus in-process path meets performance budgets (decision 2026-06-09: no dual-bus end state) — benchmark gate per Requirement 14 AC4
 
-  - Create HashComputer trait for cryptographic hashing of executable files
-  - Implement SHA-256 hash computation for accessible executable files in ProcessMessageHandler
-  - Handle missing or inaccessible executable files without failing enumeration
-  - Store hash_algorithm field ('sha256') with computed hash values in ProtoProcessRecord
+- [ ] 3. Implement executable integrity verification with SHA-256 hashing 🔄 (core implementation shipped; remaining scope below)
+
+  - ✅ Create HashComputer trait for cryptographic hashing of executable files (`daemoneye-lib/src/integrity/`)
+  - ✅ Implement SHA-256 hash computation for accessible executable files (`procmond/src/hash_pass.rs`, enabled via `--compute-hashes` flag)
+  - ✅ Store hash_algorithm field ('sha256') with computed hash values in ProtoProcessRecord
+  - ✅ Hash-pass composition covered by `procmond/tests/hash_composition.rs`
+  - **Remaining scope**:
   - Write criterion benchmarks to establish baseline performance metrics for hashing impact on enumeration speed (collecting data for future optimization)
+  - Verify graceful handling of missing or inaccessible executable files without failing enumeration
   - _Requirements: 2.1, 2.2, 2.4_
 
 - [x] 4. Complete procmond collector-core integration with daemoneye-eventbus
@@ -473,50 +477,122 @@ The following foundational components have been successfully implemented:
 - [ ] 6.5 Create service deployment and configuration management
 
   - Create system service installation scripts for Linux (systemd), macOS (launchd), and Windows (Service Control Manager)
+  - Add systemd service unit files for Linux with proper dependencies and security settings
+  - Add launchd plist files for macOS with appropriate permissions and startup configuration
+  - Create Windows service installer with proper registry entries and security descriptors
   - Implement service configuration templates with environment-specific customization including daemoneye-eventbus broker settings
+  - Implement service configuration validation and deployment verification
   - Add service dependency management and startup ordering
+  - Add service update and migration procedures for configuration changes
   - Create service uninstallation and cleanup procedures
+  - Create service deployment documentation with platform-specific installation guides
+  - Write deployment automation scripts for common service management scenarios
   - Write deployment validation tests for all supported platforms
   - _Requirements: 6.1, 6.2, 6.4, 6.5_
 
-- [ ] 7. **PLACEHOLDER: Complete SQL-to-IPC Detection Engine Implementation**
+- [ ] 6.6 Add comprehensive service testing and validation
 
-  **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
+  - Create integration tests for service installation, startup, and shutdown on all platforms
+  - Add service failure scenario testing with collector process crashes and recovery
+  - Implement service upgrade testing with configuration migration and data preservation
+  - Create service security testing for privilege boundaries and access controls
+  - Add service performance baseline collection under high load with multiple collector processes (establishing metrics for future optimization)
+  - Write service compatibility tests across different OS versions and configurations
+  - Create chaos testing for various failure modes and recovery validation
+  - Add end-to-end tests for procmond Monitor Collector triggering analysis collectors
+  - Validate all GitHub issue #89 acceptance criteria including Monitor Collector requirements
+  - Test continuous operation, event generation, and collector coordination as specified
+  - Validate daemoneye-agent integration, health check endpoints, and graceful shutdown
+  - Test cross-platform compatibility (Linux, Windows, macOS) per GitHub issue requirements
+  - Collect baseline performance metrics for GitHub issue #89 requirements (validation will occur after optimization phase)
+  - _Requirements: All requirements verification_
 
-  **📋 Action Required**:
+- [ ] 7. Implement SQL-to-IPC Detection Engine (ADR-0006)
 
-  1. Complete implementation following `.kiro/specs/sql-to-ipc-detection-engine/tasks.md`
-  2. Return here to integrate SQL-to-IPC engine with core monitoring infrastructure
+  **MVP gate (ordered):** 7.1 → 7.2 → 7.3 → 7.4 → 7.5 → 7.6 → 7.7 → 7.8; 7.9–7.10 may run parallel after 7.6. Merged 2026-06-09 from the former `.kiro/upcoming-specs/sql-to-ipc-detection-engine/tasks.md`, rewritten per ADR-0006. Future-tier work (AUTO JOIN R22, YARA/eBPF collectors R23, reactive cascade R24) is intentionally absent — see F-series placeholders.
 
-  **🔗 Integration Points**: Once SQL-to-IPC engine is complete, integrate with:
+  Design reference: see the "Detection Engine (SQL-to-IPC, ADR-0006)" section of the sibling design.md. Governing requirements: R17–R21 (plus R3, R8, R10) in the sibling requirements.md.
 
-  - Existing daemoneye-agent detection workflow (replace placeholder detection engine)
-  - Collector-core EventSource trait for task handling and capability advertisement
-  - IPC client infrastructure for SQL-generated detection tasks
-  - Existing alert generation and delivery systems
+- [ ] 7.1 Build the SQL analyzer module
 
-  **✅ Success Criteria**: SQL-to-IPC engine fully replaces existing detection logic while maintaining backward compatibility
+  - Refactor/extend the existing `daemoneye-lib/src/detection/sql_to_ipc.rs` (`SqlToIpcTranslator`) into the detection-engine module tree under `daemoneye-lib/src/detection/`
+  - Implement sqlparser AST generation with SELECT-only validation and a function allowlist
+  - Enforce a subquery depth limit (default 3)
+  - Produce typed `CollectionRequirements` (migrate the existing same-named struct; delete the old shape once parity tests pass)
+  - _Requirements: R3, R17_
 
-  _Requirements: 3.1, 3.2, 4.1, 4.3, 12.1, 12.2, 12.3, 12.4, 12.5_
+- [ ] 7.2 Implement regex compile/cache infrastructure
+
+  - Use the linear-time `regex` crate with `RegexBuilder::size_limit`/`dfa_size_limit` bounds
+  - Run AST validation BEFORE pattern compilation
+  - Cache compiled patterns keyed by full pattern string with LRU eviction
+  - Flag/disable patterns exceeding the observed-latency threshold (default 10ms)
+  - Emit compilation, execution, and cache-hit metrics
+  - _Requirements: R17_
+
+- [ ] 7.3 Build the static schema catalog
+
+  - Register collector schema descriptors at startup (tables, column types, pushdown ops)
+  - Authenticate registration via peer credentials / spawn token per the Broker Security Model
+  - Validate rule table references against the catalog
+  - Re-validate and re-plan enabled rules on descriptor change, surfacing unhealthy rules
+  - _Requirements: R19_
+
+- [ ] 7.4 Implement the pushdown planner
+
+  - Implement capability-boolean predicate/projection pushdown to protobuf DetectionTasks
+  - Run conformance vectors per advertised operation; unverified ops run agent-side
+  - Implement task lifecycle: renew before TTL expiry while the rule is enabled; re-issue the active task set on collector re-registration
+  - _Requirements: R18_
+
+- [ ] 7.5 Implement redb detection storage
+
+  - Create time-partitioned event tables with configurable bucket sizes
+  - Use fixed-width keys and multimap secondary indexes per spec §11.7
+  - Implement batch writes with group commit
+  - _Requirements: R20_
+
+- [ ] 7.6 Integrate DataFusion query execution
+
+  - Implement per-collector redb `TableProvider`s with filter/projection pushdown into scans
+  - Configure `SessionContext` with the function allowlist, memory-manager limits, and cardinality caps
+  - Execute derived SQL only (the original dialect never reaches the engine)
+  - Evaluate rules per collection cycle, honoring the scan-interval+100ms latency bound
+  - Add a binary-size/memory validation gate for the DataFusion dependency against the \<100MB budget
+  - _Requirements: R3, R20_
+
+- [ ] 7.7 Add degradation markers and reliability handling
+
+  - Attach completeness markers to alerts and rule health (CLI-visible "no match" vs "could not fully evaluate")
+  - Handle collector-disconnect table unavailability
+  - Deduplicate replayed events by (task_id, seq_no) with a late-event grace period
+  - Count backpressure sheds; implement sequence-number recovery replay
+  - _Requirements: R20, R21_
+
+- [ ] 7.8 Integrate the engine with daemoneye-agent
+
+  - Extract a `DetectionEngine` trait from the existing concrete struct's public API; implement it on the current struct for compatibility, then on the new engine
+  - Replace the placeholder detection path in daemoneye-agent's main loop
+  - Wire dispatch through `ResilientIpcClient` (daemoneye-lib/src/ipc/client.rs) and the `BrokerManager` (daemoneye-agent/src/broker_manager.rs) capability-negotiation workflow
+  - _Requirements: R3, R18, R19_
+
+- [ ] 7.9 Add detection metrics and execution-plan output
+
+  - Emit tracing-ecosystem metrics for rule evaluation latency/match rates, IPC rates/queue depths, and redb write latency
+  - Provide on-demand execution-plan output for rule debugging (no Prometheus crate in v1.0)
+  - _Requirements: R10_
+
+- [ ] 7.10 Write operator documentation
+
+  - Write a rule-authoring guide (SQLite dialect + documented extension policy)
+  - Create a first-rule tutorial and regex pattern guidance
+  - Document rule testing via daemoneye-cli
+  - Defer AUTO JOIN/specialty-collector/cascade tutorials to the Future tier
+  - _Requirements: R8, R17_
 
 - [ ] 8. Implement audit ledger with tamper-evident logging
 
-- [ ] 8.1 Create BLAKE3-based audit ledger infrastructure
-
-  - Implement append-only audit ledger using redb with BLAKE3 hashing
-  - Create Merkle tree structure for tamper-evident logging
-  - Add audit entry validation and integrity verification
-  - Implement audit ledger recovery and consistency checking
-  - Write unit tests for audit ledger operations and integrity validation
-  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
-
-- [ ] 8.2 Integrate audit logging with process collection
-
-  - Add audit logging to ProcessMessageHandler for all security-relevant events
-  - Implement audit entry generation for process enumeration cycles
-  - Create audit metadata tracking for forensic analysis
-  - Add audit ledger performance monitoring and optimization
-  - Write integration tests for audit logging with process collection
+  - **Superseded by / merged into Task 10 ([#42](https://github.com/EvilBit-Labs/DaemonEye/issues/42))**. The former 8.1/8.2 breakdown described the same work; unique bullets (ledger recovery/consistency checking and process-collection audit integration) have been moved into Task 10.
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
 - [ ] 9. Complete daemoneye-cli implementation
@@ -539,9 +615,9 @@ The following foundational components have been successfully implemented:
   - Write integration tests for CLI management functionality
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
-- [ ] 10. Implement comprehensive alerting system (Core Strategic Priority)
+- [ ] 26. Implement comprehensive alerting system (Core Strategic Priority)
 
-- [ ] 10.1 Create multi-channel alert delivery with reliability guarantees
+- [ ] 26.1 Create multi-channel alert delivery with reliability guarantees
 
   - Implement alert sinks for stdout, syslog, webhook, email, and file output
   - Add circuit breaker pattern for failed alert deliveries with configurable failure thresholds
@@ -552,7 +628,7 @@ The following foundational components have been successfully implemented:
   - Write comprehensive unit tests for alert delivery, failure handling, and reliability patterns
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 10.2 Add alert correlation and context enrichment
+- [ ] 26.2 Add alert correlation and context enrichment
 
   - Implement alert correlation across multiple detection rules and collector types using daemoneye-eventbus message broker
   - Add context enrichment with process ancestry, system state, and related events from multiple collector domains
@@ -563,9 +639,9 @@ The following foundational components have been successfully implemented:
   - Write integration tests for alert correlation, enrichment, and forensic capabilities
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 15.4, 16.3_
 
-- [ ] 11. Implement comprehensive observability and monitoring
+- [ ] 27. Implement comprehensive observability and monitoring
 
-- [ ] 11.1 Create metrics collection and export with performance baselines
+- [ ] 27.1 Create metrics collection and export with performance baselines
 
   - Implement Prometheus-compatible metrics for all components (procmond, daemoneye-agent, daemoneye-cli)
   - Add performance metrics for process enumeration (\<5s for 10,000+ processes), detection (\<100ms per rule), and alerting
@@ -576,7 +652,7 @@ The following foundational components have been successfully implemented:
   - Write comprehensive unit tests for metrics collection, export, and performance validation
   - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
 
-- [ ] 11.2 Add structured logging and correlation with audit integration
+- [ ] 27.2 Add structured logging and correlation with audit integration
 
   - Implement correlation ID tracking across all system components for distributed tracing through daemoneye-eventbus message broker
   - Add structured logging with consistent field naming, JSON formatting, and configurable log levels
@@ -591,45 +667,12 @@ The following foundational components have been successfully implemented:
 
 The following collectors are planned for future implementation to extend the virtual table system:
 
-- [ ] 11. Network Collector (netmond) - Virtual tables: `network_connections`, `network_interfaces`
-- [ ] 12. Filesystem Collector (fsmond) - Virtual tables: `file_events`, `file_metadata`
-- [ ] 13. Performance Collector (perfmond) - Virtual tables: `system_metrics`, `resource_usage`
-- [ ] 14. Triggerable Collectors - Binary Hasher, Memory Analyzer, YARA Scanner, PE Analyzer
+- [ ] F1. Network Collector (netmond) - Virtual tables: `network_connections`, `network_interfaces`
+- [ ] F2. Filesystem Collector (fsmond) - Virtual tables: `file_events`, `file_metadata`
+- [ ] F3. Performance Collector (perfmond) - Virtual tables: `system_metrics`, `resource_usage`
+- [ ] F4. Triggerable Collectors - Binary Hasher, Memory Analyzer, YARA Scanner, PE Analyzer
 
 These extensions will follow the established collector-core framework patterns and integrate with the SQL-to-IPC translation system for unified querying across all monitoring domains.
-
-- Add systemd service unit files for Linux with proper dependencies and security settings
-
-- Add launchd plist files for macOS with appropriate permissions and startup configuration
-
-- Create Windows service installer with proper registry entries and security descriptors
-
-- Implement service configuration validation and deployment verification
-
-- Add service update and migration procedures for configuration changes
-
-- Create service deployment documentation with platform-specific installation guides
-
-- Write deployment automation scripts for common service management scenarios
-
-- _Requirements: 6.1, 6.2, 6.4, 6.5_
-
-- [ ] 9.9 Add comprehensive service testing and validation
-
-  - Create integration tests for service installation, startup, and shutdown on all platforms
-  - Add service failure scenario testing with collector process crashes and recovery
-  - Implement service upgrade testing with configuration migration and data preservation
-  - Create service security testing for privilege boundaries and access controls
-  - Add service performance baseline collection under high load with multiple collector processes (establishing metrics for future optimization)
-  - Write service compatibility tests across different OS versions and configurations
-  - Create chaos testing for various failure modes and recovery validation
-  - Add end-to-end tests for procmond Monitor Collector triggering analysis collectors
-  - Validate all GitHub issue #89 acceptance criteria including Monitor Collector requirements
-  - Test continuous operation, event generation, and collector coordination as specified
-  - Validate daemoneye-agent integration, health check endpoints, and graceful shutdown
-  - Test cross-platform compatibility (Linux, Windows, macOS) per GitHub issue requirements
-  - Collect baseline performance metrics for GitHub issue #89 requirements (validation will occur after optimization phase)
-  - _Requirements: All requirements verification_
 
 - [ ] 10. Create tamper-evident audit logging system - [#42](https://github.com/EvilBit-Labs/DaemonEye/issues/42)
 
@@ -638,8 +681,13 @@ These extensions will follow the established collector-core framework patterns a
   - Add audit entry structure with timestamp, actor, action, payload hash, previous hash, entry hash
   - Implement chain verification function to detect tampering attempts
   - Add periodic checkpoints with optional Ed25519 signatures for external verification
+  - Implement audit ledger recovery and consistency checking (merged from former Task 8.1)
+  - Add audit logging to ProcessMessageHandler for all security-relevant events, including audit entry generation for process enumeration cycles (merged from former Task 8.2)
+  - Create audit metadata tracking for forensic analysis (merged from former Task 8.2)
+  - Add audit ledger performance monitoring and optimization (merged from former Task 8.2)
   - Write cryptographic tests for hash chain integrity and inclusion proofs
-  - _Requirements: 7.1, 7.2, 7.4, 7.5_
+  - Write integration tests for audit logging with process collection (merged from former Task 8.2)
+  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
 - [ ] 11. Implement redb database layer for daemoneye-agent
 
@@ -664,7 +712,7 @@ These extensions will follow the established collector-core framework patterns a
 - [ ] 11.3 Add database migration system and advanced features - [#45](https://github.com/EvilBit-Labs/DaemonEye/issues/45)
 
   - Add database migration system with schema versioning
-  - Implement connection pooling and lifecycle management
+  - Implement a shared DatabaseManager handle (Arc) for cross-component access, using redb's built-in write-transaction serialization
   - Add proper error recovery and rollback mechanisms
   - Create data cleanup and retention policy implementation
   - Write integration tests for migration scenarios and version compatibility
@@ -682,13 +730,13 @@ These extensions will follow the established collector-core framework patterns a
 
 - [ ] 12.2 Replace existing detection engine with SQL-to-IPC implementation
 
-  - **Note**: This task is now covered by the dedicated sql-to-ipc-detection-engine spec
-  - Integrate SQL-to-IPC engine as replacement for placeholder detection logic
-  - Implement SQL parsing, pushdown planning, and two-layer execution architecture
-  - Add schema registry integration for collector capability negotiation
-  - Create reactive pipeline orchestrator for cascading analysis and auto-correlation
-  - Integrate specialty collectors (YARA, PE analysis, network analysis) with SQL queries
-  - **Reference**: See #\[[file:.kiro/specs/sql-to-ipc-detection-engine/tasks.md]\] for complete implementation plan
+  - **Note**: This task is now covered by Task 7 (SQL-to-IPC Detection Engine, ADR-0006) in this file
+  - Integrate SQL-to-IPC engine as replacement for placeholder detection logic (Task 7.8)
+  - Implement SQL parsing, pushdown planning, and DataFusion execution architecture (Tasks 7.1, 7.4, 7.6)
+  - Add static schema catalog integration for collector capability negotiation (Task 7.3)
+  - Reactive pipeline orchestrator for cascading analysis and auto-correlation: deferred to Future tier (R22–R24); task breakdown to be authored when scheduled
+  - Specialty collector integration (YARA, PE analysis, network analysis): deferred to Future tier (R22–R24); task breakdown to be authored when scheduled
+  - **Reference**: See Tasks 7.1–7.10 above for the complete implementation plan
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
 - [ ] 12.3 Integrate SQL-to-IPC engine with existing daemoneye-agent infrastructure
@@ -938,7 +986,7 @@ These extensions will follow the established collector-core framework patterns a
   - Write metrics accuracy tests and Prometheus scraping compatibility verification
   - _Requirements: 10.1, 10.2, 10.3, 10.4_
 
-- [x] 22. Create comprehensive test suite and quality assurance
+- [ ] 22. Create comprehensive test suite and quality assurance
 
 - [ ] 22.1 Implement unit test coverage - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
@@ -969,9 +1017,18 @@ These extensions will follow the established collector-core framework patterns a
 - [ ] 22.4 Set up CI matrix and quality gates - [#61](https://github.com/EvilBit-Labs/DaemonEye/issues/61)
 
   - Set up GitHub Actions CI matrix for Linux, macOS, Windows with multiple Rust versions (stable, beta, MSRV)
+  - Configure comprehensive CI matrix testing aligned with AGENTS.md OS Support Matrix
+  - Add primary platform testing: Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Debian 11+, macOS 14.0+ (Sonoma), Windows 10+/11/Server 2019+/Server 2022
+  - Include architecture matrix: x86_64 and ARM64 for all primary platforms
+  - Add secondary platform testing: Alpine 3.16+, Amazon Linux 2+, FreeBSD 13.0+
+  - Configure multiple Rust version testing (stable, beta, MSRV 1.95) across primary platforms
   - Add automated quality gates: fmt-check, clippy strict, comprehensive test suite
+  - Set up quality gates with clippy, rustfmt, security auditing (cargo audit, cargo deny), and overflow-checks validation
   - Implement performance regression detection with criterion benchmarks
-  - Add dependency scanning, SLSA provenance (Enterprise), and security validation
+  - Create automated test reporting and coverage tracking with llvm-cov
+  - Add container-based testing for Alpine and Amazon Linux deployments
+  - Configure cross-compilation testing for ARM64 targets
+  - Add dependency scanning, SLSA provenance, and security validation
   - Create automated release pipeline with platform-specific packages and code signing
   - _Requirements: All requirements verification_
 
@@ -1035,16 +1092,6 @@ These extensions will follow the established collector-core framework patterns a
     - Create chaos engineering tests for random component failures and recovery
     - Add stress tests for security boundary enforcement under resource pressure
     - Write comprehensive load tests simulating real-world deployment scenarios
-    - Requirements: All requirements (verification_daemoneye/issues/61)
-    - Configure comprehensive CI matrix testing aligned with AGENTS.md OS Support Matrix
-    - Add primary platform testing: Ubuntu 20.04+ LTS, RHEL/CentOS 8+, Debian 11+ LTS, macOS 14.0+ (Sonoma), Windows 10+/11/Server 2019+/Server 2022
-    - Include architecture matrix: x86_64 and ARM64 for all primary platforms
-    - Add secondary platform testing: Alpine 3.16+, Amazon Linux 2+, Ubuntu 18.04, RHEL 7, macOS 12.0+ (Monterey), FreeBSD 13.0+
-    - Configure multiple Rust version testing (stable, beta, MSRV 1.70+) across primary platforms
-    - Set up quality gates with clippy, rustfmt, security auditing (cargo audit, cargo deny), and overflow-checks validation
-    - Create automated test reporting and coverage tracking with llvm-cov
-    - Add container-based testing for Alpine and Amazon Linux deployments
-    - Configure cross-compilation testing for ARM64 targets
     - _Requirements: All requirements verification_
 
 - [ ] 24. Add advanced security testing and validation - [#62](https://github.com/EvilBit-Labs/DaemonEye/issues/62)
@@ -1066,16 +1113,16 @@ These extensions will follow the established collector-core framework patterns a
   - Integrate daemoneye-agent IPC client with collector-core framework from Task 4
   - Verify task distribution and result collection workflows work through collector-core runtime
   - Ensure existing protobuf + CRC32 framing is preserved through collector-core integration
-  - Test cross-component communication with refactored procmond using collector-core from Task 7
+  - Test cross-component communication with refactored procmond using collector-core from Task 4
   - Write integration tests for complete collector-core mediated IPC communication
   - _Requirements: All requirements integration_
 
 - [ ] 25.2 Implement rule translation and execution pipeline - [#63](https://github.com/EvilBit-Labs/DaemonEye/issues/63)
 
-  - Integrate SQL-to-IPC translation pipeline from Task 11 with collector-core framework from Task 4
+  - Integrate SQL-to-IPC translation pipeline from Task 12 (SQL-to-IPC detection engine integration) with collector-core framework from Task 4
   - Verify detection rule execution works with collector-core event sources and IPC distribution
   - Connect result aggregation from collector-core events to alert generation pipeline
-  - Test complete detection pipeline with ProcessEventSource from Task 7 and collector-core runtime
+  - Test complete detection pipeline with ProcessEventSource from Task 4 and collector-core runtime
   - Write integration tests for end-to-end rule execution through collector-core architecture
   - _Requirements: All requirements integration_
 
@@ -1097,14 +1144,14 @@ These extensions will follow the established collector-core framework patterns a
 
 ## Advanced Features (Dependent on SQL-to-IPC Engine)
 
-- [ ] 11. **PLACEHOLDER: Implement Specialty Collectors for Advanced Pattern Matching**
+- [ ] F5. **PLACEHOLDER: Implement Specialty Collectors for Advanced Pattern Matching**
 
-  **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
+  **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC detection engine (Task 7 above).
 
   **📋 Action Required**:
 
-  1. Complete SQL-to-IPC engine implementation (Task 6 above)
-  2. Follow tasks 6.1-6.6 from `.kiro/specs/sql-to-ipc-detection-engine/tasks.md`
+  1. Complete SQL-to-IPC engine implementation (Tasks 7.1–7.10 above)
+  2. Specialty-collector work (YARA, eBPF, PE analysis) is deferred to Future tier (R22–R24); task breakdown to be authored when scheduled
   3. Return here for integration with core monitoring infrastructure
 
   **🔗 Integration Scope**:
@@ -1116,16 +1163,16 @@ These extensions will follow the established collector-core framework patterns a
 
   _Requirements: 6.1, 6.2, 11.1, 11.2_
 
-- [ ] 12. **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
+- [ ] F6. **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC detection engine (Task 7 above).
 
-  - Complete SQL-to-IPC engine implementation (Task 6 above)
-  - Follow tasks 7.1-7.5 from #\[[file:.kiro/specs/sql-to-ipc-detection-engine/tasks.md]\]
+  - Complete SQL-to-IPC engine implementation (Tasks 7.1–7.10 above)
+  - Core error-handling and reliability work is now covered by Task 7.7 (degradation markers & reliability); advanced cascade/correlation recovery is deferred to Future tier (R22–R24); task breakdown to be authored when scheduled
   - Return here for integration with core monitoring infrastructure _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
 
-The following collectors are planned for future implementation to extend the virtual table system:
+## Deferred / Open Questions
 
-- [ ] 13. Network Collector (netmond) - Virtual tables: `network_connections`, `network_interfaces`
-- [ ] 14. Filesystem Collector (fsmond) - Virtual tables: `file_events`, `file_metadata`
-- [ ] 15. Performance Collector (perfmond) - Virtual tables: `system_metrics`, `resource_usage`
+### From 2026-06-09 design review
 
-These extensions will follow the established collector-core framework patterns and integrate with the SQL-to-IPC translation system for unified querying across all monitoring domains.
+- **Task resequencing:** IPC server/client tasks (15.1/15.2) are prerequisites for Task 25 integration but sequenced after the alerting stack — consider moving them ahead of alerting/database work. Benchmark suite (Task 20, except 20.1/20.3) and stress testing (Task 23) target code that doesn't exist yet; consider deferring both until after end-to-end integration (Task 25). Interactive CLI query shell (16.3 REPL features) could defer to post-v1.0.
+- **Crossbeam end-state:** **Resolved (2026-06-09):** Full removal (R14 end-state option (a)). daemoneye-eventbus becomes the single event-routing layer; in-process needs use plain tokio channels. The crossbeam `HighPerformanceEventBus` is a sanctioned *transitional* hot path only until the eventbus in-process route demonstrably meets the performance budgets (R14 AC4 no-regression criterion is the gate), then `high_performance_event_bus.rs` and the crossbeam dependency are removed — scheduled as Task 2.7.
+- **SQL-to-IPC task breakdown ownership:** **Resolved (2026-06-09):** authored as Task 7.1–7.10 in this file per ADR-0006; the upcoming-spec tasks.md was superseded and deleted.
