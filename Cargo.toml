@@ -82,6 +82,10 @@ dirs = "6.0.0"
 figment = { version = "0.10.19", features = ["toml", "json", "env"] }
 futures = "0.3.32"
 futures-util = "0.3.32"
+# Exact-pinned: ssdeep/CTPH fuzzy hash for binary-change detection. Pure-Rust,
+# FFI-free (no cmake/C build deps), MIT-licensed. Pinned because it produces
+# integrity-adjacent data. See AGENTS.md "Pin security-critical deps".
+fuzzyhash = "=0.2.2"
 
 # System information and IPC
 hostname-validator = "1.1.1"

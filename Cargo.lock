@@ -735,6 +735,7 @@ dependencies = [
  "figment",
  "futures",
  "futures-util",
+ "fuzzyhash",
  "insta",
  "interprocess",
  "predicates",
@@ -1040,6 +1041,12 @@ dependencies = [
  "pin-project-lite",
  "slab",
 ]
+
+[[package]]
+name = "fuzzyhash"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f79db37cf4b2ca9a6b735f62ca679926ba0d233d47e164147298fd4fa4786db"
 
 [[package]]
 name = "generic-array"
