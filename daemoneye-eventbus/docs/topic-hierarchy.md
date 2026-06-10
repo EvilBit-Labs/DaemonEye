@@ -31,10 +31,19 @@ The EventBus supports two types of wildcards for flexible subscriptions:
 
   - Example: `events.+.lifecycle` matches `events.process.lifecycle` and `events.network.lifecycle`
 
-- **Multi-level wildcard (`#`)**: Matches zero or more segments (must be at the end)
+- **Multi-level wildcard (`#`)**: Matches one or more remaining segments (must be the final segment)
 
   - Example: `events.process.#` matches all process events
   - Example: `control.#` matches all control messages
+  - Note: `#` requires **at least one** remaining segment — `events.#` does **not** match the bare single-segment topic `events`.
+
+### Matcher behavior is locked by a truth-table test
+
+The exact wildcard-matching semantics above are codified by a snapshot truth-table test, so they cannot drift silently:
+
+- Test: `daemoneye-eventbus/tests/pattern_truth_table.rs`
+- Snapshot: `daemoneye-eventbus/tests/snapshots/pattern_truth_table__topic_pattern_matrix_v1.snap`
+- Run/update: `cargo test -p daemoneye-eventbus -- tests::pattern_truth_table`, then `cargo insta review`
 
 ## Event Topics
 
