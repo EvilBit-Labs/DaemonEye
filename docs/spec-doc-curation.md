@@ -23,24 +23,30 @@ Swept the repo for spec/design/ADR/architecture documents outside `.kiro/`, then
 - [x] `.kiro/steering/structure.md` — detection-engine and Access Patterns lines updated to the DataFusion/TableProvider model (no more "database connections" framing)
 - [x] `spec/adr-ipc-interprocess.md` — status flipped to **Accepted** (Phase 1 implemented; Phase 2 evaluation pending); broken `DaemonEye-core-monitoring` link case fixed (ADR-home relocation still open below)
 
-## Conflict fixes — remaining
+## Conflict fixes — applied (2026-06-09)
 
-- [ ] `docs/src/technical/eventbus-architecture.md` — bincode → postcard
-- [ ] `daemoneye-eventbus/docs/message-schemas.md` — reconcile protobuf-envelope description with the postcard/struct reality (rewrite, or mark protobuf "Planned / not the current wire format")
-- [ ] `docs/src/project-overview.md` — scrub "Business/Enterprise: PostgreSQL…" line; reconcile false "mTLS between components / certificate-based agent registration"; mark Merkle inclusion proofs In Progress
-- [ ] `docs/src/security.md` — remove/flag fictional JWT/RBAC/TLS-listener/firewall config blocks (no inbound network exists)
-- [ ] `docs/src/technical/core-monitoring.md` — remove `db.prepare`/`SelectItem::Wildcard` fiction; point to ADR-0006 DataFusion model
-- [ ] `docs/src/technical/system-architecture.md` — fix `SqliteAuditLogger` name + direct-redb-SQL snippet (ADR-0006); make this the canonical published architecture page
-- [ ] `docs/src/architecture.md` — fix "Certificate Transparency" → BLAKE3 hash-chained ledger; six-crate + eventbus model; **dedupe with system-architecture.md** (collapse to one)
-- [ ] `docs/src/technical/query-pipeline.md` — refresh Phase-2 to the DataFusion model
-- [ ] `docs/crossbeam-to-daemoneye-eventbus-migration.md` — reframe to single-bus end state (R14, 2026-06-09: full crossbeam removal, no dual-bus), or demote to historical log with a banner
-- [ ] `docs/embedded-broker-architecture.md` — add the canonical broker auth-token model (32-byte `getrandom` token, `0400` file by path, publisher authorization on `control.*`) + restart-recovery section
+All applied and committed (curation agents + sister Claude instance merging where possible; harness hooks auto-committed). Verified: no `bincode`/`SqliteAuditLogger`/`db.prepare`/unit-`SelectItem::Wildcard`/fictional-security-config remains in source docs.
 
-## Dedupe candidates
+- [x] `docs/src/technical/eventbus-architecture.md` — bincode → postcard
+- [x] `daemoneye-eventbus/docs/message-schemas.md` — banner added: wire format is postcard over Rust structs; protobuf envelope + EXACTLY_ONCE/mTLS/retention marked aspirational/not current
+- [x] `docs/src/project-overview.md` — scrubbed Business/Enterprise PostgreSQL line; reworded mTLS/cert-registration to local-IPC reality + boundary footnote; Merkle inclusion proofs marked In Progress
+- [x] `docs/src/security.md` — fictional JWT/RBAC/TLS-listener/firewall config removed; replaced with real Local IPC + Outbound Alert Delivery config
+- [x] `docs/src/technical/core-monitoring.md` — `SelectItem::Wildcard(_)` + `ExprWithAlias|ExprWithAliases` + `Expr::Value` fixed; fabricated `db.prepare` execute snippet replaced with ADR-0006 DataFusion prose + pointer
+- [x] `docs/src/architecture/system-architecture.md` — `SqliteAuditLogger` → `HashChainAuditLogger`; direct-redb-SQL snippet → DataFusion `SessionContext`/`TableProvider` model (path is `architecture/`, not `technical/`)
+- [x] `docs/src/architecture.md` — "Certificate Transparency" → BLAKE3 hash-chained; six-crate + embedded-broker data-flow; cross-link to system-architecture.md (largely already in commit `97973ae`)
+- [x] `docs/src/technical/query-pipeline.md` — Phase-2 refreshed to DataFusion-over-redb-TableProviders; flat `processes` DDL relabeled illustrative + namespaced-schema pointer
+- [x] `docs/crossbeam-to-daemoneye-eventbus-migration.md` — superseded banner (R14: full crossbeam removal, no dual-bus end state); dual-bus selector flagged historical
+- [x] `docs/embedded-broker-architecture.md` — added Security model (auth-on-default, 32-byte `getrandom` token in `0400` file by path, `control.*` publisher authz, `0700` socket dir) + Restart recovery section
 
-- [ ] `daemoneye-eventbus/docs/topic-hierarchy.md` ↔ `topic-hierarchy-design.md` (keep API-accurate former; salvage the matcher truth-table note)
-- [ ] `docs/src/architecture.md` ↔ `docs/src/technical/system-architecture.md` (collapse to one)
-- [ ] `docs/src/security.md` ↔ `docs/src/technical/security_design_overview.md` (two full threat-model treatments)
+### Code change (sister instance)
+
+- [x] `procmond` — `SqliteAuditLogger` renamed to `HashChainAuditLogger` in source (commit `f61bd71`) so code matches the corrected docs
+
+## Dedupe candidates — resolved (2026-06-09)
+
+- [x] `daemoneye-eventbus/docs/topic-hierarchy.md` ↔ `topic-hierarchy-design.md` — merged: folded the unique matcher truth-table note into `topic-hierarchy.md` (and **corrected** its `#` semantics from "zero or more" to "one or more"); reduced `topic-hierarchy-design.md` to a stub pointer
+- [x] `docs/src/architecture.md` ↔ `docs/src/architecture/system-architecture.md` — kept as overview→detail (legitimate mdbook parent/child); `architecture.md` already cross-links to `system-architecture.md` as "the fuller, maintained reference" (commit `97973ae`). No content collapse needed.
+- [x] `docs/src/security.md` ↔ `docs/src/technical/security_design_overview.md` — kept as operator-guide→deep-reference; added a cross-link from `security.md` to the Security Design Overview (compliance/threat-model depth) to stop drift
 
 ## Keep — healthy EXTENDS / reference docs (no action beyond noted nits)
 
