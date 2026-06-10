@@ -30,32 +30,72 @@ inclusion: always
 
 ## Required Data Structures
 
-### Core Types (Use Exactly)
+### Core Types (Use Exactly: `ProcessRecord` from `daemoneye-lib/src/models/process.rs`)
 
 ```rust,ignore
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::SystemTime;
 
+/// Strongly-typed process identifier (newtype over u32).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ProcessId(u32);
+
+/// Comprehensive process record with all metadata fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ProcessInfo {
-    pub pid: u32,
-    pub ppid: Option<u32>,
+pub struct ProcessRecord {
+    /// Process identifier
+    pub pid: ProcessId,
+    /// Parent process identifier
+    pub ppid: Option<ProcessId>,
+    /// Process name
     pub name: String,
-    pub executable_path: Option<String>,
+    /// Path to executable file
+    pub executable_path: Option<PathBuf>,
+    /// Command line arguments
     pub command_line: Option<String>,
-    pub start_time: Option<DateTime<Utc>>,
+    /// Process start time
+    pub start_time: Option<SystemTime>,
+    /// CPU usage percentage
     pub cpu_usage: Option<f64>,
+    /// Memory usage in bytes
     pub memory_usage: Option<u64>,
+    /// Process status
     pub status: ProcessStatus,
-    pub executable_hash: Option<String>, // SHA-256 only
+    /// Executable file hash
+    pub executable_hash: Option<String>,
+    /// Hash algorithm used
+    pub hash_algorithm: Option<String>,
+    /// Collection timestamp
     pub collection_time: DateTime<Utc>,
+    /// User ID
+    pub user_id: Option<u32>,
+    /// Group ID
+    pub group_id: Option<u32>,
+    /// Environment variables
+    pub environment_vars: HashMap<String, String>,
+    /// Additional metadata
+    pub metadata: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Process status enumeration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProcessStatus {
+    /// Process is running
     Running,
+    /// Process is sleeping/waiting
     Sleeping,
+    /// Process is stopped
     Stopped,
+    /// Process is a zombie
+    Zombie,
+    /// Process is being traced
+    Traced,
+    /// Process is in an unknown state
+    Unknown(String),
 }
 ```
 
@@ -82,17 +122,19 @@ pub enum CollectionError {
 ```rust,ignore
 use redb::TableDefinition;
 
-// Event Store (events.redb)
-const PROCESSES_TABLE: TableDefinition<u64, ProcessInfo> = TableDefinition::new("processes");
-const SCANS_TABLE: TableDefinition<u64, ScanMetadata> = TableDefinition::new("scans");
-const DETECTION_RULES_TABLE: TableDefinition<String, DetectionRule> =
+// Current tables (daemoneye-lib/src/storage.rs) — values are serialized bytes
+pub const PROCESSES: TableDefinition<'static, u64, Vec<u8>> = TableDefinition::new("processes");
+pub const DETECTION_RULES: TableDefinition<'static, &str, Vec<u8>> =
     TableDefinition::new("detection_rules");
-const ALERTS_TABLE: TableDefinition<u64, Alert> = TableDefinition::new("alerts");
-const ALERT_DELIVERIES_TABLE: TableDefinition<u64, AlertDelivery> =
-    TableDefinition::new("alert_deliveries");
+pub const ALERTS: TableDefinition<'static, u64, Vec<u8>> = TableDefinition::new("alerts");
+pub const SYSTEM_INFO: TableDefinition<'static, u64, Vec<u8>> =
+    TableDefinition::new("system_info");
+pub const SCAN_METADATA: TableDefinition<'static, u64, Vec<u8>> =
+    TableDefinition::new("scan_metadata");
 
-// Audit Ledger (audit.redb - separate file)
-const AUDIT_LEDGER_TABLE: TableDefinition<u64, AuditEntry> = TableDefinition::new("audit_ledger");
+// [Planned] — not yet present in storage.rs:
+// - alert_deliveries (delivery tracking)
+// - audit_ledger (audit.redb - separate file)
 ```
 
 ## IPC Communication (Mandatory Patterns)
@@ -126,28 +168,29 @@ let subscription = EventSubscription {
 ## Configuration Hierarchy (Exact Order Required)
 
 1. CLI flags (highest precedence)
-2. Environment variables (`DAEMONEYE_*` prefix)
-3. User config (`~/.config/daemoneye/config.yaml`)
-4. System config (`/etc/daemoneye/config.yaml`)
+2. Environment variables, component-namespaced (`PROCMOND_*`, `DAEMONEYE_AGENT_*`, `DAEMONEYE_CLI_*`)
+3. User config (`~/.config/daemoneye/config.toml`)
+4. System config (`/etc/daemoneye/config.toml`)
 5. Embedded defaults (lowest precedence)
 
 ### Required Config Structure
 
-```yaml
-app:
-  scan_interval_ms: 30000  # Must be configurable
-  batch_size: 1000         # Must enforce memory limits
+```toml
+[app]
+scan_interval_ms = 30000 # Must be configurable
+batch_size = 1000        # Must enforce memory limits
 
-database:
-  path: /var/lib/daemoneye/events.redb  # Must use .redb extension
-  retention_days: 30       # Must implement cleanup
+[database]
+path = "/var/lib/daemoneye/events.redb" # Must use .redb extension
+retention_days = 30                     # Must implement cleanup
 
-alerting:
-  sinks:
-    - type: syslog
-      facility: daemon
-    - type: webhook
-      url: https://alerts.example.com/api
+[[alerting.sinks]]
+type = "syslog"
+facility = "daemon"
+
+[[alerting.sinks]]
+type = "webhook"
+url = "https://alerts.example.com/api"
 ```
 
 ## Alert System (Exact Implementation Required)
@@ -159,9 +202,14 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait AlertSink: Send + Sync {
-    async fn send(&self, alert: &Alert) -> Result<DeliveryResult, Box<dyn Error + Send + Sync>>;
-    async fn health_check(&self) -> HealthStatus;
+    /// Send an alert through this sink.
+    async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError>;
+
+    /// Get the sink name.
     fn name(&self) -> &str;
+
+    /// Check if the sink is healthy.
+    async fn health_check(&self) -> Result<(), AlertingError>;
 }
 ```
 
