@@ -291,6 +291,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // detection_engine already mutable above; reuse directly
     let mut iteration: u64 = 0;
 
+    // Session-scoped ssdeep binary-change tracker (R2 AC7). Holds the last
+    // ssdeep digest per executable path so a similarity drop versus the
+    // previously recorded value raises a binary-change observation. Built from
+    // the default fuzzy config (validated); falls back to the default tracker if
+    // the config is ever out of range.
+    let mut binary_change_tracker = integrity_alerts::BinaryChangeTracker::new(
+        daemoneye_lib::integrity::fuzzy::FuzzyConfig::default(),
+    )
+    .unwrap_or_default();
+
     tokio::pin!(shutdown_signal);
 
     loop {
@@ -349,6 +359,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             integrity_alert_batch =
                                 integrity_alerts::detect_integrity_alerts(&result.processes);
+                            integrity_alert_batch
+                                .extend(binary_change_tracker.observe(&result.processes));
                             // Parse process data from DetectionResult.processes
                             result
                                 .processes
