@@ -120,11 +120,12 @@ Hierarchical configuration with clear precedence:
 ### Core Tables
 
 - **processes**: Process snapshots with comprehensive metadata
-- **scans**: Collection cycle metadata and statistics
+- **scan_metadata**: Collection cycle metadata and statistics
 - **detection_rules**: Rule definitions with versioning (rules translated to simple tasks for procmond)
 - **alerts**: Generated alerts with execution context
-- **alert_deliveries**: Delivery tracking with retry information
-- **audit_ledger**: Tamper-evident cryptographic chain
+- **system_info**: System-level information records
+- **alert_deliveries**: Delivery tracking with retry information [Planned — not yet in storage.rs]
+- **audit_ledger**: Tamper-evident cryptographic chain [Planned — not yet in storage.rs]
 
 ### Access Patterns
 
@@ -177,9 +178,9 @@ src/
 
 ### Configuration Files
 
-- **System**: `/etc/daemoneye/config.yaml`
-- **User**: `~/.config/daemoneye/config.yaml`
-- **Service**: Platform-specific service definitions in `scripts/service/`
+- **System**: `/etc/daemoneye/config.toml`
+- **User**: `~/.config/daemoneye/config.toml`
+- **Service**: Platform-specific service definitions \[Planned — `scripts/service/` does not exist yet; packaging is driven by the GoReleaser configs (`.goreleaser-*.yaml`)\]
 
 ### Documentation Structure
 
