@@ -482,20 +482,23 @@ async fn hash_one(exe: &KernelResolvedExe, hasher: &MultiAlgorithmHasher) -> Has
 /// Compute the ssdeep fuzzy hash for an already-hashed executable, best-effort.
 ///
 /// Runs on the blocking pool (streaming the whole file) off the async runtime.
-/// The returned `degraded` flag is `true` only when the fuzzy hash was genuinely
-/// *attempted* (the `fuzzy-hashes` feature is enabled) and failed — never when
-/// the feature is simply disabled, so a build without ssdeep does not flood
-/// degraded-coverage signals.
+/// The returned `degraded` flag is `true` whenever ssdeep coverage is absent
+/// while SHA-256 succeeded — the fuzzy hash was attempted and failed, or the
+/// authorized fd could not be cloned — but never when the `fuzzy-hashes` feature
+/// is simply disabled, so a build without ssdeep does not flood degraded-coverage
+/// signals.
 ///
 /// `fuzzy_file` is a clone of the authorized SHA-256 file descriptor; `None`
-/// means the descriptor could not be cloned (a rare OS resource condition),
-/// which is treated as "not attempted" rather than degraded.
+/// means the descriptor could not be cloned (a rare OS resource condition).
+/// Because SHA-256 succeeded but ssdeep coverage is now absent, that is reported
+/// as degraded coverage — the same operator-facing signal as an ssdeep failure —
+/// rather than silently dropped.
 async fn compute_ssdeep_best_effort(
     fuzzy_file: Option<std::fs::File>,
     path: &Path,
 ) -> (Option<String>, bool) {
     let Some(mut file) = fuzzy_file else {
-        return (None, false);
+        return (None, true);
     };
 
     let join = tokio::task::spawn_blocking(move || -> Result<String, fuzzy::FuzzyHashError> {

@@ -23,10 +23,12 @@
 //! including file open, metadata fstat, and cache lookup.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use daemoneye_lib::integrity::{
-    HashAlgorithm, HashComputer, HasherConfig, MultiAlgorithmHasher, fuzzy,
-};
+#[cfg(feature = "fuzzy-hashes")]
+use daemoneye_lib::integrity::fuzzy;
+use daemoneye_lib::integrity::{HashAlgorithm, HashComputer, HasherConfig, MultiAlgorithmHasher};
 use std::hint::black_box;
+#[cfg(feature = "fuzzy-hashes")]
+use std::io::Cursor;
 use std::io::Write;
 use tempfile::NamedTempFile;
 use tokio::runtime::Runtime;
@@ -129,7 +131,12 @@ fn bench_hash_multi_algo_large(c: &mut Criterion) {
 
 /// ssdeep/CTPH fuzzy-hash cost in isolation, across the representative sizes,
 /// so the added cost over the SHA-256-only baseline above is quantifiable for
-/// the R2 AC4 sustained-CPU budget.
+/// the R2 AC4 sustained-CPU budget. Streams via `compute_ssdeep_from_reader`,
+/// the same path procmond's hash pass uses.
+///
+/// Gated on `fuzzy-hashes`: with the feature off, `compute_ssdeep_from_reader`
+/// is a stub that returns `FeatureDisabled`, so the bench would hard-fail.
+#[cfg(feature = "fuzzy-hashes")]
 fn bench_ssdeep_only(c: &mut Criterion) {
     for (label, size) in [
         ("1kib", 1024_usize),
@@ -140,7 +147,8 @@ fn bench_ssdeep_only(c: &mut Criterion) {
         c.bench_function(&format!("integrity_ssdeep_only_{label}"), |b| {
             b.iter(|| {
                 black_box(
-                    fuzzy::compute_ssdeep_from_bytes(black_box(&bytes)).expect("ssdeep digest"),
+                    fuzzy::compute_ssdeep_from_reader(&mut Cursor::new(black_box(&bytes)))
+                        .expect("ssdeep digest"),
                 )
             });
         });
@@ -148,8 +156,11 @@ fn bench_ssdeep_only(c: &mut Criterion) {
 }
 
 /// Combined SHA-256 identity hash + ssdeep fuzzy hash, matching what procmond's
-/// hash pass now computes per executable. Compare against
-/// `integrity_hash_sha256_only_*` to read the ssdeep overhead end-to-end.
+/// hash pass now computes per executable: SHA-256 over the file plus ssdeep over
+/// the same bytes via `compute_ssdeep_from_reader` (the streaming path procmond
+/// uses). Compare against `integrity_hash_sha256_only_*` to read the ssdeep
+/// overhead end-to-end.
+#[cfg(feature = "fuzzy-hashes")]
 fn bench_sha256_plus_ssdeep_medium(c: &mut Criterion) {
     let rt = Runtime::new().expect("tokio runtime");
     let size = 256 * 1024;
@@ -161,11 +172,14 @@ fn bench_sha256_plus_ssdeep_medium(c: &mut Criterion) {
             rt.block_on(async {
                 black_box(hasher.compute(tmp.path()).await.expect("sha256 hash"));
             });
-            black_box(fuzzy::compute_ssdeep_from_bytes(&bytes).expect("ssdeep digest"));
+            black_box(
+                fuzzy::compute_ssdeep_from_reader(&mut Cursor::new(&bytes)).expect("ssdeep digest"),
+            );
         });
     });
 }
 
+#[cfg(feature = "fuzzy-hashes")]
 criterion_group!(
     benches,
     bench_hash_sha256_only_small,
@@ -174,5 +188,13 @@ criterion_group!(
     bench_hash_multi_algo_large,
     bench_ssdeep_only,
     bench_sha256_plus_ssdeep_medium
+);
+#[cfg(not(feature = "fuzzy-hashes"))]
+criterion_group!(
+    benches,
+    bench_hash_sha256_only_small,
+    bench_hash_multi_algo_small,
+    bench_hash_multi_algo_medium,
+    bench_hash_multi_algo_large
 );
 criterion_main!(benches);

@@ -561,11 +561,20 @@ message ProcessRecord {
     bool accessible = 12;
     bool file_exists = 13;
     int64 collection_time = 14;
+    // ssdeep/CTPH fuzzy hash (non-cryptographic, for binary-change detection).
+    // Independent of executable_hash: may be absent while the SHA-256 identity
+    // hash is present.
     optional string ssdeep_hash = 15;
+    // Running image differs from its on-disk executable (the backing file was
+    // deleted or replaced while the process runs). Linux-only signal today.
     bool on_disk_mismatch = 16;
+    // ssdeep computation failed while the SHA-256 identity hash succeeded —
+    // degraded integrity coverage for this process.
     bool ssdeep_degraded = 17;
 }
 ```
+
+The fuzzy-hash fields supplement, never replace, the SHA-256 identity hash (`executable_hash`): SHA-256 is the authoritative executable-substitution signal, while `ssdeep_hash`/`ssdeep_degraded` drive supplementary binary-change and degraded-coverage observations.
 
 ### Transport Layer
 

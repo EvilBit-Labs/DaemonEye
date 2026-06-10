@@ -420,6 +420,24 @@ impl ProcessEvent {
         }
     }
 
+    /// Remove the given integrity keys from `platform_metadata` without creating
+    /// a metadata object, and drop the metadata entirely if it becomes empty.
+    ///
+    /// Default integrity signals (no digest, no flags) must not force an
+    /// otherwise-absent `platform_metadata` object to exist — on the hot 10k+
+    /// process path that would be avoidable allocation per process. The getters
+    /// already default to `None`/`false` when the keys are absent.
+    fn clear_integrity_keys(&mut self, keys: &[&str]) {
+        if let Some(serde_json::Value::Object(map)) = self.platform_metadata.as_mut() {
+            for key in keys {
+                map.remove(*key);
+            }
+            if map.is_empty() {
+                self.platform_metadata = None;
+            }
+        }
+    }
+
     /// Record the ssdeep fuzzy-hash signals (produced by procmond's hash pass).
     ///
     /// These signals ride [`Self::platform_metadata`] rather than dedicated
@@ -430,8 +448,13 @@ impl ProcessEvent {
     /// `ssdeep_hash` is independent of the `(executable_hash, hash_algorithm)`
     /// paired invariant: it may be `None` (with `ssdeep_degraded` set) while the
     /// SHA-256 identity hash is present. This setter leaves the on-disk-mismatch
-    /// flag untouched (set independently by the collector).
+    /// flag untouched (set independently by the collector). The all-default case
+    /// (`None`, `false`) clears any stale keys without materializing metadata.
     pub fn set_ssdeep_signal(&mut self, ssdeep_hash: Option<String>, ssdeep_degraded: bool) {
+        if ssdeep_hash.is_none() && !ssdeep_degraded {
+            self.clear_integrity_keys(&[Self::META_SSDEEP_HASH, Self::META_SSDEEP_DEGRADED]);
+            return;
+        }
         let mut map = self.take_metadata_object();
         match ssdeep_hash {
             Some(hash) => {
@@ -444,21 +467,31 @@ impl ProcessEvent {
                 map.remove(Self::META_SSDEEP_HASH);
             }
         }
-        map.insert(
-            Self::META_SSDEEP_DEGRADED.to_owned(),
-            serde_json::Value::Bool(ssdeep_degraded),
-        );
+        if ssdeep_degraded {
+            map.insert(
+                Self::META_SSDEEP_DEGRADED.to_owned(),
+                serde_json::Value::Bool(true),
+            );
+        } else {
+            map.remove(Self::META_SSDEEP_DEGRADED);
+        }
         self.platform_metadata = Some(serde_json::Value::Object(map));
     }
 
     /// Record the on-disk-vs-running mismatch flag (produced by the collector).
     ///
     /// Leaves the ssdeep signals untouched so producers compose independently.
+    /// The default (`false`) case clears the key without materializing metadata,
+    /// so the common no-mismatch path (every Linux process) allocates nothing.
     pub fn set_on_disk_mismatch(&mut self, on_disk_mismatch: bool) {
+        if !on_disk_mismatch {
+            self.clear_integrity_keys(&[Self::META_ON_DISK_MISMATCH]);
+            return;
+        }
         let mut map = self.take_metadata_object();
         map.insert(
             Self::META_ON_DISK_MISMATCH.to_owned(),
-            serde_json::Value::Bool(on_disk_mismatch),
+            serde_json::Value::Bool(true),
         );
         self.platform_metadata = Some(serde_json::Value::Object(map));
     }
@@ -626,6 +659,33 @@ mod tests {
         assert_eq!(event.ssdeep_hash(), None);
         assert!(!event.on_disk_mismatch());
         assert!(!event.ssdeep_degraded());
+    }
+
+    #[test]
+    fn default_signals_do_not_materialize_metadata() {
+        // The common no-signal path (every clean process) must not allocate a
+        // platform_metadata object just to store default false/None values.
+        let mut event = sample_event();
+        assert!(event.platform_metadata.is_none());
+        event.set_on_disk_mismatch(false);
+        event.set_ssdeep_signal(None, false);
+        assert!(
+            event.platform_metadata.is_none(),
+            "default integrity signals must not create platform_metadata"
+        );
+        assert!(!event.on_disk_mismatch());
+        assert!(!event.ssdeep_degraded());
+        assert_eq!(event.ssdeep_hash(), None);
+    }
+
+    #[test]
+    fn clearing_signals_drops_emptied_metadata() {
+        let mut event = sample_event();
+        event.set_ssdeep_signal(Some("3:x:y".to_owned()), true);
+        assert!(event.platform_metadata.is_some());
+        // Resetting to defaults removes the keys and drops the now-empty object.
+        event.set_ssdeep_signal(None, false);
+        assert!(event.platform_metadata.is_none());
     }
 
     #[test]

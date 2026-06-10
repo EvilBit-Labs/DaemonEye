@@ -12,8 +12,9 @@
 //! procmond's `eventbus_benchmarks.rs` (WAL connector), this measures the
 //! `daemoneye-eventbus` **in-process broker delivery path**: an event published
 //! through `DaemoneyeEventBus` until an in-process subscriber receives it. This
-//! is the path the agent runs (the broker constructs with `transport_server:
-//! None`, fanning out to in-process tokio mpsc subscribers).
+//! is the path the agent runs. `DaemoneyeEventBus::from_broker` starts the broker
+//! (which binds a transport server), but the measured publish->receive path fans
+//! out to in-process tokio mpsc subscribers and never touches the socket.
 //!
 //! It exists so the R14 AC4 no-regression gate has a concrete pre-migration
 //! baseline to compare against before the legacy crossbeam
@@ -68,12 +69,13 @@ fn create_test_subscription() -> EventSubscription {
 fn bench_broker_inprocess_publish_to_receive(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let temp_dir = TempDir::new().unwrap();
-    // The broker constructs with no transport server bound, so delivery stays
-    // entirely in-process (tokio mpsc fan-out) — no socket I/O on this path.
+    // The broker binds a transport server on start, but the measured publish ->
+    // in-process subscriber path is tokio mpsc fan-out and never touches the
+    // socket. to_string_lossy avoids a panic on a non-UTF-8 temp path.
     let socket_path = temp_dir.path().join("bench-broker-e2e.sock");
 
     let broker = rt.block_on(async {
-        DaemoneyeBroker::new(socket_path.to_str().unwrap())
+        DaemoneyeBroker::new(&socket_path.to_string_lossy())
             .await
             .unwrap()
     });
