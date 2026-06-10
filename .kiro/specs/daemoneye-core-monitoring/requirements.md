@@ -6,16 +6,18 @@ DaemonEye is a security-focused, high-performance process monitoring system desi
 
 This specification covers the core monitoring functionality including the collector-core framework, process enumeration, detection rule execution, and alert generation across the three-component architecture: procmond (privileged collector), daemoneye-agent (detection orchestrator), and daemoneye-cli (operator interface). The collector-core framework enables extensible monitoring capabilities across multiple domains (process, network, filesystem, performance) while maintaining shared infrastructure and operational consistency.
 
+Requirements 17–24 specify the SQL-to-IPC detection engine, merged into this spec on 2026-06-09 from the former `.kiro/upcoming-specs/sql-to-ipc-detection-engine/` requirements and aligned to ADR-0006 (Apache DataFusion over redb TableProviders — see [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](../../../spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md)).
+
 ## Priority Tiers
 
 Decided 2026-06-09 to sequence solo-maintainer effort toward OSS v1.0.0:
 
-| Tier                    | Requirements  | Meaning                                                                              |
-| ----------------------- | ------------- | ------------------------------------------------------------------------------------ |
-| Core v1.0               | R1–R10        | Must be satisfied for the v1.0.0 release                                             |
-| Enabling infrastructure | R11, R14      | Framework/eventbus work that core monitoring depends on                              |
-| Future (post-v1.0)      | R12, R15, R16 | Multi-collector and triggered-analysis extensions; interface contracts only for v1.0 |
-| Design constraint       | R13           | Open-core boundary properties verified by conformance tests, not a deliverable       |
+| Tier                    | Requirements           | Meaning                                                                              |
+| ----------------------- | ---------------------- | ------------------------------------------------------------------------------------ |
+| Core v1.0               | R1–R10, R17–R21        | Must be satisfied for the v1.0.0 release                                             |
+| Enabling infrastructure | R11, R14               | Framework/eventbus work that core monitoring depends on                              |
+| Future (post-v1.0)      | R12, R15, R16, R22–R24 | Multi-collector and triggered-analysis extensions; interface contracts only for v1.0 |
+| Design constraint       | R13                    | Open-core boundary properties verified by conformance tests, not a deliverable       |
 
 ## Requirements
 
@@ -107,6 +109,8 @@ Decided 2026-06-09 to sequence solo-maintainer effort toward OSS v1.0.0:
 4. WHEN verifying integrity THEN the system SHALL provide chain verification function to detect tampering
 5. WHEN audit events are recorded THEN the system SHALL maintain proper ordering and millisecond-precision timestamps
 6. WHEN audit entries are committed THEN the system SHALL periodically produce Ed25519-signed checkpoints over the chain head, exportable for off-host anchoring, so that chain rewrites by a host-resident adversary are detectable
+7. WHEN detection rules execute THEN the system SHALL record execution metadata with correlation IDs, and generated alerts SHALL store pointers to the source data used in detection so that detection logic can be reconstructed from audit trails
+8. WHEN recording execution metadata and correlation records THEN the system SHALL apply the project-wide field-masking policy (command-line arguments masked by default) to fields reproducing raw process event data
 
 ### Requirement 8
 
@@ -143,6 +147,7 @@ Decided 2026-06-09 to sequence solo-maintainer effort toward OSS v1.0.0:
 3. WHEN monitoring health THEN the system SHALL expose component-level health via daemoneye-cli over the local IPC/database path; any HTTP health endpoint SHALL be opt-in and disabled by default
 4. WHEN tracking performance THEN the system SHALL embed performance metrics in log entries with correlation IDs
 5. WHEN integrating with monitoring systems THEN the system SHALL respect NO_COLOR and TERM=dumb environment variables for console output
+6. WHEN the detection pipeline operates THEN the system SHALL emit metrics for rule evaluation latency and match rates, IPC message rates and queue depths, and redb write latency, and SHALL provide detailed execution plans on demand for rule debugging
 
 ### Requirement 11
 
@@ -218,6 +223,108 @@ Decided 2026-06-09 to sequence solo-maintainer effort toward OSS v1.0.0:
 4. WHEN the system starts THEN static monitor collectors (e.g., procmond) SHALL be registered from configuration; dynamic runtime registration of triggerable analysis collectors is a future extension and SHALL NOT be required for core monitoring
 5. WHEN managing collector dependencies THEN the system SHALL provide topic-based coordination that allows collectors to subscribe to relevant event streams and publish results for downstream processing
 
+### Requirement 17
+
+**User Story:** As a security analyst, I want to write detection rules in SQL with documented DaemonEye extensions, so that I can leverage my existing query skills without learning a proprietary rule language.
+
+#### Acceptance Criteria
+
+1. WHEN writing detection rules THEN the system SHALL accept SQLite-dialect SELECT statements; DaemonEye-specific dialect extensions (AUTO JOIN/WHEN — see Requirement 22) SHALL be explicitly documented as extensions rather than presented as standard SQL
+2. WHEN parsing SQL THEN the system SHALL use the sqlparser crate for AST generation and load-time validation (Requirement 3)
+3. WHEN validating queries THEN the system SHALL only allow SELECT statements with approved functions (aggregations, string operations, date/time helpers) and SHALL limit subquery nesting depth to a configurable maximum (default: 3)
+4. WHEN SQL contains forbidden constructs THEN the system SHALL reject the query with detailed error messages and log the attempt for audit purposes
+5. WHEN rules reference tables THEN the system SHALL validate references against the collector schema catalog (Requirement 19)
+6. WHEN rules contain REGEXP operators THEN the system SHALL compile patterns at rule load time using a linear-time regex engine (Rust regex crate) with compile-time size and complexity limits — eliminating catastrophic backtracking by construction — and SHALL cache compiled patterns keyed by the full pattern string with LRU eviction (bounds per spec §4.2/§4.5)
+7. WHEN monitoring regex performance THEN the system SHALL track compilation time, execution time, and cache hit rates, with a per-pattern observed-latency threshold (default: 10ms) used to flag or disable slow patterns
+
+### Requirement 18
+
+**User Story:** As a detection engineer, I want simple operations pushed to collectors automatically, so that I get maximum performance without manual optimization.
+
+#### Acceptance Criteria
+
+1. WHEN analyzing a rule's AST THEN the system SHALL identify pushdown-eligible predicates (equality, inequality, IN, LIKE, REGEXP) and projections
+2. WHEN generating collection tasks THEN the system SHALL push projections and eligible predicates to collectors as protobuf DetectionTasks
+3. WHEN collectors cannot handle predicates THEN the system SHALL execute them in the agent-side execution engine (Requirement 20), falling back gracefully
+4. WHEN pushing predicates THEN pushed-down evaluation SHALL be semantically equivalent to the agent's reference evaluation; collectors SHALL pass a conformance vector per advertised pushdown operation, and unverified operations SHALL execute agent-side
+5. WHEN pushdown tasks are active THEN the agent SHALL renew tasks before TTL expiry for as long as their rule is enabled, and SHALL re-issue the active task set when a collector (re)registers
+
+### Requirement 19
+
+**User Story:** As a system architect, I want collectors to advertise their schemas and capabilities, so that the query planner can make sound pushdown decisions.
+
+#### Acceptance Criteria
+
+1. WHEN collectors start THEN they SHALL register schema descriptors (table definitions, column types, supported pushdown operations) at startup; v1.0 uses static startup registration — dynamic hot-updates are a future extension
+2. WHEN accepting a registration THEN the agent SHALL authenticate the collector identity (socket peer credentials or pre-shared spawn token) and SHALL reject unauthenticated registrations
+3. WHEN planning queries THEN the agent SHALL validate table references against the current catalog and provide clear error messages for unsupported operations
+4. WHEN a collector's schema descriptor changes (upgrade/restart) THEN the system SHALL re-validate and re-plan all enabled rules referencing affected tables; rules that no longer validate SHALL be marked unhealthy and surfaced to operators
+
+### Requirement 20
+
+**User Story:** As a performance engineer, I want complex operations executed efficiently over redb with bounded resources, so that large datasets cannot exhaust memory or silently degrade detection.
+
+#### Acceptance Criteria
+
+1. WHEN executing derived queries THEN the system SHALL use Apache DataFusion over redb-backed per-collector TableProvider implementations (ADR-0006); the original SQL dialect SHALL never reach the execution layer (Requirement 3)
+2. WHEN executing joins and aggregations THEN the system SHALL enforce bounded memory via the query engine's memory manager with configurable cardinality caps, and aggregations SHALL require explicit time windows
+3. WHEN operations exceed limits or inputs are unavailable THEN the system SHALL emit partial results with diagnostics, and any alert or rule evaluation produced under degraded conditions SHALL carry an explicit completeness marker visible via daemoneye-cli, distinguishing "no match" from "could not fully evaluate"
+4. WHEN storing events THEN the system SHALL partition by time with configurable bucket sizes, use fixed-width keys, and maintain multimap secondary indexes per the redb playbook (spec §11.7)
+5. WHEN replayed or late events arrive THEN aggregation state SHALL deduplicate by (task_id, seq_no), apply a configurable late-event grace period after window close, and count later arrivals as late-discarded in metrics
+6. WHEN correlating across sources THEN the system SHALL use a time-stable process identity (pid plus start_time, or a process UUID), constraining joins on recyclable keys to the process lifetime window
+7. WHEN evaluating rules THEN pushdown predicates SHALL stream-filter at collectors and full rule evaluation SHALL run per collection cycle against the event store; event-to-alert latency SHALL NOT exceed one scan interval plus the 100ms per-rule budget
+
+### Requirement 21
+
+**User Story:** As a reliability engineer, I want comprehensive error handling and recovery in the detection pipeline, so that the system remains operational despite collector failures or data corruption.
+
+#### Acceptance Criteria
+
+1. WHEN collectors disconnect THEN the system SHALL mark affected tables as unavailable, continue with remaining sources, and surface the degradation per Requirement 20
+2. WHEN schema mismatches occur THEN the system SHALL request updated descriptors and reconcile differences per Requirement 19
+3. WHEN data corruption is detected THEN the system SHALL validate checksums and request retransmission
+4. WHEN rate limits are exceeded THEN the system SHALL apply backpressure and throttle collection requests, counting shed events toward the Requirement 20 completeness markers
+5. WHEN recovery is needed THEN the system SHALL replay missed events from last known good sequence numbers
+
+### Requirement 22
+
+> **Tier: Future (post-v1.0).** Gated on a second collector existing; see Priority Tiers.
+
+**User Story:** As a security operator, I want automatic correlation between related data sources through JOIN triggers, so that I get comprehensive analysis without complex rule authoring.
+
+#### Acceptance Criteria
+
+1. WHEN SQL contains plain JOINs THEN the system SHALL execute them over stored data (Requirement 20); AUTO JOIN syntax SHALL be the explicit opt-in path that triggers live collection of the joined source
+2. WHEN conditional auto-JOINs (WHEN clauses) are specified THEN the system SHALL collect only when trigger conditions are met
+3. WHEN parsing AUTO JOIN or WHEN constructs THEN they SHALL pass the same AST validation as standard SQL (SELECT-only, function allowlist, depth limits) before activation
+4. WHEN AUTO JOIN triggers collection THEN the system SHALL enforce a configurable per-rule trigger budget, surfacing budget exhaustion as degraded detection
+5. WHEN auto-JOIN collection fails THEN the system SHALL continue with available data, log the failure, and mark results degraded
+
+### Requirement 23
+
+> **Tier: Future (post-v1.0).** Security constraints below are binding whenever this is built.
+
+**User Story:** As a threat hunter, I want complex pattern matching (YARA, eBPF) integrated with SQL-based rules, so that I can combine behavioral analysis with signature-based detection.
+
+#### Acceptance Criteria
+
+1. WHEN rules require YARA analysis THEN the system SHALL trigger YARA collectors and make results queryable via SQL
+2. WHEN supplemental rule data contains YARA rules THEN they SHALL originate from signed rule packs, with configurable maximum rule size and compilation timeout enforced at the agent before transmission
+3. WHEN supplemental rule data contains eBPF programs THEN the system SHALL verify an Ed25519 signature on the bytecode against operator-provisioned keys before delivery to any collector and SHALL reject unsigned or unverifiable programs
+4. WHEN specialty analysis fails THEN the system SHALL continue with available data sources, marking results degraded per Requirement 20
+
+### Requirement 24
+
+> **Tier: Future (post-v1.0)** except AC1, which is the v1.0 host-side trace primitive.
+
+**User Story:** As a security architect, I want the detection pipeline to operate as a reactive system, so that initial detections can trigger deeper analysis.
+
+#### Acceptance Criteria
+
+1. WHEN a detection rule matches THEN the system MAY emit a scoped TraceCommand targeting the matching process and its descendants (host-side primitive; hunt orchestration and adjudication are commercial-tier, out of this repo)
+2. WHEN cascading analysis is implemented THEN trigger evaluation and re-evaluation SHALL use bounded, deduplicated analysis queues with priority ordering, never an unbounded queue
+3. WHEN analysis chains form THEN circuit breakers SHALL enforce a configurable maximum cascade depth (default: 5), detect cycles via correlation-id lineage, reject statically-detectable trigger cycles at rule load time, and surface breaker activations as degraded-detection events
+
 ## Deferred / Open Questions
 
 ### From 2026-06-09 design review
@@ -228,4 +335,9 @@ Decided 2026-06-09 to sequence solo-maintainer effort toward OSS v1.0.0:
 - **ShadowHunt trigger→trace requirements:** **Resolved (2026-06-09):** Hunt orchestration and adjudication are managed server-side by the commercial tier (sold separately, not in this repo). The Community tier owns the host-side primitives only: TraceCommand intake, trace_id-stamped focused capture, and RBAC-gated local trace initiation — these will be specified as interface contracts in a future Community requirements increment so the commercial tier can drive them.
 - **Priority tiers / v1.0 cut:** **Resolved (2026-06-09):** Tiering adopted as proposed — core v1.0 (R1–R10), enabling infrastructure (R11, R14), future (R12, R15, R16), design constraint (R13). See the Priority Tiers section above.
 - **Alert flow vs eventbus:** **Resolved (2026-06-09):** Alerts publish to the embedded daemoneye-eventbus broker on the alerts topic; configured sinks consume from the broker for delivery, enabling multi-consumer dispatch. See R5 AC6.
-- **Spec merge (decided 2026-06-09, execution pending):** The `.kiro/upcoming-specs/sql-to-ipc-detection-engine/` triplet will be merged into this spec as part of the pending ADR-0006 rewrite, in a dedicated session/PR. Detection-engine requirements fold in as a numbered group superseding the R3 overlap; design sections are rewritten DataFusion-first; detection tasks slot into the renumbered task sequence with the MVP gate (parse → validate → pushdown → DataFusion execution → agent integration) ahead of speculative work; `upcoming-specs/` is then deleted. The remaining open questions in that spec (scope cuts, AUTO JOIN positioning, rule evaluation model, Sigma interop) are resolved during the merge.
+- **Spec merge:** **Resolved/executed (2026-06-09):** The former `.kiro/upcoming-specs/sql-to-ipc-detection-engine/` triplet was merged into this spec: requirements became R17–R24 (aligned to ADR-0006), design content was folded into design.md DataFusion-first, tasks were slotted into tasks.md with the MVP gate, and `upcoming-specs/` was deleted.
+- **Detection-engine scope cuts:** **Resolved (2026-06-09):** Static schema catalog for v1.0 (R19 — dynamic hot-updates deferred); optimizer machinery (selectivity-based index selection, hot/cold index management, SHJ→INLJ switching) dropped — DataFusion owns execution strategy per ADR-0006; YARA/eBPF integration → R23 (Future); reactive cascade → R24 (Future; v1.0 ships only the TraceCommand host primitive); the former spec's speculative-extensibility requirement was dropped as covered by R12/R13.
+- **AUTO JOIN positioning:** **Resolved (2026-06-09):** AUTO JOIN/WHEN are documented DaemonEye dialect extensions, not "standard SQL" (R17 AC1), and are deferred to the Future tier alongside multi-collector support (R22). Plain JOINs execute over stored data.
+- **Rule evaluation model:** **Resolved (2026-06-09):** Streaming pushdown predicates filter at collectors; full rule evaluation runs per collection cycle agent-side; event-to-alert latency ≤ one scan interval + 100ms per rule (R20 AC7).
+- **Sigma/community rule interop:** **Resolved (2026-06-09):** Deliberate v1.0 positioning — bespoke SQL only. A Sigma→SQL import converter is a post-v1.0 roadmap candidate (tracked in BACKLOG.md).
+- **Metrics crate:** **Resolved (2026-06-09):** v1.0 detection metrics use the existing tracing ecosystem (R10 AC6); adopting a dedicated metrics crate/Prometheus exporter is deferred and gated on the R10 opt-in listener decision.

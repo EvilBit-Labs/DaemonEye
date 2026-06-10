@@ -507,25 +507,88 @@ The following foundational components have been successfully implemented:
   - Collect baseline performance metrics for GitHub issue #89 requirements (validation will occur after optimization phase)
   - _Requirements: All requirements verification_
 
-- [ ] 7. **PLACEHOLDER: Complete SQL-to-IPC Detection Engine Implementation**
+- [ ] 7. Implement SQL-to-IPC Detection Engine (ADR-0006)
 
-  **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
+  **MVP gate (ordered):** 7.1 → 7.2 → 7.3 → 7.4 → 7.5 → 7.6 → 7.7 → 7.8; 7.9–7.10 may run parallel after 7.6. Merged 2026-06-09 from the former `.kiro/upcoming-specs/sql-to-ipc-detection-engine/tasks.md`, rewritten per ADR-0006. Future-tier work (AUTO JOIN R22, YARA/eBPF collectors R23, reactive cascade R24) is intentionally absent — see F-series placeholders.
 
-  **📋 Action Required**:
+  Design reference: see the "Detection Engine (SQL-to-IPC, ADR-0006)" section of the sibling design.md. Governing requirements: R17–R21 (plus R3, R8, R10) in the sibling requirements.md.
 
-  1. Complete implementation following `.kiro/upcoming-specs/sql-to-ipc-detection-engine/tasks.md`
-  2. Return here to integrate SQL-to-IPC engine with core monitoring infrastructure
+- [ ] 7.1 Build the SQL analyzer module
 
-  **🔗 Integration Points**: Once SQL-to-IPC engine is complete, integrate with:
+  - Refactor/extend the existing `daemoneye-lib/src/detection/sql_to_ipc.rs` (`SqlToIpcTranslator`) into the detection-engine module tree under `daemoneye-lib/src/detection/`
+  - Implement sqlparser AST generation with SELECT-only validation and a function allowlist
+  - Enforce a subquery depth limit (default 3)
+  - Produce typed `CollectionRequirements` (migrate the existing same-named struct; delete the old shape once parity tests pass)
+  - _Requirements: R3, R17_
 
-  - Existing daemoneye-agent detection workflow (replace placeholder detection engine)
-  - Collector-core EventSource trait for task handling and capability advertisement
-  - IPC client infrastructure for SQL-generated detection tasks
-  - Existing alert generation and delivery systems
+- [ ] 7.2 Implement regex compile/cache infrastructure
 
-  **✅ Success Criteria**: SQL-to-IPC engine fully replaces existing detection logic while maintaining backward compatibility
+  - Use the linear-time `regex` crate with `RegexBuilder::size_limit`/`dfa_size_limit` bounds
+  - Run AST validation BEFORE pattern compilation
+  - Cache compiled patterns keyed by full pattern string with LRU eviction
+  - Flag/disable patterns exceeding the observed-latency threshold (default 10ms)
+  - Emit compilation, execution, and cache-hit metrics
+  - _Requirements: R17_
 
-  _Requirements: 3.1, 3.2, 4.1, 4.3, 12.1, 12.2, 12.3, 12.4, 12.5_
+- [ ] 7.3 Build the static schema catalog
+
+  - Register collector schema descriptors at startup (tables, column types, pushdown ops)
+  - Authenticate registration via peer credentials / spawn token per the Broker Security Model
+  - Validate rule table references against the catalog
+  - Re-validate and re-plan enabled rules on descriptor change, surfacing unhealthy rules
+  - _Requirements: R19_
+
+- [ ] 7.4 Implement the pushdown planner
+
+  - Implement capability-boolean predicate/projection pushdown to protobuf DetectionTasks
+  - Run conformance vectors per advertised operation; unverified ops run agent-side
+  - Implement task lifecycle: renew before TTL expiry while the rule is enabled; re-issue the active task set on collector re-registration
+  - _Requirements: R18_
+
+- [ ] 7.5 Implement redb detection storage
+
+  - Create time-partitioned event tables with configurable bucket sizes
+  - Use fixed-width keys and multimap secondary indexes per spec §11.7
+  - Implement batch writes with group commit
+  - _Requirements: R20_
+
+- [ ] 7.6 Integrate DataFusion query execution
+
+  - Implement per-collector redb `TableProvider`s with filter/projection pushdown into scans
+  - Configure `SessionContext` with the function allowlist, memory-manager limits, and cardinality caps
+  - Execute derived SQL only (the original dialect never reaches the engine)
+  - Evaluate rules per collection cycle, honoring the scan-interval+100ms latency bound
+  - Add a binary-size/memory validation gate for the DataFusion dependency against the \<100MB budget
+  - _Requirements: R3, R20_
+
+- [ ] 7.7 Add degradation markers and reliability handling
+
+  - Attach completeness markers to alerts and rule health (CLI-visible "no match" vs "could not fully evaluate")
+  - Handle collector-disconnect table unavailability
+  - Deduplicate replayed events by (task_id, seq_no) with a late-event grace period
+  - Count backpressure sheds; implement sequence-number recovery replay
+  - _Requirements: R20, R21_
+
+- [ ] 7.8 Integrate the engine with daemoneye-agent
+
+  - Extract a `DetectionEngine` trait from the existing concrete struct's public API; implement it on the current struct for compatibility, then on the new engine
+  - Replace the placeholder detection path in daemoneye-agent's main loop
+  - Wire dispatch through `ResilientIpcClient` (daemoneye-lib/src/ipc/client.rs) and the `BrokerManager` (daemoneye-agent/src/broker_manager.rs) capability-negotiation workflow
+  - _Requirements: R3, R18, R19_
+
+- [ ] 7.9 Add detection metrics and execution-plan output
+
+  - Emit tracing-ecosystem metrics for rule evaluation latency/match rates, IPC rates/queue depths, and redb write latency
+  - Provide on-demand execution-plan output for rule debugging (no Prometheus crate in v1.0)
+  - _Requirements: R10_
+
+- [ ] 7.10 Write operator documentation
+
+  - Write a rule-authoring guide (SQLite dialect + documented extension policy)
+  - Create a first-rule tutorial and regex pattern guidance
+  - Document rule testing via daemoneye-cli
+  - Defer AUTO JOIN/specialty-collector/cascade tutorials to the Future tier
+  - _Requirements: R8, R17_
 
 - [ ] 8. Implement audit ledger with tamper-evident logging
 
@@ -667,13 +730,13 @@ These extensions will follow the established collector-core framework patterns a
 
 - [ ] 12.2 Replace existing detection engine with SQL-to-IPC implementation
 
-  - **Note**: This task is now covered by the dedicated sql-to-ipc-detection-engine spec
-  - Integrate SQL-to-IPC engine as replacement for placeholder detection logic
-  - Implement SQL parsing, pushdown planning, and two-layer execution architecture
-  - Add schema registry integration for collector capability negotiation
-  - Create reactive pipeline orchestrator for cascading analysis and auto-correlation
-  - Integrate specialty collectors (YARA, PE analysis, network analysis) with SQL queries
-  - **Reference**: See #\[[file:.kiro/upcoming-specs/sql-to-ipc-detection-engine/tasks.md]\] for complete implementation plan
+  - **Note**: This task is now covered by Task 7 (SQL-to-IPC Detection Engine, ADR-0006) in this file
+  - Integrate SQL-to-IPC engine as replacement for placeholder detection logic (Task 7.8)
+  - Implement SQL parsing, pushdown planning, and DataFusion execution architecture (Tasks 7.1, 7.4, 7.6)
+  - Add static schema catalog integration for collector capability negotiation (Task 7.3)
+  - Reactive pipeline orchestrator for cascading analysis and auto-correlation: deferred to Future tier (R22–R24); task breakdown to be authored when scheduled
+  - Specialty collector integration (YARA, PE analysis, network analysis): deferred to Future tier (R22–R24); task breakdown to be authored when scheduled
+  - **Reference**: See Tasks 7.1–7.10 above for the complete implementation plan
   - _Requirements: 3.1, 3.2, 3.3, 3.5_
 
 - [ ] 12.3 Integrate SQL-to-IPC engine with existing daemoneye-agent infrastructure
@@ -1083,12 +1146,12 @@ These extensions will follow the established collector-core framework patterns a
 
 - [ ] F5. **PLACEHOLDER: Implement Specialty Collectors for Advanced Pattern Matching**
 
-  **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
+  **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC detection engine (Task 7 above).
 
   **📋 Action Required**:
 
-  1. Complete SQL-to-IPC engine implementation (Task 7 above)
-  2. Follow tasks 6.1-6.6 from `.kiro/upcoming-specs/sql-to-ipc-detection-engine/tasks.md`
+  1. Complete SQL-to-IPC engine implementation (Tasks 7.1–7.10 above)
+  2. Specialty-collector work (YARA, eBPF, PE analysis) is deferred to Future tier (R22–R24); task breakdown to be authored when scheduled
   3. Return here for integration with core monitoring infrastructure
 
   **🔗 Integration Scope**:
@@ -1100,10 +1163,10 @@ These extensions will follow the established collector-core framework patterns a
 
   _Requirements: 6.1, 6.2, 11.1, 11.2_
 
-- [ ] F6. **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC Detection Engine specification.
+- [ ] F6. **🚧 DEPENDENCY**: This task requires completion of the SQL-to-IPC detection engine (Task 7 above).
 
-  - Complete SQL-to-IPC engine implementation (Task 7 above)
-  - Follow tasks 7.1-7.5 from #\[[file:.kiro/upcoming-specs/sql-to-ipc-detection-engine/tasks.md]\]
+  - Complete SQL-to-IPC engine implementation (Tasks 7.1–7.10 above)
+  - Core error-handling and reliability work is now covered by Task 7.7 (degradation markers & reliability); advanced cascade/correlation recovery is deferred to Future tier (R22–R24); task breakdown to be authored when scheduled
   - Return here for integration with core monitoring infrastructure _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
 
 ## Deferred / Open Questions
@@ -1112,4 +1175,4 @@ These extensions will follow the established collector-core framework patterns a
 
 - **Task resequencing:** IPC server/client tasks (15.1/15.2) are prerequisites for Task 25 integration but sequenced after the alerting stack — consider moving them ahead of alerting/database work. Benchmark suite (Task 20, except 20.1/20.3) and stress testing (Task 23) target code that doesn't exist yet; consider deferring both until after end-to-end integration (Task 25). Interactive CLI query shell (16.3 REPL features) could defer to post-v1.0.
 - **Crossbeam end-state:** **Resolved (2026-06-09):** Full removal (R14 end-state option (a)). daemoneye-eventbus becomes the single event-routing layer; in-process needs use plain tokio channels. The crossbeam `HighPerformanceEventBus` is a sanctioned *transitional* hot path only until the eventbus in-process route demonstrably meets the performance budgets (R14 AC4 no-regression criterion is the gate), then `high_performance_event_bus.rs` and the crossbeam dependency are removed — scheduled as Task 2.7.
-- **SQL-to-IPC task breakdown ownership:** the upcoming-spec's tasks.md predates ADR-0006 (DataFusion); decide who authors the post-ADR task breakdown and whether it replaces `.kiro/upcoming-specs/sql-to-ipc-detection-engine/tasks.md`.
+- **SQL-to-IPC task breakdown ownership:** **Resolved (2026-06-09):** authored as Task 7.1–7.10 in this file per ADR-0006; the upcoming-spec tasks.md was superseded and deleted.
