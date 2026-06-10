@@ -584,16 +584,16 @@ When generating code:
 
 ## Source-of-Truth Map
 
-| Section                       | Source                                                                                                                                                                                    |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Architecture                  | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                                                                                              |
-| Technology                    | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                                                                                                        |
-| Product                       | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                                                                                                  |
-| Core Requirements             | [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md)                                                                          |
-| Development                   | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                                                                                          |
-| SQL-to-IPC Pipeline           | [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](./spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md)                                                                  |
-| Detection Execution (binding) | ADR-0006: Apache DataFusion over redb TableProviders (spec §9/§11). `.kiro/upcoming-specs/sql-to-ipc-detection-engine/` predates it — **non-normative**, pending merge into the core spec |
-| v1.0 Scope                    | Priority Tiers table in [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md) — R1–R10 are the v1.0 bar                        |
+| Section                       | Source                                                                                                                                                                                                                  |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Architecture                  | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                                                                                                                            |
+| Technology                    | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                                                                                                                                      |
+| Product                       | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                                                                                                                                |
+| Core Requirements             | [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md)                                                                                                        |
+| Development                   | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                                                                                                                        |
+| SQL-to-IPC Pipeline           | [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](./spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md)                                                                                                |
+| Detection Execution (binding) | ADR-0006: Apache DataFusion over redb TableProviders (spec §9/§11). Detection-engine requirements are R17–R24 in the core spec (merged 2026-06-09; the former `upcoming-specs/sql-to-ipc-detection-engine/` is deleted) |
+| v1.0 Scope                    | Priority Tiers table in [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md) — R1–R10 are the v1.0 bar                                                      |
 
 ### Cross-References
 
