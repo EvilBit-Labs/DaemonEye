@@ -1,6 +1,8 @@
 # Security Documentation
 
-This document provides comprehensive security information for DaemonEye, including threat model, security considerations, and best practices.
+This document is the operator-facing security guide for DaemonEye — threat model, security considerations, configuration, and best practices.
+
+> For the in-depth security architecture, formal threat model, and compliance-control mapping (NIST SP 800-53, FISMA/FedRAMP/CMMC, ISSO guidance), see [Security Design Overview](./technical/security_design_overview.md). This page stays at the operator/deployment level; that one is the deep reference.
 
 ---
 
