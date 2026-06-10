@@ -88,7 +88,11 @@ graph TB
 #### Core Responsibilities
 
 - **Process Enumeration**: Cross-platform process data collection using sysinfo crate
-- **Executable Hashing**: SHA-256 hash computation for integrity verification
+- **Executable Hashing**: Integrity verification through multiple hash algorithms:
+  - SHA-256 identity hash (cryptographic)
+  - ssdeep/CTPH fuzzy hash (non-cryptographic, for binary-change detection)
+  - On-disk mismatch detection
+  - Degraded coverage signaling
 - **Audit Logging**: Tamper-evident logging with cryptographic chains
 - **IPC Communication**: Simple protobuf-based communication with daemoneye-agent
 
@@ -557,6 +561,9 @@ message ProcessRecord {
     bool accessible = 12;
     bool file_exists = 13;
     int64 collection_time = 14;
+    optional string ssdeep_hash = 15;
+    bool on_disk_mismatch = 16;
+    bool ssdeep_degraded = 17;
 }
 ```
 
