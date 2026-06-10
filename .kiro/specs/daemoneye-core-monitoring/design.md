@@ -693,7 +693,7 @@ pub struct CorrelationMetadata {
 - **Implementation**: Cross-platform IPC with embedded broker architecture
 - **Unix/Linux/macOS**: Unix domain sockets with owner-only permissions (0700 dir, 0600 socket)
 - **Windows**: Named pipes with appropriate security descriptors
-- **Message Protocol**: Bincode serialization with efficient binary encoding
+- **Message Protocol**: postcard serialization with efficient binary encoding
 - **Topic Routing**: Hierarchical topic matching with wildcard support (`+` single-level, `#` multi-level)
 - **Security**: Local-only endpoints, topic-based access control, connection limits
 - **Reliability**: At-most-once delivery semantics, circuit breaker patterns, retry logic
