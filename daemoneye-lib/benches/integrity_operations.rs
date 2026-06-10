@@ -23,19 +23,25 @@
 //! including file open, metadata fstat, and cache lookup.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use daemoneye_lib::integrity::{HashAlgorithm, HashComputer, HasherConfig, MultiAlgorithmHasher};
+use daemoneye_lib::integrity::{
+    HashAlgorithm, HashComputer, HasherConfig, MultiAlgorithmHasher, fuzzy,
+};
 use std::hint::black_box;
 use std::io::Write;
 use tempfile::NamedTempFile;
 use tokio::runtime::Runtime;
+
+/// Deterministic non-zero byte payload of `size` bytes.
+fn make_bytes(size: usize) -> Vec<u8> {
+    (0..=255_u8).cycle().take(size).collect()
+}
 
 /// Create a temp file filled with `size` bytes of deterministic data.
 fn make_file(size: usize) -> NamedTempFile {
     let mut tmp = NamedTempFile::new().expect("create temp file");
     // Deterministic non-zero payload so compiler/hardware hashers cannot
     // short-circuit a zero-page fast path.
-    let chunk: Vec<u8> = (0..=255_u8).cycle().take(size).collect();
-    tmp.write_all(&chunk).expect("write temp file");
+    tmp.write_all(&make_bytes(size)).expect("write temp file");
     tmp.flush().expect("flush temp file");
     tmp
 }
@@ -121,11 +127,52 @@ fn bench_hash_multi_algo_large(c: &mut Criterion) {
     });
 }
 
+/// ssdeep/CTPH fuzzy-hash cost in isolation, across the representative sizes,
+/// so the added cost over the SHA-256-only baseline above is quantifiable for
+/// the R2 AC4 sustained-CPU budget.
+fn bench_ssdeep_only(c: &mut Criterion) {
+    for (label, size) in [
+        ("1kib", 1024_usize),
+        ("256kib", 256 * 1024),
+        ("4mib", 4 * 1024 * 1024),
+    ] {
+        let bytes = make_bytes(size);
+        c.bench_function(&format!("integrity_ssdeep_only_{label}"), |b| {
+            b.iter(|| {
+                black_box(
+                    fuzzy::compute_ssdeep_from_bytes(black_box(&bytes)).expect("ssdeep digest"),
+                )
+            });
+        });
+    }
+}
+
+/// Combined SHA-256 identity hash + ssdeep fuzzy hash, matching what procmond's
+/// hash pass now computes per executable. Compare against
+/// `integrity_hash_sha256_only_*` to read the ssdeep overhead end-to-end.
+fn bench_sha256_plus_ssdeep_medium(c: &mut Criterion) {
+    let rt = Runtime::new().expect("tokio runtime");
+    let size = 256 * 1024;
+    let tmp = make_file(size);
+    let bytes = make_bytes(size);
+    let hasher = build_hasher(vec![HashAlgorithm::Sha256]);
+    c.bench_function("integrity_sha256_plus_ssdeep_256kib", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                black_box(hasher.compute(tmp.path()).await.expect("sha256 hash"));
+            });
+            black_box(fuzzy::compute_ssdeep_from_bytes(&bytes).expect("ssdeep digest"));
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_hash_sha256_only_small,
     bench_hash_multi_algo_small,
     bench_hash_multi_algo_medium,
-    bench_hash_multi_algo_large
+    bench_hash_multi_algo_large,
+    bench_ssdeep_only,
+    bench_sha256_plus_ssdeep_medium
 );
 criterion_main!(benches);
