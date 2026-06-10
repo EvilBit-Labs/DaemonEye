@@ -46,7 +46,7 @@
 ### Configuration Management
 
 - **Hierarchical loading**: Embedded defaults → System files → User files → Environment → CLI flags
-- **Formats**: YAML, JSON, TOML support via figment and config crates
+- **Formats**: TOML (primary) via figment, plus component-namespaced environment variable overrides (`PROCMOND_*`, `DAEMONEYE_AGENT_*`, `DAEMONEYE_CLI_*`)
 - **Validation**: Comprehensive validation with detailed error messages
 
 ### Error Handling
@@ -73,10 +73,11 @@ just test         # Run all tests with cargo-nextest (unit + integration)
 just build        # Build entire workspace
 
 # Testing variants
-just test-unit    # Run unit tests only
-just test-integration  # Run integration tests only
-just test-fuzz    # Run fuzz testing suite
-just coverage     # Generate coverage report with tarpaulin
+just test-fast           # Run only fast unit tests (--lib --bins)
+just test-comprehensive  # Run comprehensive tests (collector-core)
+just test-performance    # Run performance-critical tests
+just test-security       # Run security-critical tests
+just coverage            # Generate coverage report with cargo-llvm-cov
 
 # Component execution
 just run-procmond --once --verbose      # Run process monitor
