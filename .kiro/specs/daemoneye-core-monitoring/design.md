@@ -541,7 +541,7 @@ pub trait DetectionEngine {
 
 **Detection Query Execution (ADR-0006)**:
 
-Validated/derived SQL executes via Apache DataFusion over redb per-domain tables exposed through `TableProvider` implementations, per ADR-0006 in [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](../../../spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md). The two-phase pipeline lowers the custom detection dialect at rule-compile time into (a) protobuf collection tasks and (b) derived standard SQL; the runtime executor only ever sees the derived SQL, never the original dialect.
+Validated/derived SQL executes via Apache DataFusion over redb per-domain tables exposed through `TableProvider` implementations. The full pipeline — validation, pushdown planning, schema catalog, execution, and degradation semantics — is specified in the [Detection Engine (SQL-to-IPC, ADR-0006)](#detection-engine-sql-to-ipc-adr-0006) section below; this subsection is intentionally just a pointer so the design has a single home for that material.
 
 **Security Boundaries**:
 
@@ -993,6 +993,111 @@ flowchart TD
 3. Broker responds with `REGISTER_ACK` containing assigned ID and topic assignments
 4. Collector begins sending `HEARTBEAT` messages every 30 seconds
 5. Broker monitors heartbeats and deregisters on timeout (3 missed heartbeats)
+
+## Detection Engine (SQL-to-IPC, ADR-0006)
+
+> Merged 2026-06-09 from the former `.kiro/upcoming-specs/sql-to-ipc-detection-engine/` design, rewritten DataFusion-first per ADR-0006. Governing requirements: R17–R24 in [requirements.md](./requirements.md). Authoritative join-strategy and redb-layout guidance lives in [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](../../../spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md) §11.5–§11.7.
+
+### Pipeline Overview
+
+Detection rules travel a strict two-phase pipeline: Phase 1 runs once at rule load (compile) time; Phase 2 runs per collection cycle. The original SQL dialect never reaches the execution layer (R3, R20).
+
+```mermaid
+flowchart LR
+    RULE["SQL detection rule"] --> VAL["sqlparser AST validation<br/>SELECT-only, function allowlist,<br/>subquery depth ≤ 3"]
+    VAL --> PLAN["Pushdown planner<br/>(capability booleans)"]
+    PLAN --> TASKS["protobuf DetectionTasks<br/>to collectors via EventBus"]
+    PLAN --> DERIVED["Derived standard SQL"]
+    TASKS --> EVENTS["Filtered event stream<br/>into redb event store"]
+    DERIVED --> DF["DataFusion SessionContext<br/>over redb TableProviders"]
+    EVENTS --> DF
+    DF --> ALERTS["Alert generation<br/>+ completeness markers"]
+```
+
+1. **Rule load:** sqlparser parses the rule; AST validation enforces SELECT-only statements, the approved-function allowlist, and a configurable maximum subquery nesting depth (default: 3). Table references are validated against the schema catalog (R17, R19).
+2. **Pushdown planning:** eligible predicates (equality, inequality, `IN`, `LIKE`, `REGEXP`) and projections are lowered into protobuf `DetectionTask`s addressed to the owning collectors (R18).
+3. **Derivation:** the remainder of the rule is lowered to derived standard SQL that DataFusion can execute unchanged.
+4. **Execution:** each collection cycle, the derived SQL runs in a DataFusion `SessionContext` whose catalog is populated by redb-backed per-collector `TableProvider` implementations (R20).
+5. **Alerting:** matches produce alerts with deduplication and completeness markers (R20, R21).
+
+**Load-time rejection policy:** rules that cannot be lowered into collection tasks plus derived DataFusion SQL are rejected at load time with a clear, actionable error. There is no silent fallback to scheduled full enumeration. Overcollection (collectors returning broader data than the rule strictly needs due to predicate granularity) is bounded by pushdown conformance (R18 AC4) and per-rule budgets.
+
+**Relationship to existing code:** this design extends and ultimately replaces `daemoneye-lib/src/detection/sql_to_ipc.rs` (`SqlToIpcTranslator`, ~1,112 lines). The existing module — AST walking, predicate extraction, protobuf task generation — is the seed of the Phase 1 planner, not a parallel implementation; the DataFusion execution layer replaces its placeholder execution path.
+
+### Virtual Schema Model
+
+Each collector contributes logical, read-only tables to a unified namespace: `processes.*` today (procmond); `network.*` and `filesystem.*` arrive with future collectors. Logical table names map **1:1 onto physical redb event tables** — `processes.events` is both the queryable name and the redb table per the §11.7 playbook — deliberately eliminating the virtual-vs-physical naming drift present in earlier drafts.
+
+Physical layout (spec §11.7):
+
+- One base table per source per time bucket: `processes.events` keyed `(ts_ms: u64, seq: u32)` (16-byte fixed-width primary key, strictly increasing)
+- Multimap secondary indexes inside the same bucket: `processes.idx:pid` → `(ts_ms, seq)`, plus `idx:ppid`, `idx:name` (hashed), and `idx:exe_hash`
+- Values are compact versioned structs; secondaries store only the 16-byte pointer back to the base row, never row copies
+
+### Schema Catalog (R19)
+
+The agent maintains a static catalog of collector schema descriptors:
+
+- **Static startup registration:** collectors register descriptors (table definitions, column types, supported pushdown operations) at startup; dynamic hot-updates are a future extension.
+- **Authenticated registration:** the agent authenticates collector identity via socket peer credentials or the pre-shared spawn token (see the Broker Security Model above); unauthenticated registrations are rejected.
+- **Descriptor change handling:** when a collector restarts or upgrades with a changed descriptor, the agent re-validates and re-plans all enabled rules referencing affected tables. Rules that no longer validate are marked unhealthy and surfaced to operators via daemoneye-cli rule/health status — never silently dropped.
+
+### Pushdown Planner (R18)
+
+Pushdown decisions are **capability booleans, not cost estimates**: an operation is pushed down if and only if the owning collector advertises it and has passed the conformance vector for it. There is no agent-side cost model — DataFusion owns physical execution strategy for everything that stays agent-side (ADR-0006 dropped the bespoke cost-estimator and plan-cache machinery).
+
+- **Conformance gating:** collectors must pass a conformance vector per advertised pushdown operation, proving semantic equivalence with the agent's reference evaluation; unverified operations execute agent-side.
+- **Graceful fallback:** predicates a collector cannot (or is not trusted to) evaluate run in DataFusion instead — correctness is never traded for pushdown.
+- **Task lifecycle:** the agent renews active `DetectionTask`s before TTL expiry for as long as the owning rule is enabled, and re-issues the full active task set whenever a collector (re)registers.
+
+### Regex Handling (R17)
+
+`REGEXP` patterns compile at rule load time with the Rust `regex` crate, which is linear-time by construction — catastrophic backtracking is impossible, so no execution timeouts or thread-per-match watchdogs are needed. Compile-time bounds are enforced via `RegexBuilder::size_limit`/`dfa_size_limit`, and AST validation runs **before** any pattern compilation so malformed rules never trigger compilation work. Compiled patterns are cached keyed by the **full pattern string** — never a u64 hash of it, which risks a silent collision executing the wrong pattern — with LRU eviction. Observed per-pattern execution latency above a threshold (default: 10ms) flags the pattern and may disable the owning rule.
+
+```rust,ignore
+pub struct RegexCache {
+    /// Keyed by the full pattern string — never a hash (collision risk).
+    cache: LruCache<String, Arc<regex::Regex>>,
+    /// Compile-time bounds applied via RegexBuilder size_limit/dfa_size_limit.
+    limits: RegexLimits,
+    /// Observed-latency stats; breaching the flag threshold (default 10ms)
+    /// flags the pattern and may disable the owning rule.
+    latency: HashMap<String, LatencyStats>,
+}
+```
+
+### Execution and Storage (R20)
+
+**DataFusion configuration:** the `SessionContext` is locked down to mirror load-time validation — the scalar/aggregate function registry is restricted to the approved allowlist, memory is bounded via DataFusion's memory manager (per-query memory pool), and cardinality caps are configurable; aggregations require explicit time windows.
+
+**TableProvider pushdown:** each per-collector `TableProvider` implements filter and projection pushdown into redb scans — time predicates resolve to partition plus primary-key range scans, and indexed equality predicates resolve through the multimap secondary indexes (posting-list intersection per §11.7) before any row is materialized into Arrow batches.
+
+**Storage layout:** time-partitioned base tables with configurable bucket sizes, fixed-width `(ts_ms, seq)` keys, and multimap secondary indexes per the redb performance playbook (spec §11.7). Single-writer group commit and ACK-after-commit ingest semantics follow spec §11.6.
+
+**Join guidance:** the §11.5 join-strategy material (index nested-loop, bounded symmetric hash, materialized relation cache for parent/child) survives as physical-operator guidance under DataFusion — informing which indexes the TableProviders expose and how sessions are tuned — not as a hand-rolled join executor.
+
+**Correctness invariants:**
+
+- Replayed or late events deduplicate by `(task_id, seq_no)`; a configurable grace period applies after window close, and later arrivals are counted as late-discarded in metrics.
+- Cross-source correlation uses a time-stable process identity (`pid` plus `start_time`), constraining joins on recyclable keys to the process lifetime window.
+- **Evaluation model:** pushdown predicates stream-filter at collectors; full rule evaluation runs per collection cycle against the event store. Event-to-alert latency must not exceed one scan interval plus the 100ms per-rule budget.
+
+### Degradation and Reliability (R20/R21)
+
+Detection must distinguish "no match" from "could not fully evaluate":
+
+- **Completeness markers:** any alert or rule evaluation produced under degraded conditions (missing tables, capped operations, shed events) carries an explicit completeness marker visible via daemoneye-cli.
+- **Collector disconnect:** affected tables are marked unavailable; evaluation continues with remaining sources and results are marked degraded.
+- **Backpressure:** when rate limits trip, the agent throttles collection and counts shed events toward the completeness markers — load shedding is never silent.
+- **Recovery:** checksum validation triggers retransmission requests; missed events replay from last known good sequence numbers.
+
+### Future Tier (R22–R24, post-v1.0)
+
+Kept deliberately compact — interface contracts only, no implementation sketches:
+
+- **AUTO JOIN / WHEN (R22):** these dialect extensions are handled by a pre-parse rewrite stage that lowers them to standard SQL plus trigger metadata before sqlparser ever sees the statement — sqlparser's join grammar cannot be extended. Rewritten output passes the same AST validation as any rule. AUTO JOIN-triggered live collection is governed by configurable per-rule trigger budgets; budget exhaustion surfaces as degraded detection.
+- **YARA / eBPF supplemental rules (R23):** YARA rules ship only from signed rule packs, with maximum rule size and compilation timeout enforced agent-side before transmission; eBPF bytecode requires Ed25519 signature verification against operator-provisioned keys before delivery to any collector.
+- **Reactive cascade (R24):** trigger and re-evaluation chains use bounded, deduplicated, priority-ordered analysis queues with circuit breakers enforcing a maximum cascade depth (default: 5), correlation-id lineage cycle detection at runtime, and load-time rejection of statically detectable trigger cycles. v1.0 ships only the scoped TraceCommand host primitive (R24 AC1).
 
 ## Data Models
 
@@ -2042,5 +2147,5 @@ This comprehensive testing strategy ensures DaemonEye works reliably across ente
 
 - **Cascade chaining policy:** the orchestration rule says triggerable collectors never trigger other triggerable collectors, yet the canonical workflow chains binmond → memmond → netanalymond. Decide: permit chains with an agent-enforced max cascade depth (tracked via parent_correlation_id chain length), or forbid chains and rewrite the example.
 - **Audit-entry granularity:** one entry per scan cycle vs per process record changes Merkle tree growth by orders of magnitude and determines whether memory/recovery budgets hold. Needs an explicit decision.
-- **SQL-to-task translation limits:** which SQL constructs map to which collection task types, and what happens to untranslatable rules (reject at load vs fall back to scheduled full enumeration with a cost warning)? Tied to the ADR-0006 rewrite.
+- **SQL-to-task translation limits:** **Resolved (2026-06-09):** rules that cannot be lowered into collection tasks plus derived DataFusion SQL are rejected at load time with a clear, actionable error — there is no silent fallback to scheduled full enumeration. Overcollection is bounded by pushdown conformance vectors (R18 AC4) and per-rule budgets. The pipeline and construct-to-task mapping are specified in the [Detection Engine (SQL-to-IPC, ADR-0006)](#detection-engine-sql-to-ipc-adr-0006) section.
 - **procmond privilege lifecycle:** **Resolved (2026-06-09):** procmond is the only elevated component and retains only the minimum platform-specific capability set required for steady-state collection (e.g., CAP_DAC_READ_SEARCH / CAP_SYS_PTRACE on Linux when enhanced access is configured; SeDebugPrivilege on Windows), dropping everything else after init; the retained set is expected to evolve as collection features are added and is logged at startup. daemoneye-agent and daemoneye-cli run as dedicated non-root users (see requirements.md R6 AC3/AC4). Remaining follow-up: author the per-platform privilege lifecycle table here against this model.
