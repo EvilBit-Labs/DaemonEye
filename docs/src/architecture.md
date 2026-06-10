@@ -6,6 +6,8 @@ DaemonEye implements a **workspace-based architecture** with multiple crates and
 
 The architecture is built on the **collector-core framework**, which provides extensible collection infrastructure for multiple monitoring components while maintaining shared operational foundation. See the [Collector-Core Framework](./architecture/collector-core-framework.md) documentation for detailed information about the underlying collection infrastructure.
 
+> The fuller, maintained architecture reference lives in [System Architecture](./architecture/system-architecture.md). This page is a high-level overview.
+
 ```mermaid
 graph TB
     subgraph "DaemonEye Three-Component Architecture"
@@ -13,21 +15,23 @@ graph TB
             PM[Process Monitor]
             HC[Hash Computer]
             AL[Audit Logger]
-            IPC1[IPC Server]
+            EB1[EventBus Client]
         end
 
         subgraph "daemoneye-agent (Detection Orchestrator)"
             DE[Detection Engine]
             AM[Alert Manager]
             RM[Rule Manager]
-            IPC2[IPC Client]
+            IPC2[IPC Server]
             NS[Network Sinks]
+            BROKER[Embedded EventBus Broker]
         end
 
         subgraph "daemoneye-cli (Operator Interface)"
             QE[Query Executor]
             HC2[Health Checker]
             DM[Data Manager]
+            IPC1[IPC Client]
         end
 
         subgraph "daemoneye-lib (Shared Core)"
@@ -38,11 +42,16 @@ graph TB
             ALT[Alerting]
             CRY[Crypto]
         end
+
+        subgraph "daemoneye-eventbus (Event Bus)"
+            TOPICS[Topic Hierarchy]
+            TRANS[Cross-Platform Transport]
+        end
     end
 
     subgraph "Data Stores"
         ES[Event Store<br/>redb]
-        AL2[Audit Ledger<br/>Certificate Transparency]
+        AL2[Audit Ledger<br/>BLAKE3 hash-chained]
     end
 
     subgraph "External Systems"
@@ -51,8 +60,11 @@ graph TB
         SYSLOG[Syslog]
     end
 
-    PM --> DE
-    HC --> DE
+    EB1 <--> BROKER
+    BROKER <--> TOPICS
+    BROKER <--> TRANS
+    BROKER --> DE
+    HC --> EB1
     AL --> AL2
     IPC1 <--> IPC2
     DE --> AM
@@ -60,11 +72,10 @@ graph TB
     NS --> SIEM
     NS --> WEBHOOK
     NS --> SYSLOG
-    QE --> DE
-    HC2 --> DE
-    DM --> DE
+    QE --> IPC1
+    HC2 --> IPC1
+    DM --> IPC1
     DE --> ES
-    AL --> AL2
 ```
 
 ## Component Responsibilities
@@ -77,8 +88,8 @@ graph TB
 
 - **Process Enumeration**: Cross-platform process data collection using sysinfo crate
 - **Executable Hashing**: SHA-256 hash computation for integrity verification
-- **Audit Logging**: Certificate Transparency-style Merkle tree with inclusion proofs
-- **IPC Communication**: Simple protobuf-based communication with daemoneye-agent
+- **Audit Logging**: BLAKE3 hash-chained audit ledger (Merkle inclusion proofs In Progress)
+- **EventBus Communication**: Publishes process events through the embedded daemoneye-eventbus broker hosted by daemoneye-agent
 
 **Security Boundaries**:
 
@@ -189,15 +200,18 @@ The system implements a pipeline processing model with clear phases and strict c
 ```mermaid
 sequenceDiagram
     participant SA as daemoneye-agent
+    participant EB as Embedded EventBus Broker
     participant PM as procmond
     participant SYS as System
 
-    SA->>PM: DetectionTask(ENUMERATE_PROCESSES)
+    SA->>EB: DetectionTask(ENUMERATE_PROCESSES)
+    EB->>PM: Route task to collector
     PM->>SYS: Enumerate processes
     SYS-->>PM: Process data
     PM->>PM: Compute hashes
     PM->>PM: Write to audit ledger
-    PM-->>SA: DetectionResult(processes)
+    PM-->>EB: DetectionResult(processes)
+    EB-->>SA: Route result to agent
 ```
 
 ### 2. **Detection Phase**
@@ -235,7 +249,7 @@ sequenceDiagram
 
 ## IPC Protocol Design
 
-**Purpose**: Secure, efficient communication between procmond and daemoneye-agent.
+**Purpose**: Secure, efficient task/result message contract exchanged between procmond and daemoneye-agent. These protobuf messages are routed through the embedded daemoneye-eventbus broker; the interprocess IPC transport primarily carries daemoneye-cli to daemoneye-agent traffic.
 
 **Protocol Specification**:
 
@@ -285,12 +299,12 @@ message DetectionResult {
 - **Features**: WAL mode, concurrent access, embedded database
 - **Schema**: process_snapshots, scans, detection_rules, alerts
 
-### **Audit Ledger (Certificate Transparency)**
+### **Audit Ledger (BLAKE3 hash-chained)**
 
-- **Purpose**: Tamper-evident audit trail using Certificate Transparency-style Merkle tree
+- **Purpose**: Tamper-evident audit trail using a BLAKE3 hash-chained ledger
 - **Access**: procmond write-only
-- **Features**: Merkle tree with BLAKE3 hashing and Ed25519 signatures
-- **Implementation**: rs-merkle for inclusion proofs and periodic checkpoints
+- **Features**: Per-entry BLAKE3 hash chaining with optional Ed25519 signatures
+- **Implementation**: rs-merkle scaffolding present; Merkle inclusion proofs are In Progress
 
 ## Security Architecture
 
@@ -356,13 +370,13 @@ message DetectionResult {
 
 ### **procmond ↔ daemoneye-agent**
 
-- **Protocol**: Custom Protobuf over Unix Sockets/Named Pipes
-- **Direction**: Bidirectional with simple task/result pattern
+- **Protocol**: Protobuf messages routed through the embedded daemoneye-eventbus broker hosted by daemoneye-agent (not direct point-to-point IPC)
+- **Direction**: Pub/sub task/result pattern over the broker's topic hierarchy
 - **Security**: Process isolation, no network access
 
 ### **daemoneye-agent ↔ daemoneye-cli**
 
-- **Protocol**: Local IPC or direct database access
+- **Protocol**: Protobuf over Unix sockets/named pipes (interprocess IPC)
 - **Direction**: daemoneye-cli queries daemoneye-agent
 - **Security**: Local communication only, input validation
 

@@ -145,7 +145,7 @@ impl ProcessCollector {
         let collector = Self {
             config,
             hash_computer: Box::new(Sha256HashComputer::new()),
-            audit_logger: Box::new(SqliteAuditLogger::new(&config.audit_path)?),
+            audit_logger: Box::new(HashChainAuditLogger::new(&config.audit_path)?),
             ipc_server: Box::new(UnixSocketServer::new(&config.ipc_path)?),
             privilege_manager,
         };
@@ -207,9 +207,14 @@ pub trait ProcessManager: Send + Sync {
 
 #### Implementation Structure
 
+Validated/derived SQL does not execute directly against `redb`; redb is a key/value store with no SQL, `prepare`, or `bind` API. Per ADR-0006, the engine runs derived standard SQL through an Apache DataFusion `SessionContext` whose catalog is populated by per-domain redb-backed `TableProvider` implementations. The custom detection dialect is lowered at rule-compile time into (a) protobuf collection tasks and (b) derived standard SQL; the runtime executor only ever sees the derived SQL. The full pipeline (validation, predicate pushdown, schema catalog, execution, and degradation semantics) is specified in [`.kiro/specs/daemoneye-core-monitoring/design.md`](https://github.com/EvilBit-Labs/daemoneye/blob/main/.kiro/specs/daemoneye-core-monitoring/design.md).
+
 ```rust,ignore
 pub struct DetectionEngine {
-    db: redb::Database,
+    // DataFusion session executing validated/derived SQL; redb per-domain
+    // tables are exposed through TableProvider implementations (ADR-0006).
+    query_ctx: datafusion::execution::context::SessionContext,
+    table_providers: Vec<Arc<dyn datafusion::datasource::TableProvider>>,
     rule_manager: RuleManager,
     alert_manager: AlertManager,
     sql_validator: SqlValidator,
@@ -219,7 +224,10 @@ pub struct DetectionEngine {
 
 impl DetectionEngine {
     pub async fn new(config: AgentConfig) -> Result<Self> {
-        let db = redb::Database::create(&config.event_store_path)?;
+        // Build a locked-down DataFusion session and register redb-backed
+        // TableProviders for each collector domain (process, etc.).
+        let (query_ctx, table_providers) =
+            build_session_context(&config.event_store_path, ALLOWED_SQL_FUNCTIONS)?;
 
         // Initialize SQL validator with security constraints
         let sql_validator = SqlValidator::new()
@@ -235,7 +243,8 @@ impl DetectionEngine {
         process_manager.start_procmond().await?;
 
         Ok(Self {
-            db,
+            query_ctx,
+            table_providers,
             rule_manager: RuleManager::new(&config.rules_path)?,
             alert_manager: AlertManager::new(&config.alerting_config)?,
             sql_validator,

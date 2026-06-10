@@ -238,17 +238,20 @@ impl SqlValidator {
 
     fn validate_projection_item(&self, item: &SelectItem) -> Result<()> {
         match item {
-            SelectItem::UnnamedExpr(expr) => self.validate_expression(expr)?,
-            SelectItem::ExprWithAlias { expr, .. } => self.validate_expression(expr)?,
-            SelectItem::Wildcard => Ok(()), // Allow SELECT *
-            _ => Err(ValidationError::UnsupportedSelectItem),
+            SelectItem::UnnamedExpr(expr)
+            | SelectItem::ExprWithAlias { expr, .. }
+            | SelectItem::ExprWithAliases { expr, .. } => self.validate_expression(expr),
+            // `Wildcard` is a tuple variant in sqlparser (carries
+            // `WildcardAdditionalOptions`), so it must be matched as
+            // `Wildcard(_)`, not a unit variant. Allow `SELECT *`.
+            SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(..) => Ok(()),
         }
     }
 
     fn validate_expression(&self, expr: &Expr) -> Result<()> {
         match expr {
             Expr::Identifier(_) => Ok(()),
-            Expr::Literal(_) => Ok(()),
+            Expr::Value(_) => Ok(()),
             Expr::BinaryOp { left, op, right } => {
                 self.validate_operator(op)?;
                 self.validate_expression(left)?;
@@ -371,24 +374,12 @@ impl DetectionEngine {
         Ok(alerts)
     }
 
-    async fn execute_sql_query(&self, sql: &str, scan_id: i64) -> Result<QueryResult> {
-        // Use read-only connection for security
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(PROCESSES_TABLE)?;
-
-        // Execute prepared statement with parameters
-        let mut stmt = self.db.prepare(sql)?;
-        stmt.bind((":scan_id", scan_id))?;
-
-        let mut rows = Vec::new();
-        while let Some(row) = stmt.next()? {
-            rows.push(ProcessRow::from_sqlite_row(row)?);
-        }
-
-        Ok(QueryResult { rows })
-    }
+    // `execute_sql_query` delegates to the DataFusion execution layer
+    // described below — it does not touch a bare `redb::Database` handle.
 }
 ```
+
+> **Note on rule execution.** `redb` is a key/value store with no SQL, `prepare`, or `bind` API, so detection rules are never run directly against a `redb::Database`. Per ADR-0006, validated/derived standard SQL is executed via an Apache DataFusion `SessionContext` whose catalog is populated by redb-backed per-collector `TableProvider` implementations. The runtime executor only ever sees the derived standard SQL produced by compile-time lowering — never the original custom dialect. The full pipeline (validation, predicate pushdown, schema catalog, execution, and degradation semantics) is specified in [`.kiro/specs/daemoneye-core-monitoring/design.md`](https://github.com/EvilBit-Labs/daemoneye/blob/main/.kiro/specs/daemoneye-core-monitoring/design.md) and [`spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md`](https://github.com/EvilBit-Labs/daemoneye/blob/main/spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md).
 
 ## Alert Generation and Management
 

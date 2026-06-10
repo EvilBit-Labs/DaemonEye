@@ -14,7 +14,7 @@ Detect and alert on suspicious system activity through continuous process monito
 
 ### **Audit-Grade Integrity**
 
-- Certificate Transparency-style Merkle tree with inclusion proofs suitable for compliance and forensics
+- Certificate Transparency-style Merkle tree with inclusion proofs (In Progress) suitable for compliance and forensics
 - BLAKE3 hashing for fast, cryptographically secure hash computation
 - Optional Ed25519 signatures for enhanced integrity verification
 - Append-only audit ledger with monotonic sequence numbers
@@ -96,10 +96,7 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 ### **Organizational Context**
 
-- **Small Teams**: Core tier for basic process monitoring
-- **Consultancies**: Business tier for client management and reporting
-- **Enterprises**: Enterprise tier for large-scale, federated deployments
-- **Government/Military**: Airgapped environments with strict compliance requirements
+This repository ships the agent-side Community tier. It is appropriate for individual operators, security researchers, homelabs, and small teams that want sovereign process visibility without a SaaS tether or central server. Larger deployments (centralized fleet management, multi-site aggregation, kernel-level collection) are served by commercial tiers that extend this foundation and are sold separately, not in this repo.
 
 ## Key Features
 
@@ -137,10 +134,11 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 #### Cross-Platform Support
 
-- **Linux**: Native process enumeration with eBPF integration (Enterprise tier)
-- **macOS**: EndpointSecurity framework integration (Enterprise tier)
-- **Windows**: ETW integration and Windows API access (Enterprise tier)
-- **Container Support**: Kubernetes DaemonSet deployment
+- **Linux**: Native process enumeration via `sysinfo` (procfs access through the sysinfo abstraction; the workspace does not depend on the `procfs` crate directly)
+- **macOS**: Native process enumeration via `sysinfo` and platform APIs
+- **Windows**: Native process enumeration via `sysinfo` and platform APIs
+
+> Kernel-level integrations (eBPF on Linux, ETW on Windows, EndpointSecurity on macOS) are provided by commercial-tier collectors, sold separately, not in this repo.
 
 #### Multi-Channel Alerting
 
@@ -152,7 +150,7 @@ DaemonEye implements a **three-component security architecture** with strict pri
 
 - Cryptographic integrity for forensic analysis
 - Certificate Transparency-style Merkle tree with rs-merkle
-- Ed25519 digital signatures and inclusion proofs
+- Ed25519 digital signatures and inclusion proofs (In Progress)
 - Millisecond-precision timestamps
 
 #### Resource-Bounded Operation
@@ -177,7 +175,6 @@ DaemonEye implements a **three-component security architecture** with strict pri
 - **Core**: redb (pure Rust embedded database) for optimal performance and security
 - **Features**: Concurrent access, ACID transactions, zero-copy deserialization
 - **Configuration**: Separate event store and audit ledger with different durability settings
-- **Business/Enterprise**: PostgreSQL for centralized data aggregation
 
 ### **CLI Framework**
 
@@ -238,10 +235,12 @@ Fleet-level aggregation and federation are commercial-tier concerns, handled out
 
 ### **Zero Trust Architecture**
 
-- Mutual TLS authentication between components
-- Certificate-based agent registration
+- Local IPC over Unix sockets / Windows named pipes with owner-only permissions and CRC32 framing validation
+- No inbound network surface; components communicate only over local IPC
 - No implicit trust relationships
 - Continuous verification and validation
+
+> Mutual TLS between host agents and upstream aggregators is a commercial-tier concern, sold separately, not in this repo.
 
 ## License Model
 
@@ -258,10 +257,12 @@ The DaemonEye components in this repository are licensed under Apache 2.0. Comme
 
 ### **Next Steps**
 
-- Read the [Architecture Overview](./architecture-overview.md) to understand the system design
-- Follow the [Getting Started Guide](./getting-started.md) for detailed setup instructions
-- Review the [Operator Guide](../user-guides/operator-guide.md) for day-to-day usage
-- Explore the [Configuration Guide](../user-guides/configuration.md) for advanced configuration
+- Read the [Architecture Overview](./architecture.md) to understand the system design
+- Follow the [Getting Started Guide](./getting-started.md) for prerequisites and orientation
+- Review the [Technical Documentation](./technical.md) for implementation specifications
+- Consult the [Security](./security.md) section for the threat model and security boundaries
+
+> **Note:** Operator and configuration guides will be published with the v1.0.0 release.
 
 ---
 

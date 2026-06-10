@@ -1262,7 +1262,7 @@ Based on analysis of DaemonEye's current design against NIST SP 800-53 requireme
 
 - **Vendor Implementation**: Support distributed processing and storage for DaemonEye. **Additional Required**: Enhanced distributed processing and formal distributed architecture documentation.
 - **Product Requirements**: Implement distributed architecture with secure communication and data consistency
-- **Implementation Notes**: Include federated security centers, distributed data storage, and secure inter-node communication
+- **Implementation Notes**: Distributed processing and multi-node aggregation are commercial-tier concerns, handled outside this repo.
 
 **SC-37 (Out-of-Band Channels)**:
 

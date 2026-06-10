@@ -76,7 +76,7 @@ graph LR
 
         PROC["procmond<br/>(collector-core + process EventSource)<br/>• Privileged<br/>• Process enum<br/>• Hash compute<br/>• Audit logging<br/>• EventBus client<br/>• Extensible architecture"]
 
-        AUDIT["Audit Ledger<br/>(Merkle Tree)<br/>collector-core managed"]
+        AUDIT["Audit Ledger<br/>(Merkle Tree)<br/>daemoneye-lib (crypto + storage)<br/>procmond exclusive writer"]
 
         STORE["Event Store<br/>(redb)<br/>daemoneye-agent managed"]
     end
@@ -115,7 +115,7 @@ sequenceDiagram
     CLI->>AGENT: SQL Detection Rule
     AGENT->>AGENT: SQL AST Parsing & Validation
     AGENT->>AGENT: Extract Collection Requirements
-    AGENT->>BROKER: Publish Collection Task (Topic: control.tasks.process)
+    AGENT->>BROKER: Publish Collection Task (Topic: control.collector.task)
 
     Note over BROKER,PROC: EventBus Message Routing
     BROKER->>CORE: Route Task to Subscribed Collectors
@@ -222,7 +222,11 @@ The collector-core framework will wrap and extend existing proven components:
 pub trait EventSource: Send + Sync {
     fn name(&self) -> &'static str;
     fn capabilities(&self) -> SourceCaps;
-    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()>;
+    async fn start(
+        &self,
+        tx: mpsc::Sender<CollectionEvent>,
+        shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()>;
     async fn stop(&self) -> anyhow::Result<()>;
 }
 
@@ -243,12 +247,15 @@ impl Collector {
     pub async fn run(self) -> anyhow::Result<()> { ... }
 }
 
+// Matches collector-core/src/event.rs — note: there is no TaskResult variant;
+// on-demand task results return via the RPC response path, not as events.
 #[derive(Debug, Clone)]
 pub enum CollectionEvent {
     Process(ProcessEvent),
-    Network(NetworkEvent),      // Future: netmond
-    Filesystem(FilesystemEvent), // Future: fsmond
+    Network(NetworkEvent),         // Future: netmond
+    Filesystem(FilesystemEvent),   // Future: fsmond
     Performance(PerformanceEvent), // Future: perfmond
+    TriggerRequest(TriggerRequest), // Analysis collector trigger requests
 }
 
 bitflags! {
@@ -321,12 +328,16 @@ impl EventSource for ProcessEventSource {
         SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE
     }
 
-    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        tx: mpsc::Sender<CollectionEvent>,
+        shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         // Subscribe to control tasks from daemoneye-agent
         let subscription = EventSubscription {
             subscriber_id: "process-monitor".to_string(),
             capabilities: self.capabilities(),
-            topic_patterns: Some(vec!["control.tasks.process.*".to_string()]),
+            topic_patterns: Some(vec!["control.collector.task.*".to_string()]),
             enable_wildcards: true,
             event_filter: None,
             correlation_filter: None,
@@ -338,7 +349,7 @@ impl EventSource for ProcessEventSource {
         let mut scan_interval =
             tokio::time::interval(Duration::from_millis(self.config.scan_interval_ms));
 
-        loop {
+        while !shutdown_signal.load(Ordering::Relaxed) {
             tokio::select! {
                 _ = scan_interval.tick() => {
                     // EXISTING: Reuse ProcessMessageHandler.enumerate_processes logic
@@ -354,24 +365,34 @@ impl EventSource for ProcessEventSource {
 
                     for process in result.processes {
                         let event = CollectionEvent::Process(ProcessEvent::from(process));
-                        // Publish to EventBus for daemoneye-agent consumption
-                        self.event_bus.publish(event.clone(), format!("scan-{}", task.task_id)).await?;
+                        // Publish to EventBus for daemoneye-agent consumption.
+                        // Publish failures must not kill collection: log and retry
+                        // (bounded backoff); the next scheduled scan re-covers state.
+                        if let Err(publish_err) = self
+                            .event_bus
+                            .publish(event.clone(), format!("scan-{}", task.task_id))
+                            .await
+                        {
+                            tracing::warn!(error = %publish_err, "event publish failed; will retry");
+                            self.retry_publish(event.clone()).await; // bounded retry, then drop+count
+                        }
                         // Also send to local collector runtime
                         tx.send(event).await?;
                     }
                 }
                 Some(task_event) = task_receiver.recv() => {
-                    // Handle on-demand tasks from daemoneye-agent
+                    // Handle on-demand tasks from daemoneye-agent.
+                    // Results are returned via the RPC response path (the task arrives
+                    // as an RPC request over control.collector.task.*), not as a
+                    // CollectionEvent — there is no TaskResult variant.
                     if let Ok(task) = serde_json::from_value::<DetectionTask>(task_event.event) {
                         let result = self.handler.handle_detection_task(&task).await?;
-
-                        // Publish results back to EventBus
-                        let result_event = CollectionEvent::TaskResult(TaskResultEvent::from(result));
-                        self.event_bus.publish(result_event, task.task_id).await?;
+                        self.rpc_responder.respond(task.task_id, result).await?;
                     }
                 }
             }
         }
+        Ok(())
     }
 }
 ```
@@ -402,7 +423,7 @@ fn main() -> anyhow::Result<()> {
 
 - `ProcessEventSource` implementing the EventSource trait
 - **EXISTING**: `ProcessMessageHandler` for process enumeration and task handling (from procmond/src/lib.rs)
-- **EXISTING**: `IpcConfig` and IPC server creation (from procmond/src/ipc/mod.rs)
+- **EXISTING**: `IpcConfig` and IPC server creation (from daemoneye-lib/src/ipc/mod.rs)
 - **EXISTING**: Database integration via `storage::DatabaseManager` (from daemoneye-lib)
 - Integration with collector-core runtime and existing IPC infrastructure
 
@@ -425,9 +446,13 @@ impl EventSource for ProcessEventSource {
         SourceCaps::PROCESS | SourceCaps::REALTIME | SourceCaps::SYSTEM_WIDE
     }
 
-    async fn start(&self, tx: mpsc::Sender<CollectionEvent>) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        tx: mpsc::Sender<CollectionEvent>,
+        shutdown_signal: Arc<AtomicBool>,
+    ) -> anyhow::Result<()> {
         // Process enumeration and event generation
-        loop {
+        while !shutdown_signal.load(Ordering::Relaxed) {
             let processes = self.collector.enumerate_processes().await?;
             for process in processes {
                 let event = CollectionEvent::Process(ProcessEvent::from(process));
@@ -435,6 +460,7 @@ impl EventSource for ProcessEventSource {
             }
             tokio::time::sleep(self.config.scan_interval).await;
         }
+        Ok(())
     }
 }
 
@@ -456,7 +482,7 @@ fn main() -> anyhow::Result<()> {
 - Drops all elevated privileges immediately after initialization
 - No network access whatsoever
 - No SQL parsing or complex query logic
-- Write-only access to audit ledger (managed by collector-core)
+- Exclusive write access to the audit ledger; the ledger itself is implemented in daemoneye-lib (crypto + storage modules) and invoked through the collector-core runtime
 - Cross-platform IPC via interprocess crate (managed by collector-core)
 - Purpose-built for stability and minimal attack surface
 - Zero unsafe code goal; any required unsafe code isolated to highly structured, tested modules
@@ -482,15 +508,19 @@ pub struct DaemoneyeAgent {
     // Embedded broker instance
     event_broker: Arc<DaemoneyeBroker>,
     // Detection engine with broker integration
-    detection_engine: DetectionEngine,
+    detection_engine: DefaultDetectionEngine,
     // Collector lifecycle manager
     collector_manager: CollectorManager,
     // Configuration manager
     config: AgentConfig,
 }
 
-pub struct DetectionEngine {
-    db: redb::Database,
+pub struct DefaultDetectionEngine {
+    // DataFusion session executing validated/derived SQL; redb per-domain
+    // tables are exposed through TableProvider implementations (ADR-0006).
+    // The engine never holds a bare redb::Database handle for rule execution.
+    query_ctx: datafusion::execution::context::SessionContext,
+    table_providers: Vec<Arc<dyn datafusion::datasource::TableProvider>>,
     rule_manager: RuleManager,
     alert_manager: AlertManager,
     sql_validator: SqlValidator,
@@ -502,9 +532,16 @@ pub struct DetectionEngine {
 pub trait DetectionEngine {
     async fn execute_rules(&self, scan_id: i64) -> Result<Vec<Alert>>;
     async fn validate_sql(&self, query: &str) -> Result<ValidationResult>;
-    async fn subscribe_to_events(&mut self) -> Result<mpsc::UnboundedReceiver<BusEvent>>;
+    // Bounded channel: capacity is configurable per topic class. Overflow policy
+    // is drop-oldest with a monotonic dropped-event counter surfaced via health
+    // metrics — see "Event Loss Semantics" in the EventBus section.
+    async fn subscribe_to_events(&mut self) -> Result<mpsc::Receiver<BusEvent>>;
 }
 ```
+
+**Detection Query Execution (ADR-0006)**:
+
+Validated/derived SQL executes via Apache DataFusion over redb per-domain tables exposed through `TableProvider` implementations. The full pipeline — validation, pushdown planning, schema catalog, execution, and degradation semantics — is specified in the [Detection Engine (SQL-to-IPC, ADR-0006)](#detection-engine-sql-to-ipc-adr-0006) section below; this subsection is intentionally just a pointer so the design has a single home for that material.
 
 **Security Boundaries**:
 
@@ -545,8 +582,8 @@ pub trait DetectionEngine {
 **Core Implementation**:
 
 ```rust,ignore
-pub struct QueryExecutor {
-    db: redb::Database,
+pub struct IpcQueryExecutor {
+    agent_client: IpcClient, // IPC connection to daemoneye-agent
     sql_validator: SqlValidator,
     output_formatter: OutputFormatter,
 }
@@ -557,6 +594,9 @@ pub trait QueryExecutor {
     async fn export_data(&self, format: ExportFormat, filter: &Filter) -> Result<ExportResult>;
 }
 ```
+
+> [!NOTE]
+> redb takes an exclusive file lock per process, so direct CLI opens of the event store would fail at runtime while daemoneye-agent holds it — IPC-mediated access through the agent is the single authoritative query path.
 
 **Security Boundaries**:
 
@@ -607,12 +647,13 @@ pub struct EventBusMessage {
     pub payload: MessagePayload,
 }
 
-// Collection events from monitoring components
+// Collection events from monitoring components (collector-core/src/event.rs)
 pub enum CollectionEvent {
     Process(ProcessEvent),
-    Network(NetworkEvent),         // Future: netmond
-    Filesystem(FilesystemEvent),   // Future: fsmond
-    Performance(PerformanceEvent), // Future: perfmond
+    Network(NetworkEvent),          // Future: netmond
+    Filesystem(FilesystemEvent),    // Future: fsmond
+    Performance(PerformanceEvent),  // Future: perfmond
+    TriggerRequest(TriggerRequest), // Analysis collector trigger requests
 }
 
 // RPC patterns for collector lifecycle management
@@ -652,13 +693,34 @@ pub struct CorrelationMetadata {
 - **Implementation**: Cross-platform IPC with embedded broker architecture
 - **Unix/Linux/macOS**: Unix domain sockets with owner-only permissions (0700 dir, 0600 socket)
 - **Windows**: Named pipes with appropriate security descriptors
-- **Message Protocol**: Bincode serialization with efficient binary encoding
+- **Message Protocol**: postcard serialization with efficient binary encoding
 - **Topic Routing**: Hierarchical topic matching with wildcard support (`+` single-level, `#` multi-level)
 - **Security**: Local-only endpoints, topic-based access control, connection limits
 - **Reliability**: At-most-once delivery semantics, circuit breaker patterns, retry logic
 - **Performance**: 10,000+ messages/second throughput, sub-millisecond latency
 - **Configuration**: Configurable timeouts, buffer sizes, and resource limits
 - **Error Handling**: Comprehensive error types with automatic reconnection and exponential backoff
+
+**Broker Security Model**:
+
+- **Authentication on by default**: Production startup paths use the auth-enabled broker constructor. Dev/test builds may disable authentication, but only via an explicit opt-out — there is no silent unauthenticated default.
+- **Auth token handling**: The broker auth token is a 32-byte cryptographically random value (sourced via `getrandom`), written to a `0400` file in the socket directory. Collector child processes receive the token by file path only — never via command-line argument (visible in process listings) or log line.
+- **Reserved static collector IDs**: `procmond`, `netmond`, `fsmond`, and `perfmond` form a reserved namespace. Dynamic `REGISTER` messages claiming a reserved ID are rejected. Static registrations are bound to a one-time token issued by the agent at spawn, so a reserved identity cannot be replayed by another process.
+- **Publisher authorization**: Only the daemoneye-agent's broker identity may publish to `control.collector.*` and `control.health.*` topics. Collectors may publish only to their own event topics. Authorization is enforced in the publish path, not just at subscription time.
+
+**Event Loss Semantics**:
+
+At-most-once delivery means every topic must declare its loss tolerance:
+
+- **Loss-tolerant**: Process metadata events (`events.process.metadata`, `events.process.batch`) — a dropped event is recovered by the next scheduled scan.
+- **Loss-intolerant**: One-shot lifecycle events that must not be lost are persisted by the producing collector (WAL/store-and-forward) before publication, then replayed until acknowledged.
+- **Gap detection**: Per-collector sequence numbers let the agent detect gaps in the event stream and trigger re-enumeration to restore a consistent view.
+
+**Broker Restart Recovery**:
+
+- Collectors buffer events in a bounded local queue while disconnected from the broker and flush the queue on reconnect.
+- Collectors re-run the `REGISTER` handshake on every reconnect; subscriptions are not assumed to survive a broker restart.
+- The agent re-issues outstanding collection tasks after startup, so in-flight work lost with the broker is regenerated rather than recovered.
 
 ### EventBus Communication Flow
 
@@ -781,12 +843,17 @@ flowchart TD
 
 ### Cascading Workflow Coordination
 
+> **Status: future-tier design (non-normative for core monitoring).** Community-tier v1.0 uses static registration of agent-spawned collectors only. Triggerable enrichment collectors (binmond, memmond, netanalymond, regmond) are illustrative future extensions, not Community-tier deliverables.
+
 **Purpose**: Enable complex multi-collector workflows where one collector's results automatically trigger cascading analysis by other specialized collectors
 
 **Trigger Expression Mechanisms**:
 
 - **Event Types**: Collectors express triggers using structured event types (e.g., `process.suspicious`, `network.anomaly`, `file.malicious`)
-- **Predicates**: JSONPath expressions on event payloads for fine-grained filtering (`$.severity >= 'high'`, `$.file_type == 'executable'`)
+- **Predicates**: JSONPath expressions on event payloads for fine-grained filtering (`$.severity_level >= 3`, `$.file_type == 'executable'`)
+
+> **Severity convention**: event payloads carry a numeric `severity_level` field (`low = 1`, `medium = 2`, `high = 3`, `critical = 4`) alongside the human-readable `severity` name. Ordering predicates MUST use `severity_level`; string comparison on severity names is forbidden — lexicographic ordering gives wrong results (e.g., `'critical' < 'high'`).
+
 - **Rule IDs**: Specific detection rule matches that trigger downstream analysis chains
 
 **Result Routing Architecture**:
@@ -819,7 +886,7 @@ flowchart TD
   "trigger": {
     "type": "event_type",
     "value": "process.suspicious",
-    "predicate": "$.severity >= 'high'"
+    "predicate": "$.severity_level >= 3"
   },
   "routing": {
     "topic": "collectors.binmond.trigger",
@@ -847,6 +914,8 @@ flowchart TD
 
 ### Dynamic Registration Protocol
 
+> **Status: future-tier design (non-normative for core monitoring).** Community-tier v1.0 uses static registration of agent-spawned collectors only. Triggerable enrichment collectors (binmond, memmond, netanalymond, regmond) are illustrative future extensions, not Community-tier deliverables.
+
 **Purpose**: Enable runtime registration and capability advertisement of monitoring collectors without system restart
 
 **Registration Handshake Protocol**:
@@ -868,7 +937,7 @@ flowchart TD
       "file.created"
     ],
     "trigger_patterns": [
-      "$.severity >= 'medium'",
+      "$.severity_level >= 2",
       "$.file_type == 'executable'"
     ],
     "resource_limits": {
@@ -925,35 +994,164 @@ flowchart TD
 4. Collector begins sending `HEARTBEAT` messages every 30 seconds
 5. Broker monitors heartbeats and deregisters on timeout (3 missed heartbeats)
 
+## Detection Engine (SQL-to-IPC, ADR-0006)
+
+> Merged 2026-06-09 from the former `.kiro/upcoming-specs/sql-to-ipc-detection-engine/` design, rewritten DataFusion-first per ADR-0006. Governing requirements: R17–R24 in [requirements.md](./requirements.md). Authoritative join-strategy and redb-layout guidance lives in [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](../../../spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md) §11.5–§11.7.
+
+### Pipeline Overview
+
+Detection rules travel a strict two-phase pipeline: Phase 1 runs once at rule load (compile) time; Phase 2 runs per collection cycle. The original SQL dialect never reaches the execution layer (R3, R20).
+
+```mermaid
+flowchart LR
+    RULE["SQL detection rule"] --> VAL["sqlparser AST validation<br/>SELECT-only, function allowlist,<br/>subquery depth ≤ 3"]
+    VAL --> PLAN["Pushdown planner<br/>(capability booleans)"]
+    PLAN --> TASKS["protobuf DetectionTasks<br/>to collectors via EventBus"]
+    PLAN --> DERIVED["Derived standard SQL"]
+    TASKS --> EVENTS["Filtered event stream<br/>into redb event store"]
+    DERIVED --> DF["DataFusion SessionContext<br/>over redb TableProviders"]
+    EVENTS --> DF
+    DF --> ALERTS["Alert generation<br/>+ completeness markers"]
+```
+
+1. **Rule load:** sqlparser parses the rule; AST validation enforces SELECT-only statements, the approved-function allowlist, and a configurable maximum subquery nesting depth (default: 3). Table references are validated against the schema catalog (R17, R19).
+2. **Pushdown planning:** eligible predicates (equality, inequality, `IN`, `LIKE`, `REGEXP`) and projections are lowered into protobuf `DetectionTask`s addressed to the owning collectors (R18).
+3. **Derivation:** the remainder of the rule is lowered to derived standard SQL that DataFusion can execute unchanged.
+4. **Execution:** each collection cycle, the derived SQL runs in a DataFusion `SessionContext` whose catalog is populated by redb-backed per-collector `TableProvider` implementations (R20).
+5. **Alerting:** matches produce alerts with deduplication and completeness markers (R20, R21).
+
+**Load-time rejection policy:** rules that cannot be lowered into collection tasks plus derived DataFusion SQL are rejected at load time with a clear, actionable error. There is no silent fallback to scheduled full enumeration. Overcollection (collectors returning broader data than the rule strictly needs due to predicate granularity) is bounded by pushdown conformance (R18 AC4) and per-rule budgets.
+
+**Relationship to existing code:** this design extends and ultimately replaces `daemoneye-lib/src/detection/sql_to_ipc.rs` (`SqlToIpcTranslator`, ~1,112 lines). The existing module — AST walking, predicate extraction, protobuf task generation — is the seed of the Phase 1 planner, not a parallel implementation; the DataFusion execution layer replaces its placeholder execution path.
+
+### Virtual Schema Model
+
+Each collector contributes logical, read-only tables to a unified namespace: `processes.*` today (procmond); `network.*` and `filesystem.*` arrive with future collectors. Logical table names map **1:1 onto physical redb event tables** — `processes.events` is both the queryable name and the redb table per the §11.7 playbook — deliberately eliminating the virtual-vs-physical naming drift present in earlier drafts.
+
+Physical layout (spec §11.7):
+
+- One base table per source per time bucket: `processes.events` keyed `(ts_ms: u64, seq: u32)` (16-byte fixed-width primary key, strictly increasing)
+- Multimap secondary indexes inside the same bucket: `processes.idx:pid` → `(ts_ms, seq)`, plus `idx:ppid`, `idx:name` (hashed), and `idx:exe_hash`
+- Values are compact versioned structs; secondaries store only the 16-byte pointer back to the base row, never row copies
+
+### Schema Catalog (R19)
+
+The agent maintains a static catalog of collector schema descriptors:
+
+- **Static startup registration:** collectors register descriptors (table definitions, column types, supported pushdown operations) at startup; dynamic hot-updates are a future extension.
+- **Authenticated registration:** the agent authenticates collector identity via socket peer credentials or the pre-shared spawn token (see the Broker Security Model above); unauthenticated registrations are rejected.
+- **Descriptor change handling:** when a collector restarts or upgrades with a changed descriptor, the agent re-validates and re-plans all enabled rules referencing affected tables. Rules that no longer validate are marked unhealthy and surfaced to operators via daemoneye-cli rule/health status — never silently dropped.
+
+### Pushdown Planner (R18)
+
+Pushdown decisions are **capability booleans, not cost estimates**: an operation is pushed down if and only if the owning collector advertises it and has passed the conformance vector for it. There is no agent-side cost model — DataFusion owns physical execution strategy for everything that stays agent-side (ADR-0006 dropped the bespoke cost-estimator and plan-cache machinery).
+
+- **Conformance gating:** collectors must pass a conformance vector per advertised pushdown operation, proving semantic equivalence with the agent's reference evaluation; unverified operations execute agent-side.
+- **Graceful fallback:** predicates a collector cannot (or is not trusted to) evaluate run in DataFusion instead — correctness is never traded for pushdown.
+- **Task lifecycle:** the agent renews active `DetectionTask`s before TTL expiry for as long as the owning rule is enabled, and re-issues the full active task set whenever a collector (re)registers.
+
+### Regex Handling (R17)
+
+`REGEXP` patterns compile at rule load time with the Rust `regex` crate, which is linear-time by construction — catastrophic backtracking is impossible, so no execution timeouts or thread-per-match watchdogs are needed. Compile-time bounds are enforced via `RegexBuilder::size_limit`/`dfa_size_limit`, and AST validation runs **before** any pattern compilation so malformed rules never trigger compilation work. Compiled patterns are cached keyed by the **full pattern string** — never a u64 hash of it, which risks a silent collision executing the wrong pattern — with LRU eviction. Observed per-pattern execution latency above a threshold (default: 10ms) flags the pattern and may disable the owning rule.
+
+```rust,ignore
+pub struct RegexCache {
+    /// Keyed by the full pattern string — never a hash (collision risk).
+    cache: LruCache<String, Arc<regex::Regex>>,
+    /// Compile-time bounds applied via RegexBuilder size_limit/dfa_size_limit.
+    limits: RegexLimits,
+    /// Observed-latency stats; breaching the flag threshold (default 10ms)
+    /// flags the pattern and may disable the owning rule.
+    latency: HashMap<String, LatencyStats>,
+}
+```
+
+### Execution and Storage (R20)
+
+**DataFusion configuration:** the `SessionContext` is locked down to mirror load-time validation — the scalar/aggregate function registry is restricted to the approved allowlist, memory is bounded via DataFusion's memory manager (per-query memory pool), and cardinality caps are configurable; aggregations require explicit time windows.
+
+**TableProvider pushdown:** each per-collector `TableProvider` implements filter and projection pushdown into redb scans — time predicates resolve to partition plus primary-key range scans, and indexed equality predicates resolve through the multimap secondary indexes (posting-list intersection per §11.7) before any row is materialized into Arrow batches.
+
+**Storage layout:** time-partitioned base tables with configurable bucket sizes, fixed-width `(ts_ms, seq)` keys, and multimap secondary indexes per the redb performance playbook (spec §11.7). Single-writer group commit and ACK-after-commit ingest semantics follow spec §11.6.
+
+**Join guidance:** the §11.5 join-strategy material (index nested-loop, bounded symmetric hash, materialized relation cache for parent/child) survives as physical-operator guidance under DataFusion — informing which indexes the TableProviders expose and how sessions are tuned — not as a hand-rolled join executor.
+
+**Correctness invariants:**
+
+- Replayed or late events deduplicate by `(task_id, seq_no)`; a configurable grace period applies after window close, and later arrivals are counted as late-discarded in metrics.
+- Cross-source correlation uses a time-stable process identity (`pid` plus `start_time`), constraining joins on recyclable keys to the process lifetime window.
+- **Evaluation model:** pushdown predicates stream-filter at collectors; full rule evaluation runs per collection cycle against the event store. Event-to-alert latency must not exceed one scan interval plus the 100ms per-rule budget.
+
+### Degradation and Reliability (R20/R21)
+
+Detection must distinguish "no match" from "could not fully evaluate":
+
+- **Completeness markers:** any alert or rule evaluation produced under degraded conditions (missing tables, capped operations, shed events) carries an explicit completeness marker visible via daemoneye-cli.
+- **Collector disconnect:** affected tables are marked unavailable; evaluation continues with remaining sources and results are marked degraded.
+- **Backpressure:** when rate limits trip, the agent throttles collection and counts shed events toward the completeness markers — load shedding is never silent.
+- **Recovery:** checksum validation triggers retransmission requests; missed events replay from last known good sequence numbers.
+
+### Future Tier (R22–R24, post-v1.0)
+
+Kept deliberately compact — interface contracts only, no implementation sketches:
+
+- **AUTO JOIN / WHEN (R22):** these dialect extensions are handled by a pre-parse rewrite stage that lowers them to standard SQL plus trigger metadata before sqlparser ever sees the statement — sqlparser's join grammar cannot be extended. Rewritten output passes the same AST validation as any rule. AUTO JOIN-triggered live collection is governed by configurable per-rule trigger budgets; budget exhaustion surfaces as degraded detection.
+- **YARA / eBPF supplemental rules (R23):** YARA rules ship only from signed rule packs, with maximum rule size and compilation timeout enforced agent-side before transmission; eBPF bytecode requires Ed25519 signature verification against operator-provisioned keys before delivery to any collector.
+- **Reactive cascade (R24):** trigger and re-evaluation chains use bounded, deduplicated, priority-ordered analysis queues with circuit breakers enforcing a maximum cascade depth (default: 5), correlation-id lineage cycle detection at runtime, and load-time rejection of statically detectable trigger cycles. v1.0 ships only the scoped TraceCommand host primitive (R24 AC1).
+
 ## Data Models
 
 ### Core Data Structures
 
-**ProcessRecord**: Represents a single process snapshot (existing implementation in daemoneye-lib/src/models/process.rs)
+**ProcessRecord**: Represents a single process snapshot. The Rust model and the protobuf wire format diverge intentionally; both are shown.
 
 ```rust,ignore
-// Existing ProcessRecord structure (from protobuf and Rust models)
+// Rust model (existing implementation in daemoneye-lib/src/models/process.rs)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRecord {
-    pub pid: u32,
-    pub ppid: Option<u32>,
+    pub pid: ProcessId,
+    pub ppid: Option<ProcessId>,
     pub name: String,
-    pub executable_path: Option<String>,
-    pub command_line: Vec<String>,
-    pub start_time: Option<i64>,
+    pub executable_path: Option<PathBuf>,
+    pub command_line: Option<String>,
+    pub start_time: Option<SystemTime>,
     pub cpu_usage: Option<f64>,
     pub memory_usage: Option<u64>,
+    pub status: ProcessStatus,
     pub executable_hash: Option<String>,
     pub hash_algorithm: Option<String>,
-    pub user_id: Option<String>,
-    pub accessible: bool,
-    pub file_exists: bool,
-    pub collection_time: i64, // Unix timestamp in milliseconds
-    // Additional fields for collector-core integration
-    pub id: Uuid,     // NEW: Unique record identifier
-    pub scan_id: i64, // NEW: Collection cycle identifier
+    pub collection_time: DateTime<Utc>,
+    pub user_id: Option<u32>,
+    pub group_id: Option<u32>,
+    pub environment_vars: HashMap<String, String>,
+    pub metadata: HashMap<String, String>,
 }
 ```
+
+```protobuf
+// Protobuf wire format (daemoneye-lib/proto) — differs from the Rust model:
+// command_line is repeated, start_time is epoch seconds / collection_time is
+// epoch millis, and collection adds accessibility flags not present on the
+// Rust struct.
+message ProcessRecord {
+  uint32 pid = 1;
+  optional uint32 ppid = 2;
+  string name = 3;
+  optional string executable_path = 4;
+  repeated string command_line = 5;
+  optional int64 start_time = 6; // Unix timestamp in seconds
+  optional double cpu_usage = 7;
+  optional uint64 memory_usage = 8;
+  optional string executable_hash = 9;
+  optional string hash_algorithm = 10;
+  optional string user_id = 11;
+  bool accessible = 12;
+  bool file_exists = 13;
+  int64 collection_time = 14; // Unix timestamp in milliseconds
+}
+```
+
+> **Planned additions**: `id: Uuid` (unique record identifier) and `scan_id: i64` (collection cycle identifier) are planned for collector-core integration but not yet present in either representation. Migration note: adding them is backward-compatible — new protobuf field numbers plus defaulted Rust fields; existing stored records backfill `scan_id` from scan metadata.
 
 **Alert**: Represents a detection result with full context (existing implementation in daemoneye-lib/src/models/alert.rs)
 
@@ -1140,6 +1338,18 @@ Security Invariants:
 4. Signed checkpoints (if enabled) anchor external trust.
 5. Inclusion verification inputs: `(root, leaf_index, total_leaves_at_checkpoint, leaf_hash, siblings[])`.
 
+Key Management:
+
+- The checkpoint-signing Ed25519 keypair is generated at first run and stored `0400`, owned by the procmond UID, under the data directory. The public key is exported for verifiers; key rotation starts a new lineage version (old lineage remains verifiable with the old public key). In-memory handling uses the `secrecy`/`zeroize` crates so the private key is never logged and is zeroed on drop.
+
+OS-Level Isolation:
+
+- The ledger file is owned by procmond's UID with `0640` permissions (`daemoneye` group). daemoneye-agent and daemoneye-cli open read-only descriptors; only procmond holds a writable handle, enforcing the write-only/read-only split at the filesystem level in addition to the application layer.
+
+Recovery and Memory Bounds:
+
+- Checkpoints persist a Merkle frontier (MMR-style peak hashes) alongside `(tree_size, root_hash)`. Recovery loads the latest checkpoint's frontier and replays only post-checkpoint entries instead of rehashing every leaf, and steady-state append memory is `O(log n)` peak hashes rather than retaining all leaf hashes in memory.
+
 Future Enhancements:
 
 - Domain separation tags for leaf vs internal nodes (e.g., `BLAKE3("SD_LEAF" || data)`).
@@ -1167,8 +1377,10 @@ pub enum CollectionError {
         source: std::io::Error,
     },
 
+    // redb-based storage error (the implemented enum in daemoneye-lib/src/collection.rs
+    // also surfaces Timeout, EnumerationError, and Io variants)
     #[error("Database write failed: {source}")]
-    DatabaseWriteFailed { source: rusqlite::Error },
+    DatabaseWriteFailed { source: redb::Error },
 
     #[error("Backpressure policy triggered: {policy}")]
     BackpressureTriggered { policy: String },
@@ -1288,7 +1500,7 @@ prop_compose! {
 - Linux (Ubuntu 20.04, 22.04)
 - macOS (latest)
 - Windows (latest)
-- Rust versions: stable, beta, MSRV (1.70+)
+- Rust versions: stable, beta, MSRV (1.95)
 
 **Quality Gates**:
 
@@ -1714,18 +1926,20 @@ daemoneye> SELECT COUNT(*) FROM processes WHERE name LIKE '%chrome%';
 Executed in 23ms
 
 daemoneye> .schema processes
-CREATE TABLE processes (
-  id INTEGER PRIMARY KEY,
-  pid INTEGER NOT NULL,
-  ppid INTEGER,
-  name TEXT NOT NULL,
-  executable_path TEXT,
-  command_line TEXT,
-  start_time TIMESTAMP,
-  hash_sha256 TEXT,
-  scan_id INTEGER,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+-- Logical (virtual) table schema exposed by the DataFusion TableProvider
+-- over the redb `processes` table. There is no SQL DDL: redb stores typed
+-- records; this is the queryable shape, not a CREATE TABLE statement.
+processes (
+  pid              UInt32       NOT NULL,
+  ppid             UInt32,
+  name             Utf8         NOT NULL,
+  executable_path  Utf8,
+  command_line     Utf8,
+  start_time       Timestamp(ms),
+  executable_hash  Utf8,        -- SHA-256 hex
+  scan_id          Int64,
+  collection_time  Timestamp(ms) NOT NULL
+)
 
 daemoneye> .help
 Available commands:
@@ -1869,7 +2083,7 @@ graph TB
     subgraph "Rust Version Matrix"
         R1["Stable (Latest)"]
         R2["Beta"]
-        R3["MSRV (1.70+)"]
+        R3["MSRV (1.95)"]
     end
 
     subgraph "Quality Gates"
@@ -1926,3 +2140,12 @@ graph TB
 **Container Testing**: Alpine and Amazon Linux are tested in containerized environments to validate deployment scenarios.
 
 This comprehensive testing strategy ensures DaemonEye works reliably across enterprise environments while maintaining security and performance standards.
+
+## Deferred / Open Questions
+
+### From 2026-06-09 design review
+
+- **Cascade chaining policy:** the orchestration rule says triggerable collectors never trigger other triggerable collectors, yet the canonical workflow chains binmond → memmond → netanalymond. Decide: permit chains with an agent-enforced max cascade depth (tracked via parent_correlation_id chain length), or forbid chains and rewrite the example.
+- **Audit-entry granularity:** one entry per scan cycle vs per process record changes Merkle tree growth by orders of magnitude and determines whether memory/recovery budgets hold. Needs an explicit decision.
+- **SQL-to-task translation limits:** **Resolved (2026-06-09):** rules that cannot be lowered into collection tasks plus derived DataFusion SQL are rejected at load time with a clear, actionable error — there is no silent fallback to scheduled full enumeration. Overcollection is bounded by pushdown conformance vectors (R18 AC4) and per-rule budgets. The pipeline and construct-to-task mapping are specified in the [Detection Engine (SQL-to-IPC, ADR-0006)](#detection-engine-sql-to-ipc-adr-0006) section.
+- **procmond privilege lifecycle:** **Resolved (2026-06-09):** procmond is the only elevated component and retains only the minimum platform-specific capability set required for steady-state collection (e.g., CAP_DAC_READ_SEARCH / CAP_SYS_PTRACE on Linux when enhanced access is configured; SeDebugPrivilege on Windows), dropping everything else after init; the retained set is expected to evolve as collection features are added and is logged at startup. daemoneye-agent and daemoneye-cli run as dedicated non-root users (see requirements.md R6 AC3/AC4). Remaining follow-up: author the per-platform privilege lifecycle table here against this model.
