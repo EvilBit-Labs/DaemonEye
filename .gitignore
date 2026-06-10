@@ -134,7 +134,7 @@ megalinter-reports/
 docs/plans
 .cursor/commands
 .github/prompts
-.kiro/specs/*
+
 .worktrees/
 **/tessl__*
 **/*.local.md
