@@ -1,5 +1,7 @@
 # Design Document
 
+> **⚠️ ADR-0006 supersession notice (2026-06-09):** This document predates ADR-0006 (Apache DataFusion over redb TableProviders replaces the hand-rolled operator pipeline — see `spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md` §9/§11). Sections describing custom operator-pipeline execution (join executors, aggregation executors, cost estimators, SHJ→INLJ switching) are retained for historical context but are **non-normative**. The join-strategy material (INLJ/SHJ/MRC) survives only as physical-execution guidance under DataFusion. A rewrite pass against ADR-0006 is pending; see Open Questions.
+
 ## Overview
 
 The SQL-to-IPC Detection Engine represents a paradigm shift in security monitoring architecture, bridging the gap between familiar SQL-based detection rules and high-performance, distributed collection systems. The engine enables security operators to write detection rules in standard SQL while automatically translating them into efficient, pushdown-optimized collection tasks.
