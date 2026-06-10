@@ -109,9 +109,7 @@ just ci-check 2>&1 | tee /tmp/ci-check.log
 
 ```bash
 set -o pipefail; just ci-check > /tmp/ci-check.log 2>&1; echo "EXIT=$?"
-grep -E "^EXIT=" /tmp/ci-check.log
-grep -iE "tests run:|FAIL|error\[|could not compile" /tmp/ci-check.log
-# EXIT now reflects just's real status; the grep surfaces the actual failure.
+# EXIT now reflects just's real status (not tee's); inspect the log as in Option 1.
 ```
 
 **The concrete failure that was being masked.** `sqlparser` 0.61 → 0.62 added a new `SelectItem` variant `ExprWithAliases` (Spark SQL `expr AS (alias1, alias2, ...)`). The exhaustive match in `daemoneye-lib/src/models/rule.rs` (`validate_select_basic`) did not cover it → `error[E0004]: non-exhaustive patterns`:

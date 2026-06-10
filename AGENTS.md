@@ -339,7 +339,7 @@ DaemonEye/
 │       └── storage.rs      # Database (redb)
 ├── collector-core/         # Collector framework
 ├── tests/                  # Integration tests
-├── docs/solutions/         # Documented solutions (YAML frontmatter, by category)
+├── docs/solutions/         # Documented solutions to past problems (bugs, best practices, workflow patterns), by category with YAML frontmatter (module, tags, problem_type) — relevant when implementing or debugging in documented areas
 └── .kiro/                  # Steering docs & specs
 ```
 
