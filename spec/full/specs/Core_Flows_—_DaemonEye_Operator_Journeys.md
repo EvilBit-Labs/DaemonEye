@@ -1,7 +1,5 @@
 # Core Flows — DaemonEye Operator Journeys
 
-# Core Flows — DaemonEye Operator Journeys
-
 Surface: `daemoneye-cli` is the single operator console for investigation and management. Service lifecycle uses `daemoneye-agent --install/--start/--status/--stop`, while operator-facing service status is also visible through `daemoneye-cli health`. All output supports human/JSON/CSV and respects `NO_COLOR`/`TERM=dumb`. Every detection-bearing result carries a completeness marker: `complete` or `degraded: <reason>`; degraded query/alert commands return a distinct non-zero exit code so automation can fail closed.
 
 Actions that can destroy state or weaken posture confirm by default: rule delete, rule disable, alert close/reopen, data cleanup/vacuum/retention purge, bundle import/apply, privacy/security-weakening config changes, and service uninstall. Scripted operation can skip confirmation with `--yes`/`--force` where appropriate.

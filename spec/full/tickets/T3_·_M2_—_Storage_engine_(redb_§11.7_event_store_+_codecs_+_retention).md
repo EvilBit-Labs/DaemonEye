@@ -16,7 +16,7 @@
 
 ## Spec references
 
-- spec:.../bfe4676f-c557-4668-ac18-6aa1f6bff7a6 (Storage, Data Model)
+- spec/full/specs/Tech_Plan\_—_DaemonEye_Core_Monitoring_(v1.0_priority_areas).md(Storage, Data Model)
 - file:.kiro/specs/daemoneye-core-monitoring/design.md §11.6–11.7; requirements R1.3, R4.4, R7.4, R20
 
 ## Key touchpoints

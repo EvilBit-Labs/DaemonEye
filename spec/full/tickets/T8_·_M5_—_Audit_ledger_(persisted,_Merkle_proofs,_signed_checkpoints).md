@@ -15,8 +15,8 @@
 
 ## Spec references
 
-- spec:.../811199cd-23dc-4ded-9932-735252ec2438 (Flow 6)
-- spec:.../bfe4676f-c557-4668-ac18-6aa1f6bff7a6 (Audit ledger DB, read path)
+- spec/full/specs/Core_Flows\_—\_DaemonEye_Operator_Journeys.md (Flow 6)
+- spec/full/specs/Tech_Plan\_—_DaemonEye_Core_Monitoring_(v1.0_priority_areas).md(Audit ledger DB, read path)
 - requirements R7.1–R7.6
 
 ## Key touchpoints

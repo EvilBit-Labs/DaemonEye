@@ -15,7 +15,7 @@
 
 ## Spec references
 
-- spec:.../811199cd-23dc-4ded-9932-735252ec2438 (Flows 2, 3, 4, 6, 7, 9)
+- spec/full/specs/Core_Flows\_—\_DaemonEye_Operator_Journeys.md (Flows 2, 3, 4, 6, 7, 9)
 - requirements R8.1–8.5, R10.2–10.3, R10.5
 
 ## Key touchpoints

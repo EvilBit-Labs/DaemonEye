@@ -16,7 +16,7 @@
 
 ## Spec references
 
-- spec:.../bfe4676f-c557-4668-ac18-6aa1f6bff7a6 (Execution/Storage, Degradation, CompletenessTracker)
+- spec/full/specs/Tech_Plan\_—_DaemonEye_Core_Monitoring_(v1.0_priority_areas).md(Execution/Storage, Degradation, CompletenessTracker)
 - design.md §11.5–11.7; requirements R3, R10, R17, R20, R21
 
 ## Key touchpoints

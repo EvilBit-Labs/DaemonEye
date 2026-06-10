@@ -10,7 +10,7 @@
 
 ## Spec references
 
-- spec:.../bfe4676f-c557-4668-ac18-6aa1f6bff7a6 (Detection — DataFusion gate)
+- spec/full/specs/Tech_Plan\_—_DaemonEye_Core_Monitoring_(v1.0_priority_areas).md(Detection — DataFusion gate)
 - requirements R3, R20; ADR-0006
 
 ## Key touchpoints

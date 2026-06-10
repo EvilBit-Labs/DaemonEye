@@ -15,7 +15,7 @@
 
 ## Spec references
 
-- spec:.../bfe4676f-c557-4668-ac18-6aa1f6bff7a6 (End-to-end data flow)
+- spec/full/specs/Tech_Plan\_—_DaemonEye_Core_Monitoring_(v1.0_priority_areas).md(End-to-end data flow)
 - requirements (all-integration)
 
 ## Key touchpoints

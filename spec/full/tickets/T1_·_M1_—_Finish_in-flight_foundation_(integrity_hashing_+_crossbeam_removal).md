@@ -14,7 +14,7 @@
 
 ## Spec references
 
-- spec:4f1ea4cc-400a-4ef3-9666-866cbb47d44b/bfe4676f-c557-4668-ac18-6aa1f6bff7a6 (Data Model: `ProcessRecord` additions)
+- spec/full/specs/Tech_Plan\_—_DaemonEye_Core_Monitoring_(v1.0_priority_areas).md (Data Model: `ProcessRecord` additions)
 - file:.kiro/specs/daemoneye-core-monitoring/requirements.md R2, R14
 
 ## Key touchpoints

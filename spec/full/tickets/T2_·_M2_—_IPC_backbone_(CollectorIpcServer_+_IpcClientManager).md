@@ -14,7 +14,7 @@
 
 ## Spec references
 
-- spec:.../bfe4676f-c557-4668-ac18-6aa1f6bff7a6 (Component Architecture: eventbus/IPC interfaces)
+- spec/full/specs/Tech_Plan\_—_DaemonEye_Core_Monitoring_(v1.0_priority_areas).md(Component Architecture: eventbus/IPC interfaces)
 - requirements R3.1–3.2, R11.1–11.2, R12.1–12.2
 
 ## Key touchpoints
