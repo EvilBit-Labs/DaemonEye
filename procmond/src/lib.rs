@@ -973,6 +973,70 @@ mod tests {
     }
 
     #[test]
+    fn convert_lifts_integrity_signals_from_metadata_to_proto() {
+        use collector_core::ProcessEvent;
+        use std::time::SystemTime;
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().join("test.db");
+        let db_manager = Arc::new(Mutex::new(
+            storage::DatabaseManager::new(&db_path).expect("db manager"),
+        ));
+        let handler = ProcessMessageHandler::new(db_manager);
+
+        let now = SystemTime::now();
+        let mut event = ProcessEvent {
+            pid: 7,
+            ppid: None,
+            name: "p".to_string(),
+            executable_path: Some("/bin/p".to_string()),
+            command_line: vec![],
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: Some("abc".to_string()),
+            hash_algorithm: Some("sha256".to_string()),
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp: now,
+            platform_metadata: None,
+        };
+        // ssdeep present, mismatch set; degraded false.
+        event.set_ssdeep_signal(Some("3:abc:def".to_string()), false);
+        event.set_on_disk_mismatch(true);
+
+        let record = handler.convert_process_event_to_record(event);
+        assert_eq!(record.ssdeep_hash, Some("3:abc:def".to_string()));
+        assert!(record.on_disk_mismatch);
+        assert!(!record.ssdeep_degraded);
+
+        // Degraded case: ssdeep failed (None) while SHA-256 succeeded.
+        let mut degraded = ProcessEvent {
+            pid: 8,
+            ppid: None,
+            name: "p".to_string(),
+            executable_path: Some("/bin/p".to_string()),
+            command_line: vec![],
+            start_time: None,
+            cpu_usage: None,
+            memory_usage: None,
+            executable_hash: Some("abc".to_string()),
+            hash_algorithm: Some("sha256".to_string()),
+            user_id: None,
+            accessible: true,
+            file_exists: true,
+            timestamp: now,
+            platform_metadata: None,
+        };
+        degraded.set_ssdeep_signal(None, true);
+        let degraded_record = handler.convert_process_event_to_record(degraded);
+        assert_eq!(degraded_record.ssdeep_hash, None);
+        assert!(degraded_record.ssdeep_degraded);
+        assert!(!degraded_record.on_disk_mismatch);
+    }
+
+    #[test]
     #[allow(deprecated)]
     fn test_convert_process_to_record_legacy() {
         use sysinfo::System;

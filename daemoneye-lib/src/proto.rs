@@ -78,6 +78,13 @@ impl From<ProtoProcessRecord> for NativeProcessRecord {
     /// This conversion maps protobuf fields back to the native `ProcessRecord`
     /// structure, handling type conversions and providing sensible defaults
     /// for fields that may not be present.
+    ///
+    /// **Integrity signals are intentionally dropped here.** The fuzzy-hash
+    /// fields (`ssdeep_hash`, `on_disk_mismatch`, `ssdeep_degraded`) exist only
+    /// on the protobuf record, not the native model — consumers that need them
+    /// (e.g. the agent integrity-alert bridge) MUST read them off the proto
+    /// record *before* this conversion. Reading them off a converted native
+    /// record would silently yield `None`/`false`.
     fn from(proto: ProtoProcessRecord) -> Self {
         Self {
             pid: ProcessId::new(proto.pid),

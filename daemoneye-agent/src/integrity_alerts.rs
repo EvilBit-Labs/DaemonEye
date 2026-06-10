@@ -68,11 +68,15 @@ impl BinaryChangeTracker {
     #[must_use]
     pub fn observe(&mut self, records: &[ProtoProcessRecord]) -> Vec<Alert> {
         let mut alerts = Vec::new();
+        let mut running_paths: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for record in records {
-            let (Some(path), Some(current)) = (
-                record.executable_path.as_deref(),
-                record.ssdeep_hash.as_deref(),
-            ) else {
+            let Some(path) = record.executable_path.as_deref() else {
+                continue;
+            };
+            // Track every running executable path so its baseline survives the
+            // eviction sweep below even when ssdeep is transiently absent.
+            running_paths.insert(path);
+            let Some(current) = record.ssdeep_hash.as_deref() else {
                 continue;
             };
             if let Some(previous) = self.last_ssdeep.get(path)
@@ -80,9 +84,9 @@ impl BinaryChangeTracker {
                 && score < self.threshold
             {
                 let description = format!(
-                    "executable of process {} (pid {}) changed: ssdeep similarity {} fell below \
-                     threshold {} versus the previously recorded value",
-                    record.name, record.pid, score, self.threshold
+                    "executable of process {} (pid {}) changed: ssdeep similarity {score} fell \
+                     below threshold {} versus the previously recorded value",
+                    record.name, record.pid, self.threshold
                 );
                 alerts.push(build_alert(
                     record,
@@ -95,6 +99,11 @@ impl BinaryChangeTracker {
             // Seed/update the baseline to the current value.
             self.last_ssdeep.insert(path.to_owned(), current.to_owned());
         }
+        // Bound memory: drop baselines for executables no longer running. The
+        // set of running executables is naturally bounded, so the map can no
+        // longer grow without limit across the agent's lifetime under churn.
+        self.last_ssdeep
+            .retain(|path, _| running_paths.contains(path.as_str()));
         alerts
     }
 }
@@ -149,7 +158,19 @@ fn build_alert(
     description: String,
 ) -> Alert {
     let native: NativeProcessRecord = record.clone().into();
-    Alert::new(severity, title, description, rule_id, native)
+    let mut alert = Alert::new(severity, title, description, rule_id, native);
+    // The AlertManager dedup key defaults to `severity:rule_id:title`, which is
+    // identical across processes for a shared integrity rule_id — distinct
+    // affected executables in one scan would collapse to a single delivered
+    // alert (silent missed detection). Discriminate by the executable identity
+    // so each affected executable produces its own alert, while repeated signals
+    // for the *same* executable across scans still dedup as intended.
+    let target = record
+        .executable_path
+        .clone()
+        .unwrap_or_else(|| format!("pid:{}", record.pid));
+    alert.deduplication_key = format!("{}:{target}", alert.deduplication_key);
+    alert
 }
 
 #[cfg(test)]
@@ -299,5 +320,64 @@ mod tests {
         let mut tracker = BinaryChangeTracker::default();
         // No ssdeep_hash -> nothing to compare, no panic, no alert.
         assert!(tracker.observe(&[record("p", 7, false, false)]).is_empty());
+    }
+
+    fn degraded_at_path(pid: u32, path: &str) -> ProtoProcessRecord {
+        ProtoProcessRecord {
+            pid,
+            name: "p".to_owned(),
+            executable_path: Some(path.to_owned()),
+            ssdeep_degraded: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn distinct_executables_get_distinct_dedup_keys() {
+        // Two different executables both degraded must not collapse to one alert
+        // under the AlertManager's severity:rule_id:title default key.
+        let alerts = detect_integrity_alerts(&[
+            degraded_at_path(1, "/bin/a"),
+            degraded_at_path(2, "/bin/b"),
+        ]);
+        assert_eq!(alerts.len(), 2);
+        assert_ne!(alerts[0].deduplication_key, alerts[1].deduplication_key);
+    }
+
+    #[test]
+    fn same_executable_shares_dedup_key() {
+        // Same executable across two processes -> same dedup key so the
+        // AlertManager collapses repeated signals (no flood), as intended.
+        let alerts = detect_integrity_alerts(&[
+            degraded_at_path(1, "/bin/same"),
+            degraded_at_path(2, "/bin/same"),
+        ]);
+        assert_eq!(alerts.len(), 2);
+        assert_eq!(alerts[0].deduplication_key, alerts[1].deduplication_key);
+    }
+
+    #[test]
+    fn tracker_evicts_exited_executables() {
+        let mut tracker = BinaryChangeTracker::default();
+        // Seed /bin/x.
+        assert!(
+            tracker
+                .observe(&[record_ssdeep("/bin/x", &ssdeep_of(1))])
+                .is_empty()
+        );
+        // A scan WITHOUT /bin/x evicts its baseline (it is no longer running).
+        assert!(
+            tracker
+                .observe(&[record_ssdeep("/bin/y", &ssdeep_of(2))])
+                .is_empty()
+        );
+        // /bin/x returns with an unrelated binary; because its baseline was
+        // evicted it re-seeds (no alert) rather than comparing against the old
+        // value. If eviction were absent, this would fire a binary-change alert.
+        assert!(
+            tracker
+                .observe(&[record_ssdeep("/bin/x", &ssdeep_of(200))])
+                .is_empty()
+        );
     }
 }
