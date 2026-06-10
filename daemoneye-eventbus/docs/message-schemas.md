@@ -1,5 +1,7 @@
 # DaemonEye EventBus Message Schemas
 
+> **Note — design reference, not current implementation.** The current EventBus wire format is **postcard over Rust structs**, not protobuf. The `eventbus.proto` / `EventBusMessage` `oneof payload` envelope below, along with the delivery-guarantee (`EXACTLY_ONCE`/`AT_LEAST_ONCE`), mTLS, and retention content, is **aspirational / not the current implementation** and is retained here for design reference. The runtime delivery model is at-most-once, in-memory, and local-only.
+
 This document describes the message schemas used by the daemoneye-eventbus for pub/sub event distribution and RPC request/response patterns for collector management.
 
 ## Overview
@@ -218,7 +220,7 @@ message VersionNegotiationResponse {
 
 ## Quality of Service (QoS)
 
-### Delivery Guarantees
+### Delivery Guarantees (planned; current model is at-most-once, in-memory)
 
 ```protobuf
 enum DeliveryGuarantee {
