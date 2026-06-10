@@ -145,7 +145,7 @@ impl ProcessCollector {
         let collector = Self {
             config,
             hash_computer: Box::new(Sha256HashComputer::new()),
-            audit_logger: Box::new(SqliteAuditLogger::new(&config.audit_path)?),
+            audit_logger: Box::new(HashChainAuditLogger::new(&config.audit_path)?),
             ipc_server: Box::new(UnixSocketServer::new(&config.ipc_path)?),
             privilege_manager,
         };
