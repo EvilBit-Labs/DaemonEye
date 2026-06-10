@@ -410,28 +410,29 @@ impl ProcessEvent {
     /// Reserved [`Self::platform_metadata`] key for the degraded-coverage flag.
     pub const META_SSDEEP_DEGRADED: &'static str = "integrity.ssdeep_degraded";
 
-    /// Record the fuzzy-hash / on-disk-mismatch integrity signals.
+    /// Take the `platform_metadata` object map (or a fresh one), preserving any
+    /// existing keys so the composable integrity setters never clobber unrelated
+    /// metadata or each other.
+    fn take_metadata_object(&mut self) -> serde_json::Map<String, serde_json::Value> {
+        match self.platform_metadata.take() {
+            Some(serde_json::Value::Object(existing)) => existing,
+            _ => serde_json::Map::new(),
+        }
+    }
+
+    /// Record the ssdeep fuzzy-hash signals (produced by procmond's hash pass).
     ///
     /// These signals ride [`Self::platform_metadata`] rather than dedicated
     /// struct fields so the widely-constructed `ProcessEvent` literal API stays
     /// stable. The *typed* wire contract is carried by the protobuf
-    /// `ProcessRecord` fields (`ssdeep_hash`, `on_disk_mismatch`,
-    /// `ssdeep_degraded`); procmond's hash pass and collectors are the only
-    /// producers and the IPC conversion is the only consumer.
+    /// `ProcessRecord` fields; the IPC conversion is the only consumer.
     ///
     /// `ssdeep_hash` is independent of the `(executable_hash, hash_algorithm)`
     /// paired invariant: it may be `None` (with `ssdeep_degraded` set) while the
-    /// SHA-256 identity hash is present.
-    pub fn set_integrity_signals(
-        &mut self,
-        ssdeep_hash: Option<String>,
-        on_disk_mismatch: bool,
-        ssdeep_degraded: bool,
-    ) {
-        let mut map = match self.platform_metadata.take() {
-            Some(serde_json::Value::Object(existing)) => existing,
-            _ => serde_json::Map::new(),
-        };
+    /// SHA-256 identity hash is present. This setter leaves the on-disk-mismatch
+    /// flag untouched (set independently by the collector).
+    pub fn set_ssdeep_signal(&mut self, ssdeep_hash: Option<String>, ssdeep_degraded: bool) {
+        let mut map = self.take_metadata_object();
         match ssdeep_hash {
             Some(hash) => {
                 map.insert(
@@ -444,12 +445,20 @@ impl ProcessEvent {
             }
         }
         map.insert(
-            Self::META_ON_DISK_MISMATCH.to_owned(),
-            serde_json::Value::Bool(on_disk_mismatch),
-        );
-        map.insert(
             Self::META_SSDEEP_DEGRADED.to_owned(),
             serde_json::Value::Bool(ssdeep_degraded),
+        );
+        self.platform_metadata = Some(serde_json::Value::Object(map));
+    }
+
+    /// Record the on-disk-vs-running mismatch flag (produced by the collector).
+    ///
+    /// Leaves the ssdeep signals untouched so producers compose independently.
+    pub fn set_on_disk_mismatch(&mut self, on_disk_mismatch: bool) {
+        let mut map = self.take_metadata_object();
+        map.insert(
+            Self::META_ON_DISK_MISMATCH.to_owned(),
+            serde_json::Value::Bool(on_disk_mismatch),
         );
         self.platform_metadata = Some(serde_json::Value::Object(map));
     }
@@ -620,11 +629,10 @@ mod tests {
     }
 
     #[test]
-    fn integrity_signals_round_trip() {
+    fn ssdeep_signal_round_trip() {
         let mut event = sample_event();
-        event.set_integrity_signals(Some("3:abc:def".to_owned()), true, false);
+        event.set_ssdeep_signal(Some("3:abc:def".to_owned()), false);
         assert_eq!(event.ssdeep_hash(), Some("3:abc:def"));
-        assert!(event.on_disk_mismatch());
         assert!(!event.ssdeep_degraded());
     }
 
@@ -633,23 +641,36 @@ mod tests {
         // ssdeep failed (None) while the SHA-256 identity hash is present:
         // the paired (executable_hash, hash_algorithm) invariant still holds.
         let mut event = sample_event();
-        event.set_integrity_signals(None, false, true);
+        event.set_ssdeep_signal(None, true);
         assert_eq!(event.ssdeep_hash(), None);
         assert!(event.ssdeep_degraded());
         assert!(event.validate_hash_tuple().is_ok());
     }
 
     #[test]
-    fn set_integrity_signals_preserves_existing_metadata() {
+    fn ssdeep_and_mismatch_setters_compose_independently() {
+        let mut event = sample_event();
+        event.set_ssdeep_signal(Some("3:x:y".to_owned()), false);
+        event.set_on_disk_mismatch(true);
+        // Setting the mismatch flag must not clobber the ssdeep signal.
+        assert_eq!(event.ssdeep_hash(), Some("3:x:y"));
+        assert!(event.on_disk_mismatch());
+        assert!(!event.ssdeep_degraded());
+    }
+
+    #[test]
+    fn setters_preserve_existing_metadata() {
         let mut event = sample_event();
         event.platform_metadata = Some(serde_json::json!({ "collector": "linux" }));
-        event.set_integrity_signals(Some("3:x:y".to_owned()), true, false);
+        event.set_ssdeep_signal(Some("3:x:y".to_owned()), false);
+        event.set_on_disk_mismatch(true);
         let meta = event.platform_metadata.as_ref().expect("metadata present");
         assert_eq!(
             meta.get("collector").and_then(serde_json::Value::as_str),
             Some("linux")
         );
         assert_eq!(event.ssdeep_hash(), Some("3:x:y"));
+        assert!(event.on_disk_mismatch());
     }
 
     #[test]

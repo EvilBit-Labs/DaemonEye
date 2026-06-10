@@ -22,6 +22,7 @@ use collector_core::ProcessEvent;
 use daemoneye_lib::integrity::{
     HashAlgorithm, HashResult, MultiAlgorithmHasher,
     auth::{self, AuthError, MAX_EXECUTABLE_FILE_SIZE},
+    fuzzy,
 };
 use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
@@ -200,6 +201,9 @@ pub struct HashPassStats {
     pub(crate) nonauthoritative: usize,
     /// Number of unique paths where hashing failed (I/O, timeout, etc.).
     pub(crate) io_failures: usize,
+    /// Number of unique paths where the SHA-256 hash succeeded but the ssdeep
+    /// fuzzy hash failed (degraded integrity coverage).
+    pub(crate) ssdeep_failures: usize,
 }
 
 impl HashPassStats {
@@ -305,8 +309,16 @@ pub async fn populate_hashes(
 
     while let Some((raw, outcome)) = hash_stream.next().await {
         match outcome {
-            HashOutcome::Hashed { hex, algorithm } => {
+            HashOutcome::Hashed {
+                hex,
+                algorithm,
+                ssdeep,
+                ssdeep_degraded,
+            } => {
                 stats.hashed = stats.hashed.saturating_add(1);
+                if ssdeep_degraded {
+                    stats.ssdeep_failures = stats.ssdeep_failures.saturating_add(1);
+                }
                 // Stamp every event sharing this path. Direct &mut on
                 // `events` — survives drop because the caller owns it.
                 if let Some(indices) = path_to_indices.get(&raw) {
@@ -314,6 +326,7 @@ pub async fn populate_hashes(
                         if let Some(event) = events.get_mut(idx) {
                             event.executable_hash = Some(hex.clone());
                             event.hash_algorithm = Some(algorithm.clone());
+                            event.set_ssdeep_signal(ssdeep.clone(), ssdeep_degraded);
                         }
                     }
                 }
@@ -339,6 +352,7 @@ pub async fn populate_hashes(
         auth_failures = stats.auth_failures,
         nonauthoritative = stats.nonauthoritative,
         io_failures = stats.io_failures,
+        ssdeep_failures = stats.ssdeep_failures,
         "hash pass completed"
     );
 
@@ -355,8 +369,15 @@ pub async fn populate_hashes(
 
 /// Outcome of a single hash attempt.
 enum HashOutcome {
-    /// Successfully hashed — contains the hex digest and algorithm name.
-    Hashed { hex: String, algorithm: String },
+    /// Successfully hashed — contains the SHA-256 hex digest and algorithm
+    /// name, plus the best-effort ssdeep fuzzy hash and a flag indicating the
+    /// fuzzy hash was attempted but failed (degraded coverage).
+    Hashed {
+        hex: String,
+        algorithm: String,
+        ssdeep: Option<String>,
+        ssdeep_degraded: bool,
+    },
     /// Authorization rejected the path.
     AuthFailed,
     /// Engine detected mid-read mutation.
@@ -399,13 +420,23 @@ async fn hash_one(exe: &KernelResolvedExe, hasher: &MultiAlgorithmHasher) -> Has
         }
     };
 
+    // Clone the authorized fd for the best-effort fuzzy pass BEFORE the file is
+    // moved into the SHA-256 engine. The clone shares the same open file
+    // description, so ssdeep sees the exact bytes SHA-256 saw — no second open
+    // by path, no new TOCTOU window.
+    let fuzzy_file = file.try_clone().ok();
+
     // Hash the authorized file descriptor. NEVER reopen by path.
     match hasher.compute_from_file(exe.as_path(), file).await {
         Ok(result) => {
             if let Some(hex) = primary_hash_hex(&result) {
+                let (ssdeep, ssdeep_degraded) =
+                    compute_ssdeep_best_effort(fuzzy_file, exe.as_path()).await;
                 HashOutcome::Hashed {
                     hex,
                     algorithm: HashAlgorithm::Sha256.wire_name().to_owned(),
+                    ssdeep,
+                    ssdeep_degraded,
                 }
             } else {
                 let available: Vec<_> = result.hashes.keys().collect();
@@ -429,6 +460,50 @@ async fn hash_one(exe: &KernelResolvedExe, hasher: &MultiAlgorithmHasher) -> Has
         Err(ref err) => {
             warn!(path = ?exe.as_path(), error = %err, "hash failed");
             HashOutcome::IoFailure
+        }
+    }
+}
+
+/// Compute the ssdeep fuzzy hash for an already-hashed executable, best-effort.
+///
+/// Runs on the blocking pool (streaming the whole file) off the async runtime.
+/// The returned `degraded` flag is `true` only when the fuzzy hash was genuinely
+/// *attempted* (the `fuzzy-hashes` feature is enabled) and failed — never when
+/// the feature is simply disabled, so a build without ssdeep does not flood
+/// degraded-coverage signals.
+///
+/// `fuzzy_file` is a clone of the authorized SHA-256 file descriptor; `None`
+/// means the descriptor could not be cloned (a rare OS resource condition),
+/// which is treated as "not attempted" rather than degraded.
+async fn compute_ssdeep_best_effort(
+    fuzzy_file: Option<std::fs::File>,
+    path: &Path,
+) -> (Option<String>, bool) {
+    let Some(mut file) = fuzzy_file else {
+        return (None, false);
+    };
+
+    let join = tokio::task::spawn_blocking(move || -> Result<String, fuzzy::FuzzyHashError> {
+        use std::io::{Seek, SeekFrom};
+        // The cloned fd shares its offset with the SHA-256 read (now at EOF);
+        // rewind before streaming the fuzzy hash.
+        file.seek(SeekFrom::Start(0))
+            .map_err(|source| fuzzy::FuzzyHashError::Io(source.to_string()))?;
+        fuzzy::compute_ssdeep_from_reader(&mut file)
+    })
+    .await;
+
+    match join {
+        Ok(Ok(digest)) => (Some(digest), false),
+        // Feature compiled out — not a degradation, just unavailable.
+        Ok(Err(fuzzy::FuzzyHashError::FeatureDisabled)) => (None, false),
+        Ok(Err(ref err)) => {
+            debug!(path = ?path, error = %err, "ssdeep fuzzy hash failed (sha256 succeeded)");
+            (None, true)
+        }
+        Err(ref join_err) => {
+            warn!(path = ?path, error = %join_err, "ssdeep fuzzy hash task failed");
+            (None, true)
         }
     }
 }
@@ -615,6 +690,34 @@ mod tests {
                     .is_some_and(|h| h.len() == 64)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn populate_hashes_stamps_ssdeep_alongside_sha256() {
+        // A few KiB so ssdeep produces a real (non-degenerate) digest.
+        let tmp = NamedTempFile::new().unwrap();
+        fs::write(tmp.path(), vec![0xAB_u8; 8192]).unwrap();
+        let path = tmp.path().to_string_lossy().into_owned();
+
+        let mut events = vec![new_event(1, &path)];
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+
+        let stats = populate_hashes(&mut events, &hasher).await;
+        assert_eq!(stats.hashed, 1);
+        // A readable file never produces a genuine ssdeep failure.
+        assert_eq!(stats.ssdeep_failures, 0);
+
+        let event = events.first().expect("one event present");
+        assert!(
+            event
+                .executable_hash
+                .as_deref()
+                .is_some_and(|h| h.len() == 64)
+        );
+        // The default procmond build enables daemoneye-lib's `fuzzy-hashes`, so
+        // a successful SHA-256 hash carries a non-degraded ssdeep digest.
+        assert!(event.ssdeep_hash().is_some(), "ssdeep should be stamped");
+        assert!(!event.ssdeep_degraded());
     }
 
     #[tokio::test]
