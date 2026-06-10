@@ -621,13 +621,14 @@ impl LinuxProcessCollector {
         // suffix so the stored path stays clean; the mismatch is recorded as
         // distinct metadata on the event below.
         let exe_path = format!("{proc_dir}/exe");
-        let (executable_path, on_disk_mismatch) = match fs::read_link(&exe_path).ok() {
-            Some(target) => {
-                let (clean, mismatch) = classify_exe_target(target.to_string_lossy().into_owned());
-                (Some(clean), mismatch)
-            }
-            None => (None, false),
-        };
+        let (executable_path, on_disk_mismatch) =
+            fs::read_link(&exe_path)
+                .ok()
+                .map_or((None, false), |target| {
+                    let (clean, mismatch) =
+                        classify_exe_target(target.to_string_lossy().into_owned());
+                    (Some(clean), mismatch)
+                });
 
         // Read comm (process name)
         let comm_path = format!("{proc_dir}/comm");
