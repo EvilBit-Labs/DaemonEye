@@ -72,7 +72,6 @@ pub mod daemoneye_event_bus;
 pub mod event;
 pub mod event_bus;
 pub mod health_monitor;
-pub mod high_performance_event_bus;
 pub mod ipc;
 pub mod load_balancer;
 pub mod monitor_collector;
@@ -112,10 +111,6 @@ pub use event_bus::{
     LocalEventBus,
 };
 pub use health_monitor::HealthMonitor;
-pub use high_performance_event_bus::{
-    BackpressureStrategy, HighPerformanceEventBus, HighPerformanceEventBusConfig,
-    HighPerformanceEventBusImpl,
-};
 pub use ipc::CollectorIpcServer;
 pub use load_balancer::{
     FailoverEvent, LoadBalancer, LoadBalancerConfig, LoadBalancingStats, LoadBalancingStrategy,

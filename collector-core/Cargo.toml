@@ -33,9 +33,6 @@ bitflags = { workspace = true }
 cap-fs-ext = { workspace = true }
 cap-std    = { workspace = true }
 
-# High-performance concurrent data structures
-crossbeam = { workspace = true }
-
 # Event bus integration
 daemoneye-eventbus = { workspace = true }
 

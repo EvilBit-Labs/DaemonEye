@@ -72,9 +72,6 @@ collector-core = { path = "collector-core" }
 # CRC checksums
 crc32c = "0.6.8"
 criterion = "0.8.2"
-
-# High-performance concurrent data structures
-crossbeam = "0.8.4"
 daemoneye-eventbus = { path = "daemoneye-eventbus" }
 daemoneye-lib = { path = "daemoneye-lib" }
 dashmap = "6.2.1"

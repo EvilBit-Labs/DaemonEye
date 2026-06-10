@@ -157,7 +157,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 | Logging      | tracing ecosystem               |
 | Config       | YAML/TOML via figment           |
 | IPC          | interprocess + protobuf         |
-| Event Bus    | crossbeam                       |
+| Event Bus    | daemoneye-eventbus + tokio      |
 | Testing      | cargo-nextest, insta, criterion |
 
 ### Dependencies
