@@ -14,7 +14,7 @@ Detect and alert on suspicious system activity through continuous process monito
 
 ### **Audit-Grade Integrity**
 
-- Certificate Transparency-style Merkle tree with inclusion proofs suitable for compliance and forensics
+- Certificate Transparency-style Merkle tree with inclusion proofs (In Progress) suitable for compliance and forensics
 - BLAKE3 hashing for fast, cryptographically secure hash computation
 - Optional Ed25519 signatures for enhanced integrity verification
 - Append-only audit ledger with monotonic sequence numbers
@@ -150,7 +150,7 @@ This repository ships the agent-side Community tier. It is appropriate for indiv
 
 - Cryptographic integrity for forensic analysis
 - Certificate Transparency-style Merkle tree with rs-merkle
-- Ed25519 digital signatures and inclusion proofs
+- Ed25519 digital signatures and inclusion proofs (In Progress)
 - Millisecond-precision timestamps
 
 #### Resource-Bounded Operation
@@ -175,7 +175,6 @@ This repository ships the agent-side Community tier. It is appropriate for indiv
 - **Core**: redb (pure Rust embedded database) for optimal performance and security
 - **Features**: Concurrent access, ACID transactions, zero-copy deserialization
 - **Configuration**: Separate event store and audit ledger with different durability settings
-- **Business/Enterprise**: PostgreSQL for centralized data aggregation
 
 ### **CLI Framework**
 
@@ -236,10 +235,12 @@ Fleet-level aggregation and federation are commercial-tier concerns, handled out
 
 ### **Zero Trust Architecture**
 
-- Mutual TLS authentication between components
-- Certificate-based agent registration
+- Local IPC over Unix sockets / Windows named pipes with owner-only permissions and CRC32 framing validation
+- No inbound network surface; components communicate only over local IPC
 - No implicit trust relationships
 - Continuous verification and validation
+
+> Mutual TLS between host agents and upstream aggregators is a commercial-tier concern, sold separately, not in this repo.
 
 ## License Model
 
