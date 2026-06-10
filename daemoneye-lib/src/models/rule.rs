@@ -523,7 +523,8 @@ impl DetectionRule {
         for projection in &select.projection {
             match projection {
                 sqlparser::ast::SelectItem::UnnamedExpr(expr)
-                | sqlparser::ast::SelectItem::ExprWithAlias { expr, .. } => {
+                | sqlparser::ast::SelectItem::ExprWithAlias { expr, .. }
+                | sqlparser::ast::SelectItem::ExprWithAliases { expr, .. } => {
                     Self::validate_expr_basic(expr)?;
                 }
                 sqlparser::ast::SelectItem::QualifiedWildcard(..)
