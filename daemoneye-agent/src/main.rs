@@ -9,6 +9,7 @@ mod broker_manager;
 mod collector_config;
 mod collector_registry;
 mod health;
+mod integrity_alerts;
 mod ipc_server;
 
 use broker_manager::BrokerManager;
@@ -333,6 +334,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     None,
                 );
 
+                // Integrity-signal alerts raised from per-process wire flags
+                // (ssdeep_degraded / on_disk_mismatch). Read from the proto
+                // records before they are converted to the native model, which
+                // does not carry these flags.
+                let mut integrity_alert_batch: Vec<daemoneye_lib::models::Alert> = Vec::new();
+
                 let processes = match broker_manager.execute_task_rpc("procmond", task).await {
                     Ok(result) => {
                         if result.success {
@@ -340,6 +347,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 process_count = result.processes.len(),
                                 "Successfully collected process data from procmond via RPC"
                             );
+                            integrity_alert_batch =
+                                integrity_alerts::detect_integrity_alerts(&result.processes);
                             // Parse process data from DetectionResult.processes
                             result
                                 .processes
@@ -362,7 +371,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Execute detection rules against collected processes
                 let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_owned());
-                let alerts = detection_engine.execute_rules(&processes);
+                let mut alerts = detection_engine.execute_rules(&processes);
+                // Fold in integrity-signal alerts so they share the dedup,
+                // rate-limit, and delivery path of detection-rule alerts.
+                alerts.extend(integrity_alert_batch);
 
                 if !alerts.is_empty() {
                     info!(count = alerts.len(), "Generated alerts");
