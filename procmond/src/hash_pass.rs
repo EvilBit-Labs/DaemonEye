@@ -248,11 +248,17 @@ pub async fn populate_hashes(
     //
     // Phase 1 also resets stale hash state on every event up front so
     // even if the caller cancels us before any hash completes, reused
-    // events never carry hashes from a prior scan.
+    // events never carry hashes from a prior scan. This includes the ssdeep
+    // signals: clearing them here keeps reuse-safety parity with the
+    // SHA-256 fields, so a reused event whose path fails auth/IO this scan
+    // cannot lift a stale ssdeep digest or degraded flag onto the wire.
+    // The on-disk-mismatch flag is deliberately left untouched — the
+    // collector sets it before this pass runs.
     let mut path_to_indices: HashMap<String, Vec<usize>> = HashMap::new();
     for (idx, event) in events.iter_mut().enumerate() {
         event.executable_hash = None;
         event.hash_algorithm = None;
+        event.set_ssdeep_signal(None, false);
         if let Some(ref raw) = event.executable_path {
             path_to_indices.entry(raw.clone()).or_default().push(idx);
         }
@@ -423,8 +429,17 @@ async fn hash_one(exe: &KernelResolvedExe, hasher: &MultiAlgorithmHasher) -> Has
     // Clone the authorized fd for the best-effort fuzzy pass BEFORE the file is
     // moved into the SHA-256 engine. The clone shares the same open file
     // description, so ssdeep sees the exact bytes SHA-256 saw — no second open
-    // by path, no new TOCTOU window.
-    let fuzzy_file = file.try_clone().ok();
+    // by path, no new TOCTOU window. A clone failure (e.g. fd exhaustion) is a
+    // resource condition, not a hash failure: log it so the dropped ssdeep
+    // coverage is observable, but keep the "not attempted" (non-degraded)
+    // semantics rather than flooding degraded-coverage alerts.
+    let fuzzy_file = match file.try_clone() {
+        Ok(clone) => Some(clone),
+        Err(ref err) => {
+            debug!(path = ?exe.as_path(), error = %err, "ssdeep fd clone failed; skipping fuzzy hash");
+            None
+        }
+    };
 
     // Hash the authorized file descriptor. NEVER reopen by path.
     match hasher.compute_from_file(exe.as_path(), file).await {
@@ -834,6 +849,8 @@ mod tests {
         // pre-existing state, not to test a particular algorithm label.
         event.executable_hash = Some("stale-digest".to_owned());
         event.hash_algorithm = Some("stale-algo".to_owned());
+        // Seed stale ssdeep signals from a prior scan too.
+        event.set_ssdeep_signal(Some("3:stale:ssdeep".to_owned()), true);
 
         let mut events = vec![event];
         let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
@@ -850,6 +867,14 @@ mod tests {
         assert!(
             first.hash_algorithm.is_none(),
             "stale hash_algorithm must be cleared"
+        );
+        assert!(
+            first.ssdeep_hash().is_none(),
+            "stale ssdeep_hash must be cleared"
+        );
+        assert!(
+            !first.ssdeep_degraded(),
+            "stale ssdeep_degraded must be reset to false"
         );
     }
 
