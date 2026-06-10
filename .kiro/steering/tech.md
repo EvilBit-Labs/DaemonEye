@@ -15,6 +15,12 @@
 - **Features**: Concurrent access, ACID transactions, zero-copy deserialization
 - **Configuration**: Separate event store and audit ledger with different durability settings
 
+### Detection SQL Execution
+
+- **Engine**: Apache DataFusion over redb-backed per-collector `TableProvider` implementations (ADR-0006)
+- **Pipeline**: rules are validated at load time (sqlparser AST, SELECT-only allowlist); only the derived SQL reaches the engine — the original dialect never executes; pushdown-eligible predicates run collector-side
+- **Status**: [Planned] — the current detection module is a placeholder; see `.kiro/specs/daemoneye-core-monitoring/` R17–R21 and Task 7
+
 ### CLI Framework
 
 - **clap v4**: Derive macros with shell completions (bash, zsh, fish, PowerShell)
@@ -31,6 +37,7 @@
 
 - **Foundation**: Cross-platform IPC with embedded broker architecture
 - **Transport**: Unix domain sockets (Linux/macOS) and named pipes (Windows)
+- **Serialization**: postcard message envelopes with correlation metadata (protobuf remains the CLI↔agent IPC codec, not the eventbus wire format)
 - **Features**: Topic-based pub/sub messaging, wildcard subscriptions, backpressure handling
 - **Performance**: 10,000+ messages/second throughput, sub-millisecond latency
 - **Scope**: Multi-process coordination (daemoneye-agent ↔ collector-core components)

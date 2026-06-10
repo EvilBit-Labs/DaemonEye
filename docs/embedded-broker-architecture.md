@@ -60,7 +60,11 @@ pub struct DaemoneyeAgent {
 
 impl DaemoneyeAgent {
     pub async fn new(config: AgentConfig) -> Result<Self> {
-        // Initialize embedded broker with agent-specific socket path
+        // Initialize embedded broker with agent-specific socket path.
+        // NOTE: the bare `/tmp/daemoneye-{instance}.sock` form shown here is
+        // illustrative only. The socket must live inside an owner-only (0700)
+        // directory rather than directly in world-readable /tmp; see the
+        // "Security model" section for the canonical permission and auth rules.
         let socket_path = config
             .broker
             .socket_path
@@ -148,7 +152,9 @@ pub struct BrokerConfig {
 impl Default for BrokerConfig {
     fn default() -> Self {
         Self {
-            socket_path: None, // Auto-generated based on instance ID
+            // Auto-generated under an owner-only (0700) per-instance directory,
+            // NOT directly in world-readable /tmp. See "Security model" below.
+            socket_path: None,
             max_connections: 64,
             message_buffer_size: 1000,
             connection_timeout_secs: 30,
@@ -202,6 +208,23 @@ sequenceDiagram
 
     Note over AGENT,COLLECTORS: System operational
 ```
+
+## Security model
+
+The embedded broker enforces the canonical broker security model from the core monitoring design. Defaults are secure; insecure configurations require an explicit opt-out rather than appearing silently.
+
+- **Authentication on by default.** Production startup paths use the auth-enabled broker constructor. Dev/test builds may disable authentication, but only via an explicit opt-out — there is no silent unauthenticated default.
+- **Auth token handling.** The broker auth token is a 32-byte cryptographically random value sourced via `getrandom`, written to a `0400` file inside the socket directory. Collector child processes receive the token **by file path only** — never via a command-line argument (which would be visible in process listings) and never written to a log line.
+- **Socket directory permissions.** The socket lives in an owner-only `0700` directory (not directly in world-readable `/tmp`), so peers cannot enumerate or connect to the socket without owner-level access.
+- **Publisher authorization.** Only the daemoneye-agent's broker identity may publish to the `control.*` control-plane topics (e.g. `control.collector.*`, `control.health.*`). Collectors may publish only to their own event topics. Authorization is enforced in the publish path, not just at subscription time.
+
+## Restart recovery
+
+Delivery is at-most-once and in-memory; the broker does not persist undelivered messages. Recovery after a broker (agent) restart is therefore reconstructive rather than replay-based:
+
+- **Collector-side bounded buffering.** While disconnected from the broker, collectors buffer events in a bounded local queue and flush that queue on reconnect; the bound prevents unbounded memory growth during an outage.
+- **REGISTER handshake on reconnect.** Collectors re-run the `REGISTER` handshake on every reconnect. Subscriptions are not assumed to survive a broker restart and are re-established as part of registration.
+- **Agent task re-issue.** The agent re-issues its outstanding collection tasks after startup, so in-flight work lost with the broker is regenerated rather than recovered from a durable store.
 
 ## Health Monitoring and Status Reporting
 

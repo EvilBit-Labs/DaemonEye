@@ -4,6 +4,8 @@
 
 DaemonEye implements a sophisticated **SQL-to-IPC Translation** pipeline that allows operators to write complex SQL detection rules while maintaining strict security boundaries and optimal performance. This document explains how the query pipeline works and the limitations of the supported SQL dialect.
 
+> **Canonical sources.** This page is an operator-facing overview. The authoritative pipeline specification lives in [`spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md`](https://github.com/EvilBit-Labs/daemoneye/blob/main/spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md) and the detection-engine (SQL-to-IPC, ADR-0006) section of [`.kiro/specs/daemoneye-core-monitoring/design.md`](https://github.com/EvilBit-Labs/daemoneye/blob/main/.kiro/specs/daemoneye-core-monitoring/design.md).
+
 ## Query Pipeline Architecture
 
 DaemonEye's query processing follows a two-phase approach:
@@ -19,11 +21,12 @@ flowchart LR
     subgraph "Phase 2: Data Collection & Analysis"
         IPC --> Procmond[procmond Collection]
         Procmond --> DB[(redb Event Store)]
-        DB --> SQLExec[SQL Rule Execution]
-        SQLExec --> Alerts[Alert Generation]
+        DB --> TP[redb TableProviders]
+        TP --> DF[DataFusion SessionContext]
+        DF --> Alerts[Alert Generation]
     end
 
-    SQL -.->|Original Rule| SQLExec
+    SQL -.->|Derived standard SQL| DF
 ```
 
 ### Phase 1: SQL-to-IPC Translation
@@ -37,7 +40,7 @@ flowchart LR
 
 1. **Process Collection**: procmond executes the protobuf tasks to collect process data
 2. **Data Storage**: Collected data is stored in the redb event store
-3. **SQL Execution**: The original SQL rule is executed against the collected data
+3. **SQL Execution**: The **derived standard SQL** (produced by Phase 1 lowering — never the original custom dialect) is executed via an Apache DataFusion `SessionContext` whose catalog is populated by redb-backed per-collector `TableProvider` implementations (ADR-0006). `redb` itself has no SQL engine; DataFusion owns physical execution while the TableProviders push filter and projection predicates down into redb scans.
 4. **Alert Generation**: Detection results trigger alert generation and delivery
 
 ## Supported SQL Dialect
@@ -168,10 +171,12 @@ WHERE cpu_usage > 50.0
 
 ## Process Data Schema
 
-The `processes` table contains comprehensive process information:
+> **Illustrative simplification.** The single flat `processes` table below is a teaching aid for the available columns, not the literal storage layout. DaemonEye actually exposes a **namespaced virtual schema** to the DataFusion session — `processes.*` today (procmond), with `network.*` and `filesystem.*` arriving alongside future collectors. Logical table names map 1:1 onto physical redb event tables (e.g. `processes.events`). The authoritative virtual-schema and redb-layout model is specified in [`spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md`](https://github.com/EvilBit-Labs/daemoneye/blob/main/spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md) and the detection-engine section of [`.kiro/specs/daemoneye-core-monitoring/design.md`](https://github.com/EvilBit-Labs/daemoneye/blob/main/.kiro/specs/daemoneye-core-monitoring/design.md).
+
+The `processes` namespace contains comprehensive process information:
 
 ```sql
--- Core process information
+-- Core process information (illustrative; see virtual-schema model above)
 CREATE TABLE processes (
     id INTEGER PRIMARY KEY,
     scan_id INTEGER NOT NULL,

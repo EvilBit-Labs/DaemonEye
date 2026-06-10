@@ -192,50 +192,35 @@ impl SafeQueryExecutor {
 
 ## Security Configuration
 
-### Authentication and Authorization
+### Local IPC
+
+DaemonEye components communicate over local IPC only — Unix domain sockets on Unix-like systems and named pipes on Windows. There is no inbound network surface and no listening TCP ports; access control is enforced by filesystem ownership and permissions on the socket path, not by network authentication.
 
 ```yaml
-security:
-  authentication:
-    enable_auth: true
-    auth_method: jwt
-    jwt_secret: ${JWT_SECRET}
-    token_expiry: 3600
-
-  authorization:
-    enable_rbac: true
-    roles:
-      - name: admin
-        permissions: [read, write, delete, configure]
-      - name: operator
-        permissions: [read, write]
-      - name: viewer
-        permissions: [read]
-
-  access_control:
-    allowed_users: []
-    allowed_groups: []
-    denied_users: [root]
-    denied_groups: [wheel]
+ipc:
+  # Unix domain socket path for procmond <-> daemoneye-agent IPC.
+  # Owner-only permissions (0600) restrict access to the service account.
+  socket_path: /run/daemoneye/agent.sock
+  socket_permissions: '0600'
+  # Protobuf frames are length-prefixed and CRC32-validated.
+  framing: crc32
 ```
 
-### Network Security
+> DaemonEye exposes no inbound network surface. It does not listen on any TCP port, and it requires no TLS, JWT, or RBAC server for component communication. Mutual TLS between host agents and upstream aggregators is a commercial-tier concern, sold separately, not in this repo.
+
+### Outbound Alert Delivery
+
+Network use is outbound-only, for delivering alerts to configured sinks.
 
 ```yaml
-security:
-  network:
-    enable_tls: true
-    cert_file: /etc/daemoneye/cert.pem
-    key_file: /etc/daemoneye/key.pem
-    ca_file: /etc/daemoneye/ca.pem
-    verify_peer: true
-    cipher_suites: [TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256]
-
-  firewall:
-    enable_firewall: true
-    allowed_ports: [8080, 9090]
-    allowed_ips: [10.0.0.0/8, 192.168.0.0/16]
-    block_unknown: true
+alerting:
+  sinks:
+    - type: stdout
+    - type: syslog
+    - type: file
+      path: /var/log/daemoneye/alerts.log
+    - type: webhook
+      url: https://siem.example.com/ingest
 ```
 
 ### Data Protection

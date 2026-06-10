@@ -31,7 +31,7 @@ DaemonEye/
 - **Purpose**: User-space detection rule execution and alert dispatching
 - **Security**: Minimal privileges, outbound-only network connections
 - **Database**: Read/write access to event store, manages procmond lifecycle
-- **Features**: SQL-based detection engine, multi-channel alerting, IPC client
+- **Features**: SQL-based detection engine (DataFusion over redb TableProviders per ADR-0006), multi-channel alerting, IPC client
 - **Communication**: Translates complex SQL rules into simple protobuf tasks for procmond
 
 ### daemoneye-cli/ (Operator Interface)
@@ -131,7 +131,7 @@ Hierarchical configuration with clear precedence:
 
 - **Event Store**: redb with concurrent access and ACID transactions
 - **Audit Ledger**: redb with write-only access for procmond
-- **Detection Queries**: Read-only database connections for rule execution
+- **Detection Queries**: Read-only redb access via DataFusion `TableProvider`s for rule execution (ADR-0006)
 - **Indexing**: Optimized for time-series queries and rule execution
 
 ### IPC Protocol
