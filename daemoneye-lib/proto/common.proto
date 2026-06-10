@@ -84,6 +84,17 @@ message ProcessRecord {
   bool file_exists = 13;
   /// Collection timestamp (Unix timestamp in milliseconds)
   int64 collection_time = 14;
+  /// ssdeep/CTPH fuzzy hash of the executable (non-cryptographic, for
+  /// binary-change detection). Independent of executable_hash: may be present
+  /// when executable_hash is present, or absent (see ssdeep_degraded) without
+  /// affecting the SHA-256 identity hash.
+  optional string ssdeep_hash = 15;
+  /// Whether the running process image differs from its on-disk executable
+  /// (the on-disk file was deleted or replaced while the process runs).
+  bool on_disk_mismatch = 16;
+  /// Whether ssdeep computation failed while the SHA-256 identity hash
+  /// succeeded for this executable (degraded integrity coverage signal).
+  bool ssdeep_degraded = 17;
 }
 
 /// Network filtering criteria (future: netmond)

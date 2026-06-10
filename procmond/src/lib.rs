@@ -527,6 +527,13 @@ impl ProcessMessageHandler {
             "ProcessEvent invariant violated: executable_hash and hash_algorithm must both be Some or both None"
         );
 
+        // Lift the integrity signals (carried in platform_metadata to keep the
+        // widely-constructed ProcessEvent struct stable) onto the typed wire
+        // contract before the event's fields are moved into the proto record.
+        let ssdeep_hash = event.ssdeep_hash().map(str::to_owned);
+        let on_disk_mismatch = event.on_disk_mismatch();
+        let ssdeep_degraded = event.ssdeep_degraded();
+
         ProtoProcessRecord {
             pid: event.pid,
             ppid: event.ppid,
@@ -542,6 +549,9 @@ impl ProcessMessageHandler {
             accessible: event.accessible,
             file_exists: event.file_exists,
             collection_time,
+            ssdeep_hash,
+            on_disk_mismatch,
+            ssdeep_degraded,
         }
     }
 
@@ -599,6 +609,7 @@ impl ProcessMessageHandler {
             accessible,
             file_exists,
             collection_time,
+            ..Default::default()
         }
     }
 }

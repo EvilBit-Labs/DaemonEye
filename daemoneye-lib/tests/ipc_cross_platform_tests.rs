@@ -111,6 +111,7 @@ async fn test_basic_cross_platform_functionality() {
                 accessible: true,
                 file_exists: true,
                 collection_time: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
             }],
             hash_result: None,
             network_events: vec![],
@@ -411,6 +412,7 @@ async fn test_cross_platform_large_messages() {
                 accessible: true,
                 file_exists: true,
                 collection_time: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
             });
         }
 

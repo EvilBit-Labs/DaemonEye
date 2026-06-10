@@ -12,7 +12,11 @@ use std::time::UNIX_EPOCH;
 #[allow(
     clippy::doc_markdown,
     clippy::missing_const_for_fn,
-    clippy::pattern_type_mismatch
+    clippy::pattern_type_mismatch,
+    // The generated ProcessRecord legitimately carries 4 independent boolean
+    // status flags (accessible, file_exists, on_disk_mismatch, ssdeep_degraded);
+    // they are a flat wire contract, not a refactorable state struct.
+    clippy::struct_excessive_bools
 )]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/_.rs"));
@@ -58,6 +62,12 @@ impl From<NativeProcessRecord> for ProtoProcessRecord {
             accessible: true, // Default to true, can be overridden by specific implementations
             file_exists: has_executable_path, // Approximate - actual file existence check would be done elsewhere
             collection_time: native.collection_time.timestamp_millis(),
+            // The native model does not carry fuzzy-hash integrity signals;
+            // those originate on the procmond ProcessEvent -> proto path. Default
+            // them here so this conversion stays lossless for the fields it owns.
+            ssdeep_hash: None,
+            on_disk_mismatch: false,
+            ssdeep_degraded: false,
         }
     }
 }

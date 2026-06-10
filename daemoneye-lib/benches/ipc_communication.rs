@@ -67,6 +67,7 @@ fn bench_ipc_serialization(c: &mut Criterion) {
                     accessible: true,
                     file_exists: true,
                     collection_time: chrono::Utc::now().timestamp_millis(),
+                    ..Default::default()
                 }],
                 hash_result: None,
                 network_events: vec![],
@@ -100,6 +101,7 @@ fn bench_ipc_serialization(c: &mut Criterion) {
                 accessible: true,
                 file_exists: true,
                 collection_time: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
             }],
             hash_result: None,
             network_events: vec![],

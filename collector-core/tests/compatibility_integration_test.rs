@@ -508,6 +508,7 @@ async fn test_daemoneye_agent_ipc_compatibility() {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as i64,
+            ..Default::default()
         }],
         hash_result: None,
         network_events: vec![], // New fields should be empty for compatibility
