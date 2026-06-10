@@ -264,15 +264,16 @@ Use `checked_*`, `saturating_*`, or explicit `wrapping_*` for security-sensitive
 
 ### Cryptographic Standards
 
-| Purpose    | Approved                             |
-| ---------- | ------------------------------------ |
-| Hashing    | BLAKE3, SHA2 (never SHA-1)           |
-| Signatures | ed25519-dalek                        |
-| AEAD       | chacha20poly1305, aes-gcm            |
-| KDF        | HKDF-SHA256, Argon2id                |
-| TLS        | rustls (TLS 1.2+ min, 1.3 preferred) |
-| Entropy    | getrandom                            |
-| Secrets    | secrecy, zeroize crates              |
+| Purpose    | Approved                                                                                                     |
+| ---------- | ------------------------------------------------------------------------------------------------------------ |
+| Hashing    | BLAKE3, SHA2 (never SHA-1)                                                                                   |
+| Hash roles | SHA-256 = executable identity (TI interop); ssdeep = binary change detection; BLAKE3 = audit ledger/forensic |
+| Signatures | ed25519-dalek                                                                                                |
+| AEAD       | chacha20poly1305, aes-gcm                                                                                    |
+| KDF        | HKDF-SHA256, Argon2id                                                                                        |
+| TLS        | rustls (TLS 1.2+ min, 1.3 preferred)                                                                         |
+| Entropy    | getrandom                                                                                                    |
+| Secrets    | secrecy, zeroize crates                                                                                      |
 
 ### Input Validation
 
@@ -583,14 +584,16 @@ When generating code:
 
 ## Source-of-Truth Map
 
-| Section             | Source                                                                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Architecture        | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                             |
-| Technology          | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                                       |
-| Product             | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                                 |
-| Core Requirements   | [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md)         |
-| Development         | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                         |
-| SQL-to-IPC Pipeline | [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](./spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md) |
+| Section                       | Source                                                                                                                                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Architecture                  | [.kiro/steering/structure.md](./.kiro/steering/structure.md)                                                                                                                              |
+| Technology                    | [.kiro/steering/tech.md](./.kiro/steering/tech.md)                                                                                                                                        |
+| Product                       | [.kiro/steering/product.md](./.kiro/steering/product.md)                                                                                                                                  |
+| Core Requirements             | [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md)                                                                          |
+| Development                   | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                                                                                          |
+| SQL-to-IPC Pipeline           | [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](./spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md)                                                                  |
+| Detection Execution (binding) | ADR-0006: Apache DataFusion over redb TableProviders (spec §9/§11). `.kiro/upcoming-specs/sql-to-ipc-detection-engine/` predates it — **non-normative**, pending merge into the core spec |
+| v1.0 Scope                    | Priority Tiers table in [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md) — R1–R10 are the v1.0 bar                        |
 
 ### Cross-References
 
