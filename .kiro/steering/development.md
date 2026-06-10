@@ -143,11 +143,12 @@ struct Args {
 }
 
 // SQL injection prevention with AST validation
-use sqlparser::dialect::SQLiteDialect;
+// (matches the actual pipeline in daemoneye-lib/src/detection/sql_to_ipc.rs)
+use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
 fn validate_query(sql: &str) -> Result<(), SecurityError> {
-    let ast = Parser::parse_sql(&SQLiteDialect {}, sql)?;
+    let ast = Parser::parse_sql(&GenericDialect {}, sql)?;
     // Only allow SELECT statements with approved functions (including AUTO JOIN)
     Ok(())
 }
@@ -164,10 +165,10 @@ fn validate_query(sql: &str) -> Result<(), SecurityError> {
 
 ```rust,ignore
 // Use approved libraries only
-use blake3::Hasher; // Fast cryptographic hashing
-use ed25519_dalek::Keypair; // Digital signatures
-use secrecy::SecretString; // Secure secret handling
-use zeroize::Zeroize; // Memory zeroing
+use blake3::Hasher; // Fast cryptographic hashing (in use)
+use ed25519_dalek::SigningKey; // Digital signatures (2.x API; not yet a workspace dependency)
+use secrecy::SecretString; // Secure secret handling (not yet a workspace dependency)
+use zeroize::Zeroize; // Memory zeroing (not yet a workspace dependency)
 ```
 
 ## Testing Strategy
@@ -200,10 +201,10 @@ NO_COLOR=1 TERM=dumb cargo test --workspace
 
 # Component-specific testing
 cargo test -p daemoneye-lib --nocapture
-cargo test -p procmond --features test-utils
+cargo test -p procmond
 
-# Property testing for edge cases
-cargo test --features proptest
+# Property tests (proptest is a dev-dependency) run as part of the normal suite
+cargo test --workspace
 ```
 
 ## Performance Guidelines
