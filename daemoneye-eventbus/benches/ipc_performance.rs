@@ -133,11 +133,13 @@ fn latency_benchmark(c: &mut Criterion) {
             .await
             .expect("Failed to create server");
 
-        // Start echo handler for standalone server use
-        server
-            .start_echo_handler()
-            .await
-            .expect("Failed to start echo handler");
+        // start_echo_handler is an infinite accept-loop; run it on a background
+        // task. Awaiting it directly (as this previously did) never returns, so
+        // the bench process hangs until the CI job timeout even when this bench
+        // is filtered out — criterion still executes this fn's setup body.
+        tokio::spawn(async move {
+            let _ = server.start_echo_handler().await;
+        });
 
         let mut client = TransportClient::connect(&socket_config)
             .await
