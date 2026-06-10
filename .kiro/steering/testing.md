@@ -109,10 +109,10 @@ mod tests {
 
 **Files to Touch:**
 
-- `daemoneye-lib/src/detection.rs` - Rule implementation
-- `daemoneye-lib/src/models.rs` - Rule data structure
-- `daemoneye-agent/src/rules/` - Rule registration
-- `tests/integration/` - Rule validation tests
+- `daemoneye-lib/src/detection/` - Rule implementation
+- `daemoneye-lib/src/models/` - Rule data structure
+- `daemoneye-agent/src/rules/` - Rule registration [Planned — location TBD; module does not exist yet]
+- `daemoneye-lib/tests/` and `daemoneye-agent/tests/` - Rule validation tests
 
 **Checklist:**
 
@@ -131,7 +131,7 @@ mod tests {
 
 - `daemoneye-cli/src/main.rs` - CLI argument definition
 - `daemoneye-lib/src/config.rs` - Configuration handling
-- `tests/integration/` - CLI behavior tests
+- `daemoneye-cli/tests/` - CLI behavior tests
 
 **Checklist:**
 
@@ -149,8 +149,8 @@ mod tests {
 **Files to Touch:**
 
 - `daemoneye-lib/src/storage.rs` - Database operations
-- `procmond/src/collector.rs` - Collection logic
-- `benches/` - Performance benchmarks
+- `procmond/src/process_collector.rs` - Collection logic
+- `daemoneye-lib/benches/` - Performance benchmarks
 
 **Checklist:**
 
