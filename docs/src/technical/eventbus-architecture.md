@@ -286,7 +286,7 @@ The broker tracks the following statistics:
 
 ### Latency
 
-- **Local IPC**: \<1ms p99 for local IPC, validated in CI on Linux and macOS by a dedicated criterion benchmark. Windows and FreeBSD are informational only (not gated in CI).
+- **Local IPC**: \<1ms p99 for local IPC. A dedicated criterion benchmark in `benches/ipc_performance.rs` measures latency, but it is not run automatically in CI due to inconsistency on shared GitHub runners. Manual runs on stable hardware typically measure p99 ≈ 20–40µs.
 - **Message Routing**: < 100μs per message
 - **Correlation Lookup**: < 10μs per filter
 
