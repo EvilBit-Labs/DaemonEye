@@ -24,7 +24,7 @@ pub struct PriorityTriggerQueue {
     /// Normal priority queue (Normal, Low)
     normal_priority: VecDeque<TriggerRequest>,
 
-    /// Maximum queue size per priority level
+    /// Maximum total queue size across both priority lanes
     max_queue_size: usize,
 
     /// Backpressure threshold (percentage of max size)
@@ -92,21 +92,27 @@ impl PriorityTriggerQueue {
             }
         }
 
+        // Enforce the capacity limit against total queue occupancy rather than
+        // hard-reserving half of `max_queue_size` per lane. This lets a single
+        // lane borrow unused capacity from the other, so a burst of high
+        // priority triggers can use the full budget instead of being rejected
+        // at the halfway point.
+        if self.len() >= self.max_queue_size {
+            self.stats.dropped_queue_full += 1;
+            let lane = match trigger.priority {
+                TriggerPriority::Critical | TriggerPriority::High => "high_priority",
+                TriggerPriority::Normal | TriggerPriority::Low => "normal_priority",
+            };
+            return Err(TriggerError::QueueFull(lane.to_owned()));
+        }
+
         // Route to appropriate queue based on priority
         match trigger.priority {
             TriggerPriority::Critical | TriggerPriority::High => {
-                if self.high_priority.len() >= self.max_queue_size / 2 {
-                    self.stats.dropped_queue_full += 1;
-                    return Err(TriggerError::QueueFull("high_priority".to_owned()));
-                }
                 self.high_priority.push_back(trigger);
                 self.stats.high_priority_depth = self.high_priority.len();
             }
             TriggerPriority::Normal | TriggerPriority::Low => {
-                if self.normal_priority.len() >= self.max_queue_size / 2 {
-                    self.stats.dropped_queue_full += 1;
-                    return Err(TriggerError::QueueFull("normal_priority".to_owned()));
-                }
                 self.normal_priority.push_back(trigger);
                 self.stats.normal_priority_depth = self.normal_priority.len();
             }
@@ -157,5 +163,87 @@ impl PriorityTriggerQueue {
     /// Returns true if the queue is empty.
     pub fn is_empty(&self) -> bool {
         self.high_priority.is_empty() && self.normal_priority.is_empty()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::event::AnalysisType;
+    use std::collections::HashMap;
+    use std::time::SystemTime;
+
+    fn make_trigger(priority: TriggerPriority) -> TriggerRequest {
+        TriggerRequest {
+            trigger_id: "trigger".to_owned(),
+            target_collector: "collector".to_owned(),
+            analysis_type: AnalysisType::BinaryHash,
+            priority,
+            target_pid: Some(1),
+            target_path: None,
+            correlation_id: "corr".to_owned(),
+            metadata: HashMap::new(),
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    #[test]
+    fn high_priority_lane_can_use_full_budget() {
+        // Disable backpressure so this exercises only the capacity limit.
+        let budget = 10;
+        let mut queue = PriorityTriggerQueue::new(budget, 1.0);
+
+        // Fill the entire budget with high-priority triggers. Before the fix,
+        // each lane was capped at budget / 2, so the 6th high-priority trigger
+        // was rejected even though the normal lane was empty.
+        for _ in 0..budget {
+            queue
+                .enqueue(make_trigger(TriggerPriority::High))
+                .expect("high-priority trigger within total budget must be accepted");
+        }
+
+        assert_eq!(queue.len(), budget);
+        assert_eq!(queue.get_statistics().dropped_queue_full, 0);
+
+        // The next trigger exceeds the total budget and must be rejected.
+        let result = queue.enqueue(make_trigger(TriggerPriority::High));
+        assert!(matches!(result, Err(TriggerError::QueueFull(_))));
+        assert_eq!(queue.get_statistics().dropped_queue_full, 1);
+    }
+
+    #[test]
+    fn budget_of_one_yields_one_usable_slot() {
+        let mut queue = PriorityTriggerQueue::new(1, 1.0);
+
+        queue
+            .enqueue(make_trigger(TriggerPriority::High))
+            .expect("a budget of 1 must provide one usable slot");
+        assert_eq!(queue.len(), 1);
+
+        let result = queue.enqueue(make_trigger(TriggerPriority::High));
+        assert!(matches!(result, Err(TriggerError::QueueFull(_))));
+    }
+
+    #[test]
+    fn lanes_share_total_budget() {
+        let budget = 4;
+        let mut queue = PriorityTriggerQueue::new(budget, 1.0);
+
+        queue.enqueue(make_trigger(TriggerPriority::High)).unwrap();
+        queue.enqueue(make_trigger(TriggerPriority::High)).unwrap();
+        queue
+            .enqueue(make_trigger(TriggerPriority::Normal))
+            .unwrap();
+        queue
+            .enqueue(make_trigger(TriggerPriority::Normal))
+            .unwrap();
+        assert_eq!(queue.len(), budget);
+
+        // Total occupancy reached; any further enqueue is rejected.
+        assert!(matches!(
+            queue.enqueue(make_trigger(TriggerPriority::Normal)),
+            Err(TriggerError::QueueFull(_))
+        ));
     }
 }
