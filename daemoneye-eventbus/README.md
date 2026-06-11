@@ -117,7 +117,7 @@ For complete topic hierarchy documentation, see [docs/topic-hierarchy.md](docs/t
 - **Message Throughput**: 10,000+ messages per second
 - **Connection Overhead**: Minimal with connection pooling
 - **Memory Usage**: Bounded with configurable limits
-- **Latency**: \<1ms p99 for local IPC, asserted in CI on Linux and macOS by a dedicated criterion bench in `benches/ipc_performance.rs`. Windows and FreeBSD results are informational only.
+- **Latency**: \<1ms p99 for local IPC. A dedicated criterion benchmark in `benches/ipc_performance.rs` measures latency but is not run automatically in CI due to inconsistency on shared GitHub runners. Manual runs on stable hardware typically measure p99 ≈ 20–40µs.
 
 ## Cross-Platform Support
 
