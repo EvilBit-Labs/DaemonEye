@@ -74,6 +74,11 @@ impl HealthProvider for CollectorHealthProvider {
             );
 
             let telemetry_metrics = telemetry_guard.get_metrics();
+            // SAFETY: metrics are reported as f64. These counters stay well
+            // below 2^53 in practice (operation/error counts over a process
+            // lifetime), so the u64 -> f64 cast is lossless for any realistic
+            // value; even past 2^53 the loss is a negligible rounding of a
+            // diagnostic gauge.
             metrics.insert(
                 "operation_count".to_owned(),
                 telemetry_metrics.operation_count as f64,
@@ -99,6 +104,9 @@ impl HealthProvider for CollectorHealthProvider {
                 "cpu_percent".to_owned(),
                 perf_metrics.cpu.current_cpu_percent,
             );
+            // SAFETY: resident memory in bytes stays far below 2^53 (8 PiB),
+            // so the u64 -> f64 cast for this diagnostic gauge is lossless in
+            // practice.
             metrics.insert(
                 "memory_bytes".to_owned(),
                 perf_metrics.memory.current_memory_bytes as f64,
@@ -116,6 +124,9 @@ impl HealthProvider for CollectorHealthProvider {
             let runtime_guard = runtime.read().await;
             debug!("got inner runtime lock");
             let stats = runtime_guard.get_runtime_stats();
+            // SAFETY: runtime counters (events/errors/source counts) stay well
+            // below 2^53 in practice, so these usize -> f64 casts are lossless
+            // for any realistic value; the metrics are diagnostic gauges.
             metrics.insert("events_processed".to_owned(), stats.events_processed as f64);
             metrics.insert("errors_total".to_owned(), stats.errors_total as f64);
             metrics.insert(
@@ -139,7 +150,12 @@ impl HealthProvider for CollectorHealthProvider {
             components,
             metrics,
             last_heartbeat: SystemTime::now(),
-            uptime_seconds: 0, // Would need to track start time
+            // Known gap: the collector/runtime start time is not currently
+            // reachable from this provider (neither `RuntimeStats` nor the
+            // provider's `Arc<RwLock<..>>` handles expose it), so uptime is
+            // reported as 0. Plumbing a start instant through to here is
+            // tracked as a follow-up rather than done inline.
+            uptime_seconds: 0,
             error_count: 0,
         })
     }
