@@ -20,6 +20,14 @@ on:
                     - system_benchmarks
                     - process_collector_benchmarks
 
+# Serialize manual runs per ref so overlapping dispatches don't contend on the
+# shared criterion baseline cache / artifact state. cancel-in-progress is false
+# (unlike ci.yml) so an in-flight measurement is allowed to finish rather than
+# being killed mid-benchmark.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: false
+
 # Restrict permissions to minimum required
 permissions:
     contents: read
