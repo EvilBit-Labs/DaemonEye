@@ -36,6 +36,7 @@
 //!         correlation_filter: None,
 //!         topic_patterns: Some(vec!["events.process.*".to_string()]),
 //!         enable_wildcards: true,
+//!         include_control: false,
 //!     };
 //!     let mut receiver = event_bus.subscribe(subscription).await?;
 //!
