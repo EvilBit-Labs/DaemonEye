@@ -109,7 +109,16 @@ impl SqlTriggerEvaluator {
         let mut compiled_conditions = Vec::new();
 
         for condition in conditions {
-            let compiled = self.compile_condition(condition.clone())?;
+            let compiled = match self.compile_condition(condition.clone()) {
+                Ok(compiled) => compiled,
+                Err(error) => {
+                    // Surface the parse failure instead of silently registering
+                    // a never-matching condition. Track the parse error so it is
+                    // observable in evaluation statistics.
+                    self.evaluation_stats.sql_parsing_errors += 1;
+                    return Err(error);
+                }
+            };
             compiled_conditions.push(compiled);
         }
 
@@ -126,16 +135,19 @@ impl SqlTriggerEvaluator {
         #[allow(clippy::wildcard_enum_match_arm)]
         let compiled_predicate = match &condition.condition_type {
             ConditionType::Custom(sql_expr) => {
-                // Parse SQL expression for custom conditions
+                // Parse SQL expression for custom conditions. A parse failure
+                // must be rejected rather than downgraded to a never-matching
+                // condition, otherwise an invalid predicate is accepted as live
+                // configuration and never surfaces an error.
                 match self.parse_sql_expression(sql_expr) {
                     Ok(expr) => Some(expr),
-                    Err(e) => {
+                    Err(error) => {
                         warn!(
                             condition_id = %condition.id,
-                            error = %e,
+                            error = %error,
                             "Failed to compile SQL expression for trigger condition"
                         );
-                        None
+                        return Err(error);
                     }
                 }
             }
@@ -391,5 +403,61 @@ impl SqlTriggerEvaluator {
 impl Default for SqlTriggerEvaluator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::event::{AnalysisType, TriggerPriority};
+
+    fn custom_condition(id: &str, sql_expr: &str) -> TriggerCondition {
+        TriggerCondition {
+            id: id.to_owned(),
+            description: "custom predicate".to_owned(),
+            analysis_type: AnalysisType::BinaryHash,
+            priority: TriggerPriority::High,
+            target_collector: "collector".to_owned(),
+            condition_type: ConditionType::Custom(sql_expr.to_owned()),
+        }
+    }
+
+    #[test]
+    fn register_rejects_malformed_custom_predicate() {
+        let mut evaluator = SqlTriggerEvaluator::new();
+
+        // `pid >` passes the lightweight pre-check (no SELECT/FROM/`.`) but is
+        // an incomplete predicate the SQL parser rejects.
+        let result = evaluator.register_collector_conditions(
+            "collector-1".to_owned(),
+            vec![custom_condition("bad", "pid >")],
+        );
+
+        assert!(
+            matches!(result, Err(TriggerError::SqlParsingError(_))),
+            "malformed custom predicate must be rejected, got {result:?}"
+        );
+        // The never-matching condition must not have been registered.
+        assert!(evaluator.get_condition_stats("collector-1").is_empty());
+        // The parse error must be observable in the statistics.
+        assert_eq!(evaluator.get_evaluation_stats().sql_parsing_errors, 1);
+    }
+
+    #[test]
+    fn register_accepts_valid_custom_predicate() {
+        let mut evaluator = SqlTriggerEvaluator::new();
+
+        let result = evaluator.register_collector_conditions(
+            "collector-1".to_owned(),
+            vec![custom_condition("good", "pid > 1000")],
+        );
+
+        assert!(
+            result.is_ok(),
+            "valid predicate must compile, got {result:?}"
+        );
+        assert_eq!(evaluator.get_condition_stats("collector-1").len(), 1);
+        assert_eq!(evaluator.get_evaluation_stats().sql_parsing_errors, 0);
     }
 }
