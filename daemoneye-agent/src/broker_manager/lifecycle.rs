@@ -5,6 +5,7 @@ use super::health::BrokerHealth;
 use crate::health;
 use anyhow::{Context, Result};
 use daemoneye_eventbus::ConfigManager;
+use daemoneye_eventbus::rpc::CollectorRpcClient;
 use daemoneye_eventbus::{
     DaemoneyeBroker, DaemoneyeEventBus, EventBus, EventBusStatistics,
     process_manager::CollectorProcessManager,
@@ -116,17 +117,18 @@ impl BrokerManager {
             info!("All collector processes shut down successfully");
         }
 
-        // Clean up RPC clients
-        {
-            let mut clients = self.rpc_clients.write().await;
-            for (collector_id, client) in clients.drain() {
-                if let Err(e) = client.shutdown().await {
-                    warn!(
-                        collector_id = %collector_id,
-                        error = %e,
-                        "Failed to shutdown RPC client"
-                    );
-                }
+        // Clean up RPC clients. Drain the map into a local Vec under the lock,
+        // then release the lock before awaiting each client shutdown so the
+        // write guard is never held across an `.await`.
+        let clients_to_shutdown: Vec<(String, Arc<CollectorRpcClient>)> =
+            self.rpc_clients.write().await.drain().collect();
+        for (collector_id, client) in clients_to_shutdown {
+            if let Err(e) = client.shutdown().await {
+                warn!(
+                    collector_id = %collector_id,
+                    error = %e,
+                    "Failed to shutdown RPC client"
+                );
             }
         }
 
@@ -140,22 +142,27 @@ impl BrokerManager {
             }
         }
 
-        // Shutdown the event bus first
+        // Shutdown the event bus first. Take it out from under the lock, then
+        // release the guard before awaiting shutdown.
+        let event_bus = self.event_bus.lock().await.take();
+        if let Some(mut bus) = event_bus
+            && let Err(e) = bus.shutdown().await
         {
-            let mut event_bus_guard = self.event_bus.lock().await;
-            if let Some(mut event_bus) = event_bus_guard.take()
-                && let Err(e) = event_bus.shutdown().await
-            {
-                error!(error = %e, "Failed to shutdown EventBus client");
-            }
+            error!(error = %e, "Failed to shutdown EventBus client");
         }
 
-        // Shutdown the broker with timeout
+        // Shutdown the broker with timeout. Clone the broker Arc out from under
+        // the read guard, then release the guard before awaiting shutdown. The
+        // cloned Arc keeps the broker alive for the duration of the call; the
+        // shared `broker` slot is cleared explicitly below.
+        let broker = {
+            let broker_guard = self.broker.read().await;
+            broker_guard.as_ref().map(Arc::clone)
+        };
         let shutdown_timeout = Duration::from_secs(self.config.shutdown_timeout_seconds);
         let shutdown_result = tokio::time::timeout(shutdown_timeout, async {
-            let broker_guard = self.broker.read().await;
-            if let Some(broker) = broker_guard.as_ref() {
-                broker.shutdown().await
+            if let Some(active_broker) = broker {
+                active_broker.shutdown().await
             } else {
                 Ok(())
             }
@@ -237,72 +244,77 @@ impl BrokerManager {
         Arc::clone(&self.config_manager)
     }
 
-    /// Perform a health check on the broker
+    /// Perform a health check on the broker.
+    ///
+    /// A cached `Unhealthy` status is re-probed rather than returned verbatim:
+    /// treating it as terminal would make a transient failure permanent, blocking
+    /// recovery to `Healthy` until the agent restarts. `Starting`, `ShuttingDown`,
+    /// and `Stopped` are lifecycle states that only the lifecycle transitions own,
+    /// so they are returned as-is.
     pub async fn health_check(&self) -> BrokerHealth {
         let current_health = self.health_status().await;
 
         match current_health {
-            BrokerHealth::Healthy => {
-                // Verify broker is actually responsive
-                if let Some(stats) = self.statistics().await {
-                    debug!(
-                        messages_published = stats.messages_published,
-                        active_subscribers = stats.active_subscribers,
-                        uptime_seconds = stats.uptime_seconds,
-                        "Broker health check passed"
-                    );
-                    // Aggregate collector health across all managed collectors
-                    let collector_ids = self.process_manager.list_collector_ids().await;
-                    let mut any_unhealthy = false;
-                    let mut any_degraded = false;
-                    for id in collector_ids {
-                        match self.process_manager.check_collector_health(&id).await {
-                            Ok(daemoneye_eventbus::process_manager::HealthStatus::Unhealthy) => {
-                                any_unhealthy = true;
-                                break;
-                            }
-                            Ok(daemoneye_eventbus::process_manager::HealthStatus::Degraded) => {
-                                any_degraded = true;
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                warn!(collector_id = %id, error = %e, "Failed to check collector health");
-                                any_degraded = true;
-                            }
-                        }
-                    }
+            BrokerHealth::Healthy | BrokerHealth::Unhealthy(_) => {
+                let probed = self.probe_health().await;
+                // Persist the probe result so cached state tracks reality and a
+                // recovered broker is observable via `health_status()` (which
+                // `wait_for_healthy` reads).
+                *self.health_status.write().await = probed.clone();
+                probed
+            }
+            BrokerHealth::Starting | BrokerHealth::ShuttingDown | BrokerHealth::Stopped => {
+                current_health
+            }
+        }
+    }
 
-                    if any_unhealthy {
-                        let unhealthy_status = BrokerHealth::Unhealthy(
-                            "One or more collectors are unhealthy".to_owned(),
-                        );
-                        let mut health = self.health_status.write().await;
-                        *health = unhealthy_status.clone();
-                        unhealthy_status
-                    } else if any_degraded {
-                        // Represent degraded collector state as Unhealthy with reason
-                        let degraded_status = BrokerHealth::Unhealthy(
-                            "One or more collectors are degraded".to_owned(),
-                        );
-                        let mut health = self.health_status.write().await;
-                        *health = degraded_status.clone();
-                        degraded_status
-                    } else {
-                        BrokerHealth::Healthy
-                    }
-                } else {
-                    warn!("Broker health check failed - unable to get statistics");
-                    let unhealthy_status =
-                        BrokerHealth::Unhealthy("Unable to get statistics".to_owned());
-                    let mut health = self.health_status.write().await;
-                    *health = unhealthy_status.clone();
-                    unhealthy_status
+    /// Actively probe broker and collector health, returning the derived status.
+    ///
+    /// Returns `Healthy` only when broker statistics are available and no managed
+    /// collector reports unhealthy/degraded; otherwise returns `Unhealthy` with a
+    /// reason. This performs no caching — callers persist the result.
+    async fn probe_health(&self) -> BrokerHealth {
+        let Some(stats) = self.statistics().await else {
+            warn!("Broker health check failed - unable to get statistics");
+            return BrokerHealth::Unhealthy("Unable to get statistics".to_owned());
+        };
+
+        debug!(
+            messages_published = stats.messages_published,
+            active_subscribers = stats.active_subscribers,
+            uptime_seconds = stats.uptime_seconds,
+            "Broker health check passed"
+        );
+
+        // Aggregate collector health across all managed collectors.
+        let collector_ids = self.process_manager.list_collector_ids().await;
+        let mut any_unhealthy = false;
+        let mut any_degraded = false;
+        for id in collector_ids {
+            match self.process_manager.check_collector_health(&id).await {
+                Ok(daemoneye_eventbus::process_manager::HealthStatus::Unhealthy) => {
+                    any_unhealthy = true;
+                    break;
+                }
+                Ok(daemoneye_eventbus::process_manager::HealthStatus::Degraded) => {
+                    any_degraded = true;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!(collector_id = %id, error = %e, "Failed to check collector health");
+                    any_degraded = true;
                 }
             }
-            BrokerHealth::Starting
-            | BrokerHealth::ShuttingDown
-            | BrokerHealth::Unhealthy(_)
-            | BrokerHealth::Stopped => current_health,
+        }
+
+        if any_unhealthy {
+            BrokerHealth::Unhealthy("One or more collectors are unhealthy".to_owned())
+        } else if any_degraded {
+            // Represent degraded collector state as Unhealthy with reason.
+            BrokerHealth::Unhealthy("One or more collectors are degraded".to_owned())
+        } else {
+            BrokerHealth::Healthy
         }
     }
 

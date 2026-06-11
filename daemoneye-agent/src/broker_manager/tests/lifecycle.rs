@@ -102,3 +102,66 @@ async fn test_broker_manager_wait_for_healthy_timeout() {
     let result = manager.wait_for_healthy(Duration::from_millis(100)).await;
     assert!(result.is_err());
 }
+
+/// Start a `BrokerManager` backed by a real broker on a tempdir socket.
+///
+/// Returns the started manager and the `TempDir` guard (which must be kept alive
+/// for the lifetime of the manager so the socket/config paths remain valid).
+async fn started_manager() -> (BrokerManager, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let socket_path = dir.path().join("broker.sock");
+    let config = BrokerConfig {
+        socket_path: socket_path.to_string_lossy().into_owned(),
+        config_directory: dir.path().to_path_buf(),
+        ..Default::default()
+    };
+    let manager = BrokerManager::new(config);
+    manager.start().await.expect("broker starts");
+    (manager, dir)
+}
+
+#[tokio::test]
+async fn test_create_rpc_client_is_deduplicated() {
+    let (manager, _dir) = started_manager().await;
+
+    // Two creations for the same collector_id must converge on a single shared
+    // client; the second must not overwrite (and leak) the first.
+    let first = manager
+        .create_rpc_client("collector-x")
+        .await
+        .expect("first client created");
+    let second = manager
+        .create_rpc_client("collector-x")
+        .await
+        .expect("second client reuses existing");
+
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "concurrent creations must return the same client"
+    );
+    assert_eq!(
+        manager.list_registered_collector_ids().await.len(),
+        1,
+        "only one client should be stored for the collector"
+    );
+
+    manager.shutdown().await.expect("broker shuts down");
+}
+
+#[tokio::test]
+async fn test_health_check_recovers_from_unhealthy() {
+    let (manager, _dir) = started_manager().await;
+
+    // A live broker with no collectors should report healthy.
+    assert_eq!(manager.health_check().await, BrokerHealth::Healthy);
+
+    // Simulate a transient failure that cached an Unhealthy status.
+    *manager.health_status.write().await = BrokerHealth::Unhealthy("transient failure".to_owned());
+
+    // The next health check must re-probe and recover to Healthy rather than
+    // staying stuck on the cached Unhealthy state forever.
+    assert_eq!(manager.health_check().await, BrokerHealth::Healthy);
+    assert_eq!(manager.health_status().await, BrokerHealth::Healthy);
+
+    manager.shutdown().await.expect("broker shuts down");
+}

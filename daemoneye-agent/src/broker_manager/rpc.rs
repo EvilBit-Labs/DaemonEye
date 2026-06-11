@@ -49,19 +49,34 @@ impl BrokerManager {
                 .context("Failed to create RPC client")?,
         );
 
-        // Store the client
-        self.rpc_clients
-            .write()
-            .await
-            .insert(collector_id.to_owned(), Arc::clone(&client));
+        // Store the client using double-checked locking. Two tasks racing on the
+        // same collector_id can both reach here with a freshly built client; a
+        // naive `insert` would overwrite (and leak the live subscription of) the
+        // first. The `entry` API keeps whichever client was inserted first and
+        // returns it, so concurrent creators converge on a single shared client.
+        let stored = {
+            let mut clients = self.rpc_clients.write().await;
+            Arc::clone(
+                clients
+                    .entry(collector_id.to_owned())
+                    .or_insert_with(|| Arc::clone(&client)),
+            )
+        };
 
-        info!(
-            collector_id = %collector_id,
-            target_topic = %target_topic,
-            "Created RPC client for collector"
-        );
+        if Arc::ptr_eq(&stored, &client) {
+            info!(
+                collector_id = %collector_id,
+                target_topic = %target_topic,
+                "Created RPC client for collector"
+            );
+        } else {
+            info!(
+                collector_id = %collector_id,
+                "RPC client already created by a concurrent task; reusing it"
+            );
+        }
 
-        Ok(client)
+        Ok(stored)
     }
 
     /// Start a collector via RPC
@@ -215,12 +230,14 @@ impl BrokerManager {
 
     /// Get or create an RPC client for a collector
     pub async fn get_rpc_client(&self, collector_id: &str) -> Result<Arc<CollectorRpcClient>> {
-        // Check if client already exists
+        // Fast path: return an already-created client without taking the write lock.
         if let Some(client) = self.rpc_clients.read().await.get(collector_id) {
             return Ok(Arc::clone(client));
         }
 
-        // Create new client
+        // Slow path: create_rpc_client re-checks the map under the write lock
+        // (double-checked locking), so two tasks that both miss the read above
+        // converge on a single shared client rather than leaking a duplicate.
         self.create_rpc_client(collector_id).await
     }
 
