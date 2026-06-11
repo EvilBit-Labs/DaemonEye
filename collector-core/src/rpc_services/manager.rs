@@ -1,31 +1,19 @@
-//! RPC service implementations for collector lifecycle management.
+//! RPC service manager for collector-core.
 //!
-//! This module provides RPC service integration for collector-core, enabling
-//! lifecycle operations (start, stop, restart, health checks) to be performed
-//! via RPC calls through the `DaemonEye` event bus.
-
-#![allow(clippy::significant_drop_tightening)]
-#![allow(clippy::as_conversions)]
-#![allow(clippy::pattern_type_mismatch)]
-#![allow(clippy::indexing_slicing)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::use_debug)]
-#![allow(clippy::unreachable)]
+//! Wraps the `CollectorRpcService` from daemoneye-eventbus and runs the background
+//! task that subscribes to the RPC topic, dispatches requests, and publishes responses.
 
 use crate::collector::CollectorRuntime;
 use crate::performance::PerformanceMonitor;
+use crate::rpc_services::config::RpcServiceConfig;
 use daemoneye_eventbus::DaemoneyeBroker;
 use daemoneye_eventbus::rpc::{
-    CollectorOperation as RpcOperation, CollectorRpcService, ComponentHealth, ConfigProvider,
-    ConfigUpdateResult, HealthCheckData, HealthProvider, HealthStatus, RegistrationError,
-    RegistrationProvider, RegistrationRequest, RegistrationResponse, RpcCorrelationMetadata,
-    RpcRequest, ServiceCapabilities, TimeoutLimits,
+    CollectorOperation as RpcOperation, CollectorRpcService, ConfigProvider, HealthProvider,
+    RegistrationProvider, RpcCorrelationMetadata, RpcRequest, ServiceCapabilities, TimeoutLimits,
 };
-use daemoneye_lib::telemetry::{HealthStatus as TelemetryHealthStatus, TelemetryCollector};
-use std::collections::HashMap;
+use daemoneye_lib::telemetry::TelemetryCollector;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{error, info};
@@ -43,27 +31,6 @@ type TaskHandler = Box<
         > + Send
         + Sync,
 >;
-
-/// Configuration for the RPC service manager
-#[derive(Debug, Clone)]
-pub struct RpcServiceConfig {
-    /// Collector identifier
-    pub collector_id: String,
-    /// RPC topic to subscribe to
-    pub rpc_topic: String,
-    /// Default timeout for RPC operations
-    pub default_timeout: Duration,
-}
-
-impl Default for RpcServiceConfig {
-    fn default() -> Self {
-        Self {
-            collector_id: "collector".to_owned(),
-            rpc_topic: "control.collector.collector".to_owned(),
-            default_timeout: Duration::from_secs(30),
-        }
-    }
-}
 
 /// RPC service manager for collector-core
 ///
@@ -580,266 +547,6 @@ impl CollectorRpcServiceManager {
             handle.abort();
             info!("RPC service stopped");
         }
-        Ok(())
-    }
-}
-
-/// Health provider implementation for collector-core
-pub struct CollectorHealthProvider {
-    pub(crate) runtime: Arc<RwLock<Option<Arc<RwLock<CollectorRuntime>>>>>,
-    pub(crate) telemetry: Arc<RwLock<Option<Arc<RwLock<TelemetryCollector>>>>>,
-    pub(crate) performance_monitor: Arc<RwLock<Option<Arc<PerformanceMonitor>>>>,
-    pub(crate) collector_id: String,
-}
-
-#[async_trait::async_trait]
-impl HealthProvider for CollectorHealthProvider {
-    async fn get_collector_health(
-        &self,
-        collector_id: &str,
-    ) -> std::result::Result<HealthCheckData, daemoneye_eventbus::ProcessManagerError> {
-        eprintln!("HEALTH_PROVIDER: get_collector_health called for collector_id={collector_id}");
-
-        if collector_id != self.collector_id {
-            eprintln!(
-                "HEALTH_PROVIDER: collector_id mismatch: {} != {}",
-                collector_id, self.collector_id
-            );
-            return Err(daemoneye_eventbus::ProcessManagerError::ProcessNotFound(
-                collector_id.to_owned(),
-            ));
-        }
-
-        let mut components = HashMap::new();
-        let mut metrics = HashMap::new();
-
-        // Get telemetry health
-        eprintln!("HEALTH_PROVIDER: Acquiring outer telemetry lock...");
-        if let Some(telemetry) = self.telemetry.read().await.as_ref() {
-            eprintln!("HEALTH_PROVIDER: Got outer telemetry lock, acquiring inner lock...");
-            let telemetry_guard = telemetry.read().await;
-            eprintln!("HEALTH_PROVIDER: Got inner telemetry lock");
-            let health_check = telemetry_guard.health_check();
-            let telemetry_status = match health_check.status {
-                TelemetryHealthStatus::Healthy => HealthStatus::Healthy,
-                TelemetryHealthStatus::Degraded => HealthStatus::Degraded,
-                TelemetryHealthStatus::Unhealthy => HealthStatus::Unhealthy,
-                #[allow(clippy::wildcard_enum_match_arm)]
-                TelemetryHealthStatus::Unknown | _ => HealthStatus::Unknown,
-            };
-
-            components.insert(
-                "telemetry".to_owned(),
-                ComponentHealth {
-                    name: "telemetry".to_owned(),
-                    status: telemetry_status,
-                    message: Some(format!("Status: {:?}", health_check.status)),
-                    last_check: SystemTime::now(),
-                    check_interval_seconds: 60,
-                },
-            );
-
-            let telemetry_metrics = telemetry_guard.get_metrics();
-            metrics.insert(
-                "operation_count".to_owned(),
-                telemetry_metrics.operation_count as f64,
-            );
-            metrics.insert(
-                "error_count".to_owned(),
-                telemetry_metrics.error_count as f64,
-            );
-
-            // Add custom metrics if available
-            for (key, value) in &telemetry_metrics.custom_data {
-                metrics.insert(key.clone(), *value);
-            }
-        }
-
-        // Get performance monitor metrics
-        eprintln!("HEALTH_PROVIDER: Acquiring performance_monitor lock...");
-        if let Some(perf_monitor) = self.performance_monitor.read().await.as_ref() {
-            eprintln!("HEALTH_PROVIDER: Got performance_monitor lock, collecting metrics...");
-            let perf_metrics = perf_monitor.collect_resource_metrics().await;
-            eprintln!("HEALTH_PROVIDER: Got performance metrics");
-            metrics.insert(
-                "cpu_percent".to_owned(),
-                perf_metrics.cpu.current_cpu_percent,
-            );
-            metrics.insert(
-                "memory_bytes".to_owned(),
-                perf_metrics.memory.current_memory_bytes as f64,
-            );
-            metrics.insert(
-                "events_per_second".to_owned(),
-                perf_metrics.throughput.events_per_second,
-            );
-        }
-
-        // Get runtime stats if available
-        eprintln!("HEALTH_PROVIDER: Acquiring outer runtime lock...");
-        if let Some(runtime) = self.runtime.read().await.as_ref() {
-            eprintln!("HEALTH_PROVIDER: Got outer runtime lock, acquiring inner lock...");
-            let runtime_guard = runtime.read().await;
-            eprintln!("HEALTH_PROVIDER: Got inner runtime lock");
-            let stats = runtime_guard.get_runtime_stats();
-            metrics.insert("events_processed".to_owned(), stats.events_processed as f64);
-            metrics.insert("errors_total".to_owned(), stats.errors_total as f64);
-            metrics.insert(
-                "registered_sources".to_owned(),
-                stats.registered_sources as f64,
-            );
-        }
-
-        // Aggregate overall health
-        eprintln!("HEALTH_PROVIDER: Aggregating overall health...");
-        let overall_status = components
-            .values()
-            .map(|c| c.status)
-            .min()
-            .unwrap_or(HealthStatus::Unknown);
-
-        eprintln!("HEALTH_PROVIDER: Returning health data with status={overall_status:?}");
-        Ok(HealthCheckData {
-            collector_id: collector_id.to_owned(),
-            status: overall_status,
-            components,
-            metrics,
-            last_heartbeat: SystemTime::now(),
-            uptime_seconds: 0, // Would need to track start time
-            error_count: 0,
-        })
-    }
-}
-
-/// Config provider implementation for collector-core
-pub struct CollectorConfigProvider {
-    pub(crate) collector_id: String,
-}
-
-#[async_trait::async_trait]
-impl ConfigProvider for CollectorConfigProvider {
-    async fn get_config(
-        &self,
-        collector_id: &str,
-    ) -> std::result::Result<
-        daemoneye_eventbus::CollectorConfig,
-        daemoneye_eventbus::ConfigManagerError,
-    > {
-        if collector_id != self.collector_id {
-            return Err(daemoneye_eventbus::ConfigManagerError::ConfigNotFound(
-                format!("Collector {collector_id} not found"),
-            ));
-        }
-
-        // Return default config for now
-        Ok(daemoneye_eventbus::CollectorConfig::default())
-    }
-
-    async fn update_config(
-        &self,
-        collector_id: &str,
-        changes: HashMap<String, serde_json::Value>,
-        _validate_only: bool,
-        _rollback_on_failure: bool,
-    ) -> std::result::Result<ConfigUpdateResult, daemoneye_eventbus::ConfigManagerError> {
-        if collector_id != self.collector_id {
-            return Err(daemoneye_eventbus::ConfigManagerError::ConfigNotFound(
-                format!("Collector {collector_id} not found"),
-            ));
-        }
-
-        // For now, return a no-op result
-        // In a full implementation, this would update the collector configuration
-        Ok(ConfigUpdateResult {
-            version: 1,
-            changed_fields: changes.keys().cloned().collect(),
-            restart_performed: false,
-            timestamp: SystemTime::now(),
-        })
-    }
-
-    async fn validate_config(
-        &self,
-        _collector_id: &str,
-        _config: &daemoneye_eventbus::CollectorConfig,
-    ) -> std::result::Result<(), daemoneye_eventbus::ConfigManagerError> {
-        // Default validation passes
-        Ok(())
-    }
-}
-
-/// Registration provider implementation for collector-core
-pub struct CollectorRegistrationProvider {
-    collector_id: String,
-    registered: Arc<RwLock<bool>>,
-}
-
-impl CollectorRegistrationProvider {
-    pub fn new(collector_id: String) -> Self {
-        Self {
-            collector_id,
-            registered: Arc::new(RwLock::new(false)),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl RegistrationProvider for CollectorRegistrationProvider {
-    async fn register_collector(
-        &self,
-        request: RegistrationRequest,
-    ) -> std::result::Result<RegistrationResponse, RegistrationError> {
-        if request.collector_id != self.collector_id {
-            return Err(RegistrationError::Validation(format!(
-                "Collector ID mismatch: expected {}, got {}",
-                self.collector_id, request.collector_id
-            )));
-        }
-
-        let mut registered = self.registered.write().await;
-        if *registered {
-            return Err(RegistrationError::AlreadyRegistered(
-                self.collector_id.clone(),
-            ));
-        }
-
-        *registered = true;
-
-        Ok(RegistrationResponse {
-            collector_id: request.collector_id,
-            accepted: true,
-            heartbeat_interval_ms: request.heartbeat_interval_ms.unwrap_or(30000),
-            assigned_topics: vec![],
-            message: None,
-        })
-    }
-
-    async fn deregister_collector(
-        &self,
-        request: daemoneye_eventbus::rpc::DeregistrationRequest,
-    ) -> std::result::Result<(), RegistrationError> {
-        if request.collector_id != self.collector_id {
-            return Err(RegistrationError::NotFound(request.collector_id));
-        }
-
-        let mut registered = self.registered.write().await;
-        if !*registered {
-            return Err(RegistrationError::NotFound(self.collector_id.clone()));
-        }
-
-        *registered = false;
-        Ok(())
-    }
-
-    async fn update_heartbeat(
-        &self,
-        collector_id: &str,
-    ) -> std::result::Result<(), RegistrationError> {
-        if collector_id != self.collector_id {
-            return Err(RegistrationError::NotFound(collector_id.to_owned()));
-        }
-
-        // Heartbeat update is a no-op for this provider
         Ok(())
     }
 }
