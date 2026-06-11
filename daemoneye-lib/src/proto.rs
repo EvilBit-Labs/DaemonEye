@@ -530,6 +530,48 @@ mod tests {
     }
 
     #[test]
+    fn native_proto_conversion_drops_integrity_signals_by_design() {
+        // The native ProcessRecord has no integrity-signal fields; the protobuf
+        // ProcessRecord owns ssdeep_hash/on_disk_mismatch/ssdeep_degraded, which
+        // are produced only on the procmond ProcessEvent -> proto path. Both
+        // conversion directions therefore drop them. This tripwire locks that
+        // intentional asymmetry: if a future edit adds the fields to the native
+        // model (or wires them through the conversion), this test fails and forces
+        // a deliberate decision rather than silently changing the lossy boundary
+        // the agent integrity-alert bridge relies on (it reads signals off the
+        // proto record *before* this conversion).
+
+        // 1. native -> proto defaults the three fields (native has nothing to lift).
+        let native = NativeProcessRecord::new(1234, "tripwire".to_owned());
+        let proto = ProtoProcessRecord::from(native);
+        assert_eq!(proto.ssdeep_hash, None);
+        assert!(!proto.on_disk_mismatch);
+        assert!(!proto.ssdeep_degraded);
+
+        // 2. A proto carrying signals, round-tripped through the native model,
+        //    loses them — documenting the intentional drop.
+        let signalled = ProtoProcessRecord {
+            ssdeep_hash: Some("3:abc:def".to_owned()),
+            on_disk_mismatch: true,
+            ssdeep_degraded: true,
+            ..Default::default()
+        };
+        let round_tripped = ProtoProcessRecord::from(NativeProcessRecord::from(signalled));
+        assert_eq!(
+            round_tripped.ssdeep_hash, None,
+            "ssdeep_hash must not survive the native round-trip"
+        );
+        assert!(
+            !round_tripped.on_disk_mismatch,
+            "on_disk_mismatch must not survive the native round-trip"
+        );
+        assert!(
+            !round_tripped.ssdeep_degraded,
+            "ssdeep_degraded must not survive the native round-trip"
+        );
+    }
+
+    #[test]
     fn test_detection_task_builders() {
         // Test enumerate processes task
         let task = DetectionTask::new_enumerate_processes("enum-123", None);
