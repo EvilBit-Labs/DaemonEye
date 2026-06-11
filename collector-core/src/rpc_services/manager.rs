@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 type TaskHandler = Box<
@@ -211,16 +211,17 @@ impl CollectorRpcServiceManager {
         let handle = tokio::spawn(async move {
             // Signal readiness before entering the message processing loop
             // This ensures callers know the service is subscribed and ready
-            eprintln!(
-                "RPC_SERVICE_LOOP: Ready signal sent, entering message loop for collector: {config_collector_id}"
+            debug!(
+                collector_id = %config_collector_id,
+                "ready signal sent, entering RPC message loop"
             );
             ready_tx.send(()).ok();
 
             while let Some(message) = message_receiver.recv().await {
-                eprintln!(
-                    "RPC_SERVICE_LOOP: Received message on topic: {} (payload size: {} bytes)",
-                    message.topic,
-                    message.payload.len()
+                debug!(
+                    topic = %message.topic,
+                    payload_bytes = message.payload.len(),
+                    "received RPC message"
                 );
 
                 // Skip response messages - parse topic to check for rpc.response segment
@@ -230,7 +231,7 @@ impl CollectorRpcServiceManager {
                     .windows(2)
                     .any(|window| window[0] == "rpc" && window[1] == "response");
                 if is_rpc_response {
-                    eprintln!("RPC_SERVICE_LOOP: Skipping response message");
+                    debug!("skipping RPC response message");
                     continue;
                 }
 
@@ -238,14 +239,15 @@ impl CollectorRpcServiceManager {
                 let request: RpcRequest = match postcard::from_bytes::<RpcRequest>(&message.payload)
                 {
                     Ok(req) => {
-                        eprintln!(
-                            "RPC_SERVICE_LOOP: Deserialized request: operation={:?}, client_id={}, request_id={}",
-                            req.operation, req.client_id, req.request_id
+                        debug!(
+                            operation = ?req.operation,
+                            client_id = %req.client_id,
+                            request_id = %req.request_id,
+                            "deserialized RPC request"
                         );
                         req
                     }
                     Err(e) => {
-                        eprintln!("RPC_SERVICE_LOOP: Failed to deserialize RPC request: {e}");
                         error!("Failed to deserialize RPC request: {}", e);
                         continue;
                     }
@@ -431,21 +433,22 @@ impl CollectorRpcServiceManager {
                     }
                 } else {
                     // Handle other requests via RPC service
-                    eprintln!(
-                        "RPC_SERVICE_LOOP: Routing to rpc_service.handle_request() for operation: {:?}",
-                        request.operation
+                    debug!(
+                        operation = ?request.operation,
+                        "routing to rpc_service.handle_request()"
                     );
                     let resp = rpc_service_clone.handle_request(request.clone()).await;
-                    eprintln!(
-                        "RPC_SERVICE_LOOP: Got response from handle_request: status={:?}, request_id={}",
-                        resp.status, resp.request_id
+                    debug!(
+                        status = ?resp.status,
+                        request_id = %resp.request_id,
+                        "got response from handle_request"
                     );
                     resp
                 };
 
                 // Determine response topic
                 let response_topic = format!("control.rpc.response.{}", request.client_id);
-                eprintln!("RPC_SERVICE_LOOP: Will publish response to topic: {response_topic}");
+                debug!(topic = %response_topic, "will publish RPC response");
 
                 // Serialize and publish response
                 let payload = match postcard::to_allocvec(&response) {
@@ -505,22 +508,19 @@ impl CollectorRpcServiceManager {
                     }
                 };
 
-                eprintln!(
-                    "RPC_SERVICE_LOOP: Publishing response (size: {} bytes) to topic: {}",
-                    payload.len(),
-                    response_topic
+                debug!(
+                    payload_bytes = payload.len(),
+                    topic = %response_topic,
+                    "publishing RPC response"
                 );
                 match broker_clone
                     .publish(&response_topic, &response.request_id, payload)
                     .await
                 {
                     Ok(()) => {
-                        eprintln!(
-                            "RPC_SERVICE_LOOP: Successfully published response to topic: {response_topic}"
-                        );
+                        debug!(topic = %response_topic, "successfully published RPC response");
                     }
                     Err(e) => {
-                        eprintln!("RPC_SERVICE_LOOP: Failed to publish response: {e}");
                         error!(
                             request_id = %response.request_id,
                             topic = %response_topic,

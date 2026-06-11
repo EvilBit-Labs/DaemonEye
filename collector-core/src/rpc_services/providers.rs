@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
+use tracing::{debug, warn};
 
 /// Health provider implementation for collector-core
 pub struct CollectorHealthProvider {
@@ -30,12 +31,13 @@ impl HealthProvider for CollectorHealthProvider {
         &self,
         collector_id: &str,
     ) -> std::result::Result<HealthCheckData, daemoneye_eventbus::ProcessManagerError> {
-        eprintln!("HEALTH_PROVIDER: get_collector_health called for collector_id={collector_id}");
+        debug!(%collector_id, "get_collector_health called");
 
         if collector_id != self.collector_id {
-            eprintln!(
-                "HEALTH_PROVIDER: collector_id mismatch: {} != {}",
-                collector_id, self.collector_id
+            warn!(
+                requested = %collector_id,
+                expected = %self.collector_id,
+                "collector_id mismatch in health request"
             );
             return Err(daemoneye_eventbus::ProcessManagerError::ProcessNotFound(
                 collector_id.to_owned(),
@@ -46,11 +48,11 @@ impl HealthProvider for CollectorHealthProvider {
         let mut metrics = HashMap::new();
 
         // Get telemetry health
-        eprintln!("HEALTH_PROVIDER: Acquiring outer telemetry lock...");
+        debug!("acquiring outer telemetry lock");
         if let Some(telemetry) = self.telemetry.read().await.as_ref() {
-            eprintln!("HEALTH_PROVIDER: Got outer telemetry lock, acquiring inner lock...");
+            debug!("got outer telemetry lock, acquiring inner lock");
             let telemetry_guard = telemetry.read().await;
-            eprintln!("HEALTH_PROVIDER: Got inner telemetry lock");
+            debug!("got inner telemetry lock");
             let health_check = telemetry_guard.health_check();
             let telemetry_status = match health_check.status {
                 TelemetryHealthStatus::Healthy => HealthStatus::Healthy,
@@ -88,11 +90,11 @@ impl HealthProvider for CollectorHealthProvider {
         }
 
         // Get performance monitor metrics
-        eprintln!("HEALTH_PROVIDER: Acquiring performance_monitor lock...");
+        debug!("acquiring performance_monitor lock");
         if let Some(perf_monitor) = self.performance_monitor.read().await.as_ref() {
-            eprintln!("HEALTH_PROVIDER: Got performance_monitor lock, collecting metrics...");
+            debug!("got performance_monitor lock, collecting metrics");
             let perf_metrics = perf_monitor.collect_resource_metrics().await;
-            eprintln!("HEALTH_PROVIDER: Got performance metrics");
+            debug!("got performance metrics");
             metrics.insert(
                 "cpu_percent".to_owned(),
                 perf_metrics.cpu.current_cpu_percent,
@@ -108,11 +110,11 @@ impl HealthProvider for CollectorHealthProvider {
         }
 
         // Get runtime stats if available
-        eprintln!("HEALTH_PROVIDER: Acquiring outer runtime lock...");
+        debug!("acquiring outer runtime lock");
         if let Some(runtime) = self.runtime.read().await.as_ref() {
-            eprintln!("HEALTH_PROVIDER: Got outer runtime lock, acquiring inner lock...");
+            debug!("got outer runtime lock, acquiring inner lock");
             let runtime_guard = runtime.read().await;
-            eprintln!("HEALTH_PROVIDER: Got inner runtime lock");
+            debug!("got inner runtime lock");
             let stats = runtime_guard.get_runtime_stats();
             metrics.insert("events_processed".to_owned(), stats.events_processed as f64);
             metrics.insert("errors_total".to_owned(), stats.errors_total as f64);
@@ -123,14 +125,14 @@ impl HealthProvider for CollectorHealthProvider {
         }
 
         // Aggregate overall health
-        eprintln!("HEALTH_PROVIDER: Aggregating overall health...");
+        debug!("aggregating overall health");
         let overall_status = components
             .values()
             .map(|c| c.status)
             .min()
             .unwrap_or(HealthStatus::Unknown);
 
-        eprintln!("HEALTH_PROVIDER: Returning health data with status={overall_status:?}");
+        debug!(?overall_status, "returning health data");
         Ok(HealthCheckData {
             collector_id: collector_id.to_owned(),
             status: overall_status,
