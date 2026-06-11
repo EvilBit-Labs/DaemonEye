@@ -1013,7 +1013,7 @@ impl LocalEventBus {
 mod tests {
     use super::*;
     use crate::event::ProcessEvent;
-    use crate::event_bus::types::{
+    use crate::event_bus::{
         CollectorCoordination, CrossCollectorCorrelation, EventBusCorrelation, EventBusFilters,
         EventBusMetadata, SequenceCorrelation, TemporalCorrelation, TopicChain, TopicCorrelation,
     };
