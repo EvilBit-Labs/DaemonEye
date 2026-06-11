@@ -48,8 +48,25 @@ rmrf path:
 # =============================================================================
 
 # Development setup - mise handles all tool installation via mise.toml
+[group('setup')]
 setup:
     mise install
+
+# Update all dependencies
+[group('setup')]
+update-deps: _update-mise _update-cargo _update-precommit
+
+[private]
+_update-mise:
+    @mise upgrade --bump --local --before 7d
+
+[private]
+_update-cargo:
+    @{{ mise_exec }} cargo update --recursive
+
+[private]
+_update-precommit:
+    @{{ mise_exec }} pre-commit autoupdate
 
 # =============================================================================
 # FORMATTING AND LINTING
