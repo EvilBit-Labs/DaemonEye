@@ -4,9 +4,9 @@
 use super::CollectorProcessManager;
 #[cfg(all(unix, feature = "freebsd"))]
 use super::send_signal;
-use super::types::{
-    CollectorState, CollectorStatus, HealthStatus, ProcessManagerConfig, ProcessManagerError,
-};
+#[cfg(unix)]
+use super::types::CollectorState;
+use super::types::{CollectorStatus, HealthStatus, ProcessManagerConfig, ProcessManagerError};
 #[cfg(all(unix, feature = "freebsd"))]
 use nix::sys::signal::Signal;
 use std::time::SystemTime;
