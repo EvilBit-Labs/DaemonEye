@@ -152,12 +152,24 @@ impl BrokerManager {
                 // Broadcast "begin monitoring" to all collectors
                 drop(state); // Release lock before async operations
                 if let Err(e) = self.broadcast_begin_monitoring().await {
-                    // Rollback state on broadcast failure
-                    warn!(
-                        error = %e,
-                        "Failed to broadcast 'begin monitoring', rolling back to Ready state"
-                    );
-                    *self.agent_state.write().await = AgentState::Ready;
+                    // Rollback state on broadcast failure. Use compare-and-set so
+                    // we only undo *our* transition: if another task moved the
+                    // state on to ShuttingDown/StartupFailed while the lock was
+                    // released, clobbering it back to Ready would be incorrect.
+                    let mut rollback_state = self.agent_state.write().await;
+                    if matches!(*rollback_state, AgentState::SteadyState) {
+                        warn!(
+                            error = %e,
+                            "Failed to broadcast 'begin monitoring', rolling back to Ready state"
+                        );
+                        *rollback_state = AgentState::Ready;
+                    } else {
+                        warn!(
+                            error = %e,
+                            current_state = %*rollback_state,
+                            "Failed to broadcast 'begin monitoring'; state already advanced, skipping rollback"
+                        );
+                    }
                     return Err(e);
                 }
 
@@ -360,19 +372,27 @@ impl BrokerManager {
     pub async fn broadcast_begin_monitoring(&self) -> Result<()> {
         let broker_guard = self.broker.read().await;
         let Some(broker) = broker_guard.as_ref() else {
-            warn!("Cannot broadcast 'begin monitoring': broker not available");
-            return Ok(());
+            // The broker being unavailable is a failure, not a no-op. Returning
+            // `Ok(())` here would let `transition_to_steady_state` believe the
+            // "begin monitoring" signal was delivered when no collector ever
+            // received it, leaving the agent in SteadyState with idle collectors.
+            // Return an error so the caller rolls the state machine back to Ready.
+            anyhow::bail!("Cannot broadcast 'begin monitoring': broker not available");
         };
 
         let topic = "control.collector.lifecycle";
 
         // Create the lifecycle message
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_else(|e| {
+                warn!(error = %e, "System time is before UNIX_EPOCH, using timestamp 0");
+                Duration::default()
+            })
+            .as_millis();
         let message = serde_json::json!({
             "type": "BeginMonitoring",
-            "timestamp": std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
+            "timestamp": timestamp_ms,
             "source": "daemoneye-agent",
         });
 

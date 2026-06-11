@@ -94,8 +94,15 @@ impl CollectorReadinessTracker {
     }
 
     /// Mark a collector as ready.
+    ///
+    /// Only collectors that are actually expected are tracked. Inserting an
+    /// unexpected collector ID would inflate `ready_count` without affecting
+    /// `all_ready` (which only consults `expected_collectors`), producing a
+    /// misleading ready count.
     pub(super) fn mark_ready(&mut self, collector_id: &str) {
-        self.ready_collectors.insert(collector_id.to_owned());
+        if self.expected_collectors.contains(collector_id) {
+            self.ready_collectors.insert(collector_id.to_owned());
+        }
     }
 
     /// Check if all expected collectors are ready.

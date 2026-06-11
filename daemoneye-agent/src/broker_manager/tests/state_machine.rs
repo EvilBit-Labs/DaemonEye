@@ -531,3 +531,55 @@ async fn test_drop_privileges_stub() {
     let result = manager.drop_privileges().await;
     assert!(result.is_ok());
 }
+
+#[tokio::test]
+async fn test_broadcast_begin_monitoring_errors_when_broker_unavailable() {
+    let config = BrokerConfig::default();
+    let manager = BrokerManager::new(config);
+
+    // No broker was started, so the broadcast must fail rather than silently
+    // succeed. A silent success would falsely signal that collectors received
+    // the "begin monitoring" command.
+    let result = manager.broadcast_begin_monitoring().await;
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("broker not available"));
+}
+
+#[test]
+fn test_mark_ready_ignores_unexpected_collector() {
+    use crate::broker_manager::state::CollectorReadinessTracker;
+    use std::collections::HashSet;
+
+    let expected: HashSet<String> = std::iter::once("collector-1".to_owned()).collect();
+    let mut tracker = CollectorReadinessTracker::new(expected);
+
+    // Marking an unexpected collector must not grow the ready set.
+    tracker.mark_ready("unexpected-collector");
+    assert_eq!(tracker.ready_count(), 0);
+    assert!(!tracker.all_ready());
+
+    // Marking the expected collector works as normal.
+    tracker.mark_ready("collector-1");
+    assert_eq!(tracker.ready_count(), 1);
+    assert!(tracker.all_ready());
+}
+
+#[tokio::test]
+async fn test_transition_to_steady_state_rolls_back_when_broker_unavailable() {
+    let config = BrokerConfig::default();
+    let manager = BrokerManager::new(config);
+    manager
+        .set_collectors_config(CollectorsConfig::default())
+        .await;
+
+    // Reach Ready (no collectors expected, so this is immediate).
+    manager.transition_to_ready().await.unwrap();
+    assert_eq!(manager.agent_state().await, AgentState::Ready);
+
+    // The broker was never started, so broadcasting "begin monitoring" must
+    // fail and the state machine must roll back from SteadyState to Ready.
+    let result = manager.transition_to_steady_state().await;
+    assert!(result.is_err());
+    assert_eq!(manager.agent_state().await, AgentState::Ready);
+}
