@@ -2,37 +2,38 @@
 [tools]
 cargo-binstall              = "latest"
 cargo-insta                 = "1.47.2"
-"cargo:cargo-audit"         = "0.22.1"
-"cargo:cargo-deny"          = "0.19.4"
-"cargo:cargo-llvm-cov"      = "0.8.5"
-"cargo:cargo-nextest"       = "0.9.133"
-"cargo:mdbook"              = "0.5.2"
-"cargo:mdbook-linkcheck"    = "0.7.7"
-"cargo:mdbook-tabs"         = "0.3.4"
-"cargo:mdbook-mermaid"      = "0.17.0"
-"cargo:mdbook-toc"          = "0.15.3"
-"cargo:mdbook-admonish"     = "1.20.0"
-"cargo:mdbook-open-on-gh"   = "3.0.0"
-"cargo:mdbook-i18n-helpers" = "0.4.0"
+"cargo:cargo-audit"         = "latest"
+"cargo:cargo-deny"          = "0.19.8"
+"cargo:cargo-llvm-cov"      = "0.8.7"
+"cargo:cargo-nextest"       = "0.9.137"
+"cargo:mdbook"              = "latest"
+"cargo:mdbook-linkcheck"    = "latest"
+"cargo:mdbook-tabs"         = "latest"
+"cargo:mdbook-mermaid"      = "latest"
+"cargo:mdbook-toc"          = "latest"
+"cargo:mdbook-admonish"     = "latest"
+"cargo:mdbook-open-on-gh"   = "latest"
+"cargo:mdbook-i18n-helpers" = "latest"
 just                        = "latest"
 python                      = "latest"
-rust                        = { version = "1.95.0", components = "llvm-tools,cargo,rustfmt,clippy", profile = "default" }
-"cargo:cargo-outdated"      = "0.19.0"
-"cargo:cargo-release"       = "1.1.2"
-"cargo:cargo-auditable"     = "0.7.4"
-"cargo:cargo-cyclonedx"     = "0.5.9"
+rust                        = { version = "latest", components = "llvm-tools,cargo,rustfmt,clippy", profile = "default" }
+"cargo:cargo-outdated"      = "latest"
+"cargo:cargo-release"       = "latest"
+"cargo:cargo-auditable"     = "latest"
+"cargo:cargo-cyclonedx"     = "latest"
 "pipx:mdformat"             = { version = "1.0.0", uvx_args = "--with mdformat-gfm --with mdformat-config --with mdformat-footnote --with mdformat-front-matters --with mdformat-simple-breaks --with mdformat-web --with mdformat-gfm-alerts --with mdformat-toc" }
-prettier                    = "3.8.3"
-actionlint                  = "1.7.12"
-lychee                      = "0.23.0"
-markdownlint-cli2           = "0.22.1"
-protobuf                    = "34.1"
-protoc                      = "34.1"
+prettier                    = "latest"
+actionlint                  = "latest"
+lychee                      = "latest"
+markdownlint-cli2           = "latest"
+protobuf                    = "latest"
+protoc                      = "latest"
 zig                         = "latest"
 "cargo:cargo-zigbuild"      = "latest"
 bun                         = "latest"
-goreleaser                  = "2.15.3"
+goreleaser                  = "latest"
 "pipx:pre-commit"           = "latest"
+uv                          = "latest"
 
 # Many of these settings are defaults, but we are explicit in case they change in the future and to make it clear to users what is enabled.
 [settings]
@@ -42,7 +43,8 @@ env_cache                           = true
 exec_auto_install                   = true
 github_attestations                 = true
 lockfile                            = true
-pin                                 = true
+minimum_release_age                 = "7d"
+pin                                 = false
 slsa                                = true
 
 [settings.npm]
