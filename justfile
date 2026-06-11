@@ -62,7 +62,7 @@ _update-mise:
 
 [private]
 _update-cargo:
-    @{{ mise_exec }} cargo update --recursive
+    @{{ mise_exec }} cargo update --workspace
 
 [private]
 _update-precommit:
