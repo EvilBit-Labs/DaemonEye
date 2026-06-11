@@ -414,17 +414,23 @@ impl CorrelationMetadata {
         success: bool,
         error_message: Option<String>,
     ) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         let delivery_status = DeliveryStatus {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            timestamp: now,
             success,
             error_message,
             retry_count: 0,
         };
 
         if let Some(ref mut eventbus_metadata) = self.eventbus_metadata {
+            // Refresh the delivery timestamp on every tracked delivery so that
+            // pre-existing metadata does not carry a stale value into later
+            // temporal-correlation / delivery-window checks.
+            eventbus_metadata.delivery_timestamp = now;
             eventbus_metadata
                 .delivery_tracking
                 .insert(subscriber_id, delivery_status);
@@ -435,10 +441,7 @@ impl CorrelationMetadata {
             let metadata = EventBusMetadata {
                 broker_id: None,
                 routing_path: Vec::new(),
-                delivery_timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
+                delivery_timestamp: now,
                 delivery_tracking,
                 topic_chains: Vec::new(),
                 collector_coordination: None,
@@ -459,4 +462,78 @@ pub struct EventBusStatistics {
     pub active_subscribers: usize,
     /// Bus uptime
     pub uptime: Duration,
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unreadable_literal,
+    clippy::arithmetic_side_effects
+)]
+mod tests {
+    use super::*;
+
+    /// A clearly stale Unix timestamp (2001-09-09) used to seed pre-existing
+    /// metadata so a refresh is observable.
+    const STALE_TIMESTAMP: u64 = 1_000_000_000;
+
+    fn current_unix_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+
+    #[test]
+    fn track_delivery_refreshes_stale_delivery_timestamp_on_existing_metadata() {
+        // Arrange: correlation metadata that already carries eventbus metadata
+        // with a stale delivery timestamp (the regression scenario).
+        let mut metadata = CorrelationMetadata::new("corr-1".to_owned());
+        metadata.eventbus_metadata = Some(EventBusMetadata {
+            broker_id: None,
+            routing_path: Vec::new(),
+            delivery_timestamp: STALE_TIMESTAMP,
+            delivery_tracking: HashMap::new(),
+            topic_chains: Vec::new(),
+            collector_coordination: None,
+        });
+
+        // Act: record a delivery against the pre-existing metadata.
+        metadata.track_delivery("subscriber-1".to_owned(), true, None);
+
+        // Assert: the delivery timestamp must advance past the stale value so
+        // temporal-correlation/delivery-window checks see a fresh timestamp.
+        let eventbus_metadata = metadata
+            .eventbus_metadata
+            .as_ref()
+            .expect("eventbus metadata should be present");
+        assert!(
+            eventbus_metadata.delivery_timestamp > STALE_TIMESTAMP,
+            "delivery_timestamp must be refreshed on every tracked delivery (was {}, expected > {})",
+            eventbus_metadata.delivery_timestamp,
+            STALE_TIMESTAMP
+        );
+        assert!(eventbus_metadata.delivery_timestamp >= current_unix_secs().saturating_sub(5));
+    }
+
+    #[test]
+    fn track_delivery_records_status_on_first_create() {
+        let mut metadata = CorrelationMetadata::new("corr-2".to_owned());
+        assert!(metadata.eventbus_metadata.is_none());
+
+        metadata.track_delivery("subscriber-1".to_owned(), false, Some("boom".to_owned()));
+
+        let eventbus_metadata = metadata
+            .eventbus_metadata
+            .as_ref()
+            .expect("eventbus metadata should be created");
+        assert!(eventbus_metadata.delivery_timestamp >= current_unix_secs().saturating_sub(5));
+        let status = eventbus_metadata
+            .delivery_tracking
+            .get("subscriber-1")
+            .expect("delivery status should be recorded");
+        assert!(!status.success);
+        assert_eq!(status.error_message.as_deref(), Some("boom"));
+    }
 }
