@@ -1200,53 +1200,76 @@ impl ResilientIpcClient {
         // Record task attempt
         self.metrics.record_task_sent();
 
-        // Try to get connection from pool first
+        // Try a pooled connection first. If the send over it fails, the
+        // connection is most likely stale — the server closed it between
+        // requests (e.g. a restart) — so discard it and fall through to a fresh
+        // connection rather than reporting a hard failure for what is a
+        // recoverable condition. Without this, returning connections to the
+        // pool would make server restarts *worse* than the no-pool path.
         let pooled_stream = {
             let mut pool = self.connection_pool.lock().await;
             pool.get_connection(&endpoint.id)
         };
-
-        let stream = if let Some(pooled_conn) = pooled_stream {
+        if let Some(pooled_conn) = pooled_stream {
             debug!(endpoint_id = %endpoint.id, "Using pooled connection");
-            pooled_conn.stream
-        } else {
-            debug!(endpoint_id = %endpoint.id, "Creating new connection");
-            // Bounded reconnect-with-backoff loop. Circuit-breaker failure is
-            // recorded once per send (after the loop exhausts), not per attempt,
-            // so the breaker does not trip mid-retry and short-circuit its own
-            // bounded attempts when `max_reconnect_attempts` exceeds the breaker
-            // failure threshold.
-            let max_attempts = self.max_reconnect_attempts.max(1);
-            let mut attempt: u32 = 0;
-            loop {
-                match self.establish_connection_to_endpoint(&endpoint).await {
-                    Ok(s) => break s,
-                    Err(e) => {
-                        attempt = attempt.saturating_add(1);
-                        if !Self::is_retryable_connect_error(&e) || attempt >= max_attempts {
-                            // Fatal classification or attempts exhausted: record a
-                            // single failure for this send and surface the error.
-                            self.update_circuit_breaker(&endpoint.id, false).await;
-                            self.update_endpoint_health(&endpoint.id, false).await;
-                            self.metrics.record_task_failed();
-                            return Err(e);
-                        }
-                        let delay = self.reconnect_backoff_delay(attempt.saturating_sub(1));
-                        debug!(
-                            endpoint_id = %endpoint.id,
-                            attempt = attempt,
-                            delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
-                            "Connection attempt failed, retrying after backoff"
-                        );
-                        tokio::time::sleep(delay).await;
+            match self
+                .send_task_on_stream(pooled_conn.stream, task.clone())
+                .await
+            {
+                Ok((detection, live_stream)) => {
+                    self.update_circuit_breaker(&endpoint.id, true).await;
+                    self.update_endpoint_health(&endpoint.id, true).await;
+                    self.release_connection(live_stream, endpoint.id.clone())
+                        .await;
+                    return Ok(detection);
+                }
+                Err(e) => {
+                    debug!(
+                        endpoint_id = %endpoint.id,
+                        error = %e,
+                        "Pooled connection failed; retrying with a fresh connection"
+                    );
+                    // Fall through to establish a fresh connection.
+                }
+            }
+        }
+
+        // Establish a fresh connection via the bounded reconnect-with-backoff
+        // loop. Circuit-breaker failure is recorded once per send (after the
+        // loop exhausts), not per attempt, so the breaker does not trip
+        // mid-retry and short-circuit its own bounded attempts when
+        // `max_reconnect_attempts` exceeds the breaker failure threshold.
+        debug!(endpoint_id = %endpoint.id, "Creating new connection");
+        let max_attempts = self.max_reconnect_attempts.max(1);
+        let mut attempt: u32 = 0;
+        let stream = loop {
+            match self.establish_connection_to_endpoint(&endpoint).await {
+                Ok(s) => break s,
+                Err(e) => {
+                    attempt = attempt.saturating_add(1);
+                    if !Self::is_retryable_connect_error(&e) || attempt >= max_attempts {
+                        // Fatal classification or attempts exhausted: record a
+                        // single failure for this send and surface the error.
+                        self.update_circuit_breaker(&endpoint.id, false).await;
+                        self.update_endpoint_health(&endpoint.id, false).await;
+                        self.metrics.record_task_failed();
+                        return Err(e);
                     }
+                    let delay = self.reconnect_backoff_delay(attempt.saturating_sub(1));
+                    debug!(
+                        endpoint_id = %endpoint.id,
+                        attempt = attempt,
+                        delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                        "Connection attempt failed, retrying after backoff"
+                    );
+                    tokio::time::sleep(delay).await;
                 }
             }
         };
 
-        // Send the task. On success the connection is still healthy and the
-        // server keeps it open for further requests, so return it to the pool
-        // for reuse (R3: connections are leased and returned per endpoint).
+        // Send the task over the fresh connection. On success the server keeps
+        // it open for further requests, so return it to the pool for reuse
+        // (R3: connections are leased and returned per endpoint).
         match self.send_task_on_stream(stream, task).await {
             Ok((detection, live_stream)) => {
                 self.update_circuit_breaker(&endpoint.id, true).await;

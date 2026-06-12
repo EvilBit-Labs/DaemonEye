@@ -676,9 +676,18 @@ async fn test_circuit_breaker_open_short_circuits_without_retry() {
 
 #[tokio::test]
 async fn test_circuit_breaker_trips_blocks_and_recovers() {
-    // Covers AE2: the breaker trips after threshold failures, blocks while
-    // open, then half-opens after the cooldown and closes on successful
-    // recovery. A short recovery timeout keeps the test fast.
+    // Covers AE2: the breaker trips after threshold failures (reported as Open
+    // in stats), blocks sends while open, then allows attempts again once the
+    // cooldown elapses and closes after a successful recovery. A short recovery
+    // timeout keeps the test fast.
+    //
+    // NOTE: this asserts the observable Open -> blocked -> Closed lifecycle. It
+    // does NOT assert the intermediate HalfOpen state or the multi-success
+    // half-open accumulation: a pre-existing quirk means the breaker's
+    // half-open transition is computed on a throwaway clone in
+    // `should_attempt_connection`, so the stored breaker recovers on the first
+    // success and HalfOpen is never surfaced. Tracked as a follow-up; see the
+    // PR's residual review findings.
     let (config, _temp_dir) = create_test_config();
     let client = ResilientIpcClient::new(&config)
         .with_reconnect_config(1, FAST_BASE_DELAY, FAST_MAX_DELAY)
@@ -798,6 +807,65 @@ async fn test_connection_pool_reuse() {
         1,
         "second task should reuse the pooled connection, not establish a new one"
     );
+    assert_eq!(
+        metrics.pooled_connections_current.load(Ordering::Relaxed),
+        1,
+        "the reused connection should be returned to the pool after the second send"
+    );
+
+    let _result = server.graceful_shutdown().await;
+}
+
+#[tokio::test]
+async fn test_pooled_connection_recovers_after_server_restart() {
+    // A connection pooled against one server becomes stale when that server
+    // restarts. The next send reuses the stale connection, detects the failure,
+    // and recovers by establishing a fresh connection — server restarts must
+    // not be made worse by connection pooling.
+    let (config, _temp_dir) = create_test_config();
+    let mut server = echo_server(&config);
+    server.start().await.expect("server should start");
+    sleep(Duration::from_millis(200)).await;
+
+    let client =
+        ResilientIpcClient::new(&config).with_reconnect_config(3, FAST_BASE_DELAY, FAST_MAX_DELAY);
+
+    // First send establishes and pools a connection.
+    let first = timeout(
+        Duration::from_secs(5),
+        client.send_task_to_endpoint(create_test_task("restart-1"), "default"),
+    )
+    .await
+    .expect("no hang")
+    .expect("first send should succeed");
+    assert!(first.success);
+    assert_eq!(
+        client
+            .metrics()
+            .pooled_connections_current
+            .load(Ordering::Relaxed),
+        1,
+        "first send should pool its connection"
+    );
+
+    // Restart the server: the pooled connection is now stale.
+    let _result = server.graceful_shutdown().await;
+    sleep(Duration::from_millis(150)).await;
+    let mut server = echo_server(&config);
+    server.start().await.expect("server should restart");
+    sleep(Duration::from_millis(200)).await;
+
+    // The next send reuses the stale pooled connection, the send over it fails,
+    // and the client recovers transparently with a fresh connection.
+    let second = timeout(
+        Duration::from_secs(5),
+        client.send_task_to_endpoint(create_test_task("restart-2"), "default"),
+    )
+    .await
+    .expect("no hang")
+    .expect("send should recover via a fresh connection after the restart");
+    assert!(second.success);
+    assert_eq!(second.task_id, "restart-2");
 
     let _result = server.graceful_shutdown().await;
 }
