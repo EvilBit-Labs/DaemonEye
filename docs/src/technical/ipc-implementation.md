@@ -99,9 +99,9 @@ ipc:
 ### Connection Management
 
 - **Automatic Reconnection**: Clients automatically reconnect with exponential backoff and jitter. The `ResilientIpcClient` retries transient transport errors (`ConnectionRefused`, `ConnectionTimeout`, `ServerNotFound`, `PeerClosed`) up to a configurable maximum (default 10 attempts) with exponential backoff (default base 100ms, max 30s). Fatal errors (`PermissionDenied`, `CircuitBreakerOpen`, `Timeout`, codec errors) short-circuit immediately without retry
-- **Circuit Breaker**: Per-endpoint circuit breakers track failure rates and report live state (Closed/HalfOpen/Open) through `get_stats()`. Breakers open after a threshold of failures (default 5), preventing connection attempts during a recovery timeout (default 30s)
-- **Connection Pooling**: Healthy connections are returned to the pool after successful sends and reused for subsequent requests to the same endpoint
-- **Explicit Failover**: When a send to the primary endpoint fails, the client automatically fails over to an alternate healthy endpoint (if available)
+- **Circuit Breaker**: Per-endpoint circuit breakers track failure rates and report state through `get_stats()`. Breakers open after a threshold of failures (default 5), preventing connection attempts during a recovery timeout (default 30s). Note: `get_stats()` currently reports `Closed` and `Open` only — the `HalfOpen` recovery probe is evaluated transiently and is not persisted to the reported state, so a recovering breaker closes on its first successful send rather than surfacing `HalfOpen`
+- **Connection Pooling**: Healthy connections are returned to the pool after successful sends and reused for subsequent requests to the same endpoint. A reused connection that turns out to be stale (the server closed it) fails the send and transparently falls through to a fresh connection
+- **Explicit Failover**: When a send to the primary endpoint fails, the client automatically fails over to an alternate healthy endpoint (if available). Note: each endpoint runs its own bounded reconnect budget, so if both the primary and the failover endpoint are down, worst-case retry time can approach roughly 2× a single endpoint's budget before the original error is surfaced
 - **Graceful Degradation**: Components handle IPC failures without crashing
 - **Timeout Handling**: Configurable timeouts prevent hanging operations
 - **Connection Limiting**: Server-side connection limits prevent resource exhaustion
@@ -163,7 +163,7 @@ pub enum IpcError {
     Decode(prost::DecodeError),                 // Protobuf decoding error
     Encode(String),                             // Protobuf encoding error
     PeerClosed,                                 // Connection closed by peer
-    InvalidLength { length: usize },            // Invalid message length
+    InvalidLength { length: u32 },              // Invalid message length
     ConnectionRefused { endpoint: String },     // Server refused the connection
     ConnectionTimeout { endpoint: String },     // Connection attempt timed out
     ServerNotFound { endpoint: String },        // Server endpoint could not be resolved

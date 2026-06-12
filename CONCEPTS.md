@@ -1,12 +1,12 @@
 # Concepts
 
-Shared domain vocabulary for this project — entities, named processes, and status concepts with project-specific meaning. Seeded with core domain vocabulary, then accretes as ce-compound and ce-compound-refresh process learnings; direct edits are fine. Glossary only, not a spec or catch-all.
+Shared domain vocabulary for this project — entities, named processes, and status concepts with project-specific meaning. Glossary only, not a spec or catch-all.
 
 ## Agent–collector IPC
 
 ### Relationships
 
-The agent reaches a collector over one of two transports — the **Eventbus** (the live single-host path, used by procmond) or the **Interprocess transport** (for SDK collectors and the operator CLI). Before sending **Detection tasks** to a collector, the agent performs **Capability negotiation** to learn which monitoring domains that collector supports.
+The agent reaches a collector over the **Eventbus** (the live single-host path, used by procmond) or, for SDK collectors, over the **Interprocess transport**. The operator CLI also uses the Interprocess transport to talk to the agent — it is a client of the agent, not a collector endpoint. Before sending **Detection tasks** to a collector, the agent performs **Capability negotiation** to learn which monitoring domains that collector supports.
 
 ### Collector
 

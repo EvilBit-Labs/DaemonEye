@@ -824,7 +824,7 @@ impl ResilientIpcClient {
     /// `self` so it can be chained after a constructor.
     ///
     /// * `max_attempts` - total connection attempts per send before the last
-    ///   error is surfaced (values below 1 are treated as 1)
+    ///   error is surfaced (values below 1 are clamped to 1)
     /// * `base_delay` - first backoff delay; subsequent delays grow
     ///   exponentially up to `max_delay`
     /// * `max_delay` - upper bound on any single backoff delay
@@ -835,7 +835,9 @@ impl ResilientIpcClient {
         base_delay: Duration,
         max_delay: Duration,
     ) -> Self {
-        self.max_reconnect_attempts = max_attempts;
+        // Clamp at the setter so the stored value matches the documented
+        // invariant (at least one attempt), rather than relying on call sites.
+        self.max_reconnect_attempts = if max_attempts < 1 { 1 } else { max_attempts };
         self.base_reconnect_delay = base_delay;
         self.max_reconnect_delay = max_delay;
         self
@@ -1228,7 +1230,14 @@ impl ResilientIpcClient {
         // pool would make server restarts *worse* than the no-pool path.
         let pooled_stream = {
             let mut pool = self.connection_pool.lock().await;
-            pool.get_connection(&endpoint.id)
+            let conn = pool.get_connection(&endpoint.id);
+            // Keep the pooled-connections gauge accurate while a connection is
+            // checked out: `release_connection` re-derives it on return, but
+            // without this the gauge over-reports between checkout and return.
+            self.metrics.set_pooled_connections(
+                u64::try_from(pool.total_connections()).unwrap_or(u64::MAX),
+            );
+            conn
         };
         if let Some(pooled_conn) = pooled_stream {
             debug!(endpoint_id = %endpoint.id, "Using pooled connection");
