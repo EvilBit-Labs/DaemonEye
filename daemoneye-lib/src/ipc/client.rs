@@ -1139,7 +1139,7 @@ impl ResilientIpcClient {
         // one that just failed (which `send_task_to_endpoint` has now marked
         // unhealthy). With a single collector there is no alternate, so the
         // original error is surfaced unchanged.
-        match self.select_failover_endpoint(&endpoint.id).await {
+        match self.select_failover_endpoint(&endpoint.id, task_type).await {
             Some(alternate) => {
                 debug!(
                     task_id = %task.task_id,
@@ -1154,17 +1154,35 @@ impl ResilientIpcClient {
     }
 
     /// Select a healthy endpoint other than `exclude_id` for a single failover
-    /// attempt, preferring the highest health score. Returns `None` when no
-    /// alternate exists — the common single-collector case in v1.0.
-    async fn select_failover_endpoint(&self, exclude_id: &str) -> Option<CollectorEndpoint> {
+    /// attempt. Mirrors the primary path's two-tier preference
+    /// (`select_endpoint_for_task`): prefer a healthy alternate that supports
+    /// `task_type`, falling back to any healthy alternate only when none
+    /// support the task type, and within each tier prefer the highest health
+    /// score. Returns `None` when no alternate exists — the common
+    /// single-collector case in v1.0.
+    async fn select_failover_endpoint(
+        &self,
+        exclude_id: &str,
+        task_type: TaskType,
+    ) -> Option<CollectorEndpoint> {
         let endpoints = self.endpoints.read().await;
+        let by_health = |a: &&CollectorEndpoint, b: &&CollectorEndpoint| {
+            a.health_score()
+                .partial_cmp(&b.health_score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        };
+
+        // Tier 1: a healthy alternate that supports the task type.
         endpoints
             .iter()
-            .filter(|e| e.id != exclude_id && e.is_healthy)
-            .max_by(|a, b| {
-                a.health_score()
-                    .partial_cmp(&b.health_score())
-                    .unwrap_or(std::cmp::Ordering::Equal)
+            .filter(|e| e.id != exclude_id && e.is_healthy && e.supports_task_type(task_type))
+            .max_by(by_health)
+            // Tier 2: any healthy alternate.
+            .or_else(|| {
+                endpoints
+                    .iter()
+                    .filter(|e| e.id != exclude_id && e.is_healthy)
+                    .max_by(by_health)
             })
             .cloned()
     }
@@ -1268,8 +1286,8 @@ impl ResilientIpcClient {
         };
 
         // Send the task over the fresh connection. On success the server keeps
-        // it open for further requests, so return it to the pool for reuse
-        // (R3: connections are leased and returned per endpoint).
+        // it open for further requests, so return it to the pool for reuse —
+        // connections are leased and returned per endpoint.
         match self.send_task_on_stream(stream, task).await {
             Ok((detection, live_stream)) => {
                 self.update_circuit_breaker(&endpoint.id, true).await;
@@ -1899,5 +1917,39 @@ mod tests {
                 actual: 2
             }
         ));
+        // An unlisted variant (e.g. a generic Io error) defaults to non-retryable.
+        assert!(!ResilientIpcClient::is_retryable_connect_error(
+            &IpcError::Io(std::io::Error::other("boom"))
+        ));
+    }
+
+    #[test]
+    fn reconnect_backoff_delay_stays_within_bounds_with_jitter() {
+        let (config, _temp_dir) = create_test_config();
+        let base = Duration::from_millis(20);
+        let max = Duration::from_millis(100);
+        let client = ResilientIpcClient::new(&config).with_reconnect_config(10, base, max);
+
+        // Exercise the jittered production delay across attempts and many draws:
+        // the result must never exceed `max`, must be at least the deterministic
+        // backoff, and the jitter must stay within one `base`.
+        for attempt in 0..12 {
+            let backoff = ResilientIpcClient::backoff_delay(base, max, attempt);
+            for _ in 0..200 {
+                let delay = client.reconnect_backoff_delay(attempt);
+                assert!(
+                    delay <= max,
+                    "delay {delay:?} exceeded max {max:?} at attempt {attempt}"
+                );
+                assert!(
+                    delay >= backoff,
+                    "delay {delay:?} below backoff {backoff:?} at attempt {attempt}"
+                );
+                assert!(
+                    delay <= backoff.saturating_add(base).min(max),
+                    "jitter exceeded one base at attempt {attempt}: {delay:?}"
+                );
+            }
+        }
     }
 }

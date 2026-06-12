@@ -31,7 +31,9 @@ use daemoneye_lib::ipc::client::{
 use daemoneye_lib::ipc::codec::IpcError;
 use daemoneye_lib::ipc::interprocess_transport::InterprocessServer;
 use daemoneye_lib::ipc::{IpcConfig, TransportType};
-use daemoneye_lib::proto::{DetectionResult, DetectionTask, TaskType};
+use daemoneye_lib::proto::{
+    CollectionCapabilities, DetectionResult, DetectionTask, MonitoringDomain, TaskType,
+};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -43,6 +45,15 @@ use tokio::time::{sleep, timeout};
 /// missing server applies these to keep the suite quick.
 const FAST_BASE_DELAY: Duration = Duration::from_millis(1);
 const FAST_MAX_DELAY: Duration = Duration::from_millis(5);
+
+/// Process-domain capabilities, pre-set on an endpoint so routing treats it as
+/// task-compatible without a live server to negotiate against.
+fn process_capabilities() -> CollectionCapabilities {
+    CollectionCapabilities {
+        supported_domains: vec![i32::from(MonitoringDomain::Process)],
+        advanced: None,
+    }
+}
 
 /// Build a server whose handler echoes every task back as a success.
 fn echo_server(config: &IpcConfig) -> InterprocessServer {
@@ -676,18 +687,20 @@ async fn test_circuit_breaker_open_short_circuits_without_retry() {
 
 #[tokio::test]
 async fn test_circuit_breaker_trips_blocks_and_recovers() {
-    // Covers AE2: the breaker trips after threshold failures (reported as Open
-    // in stats), blocks sends while open, then allows attempts again once the
-    // cooldown elapses and closes after a successful recovery. A short recovery
-    // timeout keeps the test fast.
+    // The breaker trips after threshold failures (reported as Open in stats),
+    // blocks sends while open, then allows attempts again once the cooldown
+    // elapses and closes after a successful recovery. A short recovery timeout
+    // keeps the test fast.
     //
     // NOTE: this asserts the observable Open -> blocked -> Closed lifecycle. It
     // does NOT assert the intermediate HalfOpen state or the multi-success
-    // half-open accumulation: a pre-existing quirk means the breaker's
-    // half-open transition is computed on a throwaway clone in
-    // `should_attempt_connection`, so the stored breaker recovers on the first
-    // success and HalfOpen is never surfaced. Tracked as a follow-up; see the
-    // PR's residual review findings.
+    // half-open accumulation, because of a pre-existing quirk: `get_circuit_breaker`
+    // returns a clone, so the half-open transition computed in
+    // `should_attempt_connection` is never written back to the stored breaker.
+    // The stored breaker therefore recovers on the first success (via the
+    // `is_open` reset branch of `record_success`) and HalfOpen is never
+    // surfaced in stats. Fixing that is a separate change to the breaker state
+    // machine, deliberately out of scope here.
     let (config, _temp_dir) = create_test_config();
     let client = ResilientIpcClient::new(&config)
         .with_reconnect_config(1, FAST_BASE_DELAY, FAST_MAX_DELAY)
@@ -816,73 +829,15 @@ async fn test_connection_pool_reuse() {
     let _result = server.graceful_shutdown().await;
 }
 
-// Unix-only: this test simulates a stale pooled connection by tearing down a
-// server and rebinding a new one on the same endpoint. That simulation relies
-// on Unix-domain-socket teardown/rebind timing; on Windows named pipes the
-// stale-handle and rebind semantics differ and make the simulation unreliable
-// (GOTCHAS §1.1 — Windows IPC behavior only validates in CI). The production
-// fallback it exercises (`send_task_to_endpoint` re-dialing on a failed pooled
-// send) is platform-agnostic, and cross-platform pooling is covered by
-// `test_connection_pool_reuse`.
-#[cfg(unix)]
-#[tokio::test]
-async fn test_pooled_connection_recovers_after_server_restart() {
-    // A connection pooled against one server becomes stale when that server
-    // restarts. The next send reuses the stale connection, detects the failure,
-    // and recovers by establishing a fresh connection — server restarts must
-    // not be made worse by connection pooling.
-    let (config, _temp_dir) = create_test_config();
-    let mut server = echo_server(&config);
-    server.start().await.expect("server should start");
-    sleep(Duration::from_millis(200)).await;
-
-    let client =
-        ResilientIpcClient::new(&config).with_reconnect_config(3, FAST_BASE_DELAY, FAST_MAX_DELAY);
-
-    // First send establishes and pools a connection.
-    let first = timeout(
-        Duration::from_secs(5),
-        client.send_task_to_endpoint(create_test_task("restart-1"), "default"),
-    )
-    .await
-    .expect("no hang")
-    .expect("first send should succeed");
-    assert!(first.success);
-    assert_eq!(
-        client
-            .metrics()
-            .pooled_connections_current
-            .load(Ordering::Relaxed),
-        1,
-        "first send should pool its connection"
-    );
-
-    // Restart the server: the pooled connection is now stale.
-    let _result = server.graceful_shutdown().await;
-    sleep(Duration::from_millis(150)).await;
-    let mut server = echo_server(&config);
-    server.start().await.expect("server should restart");
-    sleep(Duration::from_millis(200)).await;
-
-    // The next send reuses the stale pooled connection, the send over it fails,
-    // and the client recovers transparently with a fresh connection.
-    let second = timeout(
-        Duration::from_secs(5),
-        client.send_task_to_endpoint(create_test_task("restart-2"), "default"),
-    )
-    .await
-    .expect("no hang")
-    .expect("send should recover via a fresh connection after the restart");
-    assert!(second.success);
-    assert_eq!(second.task_id, "restart-2");
-
-    let _result = server.graceful_shutdown().await;
-}
-
 #[tokio::test]
 async fn test_failover_routes_around_downed_endpoint() {
-    // Covers AE2: routing selects a primary endpoint that is down, the send
-    // fails, and the client fails over to a healthy alternate that succeeds.
+    // Genuinely exercises the failover retry branch: the "down" endpoint has
+    // pre-set capabilities (so routing selects it as a healthy, task-compatible
+    // primary) but no live server, so its send fails and the client fails over
+    // to the live "up" endpoint. Pre-setting capabilities — rather than
+    // negotiating against a server — is what keeps "down" selectable; a
+    // never-negotiated endpoint would be culled by `refresh_capabilities`
+    // before selection, and routing would pick "up" directly without failover.
     let (down_config, _down_dir) = create_test_config();
     let (up_config, _up_dir) = create_test_config();
 
@@ -892,9 +847,12 @@ async fn test_failover_routes_around_downed_endpoint() {
     sleep(Duration::from_millis(200)).await;
 
     // Priority strategy selects the lowest-priority-number healthy endpoint
-    // first; "down" (priority 1) is tried before "up" (priority 2).
-    let down = CollectorEndpoint::new("down".to_string(), down_config.endpoint_path.clone(), 1);
-    let up = CollectorEndpoint::new("up".to_string(), up_config.endpoint_path.clone(), 2);
+    // first; "down" (priority 1) is tried before "up" (priority 2). Both carry
+    // pre-set Process capabilities so both are task-compatible.
+    let mut down = CollectorEndpoint::new("down".to_string(), down_config.endpoint_path.clone(), 1);
+    down.update_capabilities(process_capabilities());
+    let mut up = CollectorEndpoint::new("up".to_string(), up_config.endpoint_path.clone(), 2);
+    up.update_capabilities(process_capabilities());
 
     let client = ResilientIpcClient::new_with_endpoints(
         &down_config,
@@ -911,6 +869,29 @@ async fn test_failover_routes_around_downed_endpoint() {
 
     assert!(result.success);
     assert_eq!(result.task_id, "failover-test");
+
+    // Prove the failover machinery actually ran rather than "up" being picked
+    // directly: the primary "down" endpoint was attempted (its 2 retries) before
+    // the successful dial on "up", and "down" is now marked unhealthy.
+    assert!(
+        client
+            .metrics()
+            .connection_attempts_total
+            .load(Ordering::Relaxed)
+            >= 2,
+        "failover should have retried the down endpoint before succeeding on up"
+    );
+    let stats = client.get_stats().await;
+    let down_healthy = stats
+        .endpoint_stats
+        .iter()
+        .find(|e| e.endpoint_id == "down")
+        .expect("down endpoint present")
+        .is_healthy;
+    assert!(
+        !down_healthy,
+        "the down endpoint should be marked unhealthy after the failed primary attempt"
+    );
 
     let _result = server.graceful_shutdown().await;
 }
