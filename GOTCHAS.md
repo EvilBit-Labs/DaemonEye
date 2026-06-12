@@ -19,6 +19,7 @@ CI runs `cargo nextest run --profile ci --all-features` on a Linux / macOS / Win
 
 The workspace denies `clippy::expect_used`, `unwrap_used`, and `panic` outside tests. `.expect("...")` will fail `clippy -- -D warnings` in any non-test path.
 
+- **Why it's denied (not just style):** in a privilege-separated daemon a panic is a DoS-class failure — `expect()`/`unwrap()` terminate the process immediately, breaking availability and cutting off observability at the worst moment. Security-critical paths must degrade, not abort.
 - **Use instead:** `?`, `unwrap_or_default()`, `unwrap_or_else(...)`, or explicit error handling.
 - **Tests are exempt:** every `#[cfg(test)]` module carries a `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` header by convention. Keep it on new test modules — don't remove it, and don't "fix" it. A reviewer suggestion to strip the module-wide allow is declining the project's own test convention.
 

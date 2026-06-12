@@ -1215,8 +1215,10 @@ impl ResilientIpcClient {
             return Err(IpcError::CircuitBreakerOpen);
         }
 
-        // Record task attempt
-        self.metrics.record_task_sent();
+        // `record_task_sent` is recorded once per wire-level send inside
+        // `send_task_on_stream` (the single source of truth), so it is NOT
+        // recorded here — counting it at both levels double-counts and skews
+        // `success_rate` low.
 
         // Try a pooled connection first. If the send over it fails, the
         // connection is most likely stale — the server closed it between

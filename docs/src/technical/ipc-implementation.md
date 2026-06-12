@@ -108,6 +108,46 @@ ipc:
 
 The reconnection and circuit breaker parameters are configurable via the `with_reconnect_config()` and `with_breaker_config()` builder methods, primarily for testing and tuning scenarios.
 
+> **Note — defaults are reliability-first, not latency-first.** The defaults (10 attempts, 100ms base / 30s max backoff, 5-failure breaker, 30s recovery) favour eventual delivery over fast failure: a send to a persistently-unavailable endpoint can block for tens of seconds before surfacing an error, which is unsuitable for a real-time alerting path with a sub-100ms budget. Latency-sensitive callers should tune the parameters down at construction, for example:
+>
+> ```rust,ignore
+> let client = ResilientIpcClient::new(&config)
+>     .with_reconnect_config(2, Duration::from_millis(10), Duration::from_millis(100))
+>     .with_breaker_config(3, Duration::from_secs(5));
+> ```
+
+The per-endpoint circuit breaker moves through three states, surfaced live via `get_stats()`:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: failures reach threshold (default 5)
+    Open --> HalfOpen: recovery timeout elapses (default 30s)
+    HalfOpen --> Closed: probe send succeeds
+    HalfOpen --> Open: probe send fails
+    Closed --> Closed: send succeeds (failure count reset)
+```
+
+A routed send tries a pooled connection first, recovers a stale one with a fresh bounded reconnect, and fails over to an alternate endpoint only when the primary is exhausted:
+
+```mermaid
+flowchart TD
+    A[send_task_with_routing] --> B[select healthy, task-compatible primary]
+    B --> C{pooled connection available?}
+    C -->|yes| D[send on pooled stream]
+    D -->|ok| E[return connection to pool: success]
+    D -->|stale: send failed| F[discard and dial fresh]
+    C -->|no| F
+    F --> G{connect ok within max attempts?}
+    G -->|transient error| H[backoff plus jitter, retry]
+    H --> F
+    G -->|ok| I[send, return to pool: success]
+    G -->|fatal or exhausted| J[mark primary unhealthy]
+    J --> K{healthy alternate exists?}
+    K -->|yes| L[failover: send to alternate]
+    K -->|no| M[surface original error]
+```
+
 ### Error Types
 
 The IPC layer provides detailed error information:
