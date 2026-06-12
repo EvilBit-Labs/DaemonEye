@@ -197,7 +197,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 
 - **Edition**: Rust 2024 (MSRV: 1.95+)
 - **Linting**: `cargo clippy -- -D warnings` (zero warnings)
-- **Clippy/rustdoc lint traps**: see [GOTCHAS.md](GOTCHAS.md) §5 (`future_not_send` in `tracing` macros, `string_slice`, `items_after_statements`, inlined format args, `as_conversions` safety comments, rustdoc bracket-escaping, etc.)
+- **Clippy/rustdoc lint traps**: see [GOTCHAS.md](GOTCHAS.md) §5
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Formatting**: `rustfmt` with 119 char line length
 - **Errors**: `thiserror` for structured errors, `anyhow` for context
@@ -214,7 +214,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 5. No new `unsafe` without approval
 6. Benchmarks within acceptable ranges
 
-**Gotchas**: Pre-commit hooks (`cargo fmt`, `mdformat`) rewrite files and abort the commit — re-stage and retry. This and the rest (local-vs-CI test gap, lint traps, toolchain, bots, domain limits) live in [GOTCHAS.md](GOTCHAS.md).
+**Gotchas**: see [GOTCHAS.md](GOTCHAS.md) (pre-commit hook behavior is in §1.3).
 
 ---
 
@@ -275,7 +275,7 @@ Use `checked_*`, `saturating_*`, or explicit `wrapping_*` for security-sensitive
 - Treat all external inputs as untrusted
 - Validate early, reject with actionable errors
 - Use typed parsers over regex
-- Length limits on all variable-length inputs (incl. the 107-byte Unix socket-path limit — see [GOTCHAS.md](GOTCHAS.md) §4.1)
+- Length limits on all variable-length inputs (Unix socket-path limit: [GOTCHAS.md](GOTCHAS.md) §4.1)
 - SQL: AST validation with `sqlparser` \[Implemented at rule load time; execution-time enforcement is [Planned]\]
 
 ### Newtype Safety
@@ -488,7 +488,7 @@ pub struct Cli {
 
 ### Security Scanners
 
-- **Scanner gotchas** (zizmor `permissions:` block, CodeQL `rust/cleartext-logging` in assert messages): see [GOTCHAS.md](GOTCHAS.md) §3.4
+- **Scanner gotchas**: see [GOTCHAS.md](GOTCHAS.md) §3.4
 
 ### Code Review
 
