@@ -429,10 +429,10 @@ async fn hash_one(exe: &KernelResolvedExe, hasher: &MultiAlgorithmHasher) -> Has
     // Clone the authorized fd for the best-effort fuzzy pass BEFORE the file is
     // moved into the SHA-256 engine. The clone shares the same open file
     // description, so ssdeep sees the exact bytes SHA-256 saw — no second open
-    // by path, no new TOCTOU window. A clone failure (e.g. fd exhaustion) is a
-    // resource condition, not a hash failure: log it so the dropped ssdeep
-    // coverage is observable, but keep the "not attempted" (non-degraded)
-    // semantics rather than flooding degraded-coverage alerts.
+    // by path, no new TOCTOU window. A clone failure (e.g. fd exhaustion) is
+    // logged and then surfaced as degraded coverage: ssdeep is absent while
+    // SHA-256 succeeded, so `compute_ssdeep_best_effort` maps the `None` fd to
+    // `(None, true)` — the operator-facing degraded-coverage signal.
     let fuzzy_file = match file.try_clone() {
         Ok(clone) => Some(clone),
         Err(ref err) => {

@@ -98,7 +98,16 @@ fn bench_broker_inprocess_publish_to_receive(c: &mut Criterion) {
                     )
                     .await
                     .unwrap();
-                black_box(receiver.recv().await)
+                // Bound the wait so a publish/subscribe regression (or a dropped
+                // event) fails the bench fast instead of hanging indefinitely and
+                // wedging CI.
+                let received = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    receiver.recv(),
+                )
+                .await
+                .expect("broker_inprocess bench: no event received within 5s (publish/subscribe regression?)");
+                black_box(received)
             })
         });
     });
