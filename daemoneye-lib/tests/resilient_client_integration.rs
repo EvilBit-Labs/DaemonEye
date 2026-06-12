@@ -816,6 +816,15 @@ async fn test_connection_pool_reuse() {
     let _result = server.graceful_shutdown().await;
 }
 
+// Unix-only: this test simulates a stale pooled connection by tearing down a
+// server and rebinding a new one on the same endpoint. That simulation relies
+// on Unix-domain-socket teardown/rebind timing; on Windows named pipes the
+// stale-handle and rebind semantics differ and make the simulation unreliable
+// (GOTCHAS §1.1 — Windows IPC behavior only validates in CI). The production
+// fallback it exercises (`send_task_to_endpoint` re-dialing on a failed pooled
+// send) is platform-agnostic, and cross-platform pooling is covered by
+// `test_connection_pool_reuse`.
+#[cfg(unix)]
 #[tokio::test]
 async fn test_pooled_connection_recovers_after_server_restart() {
     // A connection pooled against one server becomes stale when that server
