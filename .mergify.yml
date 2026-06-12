@@ -1,178 +1,179 @@
 queue_rules:
-  # ─────────────────────────────────────────────────────────────────────────
-  # 1. dosubot — lint only
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: dosubot
-    merge_method: squash
-    queue_conditions:
-      - base = main
-      - label != do-not-merge
-      - author = dosubot[bot]
-    merge_conditions:
-      - check-success = quality
+    # ─────────────────────────────────────────────────────────────────────────
+    # 1. dosubot — lint only
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: dosubot
+      merge_method: squash
+      queue_conditions:
+          - base = main
+          - label != do-not-merge
+          - author = dosubot[bot]
+      merge_conditions:
+          - check-success = quality
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # 2. dependabot-workflows — workflow-only changes, lint only
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: dependabot-workflows
-    merge_method: squash
-    queue_conditions:
-      - base = main
-      - label != do-not-merge
-      - author = dependabot[bot]
-      - "-files ~= ^(?!\\.github/workflows/)"
-    merge_conditions:
-      - check-success = quality
+    # ─────────────────────────────────────────────────────────────────────────
+    # 2. dependabot-workflows — workflow-only changes, lint only
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: dependabot-workflows
+      merge_method: squash
+      queue_conditions:
+          - base = main
+          - label != do-not-merge
+          - author = dependabot[bot]
+          - "-files ~= ^(?!\\.github/workflows/)"
+      merge_conditions:
+          - check-success = quality
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # 3. dependabot — non-workflow changes, full CI
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: dependabot
-    merge_method: squash
-    queue_conditions:
-      - base = main
-      - label != do-not-merge
-      - author = dependabot[bot]
-    merge_conditions:
-      - check-success = quality
-      - check-success = test
-      - "check-success = test-cross-platform (macos-15, macOS)"
-      - "check-success = test-cross-platform (windows-2022, Windows)"
-      - "check-success = test-cross-platform (ubuntu-22.04, Linux)"
-      - check-success = coverage
-      - check-success = DCO
+    # ─────────────────────────────────────────────────────────────────────────
+    # 3. dependabot — non-workflow changes, full CI
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: dependabot
+      merge_method: squash
+      queue_conditions:
+          - base = main
+          - label != do-not-merge
+          - author = dependabot[bot]
+      merge_conditions:
+          - check-success = quality
+          - check-success = test
+          - "check-success = test-cross-platform (macos-15, macOS)"
+          - "check-success = test-cross-platform (windows-2022, Windows)"
+          - "check-success = test-cross-platform (ubuntu-22.04, Linux)"
+          - check-success = coverage
+          - check-success = DCO
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # 4. default — manually enqueued by maintainers, full CI
-  #    Repo permissions restrict who can send the /queue command.
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: default
-    merge_method: squash
-    merge_conditions:
-      - check-success = quality
-      - check-success = test
-      - "check-success = test-cross-platform (macos-15, macOS)"
-      - "check-success = test-cross-platform (windows-2022, Windows)"
-      - "check-success = test-cross-platform (ubuntu-22.04, Linux)"
-      - check-success = coverage
-      - check-success = DCO
+    # ─────────────────────────────────────────────────────────────────────────
+    # 4. default — manually enqueued by maintainers, full CI
+    #    Repo permissions restrict who can send the /queue command.
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: default
+      merge_method: squash
+      merge_conditions:
+          - check-success = quality
+          - check-success = test
+          - "check-success = test-cross-platform (macos-15, macOS)"
+          - "check-success = test-cross-platform (windows-2022, Windows)"
+          - "check-success = test-cross-platform (ubuntu-22.04, Linux)"
+          - check-success = coverage
+          - check-success = DCO
 
 pull_request_rules:
-  # ─────────────────────────────────────────────────────────────────────────
-  # Auto-approve bot PRs
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: Auto-approve dosubot PRs
-    conditions:
-      - base = main
-      - -draft
-      - author = dosubot[bot]
-    actions:
-      review:
-        type: APPROVE
-        message: Automatically approved by Mergify
+    # ─────────────────────────────────────────────────────────────────────────
+    # Auto-approve bot PRs
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: Auto-approve dosubot PRs
+      conditions:
+          - base = main
+          - -draft
+          - author = dosubot[bot]
+      actions:
+          review:
+              type: APPROVE
+              message: Automatically approved by Mergify
 
-  - name: Auto-approve dependabot PRs
-    conditions:
-      - base = main
-      - -draft
-      - author = dependabot[bot]
-    actions:
-      review:
-        type: APPROVE
-        message: Automatically approved by Mergify
+    - name: Auto-approve dependabot PRs
+      conditions:
+          - base = main
+          - -draft
+          - author = dependabot[bot]
+      actions:
+          review:
+              type: APPROVE
+              message: Automatically approved by Mergify
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # Keep PRs up to date
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: Keep PRs up to date with main
-    conditions:
-      - base = main
-      - -conflict
-      - -draft
-    actions:
-      update: {}
+    # ─────────────────────────────────────────────────────────────────────────
+    # Keep PRs up to date
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: Keep PRs up to date with main
+      conditions:
+          - base = main
+          - -conflict
+          - -draft
+      actions:
+          update: {}
 
 merge_protections:
-  # ─────────────────────────────────────────────────────────────────────────
-  # 1. Conventional commits (skip for bots)
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: Enforce conventional commit
-    description: >-
-      Require conventional commit format per https://www.conventionalcommits.org/en/v1.0.0/.
-      Skipped for dependabot and dosubot.
-    if:
-      - base = main
-      - author != dependabot[bot]
-      - author != dosubot[bot]
-    success_conditions:
-      - "title ~= ^(fix|feat|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\\(.+\\))?!?:"
+    # ─────────────────────────────────────────────────────────────────────────
+    # 1. Conventional commits (skip for bots)
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: Enforce conventional commit
+      description: >-
+          Require conventional commit format per https://www.conventionalcommits.org/en/v1.0.0/.
+          Skipped for dependabot and dosubot.
+      if:
+          - base = main
+          - author != dependabot[bot]
+          - author != dosubot[bot]
+      success_conditions:
+          - "title ~= ^(fix|feat|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\\(.+\\))?!?:"
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # 2. Full CI for non-bot authors or dependabot with non-workflow changes
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: Full CI must pass
-    description: >-
-      All CI checks must pass. Activates for non-bot authors, or dependabot
-      when files exist outside .github/workflows/.
-    if:
-      - base = main
-      - or:
-          - and:
-              - author != dependabot[bot]
-              - author != dosubot[bot]
-          - and:
-              - author = dependabot[bot]
-              - "files ~= ^(?!\\.github/workflows/)"
-    success_conditions:
-      - check-success = quality
-      - check-success = test
-      - "check-success = test-cross-platform (macos-15, macOS)"
-      - "check-success = test-cross-platform (windows-2022, Windows)"
-      - "check-success = test-cross-platform (ubuntu-22.04, Linux)"
-      - check-success = coverage
-      - check-success = DCO
+    # ─────────────────────────────────────────────────────────────────────────
+    # 2. Full CI for non-bot authors or dependabot with non-workflow changes
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: Full CI must pass
+      description: >-
+          All CI checks must pass. Activates for non-bot authors, or dependabot
+          when files exist outside .github/workflows/.
+      if:
+          - base = main
+          - or:
+                - and:
+                      - author != dependabot[bot]
+                      - author != dosubot[bot]
+                - and:
+                      - author = dependabot[bot]
+                      - "files ~= ^(?!\\.github/workflows/)"
+      success_conditions:
+          - check-success = quality
+          - check-success = test
+          - "check-success = test-cross-platform (macos-15, macOS)"
+          - "check-success = test-cross-platform (windows-2022, Windows)"
+          - "check-success = test-cross-platform (ubuntu-22.04, Linux)"
+          - check-success = coverage
+          - check-success = DCO
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # 3. Lint-only for bots with workflow-only changes
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: Lint must pass for bot workflow PRs
-    description: >-
-      Lint check must pass for dosubot or dependabot when all files are
-      within .github/workflows/.
-    if:
-      - base = main
-      - or:
-          - author = dosubot[bot]
-          - and:
-              - author = dependabot[bot]
-              - "-files ~= ^(?!\\.github/workflows/)"
-    success_conditions:
-      - check-success = quality
+    # ─────────────────────────────────────────────────────────────────────────
+    # 3. Lint-only for bots with workflow-only changes
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: Lint must pass for bot workflow PRs
+      description: >-
+          Lint check must pass for dosubot or dependabot when all files are
+          within .github/workflows/.
+      if:
+          - base = main
+          - or:
+                - author = dosubot[bot]
+                - and:
+                      - author = dependabot[bot]
+                      - "-files ~= ^(?!\\.github/workflows/)"
+      success_conditions:
+          - check-success = quality
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # 4. Outdated PR protection
-  # ─────────────────────────────────────────────────────────────────────────
-  - name: Do not merge outdated PRs
-    description: Make sure PRs are within 3 commits of the base branch before merging
-    if:
-      - base = main
-    success_conditions:
-      - "#commits-behind <= 3"
+    # ─────────────────────────────────────────────────────────────────────────
+    # 4. Outdated PR protection
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: Do not merge outdated PRs
+      description: Make sure PRs are within 3 commits of the base branch before merging
+      if:
+          - base = main
+      success_conditions:
+          - "#commits-behind <= 3"
 merge_protections_settings:
-  reporting_method: check-runs
-# auto_merge_conditions reflects the queue_conditions of the queue rules that previously had autoqueue: true. The following queue rules were manual-only ('default') and remain reachable via the `/queue` command. Review and adjust if needed.
-  auto_merge_conditions:
-    - or:
-        - and:
-            - base = main
-            - label != do-not-merge
-            - author = dosubot[bot]
-        - and:
-            - base = main
-            - label != do-not-merge
-            - author = dependabot[bot]
-            - "-files ~= ^(?!\\.github/workflows/)"
-        - and:
-            - base = main
-            - label != do-not-merge
-            - author = dependabot[bot]
+    reporting_method: check-runs
+    # Auto-merge applies to bot PRs (dosubot; dependabot on non-workflow changes).
+    # Maintainer PRs are enqueued manually via the `/queue` command.
+    auto_merge_conditions:
+        - or:
+              - and:
+                    - base = main
+                    - label != do-not-merge
+                    - author = dosubot[bot]
+              - and:
+                    - base = main
+                    - label != do-not-merge
+                    - author = dependabot[bot]
+                    - "-files ~= ^(?!\\.github/workflows/)"
+              - and:
+                    - base = main
+                    - label != do-not-merge
+                    - author = dependabot[bot]

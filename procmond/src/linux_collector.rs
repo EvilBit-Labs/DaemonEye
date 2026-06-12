@@ -22,6 +22,27 @@ use crate::process_collector::{
     ProcessCollector, ProcessCollectorCapabilities,
 };
 
+/// Suffix the Linux kernel appends to a `/proc/<pid>/exe` symlink target when
+/// the backing executable has been unlinked or replaced while the process runs.
+/// Its presence is the on-disk-vs-running mismatch signal (R2 AC6).
+const DELETED_EXE_SUFFIX: &str = " (deleted)";
+
+/// Classify a `/proc/<pid>/exe` symlink target.
+///
+/// Returns the cleaned executable path and whether the kernel flagged the
+/// backing file as deleted/replaced (the trailing `" (deleted)"` suffix). The
+/// suffix is matched only as a trailing token so a path that legitimately
+/// contains the substring mid-string is not misclassified. The suffix is ASCII,
+/// so truncating at `len - suffix_len` always lands on a char boundary.
+fn classify_exe_target(mut target: String) -> (String, bool) {
+    if target.ends_with(DELETED_EXE_SUFFIX) {
+        target.truncate(target.len().saturating_sub(DELETED_EXE_SUFFIX.len()));
+        (target, true)
+    } else {
+        (target, false)
+    }
+}
+
 /// Linux-specific errors that can occur during process collection.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -593,11 +614,21 @@ impl LinuxProcessCollector {
             },
         );
 
-        // Read executable path
+        // Read executable path. The kernel appends `" (deleted)"` to the
+        // /proc/<pid>/exe symlink target when the backing executable was
+        // unlinked or replaced while the process keeps running — the
+        // on-disk-vs-running mismatch signal (R2 AC6). Detect and strip the
+        // suffix so the stored path stays clean; the mismatch is recorded as
+        // distinct metadata on the event below.
         let exe_path = format!("{proc_dir}/exe");
-        let executable_path = fs::read_link(&exe_path)
-            .ok()
-            .map(|path| path.to_string_lossy().into_owned());
+        let (executable_path, on_disk_mismatch) =
+            fs::read_link(&exe_path)
+                .ok()
+                .map_or((None, false), |target| {
+                    let (clean, mismatch) =
+                        classify_exe_target(target.to_string_lossy().into_owned());
+                    (Some(clean), mismatch)
+                });
 
         // Read comm (process name)
         let comm_path = format!("{proc_dir}/comm");
@@ -665,7 +696,7 @@ impl LinuxProcessCollector {
         let accessible = true; // If we can read /proc/[pid], it's accessible
         let file_exists = executable_path.is_some();
 
-        Ok(ProcessEvent {
+        let mut event = ProcessEvent {
             pid,
             ppid,
             name,
@@ -681,7 +712,11 @@ impl LinuxProcessCollector {
             file_exists,
             timestamp: SystemTime::now(),
             platform_metadata,
-        })
+        };
+        // Record the on-disk-vs-running mismatch (set independently of the
+        // ssdeep signals so producers compose; preserves platform_metadata).
+        event.set_on_disk_mismatch(on_disk_mismatch);
+        Ok(event)
     }
 
     /// Enumerates all processes by reading /proc directory.
@@ -1090,6 +1125,29 @@ impl Clone for LinuxProcessCollector {
 mod tests {
     use super::*;
     use crate::process_collector::ProcessCollectionConfig;
+
+    #[test]
+    fn classify_exe_target_flags_and_strips_deleted_suffix() {
+        let (path, mismatch) = classify_exe_target("/usr/bin/app (deleted)".to_owned());
+        assert_eq!(path, "/usr/bin/app");
+        assert!(mismatch);
+    }
+
+    #[test]
+    fn classify_exe_target_passes_clean_path_through() {
+        let (path, mismatch) = classify_exe_target("/usr/bin/app".to_owned());
+        assert_eq!(path, "/usr/bin/app");
+        assert!(!mismatch);
+    }
+
+    #[test]
+    fn classify_exe_target_only_matches_trailing_suffix() {
+        // A path that legitimately contains the substring mid-string but does
+        // not END with it must not be flagged.
+        let (path, mismatch) = classify_exe_target("/opt/ (deleted)/app".to_owned());
+        assert_eq!(path, "/opt/ (deleted)/app");
+        assert!(!mismatch);
+    }
 
     #[test]
     fn test_linux_collector_creation() {

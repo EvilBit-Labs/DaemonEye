@@ -22,7 +22,7 @@ bench = true
 
 # Feature flags
 [features]
-default = ["process-collection", "detection-engine", "alerting", "ipc"]
+default = ["process-collection", "detection-engine", "alerting", "ipc", "fuzzy-hashes"]
 
 # Component features
 process-collection = []
@@ -45,6 +45,11 @@ ipc = [] # Use interprocess transport (cross-platform)
 #
 # sha3-hashes: SHA3-256 (cryptographically secure, ~5-10x slower than SHA-256)
 sha3-hashes = ["dep:sha3"]
+#
+# fuzzy-hashes: ssdeep/CTPH fuzzy hashing for binary-change detection. This is a
+# NON-cryptographic similarity hash, deliberately kept off the MultiAlgorithmHasher
+# cryptographic path (HashResult.hashes is asserted cryptographically-secure-only).
+fuzzy-hashes = ["dep:fuzzyhash"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -89,6 +94,9 @@ sha2 = { workspace = true }
 
 # Optional: additional cryptographic hash backends for integrity verification
 sha3 = { workspace = true, optional = true }
+
+# Optional: non-cryptographic fuzzy (ssdeep/CTPH) hashing for binary-change detection
+fuzzyhash = { workspace = true, optional = true }
 
 # Shared bounded hash-result cache (inline path + triggered path share one instance)
 quick_cache = { workspace = true }

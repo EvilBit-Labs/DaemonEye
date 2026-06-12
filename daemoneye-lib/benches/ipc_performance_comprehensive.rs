@@ -103,6 +103,7 @@ fn create_benchmark_process_record(pid: u32) -> ProcessRecord {
         accessible: true,
         file_exists: true,
         collection_time: chrono::Utc::now().timestamp_millis(),
+        ..Default::default()
     }
 }
 

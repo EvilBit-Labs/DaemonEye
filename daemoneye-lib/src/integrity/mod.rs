@@ -65,6 +65,7 @@
 //! ```
 
 pub mod auth;
+pub mod fuzzy;
 
 use quick_cache::sync::Cache;
 use serde::{Deserialize, Serialize};

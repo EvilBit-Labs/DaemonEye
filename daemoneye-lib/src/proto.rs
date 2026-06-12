@@ -12,7 +12,11 @@ use std::time::UNIX_EPOCH;
 #[allow(
     clippy::doc_markdown,
     clippy::missing_const_for_fn,
-    clippy::pattern_type_mismatch
+    clippy::pattern_type_mismatch,
+    // The generated ProcessRecord legitimately carries 4 independent boolean
+    // status flags (accessible, file_exists, on_disk_mismatch, ssdeep_degraded);
+    // they are a flat wire contract, not a refactorable state struct.
+    clippy::struct_excessive_bools
 )]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/_.rs"));
@@ -58,6 +62,12 @@ impl From<NativeProcessRecord> for ProtoProcessRecord {
             accessible: true, // Default to true, can be overridden by specific implementations
             file_exists: has_executable_path, // Approximate - actual file existence check would be done elsewhere
             collection_time: native.collection_time.timestamp_millis(),
+            // The native model does not carry fuzzy-hash integrity signals;
+            // those originate on the procmond ProcessEvent -> proto path. Default
+            // them here so this conversion stays lossless for the fields it owns.
+            ssdeep_hash: None,
+            on_disk_mismatch: false,
+            ssdeep_degraded: false,
         }
     }
 }
@@ -68,6 +78,13 @@ impl From<ProtoProcessRecord> for NativeProcessRecord {
     /// This conversion maps protobuf fields back to the native `ProcessRecord`
     /// structure, handling type conversions and providing sensible defaults
     /// for fields that may not be present.
+    ///
+    /// **Integrity signals are intentionally dropped here.** The fuzzy-hash
+    /// fields (`ssdeep_hash`, `on_disk_mismatch`, `ssdeep_degraded`) exist only
+    /// on the protobuf record, not the native model — consumers that need them
+    /// (e.g. the agent integrity-alert bridge) MUST read them off the proto
+    /// record *before* this conversion. Reading them off a converted native
+    /// record would silently yield `None`/`false`.
     fn from(proto: ProtoProcessRecord) -> Self {
         Self {
             pid: ProcessId::new(proto.pid),
@@ -510,6 +527,48 @@ mod tests {
         assert_eq!(task.task_id, "test-123");
         assert_eq!(task.task_type, ProtoTaskType::EnumerateProcesses as i32);
         assert_eq!(task.metadata.as_deref(), Some("test metadata"));
+    }
+
+    #[test]
+    fn native_proto_conversion_drops_integrity_signals_by_design() {
+        // The native ProcessRecord has no integrity-signal fields; the protobuf
+        // ProcessRecord owns ssdeep_hash/on_disk_mismatch/ssdeep_degraded, which
+        // are produced only on the procmond ProcessEvent -> proto path. Both
+        // conversion directions therefore drop them. This tripwire locks that
+        // intentional asymmetry: if a future edit adds the fields to the native
+        // model (or wires them through the conversion), this test fails and forces
+        // a deliberate decision rather than silently changing the lossy boundary
+        // the agent integrity-alert bridge relies on (it reads signals off the
+        // proto record *before* this conversion).
+
+        // 1. native -> proto defaults the three fields (native has nothing to lift).
+        let native = NativeProcessRecord::new(1234, "tripwire".to_owned());
+        let proto = ProtoProcessRecord::from(native);
+        assert_eq!(proto.ssdeep_hash, None);
+        assert!(!proto.on_disk_mismatch);
+        assert!(!proto.ssdeep_degraded);
+
+        // 2. A proto carrying signals, round-tripped through the native model,
+        //    loses them — documenting the intentional drop.
+        let signalled = ProtoProcessRecord {
+            ssdeep_hash: Some("3:abc:def".to_owned()),
+            on_disk_mismatch: true,
+            ssdeep_degraded: true,
+            ..Default::default()
+        };
+        let round_tripped = ProtoProcessRecord::from(NativeProcessRecord::from(signalled));
+        assert_eq!(
+            round_tripped.ssdeep_hash, None,
+            "ssdeep_hash must not survive the native round-trip"
+        );
+        assert!(
+            !round_tripped.on_disk_mismatch,
+            "on_disk_mismatch must not survive the native round-trip"
+        );
+        assert!(
+            !round_tripped.ssdeep_degraded,
+            "ssdeep_degraded must not survive the native round-trip"
+        );
     }
 
     #[test]

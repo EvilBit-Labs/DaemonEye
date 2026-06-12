@@ -85,7 +85,7 @@ Commit style: [.github/commit-instructions.md](.github/commit-instructions.md)
 ### Behavior Guidelines
 
 01. **No Merging**: Never merge without a passing CI check and code review approval on a PR. This must be performed by a human maintainer, not an AI assistant.
-02. **No Auto-Commits**: Never commit without explicit permission. Always present diffs for approval before staging or committing. This applies to every AI assistant regardless of tooling.
+02. **No Direct Commits to main**: Never commit **to main** without explicit permission. Work on a feature branch and open a PR for review so all changes go through the proper CI and review process. (Committing to a feature branch during agentic work is expected; merging to main is the gated step — see rule 01.)
 03. **Security-First**: All changes must maintain least privilege and undergo security review.
 04. **Zero-Warnings Policy**: `cargo clippy -- -D warnings` with no exceptions.
 05. **Operator-Centric**: Prioritize workflows efficient in contested/airgapped environments.
@@ -157,7 +157,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 | Logging      | tracing ecosystem               |
 | Config       | YAML/TOML via figment           |
 | IPC          | interprocess + protobuf         |
-| Event Bus    | crossbeam                       |
+| Event Bus    | daemoneye-eventbus + tokio      |
 | Testing      | cargo-nextest, insta, criterion |
 
 ### Dependencies

@@ -250,6 +250,7 @@ fn test_detection_result_with_multi_domain_events() -> Result<(), Box<dyn std::e
             accessible: true,
             file_exists: true,
             collection_time: 1_640_995_200_000, // 2022-01-01 00:00:00 UTC in milliseconds
+            ..Default::default()
         }],
         hash_result: None,
         network_events: vec![NetworkRecord {
@@ -406,6 +407,7 @@ fn test_backward_compatibility_detection_result() -> Result<(), Box<dyn std::err
             accessible: true,
             file_exists: true,
             collection_time: 1_640_995_200_000,
+            ..Default::default()
         }],
         hash_result: None,
         // New fields should be empty for backward compatibility

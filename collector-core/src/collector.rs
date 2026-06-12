@@ -1716,7 +1716,7 @@ impl CollectorRuntime {
     /// Initialize `LocalEventBus` for the collector runtime.
     ///
     /// This method creates and configures a `LocalEventBus` instance
-    /// for in-process event distribution using crossbeam channels.
+    /// for in-process event distribution using plain `tokio` channels.
     #[allow(clippy::unused_async)]
     pub async fn initialize_local_eventbus(&mut self) -> Result<()> {
         info!("Initializing LocalEventBus for collector runtime");

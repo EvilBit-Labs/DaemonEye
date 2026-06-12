@@ -209,6 +209,7 @@ async fn test_connection_limits_enforcement() {
                     accessible: true,
                     file_exists: true,
                     collection_time: chrono::Utc::now().timestamp_millis(),
+                    ..Default::default()
                 }],
                 hash_result: None,
                 network_events: vec![],
@@ -637,6 +638,7 @@ async fn test_resource_exhaustion_resistance() {
                     accessible: true,
                     file_exists: true,
                     collection_time: chrono::Utc::now().timestamp_millis(),
+                    ..Default::default()
                 }],
                 hash_result: None,
                 network_events: vec![],
