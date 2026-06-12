@@ -6,7 +6,7 @@
       "version": "0.1.1"
     },
     "actionbook/rust-skills": {
-      "version": "1f4becdcb88d1cbccc1880594479f28891102843",
+      "version": "fa60f7931223646fb71c4586b4a6c8545016076a",
       "source": "https://github.com/actionbook/rust-skills",
       "include": {
         "skills": [
@@ -70,11 +70,11 @@
       "version": "0.1.2"
     },
     "neonwatty/logo-designer-skill": {
-      "version": "60285dd8417d5194155d8c2e349e2f8b61ffe6ff",
+      "version": "8f9a4b04009c15b05eeb47b4608d5502abafa609",
       "source": "https://github.com/neonwatty/logo-designer-skill"
     },
     "trailofbits/skills": {
-      "version": "d7f76b532d1e4c6e7757e04d25c99ab60dd5e32c",
+      "version": "c070b9b5881183ea5f6e320ff06c46688becb13e",
       "source": "https://github.com/trailofbits/skills",
       "include": {
         "skills": [
