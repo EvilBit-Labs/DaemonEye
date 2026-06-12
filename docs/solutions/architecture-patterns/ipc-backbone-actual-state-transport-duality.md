@@ -31,6 +31,8 @@ tags:
 
 The M2 IPC backbone ticket (`spec/full/tickets/T2_·_M2_—_IPC_backbone...`) and the `.kiro/specs/daemoneye-core-monitoring/tasks.md` entries frame the IPC layer as net-new work to "implement" and "complete":
 
+> **Source of truth:** `.kiro/` and `spec/full/` are both valid, but `spec/full/` (specs + tickets) updates faster and leads. On any conflict, trust `spec/full/` and correct `.kiro/`. The `.kiro/` citations here reflect where the framing/numbering currently lives; verify against `spec/full/` if they diverge.
+
 - "**Implement** `CollectorIpcServer` in `collector-core/src/ipc.rs`"
 - "**Complete** `IpcClientManager` in daemoneye-agent — reconnection, capability negotiation, task distribution"
 
