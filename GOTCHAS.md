@@ -1,6 +1,8 @@
 # Development Gotchas & Pitfalls
 
-This document tracks non-obvious behaviors, common pitfalls, and hard-won lessons in the DaemonEye codebase to assist future maintainers and contributors. It accretes over time — add an entry whenever a surprise costs more than a few minutes.
+This document tracks non-obvious behaviors and hard-won lessons in the DaemonEye codebase to assist future maintainers and contributors.
+
+**The bar:** a gotcha is a *specific lesson learned the hard way* — a surprise that cost real time. Prescriptive "how we do X" rules (standards, architecture, requirements) belong in [AGENTS.md](AGENTS.md), **not** here. Add an entry whenever a surprise costs more than a few minutes; keep standards out so this stays a list of traps, not a second style guide.
 
 ## 1. Testing, Linting & CI
 
