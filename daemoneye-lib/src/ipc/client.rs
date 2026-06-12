@@ -743,6 +743,9 @@ pub struct ResilientIpcClient {
     max_reconnect_attempts: u32,
     base_reconnect_delay: Duration,
     max_reconnect_delay: Duration,
+    /// Per-endpoint circuit-breaker configuration
+    breaker_failure_threshold: u32,
+    breaker_recovery_timeout: Duration,
 }
 
 #[allow(dead_code)] // Work in progress - some methods not yet used
@@ -775,6 +778,8 @@ impl ResilientIpcClient {
             max_reconnect_attempts: 10,
             base_reconnect_delay: Duration::from_millis(100),
             max_reconnect_delay: Duration::from_secs(30),
+            breaker_failure_threshold: 5,
+            breaker_recovery_timeout: Duration::from_secs(30),
         }
     }
 
@@ -807,7 +812,50 @@ impl ResilientIpcClient {
             max_reconnect_attempts: 10,
             base_reconnect_delay: Duration::from_millis(100),
             max_reconnect_delay: Duration::from_secs(30),
+            breaker_failure_threshold: 5,
+            breaker_recovery_timeout: Duration::from_secs(30),
         }
+    }
+
+    /// Override the reconnection backoff parameters.
+    ///
+    /// Production uses the defaults set in [`Self::new`]; this builder-style
+    /// setter exists mainly for tests and tuning. It consumes and returns
+    /// `self` so it can be chained after a constructor.
+    ///
+    /// * `max_attempts` - total connection attempts per send before the last
+    ///   error is surfaced (values below 1 are treated as 1)
+    /// * `base_delay` - first backoff delay; subsequent delays grow
+    ///   exponentially up to `max_delay`
+    /// * `max_delay` - upper bound on any single backoff delay
+    #[must_use]
+    pub const fn with_reconnect_config(
+        mut self,
+        max_attempts: u32,
+        base_delay: Duration,
+        max_delay: Duration,
+    ) -> Self {
+        self.max_reconnect_attempts = max_attempts;
+        self.base_reconnect_delay = base_delay;
+        self.max_reconnect_delay = max_delay;
+        self
+    }
+
+    /// Override the per-endpoint circuit-breaker parameters.
+    ///
+    /// Production uses the defaults set in [`Self::new`] (threshold 5, 30s
+    /// recovery); this builder-style setter exists mainly for tests and tuning.
+    /// Only breakers created after this call observe the new values, so chain it
+    /// immediately after a constructor before any send.
+    #[must_use]
+    pub const fn with_breaker_config(
+        mut self,
+        failure_threshold: u32,
+        recovery_timeout: Duration,
+    ) -> Self {
+        self.breaker_failure_threshold = failure_threshold;
+        self.breaker_recovery_timeout = recovery_timeout;
+        self
     }
 
     /// Add a new collector endpoint for load balancing and failover
@@ -907,8 +955,9 @@ impl ResilientIpcClient {
             performance_filter: None,
         };
 
-        // Send capability negotiation request using existing task mechanism
-        let result = self.send_task_on_stream(stream, capability_task).await?;
+        // Send capability negotiation request using existing task mechanism.
+        // The stream is dropped after negotiation rather than pooled.
+        let (result, _stream) = self.send_task_on_stream(stream, capability_task).await?;
 
         // Extract capabilities from the result metadata
         let capabilities = if result.success {
@@ -1078,8 +1127,46 @@ impl ResilientIpcClient {
             "Routing task to compatible endpoint"
         );
 
-        // Send task to selected endpoint
-        self.send_task_to_endpoint(task, &endpoint.id).await
+        // First attempt on the selected endpoint. Clone the task so the
+        // original remains available for a single failover attempt —
+        // `send_task_to_endpoint` consumes the task by value.
+        let first_result = self.send_task_to_endpoint(task.clone(), &endpoint.id).await;
+        if first_result.is_ok() {
+            return first_result;
+        }
+
+        // Explicit failover: try one alternate healthy endpoint, excluding the
+        // one that just failed (which `send_task_to_endpoint` has now marked
+        // unhealthy). With a single collector there is no alternate, so the
+        // original error is surfaced unchanged.
+        match self.select_failover_endpoint(&endpoint.id).await {
+            Some(alternate) => {
+                debug!(
+                    task_id = %task.task_id,
+                    failed_endpoint = %endpoint.id,
+                    failover_endpoint = %alternate.id,
+                    "Primary endpoint failed; attempting failover"
+                );
+                self.send_task_to_endpoint(task, &alternate.id).await
+            }
+            None => first_result,
+        }
+    }
+
+    /// Select a healthy endpoint other than `exclude_id` for a single failover
+    /// attempt, preferring the highest health score. Returns `None` when no
+    /// alternate exists — the common single-collector case in v1.0.
+    async fn select_failover_endpoint(&self, exclude_id: &str) -> Option<CollectorEndpoint> {
+        let endpoints = self.endpoints.read().await;
+        endpoints
+            .iter()
+            .filter(|e| e.id != exclude_id && e.is_healthy)
+            .max_by(|a, b| {
+                a.health_score()
+                    .partial_cmp(&b.health_score())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .cloned()
     }
 
     /// Send a task to a specific endpoint
@@ -1124,40 +1211,66 @@ impl ResilientIpcClient {
             pooled_conn.stream
         } else {
             debug!(endpoint_id = %endpoint.id, "Creating new connection");
-            match self.establish_connection_to_endpoint(&endpoint).await {
-                Ok(s) => s,
-                Err(e) => {
-                    // Connection failed: update breaker, health, and metrics
-                    self.update_circuit_breaker(&endpoint.id, false).await;
-                    self.update_endpoint_health(&endpoint.id, false).await;
-                    self.metrics.record_task_failed();
-                    return Err(e);
+            // Bounded reconnect-with-backoff loop. Circuit-breaker failure is
+            // recorded once per send (after the loop exhausts), not per attempt,
+            // so the breaker does not trip mid-retry and short-circuit its own
+            // bounded attempts when `max_reconnect_attempts` exceeds the breaker
+            // failure threshold.
+            let max_attempts = self.max_reconnect_attempts.max(1);
+            let mut attempt: u32 = 0;
+            loop {
+                match self.establish_connection_to_endpoint(&endpoint).await {
+                    Ok(s) => break s,
+                    Err(e) => {
+                        attempt = attempt.saturating_add(1);
+                        if !Self::is_retryable_connect_error(&e) || attempt >= max_attempts {
+                            // Fatal classification or attempts exhausted: record a
+                            // single failure for this send and surface the error.
+                            self.update_circuit_breaker(&endpoint.id, false).await;
+                            self.update_endpoint_health(&endpoint.id, false).await;
+                            self.metrics.record_task_failed();
+                            return Err(e);
+                        }
+                        let delay = self.reconnect_backoff_delay(attempt.saturating_sub(1));
+                        debug!(
+                            endpoint_id = %endpoint.id,
+                            attempt = attempt,
+                            delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                            "Connection attempt failed, retrying after backoff"
+                        );
+                        tokio::time::sleep(delay).await;
+                    }
                 }
             }
         };
 
-        // Send task
-        let result = self.send_task_on_stream(stream, task).await;
-        let success = result.is_ok();
-
-        // Update circuit breaker and endpoint health
-        self.update_circuit_breaker(&endpoint.id, success).await;
-        self.update_endpoint_health(&endpoint.id, success).await;
-
-        // Record failure in metrics if the task failed at any point
-        if !success {
-            self.metrics.record_task_failed();
+        // Send the task. On success the connection is still healthy and the
+        // server keeps it open for further requests, so return it to the pool
+        // for reuse (R3: connections are leased and returned per endpoint).
+        match self.send_task_on_stream(stream, task).await {
+            Ok((detection, live_stream)) => {
+                self.update_circuit_breaker(&endpoint.id, true).await;
+                self.update_endpoint_health(&endpoint.id, true).await;
+                self.release_connection(live_stream, endpoint.id.clone())
+                    .await;
+                Ok(detection)
+            }
+            Err(e) => {
+                self.update_circuit_breaker(&endpoint.id, false).await;
+                self.update_endpoint_health(&endpoint.id, false).await;
+                self.metrics.record_task_failed();
+                Err(e)
+            }
         }
-
-        result
     }
 
-    /// Send a task on an established stream
+    /// Send a task on an established stream, returning the response together
+    /// with the stream so the caller can return it to the connection pool.
     async fn send_task_on_stream(
         &self,
         mut stream: LocalSocketStream,
         task: DetectionTask,
-    ) -> IpcResult<DetectionResult> {
+    ) -> IpcResult<(DetectionResult, LocalSocketStream)> {
         let start_time = Instant::now();
         self.metrics.record_task_sent();
 
@@ -1182,7 +1295,7 @@ impl ResilientIpcClient {
             "Task completed"
         );
 
-        Ok(result)
+        Ok((result, stream))
     }
 
     /// Get current endpoints (for monitoring and diagnostics)
@@ -1206,6 +1319,18 @@ impl ResilientIpcClient {
 
     /// Get comprehensive client statistics
     pub async fn get_stats(&self) -> ClientStats {
+        // Pre-collect each endpoint's live circuit-breaker state under a single
+        // read lock. The state cannot be read inside the synchronous `.map()`
+        // closure below, since acquiring the breaker lock there would require an
+        // `.await`. Endpoints with no breaker entry yet report `Closed`.
+        let breaker_states: HashMap<String, CircuitBreakerState> = {
+            let circuit_breakers = self.circuit_breakers.read().await;
+            circuit_breakers
+                .iter()
+                .map(|(id, breaker)| (id.clone(), breaker.state()))
+                .collect()
+        };
+
         let endpoint_stats = {
             let endpoints = self.endpoints.read().await;
             endpoints
@@ -1215,10 +1340,10 @@ impl ResilientIpcClient {
                     priority: e.priority,
                     is_healthy: e.is_healthy,
                     health_score: e.health_score(),
-                    circuit_breaker_state: {
-                        // Simplified: Currently reporting Closed until full CB tracking is wired in stats
-                        CircuitBreakerState::Closed
-                    },
+                    circuit_breaker_state: breaker_states
+                        .get(&e.id)
+                        .cloned()
+                        .unwrap_or(CircuitBreakerState::Closed),
                     capabilities: e.capabilities.clone(),
                     last_success: e.last_success,
                     last_failure: e.last_failure,
@@ -1323,8 +1448,8 @@ impl ResilientIpcClient {
             .entry(endpoint_id.to_owned())
             .or_insert_with(|| {
                 CircuitBreaker::new(
-                    5,                       // failure threshold
-                    Duration::from_secs(30), // recovery timeout
+                    self.breaker_failure_threshold,
+                    self.breaker_recovery_timeout,
                     Some(Arc::clone(&self.metrics)),
                 )
             })
@@ -1355,6 +1480,50 @@ impl ResilientIpcClient {
                 endpoint.mark_unhealthy();
             }
         }
+    }
+
+    /// Classify whether a connection error is transient and worth retrying.
+    ///
+    /// Only genuinely retryable transport failures return `true`. Fatal
+    /// classifications — permission denial, an already-open circuit breaker,
+    /// protocol/codec errors, per-frame timeouts, and any unlisted
+    /// `#[non_exhaustive]` variant — return `false` and short-circuit the loop.
+    const fn is_retryable_connect_error(err: &IpcError) -> bool {
+        matches!(
+            err,
+            IpcError::ConnectionRefused { .. }
+                | IpcError::ConnectionTimeout { .. }
+                | IpcError::ServerNotFound { .. }
+                | IpcError::PeerClosed
+        )
+    }
+
+    /// Deterministic exponential backoff for retry attempt `attempt` (0-indexed):
+    /// `base * 2^attempt`, capped at `max`. Jitter is layered on separately by
+    /// [`Self::reconnect_backoff_delay`]; this pure function stays
+    /// straightforward to unit-test.
+    fn backoff_delay(base: Duration, max: Duration, attempt: u32) -> Duration {
+        // Cap the exponent so the shift cannot overflow a u32 multiplier; the
+        // result is clamped to `max` regardless.
+        let exponent = attempt.min(31);
+        let multiplier = 1_u32 << exponent;
+        base.checked_mul(multiplier).unwrap_or(max).min(max)
+    }
+
+    /// Exponential backoff for retry attempt `attempt` (0-indexed) plus a
+    /// bounded positive jitter of up to one `base_reconnect_delay`, clamped to
+    /// `max_reconnect_delay`.
+    ///
+    /// The random value is drawn and the delay fully computed before any
+    /// `.await`, so the resulting future stays `Send` (no RNG guard is held
+    /// across the suspend point).
+    fn reconnect_backoff_delay(&self, attempt: u32) -> Duration {
+        let backoff =
+            Self::backoff_delay(self.base_reconnect_delay, self.max_reconnect_delay, attempt);
+        let jitter_ceiling_nanos =
+            u64::try_from(self.base_reconnect_delay.as_nanos()).unwrap_or(u64::MAX);
+        let jitter = Duration::from_nanos(rand::random_range(0..=jitter_ceiling_nanos));
+        backoff.saturating_add(jitter).min(self.max_reconnect_delay)
     }
 
     /// Establish a new connection to a specific endpoint
@@ -1628,5 +1797,84 @@ mod tests {
         assert!(endpoint.supports_advanced_capability("realtime"));
         assert!(endpoint.supports_advanced_capability("system_wide"));
         assert!(!endpoint.supports_advanced_capability("unknown_capability"));
+    }
+
+    #[test]
+    fn backoff_delay_grows_exponentially_and_caps() {
+        let base = Duration::from_millis(10);
+        let max = Duration::from_millis(100);
+
+        // Exponential growth: base * 2^attempt.
+        assert_eq!(
+            ResilientIpcClient::backoff_delay(base, max, 0),
+            Duration::from_millis(10)
+        );
+        assert_eq!(
+            ResilientIpcClient::backoff_delay(base, max, 1),
+            Duration::from_millis(20)
+        );
+        assert_eq!(
+            ResilientIpcClient::backoff_delay(base, max, 2),
+            Duration::from_millis(40)
+        );
+
+        // Still under the cap at attempt 3 (80ms), capped at attempt 4 (160ms
+        // would exceed 100ms) and beyond.
+        assert_eq!(
+            ResilientIpcClient::backoff_delay(base, max, 3),
+            Duration::from_millis(80)
+        );
+        assert_eq!(ResilientIpcClient::backoff_delay(base, max, 4), max);
+        assert_eq!(ResilientIpcClient::backoff_delay(base, max, 50), max);
+
+        let mut previous = Duration::ZERO;
+        for attempt in 0..40 {
+            let delay = ResilientIpcClient::backoff_delay(base, max, attempt);
+            assert!(delay >= previous, "delay decreased at attempt {attempt}");
+            assert!(delay <= max, "delay exceeded max at attempt {attempt}");
+            previous = delay;
+        }
+    }
+
+    #[test]
+    fn retryable_classifier_separates_transient_from_fatal() {
+        // Transient transport failures are retried.
+        assert!(ResilientIpcClient::is_retryable_connect_error(
+            &IpcError::ServerNotFound {
+                endpoint: "x".to_string()
+            }
+        ));
+        assert!(ResilientIpcClient::is_retryable_connect_error(
+            &IpcError::ConnectionRefused {
+                endpoint: "x".to_string()
+            }
+        ));
+        assert!(ResilientIpcClient::is_retryable_connect_error(
+            &IpcError::ConnectionTimeout {
+                endpoint: "x".to_string()
+            }
+        ));
+        assert!(ResilientIpcClient::is_retryable_connect_error(
+            &IpcError::PeerClosed
+        ));
+
+        // Fatal classifications are not retried.
+        assert!(!ResilientIpcClient::is_retryable_connect_error(
+            &IpcError::PermissionDenied {
+                endpoint: "x".to_string()
+            }
+        ));
+        assert!(!ResilientIpcClient::is_retryable_connect_error(
+            &IpcError::CircuitBreakerOpen
+        ));
+        assert!(!ResilientIpcClient::is_retryable_connect_error(
+            &IpcError::Timeout
+        ));
+        assert!(!ResilientIpcClient::is_retryable_connect_error(
+            &IpcError::CrcMismatch {
+                expected: 1,
+                actual: 2
+            }
+        ));
     }
 }
