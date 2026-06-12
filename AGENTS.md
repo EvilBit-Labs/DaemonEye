@@ -335,6 +335,7 @@ DaemonEye/
 ├── collector-core/         # Collector framework
 ├── tests/                  # Integration tests
 ├── docs/solutions/         # Documented solutions to past problems (bugs, best practices, workflow patterns), by category with YAML frontmatter (module, tags, problem_type) — relevant when implementing or debugging in documented areas
+├── CONCEPTS.md             # Shared domain vocabulary (entities, named processes, status concepts) — relevant when orienting to the codebase or discussing domain concepts
 └── .kiro/                  # Steering docs & specs
 ```
 
