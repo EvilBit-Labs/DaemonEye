@@ -98,10 +98,15 @@ ipc:
 
 ### Connection Management
 
-- **Automatic Reconnection**: Clients automatically reconnect with exponential backoff
+- **Automatic Reconnection**: Clients automatically reconnect with exponential backoff and jitter. The `ResilientIpcClient` retries transient transport errors (`ConnectionRefused`, `ConnectionTimeout`, `ServerNotFound`, `PeerClosed`) up to a configurable maximum (default 10 attempts) with exponential backoff (default base 100ms, max 30s). Fatal errors (`PermissionDenied`, `CircuitBreakerOpen`, `Timeout`, codec errors) short-circuit immediately without retry
+- **Circuit Breaker**: Per-endpoint circuit breakers track failure rates and report live state (Closed/HalfOpen/Open) through `get_stats()`. Breakers open after a threshold of failures (default 5), preventing connection attempts during a recovery timeout (default 30s)
+- **Connection Pooling**: Healthy connections are returned to the pool after successful sends and reused for subsequent requests to the same endpoint
+- **Explicit Failover**: When a send to the primary endpoint fails, the client automatically fails over to an alternate healthy endpoint (if available)
 - **Graceful Degradation**: Components handle IPC failures without crashing
 - **Timeout Handling**: Configurable timeouts prevent hanging operations
 - **Connection Limiting**: Server-side connection limits prevent resource exhaustion
+
+The reconnection and circuit breaker parameters are configurable via the `with_reconnect_config()` and `with_breaker_config()` builder methods, primarily for testing and tuning scenarios.
 
 ### Error Types
 
@@ -119,6 +124,11 @@ pub enum IpcError {
     Encode(String),                             // Protobuf encoding error
     PeerClosed,                                 // Connection closed by peer
     InvalidLength { length: usize },            // Invalid message length
+    ConnectionRefused { endpoint: String },     // Server refused the connection
+    ConnectionTimeout { endpoint: String },     // Connection attempt timed out
+    ServerNotFound { endpoint: String },        // Server endpoint could not be resolved
+    CircuitBreakerOpen,                         // Circuit breaker is open
+    PermissionDenied { endpoint: String },      // Permission denied for endpoint
 }
 ```
 
