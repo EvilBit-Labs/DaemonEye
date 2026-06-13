@@ -25,14 +25,53 @@
     clippy::let_underscore_must_use
 )]
 
-use daemoneye_lib::ipc::client::{CircuitBreakerState, CollectorEndpoint, ResilientIpcClient};
+use daemoneye_lib::ipc::client::{
+    CircuitBreakerState, CollectorEndpoint, LoadBalancingStrategy, ResilientIpcClient,
+};
+use daemoneye_lib::ipc::codec::IpcError;
 use daemoneye_lib::ipc::interprocess_transport::InterprocessServer;
 use daemoneye_lib::ipc::{IpcConfig, TransportType};
-use daemoneye_lib::proto::{DetectionResult, DetectionTask, TaskType};
+use daemoneye_lib::proto::{
+    CollectionCapabilities, DetectionResult, DetectionTask, MonitoringDomain, TaskType,
+};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::{sleep, timeout};
+
+/// Small, fast backoff settings so retry-driven tests do not wait on the
+/// production defaults (10 attempts, 100ms base). Each helper that sends to a
+/// missing server applies these to keep the suite quick.
+const FAST_BASE_DELAY: Duration = Duration::from_millis(1);
+const FAST_MAX_DELAY: Duration = Duration::from_millis(5);
+
+/// Process-domain capabilities, pre-set on an endpoint so routing treats it as
+/// task-compatible without a live server to negotiate against.
+fn process_capabilities() -> CollectionCapabilities {
+    CollectionCapabilities {
+        supported_domains: vec![i32::from(MonitoringDomain::Process)],
+        advanced: None,
+    }
+}
+
+/// Build a server whose handler echoes every task back as a success.
+fn echo_server(config: &IpcConfig) -> InterprocessServer {
+    let mut server = InterprocessServer::new(config.clone());
+    server.set_handler(|task: DetectionTask| async move {
+        Ok(DetectionResult {
+            task_id: task.task_id,
+            success: true,
+            error_message: None,
+            processes: vec![],
+            hash_result: None,
+            network_events: vec![],
+            filesystem_events: vec![],
+            performance_events: vec![],
+        })
+    });
+    server
+}
 
 /// Creates a test IPC configuration with a temporary directory for socket files.
 ///
@@ -108,7 +147,10 @@ async fn test_connection_state_tracking() {
 #[tokio::test]
 async fn test_circuit_breaker_functionality() {
     let (config, _temp_dir) = create_test_config();
-    let client = ResilientIpcClient::new(&config);
+    // Keep retries small/fast: the no-server sends below now run a bounded
+    // backoff loop, so the production defaults would make this test crawl.
+    let client =
+        ResilientIpcClient::new(&config).with_reconnect_config(2, FAST_BASE_DELAY, FAST_MAX_DELAY);
 
     // Get initial stats
     let stats = client.get_stats().await;
@@ -219,48 +261,43 @@ async fn test_retry_with_exponential_backoff() {
     let (mut config, _temp_dir) = create_test_config();
     // Use a unique endpoint path to avoid interference from other tests
     config.endpoint_path = format!("{}-backoff", config.endpoint_path);
-    let client = ResilientIpcClient::new(&config);
+    // Four attempts with a 20ms base so the backoff sleeps are observable but
+    // the test still finishes quickly.
+    let client = ResilientIpcClient::new(&config).with_reconnect_config(
+        4,
+        Duration::from_millis(20),
+        Duration::from_millis(100),
+    );
 
-    // Try to send a task without a server to trigger retries
+    // No server: ServerNotFound is retryable, so the bounded loop exhausts all
+    // attempts before surfacing the last error.
     let task = create_test_task("backoff-test");
     let start_time = std::time::Instant::now();
 
     let result = timeout(
-        Duration::from_secs(2),
+        Duration::from_secs(5),
         client.send_task_to_endpoint(task, "default"),
     )
-    .await;
+    .await
+    .expect("send should not hang");
 
-    // Should fail immediately since there's no server (no retry logic in send_task_to_endpoint)
-    assert!(
-        matches!(result, Ok(Err(_))),
-        "Expected task to fail immediately without server"
-    );
+    assert!(result.is_err(), "expected failure against a missing server");
 
-    // Check that task attempts were made (either failed or sent)
-    let _stats = client.get_stats().await;
-    let metrics = client.metrics();
-    let tasks_sent = metrics
-        .tasks_sent_total
-        .load(std::sync::atomic::Ordering::Relaxed);
-    let tasks_failed = metrics
-        .tasks_failed_total
-        .load(std::sync::atomic::Ordering::Relaxed);
+    // Retries actually happened: the connection was attempted exactly N times
+    // (once per bounded attempt) — proving the loop ran rather than failing
+    // fast as the pre-backoff implementation did.
+    let attempts = client
+        .metrics()
+        .connection_attempts_total
+        .load(Ordering::Relaxed);
+    assert_eq!(attempts, 4, "expected exactly 4 connection attempts");
 
-    // Either tasks were sent (and possibly failed) or failed directly
-    assert!(
-        tasks_sent > 0 || tasks_failed > 0,
-        "No task attempts were recorded: sent={}, failed={}",
-        tasks_sent,
-        tasks_failed
-    );
-
-    // Since there's no retry logic in send_task_to_endpoint, the operation should complete quickly
+    // Elapsed time covers at least the first three backoff sleeps (20 + 40 + 80
+    // = 140ms, before jitter) — well above the pre-backoff "<500ms quick fail".
     let elapsed = start_time.elapsed();
     assert!(
-        elapsed < Duration::from_millis(500),
-        "Expected quick failure without retries, took {:?}",
-        elapsed
+        elapsed >= Duration::from_millis(140),
+        "expected backoff sleeps to elapse, took {elapsed:?}"
     );
 }
 
@@ -481,7 +518,8 @@ async fn test_force_reconnection() {
 #[tokio::test]
 async fn test_client_statistics() {
     let (config, _temp_dir) = create_test_config();
-    let client = ResilientIpcClient::new(&config);
+    let client =
+        ResilientIpcClient::new(&config).with_reconnect_config(2, FAST_BASE_DELAY, FAST_MAX_DELAY);
 
     // Get initial stats
     let stats = client.get_stats().await;
@@ -537,4 +575,323 @@ async fn test_client_statistics() {
         tasks_sent,
         tasks_failed
     );
+}
+
+#[tokio::test]
+async fn test_backoff_retry_succeeds_when_server_starts_mid_retry() {
+    // The "comes up on a later attempt" case: the client begins retrying
+    // against an absent socket (ServerNotFound), the server binds mid-retry,
+    // and a subsequent attempt connects and succeeds.
+    let (config, _temp_dir) = create_test_config();
+    let client = ResilientIpcClient::new(&config).with_reconnect_config(
+        10,
+        Duration::from_millis(50),
+        Duration::from_secs(1),
+    );
+
+    let server_config = config.clone();
+    let server_handle = tokio::spawn(async move {
+        // Start the server shortly after the client begins retrying.
+        sleep(Duration::from_millis(120)).await;
+        let mut server = echo_server(&server_config);
+        server.start().await.expect("server should start");
+        // Keep it alive long enough for the client to connect and finish.
+        sleep(Duration::from_secs(2)).await;
+        let _result = server.graceful_shutdown().await;
+    });
+
+    let task = create_test_task("warmup-test");
+    let result = timeout(
+        Duration::from_secs(5),
+        client.send_task_to_endpoint(task, "default"),
+    )
+    .await
+    .expect("send should not hang")
+    .expect("send should succeed once the server comes up");
+
+    assert!(result.success);
+    assert_eq!(result.task_id, "warmup-test");
+
+    let _result = server_handle.await;
+}
+
+#[tokio::test]
+async fn test_backoff_bound_stops_after_max_attempts() {
+    // Regression guard: with max_reconnect_attempts above the circuit-breaker
+    // failure threshold (5), the breaker must NOT trip mid-retry and cut the
+    // loop short. Exactly N connection attempts must occur.
+    let (mut config, _temp_dir) = create_test_config();
+    config.endpoint_path = format!("{}-bound", config.endpoint_path);
+    let client =
+        ResilientIpcClient::new(&config).with_reconnect_config(8, FAST_BASE_DELAY, FAST_MAX_DELAY);
+
+    let task = create_test_task("bound-test");
+    let result = timeout(
+        Duration::from_secs(5),
+        client.send_task_to_endpoint(task, "default"),
+    )
+    .await
+    .expect("send should not hang");
+
+    assert!(result.is_err(), "expected failure against a missing server");
+
+    let attempts = client
+        .metrics()
+        .connection_attempts_total
+        .load(Ordering::Relaxed);
+    assert_eq!(
+        attempts, 8,
+        "expected exactly 8 attempts (breaker must not short-circuit the loop), got {attempts}"
+    );
+}
+
+#[tokio::test]
+async fn test_circuit_breaker_open_short_circuits_without_retry() {
+    // Once the breaker is open, a further send is rejected immediately with
+    // CircuitBreakerOpen and makes no new connection attempt — the open breaker
+    // is classified fatal and not retried.
+    let (mut config, _temp_dir) = create_test_config();
+    config.endpoint_path = format!("{}-cb-open", config.endpoint_path);
+    // One attempt per send and the default breaker threshold (5): five failing
+    // sends trip the breaker.
+    let client =
+        ResilientIpcClient::new(&config).with_reconnect_config(1, FAST_BASE_DELAY, FAST_MAX_DELAY);
+
+    for i in 0..5 {
+        let task = create_test_task(&format!("cb-trip-{i}"));
+        let result = client.send_task_to_endpoint(task, "default").await;
+        assert!(result.is_err(), "send {i} should fail without a server");
+    }
+
+    let attempts_before = client
+        .metrics()
+        .connection_attempts_total
+        .load(Ordering::Relaxed);
+
+    let task = create_test_task("cb-after-open");
+    let result = client.send_task_to_endpoint(task, "default").await;
+    assert!(
+        matches!(result, Err(IpcError::CircuitBreakerOpen)),
+        "expected CircuitBreakerOpen, got {result:?}"
+    );
+
+    let attempts_after = client
+        .metrics()
+        .connection_attempts_total
+        .load(Ordering::Relaxed);
+    assert_eq!(
+        attempts_before, attempts_after,
+        "an open breaker must not attempt a new connection"
+    );
+}
+
+#[tokio::test]
+async fn test_circuit_breaker_trips_blocks_and_recovers() {
+    // The breaker trips after threshold failures (reported as Open in stats),
+    // blocks sends while open, then allows attempts again once the cooldown
+    // elapses and closes after a successful recovery. A short recovery timeout
+    // keeps the test fast.
+    //
+    // NOTE: this asserts the observable Open -> blocked -> Closed lifecycle. It
+    // does NOT assert the intermediate HalfOpen state or the multi-success
+    // half-open accumulation, because of a pre-existing quirk: `get_circuit_breaker`
+    // returns a clone, so the half-open transition computed in
+    // `should_attempt_connection` is never written back to the stored breaker.
+    // The stored breaker therefore recovers on the first success (via the
+    // `is_open` reset branch of `record_success`) and HalfOpen is never
+    // surfaced in stats. Fixing that is a separate change to the breaker state
+    // machine, deliberately out of scope here.
+    let (config, _temp_dir) = create_test_config();
+    let client = ResilientIpcClient::new(&config)
+        .with_reconnect_config(1, FAST_BASE_DELAY, FAST_MAX_DELAY)
+        .with_breaker_config(3, Duration::from_millis(200));
+
+    // Phase 1: three failing sends (no server) trip the breaker.
+    for i in 0..3 {
+        let task = create_test_task(&format!("trip-{i}"));
+        let _result = client.send_task_to_endpoint(task, "default").await;
+    }
+    let stats = client.get_stats().await;
+    let state = stats
+        .endpoint_stats
+        .iter()
+        .find(|e| e.endpoint_id == "default")
+        .expect("default endpoint present")
+        .circuit_breaker_state
+        .clone();
+    assert_eq!(
+        state,
+        CircuitBreakerState::Open,
+        "breaker should report Open in stats after threshold failures"
+    );
+
+    // Phase 2: while open and within the cooldown, sends short-circuit.
+    let task = create_test_task("blocked");
+    let result = client.send_task_to_endpoint(task, "default").await;
+    assert!(
+        matches!(result, Err(IpcError::CircuitBreakerOpen)),
+        "send while open should be blocked, got {result:?}"
+    );
+
+    // Phase 3: bring a server up and wait out the cooldown; recovery succeeds
+    // and the breaker closes.
+    let mut server = echo_server(&config);
+    server.start().await.expect("server should start");
+    sleep(Duration::from_millis(250)).await; // exceed the 200ms cooldown
+
+    for i in 0..3 {
+        let task = create_test_task(&format!("recover-{i}"));
+        let result = timeout(
+            Duration::from_secs(5),
+            client.send_task_to_endpoint(task, "default"),
+        )
+        .await
+        .expect("recovery send should not hang");
+        assert!(
+            result.is_ok(),
+            "recovery send {i} should succeed: {result:?}"
+        );
+    }
+
+    let stats = client.get_stats().await;
+    let state = stats
+        .endpoint_stats
+        .iter()
+        .find(|e| e.endpoint_id == "default")
+        .expect("default endpoint present")
+        .circuit_breaker_state
+        .clone();
+    assert_eq!(
+        state,
+        CircuitBreakerState::Closed,
+        "breaker should close in stats after successful recovery"
+    );
+
+    let _result = server.graceful_shutdown().await;
+}
+
+#[tokio::test]
+async fn test_connection_pool_reuse() {
+    // Two sequential tasks to the same endpoint: the first establishes and
+    // pools a connection, the second reuses it without establishing a new one.
+    let (config, _temp_dir) = create_test_config();
+    let mut server = echo_server(&config);
+    server.start().await.expect("server should start");
+    sleep(Duration::from_millis(200)).await;
+
+    let client = ResilientIpcClient::new(&config);
+
+    let first = timeout(
+        Duration::from_secs(5),
+        client.send_task_to_endpoint(create_test_task("pool-1"), "default"),
+    )
+    .await
+    .expect("no hang")
+    .expect("first send should succeed");
+    assert!(first.success);
+
+    let metrics = client.metrics();
+    assert_eq!(
+        metrics
+            .connections_established_total
+            .load(Ordering::Relaxed),
+        1,
+        "first task should establish exactly one connection"
+    );
+    assert_eq!(
+        metrics.pooled_connections_current.load(Ordering::Relaxed),
+        1,
+        "the connection should be returned to the pool after the send"
+    );
+
+    let second = timeout(
+        Duration::from_secs(5),
+        client.send_task_to_endpoint(create_test_task("pool-2"), "default"),
+    )
+    .await
+    .expect("no hang")
+    .expect("second send should succeed");
+    assert!(second.success);
+
+    assert_eq!(
+        metrics
+            .connections_established_total
+            .load(Ordering::Relaxed),
+        1,
+        "second task should reuse the pooled connection, not establish a new one"
+    );
+    assert_eq!(
+        metrics.pooled_connections_current.load(Ordering::Relaxed),
+        1,
+        "the reused connection should be returned to the pool after the second send"
+    );
+
+    let _result = server.graceful_shutdown().await;
+}
+
+#[tokio::test]
+async fn test_failover_routes_around_downed_endpoint() {
+    // Genuinely exercises the failover retry branch: the "down" endpoint has
+    // pre-set capabilities (so routing selects it as a healthy, task-compatible
+    // primary) but no live server, so its send fails and the client fails over
+    // to the live "up" endpoint. Pre-setting capabilities — rather than
+    // negotiating against a server — is what keeps "down" selectable; a
+    // never-negotiated endpoint would be culled by `refresh_capabilities`
+    // before selection, and routing would pick "up" directly without failover.
+    let (down_config, _down_dir) = create_test_config();
+    let (up_config, _up_dir) = create_test_config();
+
+    // Only the "up" endpoint has a server listening.
+    let mut server = echo_server(&up_config);
+    server.start().await.expect("server should start");
+    sleep(Duration::from_millis(200)).await;
+
+    // Priority strategy selects the lowest-priority-number healthy endpoint
+    // first; "down" (priority 1) is tried before "up" (priority 2). Both carry
+    // pre-set Process capabilities so both are task-compatible.
+    let mut down = CollectorEndpoint::new("down".to_string(), down_config.endpoint_path.clone(), 1);
+    down.update_capabilities(process_capabilities());
+    let mut up = CollectorEndpoint::new("up".to_string(), up_config.endpoint_path.clone(), 2);
+    up.update_capabilities(process_capabilities());
+
+    let client = ResilientIpcClient::new_with_endpoints(
+        &down_config,
+        vec![down, up],
+        LoadBalancingStrategy::Priority,
+    )
+    .with_reconnect_config(2, FAST_BASE_DELAY, FAST_MAX_DELAY);
+
+    let task = create_test_task("failover-test");
+    let result = timeout(Duration::from_secs(5), client.send_task(task))
+        .await
+        .expect("send should not hang")
+        .expect("failover should succeed on the healthy endpoint");
+
+    assert!(result.success);
+    assert_eq!(result.task_id, "failover-test");
+
+    // Prove the failover machinery actually ran rather than "up" being picked
+    // directly: the primary "down" endpoint was attempted (its 2 retries) before
+    // the successful dial on "up", and "down" is now marked unhealthy.
+    assert!(
+        client
+            .metrics()
+            .connection_attempts_total
+            .load(Ordering::Relaxed)
+            >= 2,
+        "failover should have retried the down endpoint before succeeding on up"
+    );
+    let stats = client.get_stats().await;
+    let down_healthy = stats
+        .endpoint_stats
+        .iter()
+        .find(|e| e.endpoint_id == "down")
+        .expect("down endpoint present")
+        .is_healthy;
+    assert!(
+        !down_healthy,
+        "the down endpoint should be marked unhealthy after the failed primary attempt"
+    );
+
+    let _result = server.graceful_shutdown().await;
 }

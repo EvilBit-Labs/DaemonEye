@@ -2,6 +2,8 @@
 
 > *"We watch from the shadows — our eyes never close."*
 
+@GOTCHAS.md
+
 ## Mission
 
 DaemonEye is a **silent observability and hunt layer** for sensitive, restricted, and air-gapped environments. It turns endpoints into stealth honeypots: passive by default, surgically traceable on demand, and cryptographically auditable. Telemetry never leaves customer control unless explicitly exported by an operator.
@@ -195,16 +197,9 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 
 - **Edition**: Rust 2024 (MSRV: 1.95+)
 - **Linting**: `cargo clippy -- -D warnings` (zero warnings)
-- **Format args**: Use `{variable}` inlined syntax in `format!`/`anyhow!` macros (`clippy::uninlined_format_args`)
-- **If-else ordering**: Clippy prefers `==` checks first in if-else (`clippy::unnecessary_negation`)
-- **map_err_ignore**: Name ignored variables in closures (`|_elapsed|` not `|_|`)
-- **as_conversions**: Add `#[allow(clippy::as_conversions)]` with safety comment for intentional casts
-- **Async in tracing macros**: Never `.await` inside `info!`/`debug!`/`warn!`/`error!` - causes `future_not_send`. Extract value first.
-- **string_slice**: Denied — use `split_once('=')` or `char_indices()` instead of `&s[..pos]` on user input
-- **items_after_statements**: All `const` declarations must be at function top, not after `return` statements
+- **Clippy/rustdoc lint traps**: see [GOTCHAS.md](GOTCHAS.md) §5
 - **Safety**: `unsafe_code = "forbid"` at workspace level
 - **Formatting**: `rustfmt` with 119 char line length
-- **Rustdoc**: Escape brackets in paths like `/proc/\[pid\]/stat` to avoid broken link warnings
 - **Errors**: `thiserror` for structured errors, `anyhow` for context
 - **Async**: Async-first with Tokio
 - **Logging**: Structured with `tracing`
@@ -219,7 +214,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 5. No new `unsafe` without approval
 6. Benchmarks within acceptable ranges
 
-**Gotchas**: Pre-commit runs `cargo fmt` which modifies files. If unstaged changes exist, commit may fail with "Stashed changes conflicted". Run `cargo fmt --all` before staging or reset unrelated unstaged files.
+**Gotchas**: see [GOTCHAS.md](GOTCHAS.md) (pre-commit hook behavior is in §1.3).
 
 ---
 
@@ -280,8 +275,7 @@ Use `checked_*`, `saturating_*`, or explicit `wrapping_*` for security-sensitive
 - Treat all external inputs as untrusted
 - Validate early, reject with actionable errors
 - Use typed parsers over regex
-- Length limits on all variable-length inputs
-- **Socket path limit**: Unix `sockaddr_un.sun_path` is 108 bytes with NUL — usable limit is 107, not 255
+- Length limits on all variable-length inputs (Unix socket-path limit: [GOTCHAS.md](GOTCHAS.md) §4.1)
 - SQL: AST validation with `sqlparser` \[Implemented at rule load time; execution-time enforcement is [Planned]\]
 
 ### Newtype Safety
@@ -341,6 +335,7 @@ DaemonEye/
 ├── collector-core/         # Collector framework
 ├── tests/                  # Integration tests
 ├── docs/solutions/         # Documented solutions to past problems (bugs, best practices, workflow patterns), by category with YAML frontmatter (module, tags, problem_type) — relevant when implementing or debugging in documented areas
+├── CONCEPTS.md             # Shared domain vocabulary (entities, named processes, status concepts) — relevant when orienting to the codebase or discussing domain concepts
 └── .kiro/                  # Steering docs & specs
 ```
 
@@ -379,7 +374,6 @@ pub trait AlertSink: Send + Sync {
 - **Property**: proptest for edge cases
 - **Fuzz**: Security-critical components
 - **Snapshot**: insta for CLI output
-- **Cross-crate traits**: Import traits for method access (e.g., `use daemoneye_eventbus::rpc::RegistrationProvider;`)
 
 ### Test Environment
 
@@ -495,8 +489,7 @@ pub struct Cli {
 
 ### Security Scanners
 
-- **zizmor**: GitHub Actions permissions - add explicit `permissions:` block to workflows
-- **CodeQL rust/cleartext-logging**: Don't interpolate sensitive values in assert messages
+- **Scanner gotchas**: see [GOTCHAS.md](GOTCHAS.md) §3.4
 
 ### Code Review
 
