@@ -6,45 +6,58 @@
 //! # Module layout (T3 · M2 event store)
 //!
 //! The event-store engine is organized by domain under `storage/`:
-//! - [`error`] — [`StorageError`], shared across the engine and the legacy
+//! - `error` — [`StorageError`], shared across the engine and the legacy
 //!   [`DatabaseManager`].
-//! - [`codec`] — custom `redb::Value`/`redb::Key` impls (fixed-width `(ts_ms,
+//! - `codec` — custom `redb::Value`/`redb::Key` impls (fixed-width `(ts_ms,
 //!   seq)` keys, version-tagged postcard values).
+//! - `bucket` — time-bucket partitioning of `processes.events`.
 //!
 //! [`EventStore`] is the agent-owned, single-writer store that supersedes the
 //! stubbed [`DatabaseManager`]; the latter is retained so procmond's existing
 //! callers keep working until its storage is reconciled (T8).
 
+mod bucket;
 mod codec;
 mod error;
 
 pub use error::StorageError;
 
 use crate::models::{Alert, DetectionRule, ProcessRecord, SystemInfo};
+use bucket::{
+    bucket_id, bucket_table_name, choose_granularity, parse_bucket_name, retention_cutoff,
+};
 use codec::{TsSeqKey, decode_value, encode_value};
-use redb::{Database, ReadableDatabase, ReadableTableMetadata, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTableMetadata, TableDefinition, TableHandle};
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::Path};
 
+/// redb table type for a process-event bucket: `(ts_ms, seq)` → versioned bytes.
+type EventTable<'a> = TableDefinition<'a, TsSeqKey, &'static [u8]>;
+
+/// Build the redb table definition for a bucket table name.
+const fn bucket_def(name: &str) -> EventTable<'_> {
+    TableDefinition::new(name)
+}
+
 /// Agent-owned, single-writer event store (T3 · M2).
 ///
-/// Supersedes the stubbed [`DatabaseManager`]. This first increment (U1/U2)
-/// provides the primary `processes.events` table keyed by `(ts_ms, seq)` over
-/// the U2 codecs. Time-bucketing (U3), secondary indexes (U4), the single-writer
-/// ingest pipeline (U5/U6), the read handle + MRC (U7), and the signed
-/// schema-rebuild path (U8) build on this foundation.
+/// Supersedes the stubbed [`DatabaseManager`]. `processes.events` is partitioned
+/// into per-time-window bucket tables (`processes.events@<id>`, U3) over the U2
+/// codecs; secondary indexes (U4), the single-writer ingest pipeline (U5/U6),
+/// the read handle + MRC (U7), and the signed schema-rebuild path (U8) build on
+/// this foundation.
 pub struct EventStore {
     db: Database,
+    /// Bucket granularity in milliseconds (hourly by default; coarsens to daily
+    /// for long retention windows so the live-bucket count stays bounded).
+    granularity_ms: u64,
+    /// Retention window in milliseconds; buckets older than this are dropped.
+    retention_ms: u64,
 }
 
 impl EventStore {
-    /// Primary process-event table.
-    ///
-    /// U3 partitions this into per-time-bucket tables (`processes.events@<id>`);
-    /// this first cut uses a single table so the codecs and the ACID write/read
-    /// path can be exercised end-to-end.
-    const PROCESSES_EVENTS: TableDefinition<'static, TsSeqKey, &'static [u8]> =
-        TableDefinition::new("processes.events");
+    /// Default retention window: 7 days, in milliseconds.
+    const DEFAULT_RETENTION_MS: u64 = 604_800_000;
 
     /// Create (or open) the event store at `path`.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
@@ -55,7 +68,12 @@ impl EventStore {
                 path: db_path.to_path_buf(),
                 source,
             })?;
-        Ok(Self { db })
+        let retention_ms = Self::DEFAULT_RETENTION_MS;
+        Ok(Self {
+            db,
+            granularity_ms: choose_granularity(retention_ms),
+            retention_ms,
+        })
     }
 
     /// Open an existing event store at `path`.
@@ -67,13 +85,17 @@ impl EventStore {
                 path: db_path.to_path_buf(),
                 source,
             })?;
-        Ok(Self { db })
+        let retention_ms = Self::DEFAULT_RETENTION_MS;
+        Ok(Self {
+            db,
+            granularity_ms: choose_granularity(retention_ms),
+            retention_ms,
+        })
     }
 
-    /// Persist a single process event keyed by `(ts_ms, seq)`.
-    ///
-    /// ACID: one write transaction per call. The ingest pipeline (U5) batches
-    /// many of these into a single group commit.
+    /// Persist a single process event keyed by `(ts_ms, seq)`, routed to the
+    /// time bucket for `ts_ms`. ACID: one write transaction per call. The ingest
+    /// pipeline (U5) batches many of these into a single group commit.
     pub fn put_event(
         &self,
         ts_ms: u64,
@@ -81,8 +103,9 @@ impl EventStore {
         record: &ProcessRecord,
     ) -> Result<(), StorageError> {
         let bytes = encode_value(record)?;
+        let name = bucket_table_name(bucket_id(ts_ms, self.granularity_ms)?);
         let txn = self.db.begin_write()?;
-        let mut table = txn.open_table(Self::PROCESSES_EVENTS)?;
+        let mut table = txn.open_table(bucket_def(&name))?;
         table.insert((ts_ms, seq), bytes.as_slice())?;
         drop(table);
         txn.commit()?;
@@ -91,8 +114,9 @@ impl EventStore {
 
     /// Fetch the process event stored at `(ts_ms, seq)`, if any.
     pub fn get_event(&self, ts_ms: u64, seq: u32) -> Result<Option<ProcessRecord>, StorageError> {
+        let name = bucket_table_name(bucket_id(ts_ms, self.granularity_ms)?);
         let txn = self.db.begin_read()?;
-        let table = match txn.open_table(Self::PROCESSES_EVENTS) {
+        let table = match txn.open_table(bucket_def(&name)) {
             Ok(table) => table,
             Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
             Err(other) => return Err(other.into()),
@@ -103,14 +127,61 @@ impl EventStore {
         }
     }
 
-    /// Count the events currently stored (test/diagnostic helper).
+    /// List the live bucket ids in ascending order (discovered via `list_tables`).
+    pub fn list_buckets(&self) -> Result<Vec<u64>, StorageError> {
+        let txn = self.db.begin_read()?;
+        let mut ids: Vec<u64> = txn
+            .list_tables()?
+            .filter_map(|handle| parse_bucket_name(handle.name()))
+            .collect();
+        ids.sort_unstable();
+        Ok(ids)
+    }
+
+    /// Count the events across all buckets (test/diagnostic helper).
     pub fn event_count(&self) -> Result<u64, StorageError> {
         let txn = self.db.begin_read()?;
-        match txn.open_table(Self::PROCESSES_EVENTS) {
-            Ok(table) => Ok(table.len()?),
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(0),
-            Err(other) => Err(other.into()),
+        let names: Vec<String> = txn
+            .list_tables()?
+            .filter(|handle| parse_bucket_name(handle.name()).is_some())
+            .map(|handle| handle.name().to_owned())
+            .collect();
+        let mut total = 0_u64;
+        for name in &names {
+            let table = txn.open_table(bucket_def(name))?;
+            total = total.saturating_add(table.len()?);
         }
+        Ok(total)
+    }
+
+    /// Drop every bucket entirely older than the retention window relative to
+    /// `now_ms`. Returns the number of buckets dropped (an O(1) `delete_table`
+    /// each). Callers observe the count to assert retention actually ran.
+    pub fn drop_expired(&self, now_ms: u64) -> Result<usize, StorageError> {
+        let cutoff = retention_cutoff(now_ms, self.retention_ms, self.granularity_ms)?;
+        let expired: Vec<String> = {
+            let rtxn = self.db.begin_read()?;
+            rtxn.list_tables()?
+                .filter_map(|handle| {
+                    let name = handle.name();
+                    parse_bucket_name(name)
+                        .filter(|&id| id < cutoff)
+                        .map(|_| name.to_owned())
+                })
+                .collect()
+        };
+        if expired.is_empty() {
+            return Ok(0);
+        }
+        let txn = self.db.begin_write()?;
+        let mut dropped = 0_usize;
+        for name in &expired {
+            if txn.delete_table(bucket_def(name))? {
+                dropped = dropped.saturating_add(1);
+            }
+        }
+        txn.commit()?;
+        Ok(dropped)
     }
 }
 
@@ -492,6 +563,97 @@ mod tests {
         let store = EventStore::new(&db_path).expect("create event store");
         assert!(store.get_event(1, 1).expect("get on empty").is_none());
         assert_eq!(store.event_count().expect("count empty"), 0);
+    }
+
+    #[test]
+    fn event_store_routes_events_into_per_hour_buckets() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("buckets.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+
+        // Three events: two in the same hour, one in the next hour.
+        let hour = 3_600_000_u64;
+        let base = hour.saturating_mul(100);
+        store
+            .put_event(base, 1, &ProcessRecord::new(1, "a".to_owned()))
+            .expect("put a");
+        store
+            .put_event(
+                base.saturating_add(1000),
+                2,
+                &ProcessRecord::new(2, "b".to_owned()),
+            )
+            .expect("put b");
+        store
+            .put_event(
+                base.saturating_add(hour),
+                3,
+                &ProcessRecord::new(3, "c".to_owned()),
+            )
+            .expect("put c");
+
+        // Two distinct buckets discovered, ascending; all three events counted.
+        let buckets = store.list_buckets().expect("list buckets");
+        assert_eq!(buckets.len(), 2, "two distinct hour buckets");
+        let first = buckets.first().copied().expect("first bucket");
+        let last = buckets.last().copied().expect("last bucket");
+        assert!(first < last, "buckets ascending and distinct");
+        assert_eq!(store.event_count().expect("count"), 3);
+
+        // Each event is retrievable from its routed bucket.
+        assert!(store.get_event(base, 1).expect("get a").is_some());
+        assert!(
+            store
+                .get_event(base.saturating_add(hour), 3)
+                .expect("get c")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn event_store_retention_drops_expired_buckets_only() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("retention.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+
+        let hour = 3_600_000_u64;
+        // An old event (hour 1) and a recent event (hour 1000).
+        store
+            .put_event(hour, 1, &ProcessRecord::new(1, "old".to_owned()))
+            .expect("put old");
+        let recent_ts = hour.saturating_mul(1000);
+        store
+            .put_event(recent_ts, 2, &ProcessRecord::new(2, "recent".to_owned()))
+            .expect("put recent");
+        assert_eq!(store.list_buckets().expect("list").len(), 2);
+
+        // "now" = hour 1001 with the default 7-day (168-hour) retention: the
+        // hour-1 bucket is far expired; the hour-1000 bucket is inside the window.
+        let now = hour.saturating_mul(1001);
+        let dropped = store.drop_expired(now).expect("drop expired");
+        assert_eq!(dropped, 1, "exactly the expired bucket dropped (mechanism)");
+
+        // The recent event survives; the old one is gone.
+        assert!(store.get_event(recent_ts, 2).expect("get recent").is_some());
+        assert!(store.get_event(hour, 1).expect("get old").is_none());
+        assert_eq!(store.list_buckets().expect("list after").len(), 1);
+        assert_eq!(store.event_count().expect("count after"), 1);
+    }
+
+    #[test]
+    fn event_store_retention_noop_when_nothing_expired() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("retention-noop.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        let hour = 3_600_000_u64;
+        let ts = hour.saturating_mul(1000);
+        store
+            .put_event(ts, 1, &ProcessRecord::new(1, "recent".to_owned()))
+            .expect("put");
+        // now just after the event; nothing is past the retention window.
+        let dropped = store.drop_expired(ts.saturating_add(hour)).expect("drop");
+        assert_eq!(dropped, 0);
+        assert_eq!(store.event_count().expect("count"), 1);
     }
 
     #[test]
