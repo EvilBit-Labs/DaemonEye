@@ -1,148 +1,148 @@
 name: CI
 
 on:
-    push:
-        branches: [ main ]
-    pull_request:
-        branches: [ main ]
-    workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
-        # Restrict permissions to minimum required (principle of least privilege)
+    # Restrict permissions to minimum required (principle of least privilege)
 permissions:
-    contents: read
+  contents: read
 
 defaults:
-    run:
-        shell: bash
+  run:
+    shell: bash
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.ref }}
-    cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
-    CARGO_TERM_COLOR: always
-    CI: true
-    GITHUB_ACTIONS: true
+  CARGO_TERM_COLOR: always
+  CI: true
+  GITHUB_ACTIONS: true
 
 jobs:
-    quality:
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-              with:
-                  persist-credentials: false
-            - name: Set up mise toolchain
-              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
-              with:
-                  install: true
-                  cache: true
-                  github_token: ${{ secrets.GITHUB_TOKEN }}
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Set up mise toolchain
+        uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925 # v4.1.0
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Ensure rustfmt and clippy are installed
-              run: mise x -- rustup component add rustfmt clippy
+      - name: Ensure rustfmt and clippy are installed
+        run: mise x -- rustup component add rustfmt clippy
 
-            - name: Check formatting
-              run: just lint-rust
+      - name: Check formatting
+        run: just lint-rust
 
-    test:
-        runs-on: ubuntu-latest
-        timeout-minutes: 20
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-              with:
-                  persist-credentials: false
-            - name: Set up mise toolchain
-              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
-              with:
-                  install: true
-                  cache: true
-                  github_token: ${{ secrets.GITHUB_TOKEN }}
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up mise toolchain
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Run tests (all features)
-              run: mise x -- cargo nextest run --profile ci --all-features
+      - name: Run tests (all features)
+        run: mise x -- cargo nextest run --profile ci --all-features
 
-            - name: Build release
-              run: mise x -- cargo build --release --all-features
+      - name: Build release
+        run: mise x -- cargo build --release --all-features
 
-    test-cross-platform:
-        strategy:
-            matrix:
-                # Note: While in active development, the matrix is limited to reduce CI load and time. Future iterations should expand the matrix to cover all supported platforms.
-                # Code is intentionally commented out to make it easier to expand in the future.
-                include:
-                    # Primary Support - Linux
-                    # - os: ubuntu-24.04
-                    #   platform: "Linux"
-                    # Disabled: ARM runners are flaky on GitHub Actions
-                    # - os: ubuntu-24.04-arm
-                    #   platform: "Linux"
-                    # Primary Support - macOS (using available runners)
-                    - os: macos-15
-                      platform: "macOS"
-                    # - os: macos-14
-                    #   platform: "macOS"
-                    # - os: macos-13
-                    #   platform: "macOS"
-                    # Primary Support - Windows
-                    # - os: windows-2025
-                    #   platform: "Windows"
-                    - os: windows-2022
-                      platform: "Windows"
-                    # Secondary Support - Linux (using available runners)
-                    - os: ubuntu-22.04
-                      platform: "Linux"
-                    # Note: Ubuntu 20.04, 18.04, RHEL 7, FreeBSD, and Windows Server 2019 testing would require custom runners
-                    # Note: macOS 12 (Monterey) testing would require custom runners
+  test-cross-platform:
+    strategy:
+      matrix:
+        # Note: While in active development, the matrix is limited to reduce CI load and time. Future iterations should expand the matrix to cover all supported platforms.
+        # Code is intentionally commented out to make it easier to expand in the future.
+        include:
+          # Primary Support - Linux
+          # - os: ubuntu-24.04
+          #   platform: "Linux"
+          # Disabled: ARM runners are flaky on GitHub Actions
+          # - os: ubuntu-24.04-arm
+          #   platform: "Linux"
+          # Primary Support - macOS (using available runners)
+          - os: macos-15
+            platform: "macOS"
+          # - os: macos-14
+          #   platform: "macOS"
+          # - os: macos-13
+          #   platform: "macOS"
+          # Primary Support - Windows
+          # - os: windows-2025
+          #   platform: "Windows"
+          - os: windows-2022
+            platform: "Windows"
+          # Secondary Support - Linux (using available runners)
+          - os: ubuntu-22.04
+            platform: "Linux"
+          # Note: Ubuntu 20.04, 18.04, RHEL 7, FreeBSD, and Windows Server 2019 testing would require custom runners
+          # Note: macOS 12 (Monterey) testing would require custom runners
 
-        runs-on: ${{ matrix.os }}
-        timeout-minutes: 30
-        needs: quality
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-              with:
-                  persist-credentials: false
-            - name: Set up mise toolchain
-              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
-              with:
-                  install: true
-                  cache: true
-                  github_token: ${{ secrets.GITHUB_TOKEN }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    needs: quality
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up mise toolchain
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
-            # Run tests and build the release binary
-            - name: Run tests (all features)
-              run: mise x -- cargo nextest run --profile ci --all-features
-            - name: Build release
-              run: mise x -- cargo build --release --all-features
+      # Run tests and build the release binary
+      - name: Run tests (all features)
+        run: mise x -- cargo nextest run --profile ci --all-features
+      - name: Build release
+        run: mise x -- cargo build --release --all-features
 
-    coverage:
-        runs-on: ubuntu-latest
-        timeout-minutes: 30
-        needs: [ test, test-cross-platform, quality ]
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-              with:
-                  persist-credentials: false
-            - name: Set up mise toolchain
-              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
-              with:
-                  install: true
-                  cache: true
-                  github_token: ${{ secrets.GITHUB_TOKEN }}
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [test, test-cross-platform, quality]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up mise toolchain
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Generate coverage
-              run: mise x -- cargo llvm-cov --all-features --no-report
+      - name: Generate coverage
+        run: mise x -- cargo llvm-cov --all-features --no-report
 
-            - name: Combine coverage reports
-              run: mise x -- cargo llvm-cov report --lcov --output-path lcov.info
+      - name: Combine coverage reports
+        run: mise x -- cargo llvm-cov report --lcov --output-path lcov.info
 
-            - name: Upload to Codecov
-              uses: codecov/codecov-action@3f20e214133d0983f9a10f3d63b0faf9241a3daa # v6.0.0
-              with:
-                  files: lcov.info
-                  fail_ci_if_error: false
-                  token: ${{ secrets.CODECOV_TOKEN }}
-                  slug: EvilBit-Labs/daemoneye
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@3f20e214133d0983f9a10f3d63b0faf9241a3daa # v6.0.0
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: EvilBit-Labs/daemoneye
