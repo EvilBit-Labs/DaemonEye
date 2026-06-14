@@ -195,7 +195,7 @@ async fn test_shutdown_while_disconnected() {
 #[tokio::test]
 async fn test_event_conversion() {
     let event = create_test_event(1234);
-    let eventbus_event = EventBusConnector::convert_to_eventbus_event(&event);
+    let eventbus_event = EventBusConnector::convert_to_eventbus_event(&event, 42);
 
     assert_eq!(eventbus_event.pid, 1234);
     assert_eq!(eventbus_event.name, "test_process_1234");
@@ -909,7 +909,7 @@ fn test_convert_to_eventbus_event_with_all_fields() {
         platform_metadata: None,
     };
 
-    let eventbus_event = EventBusConnector::convert_to_eventbus_event(&event);
+    let eventbus_event = EventBusConnector::convert_to_eventbus_event(&event, 42);
 
     assert_eq!(eventbus_event.pid, 1234);
     assert_eq!(eventbus_event.name, "full_test");
@@ -924,6 +924,8 @@ fn test_convert_to_eventbus_event_with_all_fields() {
         Some("full --opt1 --opt2".to_owned())
     );
     assert!(eventbus_event.start_time.is_some());
+    // The durable WAL sequence is stamped into metadata as source_seq (T3 · U6).
+    assert_eq!(daemoneye_eventbus::source_seq_of(&eventbus_event), 42);
 }
 
 #[test]
@@ -946,7 +948,7 @@ fn test_convert_to_eventbus_event_minimal() {
         platform_metadata: None,
     };
 
-    let eventbus_event = EventBusConnector::convert_to_eventbus_event(&event);
+    let eventbus_event = EventBusConnector::convert_to_eventbus_event(&event, 42);
 
     assert_eq!(eventbus_event.pid, 1);
     assert_eq!(eventbus_event.name, "min");

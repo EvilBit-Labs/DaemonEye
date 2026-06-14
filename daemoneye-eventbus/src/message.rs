@@ -528,8 +528,27 @@ pub struct ProcessEvent {
     pub ppid: Option<u32>,
     /// Process start time
     pub start_time: Option<SystemTime>,
-    /// Additional metadata
+    /// Additional metadata. The producer's durable WAL sequence rides here under
+    /// [`SOURCE_SEQ_METADATA_KEY`] (T3 · U6): the agent's store-write ingest uses
+    /// `(source, source_seq)` as the idempotency key, and this value stays stable
+    /// across a re-published (buffered) event. Carried in metadata rather than a
+    /// typed field to keep the wire change additive across the many producers.
     pub metadata: HashMap<String, String>,
+}
+
+/// Metadata key under which a producer stamps its durable WAL sequence on a
+/// [`ProcessEvent`], for the agent's `(source, source_seq)` idempotency gate.
+pub const SOURCE_SEQ_METADATA_KEY: &str = "source_seq";
+
+/// Read the producer's WAL sequence from a [`ProcessEvent`]'s metadata, or 0
+/// when the producer did not stamp one (older events).
+#[must_use]
+pub fn source_seq_of(event: &ProcessEvent) -> u64 {
+    event
+        .metadata
+        .get(SOURCE_SEQ_METADATA_KEY)
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
 }
 
 /// Network monitoring event data (placeholder)
@@ -911,6 +930,41 @@ impl Default for CorrelationFilter {
 )]
 mod tests {
     use super::*;
+
+    // --- source_seq_of (T3 · U6) ---
+
+    fn process_event_with_metadata(metadata: HashMap<String, String>) -> ProcessEvent {
+        ProcessEvent {
+            pid: 1,
+            name: "p".to_owned(),
+            command_line: None,
+            executable_path: None,
+            ppid: None,
+            start_time: None,
+            metadata,
+        }
+    }
+
+    #[test]
+    fn source_seq_of_reads_the_stamped_sequence() {
+        let mut meta = HashMap::new();
+        meta.insert(SOURCE_SEQ_METADATA_KEY.to_owned(), "4242".to_owned());
+        assert_eq!(source_seq_of(&process_event_with_metadata(meta)), 4242);
+    }
+
+    #[test]
+    fn source_seq_of_defaults_to_zero_when_absent_or_unparseable() {
+        assert_eq!(
+            source_seq_of(&process_event_with_metadata(HashMap::new())),
+            0
+        );
+        let mut bad = HashMap::new();
+        bad.insert(
+            SOURCE_SEQ_METADATA_KEY.to_owned(),
+            "not-a-number".to_owned(),
+        );
+        assert_eq!(source_seq_of(&process_event_with_metadata(bad)), 0);
+    }
 
     // --- truncate_to_byte_boundary ---
 
