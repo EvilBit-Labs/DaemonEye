@@ -23,6 +23,7 @@ mod codec;
 mod error;
 mod index;
 pub mod ingest;
+pub mod mrc;
 
 pub use error::StorageError;
 
@@ -36,6 +37,7 @@ use index::{
     ppid_index_name, u32_index_def,
 };
 use ingest::IngestRecord;
+use mrc::MrcMap;
 use redb::{
     Database, ReadTransaction, ReadableDatabase, ReadableTableMetadata, TableDefinition,
     TableHandle,
@@ -75,11 +77,16 @@ pub struct EventStore {
     granularity_ms: u64,
     /// Retention window in milliseconds; buckets older than this are dropped.
     retention_ms: u64,
+    /// Recent window (ms) the in-memory MRC parent map is rebuilt from on start.
+    mrc_window_ms: u64,
 }
 
 impl EventStore {
     /// Default retention window: 7 days, in milliseconds.
     const DEFAULT_RETENTION_MS: u64 = 604_800_000;
+
+    /// Default MRC rebuild window: 30 minutes, in milliseconds (§11.7.7).
+    const DEFAULT_MRC_WINDOW_MS: u64 = 1_800_000;
 
     /// Create (or open) the event store at `path`.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
@@ -95,6 +102,7 @@ impl EventStore {
             db,
             granularity_ms: choose_granularity(retention_ms),
             retention_ms,
+            mrc_window_ms: Self::DEFAULT_MRC_WINDOW_MS,
         })
     }
 
@@ -112,6 +120,7 @@ impl EventStore {
             db,
             granularity_ms: choose_granularity(retention_ms),
             retention_ms,
+            mrc_window_ms: Self::DEFAULT_MRC_WINDOW_MS,
         })
     }
 
@@ -273,6 +282,68 @@ impl EventStore {
             Some(guard) => Ok(Some(decode_value(guard.value())?)),
             None => Ok(None),
         }
+    }
+
+    /// Range scan: every process record with `ts_ms` in `[start_ms, end_ms)`,
+    /// ascending. The agent's internal read handle (R9); the CLI consumes it over
+    /// IPC. Resolves the time window to the bucket subset (U3), then a key range
+    /// per bucket via redb's MVCC read snapshot.
+    pub fn scan_range(
+        &self,
+        start_ms: u64,
+        end_ms: u64,
+    ) -> Result<Vec<ProcessRecord>, StorageError> {
+        if end_ms <= start_ms {
+            return Ok(Vec::new());
+        }
+        let start_bucket = bucket_id(start_ms, self.granularity_ms)?;
+        let end_bucket = bucket_id(end_ms.saturating_sub(1), self.granularity_ms)?;
+        let txn = self.db.begin_read()?;
+        let mut out = Vec::new();
+        for id in collect_bucket_ids(&txn)? {
+            if id < start_bucket || id > end_bucket {
+                continue;
+            }
+            let table = match txn.open_table(bucket_def(&bucket_table_name(id))) {
+                Ok(table) => table,
+                Err(redb::TableError::TableDoesNotExist(_)) => continue,
+                Err(other) => return Err(other.into()),
+            };
+            for entry in table.range((start_ms, 0_u32)..(end_ms, 0_u32))? {
+                let (_key, value) = entry?;
+                out.push(decode_value(value.value())?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Sorted `(ts_ms, seq)` postings for a pid across all buckets — the
+    /// cache-shaped index-scan primitive T6's planner/LRU wraps (pointers only,
+    /// no primary-row fetch, no intersection).
+    pub fn pid_postings(&self, pid: u32) -> Result<Vec<(u64, u32)>, StorageError> {
+        let txn = self.db.begin_read()?;
+        let mut out = Vec::new();
+        for id in collect_bucket_ids(&txn)? {
+            let idx = match txn.open_multimap_table(u32_index_def(&pid_index_name(id))) {
+                Ok(idx) => idx,
+                Err(redb::TableError::TableDoesNotExist(_)) => continue,
+                Err(other) => return Err(other.into()),
+            };
+            for posting in idx.get(pid)? {
+                out.push(posting?.value());
+            }
+        }
+        out.sort_unstable();
+        Ok(out)
+    }
+
+    /// Build the in-memory MRC parent map from the recent window
+    /// `[now_ms - mrc_window, now_ms]`. Rebuilt on start; a cache, never a
+    /// persistence dependency.
+    pub fn build_mrc(&self, now_ms: u64) -> Result<MrcMap, StorageError> {
+        let start = now_ms.saturating_sub(self.mrc_window_ms);
+        let records = self.scan_range(start, now_ms.saturating_add(1))?;
+        Ok(mrc::build_mrc(&records))
     }
 
     /// List the live bucket ids in ascending order (discovered via `list_tables`).
@@ -893,6 +964,102 @@ mod tests {
         // The expired bucket's index is gone; the recent one survives.
         assert!(store.find_by_pid(7).expect("find 7 after").is_empty());
         assert_eq!(store.find_by_pid(8).expect("find 8 after").len(), 1);
+    }
+
+    #[test]
+    fn event_store_scan_range_returns_window_ascending_across_buckets() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("scan.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        let hour = 3_600_000_u64;
+
+        // hour 0: ts 1000, 2000; hour 1: ts hour+500; hour 5: ts 5*hour.
+        store
+            .put_event(1_000, 1, &ProcessRecord::new(1, "a".to_owned()))
+            .expect("a");
+        store
+            .put_event(2_000, 2, &ProcessRecord::new(2, "b".to_owned()))
+            .expect("b");
+        store
+            .put_event(
+                hour.saturating_add(500),
+                3,
+                &ProcessRecord::new(3, "c".to_owned()),
+            )
+            .expect("c");
+        store
+            .put_event(
+                hour.saturating_mul(5),
+                4,
+                &ProcessRecord::new(4, "d".to_owned()),
+            )
+            .expect("d");
+
+        // Window [1500, hour+1000) spans hour 0 and hour 1: catches b and c, not a or d.
+        let hits = store
+            .scan_range(1_500, hour.saturating_add(1_000))
+            .expect("scan");
+        let names: Vec<&str> = hits.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["b", "c"],
+            "in-window rows, ascending by (ts, seq)"
+        );
+
+        // Empty / inverted windows.
+        assert!(store.scan_range(10, 10).expect("empty").is_empty());
+        assert!(store.scan_range(5_000, 1_000).expect("inverted").is_empty());
+    }
+
+    #[test]
+    fn event_store_pid_postings_returns_sorted_pointers() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("postings.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        let hour = 3_600_000_u64;
+
+        // pid 7 appears at (hour, 9) and (0, 1) — postings must come back sorted.
+        store
+            .put_event(hour, 9, &ProcessRecord::new(7, "p".to_owned()))
+            .expect("p1");
+        store
+            .put_event(100, 1, &ProcessRecord::new(7, "p".to_owned()))
+            .expect("p2");
+        store
+            .put_event(100, 2, &ProcessRecord::new(8, "q".to_owned()))
+            .expect("q");
+
+        let postings = store.pid_postings(7).expect("postings");
+        assert_eq!(
+            postings,
+            vec![(100, 1), (hour, 9)],
+            "ascending (ts, seq) pointers"
+        );
+        assert!(store.pid_postings(999).expect("miss").is_empty());
+    }
+
+    #[test]
+    fn event_store_build_mrc_resolves_parent_lineage_in_window() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("mrc.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+
+        let now = 100_000_000_u64; // within one hourly bucket
+        let mut parent = ProcessRecord::new(1, "init".to_owned());
+        parent.ppid = None;
+        let mut child = ProcessRecord::new(100, "bash".to_owned());
+        child.ppid = Some(crate::models::process::ProcessId::new(1));
+        store
+            .put_event(now.saturating_sub(2_000), 1, &parent)
+            .expect("parent");
+        store
+            .put_event(now.saturating_sub(1_000), 2, &child)
+            .expect("child");
+
+        let mrc = store.build_mrc(now).expect("build mrc");
+        let bash = mrc.get(&100).expect("child in mrc");
+        assert_eq!(bash.ppid, Some(1));
+        assert_eq!(bash.parent_name.as_deref(), Some("init"));
     }
 
     #[test]
