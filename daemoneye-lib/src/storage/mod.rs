@@ -11,6 +11,8 @@
 //! - `codec` — custom `redb::Value`/`redb::Key` impls (fixed-width `(ts_ms,
 //!   seq)` keys, version-tagged postcard values).
 //! - `bucket` — time-bucket partitioning of `processes.events`.
+//! - `index` — secondary multimap indexes over pid, ppid, name, and
+//!   `exe_hash`, each mapping a term to `(ts_ms, seq)` pointers.
 //!
 //! [`EventStore`] is the agent-owned, single-writer store that supersedes the
 //! stubbed [`DatabaseManager`]; the latter is retained so procmond's existing
@@ -19,6 +21,7 @@
 mod bucket;
 mod codec;
 mod error;
+mod index;
 
 pub use error::StorageError;
 
@@ -27,7 +30,14 @@ use bucket::{
     bucket_id, bucket_table_name, choose_granularity, parse_bucket_name, retention_cutoff,
 };
 use codec::{TsSeqKey, decode_value, encode_value};
-use redb::{Database, ReadableDatabase, ReadableTableMetadata, TableDefinition, TableHandle};
+use index::{
+    exe_hash_prefix, exe_index_name, hash_index_def, name_hash128, name_index_name, pid_index_name,
+    ppid_index_name, u32_index_def,
+};
+use redb::{
+    Database, ReadTransaction, ReadableDatabase, ReadableTableMetadata, TableDefinition,
+    TableHandle,
+};
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::Path};
 
@@ -37,6 +47,16 @@ type EventTable<'a> = TableDefinition<'a, TsSeqKey, &'static [u8]>;
 /// Build the redb table definition for a bucket table name.
 const fn bucket_def(name: &str) -> EventTable<'_> {
     TableDefinition::new(name)
+}
+
+/// Collect the live process-event bucket ids from a read transaction, ascending.
+fn collect_bucket_ids(txn: &ReadTransaction) -> Result<Vec<u64>, StorageError> {
+    let mut ids: Vec<u64> = txn
+        .list_tables()?
+        .filter_map(|handle| parse_bucket_name(handle.name()))
+        .collect();
+    ids.sort_unstable();
+    Ok(ids)
 }
 
 /// Agent-owned, single-writer event store (T3 · M2).
@@ -103,13 +123,89 @@ impl EventStore {
         record: &ProcessRecord,
     ) -> Result<(), StorageError> {
         let bytes = encode_value(record)?;
-        let name = bucket_table_name(bucket_id(ts_ms, self.granularity_ms)?);
+        let id = bucket_id(ts_ms, self.granularity_ms)?;
+        let key = (ts_ms, seq);
         let txn = self.db.begin_write()?;
-        let mut table = txn.open_table(bucket_def(&name))?;
-        table.insert((ts_ms, seq), bytes.as_slice())?;
-        drop(table);
+
+        let mut base = txn.open_table(bucket_def(&bucket_table_name(id)))?;
+        base.insert(key, bytes.as_slice())?;
+        drop(base);
+
+        let mut pid_idx = txn.open_multimap_table(u32_index_def(&pid_index_name(id)))?;
+        pid_idx.insert(record.pid.raw(), key)?;
+        drop(pid_idx);
+
+        if let Some(ppid) = record.ppid {
+            let mut ppid_idx = txn.open_multimap_table(u32_index_def(&ppid_index_name(id)))?;
+            ppid_idx.insert(ppid.raw(), key)?;
+            drop(ppid_idx);
+        }
+
+        let mut name_idx = txn.open_multimap_table(hash_index_def(&name_index_name(id)))?;
+        name_idx.insert(name_hash128(&record.name), key)?;
+        drop(name_idx);
+
+        if let Some(prefix) = record.executable_hash.as_deref().and_then(exe_hash_prefix) {
+            let mut exe_idx = txn.open_multimap_table(hash_index_def(&exe_index_name(id)))?;
+            exe_idx.insert(prefix, key)?;
+            drop(exe_idx);
+        }
+
         txn.commit()?;
         Ok(())
+    }
+
+    /// All process records whose `pid` matches, across every live bucket, via
+    /// the `idx:pid` secondary index.
+    pub fn find_by_pid(&self, pid: u32) -> Result<Vec<ProcessRecord>, StorageError> {
+        let txn = self.db.begin_read()?;
+        let mut out = Vec::new();
+        for id in collect_bucket_ids(&txn)? {
+            let idx = match txn.open_multimap_table(u32_index_def(&pid_index_name(id))) {
+                Ok(idx) => idx,
+                Err(redb::TableError::TableDoesNotExist(_)) => continue,
+                Err(other) => return Err(other.into()),
+            };
+            let base = txn.open_table(bucket_def(&bucket_table_name(id)))?;
+            for posting in idx.get(pid)? {
+                let (ts, seq) = posting?.value();
+                if let Some(guard) = base.get((ts, seq))? {
+                    out.push(decode_value(guard.value())?);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// All process records whose `name` matches, across every live bucket. The
+    /// `idx:name` index is keyed by a 128-bit hash, so each candidate posting is
+    /// verified against the primary row's exact name before inclusion — this is
+    /// the collision-verify path that guards against hash collisions.
+    pub fn find_by_name(&self, name: &str) -> Result<Vec<ProcessRecord>, StorageError> {
+        let hash = name_hash128(name);
+        // The index lowercases names, so the collision verify is case-insensitive
+        // too — a candidate matches when its lowercased name equals the query's.
+        let lowered_query = name.to_lowercase();
+        let txn = self.db.begin_read()?;
+        let mut out = Vec::new();
+        for id in collect_bucket_ids(&txn)? {
+            let idx = match txn.open_multimap_table(hash_index_def(&name_index_name(id))) {
+                Ok(idx) => idx,
+                Err(redb::TableError::TableDoesNotExist(_)) => continue,
+                Err(other) => return Err(other.into()),
+            };
+            let base = txn.open_table(bucket_def(&bucket_table_name(id)))?;
+            for posting in idx.get(hash)? {
+                let (ts, seq) = posting?.value();
+                if let Some(guard) = base.get((ts, seq))? {
+                    let record: ProcessRecord = decode_value(guard.value())?;
+                    if record.name.to_lowercase() == lowered_query {
+                        out.push(record);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Fetch the process event stored at `(ts_ms, seq)`, if any.
@@ -159,26 +255,27 @@ impl EventStore {
     /// each). Callers observe the count to assert retention actually ran.
     pub fn drop_expired(&self, now_ms: u64) -> Result<usize, StorageError> {
         let cutoff = retention_cutoff(now_ms, self.retention_ms, self.granularity_ms)?;
-        let expired: Vec<String> = {
+        let expired_ids: Vec<u64> = {
             let rtxn = self.db.begin_read()?;
             rtxn.list_tables()?
-                .filter_map(|handle| {
-                    let name = handle.name();
-                    parse_bucket_name(name)
-                        .filter(|&id| id < cutoff)
-                        .map(|_| name.to_owned())
-                })
+                .filter_map(|handle| parse_bucket_name(handle.name()))
+                .filter(|&id| id < cutoff)
                 .collect()
         };
-        if expired.is_empty() {
+        if expired_ids.is_empty() {
             return Ok(0);
         }
         let txn = self.db.begin_write()?;
         let mut dropped = 0_usize;
-        for name in &expired {
-            if txn.delete_table(bucket_def(name))? {
+        for id in &expired_ids {
+            if txn.delete_table(bucket_def(&bucket_table_name(*id)))? {
                 dropped = dropped.saturating_add(1);
             }
+            // Drop the bucket's secondary indexes alongside the base table.
+            txn.delete_multimap_table(u32_index_def(&pid_index_name(*id)))?;
+            txn.delete_multimap_table(u32_index_def(&ppid_index_name(*id)))?;
+            txn.delete_multimap_table(hash_index_def(&name_index_name(*id)))?;
+            txn.delete_multimap_table(hash_index_def(&exe_index_name(*id)))?;
         }
         txn.commit()?;
         Ok(dropped)
@@ -654,6 +751,96 @@ mod tests {
         let dropped = store.drop_expired(ts.saturating_add(hour)).expect("drop");
         assert_eq!(dropped, 0);
         assert_eq!(store.event_count().expect("count"), 1);
+    }
+
+    #[test]
+    fn event_store_finds_records_by_pid_via_index() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("idx-pid.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        let hour = 3_600_000_u64;
+        let base = hour.saturating_mul(500);
+
+        // pid 1234 appears twice (different ts/seq); pid 9999 once.
+        store
+            .put_event(base, 1, &ProcessRecord::new(1234, "bash".to_owned()))
+            .expect("put 1");
+        store
+            .put_event(
+                base.saturating_add(hour),
+                2,
+                &ProcessRecord::new(1234, "bash".to_owned()),
+            )
+            .expect("put 2");
+        store
+            .put_event(base, 3, &ProcessRecord::new(9999, "zsh".to_owned()))
+            .expect("put 3");
+
+        let hits = store.find_by_pid(1234).expect("find pid");
+        assert_eq!(hits.len(), 2, "both pid-1234 rows returned via idx:pid");
+        assert!(hits.iter().all(|r| r.pid.raw() == 1234));
+        assert_eq!(store.find_by_pid(9999).expect("find pid").len(), 1);
+        assert!(store.find_by_pid(4242).expect("find miss").is_empty());
+    }
+
+    #[test]
+    fn event_store_finds_records_by_name_with_collision_verify() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("idx-name.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        let hour = 3_600_000_u64;
+        let base = hour.saturating_mul(500);
+
+        // Two "nginx" rows and one "redis" row.
+        store
+            .put_event(base, 1, &ProcessRecord::new(1, "nginx".to_owned()))
+            .expect("put 1");
+        store
+            .put_event(base, 2, &ProcessRecord::new(2, "nginx".to_owned()))
+            .expect("put 2");
+        store
+            .put_event(base, 3, &ProcessRecord::new(3, "redis".to_owned()))
+            .expect("put 3");
+
+        // find_by_name returns ONLY exact-name matches (the primary-row verify
+        // guards against hash collisions), and is case-insensitive on the term.
+        let nginx = store.find_by_name("NGINX").expect("find nginx");
+        assert_eq!(nginx.len(), 2, "both nginx rows returned");
+        assert!(nginx.iter().all(|r| r.name == "nginx"));
+        assert_eq!(store.find_by_name("redis").expect("find redis").len(), 1);
+        assert!(
+            store
+                .find_by_name("absent")
+                .expect("find absent")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn event_store_retention_drops_indexes_with_their_bucket() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("idx-retention.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        let hour = 3_600_000_u64;
+
+        // Old event (hour 1) indexed by pid 7; recent event (hour 1000) pid 8.
+        store
+            .put_event(hour, 1, &ProcessRecord::new(7, "old".to_owned()))
+            .expect("put old");
+        store
+            .put_event(
+                hour.saturating_mul(1000),
+                2,
+                &ProcessRecord::new(8, "new".to_owned()),
+            )
+            .expect("put new");
+        assert_eq!(store.find_by_pid(7).expect("find 7 before").len(), 1);
+
+        let dropped = store.drop_expired(hour.saturating_mul(1001)).expect("drop");
+        assert_eq!(dropped, 1);
+        // The expired bucket's index is gone; the recent one survives.
+        assert!(store.find_by_pid(7).expect("find 7 after").is_empty());
+        assert_eq!(store.find_by_pid(8).expect("find 8 after").len(), 1);
     }
 
     #[test]
