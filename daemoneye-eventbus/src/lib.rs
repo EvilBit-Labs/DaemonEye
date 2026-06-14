@@ -89,7 +89,7 @@ pub use error::{EventBusError, Result};
 pub use message::{
     BusEvent, CollectionEvent, CorrelationFilter, CorrelationMetadata, EventFilter,
     EventSubscription, FilesystemEvent, Message, MessageType, NetworkEvent, PerformanceEvent,
-    ProcessEvent, SourceCaps, TriggerRequest,
+    ProcessEvent, SOURCE_SEQ_METADATA_KEY, SourceCaps, TriggerRequest, source_seq_of,
 };
 pub use process_manager::{
     CollectorConfig, CollectorProcessManager, CollectorState, ProcessManagerConfig,
