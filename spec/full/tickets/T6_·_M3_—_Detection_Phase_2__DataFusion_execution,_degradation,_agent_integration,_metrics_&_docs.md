@@ -26,6 +26,7 @@
 - file:daemoneye-agent/src/main.rs (detection loop), file:daemoneye-agent/src/broker_manager.rs — wire `ResilientIpcClient` (file:daemoneye-lib/src/ipc/client.rs) + capability negotiation; load persisted rules from storage (T3).
 - file:daemoneye-lib/src/models/alert.rs — add persisted `Completeness { status, reasons[] }`; `CompletenessTracker` threads executor/collector signals.
 - Metrics via `tracing` (no Prometheus crate here); on-demand `EXPLAIN` plan output. Docs: dialect/extension policy + CLI rule-testing guidance.
+- **T3 storage handoff:** T3 ships the event store with index-scan primitives shaped for caching and an in-memory MRC parent map, but defers the §11.7.4 posting-list page LRU — build it as the first storage-side task here, then layer pushdown intersection on top. See the T3 brainstorm: [storage-engine event store](../../../docs/brainstorms/2026-06-13-storage-engine-event-store-requirements.md).
 
 ## Testing & quality gates
 
