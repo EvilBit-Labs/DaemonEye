@@ -22,6 +22,7 @@ mod bucket;
 mod codec;
 mod error;
 mod index;
+pub mod ingest;
 
 pub use error::StorageError;
 
@@ -34,12 +35,13 @@ use index::{
     exe_hash_prefix, exe_index_name, hash_index_def, name_hash128, name_index_name, pid_index_name,
     ppid_index_name, u32_index_def,
 };
+use ingest::IngestRecord;
 use redb::{
     Database, ReadTransaction, ReadableDatabase, ReadableTableMetadata, TableDefinition,
     TableHandle,
 };
 use serde::{Deserialize, Serialize};
-use std::{fs, io, path::Path};
+use std::{collections::BTreeMap, fs, io, path::Path};
 
 /// redb table type for a process-event bucket: `(ts_ms, seq)` → versioned bytes.
 type EventTable<'a> = TableDefinition<'a, TsSeqKey, &'static [u8]>;
@@ -151,6 +153,56 @@ impl EventStore {
             drop(exe_idx);
         }
 
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Group-commit a batch of records in a single write transaction — the
+    /// ingest pipeline's (U5) commit path. Records are grouped by time bucket so
+    /// each bucket's tables are opened once. Commits use redb's default
+    /// `Durability::Immediate` (one fsync per group), so the R7/R8 durability
+    /// guarantees hold. `collector_id` / `source_seq` on each record are the
+    /// pipeline's dedup concern and are not persisted here.
+    pub fn put_batch(&self, records: &[IngestRecord]) -> Result<(), StorageError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let mut by_bucket: BTreeMap<u64, Vec<&IngestRecord>> = BTreeMap::new();
+        for rec in records {
+            let id = bucket_id(rec.ts_ms, self.granularity_ms)?;
+            by_bucket.entry(id).or_default().push(rec);
+        }
+        let txn = self.db.begin_write()?;
+        for (id, recs) in &by_bucket {
+            let mut base = txn.open_table(bucket_def(&bucket_table_name(*id)))?;
+            let mut pid_idx = txn.open_multimap_table(u32_index_def(&pid_index_name(*id)))?;
+            let mut ppid_idx = txn.open_multimap_table(u32_index_def(&ppid_index_name(*id)))?;
+            let mut name_idx = txn.open_multimap_table(hash_index_def(&name_index_name(*id)))?;
+            let mut exe_idx = txn.open_multimap_table(hash_index_def(&exe_index_name(*id)))?;
+            for rec in recs {
+                let bytes = encode_value(&rec.record)?;
+                let key = (rec.ts_ms, rec.seq);
+                base.insert(key, bytes.as_slice())?;
+                pid_idx.insert(rec.record.pid.raw(), key)?;
+                if let Some(ppid) = rec.record.ppid {
+                    ppid_idx.insert(ppid.raw(), key)?;
+                }
+                name_idx.insert(name_hash128(&rec.record.name), key)?;
+                if let Some(prefix) = rec
+                    .record
+                    .executable_hash
+                    .as_deref()
+                    .and_then(exe_hash_prefix)
+                {
+                    exe_idx.insert(prefix, key)?;
+                }
+            }
+            drop(exe_idx);
+            drop(name_idx);
+            drop(ppid_idx);
+            drop(pid_idx);
+            drop(base);
+        }
         txn.commit()?;
         Ok(())
     }
