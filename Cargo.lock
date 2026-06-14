@@ -706,6 +706,7 @@ dependencies = [
  "fuzzyhash",
  "insta",
  "interprocess",
+ "postcard",
  "predicates",
  "proptest",
  "prost",

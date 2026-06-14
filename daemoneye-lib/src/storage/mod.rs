@@ -2,76 +2,116 @@
 //!
 //! This module provides database operations using redb for optimal performance and security.
 //! It includes table definitions, transaction handling, and data serialization.
+//!
+//! # Module layout (T3 · M2 event store)
+//!
+//! The event-store engine is organized by domain under `storage/`:
+//! - [`error`] — [`StorageError`], shared across the engine and the legacy
+//!   [`DatabaseManager`].
+//! - [`codec`] — custom `redb::Value`/`redb::Key` impls (fixed-width `(ts_ms,
+//!   seq)` keys, version-tagged postcard values).
+//!
+//! [`EventStore`] is the agent-owned, single-writer store that supersedes the
+//! stubbed [`DatabaseManager`]; the latter is retained so procmond's existing
+//! callers keep working until its storage is reconciled (T8).
+
+mod codec;
+mod error;
+
+pub use error::StorageError;
 
 use crate::models::{Alert, DetectionRule, ProcessRecord, SystemInfo};
-use redb::{Database, ReadableDatabase, TableDefinition};
+use codec::{TsSeqKey, decode_value, encode_value};
+use redb::{Database, ReadableDatabase, ReadableTableMetadata, TableDefinition};
 use serde::{Deserialize, Serialize};
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-};
-use thiserror::Error;
+use std::{fs, io, path::Path};
 
-/// Database operation errors.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum StorageError {
-    /// Platform-agnostic friendly errors for directory issues
-    #[error("Database directory '{dir}' does not exist")]
-    MissingDirectory {
-        dir: PathBuf,
-        #[source]
-        source: Option<std::io::Error>,
-    },
+/// Agent-owned, single-writer event store (T3 · M2).
+///
+/// Supersedes the stubbed [`DatabaseManager`]. This first increment (U1/U2)
+/// provides the primary `processes.events` table keyed by `(ts_ms, seq)` over
+/// the U2 codecs. Time-bucketing (U3), secondary indexes (U4), the single-writer
+/// ingest pipeline (U5/U6), the read handle + MRC (U7), and the signed
+/// schema-rebuild path (U8) build on this foundation.
+pub struct EventStore {
+    db: Database,
+}
 
-    #[error("Database directory '{path}' is not a directory")]
-    NotADirectory { path: PathBuf },
+impl EventStore {
+    /// Primary process-event table.
+    ///
+    /// U3 partitions this into per-time-bucket tables (`processes.events@<id>`);
+    /// this first cut uses a single table so the codecs and the ACID write/read
+    /// path can be exercised end-to-end.
+    const PROCESSES_EVENTS: TableDefinition<'static, TsSeqKey, &'static [u8]> =
+        TableDefinition::new("processes.events");
 
-    #[error("Permission denied accessing database directory '{path}'")]
-    DirectoryPermissionDenied {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    /// Create (or open) the event store at `path`.
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
+        let db_path = path.as_ref();
+        ensure_db_dir(db_path)?;
+        let db =
+            Database::create(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
+                path: db_path.to_path_buf(),
+                source,
+            })?;
+        Ok(Self { db })
+    }
 
-    #[error("Failed to open/create database at '{path}'")]
-    DatabaseCreationFailed {
-        path: PathBuf,
-        #[source]
-        source: redb::DatabaseError,
-    },
+    /// Open an existing event store at `path`.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
+        let db_path = path.as_ref();
+        ensure_db_dir(db_path)?;
+        let db =
+            Database::open(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
+                path: db_path.to_path_buf(),
+                source,
+            })?;
+        Ok(Self { db })
+    }
 
-    /// Legacy error variants (preserved for compatibility)
-    #[error("Database error: {0}")]
-    DatabaseError(#[from] redb::DatabaseError),
+    /// Persist a single process event keyed by `(ts_ms, seq)`.
+    ///
+    /// ACID: one write transaction per call. The ingest pipeline (U5) batches
+    /// many of these into a single group commit.
+    pub fn put_event(
+        &self,
+        ts_ms: u64,
+        seq: u32,
+        record: &ProcessRecord,
+    ) -> Result<(), StorageError> {
+        let bytes = encode_value(record)?;
+        let txn = self.db.begin_write()?;
+        let mut table = txn.open_table(Self::PROCESSES_EVENTS)?;
+        table.insert((ts_ms, seq), bytes.as_slice())?;
+        drop(table);
+        txn.commit()?;
+        Ok(())
+    }
 
-    #[error("Storage error: {0}")]
-    StorageError(#[from] redb::StorageError),
+    /// Fetch the process event stored at `(ts_ms, seq)`, if any.
+    pub fn get_event(&self, ts_ms: u64, seq: u32) -> Result<Option<ProcessRecord>, StorageError> {
+        let txn = self.db.begin_read()?;
+        let table = match txn.open_table(Self::PROCESSES_EVENTS) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(other) => return Err(other.into()),
+        };
+        match table.get((ts_ms, seq))? {
+            Some(guard) => Ok(Some(decode_value(guard.value())?)),
+            None => Ok(None),
+        }
+    }
 
-    #[error("Table error: {0}")]
-    TableError(#[from] redb::TableError),
-
-    #[error("Transaction error: {0}")]
-    TransactionError(#[from] redb::TransactionError),
-
-    #[error("Commit error: {0}")]
-    CommitError(#[from] redb::CommitError),
-
-    #[error("Serialization error: {0}")]
-    SerializationError(#[from] serde_json::Error),
-
-    #[error("I/O error accessing '{path}'")]
-    IoError {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("Table not found: {table}")]
-    TableNotFound { table: String },
-
-    #[error("Record not found: {id}")]
-    RecordNotFound { id: String },
+    /// Count the events currently stored (test/diagnostic helper).
+    pub fn event_count(&self) -> Result<u64, StorageError> {
+        let txn = self.db.begin_read()?;
+        match txn.open_table(Self::PROCESSES_EVENTS) {
+            Ok(table) => Ok(table.len()?),
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(0),
+            Err(other) => Err(other.into()),
+        }
+    }
 }
 
 /// Validates that the directory containing the database file exists and is accessible.
@@ -415,6 +455,43 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let _manager = DatabaseManager::new(&db_path).expect("Failed to create database manager");
         assert!(db_path.exists());
+    }
+
+    #[test]
+    fn event_store_round_trips_a_process_record_through_real_redb() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("events.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+
+        let record = ProcessRecord::new(4321, "subscribed-collector".to_owned());
+        store
+            .put_event(1_700_000_000_000, 7, &record)
+            .expect("put event");
+
+        let fetched = store
+            .get_event(1_700_000_000_000, 7)
+            .expect("get event")
+            .expect("event present");
+        assert_eq!(fetched.pid, record.pid);
+        assert_eq!(fetched.name, record.name);
+        assert_eq!(store.event_count().expect("count"), 1);
+
+        // A different key returns None, not the stored row.
+        assert!(
+            store
+                .get_event(1_700_000_000_000, 8)
+                .expect("get miss")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn event_store_get_on_fresh_store_returns_none_not_error() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("fresh.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        assert!(store.get_event(1, 1).expect("get on empty").is_none());
+        assert_eq!(store.event_count().expect("count empty"), 0);
     }
 
     #[test]
