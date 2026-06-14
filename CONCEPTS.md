@@ -27,3 +27,21 @@ The framed-protobuf-over-socket transport (Unix socket or named pipe) used for S
 ### Detection task
 
 A unit of collection work the agent sends to a collector, naming a monitoring domain and filters; the collector answers with a Detection result (the collected records or an error). A task targets a single monitoring domain and is rejected by a collector that lacks the corresponding capability.
+
+## Event store
+
+### Event store
+
+The agent-managed redb database of collected telemetry — `processes.events` and its sibling tables (scans, detection rules, alerts, alert deliveries). The agent is the single writer; the operator CLI and the detection engine read it. Distinct from the procmond-owned audit ledger, which is write-only forensic provenance, not queryable telemetry.
+
+### Time bucket
+
+The partition unit of `processes.events`: one base table (plus its secondary indexes) per time window, hourly by default and daily for low-volume hosts. Retention works at bucket granularity — expiring history is an O(1) drop of a whole bucket, not a row scan.
+
+### MRC (materialized relation cache)
+
+An in-memory cache of the parent relation (`pid → {ppid, parent_name, start_time}`), rebuilt on start from a bounded recent window. It turns the common parent/child lookup into a single map read. Always a cache, never a source of truth — if absent it is rebuilt, never recovered.
+
+### Schema-version rebuild
+
+The recovery path when the event store's `schema_version` tag does not match the running binary. The old partitions are exported as a signed bundle and dropped, the store reinitializes at the new version, and available procmond WAL is replayed — with an explicit gap record for whatever the WAL could not restore. Deliberately not an in-place migration.
