@@ -24,8 +24,13 @@ mod error;
 mod index;
 pub mod ingest;
 pub mod mrc;
+pub mod schema;
 
 pub use error::StorageError;
+pub use schema::{
+    BundleManifest, BundleSigner, GapRecord, MigrationReport, SCHEMA_VERSION, SchemaClassification,
+    SignerError,
+};
 
 use crate::models::{Alert, DetectionRule, ProcessRecord, SystemInfo};
 use bucket::{
@@ -98,12 +103,14 @@ impl EventStore {
                 source,
             })?;
         let retention_ms = Self::DEFAULT_RETENTION_MS;
-        Ok(Self {
+        let store = Self {
             db,
             granularity_ms: choose_granularity(retention_ms),
             retention_ms,
             mrc_window_ms: Self::DEFAULT_MRC_WINDOW_MS,
-        })
+        };
+        store.classify_and_init()?;
+        Ok(store)
     }
 
     /// Open an existing event store at `path`.
@@ -116,12 +123,27 @@ impl EventStore {
                 source,
             })?;
         let retention_ms = Self::DEFAULT_RETENTION_MS;
-        Ok(Self {
+        let store = Self {
             db,
             granularity_ms: choose_granularity(retention_ms),
             retention_ms,
             mrc_window_ms: Self::DEFAULT_MRC_WINDOW_MS,
-        })
+        };
+        store.classify_and_init()?;
+        Ok(store)
+    }
+
+    /// Classify the store's `schema_version` (U8): a fresh store is stamped with
+    /// the current version; a match proceeds; a mismatch is surfaced so the agent
+    /// can run the export → rebuild path ([`schema::migrate`]) before reopening.
+    fn classify_and_init(&self) -> Result<(), StorageError> {
+        match schema::classify(&self.db)? {
+            SchemaClassification::FirstInit => schema::write_current_version(&self.db),
+            SchemaClassification::Match => Ok(()),
+            SchemaClassification::Mismatch { found, expected } => {
+                Err(StorageError::SchemaVersionMismatch { found, expected })
+            }
+        }
     }
 
     /// Persist a single process event keyed by `(ts_ms, seq)`, routed to the
