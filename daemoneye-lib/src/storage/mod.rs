@@ -24,6 +24,7 @@ mod error;
 mod index;
 pub mod ingest;
 pub mod mrc;
+mod records;
 pub mod schema;
 
 pub use error::StorageError;
@@ -368,6 +369,58 @@ impl EventStore {
         Ok(mrc::build_mrc(&records))
     }
 
+    // ---- Plain-table persistence (rules, alerts, scans) — U9 ---------------
+    //
+    // These small, directly-keyed tables live alongside the time-bucketed events
+    // under the same `schema_version` governance. Implementations live in
+    // [`records`]; the methods here are the public facade the agent and CLI use.
+
+    /// Persist (upsert) a detection rule. Reloading these on start is the fix for
+    /// the origin "zero rules after restart" bug.
+    pub fn store_rule(&self, rule: &DetectionRule) -> Result<(), StorageError> {
+        records::store_rule(&self.db, rule)
+    }
+
+    /// Fetch a detection rule by id.
+    pub fn get_rule(&self, id: &str) -> Result<Option<DetectionRule>, StorageError> {
+        records::get_rule(&self.db, id)
+    }
+
+    /// Fetch every persisted detection rule.
+    pub fn get_all_rules(&self) -> Result<Vec<DetectionRule>, StorageError> {
+        records::all_rules(&self.db)
+    }
+
+    /// Persist (upsert) an alert keyed by its uuid.
+    pub fn store_alert(&self, alert: &Alert) -> Result<(), StorageError> {
+        records::store_alert(&self.db, alert)
+    }
+
+    /// Fetch an alert by its uuid string.
+    pub fn get_alert(&self, id: &str) -> Result<Option<Alert>, StorageError> {
+        records::get_alert(&self.db, id)
+    }
+
+    /// Fetch every persisted alert.
+    pub fn get_all_alerts(&self) -> Result<Vec<Alert>, StorageError> {
+        records::all_alerts(&self.db)
+    }
+
+    /// Persist (upsert) scan metadata (carrying host identity, U9).
+    pub fn store_scan(&self, scan: &ScanMetadata) -> Result<(), StorageError> {
+        records::store_scan(&self.db, scan)
+    }
+
+    /// Fetch scan metadata by scan id.
+    pub fn get_scan(&self, id: &str) -> Result<Option<ScanMetadata>, StorageError> {
+        records::get_scan(&self.db, id)
+    }
+
+    /// Fetch every persisted scan metadata record.
+    pub fn get_all_scans(&self) -> Result<Vec<ScanMetadata>, StorageError> {
+        records::all_scans(&self.db)
+    }
+
     /// List the live bucket ids in ascending order (discovered via `list_tables`).
     pub fn list_buckets(&self) -> Result<Vec<u64>, StorageError> {
         let txn = self.db.begin_read()?;
@@ -490,6 +543,11 @@ impl Tables {
 }
 
 /// Scan metadata for tracking collection operations.
+///
+/// Carries the host's **static** identity (hostname, OS, architecture) folded in
+/// from `SystemInfo` (U9), so every scan is self-describing for cross-host
+/// stitching. The volatile `SystemInfo` stats (cpu cores, total memory, uptime)
+/// are deliberately *not* folded — they are point-in-time samples, not identity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScanMetadata {
     /// Scan ID
@@ -504,6 +562,48 @@ pub struct ScanMetadata {
     pub status: ScanStatus,
     /// Error message if scan failed
     pub error_message: Option<String>,
+    /// Host name the scan ran on (folded from `SystemInfo`).
+    pub hostname: String,
+    /// Operating system name (folded from `SystemInfo`).
+    pub os_name: String,
+    /// Operating system version (folded from `SystemInfo`).
+    pub os_version: String,
+    /// CPU architecture (folded from `SystemInfo`).
+    pub architecture: String,
+}
+
+impl ScanMetadata {
+    /// Build scan metadata for a completed scan, folding the host's static
+    /// identity from `system`.
+    pub fn new(
+        scan_id: impl Into<String>,
+        timestamp: chrono::DateTime<chrono::Utc>,
+        process_count: usize,
+        duration_ms: u64,
+        status: ScanStatus,
+        system: &SystemInfo,
+    ) -> Self {
+        Self {
+            scan_id: scan_id.into(),
+            timestamp,
+            process_count,
+            duration_ms,
+            status,
+            error_message: None,
+            hostname: system.hostname.clone(),
+            os_name: system.os_name.clone(),
+            os_version: system.os_version.clone(),
+            architecture: system.architecture.clone(),
+        }
+    }
+
+    /// Attach a failure message (builder-style), marking the scan errored.
+    #[must_use]
+    pub fn with_error(mut self, message: impl Into<String>) -> Self {
+        self.error_message = Some(message.into());
+        self.status = ScanStatus::Failed;
+        self
+    }
 }
 
 /// Scan status enumeration.
@@ -1084,6 +1184,160 @@ mod tests {
         assert_eq!(bash.parent_name.as_deref(), Some("init"));
     }
 
+    // ---- Plain-table persistence (U9) -------------------------------------
+
+    #[test]
+    fn event_store_rules_persist_across_reopen() {
+        // The headline "zero rules after restart" fix: a stored rule must survive
+        // dropping and reopening the store.
+        let temp_dir = tempdir().expect("temp dir");
+        let db_path = temp_dir.path().join("events.redb");
+
+        let rule = DetectionRule::new(
+            crate::models::RuleId::new("apache-bash-spawn"),
+            "Apache spawns bash",
+            "Detects a bash child of an apache process",
+            "SELECT 1",
+            "lateral-movement",
+            AlertSeverity::High,
+        );
+        let writer = EventStore::new(&db_path).expect("create store");
+        writer.store_rule(&rule).expect("store rule");
+        // Visible immediately within the same handle.
+        assert_eq!(writer.get_all_rules().expect("all rules").len(), 1);
+        drop(writer);
+
+        // Reopen a fresh handle: the rule is still there (the actual regression).
+        let store = EventStore::open(&db_path).expect("reopen store");
+        let loaded = store.get_all_rules().expect("all rules after reopen");
+        assert_eq!(loaded.len(), 1, "rule did not survive restart");
+        assert_eq!(
+            loaded.first().expect("one rule").id.raw(),
+            "apache-bash-spawn"
+        );
+
+        let by_id = store
+            .get_rule("apache-bash-spawn")
+            .expect("get rule")
+            .expect("rule present");
+        assert_eq!(by_id, rule);
+        assert!(
+            store.get_rule("missing").expect("get miss").is_none(),
+            "absent rule must read as None"
+        );
+    }
+
+    #[test]
+    fn event_store_store_rule_upserts_by_id() {
+        let temp_dir = tempdir().expect("temp dir");
+        let db_path = temp_dir.path().join("events.redb");
+        let store = EventStore::new(&db_path).expect("create store");
+
+        let v1 = DetectionRule::new(
+            crate::models::RuleId::new("r1"),
+            "first",
+            "desc",
+            "SELECT 1",
+            "cat",
+            AlertSeverity::Low,
+        );
+        let v2 = DetectionRule::new(
+            crate::models::RuleId::new("r1"),
+            "second",
+            "desc",
+            "SELECT 1",
+            "cat",
+            AlertSeverity::High,
+        );
+        store.store_rule(&v1).expect("store v1");
+        store.store_rule(&v2).expect("store v2");
+
+        // Same id → one row, latest wins.
+        let all = store.get_all_rules().expect("all");
+        assert_eq!(all.len(), 1);
+        assert_eq!(all.first().expect("one rule").name, "second");
+    }
+
+    #[test]
+    fn event_store_alerts_round_trip() {
+        let temp_dir = tempdir().expect("temp dir");
+        let db_path = temp_dir.path().join("events.redb");
+        let writer = EventStore::new(&db_path).expect("create store");
+
+        let proc = ProcessRecord::new(99, "suspect".to_owned());
+        let alert = Alert::new(
+            AlertSeverity::Critical,
+            "lateral movement",
+            "apache -> bash",
+            "apache-bash-spawn",
+            proc,
+        );
+        writer.store_alert(&alert).expect("store alert");
+        drop(writer);
+
+        // Reopen a fresh handle to prove durability symmetric with rules/scans.
+        let store = EventStore::open(&db_path).expect("reopen store");
+        let fetched = store
+            .get_alert(&alert.id.to_string())
+            .expect("get alert")
+            .expect("alert present");
+        assert_eq!(fetched, alert);
+        assert_eq!(store.get_all_alerts().expect("all alerts").len(), 1);
+    }
+
+    #[test]
+    fn event_store_scans_persist_with_host_identity() {
+        let temp_dir = tempdir().expect("temp dir");
+        let db_path = temp_dir.path().join("events.redb");
+
+        let mut system = SystemInfo::new();
+        system.hostname = "edge-01".to_owned();
+        system.os_name = "linux".to_owned();
+        system.os_version = "6.1".to_owned();
+        system.architecture = "aarch64".to_owned();
+        // Volatile stats are present on SystemInfo but must NOT be folded in.
+        system.cpu_cores = 8;
+        system.total_memory = 16_000_000_000;
+
+        let scan = ScanMetadata::new(
+            "scan-001",
+            chrono::Utc::now(),
+            42,
+            1234,
+            ScanStatus::Completed,
+            &system,
+        );
+        let writer = EventStore::new(&db_path).expect("create store");
+        writer.store_scan(&scan).expect("store scan");
+        drop(writer);
+
+        let store = EventStore::open(&db_path).expect("reopen store");
+        let loaded = store
+            .get_scan("scan-001")
+            .expect("get scan")
+            .expect("scan present");
+        // Host identity folded in.
+        assert_eq!(loaded.hostname, "edge-01");
+        assert_eq!(loaded.os_name, "linux");
+        assert_eq!(loaded.os_version, "6.1");
+        assert_eq!(loaded.architecture, "aarch64");
+        // The scan carries identity, not the volatile stats (no such fields exist).
+        assert_eq!(loaded.process_count, 42);
+        assert_eq!(store.get_all_scans().expect("all scans").len(), 1);
+    }
+
+    #[test]
+    fn event_store_plain_tables_empty_on_fresh_store() {
+        let temp_dir = tempdir().expect("temp dir");
+        let db_path = temp_dir.path().join("events.redb");
+        let store = EventStore::new(&db_path).expect("create store");
+        // Reads against never-created tables are empty, not errors.
+        assert!(store.get_all_rules().expect("rules").is_empty());
+        assert!(store.get_all_alerts().expect("alerts").is_empty());
+        assert!(store.get_all_scans().expect("scans").is_empty());
+        assert!(store.get_rule("x").expect("rule").is_none());
+    }
+
     #[test]
     fn test_database_creation_invalid_path() {
         // Test with a path that doesn't exist
@@ -1102,6 +1356,10 @@ mod tests {
             duration_ms: 5000,
             status: ScanStatus::Completed,
             error_message: None,
+            hostname: "test-host".to_owned(),
+            os_name: "linux".to_owned(),
+            os_version: "1.0".to_owned(),
+            architecture: "x86_64".to_owned(),
         };
 
         assert_eq!(metadata.scan_id, "test-scan-1");
@@ -1120,6 +1378,10 @@ mod tests {
             duration_ms: 1000,
             status: ScanStatus::Failed,
             error_message: Some("Test error".to_owned()),
+            hostname: "test-host".to_owned(),
+            os_name: "linux".to_owned(),
+            os_version: "1.0".to_owned(),
+            architecture: "x86_64".to_owned(),
         };
 
         assert_eq!(metadata.status, ScanStatus::Failed);
@@ -1135,6 +1397,10 @@ mod tests {
             duration_ms: 2500,
             status: ScanStatus::InProgress,
             error_message: None,
+            hostname: "test-host".to_owned(),
+            os_name: "linux".to_owned(),
+            os_version: "1.0".to_owned(),
+            architecture: "x86_64".to_owned(),
         };
 
         let json = serde_json::to_string(&metadata).expect("Failed to serialize metadata");
@@ -1430,6 +1696,10 @@ mod tests {
             duration_ms: 5000,
             status: ScanStatus::Completed,
             error_message: None,
+            hostname: "test-host".to_owned(),
+            os_name: "linux".to_owned(),
+            os_version: "1.0".to_owned(),
+            architecture: "x86_64".to_owned(),
         };
 
         // Test that store_scan_metadata doesn't panic (currently stubbed)
@@ -1508,6 +1778,10 @@ mod tests {
             duration_ms: 10000,
             status: ScanStatus::InProgress,
             error_message: Some("Test error message".to_owned()),
+            hostname: "test-host".to_owned(),
+            os_name: "linux".to_owned(),
+            os_version: "1.0".to_owned(),
+            architecture: "x86_64".to_owned(),
         };
 
         assert_eq!(metadata.scan_id, "comprehensive-scan");
@@ -1560,6 +1834,10 @@ mod tests {
             duration_ms: 5000,
             status: ScanStatus::Completed,
             error_message: None,
+            hostname: "test-host".to_owned(),
+            os_name: "linux".to_owned(),
+            os_version: "1.0".to_owned(),
+            architecture: "x86_64".to_owned(),
         };
 
         let cloned_metadata = metadata.clone();
