@@ -135,7 +135,7 @@ thiserror = "2.0.18"
 # Exact-pinned: Tokio is the async runtime underpinning privilege
 # separation, IPC, and agent coordination. See AGENTS.md "Pin
 # security-critical deps".
-tokio = { version = "=1.52.1", features = [
+tokio = { version = "=1.52.3", features = [
     "rt",
     "rt-multi-thread",
     "net",
