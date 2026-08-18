@@ -825,7 +825,7 @@ impl CollectorRuntime {
                 let caps = capabilities.read().await;
                 let mut overall_health = HealthStatus::Healthy;
 
-                for (source_name, _caps) in caps.iter() {
+                for source_name in caps.keys() {
                     debug!(source_name = %source_name, "Performing health check");
 
                     // In a full implementation, this would call source.health_check()

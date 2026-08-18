@@ -352,7 +352,7 @@ async fn test_injection_malicious_process_names() {
         assert!(
             result.is_ok(),
             "Should accept event with name '{}' (truncated) for storage",
-            &malicious_name.chars().take(20).collect::<String>()
+            malicious_name.chars().take(20).collect::<String>()
         );
 
         println!("Verified malicious name pattern {} handled safely", i + 1);
