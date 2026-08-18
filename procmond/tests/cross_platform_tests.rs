@@ -683,7 +683,7 @@ async fn test_cpu_memory_usage_collected() {
                 anomalous_memory_count += 1;
                 eprintln!(
                     "Warning: Process {} ({}) reports unusually high memory: {} bytes",
-                    event.pid, &event.name, memory
+                    event.pid, event.name, memory
                 );
             } else {
                 with_memory += 1;
