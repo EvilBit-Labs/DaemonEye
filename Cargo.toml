@@ -110,7 +110,7 @@ prost-types = "0.14.4"
 # Exact-pinned per AGENTS.md "Pin security-critical deps" — this cache
 # holds authoritative hash results so a silent upstream change here
 # could affect integrity decisions.
-quick_cache = "=0.6.21"
+quick_cache = "=0.6.23"
 rand = "0.10.1"
 
 # Database and storage
