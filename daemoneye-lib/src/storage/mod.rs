@@ -514,34 +514,6 @@ fn ensure_db_dir(db_path: &Path) -> Result<(), StorageError> {
     }
 }
 
-/// Table definitions for the database schema.
-pub struct Tables;
-
-impl Tables {
-    /// Process records table
-    /// TODO: Use `ProcessRecord` type in Task 8 when redb Value trait is implemented
-    pub const PROCESSES: TableDefinition<'static, u64, Vec<u8>> = TableDefinition::new("processes");
-
-    /// Detection rules table
-    /// TODO: Use `DetectionRule` type in Task 8 when redb Value trait is implemented
-    pub const DETECTION_RULES: TableDefinition<'static, &str, Vec<u8>> =
-        TableDefinition::new("detection_rules");
-
-    /// Alerts table
-    /// TODO: Use Alert type in Task 8 when redb Value trait is implemented
-    pub const ALERTS: TableDefinition<'static, u64, Vec<u8>> = TableDefinition::new("alerts");
-
-    /// System info table
-    /// TODO: Use `SystemInfo` type in Task 8 when redb Value trait is implemented
-    pub const SYSTEM_INFO: TableDefinition<'static, u64, Vec<u8>> =
-        TableDefinition::new("system_info");
-
-    /// Scan metadata table
-    /// TODO: Use `ScanMetadata` type in Task 8 when redb Value trait is implemented
-    pub const SCAN_METADATA: TableDefinition<'static, u64, Vec<u8>> =
-        TableDefinition::new("scan_metadata");
-}
-
 /// Scan metadata for tracking collection operations.
 ///
 /// Carries the host's **static** identity (hostname, OS, architecture) folded in
@@ -1611,16 +1583,6 @@ mod tests {
         // Test that get_stats returns default values (currently stubbed)
         let stats = manager.get_stats().expect("Failed to get stats");
         assert_eq!(stats.processes, 0); // Currently stubbed to return 0
-    }
-
-    #[test]
-    fn test_tables_constants() {
-        // Test that table definitions are accessible
-        let _ = Tables::PROCESSES;
-        let _ = Tables::DETECTION_RULES;
-        let _ = Tables::ALERTS;
-        let _ = Tables::SYSTEM_INFO;
-        let _ = Tables::SCAN_METADATA;
     }
 
     #[test]
