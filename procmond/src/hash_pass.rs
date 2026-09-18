@@ -204,6 +204,10 @@ pub struct HashPassStats {
     /// Number of unique paths where the SHA-256 hash succeeded but the ssdeep
     /// fuzzy hash failed (degraded integrity coverage).
     pub(crate) ssdeep_failures: usize,
+    /// Number of events whose path-derived hash was discarded because the
+    /// collector probed an on-disk mismatch, so the file at that path is not
+    /// the image the process is running. Counted per event, not per path.
+    pub(crate) on_disk_mismatch_skips: usize,
 }
 
 impl HashPassStats {
@@ -252,8 +256,9 @@ pub async fn populate_hashes(
     // signals: clearing them here keeps reuse-safety parity with the
     // SHA-256 fields, so a reused event whose path fails auth/IO this scan
     // cannot lift a stale ssdeep digest or degraded flag onto the wire.
-    // The on-disk-mismatch flag is deliberately left untouched — the
-    // collector sets it before this pass runs.
+    // The on-disk state is deliberately left untouched — the collector sets
+    // it before this pass runs, and Phase 2 READS it to decide whether a
+    // path-derived hash may be attributed to the event at all.
     let mut path_to_indices: HashMap<String, Vec<usize>> = HashMap::new();
     for (idx, event) in events.iter_mut().enumerate() {
         event.executable_hash = None;
@@ -327,9 +332,29 @@ pub async fn populate_hashes(
                 }
                 // Stamp every event sharing this path. Direct &mut on
                 // `events` — survives drop because the caller owns it.
+                //
+                // The skip below is per-event, NOT a filter on the work list:
+                // two processes can share `/usr/bin/app` while only one of them
+                // is Mismatch, and dropping the whole path would strip the hash
+                // from the clean process too.
                 if let Some(indices) = path_to_indices.get(&raw) {
                     for &idx in indices {
                         if let Some(event) = events.get_mut(idx) {
+                            // This hash was produced by re-opening the path. If
+                            // the collector probed a Mismatch, the file now at
+                            // that path is NOT the image this process is
+                            // running — the original was unlinked or replaced.
+                            // Stamping it would attribute a clean, plausible
+                            // identity hash of the attacker's binary to the
+                            // tampered process, which is worse than no hash:
+                            // the record reads as benign. Leave the hash absent
+                            // and mark coverage degraded instead.
+                            if event.on_disk_state().is_mismatch() {
+                                stats.on_disk_mismatch_skips =
+                                    stats.on_disk_mismatch_skips.saturating_add(1);
+                                event.set_ssdeep_signal(None, true);
+                                continue;
+                            }
                             event.executable_hash = Some(hex.clone());
                             event.hash_algorithm = Some(algorithm.clone());
                             event.set_ssdeep_signal(ssdeep.clone(), ssdeep_degraded);
@@ -358,6 +383,7 @@ pub async fn populate_hashes(
         auth_failures = stats.auth_failures,
         nonauthoritative = stats.nonauthoritative,
         io_failures = stats.io_failures,
+        on_disk_mismatch_skips = stats.on_disk_mismatch_skips,
         ssdeep_failures = stats.ssdeep_failures,
         "hash pass completed"
     );
@@ -684,6 +710,67 @@ mod tests {
     }
 
     // ── populate_hashes ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn mismatch_event_gets_no_path_derived_hash() {
+        // The file at the path is NOT the image a Mismatch process is running:
+        // the original was unlinked or replaced. Stamping the path's hash would
+        // attribute a clean, plausible identity hash of the replacement binary
+        // to the tampered process, making its record read as benign.
+        let tmp = NamedTempFile::new().unwrap();
+        fs::write(tmp.path(), b"attacker replacement").unwrap();
+        let path = tmp.path().to_string_lossy().into_owned();
+
+        let mut tampered = new_event(1, &path);
+        tampered.set_on_disk_state(collector_core::OnDiskState::Mismatch);
+        let mut events = vec![tampered];
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+
+        let stats = populate_hashes(&mut events, &hasher).await;
+
+        let event = events.first().expect("one event");
+        assert_eq!(
+            event.executable_hash, None,
+            "a replaced executable's path hash must not be attributed to the process"
+        );
+        assert_eq!(event.hash_algorithm, None);
+        assert!(
+            event.ssdeep_degraded(),
+            "dropping the hash must be reported as degraded coverage, not silence"
+        );
+        assert_eq!(stats.on_disk_mismatch_skips, 1);
+    }
+
+    #[tokio::test]
+    async fn mismatch_skip_is_per_event_not_per_path() {
+        // Two processes share one path; only one is Mismatch. Filtering the
+        // work list by state would strip the hash from the clean process too.
+        let tmp = NamedTempFile::new().unwrap();
+        fs::write(tmp.path(), b"shared binary").unwrap();
+        let path = tmp.path().to_string_lossy().into_owned();
+
+        let mut tampered = new_event(1, &path);
+        tampered.set_on_disk_state(collector_core::OnDiskState::Mismatch);
+        let mut clean = new_event(2, &path);
+        clean.set_on_disk_state(collector_core::OnDiskState::Match);
+        let mut events = vec![tampered, clean];
+        let hasher = Arc::new(MultiAlgorithmHasher::new(HasherConfig::default()).unwrap());
+
+        let stats = populate_hashes(&mut events, &hasher).await;
+
+        let tampered_event = events.first().expect("tampered event");
+        let clean_event = events.get(1).expect("clean event");
+        assert_eq!(
+            tampered_event.executable_hash, None,
+            "tampered process: no hash"
+        );
+        assert!(
+            clean_event.executable_hash.is_some(),
+            "clean process sharing the path must still be hashed"
+        );
+        assert_eq!(stats.on_disk_mismatch_skips, 1);
+        assert_eq!(stats.unique_paths, 1);
+    }
 
     #[tokio::test]
     async fn populate_hashes_fills_hash_and_algorithm() {
