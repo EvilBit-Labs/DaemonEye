@@ -106,16 +106,6 @@ pub trait BundleSigner: Send + Sync {
 #[error("bundle signer error: {0}")]
 pub struct SignerError(pub String);
 
-/// One partition (redb table) recorded in the bundle manifest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PartitionInfo {
-    /// Table name as reported by `list_tables()`.
-    pub name: String,
-    /// Reserved forensic field, currently `0`. The completeness gate matches on
-    /// partition *names*, not counts, so this is advisory only.
-    pub entries: u64,
-}
-
 /// Stable, versioned bundle manifest header (R18). Round-trips via postcard.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleManifest {
@@ -125,8 +115,8 @@ pub struct BundleManifest {
     pub schema_version: u32,
     /// Wall-clock archive time, injected (ms since epoch).
     pub written_at_ms: u64,
-    /// Every partition discovered via `list_tables()` at archive time.
-    pub partitions: Vec<PartitionInfo>,
+    /// Every partition (table name) discovered via `list_tables()` at archive time.
+    pub partitions: Vec<String>,
 }
 
 /// The unrecoverable observation window created by a rebuild (R17). The agent
@@ -299,7 +289,7 @@ fn remove_marker(db_path: &Path) -> Result<(), StorageError> {
 /// Inspect the old store: read its schema version, enumerate partitions for the
 /// manifest, and compute the gap start (oldest event `ts_ms`, schema-stable key
 /// codec). The handle is dropped before any file-level archive step.
-fn inspect_store(db_path: &Path) -> Result<(u32, Vec<PartitionInfo>, u64), StorageError> {
+fn inspect_store(db_path: &Path) -> Result<(u32, Vec<String>, u64), StorageError> {
     let db = Database::open(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
         path: db_path.to_path_buf(),
         source,
@@ -315,10 +305,7 @@ fn inspect_store(db_path: &Path) -> Result<(u32, Vec<PartitionInfo>, u64), Stora
     let mut bucket_names = Vec::new();
     for handle in rtxn.list_tables()? {
         let name = handle.name().to_owned();
-        partitions.push(PartitionInfo {
-            name: name.clone(),
-            entries: 0,
-        });
+        partitions.push(name.clone());
         if super::bucket::parse_bucket_name(&name).is_some() {
             bucket_names.push(name);
         }
@@ -457,11 +444,7 @@ fn verify_bundle_self(
 
     let (embedded_manifest, db_bytes) = split_bundle(&bundle)?;
     let archived: Vec<String> = enumerate_archived_partitions(db_bytes, bundle_path)?;
-    let mut expected: Vec<String> = embedded_manifest
-        .partitions
-        .iter()
-        .map(|partition| partition.name.clone())
-        .collect();
+    let mut expected: Vec<String> = embedded_manifest.partitions.clone();
     let mut archived_sorted = archived;
     expected.sort();
     archived_sorted.sort();
@@ -1020,10 +1003,7 @@ mod tests {
         let bundle_path = default_bundle_path(&path);
         export_bundle(&path, &bundle_path, &real_manifest, &signer).unwrap();
 
-        partitions.push(PartitionInfo {
-            name: "phantom.partition".to_owned(),
-            entries: 0,
-        });
+        partitions.push("phantom.partition".to_owned());
         let inflated = BundleManifest {
             partitions,
             ..real_manifest
@@ -1288,10 +1268,7 @@ mod tests {
             format_version: BUNDLE_FORMAT_VERSION,
             schema_version: 3,
             written_at_ms: 42,
-            partitions: vec![PartitionInfo {
-                name: "processes.events@7".to_owned(),
-                entries: 9,
-            }],
+            partitions: vec!["processes.events@7".to_owned()],
         };
         let bytes = postcard::to_allocvec(&manifest).unwrap();
         let decoded: BundleManifest = postcard::from_bytes(&bytes).unwrap();
