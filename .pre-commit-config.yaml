@@ -64,6 +64,8 @@ repos:
       rev: 1.0.0
       hooks:
           - id: mdformat
+            # .mdformat.toml uses `exclude`, which needs mdformat on Python 3.13+.
+            language_version: python3
             additional_dependencies:
                 - mdformat-gfm
                 - mdformat-admon
