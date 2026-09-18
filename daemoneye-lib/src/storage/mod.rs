@@ -45,8 +45,8 @@ use index::{
 use ingest::IngestRecord;
 use mrc::MrcMap;
 use redb::{
-    Database, ReadTransaction, ReadableDatabase, ReadableTableMetadata, TableDefinition,
-    TableHandle,
+    Database, MultimapTable, ReadTransaction, ReadableDatabase, ReadableTableMetadata, Table,
+    TableDefinition, TableHandle,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, io, path::Path};
@@ -57,6 +57,41 @@ type EventTable<'a> = TableDefinition<'a, TsSeqKey, &'static [u8]>;
 /// Build the redb table definition for a bucket table name.
 const fn bucket_def(name: &str) -> EventTable<'_> {
     TableDefinition::new(name)
+}
+
+/// Write one record's primary row and its index postings against already-open
+/// table handles.
+///
+/// The `ppid_idx` / `exe_idx` handles are optional because the two callers differ
+/// in table lifecycle, not just in shape: the batch path opens all four indexes
+/// once per bucket, while the single-event path opens these two only when the
+/// record carries the field. Opening a table inside a write transaction creates
+/// it, so passing `None` is what keeps a single-event write from persisting an
+/// empty index table the record has no posting for.
+fn insert_record(
+    base: &mut Table<'_, TsSeqKey, &'static [u8]>,
+    pid_idx: &mut MultimapTable<'_, u32, TsSeqKey>,
+    name_idx: &mut MultimapTable<'_, u128, TsSeqKey>,
+    ppid_idx: Option<&mut MultimapTable<'_, u32, TsSeqKey>>,
+    exe_idx: Option<&mut MultimapTable<'_, u128, TsSeqKey>>,
+    key: (u64, u32),
+    record: &ProcessRecord,
+) -> Result<(), StorageError> {
+    let bytes = encode_value(record)?;
+    base.insert(key, bytes.as_slice())?;
+    pid_idx.insert(record.pid.raw(), key)?;
+    name_idx.insert(name_hash128(&record.name), key)?;
+
+    if let (Some(ppid), Some(index)) = (record.ppid, ppid_idx) {
+        index.insert(ppid.raw(), key)?;
+    }
+    if let (Some(prefix), Some(index)) = (
+        record.executable_hash.as_deref().and_then(exe_hash_prefix),
+        exe_idx,
+    ) {
+        index.insert(prefix, key)?;
+    }
+    Ok(())
 }
 
 /// Collect the live process-event bucket ids from a read transaction, ascending.
@@ -156,34 +191,40 @@ impl EventStore {
         seq: u32,
         record: &ProcessRecord,
     ) -> Result<(), StorageError> {
-        let bytes = encode_value(record)?;
         let id = bucket_id(ts_ms, self.granularity_ms)?;
         let key = (ts_ms, seq);
         let txn = self.db.begin_write()?;
 
         let mut base = txn.open_table(bucket_def(&bucket_table_name(id)))?;
-        base.insert(key, bytes.as_slice())?;
-        drop(base);
-
         let mut pid_idx = txn.open_multimap_table(u32_index_def(&pid_index_name(id)))?;
-        pid_idx.insert(record.pid.raw(), key)?;
-        drop(pid_idx);
-
-        if let Some(ppid) = record.ppid {
-            let mut ppid_idx = txn.open_multimap_table(u32_index_def(&ppid_index_name(id)))?;
-            ppid_idx.insert(ppid.raw(), key)?;
-            drop(ppid_idx);
-        }
-
         let mut name_idx = txn.open_multimap_table(hash_index_def(&name_index_name(id)))?;
-        name_idx.insert(name_hash128(&record.name), key)?;
-        drop(name_idx);
 
-        if let Some(prefix) = record.executable_hash.as_deref().and_then(exe_hash_prefix) {
-            let mut exe_idx = txn.open_multimap_table(hash_index_def(&exe_index_name(id)))?;
-            exe_idx.insert(prefix, key)?;
-            drop(exe_idx);
-        }
+        // Opening a table creates it, so these two stay unopened for a record that
+        // carries neither field.
+        let mut ppid_idx = match record.ppid {
+            Some(_) => Some(txn.open_multimap_table(u32_index_def(&ppid_index_name(id)))?),
+            None => None,
+        };
+        let mut exe_idx = match record.executable_hash.as_deref().and_then(exe_hash_prefix) {
+            Some(_) => Some(txn.open_multimap_table(hash_index_def(&exe_index_name(id)))?),
+            None => None,
+        };
+
+        insert_record(
+            &mut base,
+            &mut pid_idx,
+            &mut name_idx,
+            ppid_idx.as_mut(),
+            exe_idx.as_mut(),
+            key,
+            record,
+        )?;
+
+        drop(exe_idx);
+        drop(ppid_idx);
+        drop(name_idx);
+        drop(pid_idx);
+        drop(base);
 
         txn.commit()?;
         Ok(())
@@ -212,22 +253,15 @@ impl EventStore {
             let mut name_idx = txn.open_multimap_table(hash_index_def(&name_index_name(*id)))?;
             let mut exe_idx = txn.open_multimap_table(hash_index_def(&exe_index_name(*id)))?;
             for rec in recs {
-                let bytes = encode_value(&rec.record)?;
-                let key = (rec.ts_ms, rec.seq);
-                base.insert(key, bytes.as_slice())?;
-                pid_idx.insert(rec.record.pid.raw(), key)?;
-                if let Some(ppid) = rec.record.ppid {
-                    ppid_idx.insert(ppid.raw(), key)?;
-                }
-                name_idx.insert(name_hash128(&rec.record.name), key)?;
-                if let Some(prefix) = rec
-                    .record
-                    .executable_hash
-                    .as_deref()
-                    .and_then(exe_hash_prefix)
-                {
-                    exe_idx.insert(prefix, key)?;
-                }
+                insert_record(
+                    &mut base,
+                    &mut pid_idx,
+                    &mut name_idx,
+                    Some(&mut ppid_idx),
+                    Some(&mut exe_idx),
+                    (rec.ts_ms, rec.seq),
+                    &rec.record,
+                )?;
             }
             drop(exe_idx);
             drop(name_idx);
@@ -1048,6 +1082,52 @@ mod tests {
         // The expired bucket's index is gone; the recent one survives.
         assert!(store.find_by_pid(7).expect("find 7 after").is_empty());
         assert_eq!(store.find_by_pid(8).expect("find 8 after").len(), 1);
+    }
+
+    /// The single-event write path opens the ppid and exe-hash index tables only
+    /// inside its `if let` guards. Opening a table in a redb write transaction
+    /// creates it, so those two tables must stay absent for a record that carries
+    /// neither field — the guard that U3's shared helper did not turn conditional
+    /// table creation into unconditional creation (KTD5).
+    #[test]
+    fn event_store_put_event_creates_no_index_table_for_absent_fields() {
+        use redb::MultimapTableHandle as _;
+
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("conditional-idx.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        let ts = 3_600_000_u64;
+
+        let record = ProcessRecord::new(42, "bare".to_owned());
+        assert!(record.ppid.is_none(), "fixture carries no ppid");
+        assert!(
+            record.executable_hash.is_none(),
+            "fixture carries no executable hash"
+        );
+        store.put_event(ts, 1, &record).expect("put bare record");
+
+        let id = bucket_id(ts, store.granularity_ms).expect("bucket id");
+        let txn = store.db.begin_read().expect("read txn");
+        // The indexes are multimap tables, which redb enumerates separately from
+        // the plain tables that hold the primary rows.
+        let names: Vec<String> = txn
+            .list_multimap_tables()
+            .expect("list multimap tables")
+            .map(|handle| handle.name().to_owned())
+            .collect();
+
+        // The unconditional indexes are present.
+        assert!(names.contains(&pid_index_name(id)), "pid index created");
+        assert!(names.contains(&name_index_name(id)), "name index created");
+        // The conditional ones were never opened, so they were never created.
+        assert!(
+            !names.contains(&ppid_index_name(id)),
+            "ppid index must not be created for a record with no ppid"
+        );
+        assert!(
+            !names.contains(&exe_index_name(id)),
+            "exe_hash index must not be created for a record with no executable hash"
+        );
     }
 
     #[test]
