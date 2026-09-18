@@ -543,7 +543,7 @@ impl EventBusConnector {
         event: ProcessEvent,
         topic: String,
     ) -> EventBusConnectorResult<()> {
-        match self.publish_to_broker(&event, &topic).await {
+        match self.publish_to_broker(&event, &topic, sequence).await {
             Ok(()) => {
                 // Successfully published - mark as published in WAL
                 self.mark_published_with_warning(sequence).await;
@@ -720,7 +720,10 @@ impl EventBusConnector {
             let topic = event_type.topic();
 
             if self.connected {
-                match self.publish_to_broker(&entry.event, topic).await {
+                match self
+                    .publish_to_broker(&entry.event, topic, entry.sequence)
+                    .await
+                {
                     Ok(()) => {
                         replayed = replayed.saturating_add(1);
                         // Track the actual WAL sequence for proper cleanup
@@ -1050,13 +1053,15 @@ impl EventBusConnector {
         &self,
         event: &ProcessEvent,
         topic: &str,
+        sequence: u64,
     ) -> EventBusConnectorResult<()> {
         let client = self.client.as_ref().ok_or_else(|| {
             EventBusConnectorError::Connection("Not connected to broker".to_owned())
         })?;
 
-        // Convert collector_core::ProcessEvent to eventbus ProcessEvent
-        let eventbus_event = Self::convert_to_eventbus_event(event);
+        // Convert collector_core::ProcessEvent to eventbus ProcessEvent, carrying
+        // the durable WAL `sequence` so the agent can dedup on (source, source_seq).
+        let eventbus_event = Self::convert_to_eventbus_event(event, sequence);
         let collection_event = EventBusCollectionEvent::Process(eventbus_event);
 
         // Generate correlation ID
@@ -1072,9 +1077,17 @@ impl EventBusConnector {
         Ok(())
     }
 
-    /// Convert collector_core ProcessEvent to eventbus ProcessEvent.
-    fn convert_to_eventbus_event(event: &ProcessEvent) -> EventBusProcessEvent {
+    /// Convert collector_core ProcessEvent to eventbus ProcessEvent, stamping the
+    /// producer's durable WAL `sequence` into metadata as the agent's idempotency
+    /// `source_seq` (T3 · U6).
+    fn convert_to_eventbus_event(event: &ProcessEvent, sequence: u64) -> EventBusProcessEvent {
         use std::collections::HashMap;
+
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            daemoneye_eventbus::SOURCE_SEQ_METADATA_KEY.to_owned(),
+            sequence.to_string(),
+        );
 
         EventBusProcessEvent {
             pid: event.pid,
@@ -1083,7 +1096,7 @@ impl EventBusConnector {
             executable_path: event.executable_path.clone(),
             ppid: event.ppid,
             start_time: event.start_time,
-            metadata: HashMap::new(),
+            metadata,
         }
     }
 
@@ -1144,7 +1157,7 @@ impl EventBusConnector {
 
         while let Some(buffered) = self.buffer.pop_front() {
             match self
-                .publish_to_broker(&buffered.event, &buffered.topic)
+                .publish_to_broker(&buffered.event, &buffered.topic, buffered.sequence)
                 .await
             {
                 Ok(()) => {

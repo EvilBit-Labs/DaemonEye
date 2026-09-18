@@ -565,9 +565,11 @@ message ProcessRecord {
     // Independent of executable_hash: may be absent while the SHA-256 identity
     // hash is present.
     optional string ssdeep_hash = 15;
-    // Running image differs from its on-disk executable (the backing file was
-    // deleted or replaced while the process runs). Linux-only signal today.
-    bool on_disk_mismatch = 16;
+    // On-disk-vs-running state: UNKNOWN / MATCH / MISMATCH, UNKNOWN = 0.
+    // Three-state so an unprobed platform reports UNKNOWN rather than a
+    // fabricated clean result; probed on Linux only today, so macOS and
+    // Windows report UNKNOWN. UNKNOWN is never a clean result.
+    OnDiskState on_disk_state = 16;
     // ssdeep computation failed while the SHA-256 identity hash succeeded —
     // degraded integrity coverage for this process.
     bool ssdeep_degraded = 17;

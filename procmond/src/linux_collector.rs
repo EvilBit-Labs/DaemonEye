@@ -6,7 +6,7 @@
 //! detection, and enhanced metadata collection.
 
 use async_trait::async_trait;
-use collector_core::ProcessEvent;
+use collector_core::{OnDiskState, ProcessEvent};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
@@ -29,17 +29,35 @@ const DELETED_EXE_SUFFIX: &str = " (deleted)";
 
 /// Classify a `/proc/<pid>/exe` symlink target.
 ///
-/// Returns the cleaned executable path and whether the kernel flagged the
-/// backing file as deleted/replaced (the trailing `" (deleted)"` suffix). The
+/// Returns the cleaned executable path and the resulting [`OnDiskState`]. The
 /// suffix is matched only as a trailing token so a path that legitimately
 /// contains the substring mid-string is not misclassified. The suffix is ASCII,
 /// so truncating at `len - suffix_len` always lands on a char boundary.
-fn classify_exe_target(mut target: String) -> (String, bool) {
+///
+/// Both outcomes are probed results; a link that cannot be read at all is
+/// [`OnDiskState::Unknown`], handled by [`classify_exe_link`].
+///
+/// `Match` means only that the dentry is still linked. Contents are never
+/// compared, so it does not cover a bind-mount or overlay swap, an in-place
+/// overwrite where `ETXTBSY` is unenforced (NFS, some FUSE), or `ptrace`
+/// patching of the running image.
+/// Turn an optionally-read `/proc/<pid>/exe` target into a path and a probed
+/// state. `None` means the link could not be read, which is
+/// [`OnDiskState::Unknown`], never `Match`. Split out so that branch is
+/// testable — `read_process_info` hardcodes `/proc/<pid>`.
+fn classify_exe_link(target: Option<String>) -> (Option<String>, OnDiskState) {
+    target.map_or((None, OnDiskState::Unknown), |raw| {
+        let (clean, state) = classify_exe_target(raw);
+        (Some(clean), state)
+    })
+}
+
+fn classify_exe_target(mut target: String) -> (String, OnDiskState) {
     if target.ends_with(DELETED_EXE_SUFFIX) {
         target.truncate(target.len().saturating_sub(DELETED_EXE_SUFFIX.len()));
-        (target, true)
+        (target, OnDiskState::Mismatch)
     } else {
-        (target, false)
+        (target, OnDiskState::Match)
     }
 }
 
@@ -621,14 +639,26 @@ impl LinuxProcessCollector {
         // suffix so the stored path stays clean; the mismatch is recorded as
         // distinct metadata on the event below.
         let exe_path = format!("{proc_dir}/exe");
-        let (executable_path, on_disk_mismatch) =
-            fs::read_link(&exe_path)
-                .ok()
-                .map_or((None, false), |target| {
-                    let (clean, mismatch) =
-                        classify_exe_target(target.to_string_lossy().into_owned());
-                    (Some(clean), mismatch)
-                });
+        let link = match fs::read_link(&exe_path) {
+            Ok(target) => Some(target.to_string_lossy().into_owned()),
+            Err(ref err) => {
+                // ENOENT is the ordinary kernel-thread case. Anything else means
+                // the probe is broken, and a broken probe emits the same Unknown
+                // as a kernel thread — the dashboard then goes quiet and
+                // "nothing tampered" looks like "nothing checked".
+                if err.kind() != io::ErrorKind::NotFound {
+                    let kind = err.kind();
+                    warn!(
+                        pid,
+                        error = %err,
+                        ?kind,
+                        "on-disk probe failed; on_disk_state degraded to Unknown"
+                    );
+                }
+                None
+            }
+        };
+        let (executable_path, on_disk_state) = classify_exe_link(link);
 
         // Read comm (process name)
         let comm_path = format!("{proc_dir}/comm");
@@ -694,7 +724,10 @@ impl LinuxProcessCollector {
         };
 
         let accessible = true; // If we can read /proc/[pid], it's accessible
-        let file_exists = executable_path.is_some();
+        // The " (deleted)" suffix is stripped, so `executable_path` is `Some(..)`
+        // even when the file is gone; `is_some()` alone would report a deleted
+        // executable as present.
+        let file_exists = executable_path.is_some() && !on_disk_state.is_mismatch();
 
         let mut event = ProcessEvent {
             pid,
@@ -713,9 +746,9 @@ impl LinuxProcessCollector {
             timestamp: SystemTime::now(),
             platform_metadata,
         };
-        // Record the on-disk-vs-running mismatch (set independently of the
-        // ssdeep signals so producers compose; preserves platform_metadata).
-        event.set_on_disk_mismatch(on_disk_mismatch);
+        // Record the on-disk-vs-running state (set independently of the ssdeep
+        // signals so producers compose; preserves platform_metadata).
+        event.set_on_disk_state(on_disk_state);
         Ok(event)
     }
 
@@ -1127,26 +1160,71 @@ mod tests {
     use crate::process_collector::ProcessCollectionConfig;
 
     #[test]
+    fn unreadable_exe_link_is_unknown_not_match() {
+        // A kernel thread has no exe link; an unreadable one is EACCES. Either
+        // way the probe learned nothing, so Match would be a false negative.
+        let (path, state) = classify_exe_link(None);
+        assert_eq!(path, None);
+        assert_eq!(
+            state,
+            OnDiskState::Unknown,
+            "an unreadable /proc/<pid>/exe must carry no claim, never a clean result"
+        );
+    }
+
+    #[test]
+    fn readable_exe_link_yields_a_probed_state() {
+        let (path, state) = classify_exe_link(Some("/usr/bin/app".to_owned()));
+        assert_eq!(path.as_deref(), Some("/usr/bin/app"));
+        assert_eq!(state, OnDiskState::Match);
+
+        let (deleted_path, deleted_state) =
+            classify_exe_link(Some("/usr/bin/app (deleted)".to_owned()));
+        assert_eq!(deleted_path.as_deref(), Some("/usr/bin/app"));
+        assert_eq!(deleted_state, OnDiskState::Mismatch);
+    }
+
+    #[test]
+    fn deleted_executable_is_not_reported_as_still_existing() {
+        // The suffix is stripped, so executable_path is Some(..) for a file
+        // that is gone.
+        let (executable_path, on_disk_state) =
+            classify_exe_link(Some("/usr/bin/app (deleted)".to_owned()));
+        let file_exists = executable_path.is_some() && !on_disk_state.is_mismatch();
+        assert!(
+            !file_exists,
+            "a deleted executable must not report file_exists = true"
+        );
+
+        let (clean_path, clean_state) = classify_exe_link(Some("/usr/bin/app".to_owned()));
+        assert!(clean_path.is_some() && !clean_state.is_mismatch());
+    }
+
+    #[test]
     fn classify_exe_target_flags_and_strips_deleted_suffix() {
-        let (path, mismatch) = classify_exe_target("/usr/bin/app (deleted)".to_owned());
+        let (path, state) = classify_exe_target("/usr/bin/app (deleted)".to_owned());
         assert_eq!(path, "/usr/bin/app");
-        assert!(mismatch);
+        assert_eq!(state, OnDiskState::Mismatch);
     }
 
     #[test]
     fn classify_exe_target_passes_clean_path_through() {
-        let (path, mismatch) = classify_exe_target("/usr/bin/app".to_owned());
+        let (path, state) = classify_exe_target("/usr/bin/app".to_owned());
         assert_eq!(path, "/usr/bin/app");
-        assert!(!mismatch);
+        assert_eq!(
+            state,
+            OnDiskState::Match,
+            "a successfully read link with no (deleted) suffix is a positive Match finding"
+        );
     }
 
     #[test]
     fn classify_exe_target_only_matches_trailing_suffix() {
         // A path that legitimately contains the substring mid-string but does
         // not END with it must not be flagged.
-        let (path, mismatch) = classify_exe_target("/opt/ (deleted)/app".to_owned());
+        let (path, state) = classify_exe_target("/opt/ (deleted)/app".to_owned());
         assert_eq!(path, "/opt/ (deleted)/app");
-        assert!(!mismatch);
+        assert_eq!(state, OnDiskState::Match);
     }
 
     #[test]

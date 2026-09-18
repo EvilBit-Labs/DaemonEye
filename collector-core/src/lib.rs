@@ -103,8 +103,8 @@ pub use daemoneye_event_bus::{
     PerformanceMetrics, TopicStatistics, TransportStatistics,
 };
 pub use event::{
-    AnalysisType, CollectionEvent, FilesystemEvent, NetworkEvent, PerformanceEvent, ProcessEvent,
-    TriggerPriority, TriggerRequest,
+    AnalysisType, CollectionEvent, FilesystemEvent, NetworkEvent, OnDiskState, PerformanceEvent,
+    ProcessEvent, TriggerPriority, TriggerRequest,
 };
 pub use event_bus::{
     BusEvent, CorrelationFilter, EventBus, EventBusConfig, EventFilter, EventSubscription,

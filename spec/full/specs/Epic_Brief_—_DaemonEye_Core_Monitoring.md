@@ -20,7 +20,7 @@ This Epic closes that foundation→product gap by finishing the stubbed middle s
 - **Storage (**file:daemoneye-lib/src/storage.rs**)** — every persist/query method is a TODO; `Vec<u8>` placeholder tables; no schema, indexing, transactions, retention, or migrations. This blocks rule persistence and the agent's detection loop (which currently loads **zero rules**).
 - **Detection (**file:daemoneye-lib/src/detection/mod.rs**)** — naive `name.contains("suspicious")` / `cpu_usage > 80` matching; SQL is validated at load time but never executed; the DataFusion-over-redb engine (R17–R21) is unbuilt and unwired into the agent loop.
 - **Audit ledger (**file:daemoneye-lib/src/crypto.rs**)** — BLAKE3 hash chain exists but is in-memory, has no persisted `audit_ledger` table, `generate_inclusion_proof()` returns `vec![]`, and there are no Ed25519 checkpoints; architecture also expects procmond ownership.
-- **Privilege & service mgmt (**file:daemoneye-agent/src/main.rs**, **file:daemoneye-agent/src/broker_manager.rs**)** — foreground process, Ctrl+C-only shutdown, `--database/--log-level` only; no daemon/service modes, no install/supervision, and privilege dropping is an explicit stub (procmond detects CAP_SYS_PTRACE/root but never drops).
+- **Privilege & service mgmt (**file:daemoneye-agent/src/main.rs**, **file:daemoneye-agent/src/broker_manager/state_machine.rs**)** — foreground process, Ctrl+C-only shutdown, `--database/--log-level` only; no daemon/service modes, no install/supervision, and privilege dropping is an explicit stub (procmond detects CAP_SYS_PTRACE/root but never drops).
 
 **Constraints (not the headline)**
 

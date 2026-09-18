@@ -31,4 +31,4 @@ T3 (needs a real event-store table to read).
 
 ## Acceptance criteria
 
-- Recorded measurements show binary-size, `<100MB RSS`, and `<100ms/rule` are achievable; **go/no-go decision documented** before T6 proceeds. If no-go, surface alternatives for re-planning.
+- Recorded measurements show `<100MB RSS` and `<100ms/rule` are achievable; **go/no-go decision documented** before T6 proceeds. Binary size has no numeric threshold — record the release-binary delta and let the maintainer judge it explicitly in the decision artifact rather than implying a bar the repo does not define. If no-go, the fallback is the hand-rolled executor (see Tech Plan, no-go contingency).

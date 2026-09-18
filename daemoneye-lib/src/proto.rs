@@ -13,9 +13,9 @@ use std::time::UNIX_EPOCH;
     clippy::doc_markdown,
     clippy::missing_const_for_fn,
     clippy::pattern_type_mismatch,
-    // The generated ProcessRecord legitimately carries 4 independent boolean
-    // status flags (accessible, file_exists, on_disk_mismatch, ssdeep_degraded);
-    // they are a flat wire contract, not a refactorable state struct.
+    // Guard only: ProcessRecord now has three bools (accessible, file_exists,
+    // ssdeep_degraded) and the lint fires above three. They are a flat wire
+    // contract, not a refactorable state struct.
     clippy::struct_excessive_bools
 )]
 mod generated {
@@ -32,6 +32,18 @@ pub use self::{
     ProcessFilter as ProtoProcessFilter, ProcessRecord as ProtoProcessRecord,
     TaskType as ProtoTaskType,
 };
+
+impl ProtoProcessRecord {
+    /// Decode [`Self::on_disk_state`], degrading an unrecognized wire value to
+    /// [`OnDiskState::Unknown`].
+    ///
+    /// Every consumer goes through this. A value this build does not recognize
+    /// carries no claim and must never read as clean.
+    #[must_use]
+    pub fn on_disk_state_or_unknown(&self) -> OnDiskState {
+        OnDiskState::try_from(self.on_disk_state).unwrap_or(OnDiskState::Unknown)
+    }
+}
 
 impl From<NativeProcessRecord> for ProtoProcessRecord {
     /// Convert from native `ProcessRecord` to protobuf `ProcessRecord`.
@@ -62,11 +74,13 @@ impl From<NativeProcessRecord> for ProtoProcessRecord {
             accessible: true, // Default to true, can be overridden by specific implementations
             file_exists: has_executable_path, // Approximate - actual file existence check would be done elsewhere
             collection_time: native.collection_time.timestamp_millis(),
-            // The native model does not carry fuzzy-hash integrity signals;
-            // those originate on the procmond ProcessEvent -> proto path. Default
+            // The native model does not carry the per-process integrity signals;
+            // those originate on the procmond ProcessEvent -> proto path. Note
+            // on_disk_state is a symlink probe, not a hash — it is grouped with
+            // the ssdeep fields only because they share that origin. Default
             // them here so this conversion stays lossless for the fields it owns.
             ssdeep_hash: None,
-            on_disk_mismatch: false,
+            on_disk_state: i32::from(OnDiskState::Unknown),
             ssdeep_degraded: false,
         }
     }
@@ -79,12 +93,12 @@ impl From<ProtoProcessRecord> for NativeProcessRecord {
     /// structure, handling type conversions and providing sensible defaults
     /// for fields that may not be present.
     ///
-    /// **Integrity signals are intentionally dropped here.** The fuzzy-hash
-    /// fields (`ssdeep_hash`, `on_disk_mismatch`, `ssdeep_degraded`) exist only
+    /// **Integrity signals are intentionally dropped here.** The per-process
+    /// fields (`ssdeep_hash`, `on_disk_state`, `ssdeep_degraded`) exist only
     /// on the protobuf record, not the native model — consumers that need them
     /// (e.g. the agent integrity-alert bridge) MUST read them off the proto
     /// record *before* this conversion. Reading them off a converted native
-    /// record would silently yield `None`/`false`.
+    /// record would silently yield `None`/`false`/`UNKNOWN`.
     fn from(proto: ProtoProcessRecord) -> Self {
         Self {
             pid: ProcessId::new(proto.pid),
@@ -530,9 +544,55 @@ mod tests {
     }
 
     #[test]
+    fn unknown_is_the_zero_value_of_on_disk_state() {
+        // proto3 decodes an absent field 16 as the zero value. If a reorder made
+        // MATCH = 0, every unset field would become a fabricated clean result,
+        // and every other assertion here would still pass — they are symbolic.
+        assert_eq!(
+            i32::from(OnDiskState::Unknown),
+            0,
+            "UNKNOWN must be the zero value; an absent field 16 decodes to it"
+        );
+    }
+
+    #[test]
+    fn on_disk_state_discriminants_survive_the_old_bool_encoding() {
+        // A legacy `on_disk_mismatch = true` is varint 1. MISMATCH = 1 keeps a
+        // skewed pair decoding it as the finding it was; swapping these turns a
+        // confirmed mismatch into a clean result.
+        assert_eq!(
+            i32::from(OnDiskState::Mismatch),
+            1,
+            "MISMATCH must be 1: it is what an old `on_disk_mismatch = true` decodes to"
+        );
+        assert_eq!(
+            i32::from(OnDiskState::Unknown),
+            0,
+            "UNKNOWN must be 0: an old `false`/absent field decodes to it, and the \
+             old bool conflated probed-clean with never-probed"
+        );
+        assert_eq!(i32::from(OnDiskState::Match), 2);
+    }
+
+    #[test]
+    fn on_disk_state_decode_degrades_unrecognized_values_to_unknown() {
+        let skewed = ProtoProcessRecord {
+            on_disk_state: 9999,
+            ..Default::default()
+        };
+        assert_eq!(skewed.on_disk_state_or_unknown(), OnDiskState::Unknown);
+
+        let real = ProtoProcessRecord {
+            on_disk_state: i32::from(OnDiskState::Mismatch),
+            ..Default::default()
+        };
+        assert_eq!(real.on_disk_state_or_unknown(), OnDiskState::Mismatch);
+    }
+
+    #[test]
     fn native_proto_conversion_drops_integrity_signals_by_design() {
         // The native ProcessRecord has no integrity-signal fields; the protobuf
-        // ProcessRecord owns ssdeep_hash/on_disk_mismatch/ssdeep_degraded, which
+        // ProcessRecord owns ssdeep_hash/on_disk_state/ssdeep_degraded, which
         // are produced only on the procmond ProcessEvent -> proto path. Both
         // conversion directions therefore drop them. This tripwire locks that
         // intentional asymmetry: if a future edit adds the fields to the native
@@ -545,14 +605,14 @@ mod tests {
         let native = NativeProcessRecord::new(1234, "tripwire".to_owned());
         let proto = ProtoProcessRecord::from(native);
         assert_eq!(proto.ssdeep_hash, None);
-        assert!(!proto.on_disk_mismatch);
+        assert_eq!(proto.on_disk_state, i32::from(OnDiskState::Unknown));
         assert!(!proto.ssdeep_degraded);
 
         // 2. A proto carrying signals, round-tripped through the native model,
         //    loses them — documenting the intentional drop.
         let signalled = ProtoProcessRecord {
             ssdeep_hash: Some("3:abc:def".to_owned()),
-            on_disk_mismatch: true,
+            on_disk_state: i32::from(OnDiskState::Mismatch),
             ssdeep_degraded: true,
             ..Default::default()
         };
@@ -561,9 +621,12 @@ mod tests {
             round_tripped.ssdeep_hash, None,
             "ssdeep_hash must not survive the native round-trip"
         );
-        assert!(
-            !round_tripped.on_disk_mismatch,
-            "on_disk_mismatch must not survive the native round-trip"
+        // Must degrade to UNKNOWN, not MATCH: the native model cannot carry the
+        // signal, so the round-trip forgets it rather than inventing clean.
+        assert_eq!(
+            round_tripped.on_disk_state,
+            i32::from(OnDiskState::Unknown),
+            "a MISMATCH finding must degrade to UNKNOWN across the native round-trip, never to MATCH"
         );
         assert!(
             !round_tripped.ssdeep_degraded,

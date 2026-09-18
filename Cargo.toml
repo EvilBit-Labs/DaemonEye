@@ -41,20 +41,20 @@ exclude = [
 
 [workspace.dependencies]
 # Core error handling and utilities
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 
 # Testing and development
 assert_cmd = "2.2.2"
 
 # Async runtime and traits
-async-trait = "0.1.89"
-bitflags = { version = "2.13.0", features = ["serde"] }
+async-trait = "0.1.92"
+bitflags = { version = "2.13.1", features = ["serde"] }
 
 # Cryptographic operations
-blake3 = { version = "1.8.5", default-features = false, features = ["std"] }
+blake3 = { version = "1.8.6", default-features = false, features = ["std"] }
 
 # Buffer and byte utilities
-bytes = "1.11.1"
+bytes = "1.12.1"
 
 # Capability-based filesystem access (TOCTOU-safe opens)
 cap-fs-ext = "=4.0.2"
@@ -64,7 +64,7 @@ cap-std = "=4.0.2"
 chrono = { version = "0.4.45", features = ["serde"] }
 
 # CLI and configuration
-clap = { version = "4.6.1", features = ["derive"] }
+clap = { version = "4.6.6", features = ["derive"] }
 
 # Internal libraries
 collector-core = { path = "collector-core" }
@@ -77,8 +77,8 @@ daemoneye-lib = { path = "daemoneye-lib" }
 dashmap = "6.2.1"
 dirs = "6.0.0"
 figment = { version = "0.10.19", features = ["toml", "json", "env"] }
-futures = "0.3.32"
-futures-util = "0.3.32"
+futures = "0.3.34"
+futures-util = "0.3.34"
 # Exact-pinned: ssdeep/CTPH fuzzy hash for binary-change detection. Pure-Rust,
 # FFI-free (no cmake/C build deps), MIT-licensed. Pinned because it produces
 # integrity-adjacent data. See AGENTS.md "Pin security-critical deps".
@@ -86,8 +86,8 @@ fuzzyhash = "=0.2.2"
 
 # System information and IPC
 hostname-validator = "1.1.1"
-insta = { version = "1.47.2", features = ["filters"] }
-interprocess = { version = "2.4.2", features = ["tokio"] }
+insta = { version = "1.48.0", features = ["filters"] }
+interprocess = { version = "2.4.3", features = ["tokio"] }
 # Exact-pinned: libc exposes raw OS constants (O_NOFOLLOW, ELOOP, etc.)
 # that security-critical code in procmond relies on. See AGENTS.md
 # "Pin security-critical deps".
@@ -111,27 +111,27 @@ prost-types = "0.14.4"
 # holds authoritative hash results so a silent upstream change here
 # could affect integrity decisions.
 quick_cache = "=0.6.23"
-rand = "0.10.1"
+rand = "0.10.2"
 
 # Database and storage
-redb = "4.1.0"
-regex = "1.12.4"
+redb = "4.2.0"
+regex = "1.13.1"
 rs_merkle = "1.5.0"
 
 # Platform-specific dependencies
 # macOS
 security-framework = "3.7.0"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 sha2 = "0.11.0"
 # Exact-pinned: SHA-3 is a cryptographic primitive and must not change
 # silently under a caret update. See AGENTS.md "Pin security-critical deps".
 sha3 = "=0.12.0"
 sqlparser = "0.62.0"
 
-sysinfo = "0.39.3"
+sysinfo = "0.39.6"
 tempfile = "3.27.0"
-thiserror = "2.0.18"
+thiserror = "2.0.20"
 # Exact-pinned: Tokio is the async runtime underpinning privilege
 # separation, IPC, and agent coordination. See AGENTS.md "Pin
 # security-critical deps".
@@ -148,16 +148,16 @@ tokio = { version = "=1.52.3", features = [
     "signal",
 ] }
 tokio-test = "0.4.5"
-toml = "1.1.2+spec-1.1.0"
+toml = "1.1.4+spec-1.1.0"
 
 # Logging and observability
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tracing-test = "0.2.6"
 unidirs = "0.1.3"
-uuid = { version = "1.23.3", features = ["v4", "serde"] }
+uuid = { version = "1.24.1", features = ["v4", "serde"] }
 uzers = "0.12.2"
-whoami = "2.1.2"
+whoami = "2.1.3"
 
 # Windows
 windows = { version = "0.62.2", features = [

@@ -1,8 +1,8 @@
 //! Agent-side integrity-signal alert bridge.
 //!
 //! procmond cannot emit alerts (it has no `AlertManager` and no network by
-//! design), so the per-process integrity flags it sets on the wire
-//! (`ssdeep_degraded`, `on_disk_mismatch`) are turned into alerts here in the
+//! design), so the per-process integrity signals it sets on the wire
+//! (`ssdeep_degraded`, `on_disk_state`) are turned into alerts here in the
 //! orchestrator, independently of the SQL rule engine. The flags live on the
 //! protobuf `ProcessRecord`; the native model does not carry them, so this
 //! bridge reads the proto records before they are converted to the native model.
@@ -10,7 +10,7 @@
 use daemoneye_lib::integrity::fuzzy::{self, DEFAULT_SSDEEP_SIMILARITY_THRESHOLD, FuzzyConfig};
 use daemoneye_lib::models::process::ProcessRecord as NativeProcessRecord;
 use daemoneye_lib::models::{Alert, AlertSeverity};
-use daemoneye_lib::proto::ProcessRecord as ProtoProcessRecord;
+use daemoneye_lib::proto::{OnDiskState, ProcessRecord as ProtoProcessRecord};
 use std::collections::HashMap;
 
 /// Synthetic detection-rule id for the degraded-integrity-coverage alert
@@ -111,7 +111,9 @@ impl BinaryChangeTracker {
 /// Build integrity alerts from the per-process flags on proto process records.
 ///
 /// A single record may produce both alerts (they carry distinct deduplication
-/// keys); clean records produce none. The `AlertManager` deduplicates repeated
+/// keys); records with no positive finding produce none — whether probed-clean
+/// (`MATCH`) or never probed (`UNKNOWN`), which are the two states this signal
+/// exists to keep apart. The `AlertManager` deduplicates repeated
 /// signals within its window, so re-observing the same condition across scans
 /// does not flood downstream sinks.
 #[must_use]
@@ -132,7 +134,14 @@ pub fn detect_integrity_alerts(records: &[ProtoProcessRecord]) -> Vec<Alert> {
                 description,
             ));
         }
-        if record.on_disk_mismatch {
+        // MISMATCH only. UNKNOWN means the collector never probed; treating
+        // "not MATCH" as a finding would alert on every process on every
+        // unprobed platform.
+        //
+        // Known gap: UNKNOWN is also not surfaced as coverage loss, unlike
+        // ssdeep_degraded above. On macOS and Windows that makes "no alerts"
+        // mean "not checked". Revisit when their probes land (T1).
+        if record.on_disk_state_or_unknown() == OnDiskState::Mismatch {
             let description = format!(
                 "running image of process {} (pid {}) differs from its on-disk executable \
                  (the backing file was deleted or replaced while the process runs)",
@@ -183,19 +192,56 @@ mod tests {
     )]
     use super::*;
 
-    fn record(name: &str, pid: u32, degraded: bool, mismatch: bool) -> ProtoProcessRecord {
+    fn record(name: &str, pid: u32, degraded: bool, state: OnDiskState) -> ProtoProcessRecord {
         ProtoProcessRecord {
             pid,
             name: name.to_owned(),
             ssdeep_degraded: degraded,
-            on_disk_mismatch: mismatch,
+            on_disk_state: i32::from(state),
             ..Default::default()
         }
     }
 
     #[test]
+    fn unknown_on_disk_state_does_not_alert() {
+        // macOS and Windows emit UNKNOWN for every record; treating it as a
+        // mismatch would fire a High alert per process per scan.
+        let alerts =
+            detect_integrity_alerts(&[record("unprobed", 11, false, OnDiskState::Unknown)]);
+        assert!(
+            alerts.is_empty(),
+            "an unprobed record must not produce a mismatch alert"
+        );
+    }
+
+    #[test]
+    fn unrecognized_on_disk_state_value_does_not_alert() {
+        // Out-of-range decodes to UNKNOWN, not a panic or a finding.
+        let malformed = ProtoProcessRecord {
+            pid: 12,
+            name: "malformed".to_owned(),
+            on_disk_state: 9999,
+            ..Default::default()
+        };
+        assert!(detect_integrity_alerts(&[malformed]).is_empty());
+    }
+
+    #[test]
+    fn match_state_does_not_alert_but_mismatch_does() {
+        assert!(
+            detect_integrity_alerts(&[record("clean", 13, false, OnDiskState::Match)]).is_empty(),
+            "a probed-clean record is not a finding"
+        );
+        assert_eq!(
+            detect_integrity_alerts(&[record("tampered", 14, false, OnDiskState::Mismatch)]).len(),
+            1,
+            "a probed mismatch is still a finding"
+        );
+    }
+
+    #[test]
     fn degraded_record_yields_one_medium_alert() {
-        let alerts = detect_integrity_alerts(&[record("p", 7, true, false)]);
+        let alerts = detect_integrity_alerts(&[record("p", 7, true, OnDiskState::Match)]);
         assert_eq!(alerts.len(), 1);
         let alert = alerts.first().expect("one alert");
         assert_eq!(alert.severity, AlertSeverity::Medium);
@@ -204,7 +250,7 @@ mod tests {
 
     #[test]
     fn mismatch_record_yields_one_high_alert() {
-        let alerts = detect_integrity_alerts(&[record("p", 7, false, true)]);
+        let alerts = detect_integrity_alerts(&[record("p", 7, false, OnDiskState::Mismatch)]);
         assert_eq!(alerts.len(), 1);
         let alert = alerts.first().expect("one alert");
         assert_eq!(alert.severity, AlertSeverity::High);
@@ -213,13 +259,13 @@ mod tests {
 
     #[test]
     fn clean_record_yields_no_alerts() {
-        let alerts = detect_integrity_alerts(&[record("p", 7, false, false)]);
+        let alerts = detect_integrity_alerts(&[record("p", 7, false, OnDiskState::Match)]);
         assert!(alerts.is_empty());
     }
 
     #[test]
     fn degraded_and_mismatch_yields_two_distinct_alerts() {
-        let alerts = detect_integrity_alerts(&[record("p", 7, true, true)]);
+        let alerts = detect_integrity_alerts(&[record("p", 7, true, OnDiskState::Mismatch)]);
         assert_eq!(alerts.len(), 2);
         // Distinct deduplication keys so both reach the sinks.
         let keys: std::collections::HashSet<&str> = alerts
@@ -319,7 +365,11 @@ mod tests {
     fn record_without_ssdeep_is_ignored() {
         let mut tracker = BinaryChangeTracker::default();
         // No ssdeep_hash -> nothing to compare, no panic, no alert.
-        assert!(tracker.observe(&[record("p", 7, false, false)]).is_empty());
+        assert!(
+            tracker
+                .observe(&[record("p", 7, false, OnDiskState::Match)])
+                .is_empty()
+        );
     }
 
     fn degraded_at_path(pid: u32, path: &str) -> ProtoProcessRecord {

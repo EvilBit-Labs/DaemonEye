@@ -2,9 +2,9 @@ name: CodeQL
 
 on:
     push:
-        branches: [ main ]
+        branches: [main]
     pull_request:
-        branches: [ main ]
+        branches: [main]
     schedule:
         - cron: "43 22 * * 1"
     workflow_dispatch:
@@ -19,19 +19,19 @@ jobs:
         name: CodeQL Analyze
         runs-on: ubuntu-22.04
         steps:
-            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
-            - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+            - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
               with:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
-            - uses: github/codeql-action/init@v3
+            - uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
               with:
                   languages: rust
 
-            - uses: github/codeql-action/autobuild@v3
+            - uses: github/codeql-action/autobuild@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
 
-            - uses: github/codeql-action/analyze@v3
+            - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0

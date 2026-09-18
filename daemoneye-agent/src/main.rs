@@ -345,7 +345,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
 
                 // Integrity-signal alerts raised from per-process wire flags
-                // (ssdeep_degraded / on_disk_mismatch). Read from the proto
+                // (ssdeep_degraded / on_disk_state). Read from the proto
                 // records before they are converted to the native model, which
                 // does not carry these flags.
                 let mut integrity_alert_batch: Vec<daemoneye_lib::models::Alert> = Vec::new();

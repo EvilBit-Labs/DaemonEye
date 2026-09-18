@@ -2,9 +2,9 @@ name: CI
 
 on:
     push:
-        branches: [ main ]
+        branches: [main]
     pull_request:
-        branches: [ main ]
+        branches: [main]
     workflow_dispatch:
 
         # Restrict permissions to minimum required (principle of least privilege)
@@ -29,11 +29,11 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout repository
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
             - name: Set up mise toolchain
-              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+              uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
               with:
                   install: true
                   cache: true
@@ -50,7 +50,7 @@ jobs:
         timeout-minutes: 20
         steps:
             - name: Checkout repository
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
             - name: Set up mise toolchain
@@ -101,11 +101,11 @@ jobs:
         needs: quality
         steps:
             - name: Checkout repository
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
             - name: Set up mise toolchain
-              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+              uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
               with:
                   install: true
                   cache: true
@@ -120,14 +120,14 @@ jobs:
     coverage:
         runs-on: ubuntu-latest
         timeout-minutes: 30
-        needs: [ test, test-cross-platform, quality ]
+        needs: [test, quality]
         steps:
             - name: Checkout repository
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   persist-credentials: false
             - name: Set up mise toolchain
-              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+              uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
               with:
                   install: true
                   cache: true
@@ -140,7 +140,7 @@ jobs:
               run: mise x -- cargo llvm-cov report --lcov --output-path lcov.info
 
             - name: Upload to Codecov
-              uses: codecov/codecov-action@3f20e214133d0983f9a10f3d63b0faf9241a3daa # v6.0.0
+              uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
               with:
                   files: lcov.info
                   fail_ci_if_error: false

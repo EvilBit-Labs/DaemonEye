@@ -84,6 +84,7 @@ rand = { workspace = true }
 
 # Database
 redb = { workspace = true }
+postcard = { workspace = true }
 rs_merkle = { workspace = true }
 # Core dependencies used by all components
 serde = { workspace = true }
