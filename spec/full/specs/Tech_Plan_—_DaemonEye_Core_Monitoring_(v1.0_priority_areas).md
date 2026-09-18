@@ -1,5 +1,3 @@
-# Tech Plan — DaemonEye Core Monitoring (v1.0 priority areas)
-
 # Tech Plan — DaemonEye Core Monitoring
 
 Scope: deep design for **storage, detection engine, audit ledger, privilege/service management**, and the cross-cutting **degradation/completeness contract**. Alerting, CLI, observability, and offline bundles are covered at interface level only. Binding references: file:.kiro/specs/daemoneye-core-monitoring/requirements.md (R1–R24), file:.kiro/specs/daemoneye-core-monitoring/design.md (ADR-0006, §11.5–11.7), Epic Brief spec:4f1ea4cc-400a-4ef3-9666-866cbb47d44b/ed183283-58cd-4c2b-9bc1-27b2b4032f0f, Core Flows spec:4f1ea4cc-400a-4ef3-9666-866cbb47d44b/811199cd-23dc-4ded-9932-735252ec2438.
