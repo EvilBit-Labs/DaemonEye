@@ -21,7 +21,7 @@
 
 ## Key touchpoints
 
-- file:daemoneye-lib/src/alerting.rs — existing `AlertSink` trait + `AlertManager` (stdout/file + parallel delivery already done); add `WebhookSink`/`SyslogSink`/`EmailSink`, per-sink circuit breaker, exponential-backoff+jitter retries, dead-letter queue, success-rate tracking, correlation/enrichment.
+- file:daemoneye-lib/src/alerting.rs — existing `AlertSink` trait + `AlertManager` (stdout/file + parallel delivery already done); add `WebhookSink`/`SyslogSink`/`EmailSink`, per-sink circuit breaker, exponential-backoff+jitter retries, dead-letter queue, success-rate tracking, per-alert enrichment.
 - Alerts publish to embedded broker `alerts` topic (file:daemoneye-eventbus/), sinks consume (R5 AC6); alerts carry `completeness` from T6.
 - `alert_deliveries` table (T3) for delivery audit/tracking.
 - New deps (flag for scrutiny, must be rustls-based/offline-friendly): webhook HTTP client (e.g., `reqwest` with `default-features=false`, `rustls-tls`), syslog, SMTP (e.g., `lettre` rustls). No inbound network.

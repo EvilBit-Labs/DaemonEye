@@ -134,19 +134,13 @@ pub fn detect_integrity_alerts(records: &[ProtoProcessRecord]) -> Vec<Alert> {
                 description,
             ));
         }
-        // Alert on a positive MISMATCH finding only. UNKNOWN means the
-        // collector never probed (no implementation for that platform, or the
-        // probe failed) and is not a finding — treating "not MATCH" as a
-        // mismatch would fire an alert for every process on every platform
-        // without a probe.
+        // MISMATCH only. UNKNOWN means the collector never probed; treating
+        // "not MATCH" as a finding would alert on every process on every
+        // unprobed platform.
         //
-        // Known gap, deliberate for now: UNKNOWN is not surfaced as coverage
-        // loss either, unlike `ssdeep_degraded` above, which raises a Medium
-        // for the same shape of gap. Today macOS and Windows emit UNKNOWN for
-        // every process, so an operator cannot tell "nothing tampered" from
-        // "nothing checked" on those hosts. Revisit when their probes land
-        // (T1 Remaining work); per-process alerting is not the answer, a
-        // once-per-scan coverage signal is.
+        // Known gap: UNKNOWN is also not surfaced as coverage loss, unlike
+        // ssdeep_degraded above. On macOS and Windows that makes "no alerts"
+        // mean "not checked". Revisit when their probes land (T1).
         if record.on_disk_state_or_unknown() == OnDiskState::Mismatch {
             let description = format!(
                 "running image of process {} (pid {}) differs from its on-disk executable \
@@ -210,10 +204,8 @@ mod tests {
 
     #[test]
     fn unknown_on_disk_state_does_not_alert() {
-        // UNKNOWN means "this collector never probed" — macOS and Windows have
-        // no probe yet, so every record they emit carries UNKNOWN. If that were
-        // treated as a mismatch, each of them would fire a High alert for every
-        // process on every scan. Silence is the only correct behaviour here.
+        // macOS and Windows emit UNKNOWN for every record; treating it as a
+        // mismatch would fire a High alert per process per scan.
         let alerts =
             detect_integrity_alerts(&[record("unprobed", 11, false, OnDiskState::Unknown)]);
         assert!(
@@ -224,8 +216,7 @@ mod tests {
 
     #[test]
     fn unrecognized_on_disk_state_value_does_not_alert() {
-        // A wire value outside the enum decodes to UNKNOWN rather than
-        // panicking or being treated as a finding.
+        // Out-of-range decodes to UNKNOWN, not a panic or a finding.
         let malformed = ProtoProcessRecord {
             pid: 12,
             name: "malformed".to_owned(),

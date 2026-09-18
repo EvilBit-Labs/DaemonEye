@@ -83,19 +83,47 @@ pub enum CollectionEvent {
 ///
 /// Mirrors the protobuf `OnDiskState`; the mapping lives at the IPC conversion
 /// boundary so this event model stays independent of the wire contract.
-/// `#[non_exhaustive]` is required here by the workspace's
-/// `clippy::exhaustive_enums` restriction, not chosen. It has a real cost: it
-/// forces a catch-all arm at every cross-crate match, and a catch-all is what
-/// lets a future variant silently degrade to `Unknown` at the wire boundary
-/// with a green build — this signal's own bug class wearing a different hat.
-/// The tripwire that compensates is in-crate, where the attribute does not
-/// apply: [`Self::as_metadata_str`] matches exhaustively, so adding a variant
-/// fails to compile HERE and forces the author to go look at the boundary.
-/// Keep that match exhaustive; never give it a catch-all.
+/// `#[non_exhaustive]` is mandated by `clippy::exhaustive_enums`, which forces a
+/// catch-all at cross-crate matches. [`Self::as_metadata_str`] matches
+/// exhaustively in-crate as the compensating tripwire — keep it that way.
 ///
-/// Deliberately NOT `Serialize`/`Deserialize`: the derives would give this type
-/// a second encoding (`"Match"`) that disagrees with [`Self::as_metadata_str`]
-/// (`"match"`) and decodes back to `Unknown`.
+/// No `Serialize`/`Deserialize`: the derives emit `"Match"` where
+/// [`Self::as_metadata_str`] emits `"match"`, and that decodes back to `Unknown`.
+///
+/// # Examples
+///
+/// ```
+/// use collector_core::{OnDiskState, ProcessEvent};
+/// use std::time::SystemTime;
+///
+/// let mut event = ProcessEvent {
+///     pid: 1,
+///     ppid: None,
+///     name: "app".to_owned(),
+///     executable_path: Some("/usr/bin/app".to_owned()),
+///     command_line: vec![],
+///     start_time: None,
+///     cpu_usage: None,
+///     memory_usage: None,
+///     executable_hash: None,
+///     hash_algorithm: None,
+///     user_id: None,
+///     accessible: true,
+///     file_exists: true,
+///     timestamp: SystemTime::now(),
+///     platform_metadata: None,
+/// };
+///
+/// // No probe: says nothing, means nothing.
+/// assert_eq!(event.on_disk_state(), OnDiskState::Unknown);
+///
+/// // Probed-clean must be recorded explicitly; silence means "not probed".
+/// event.set_on_disk_state(OnDiskState::Match);
+/// assert!(!event.on_disk_state().is_mismatch());
+///
+/// event.set_on_disk_state(OnDiskState::Mismatch);
+/// assert!(event.on_disk_state().is_mismatch());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OnDiskState {
@@ -113,13 +141,9 @@ pub enum OnDiskState {
 }
 
 impl OnDiskState {
-    /// Wire-stable string for `platform_metadata`, or `None` for
-    /// [`Self::Unknown`], which is encoded as an absent key so an unprobed
-    /// platform allocates nothing.
-    ///
-    /// Note the cost this accepts: a collector that *does* probe records
-    /// `Match` explicitly and therefore allocates per process on the 10k+
-    /// path. That is the price of not letting silence mean clean.
+    /// Wire-stable string for `platform_metadata`. `Unknown` is `None`, encoded
+    /// as an absent key; a probing collector records `Match` explicitly and so
+    /// allocates per process.
     pub const fn as_metadata_str(self) -> Option<&'static str> {
         match self {
             Self::Unknown => None,
@@ -141,11 +165,8 @@ impl OnDiskState {
 
     /// Whether this state is a positive mismatch finding.
     ///
-    /// Use this rather than `!= Match`: `Unknown` is not a finding, and
-    /// treating it as one makes every unprobed platform act on every process.
-    /// Callers are the Linux collector's `file_exists` derivation and
-    /// procmond's hash pass, which refuses to attribute a path-derived hash to
-    /// a process whose executable was replaced.
+    /// Use instead of `!= Match`: `Unknown` is not a finding, and treating it as
+    /// one makes every unprobed platform act on every process.
     #[must_use]
     pub const fn is_mismatch(self) -> bool {
         matches!(self, Self::Mismatch)
@@ -503,13 +524,8 @@ impl ProcessEvent {
     /// a metadata object, and drop the metadata entirely if it becomes empty.
     ///
     /// Default integrity signals must not force an otherwise-absent
-    /// `platform_metadata` object to exist. The getters already default to
+    /// `platform_metadata` object to exist. Getters default to
     /// `None`/`false`/[`OnDiskState::Unknown`] when the keys are absent.
-    ///
-    /// This saves an allocation only for signals that genuinely stay absent —
-    /// the ssdeep pair, and the on-disk state on platforms with no probe. A
-    /// probing collector records `Match` explicitly, so it materializes the
-    /// object regardless.
     fn clear_integrity_keys(&mut self, keys: &[&str]) {
         if let Some(serde_json::Value::Object(map)) = self.platform_metadata.as_mut() {
             for key in keys {
@@ -564,13 +580,9 @@ impl ProcessEvent {
     /// Record the on-disk-vs-running executable state (produced by the collector).
     ///
     /// Leaves the ssdeep signals untouched so producers compose independently.
-    /// [`OnDiskState::Unknown`] clears the key without materializing metadata,
-    /// so a collector with no probe for this platform allocates nothing — and,
-    /// because absent decodes back to `Unknown`, it asserts nothing either.
-    ///
-    /// A collector that *does* probe must record `Match` explicitly. That is the
-    /// point of the three-state: staying silent is how an unprobed platform is
-    /// represented, so silence cannot also mean "checked and clean".
+    /// [`OnDiskState::Unknown`] clears the key without materializing metadata.
+    /// A probing collector must record `Match` explicitly: silence is how an
+    /// unprobed platform is represented, so it cannot also mean "checked clean".
     pub fn set_on_disk_state(&mut self, state: OnDiskState) {
         let Some(encoded) = state.as_metadata_str() else {
             self.clear_integrity_keys(&[Self::META_ON_DISK_STATE]);
@@ -595,9 +607,8 @@ impl ProcessEvent {
 
     /// The on-disk-vs-running executable state.
     ///
-    /// An absent, malformed, or unrecognized value decodes to
-    /// [`OnDiskState::Unknown`] — never to `Match`. Degrading an unreadable
-    /// signal into "clean" is the failure mode this type exists to prevent.
+    /// Absent, malformed, or unrecognized decodes to [`OnDiskState::Unknown`],
+    /// never `Match`.
     #[must_use]
     pub fn on_disk_state(&self) -> OnDiskState {
         self.platform_metadata
@@ -776,9 +787,8 @@ mod tests {
 
     #[test]
     fn match_is_recorded_explicitly_and_is_distinct_from_unknown() {
-        // The whole point of the three-state: a collector that probed and found
-        // nothing wrong must SAY so. If Match were also encoded as an absent
-        // key, it would be indistinguishable from a platform with no probe.
+        // A probed-clean result must be recorded; an absent key would make it
+        // indistinguishable from an unprobed platform.
         let mut event = sample_event();
         event.set_on_disk_state(OnDiskState::Match);
         assert!(

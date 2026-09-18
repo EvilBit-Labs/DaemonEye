@@ -13,11 +13,9 @@ use std::time::UNIX_EPOCH;
     clippy::doc_markdown,
     clippy::missing_const_for_fn,
     clippy::pattern_type_mismatch,
-    // Kept as a guard, not because it currently suppresses anything: the
-    // generated ProcessRecord now carries three bools (accessible, file_exists,
-    // ssdeep_degraded) and `struct_excessive_bools` only fires above three.
-    // They are a flat wire contract, not a refactorable state struct, so the
-    // allow stays to keep a fourth from being blocked on a lint argument.
+    // Guard only: ProcessRecord now has three bools (accessible, file_exists,
+    // ssdeep_degraded) and the lint fires above three. They are a flat wire
+    // contract, not a refactorable state struct.
     clippy::struct_excessive_bools
 )]
 mod generated {
@@ -36,15 +34,11 @@ pub use self::{
 };
 
 impl ProtoProcessRecord {
-    /// Decode [`Self::on_disk_state`] into its enum, degrading an unrecognized
-    /// wire value to [`OnDiskState::Unknown`].
+    /// Decode [`Self::on_disk_state`], degrading an unrecognized wire value to
+    /// [`OnDiskState::Unknown`].
     ///
-    /// Every consumer must go through this rather than decoding the raw `i32`
-    /// itself. The fail-safe direction is the invariant: a value this build
-    /// does not recognize (version skew with a newer collector) carries no
-    /// claim, and must never be read as a clean result. Hand-rolling
-    /// `try_from(..).unwrap_or(..)` at each call site is how one of them
-    /// eventually picks the wrong default.
+    /// Every consumer goes through this. A value this build does not recognize
+    /// carries no claim and must never read as clean.
     #[must_use]
     pub fn on_disk_state_or_unknown(&self) -> OnDiskState {
         OnDiskState::try_from(self.on_disk_state).unwrap_or(OnDiskState::Unknown)
@@ -551,16 +545,33 @@ mod tests {
 
     #[test]
     fn unknown_is_the_zero_value_of_on_disk_state() {
-        // Load-bearing, and invisible to every other test in this commit:
-        // proto3 decodes an ABSENT field 16 as the enum's zero value. If a
-        // reorder made MATCH = 0, every unset field would become a fabricated
-        // clean result — the exact bug this enum replaced — and every other
-        // assertion here would still pass, because they are all symbolic.
+        // proto3 decodes an absent field 16 as the zero value. If a reorder made
+        // MATCH = 0, every unset field would become a fabricated clean result,
+        // and every other assertion here would still pass — they are symbolic.
         assert_eq!(
             i32::from(OnDiskState::Unknown),
             0,
             "UNKNOWN must be the zero value; an absent field 16 decodes to it"
         );
+    }
+
+    #[test]
+    fn on_disk_state_discriminants_survive_the_old_bool_encoding() {
+        // A legacy `on_disk_mismatch = true` is varint 1. MISMATCH = 1 keeps a
+        // skewed pair decoding it as the finding it was; swapping these turns a
+        // confirmed mismatch into a clean result.
+        assert_eq!(
+            i32::from(OnDiskState::Mismatch),
+            1,
+            "MISMATCH must be 1: it is what an old `on_disk_mismatch = true` decodes to"
+        );
+        assert_eq!(
+            i32::from(OnDiskState::Unknown),
+            0,
+            "UNKNOWN must be 0: an old `false`/absent field decodes to it, and the \
+             old bool conflated probed-clean with never-probed"
+        );
+        assert_eq!(i32::from(OnDiskState::Match), 2);
     }
 
     #[test]
@@ -610,9 +621,8 @@ mod tests {
             round_tripped.ssdeep_hash, None,
             "ssdeep_hash must not survive the native round-trip"
         );
-        // A positive MISMATCH finding must degrade to UNKNOWN, not to MATCH:
-        // the native model cannot carry the signal, so the round-trip has to
-        // forget it rather than invent a clean result.
+        // Must degrade to UNKNOWN, not MATCH: the native model cannot carry the
+        // signal, so the round-trip forgets it rather than inventing clean.
         assert_eq!(
             round_tripped.on_disk_state,
             i32::from(OnDiskState::Unknown),

@@ -21,13 +21,13 @@
 
 - file:daemoneye-lib/src/telemetry.rs — `TelemetryCollector`/`PerformanceTimer`; extend with Prometheus-compatible metrics (collection rate, detection latency, alert delivery, redb write latency — the storage write path must be instrumented, since T10's health view and the v1.0 success condition both promise it) exported via local CLI/IPC path or textfile.
 - Structured JSON logging + correlation IDs via `tracing`/`tracing-subscriber` (already present); embed perf metrics in log entries.
-- Opt-in, loopback-only HTTP health/metrics listener (disabled by default) — new dep flagged for scrutiny (e.g., minimal `hyper`/`axum` rustls, or a Prometheus textfile exporter to avoid an inbound listener entirely); honor the no-inbound-network boundary.
+- Prometheus textfile exporter for scrape access. No inbound listener, so the no-inbound-network boundary holds without a new dep.
 - Metric names per performance steering (e.g., `daemoneye_processes_collected_total`, `daemoneye_alerts_generated_total{severity=...}`).
 
 ## Testing & quality gates
 
-- `cargo clippy --workspace -- -D warnings`, `cargo fmt --all --check` clean; any new listener dep passes `cargo deny`/`cargo audit`.
-- Metric-accuracy + Prometheus scrape-compat tests; verify HTTP listeners are off by default.
+- `cargo clippy --workspace -- -D warnings`, `cargo fmt --all --check` clean.
+- Metric-accuracy + Prometheus scrape-compat tests; verify no process binds a listening socket.
 
 ## Dependencies
 
@@ -35,4 +35,4 @@ T12 (end-to-end integrated pipeline to instrument).
 
 ## Acceptance criteria
 
-- Metrics accurate and Prometheus-scrape-compatible; HTTP listeners off by default and documented as a stealth/attack-surface tradeoff.
+- Metrics accurate and Prometheus-scrape-compatible, exported without an inbound listener.

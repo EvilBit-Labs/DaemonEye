@@ -256,9 +256,8 @@ pub async fn populate_hashes(
     // signals: clearing them here keeps reuse-safety parity with the
     // SHA-256 fields, so a reused event whose path fails auth/IO this scan
     // cannot lift a stale ssdeep digest or degraded flag onto the wire.
-    // The on-disk state is deliberately left untouched — the collector sets
-    // it before this pass runs, and Phase 2 READS it to decide whether a
-    // path-derived hash may be attributed to the event at all.
+    // The on-disk state is left untouched: the collector sets it before this
+    // pass, and Phase 2 reads it to decide whether the hash may be attributed.
     let mut path_to_indices: HashMap<String, Vec<usize>> = HashMap::new();
     for (idx, event) in events.iter_mut().enumerate() {
         event.executable_hash = None;
@@ -333,22 +332,15 @@ pub async fn populate_hashes(
                 // Stamp every event sharing this path. Direct &mut on
                 // `events` — survives drop because the caller owns it.
                 //
-                // The skip below is per-event, NOT a filter on the work list:
-                // two processes can share `/usr/bin/app` while only one of them
-                // is Mismatch, and dropping the whole path would strip the hash
-                // from the clean process too.
+                // The skip is per-event, not a filter on the work list: two
+                // processes can share a path with only one tampered.
                 if let Some(indices) = path_to_indices.get(&raw) {
                     for &idx in indices {
                         if let Some(event) = events.get_mut(idx) {
-                            // This hash was produced by re-opening the path. If
-                            // the collector probed a Mismatch, the file now at
-                            // that path is NOT the image this process is
-                            // running — the original was unlinked or replaced.
-                            // Stamping it would attribute a clean, plausible
-                            // identity hash of the attacker's binary to the
-                            // tampered process, which is worse than no hash:
-                            // the record reads as benign. Leave the hash absent
-                            // and mark coverage degraded instead.
+                            // The hash came from re-opening the path. On a
+                            // Mismatch that file is not the running image, so
+                            // stamping it would give the tampered process a
+                            // clean-looking hash of the replacement binary.
                             if event.on_disk_state().is_mismatch() {
                                 stats.on_disk_mismatch_skips =
                                     stats.on_disk_mismatch_skips.saturating_add(1);
@@ -713,10 +705,8 @@ mod tests {
 
     #[tokio::test]
     async fn mismatch_event_gets_no_path_derived_hash() {
-        // The file at the path is NOT the image a Mismatch process is running:
-        // the original was unlinked or replaced. Stamping the path's hash would
-        // attribute a clean, plausible identity hash of the replacement binary
-        // to the tampered process, making its record read as benign.
+        // On a Mismatch the file at the path is not the running image, so its
+        // hash would make the tampered process read as benign.
         let tmp = NamedTempFile::new().unwrap();
         fs::write(tmp.path(), b"attacker replacement").unwrap();
         let path = tmp.path().to_string_lossy().into_owned();
@@ -743,8 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn mismatch_skip_is_per_event_not_per_path() {
-        // Two processes share one path; only one is Mismatch. Filtering the
-        // work list by state would strip the hash from the clean process too.
+        // Filtering the work list by state would strip the clean process too.
         let tmp = NamedTempFile::new().unwrap();
         fs::write(tmp.path(), b"shared binary").unwrap();
         let path = tmp.path().to_string_lossy().into_owned();
