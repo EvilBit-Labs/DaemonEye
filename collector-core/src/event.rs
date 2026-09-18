@@ -73,6 +73,65 @@ pub enum CollectionEvent {
     TriggerRequest(TriggerRequest),
 }
 
+/// On-disk-vs-running executable state (R2 AC6).
+///
+/// Three-state on purpose. A bool cannot separate "the collector probed and
+/// found no mismatch" from "this collector has no probe", and every encoding of
+/// a bool makes the unprobed case indistinguishable from a clean result — which
+/// reports a deleted-and-replaced executable as untampered on any platform
+/// without a probe. [`Self::Unknown`] is the default so silence asserts nothing.
+///
+/// Mirrors the protobuf `OnDiskState`; the mapping lives at the IPC conversion
+/// boundary so this event model stays independent of the wire contract.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum OnDiskState {
+    /// Not probed: no implementation for this platform, or the probe itself
+    /// failed. Carries no claim in either direction.
+    #[default]
+    Unknown,
+    /// Probed: the running image matches its on-disk executable.
+    Match,
+    /// Probed: the on-disk executable was deleted or replaced while the
+    /// process keeps running.
+    Mismatch,
+}
+
+impl OnDiskState {
+    /// Wire-stable string for `platform_metadata`, or `None` for
+    /// [`Self::Unknown`] — which is encoded as an absent key so the default
+    /// costs no allocation on the 10k+ process path.
+    #[must_use]
+    pub const fn as_metadata_str(self) -> Option<&'static str> {
+        match self {
+            Self::Unknown => None,
+            Self::Match => Some("match"),
+            Self::Mismatch => Some("mismatch"),
+        }
+    }
+
+    /// Decode from `platform_metadata`. Anything unrecognized decodes to
+    /// [`Self::Unknown`] rather than to a clean result.
+    #[must_use]
+    pub fn from_metadata_str(raw: &str) -> Self {
+        match raw {
+            "match" => Self::Match,
+            "mismatch" => Self::Mismatch,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Whether this state is a positive mismatch finding.
+    ///
+    /// Use this rather than `!= Match` when deciding to alert: `Unknown` is not
+    /// a finding, and treating it as one makes every unprobed platform alert on
+    /// every process.
+    #[must_use]
+    pub const fn is_mismatch(self) -> bool {
+        matches!(self, Self::Mismatch)
+    }
+}
+
 /// Process monitoring event data.
 ///
 /// Contains information about process lifecycle, metadata, and security-relevant
@@ -405,8 +464,8 @@ impl ProcessEvent {
 
     /// Reserved [`Self::platform_metadata`] key for the ssdeep fuzzy hash.
     pub const META_SSDEEP_HASH: &'static str = "integrity.ssdeep_hash";
-    /// Reserved [`Self::platform_metadata`] key for the on-disk-vs-running mismatch flag.
-    pub const META_ON_DISK_MISMATCH: &'static str = "integrity.on_disk_mismatch";
+    /// Reserved [`Self::platform_metadata`] key for the on-disk-vs-running state.
+    pub const META_ON_DISK_STATE: &'static str = "integrity.on_disk_state";
     /// Reserved [`Self::platform_metadata`] key for the degraded-coverage flag.
     pub const META_SSDEEP_DEGRADED: &'static str = "integrity.ssdeep_degraded";
 
@@ -478,20 +537,25 @@ impl ProcessEvent {
         self.platform_metadata = Some(serde_json::Value::Object(map));
     }
 
-    /// Record the on-disk-vs-running mismatch flag (produced by the collector).
+    /// Record the on-disk-vs-running executable state (produced by the collector).
     ///
     /// Leaves the ssdeep signals untouched so producers compose independently.
-    /// The default (`false`) case clears the key without materializing metadata,
-    /// so the common no-mismatch path (every Linux process) allocates nothing.
-    pub fn set_on_disk_mismatch(&mut self, on_disk_mismatch: bool) {
-        if !on_disk_mismatch {
-            self.clear_integrity_keys(&[Self::META_ON_DISK_MISMATCH]);
+    /// [`OnDiskState::Unknown`] clears the key without materializing metadata,
+    /// so a collector with no probe for this platform allocates nothing — and,
+    /// because absent decodes back to `Unknown`, it asserts nothing either.
+    ///
+    /// A collector that *does* probe must record `Match` explicitly. That is the
+    /// point of the three-state: staying silent is how an unprobed platform is
+    /// represented, so silence cannot also mean "checked and clean".
+    pub fn set_on_disk_state(&mut self, state: OnDiskState) {
+        let Some(encoded) = state.as_metadata_str() else {
+            self.clear_integrity_keys(&[Self::META_ON_DISK_STATE]);
             return;
-        }
+        };
         let mut map = self.take_metadata_object();
         map.insert(
-            Self::META_ON_DISK_MISMATCH.to_owned(),
-            serde_json::Value::Bool(true),
+            Self::META_ON_DISK_STATE.to_owned(),
+            serde_json::Value::String(encoded.to_owned()),
         );
         self.platform_metadata = Some(serde_json::Value::Object(map));
     }
@@ -505,14 +569,18 @@ impl ProcessEvent {
             .as_str()
     }
 
-    /// Whether the on-disk-vs-running mismatch flag is set.
+    /// The on-disk-vs-running executable state.
+    ///
+    /// An absent, malformed, or unrecognized value decodes to
+    /// [`OnDiskState::Unknown`] — never to `Match`. Degrading an unreadable
+    /// signal into "clean" is the failure mode this type exists to prevent.
     #[must_use]
-    pub fn on_disk_mismatch(&self) -> bool {
+    pub fn on_disk_state(&self) -> OnDiskState {
         self.platform_metadata
             .as_ref()
-            .and_then(|meta| meta.get(Self::META_ON_DISK_MISMATCH))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
+            .and_then(|meta| meta.get(Self::META_ON_DISK_STATE))
+            .and_then(serde_json::Value::as_str)
+            .map_or(OnDiskState::Unknown, OnDiskState::from_metadata_str)
     }
 
     /// Whether the degraded-integrity-coverage flag is set (ssdeep failed while
@@ -657,7 +725,11 @@ mod tests {
     fn integrity_signals_default_to_absent() {
         let event = sample_event();
         assert_eq!(event.ssdeep_hash(), None);
-        assert!(!event.on_disk_mismatch());
+        assert_eq!(
+            event.on_disk_state(),
+            OnDiskState::Unknown,
+            "an event nobody probed must default to Unknown, never Match"
+        );
         assert!(!event.ssdeep_degraded());
     }
 
@@ -667,15 +739,55 @@ mod tests {
         // platform_metadata object just to store default false/None values.
         let mut event = sample_event();
         assert!(event.platform_metadata.is_none());
-        event.set_on_disk_mismatch(false);
+        event.set_on_disk_state(OnDiskState::Unknown);
         event.set_ssdeep_signal(None, false);
         assert!(
             event.platform_metadata.is_none(),
             "default integrity signals must not create platform_metadata"
         );
-        assert!(!event.on_disk_mismatch());
+        assert_eq!(event.on_disk_state(), OnDiskState::Unknown);
         assert!(!event.ssdeep_degraded());
         assert_eq!(event.ssdeep_hash(), None);
+    }
+
+    #[test]
+    fn match_is_recorded_explicitly_and_is_distinct_from_unknown() {
+        // The whole point of the three-state: a collector that probed and found
+        // nothing wrong must SAY so. If Match were also encoded as an absent
+        // key, it would be indistinguishable from a platform with no probe.
+        let mut event = sample_event();
+        event.set_on_disk_state(OnDiskState::Match);
+        assert!(
+            event.platform_metadata.is_some(),
+            "a probed-clean result must be recorded, not implied by silence"
+        );
+        assert_eq!(event.on_disk_state(), OnDiskState::Match);
+        assert!(!event.on_disk_state().is_mismatch());
+    }
+
+    #[test]
+    fn unrecognized_metadata_value_decodes_to_unknown() {
+        let mut event = sample_event();
+        event.platform_metadata =
+            Some(serde_json::json!({ ProcessEvent::META_ON_DISK_STATE: "sideways" }));
+        assert_eq!(
+            event.on_disk_state(),
+            OnDiskState::Unknown,
+            "an unparseable value must degrade to Unknown, never to Match"
+        );
+    }
+
+    #[test]
+    fn resetting_to_unknown_clears_a_previously_recorded_state() {
+        let mut event = sample_event();
+        event.set_on_disk_state(OnDiskState::Mismatch);
+        assert_eq!(event.on_disk_state(), OnDiskState::Mismatch);
+        event.set_on_disk_state(OnDiskState::Unknown);
+        assert_eq!(event.on_disk_state(), OnDiskState::Unknown);
+        assert!(
+            event.platform_metadata.is_none(),
+            "clearing the only integrity key drops the emptied metadata object"
+        );
     }
 
     #[test]
@@ -711,10 +823,10 @@ mod tests {
     fn ssdeep_and_mismatch_setters_compose_independently() {
         let mut event = sample_event();
         event.set_ssdeep_signal(Some("3:x:y".to_owned()), false);
-        event.set_on_disk_mismatch(true);
-        // Setting the mismatch flag must not clobber the ssdeep signal.
+        event.set_on_disk_state(OnDiskState::Mismatch);
+        // Setting the on-disk state must not clobber the ssdeep signal.
         assert_eq!(event.ssdeep_hash(), Some("3:x:y"));
-        assert!(event.on_disk_mismatch());
+        assert_eq!(event.on_disk_state(), OnDiskState::Mismatch);
         assert!(!event.ssdeep_degraded());
     }
 
@@ -723,14 +835,14 @@ mod tests {
         let mut event = sample_event();
         event.platform_metadata = Some(serde_json::json!({ "collector": "linux" }));
         event.set_ssdeep_signal(Some("3:x:y".to_owned()), false);
-        event.set_on_disk_mismatch(true);
+        event.set_on_disk_state(OnDiskState::Mismatch);
         let meta = event.platform_metadata.as_ref().expect("metadata present");
         assert_eq!(
             meta.get("collector").and_then(serde_json::Value::as_str),
             Some("linux")
         );
         assert_eq!(event.ssdeep_hash(), Some("3:x:y"));
-        assert!(event.on_disk_mismatch());
+        assert_eq!(event.on_disk_state(), OnDiskState::Mismatch);
     }
 
     #[test]

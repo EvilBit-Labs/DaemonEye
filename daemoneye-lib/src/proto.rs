@@ -14,8 +14,8 @@ use std::time::UNIX_EPOCH;
     clippy::missing_const_for_fn,
     clippy::pattern_type_mismatch,
     // The generated ProcessRecord legitimately carries 4 independent boolean
-    // status flags (accessible, file_exists, on_disk_mismatch, ssdeep_degraded);
-    // they are a flat wire contract, not a refactorable state struct.
+    // status flags (accessible, file_exists, ssdeep_degraded); they are a flat
+    // wire contract, not a refactorable state struct.
     clippy::struct_excessive_bools
 )]
 mod generated {
@@ -66,7 +66,7 @@ impl From<NativeProcessRecord> for ProtoProcessRecord {
             // those originate on the procmond ProcessEvent -> proto path. Default
             // them here so this conversion stays lossless for the fields it owns.
             ssdeep_hash: None,
-            on_disk_mismatch: false,
+            on_disk_state: i32::from(OnDiskState::Unknown),
             ssdeep_degraded: false,
         }
     }
@@ -80,7 +80,7 @@ impl From<ProtoProcessRecord> for NativeProcessRecord {
     /// for fields that may not be present.
     ///
     /// **Integrity signals are intentionally dropped here.** The fuzzy-hash
-    /// fields (`ssdeep_hash`, `on_disk_mismatch`, `ssdeep_degraded`) exist only
+    /// fields (`ssdeep_hash`, `on_disk_state`, `ssdeep_degraded`) exist only
     /// on the protobuf record, not the native model — consumers that need them
     /// (e.g. the agent integrity-alert bridge) MUST read them off the proto
     /// record *before* this conversion. Reading them off a converted native
@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn native_proto_conversion_drops_integrity_signals_by_design() {
         // The native ProcessRecord has no integrity-signal fields; the protobuf
-        // ProcessRecord owns ssdeep_hash/on_disk_mismatch/ssdeep_degraded, which
+        // ProcessRecord owns ssdeep_hash/on_disk_state/ssdeep_degraded, which
         // are produced only on the procmond ProcessEvent -> proto path. Both
         // conversion directions therefore drop them. This tripwire locks that
         // intentional asymmetry: if a future edit adds the fields to the native
@@ -545,14 +545,14 @@ mod tests {
         let native = NativeProcessRecord::new(1234, "tripwire".to_owned());
         let proto = ProtoProcessRecord::from(native);
         assert_eq!(proto.ssdeep_hash, None);
-        assert!(!proto.on_disk_mismatch);
+        assert_eq!(proto.on_disk_state, i32::from(OnDiskState::Unknown));
         assert!(!proto.ssdeep_degraded);
 
         // 2. A proto carrying signals, round-tripped through the native model,
         //    loses them — documenting the intentional drop.
         let signalled = ProtoProcessRecord {
             ssdeep_hash: Some("3:abc:def".to_owned()),
-            on_disk_mismatch: true,
+            on_disk_state: i32::from(OnDiskState::Mismatch),
             ssdeep_degraded: true,
             ..Default::default()
         };
@@ -561,9 +561,13 @@ mod tests {
             round_tripped.ssdeep_hash, None,
             "ssdeep_hash must not survive the native round-trip"
         );
-        assert!(
-            !round_tripped.on_disk_mismatch,
-            "on_disk_mismatch must not survive the native round-trip"
+        // A positive MISMATCH finding must degrade to UNKNOWN, not to MATCH:
+        // the native model cannot carry the signal, so the round-trip has to
+        // forget it rather than invent a clean result.
+        assert_eq!(
+            round_tripped.on_disk_state,
+            i32::from(OnDiskState::Unknown),
+            "a MISMATCH finding must degrade to UNKNOWN across the native round-trip, never to MATCH"
         );
         assert!(
             !round_tripped.ssdeep_degraded,

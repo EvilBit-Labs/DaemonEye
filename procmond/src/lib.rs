@@ -64,6 +64,28 @@ use daemoneye_lib::ipc::IpcError;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Map the collector-core [`OnDiskState`] onto its protobuf counterpart.
+///
+/// The two enums are deliberately separate types: `collector-core` is the
+/// collector SDK and keeps its event model independent of the wire contract,
+/// so this conversion boundary is the single place the two meet. The mapping is
+/// total and order-preserving, and `Unknown` maps to `Unknown` — no variant
+/// silently becomes `Match`.
+const fn map_on_disk_state(
+    state: collector_core::OnDiskState,
+) -> daemoneye_lib::proto::OnDiskState {
+    match state {
+        collector_core::OnDiskState::Match => daemoneye_lib::proto::OnDiskState::Match,
+        collector_core::OnDiskState::Mismatch => daemoneye_lib::proto::OnDiskState::Mismatch,
+        // Covers `Unknown` and — because `OnDiskState` is #[non_exhaustive] —
+        // any variant added later and not yet handled here. Both must degrade
+        // to Unknown, never to Match: an unmapped state is by definition one
+        // this boundary knows nothing about, and the fail-safe direction for
+        // an integrity signal is "no claim", not "clean".
+        collector_core::OnDiskState::Unknown | _ => daemoneye_lib::proto::OnDiskState::Unknown,
+    }
+}
+
 /// Message handler for IPC communication with process monitoring.
 ///
 /// The `ProcessMessageHandler` is the core component of procmond that handles
@@ -531,7 +553,7 @@ impl ProcessMessageHandler {
         // widely-constructed ProcessEvent struct stable) onto the typed wire
         // contract before the event's fields are moved into the proto record.
         let ssdeep_hash = event.ssdeep_hash().map(str::to_owned);
-        let on_disk_mismatch = event.on_disk_mismatch();
+        let on_disk_state = i32::from(map_on_disk_state(event.on_disk_state()));
         let ssdeep_degraded = event.ssdeep_degraded();
 
         ProtoProcessRecord {
@@ -550,7 +572,7 @@ impl ProcessMessageHandler {
             file_exists: event.file_exists,
             collection_time,
             ssdeep_hash,
-            on_disk_mismatch,
+            on_disk_state,
             ssdeep_degraded,
         }
     }
@@ -1002,13 +1024,16 @@ mod tests {
             timestamp: now,
             platform_metadata: None,
         };
-        // ssdeep present, mismatch set; degraded false.
+        // ssdeep present, mismatch probed; degraded false.
         event.set_ssdeep_signal(Some("3:abc:def".to_string()), false);
-        event.set_on_disk_mismatch(true);
+        event.set_on_disk_state(collector_core::OnDiskState::Mismatch);
 
         let record = handler.convert_process_event_to_record(event);
         assert_eq!(record.ssdeep_hash, Some("3:abc:def".to_string()));
-        assert!(record.on_disk_mismatch);
+        assert_eq!(
+            record.on_disk_state,
+            i32::from(daemoneye_lib::proto::OnDiskState::Mismatch)
+        );
         assert!(!record.ssdeep_degraded);
 
         // Degraded case: ssdeep failed (None) while SHA-256 succeeded.
@@ -1033,7 +1058,23 @@ mod tests {
         let degraded_record = handler.convert_process_event_to_record(degraded);
         assert_eq!(degraded_record.ssdeep_hash, None);
         assert!(degraded_record.ssdeep_degraded);
-        assert!(!degraded_record.on_disk_mismatch);
+        // The collector never set an on-disk state on this event, so the
+        // conversion must carry UNKNOWN across the boundary rather than
+        // defaulting it into a clean MATCH.
+        assert_eq!(
+            degraded_record.on_disk_state,
+            i32::from(daemoneye_lib::proto::OnDiskState::Unknown)
+        );
+    }
+
+    #[test]
+    fn on_disk_state_mapping_is_total_and_never_upgrades_unknown() {
+        use collector_core::OnDiskState as CoreState;
+        use daemoneye_lib::proto::OnDiskState as WireState;
+
+        assert_eq!(map_on_disk_state(CoreState::Unknown), WireState::Unknown);
+        assert_eq!(map_on_disk_state(CoreState::Match), WireState::Match);
+        assert_eq!(map_on_disk_state(CoreState::Mismatch), WireState::Mismatch);
     }
 
     #[test]
