@@ -479,8 +479,8 @@ impl EventStore {
         let cutoff = retention_cutoff(now_ms, self.retention_ms, self.granularity_ms)?;
         let expired_ids: Vec<u64> = {
             let rtxn = self.db.begin_read()?;
-            rtxn.list_tables()?
-                .filter_map(|handle| parse_bucket_name(handle.name()))
+            collect_bucket_ids(&rtxn)?
+                .into_iter()
                 .filter(|&id| id < cutoff)
                 .collect()
         };
@@ -732,11 +732,6 @@ impl DatabaseManager {
     pub fn get_alert(&self, _id: u64) -> Result<Option<Alert>, StorageError> {
         // TODO: Implement in Task 8 - redb database integration
         let _read_txn = self.db.begin_read()?;
-        // let table = read_txn.open_table(Tables::ALERTS)?;
-        // Ok(table
-        //     .get(id)
-        //     .map_err(StorageError::from)?
-        //     .map(|guard| guard.value().clone()))
         Ok(None)
     }
 
@@ -744,15 +739,6 @@ impl DatabaseManager {
     pub fn get_all_alerts(&self) -> Result<Vec<Alert>, StorageError> {
         // TODO: Implement in Task 8 - redb database integration
         let _read_txn = self.db.begin_read()?;
-        // let table = read_txn.open_table(Tables::ALERTS)?;
-        // let mut alerts = Vec::new();
-
-        // for result in table.iter().map_err(StorageError::from)? {
-        //     let (_, alert) = result.map_err(StorageError::from)?;
-        //     alerts.push(alert.value().clone());
-        // }
-
-        // Ok(alerts)
         Ok(Vec::new())
     }
 
@@ -764,11 +750,6 @@ impl DatabaseManager {
     ) -> Result<(), StorageError> {
         // TODO: Implement in Task 8 - redb database integration
         let _write_txn = self.db.begin_write()?;
-        // {
-        //     let mut table = write_txn.open_table(Tables::SYSTEM_INFO)?;
-        //     table.insert(id, system_info).map_err(StorageError::from)?;
-        // }
-        // write_txn.commit()?;
         Ok(())
     }
 
@@ -776,16 +757,6 @@ impl DatabaseManager {
     pub fn get_latest_system_info(&self) -> Result<Option<SystemInfo>, StorageError> {
         // TODO: Implement in Task 8 - redb database integration
         let _read_txn = self.db.begin_read()?;
-        // let table = read_txn.open_table(Tables::SYSTEM_INFO)?;
-
-        // // Get the latest entry (highest ID)
-        // let mut latest: Option<SystemInfo> = None;
-        // for result in table.iter().map_err(StorageError::from)? {
-        //     let (_, system_info) = result.map_err(StorageError::from)?;
-        //     latest = Some(system_info.value().clone());
-        // }
-
-        // Ok(latest)
         Ok(None)
     }
 
@@ -797,11 +768,6 @@ impl DatabaseManager {
     ) -> Result<(), StorageError> {
         // TODO: Implement in Task 8 - redb database integration
         let _write_txn = self.db.begin_write()?;
-        // {
-        //     let mut table = write_txn.open_table(Tables::SCAN_METADATA)?;
-        //     table.insert(id, metadata).map_err(StorageError::from)?;
-        // }
-        // write_txn.commit()?;
         Ok(())
     }
 
@@ -1088,7 +1054,7 @@ mod tests {
     /// inside its `if let` guards. Opening a table in a redb write transaction
     /// creates it, so those two tables must stay absent for a record that carries
     /// neither field — the guard that U3's shared helper did not turn conditional
-    /// table creation into unconditional creation (KTD5).
+    /// table creation into unconditional creation.
     #[test]
     fn event_store_put_event_creates_no_index_table_for_absent_fields() {
         use redb::MultimapTableHandle as _;

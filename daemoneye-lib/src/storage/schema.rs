@@ -396,6 +396,27 @@ fn export_bundle(
     Ok(())
 }
 
+/// Bind the verified archive to *this* rebuild run.
+///
+/// The signature proves the bundle on disk is *a* validly-signed archive; it
+/// cannot prove it is the one this run just exported. A bundle swapped between
+/// the export write and the read-back — an older archive carrying the same
+/// signing key — would satisfy the signature and the completeness gate alike.
+/// Since the next step reinitializes the live store, that substitution would
+/// destroy the data whose only copy was the archive that got swapped away.
+fn ensure_bundle_is_this_run(
+    embedded: &BundleManifest,
+    expected: &BundleManifest,
+) -> Result<(), StorageError> {
+    if embedded == expected {
+        return Ok(());
+    }
+    Err(StorageError::Bucket {
+        bucket: "schema-rebuild".to_owned(),
+        message: "bundle manifest does not match the expected manifest".to_owned(),
+    })
+}
+
 /// The drop gate (R15): read the bundle + signature back from disk (never the
 /// in-memory buffer, so read-back corruption is caught), verify the signature,
 /// and prove completeness by re-deriving the archived store's table set and
@@ -474,6 +495,19 @@ fn split_bundle(bundle: &[u8]) -> Result<(BundleManifest, &[u8]), StorageError> 
             message: "bundle truncated: db body".to_owned(),
         })?;
     let manifest: BundleManifest = postcard::from_bytes(manifest_bytes)?;
+    // Gate on the envelope version before trusting any other field. postcard is
+    // not self-describing, so a manifest written under a different layout does
+    // not fail to decode — it decodes into plausible-looking nonsense, and the
+    // failure then surfaces downstream as a misleading completeness error.
+    if manifest.format_version != BUNDLE_FORMAT_VERSION {
+        return Err(StorageError::Bucket {
+            bucket: "schema-rebuild".to_owned(),
+            message: format!(
+                "unsupported bundle format version {found}, expected {BUNDLE_FORMAT_VERSION}",
+                found = manifest.format_version
+            ),
+        });
+    }
     Ok((manifest, db_bytes))
 }
 
@@ -690,12 +724,7 @@ fn run_rebuild(
         write_marker(db_path, marker)?;
         export_bundle(db_path, &marker.bundle_path, &manifest, signer)?;
         let embedded = verify_bundle_self(&marker.bundle_path, signer)?;
-        if embedded != manifest {
-            return Err(StorageError::Bucket {
-                bucket: "schema-rebuild".to_owned(),
-                message: "bundle manifest does not match the expected manifest".to_owned(),
-            });
-        }
+        ensure_bundle_is_this_run(&embedded, &manifest)?;
         marker.phase = MigrationPhase::Verified;
         write_marker(db_path, marker)?;
     }
@@ -1006,6 +1035,67 @@ mod tests {
         );
     }
 
+    /// postcard is not self-describing, so a manifest from another envelope
+    /// version decodes into nonsense rather than failing. The version gate is
+    /// what turns that into an honest error instead of a misleading one
+    /// downstream.
+    #[test]
+    fn bundle_with_an_unsupported_format_version_is_rejected() {
+        let foreign = BundleManifest {
+            format_version: BUNDLE_FORMAT_VERSION.saturating_add(1),
+            schema_version: 1,
+            written_at_ms: 1,
+            partitions: vec!["processes.events@7".to_owned()],
+        };
+        let manifest_bytes = postcard::to_allocvec(&foreign).unwrap();
+        let mut bundle = Vec::new();
+        let manifest_len = u64::try_from(manifest_bytes.len()).unwrap();
+        bundle.extend_from_slice(&manifest_len.to_le_bytes());
+        bundle.extend_from_slice(&manifest_bytes);
+        bundle.extend_from_slice(b"db-bytes");
+
+        let err = split_bundle(&bundle).unwrap_err();
+        let StorageError::Bucket { ref message, .. } = err else {
+            panic!("expected a bucket error, got {err:?}");
+        };
+        assert!(
+            message.contains("unsupported bundle format version"),
+            "expected the version gate to reject it, got: {message}"
+        );
+    }
+
+    /// A validly-signed archive that is not the one this run exported must be
+    /// rejected before the destructive reinit — the signature alone cannot tell
+    /// a swapped older archive from this run's.
+    #[test]
+    fn a_different_signed_archive_is_not_accepted_as_this_run() {
+        let manifest = BundleManifest {
+            format_version: BUNDLE_FORMAT_VERSION,
+            schema_version: 1,
+            written_at_ms: 1,
+            partitions: vec!["processes.events@7".to_owned()],
+        };
+        assert!(ensure_bundle_is_this_run(&manifest, &manifest).is_ok());
+
+        // Same store, different run: an archive taken at another moment.
+        let other_run = BundleManifest {
+            written_at_ms: 2,
+            ..manifest.clone()
+        };
+        let err = ensure_bundle_is_this_run(&other_run, &manifest).unwrap_err();
+        let StorageError::Bucket { ref message, .. } = err else {
+            panic!("expected a bucket error, got {err:?}");
+        };
+        assert!(message.contains("does not match the expected manifest"));
+
+        // Same run, different partition set.
+        let other_partitions = BundleManifest {
+            partitions: vec!["processes.events@8".to_owned()],
+            ..manifest
+        };
+        assert!(ensure_bundle_is_this_run(&other_partitions, &manifest).is_err());
+    }
+
     // ---- Verify read-back: bit flip fails the gate ------------------------
 
     #[test]
@@ -1032,7 +1122,16 @@ mod tests {
         fs::write(&bundle_path, &bytes).unwrap();
 
         let err = verify_bundle_self(&bundle_path, &signer).unwrap_err();
-        assert!(matches!(err, StorageError::Bucket { .. }));
+        // Specifically the signature check: the manifest still matches the
+        // archive, so a completeness-gate rejection here would mean the
+        // corruption itself went undetected.
+        let StorageError::Bucket { ref message, .. } = err else {
+            panic!("expected a bucket error, got {err:?}");
+        };
+        assert!(
+            message.contains("signature verification failed"),
+            "expected the signature check to reject it, got: {message}"
+        );
     }
 
     // ---- Resumability: resume from the sidecar marker ---------------------
