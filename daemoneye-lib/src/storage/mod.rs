@@ -1096,6 +1096,61 @@ mod tests {
         );
     }
 
+    /// The batch path is the one production writes go through, and it shares
+    /// `insert_record` with the single-event path. This drives it across two
+    /// time buckets and checks the postings themselves, not just the row count —
+    /// the single-event tests cover routing, but nothing covered the batch
+    /// path's index writes.
+    #[test]
+    fn event_store_batch_indexes_every_record_across_buckets() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("batch-index.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+
+        let hour = 3_600_000_u64;
+        let base = hour.saturating_mul(200);
+        let next = base.saturating_add(hour);
+
+        let mut early = ProcessRecord::new(11, "early".to_owned());
+        early.ppid = Some(crate::models::process::ProcessId::new(1));
+        early.executable_hash =
+            Some("abcdef0123456789abcdef0123456789ffffffffffffffffffffffffffffffff".to_owned());
+        let late = ProcessRecord::new(22, "late".to_owned());
+
+        let batch = vec![
+            IngestRecord {
+                collector_id: "c".to_owned(),
+                source_seq: 1,
+                ts_ms: base,
+                seq: 1,
+                record: early,
+            },
+            IngestRecord {
+                collector_id: "c".to_owned(),
+                source_seq: 2,
+                ts_ms: next,
+                seq: 2,
+                record: late,
+            },
+        ];
+        store.put_batch(&batch).expect("put batch");
+
+        // Each record landed in its own bucket.
+        assert_eq!(store.list_buckets().expect("buckets").len(), 2);
+        assert_eq!(store.event_count().expect("count"), 2);
+
+        // ...and each is reachable through the indexes the batch path wrote.
+        assert_eq!(store.find_by_pid(11).expect("find 11").len(), 1);
+        assert_eq!(store.find_by_pid(22).expect("find 22").len(), 1);
+        let by_name = store.find_by_name("early").expect("find early");
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name.first().map(|r| r.pid.raw()), Some(11));
+
+        // The parent-id posting is written from the batch path too.
+        let postings = store.pid_postings(11).expect("postings");
+        assert_eq!(postings, vec![(base, 1_u32)]);
+    }
+
     #[test]
     fn event_store_scan_range_returns_window_ascending_across_buckets() {
         let temp_dir = tempdir().expect("Failed to create temp dir");
