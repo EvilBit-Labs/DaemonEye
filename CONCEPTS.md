@@ -45,3 +45,7 @@ An in-memory cache of the parent relation (`pid → {ppid, parent_name, start_ti
 ### Schema-version rebuild
 
 The recovery path when the event store's `schema_version` tag does not match the running binary. The old partitions are exported as a signed bundle and dropped, the store reinitializes at the new version, and available procmond WAL is replayed — with an explicit gap record for whatever the WAL could not restore. Deliberately not an in-place migration.
+
+### Drop gate
+
+The checks a schema-version rebuild must pass before it destroys the live store. Three distinct properties, each rejecting on its own: the archive bundle is authentic (signature), it holds every partition its manifest claims (completeness), and it is the archive this run just wrote rather than an older one (this-run identity). Any failure aborts before the drop, leaving the old store intact.
