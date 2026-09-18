@@ -16,7 +16,7 @@ cargo-insta                 = "1.47.2"
 "cargo:mdbook-i18n-helpers" = "latest"
 just                        = "latest"
 python                      = "latest"
-rust                        = { version = "latest", components = "llvm-tools,cargo,rustfmt,clippy", profile = "default" }
+rust                        = { version = "1.97.1", components = "llvm-tools,cargo,rustfmt,clippy", profile = "default" }
 "cargo:cargo-outdated"      = "latest"
 "cargo:cargo-release"       = "latest"
 "cargo:cargo-auditable"     = "latest"
