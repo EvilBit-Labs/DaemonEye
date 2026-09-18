@@ -35,7 +35,7 @@
 
 ## Dependencies
 
-T
+None (entry point).
 
 ## Acceptance criteria
 

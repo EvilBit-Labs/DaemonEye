@@ -31,7 +31,7 @@
 
 ## Dependencies
 
-T
+T12 (end-to-end integrated pipeline to instrument).
 
 ## Acceptance criteria
 
