@@ -27,13 +27,24 @@ enum TaskType {
 // decode the unset field as the former — silently asserting a clean result on
 // every platform without a probe. UNKNOWN is the zero value so an absent or
 // unprobed field is honest by default.
-/// Whether a running process image matches its on-disk executable.
+//
+// Comment convention here: protoc lifts EVERY contiguous leading comment into
+// the generated Rust doc, so `//` and `///` are equivalent for that purpose and
+// `///` additionally leaves a stray `/` in the output. What keeps
+// `clippy::too_long_first_doc_paragraph` quiet is the short first line followed
+// by a blank line, not the marker. Hence `//` throughout.
+//
+// Whether a running process image matches its on-disk executable.
 enum OnDiskState {
-  /// Not probed; carries no claim and is never a clean result.
+  // Not probed: no implementation for this platform, the probe itself failed,
+  // or the signal was dropped in conversion. Carries no claim and is never a
+  // clean result.
   ON_DISK_STATE_UNKNOWN = 0;
-  /// Probed: the running image matches its on-disk executable.
+  // Probed: the backing file is still linked at its path and not flagged
+  // deleted. Does NOT attest that the running image's contents equal the
+  // file's current bytes — nothing is compared.
   ON_DISK_STATE_MATCH = 1;
-  /// Probed: the on-disk executable was deleted or replaced.
+  // Probed: the on-disk executable was deleted or replaced.
   ON_DISK_STATE_MISMATCH = 2;
 }
 
@@ -106,7 +117,15 @@ message ProcessRecord {
   /// when executable_hash is present, or absent (see ssdeep_degraded) without
   /// affecting the SHA-256 identity hash.
   optional string ssdeep_hash = 15;
-  /// On-disk-vs-running state; UNKNOWN when the collector has no probe.
+  // On-disk-vs-running state. UNKNOWN when the collector has no probe for this
+  // platform, when the probe itself failed, or when the signal was dropped in
+  // conversion. UNKNOWN is never a clean result.
+  //
+  // Wire-compatibility note: field 16 was `bool on_disk_mismatch` before
+  // 2026-09-18. Both are varint, so a skewed pair decodes silently and WRONGLY
+  // — an old collector's `true` (varint 1) reads as MATCH on a new agent,
+  // inverting a real finding into a clean one. Upgrade procmond and
+  // daemoneye-agent together; nothing enforces this at the handshake.
   OnDiskState on_disk_state = 16;
   /// Whether ssdeep computation failed while the SHA-256 identity hash
   /// succeeded for this executable (degraded integrity coverage signal).

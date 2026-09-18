@@ -70,19 +70,24 @@ use tokio::sync::Mutex;
 /// The two enums are deliberately separate types: `collector-core` is the
 /// collector SDK and keeps its event model independent of the wire contract,
 /// so this conversion boundary is the single place the two meet. The mapping is
-/// total and order-preserving, and `Unknown` maps to `Unknown` — no variant
-/// silently becomes `Match`.
+/// total, and `Unknown` maps to `Unknown` — no variant silently becomes
+/// `Match`.
+///
+/// The catch-all is forced: `OnDiskState` is `#[non_exhaustive]` (required by
+/// the workspace's `clippy::exhaustive_enums`), so this out-of-crate match
+/// cannot be exhaustive. Be aware of what that costs — a variant added later
+/// maps to `Unknown` here forever, with a green build, silently reporting a
+/// real finding as no claim. The compiler will NOT remind you. What will is
+/// `OnDiskState::as_metadata_str` in collector-core, which matches exhaustively
+/// in-crate and fails to compile on a new variant; when that fires, come here.
 const fn map_on_disk_state(
     state: collector_core::OnDiskState,
 ) -> daemoneye_lib::proto::OnDiskState {
     match state {
         collector_core::OnDiskState::Match => daemoneye_lib::proto::OnDiskState::Match,
         collector_core::OnDiskState::Mismatch => daemoneye_lib::proto::OnDiskState::Mismatch,
-        // Covers `Unknown` and — because `OnDiskState` is #[non_exhaustive] —
-        // any variant added later and not yet handled here. Both must degrade
-        // to Unknown, never to Match: an unmapped state is by definition one
-        // this boundary knows nothing about, and the fail-safe direction for
-        // an integrity signal is "no claim", not "clean".
+        // Unknown and any future variant: degrade to Unknown, never Match. The
+        // fail-safe direction for an integrity signal is "no claim", not "clean".
         collector_core::OnDiskState::Unknown | _ => daemoneye_lib::proto::OnDiskState::Unknown,
     }
 }

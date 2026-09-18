@@ -83,14 +83,29 @@ pub enum CollectionEvent {
 ///
 /// Mirrors the protobuf `OnDiskState`; the mapping lives at the IPC conversion
 /// boundary so this event model stays independent of the wire contract.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+/// `#[non_exhaustive]` is required here by the workspace's
+/// `clippy::exhaustive_enums` restriction, not chosen. It has a real cost: it
+/// forces a catch-all arm at every cross-crate match, and a catch-all is what
+/// lets a future variant silently degrade to `Unknown` at the wire boundary
+/// with a green build — this signal's own bug class wearing a different hat.
+/// The tripwire that compensates is in-crate, where the attribute does not
+/// apply: [`Self::as_metadata_str`] matches exhaustively, so adding a variant
+/// fails to compile HERE and forces the author to go look at the boundary.
+/// Keep that match exhaustive; never give it a catch-all.
+///
+/// Deliberately NOT `Serialize`/`Deserialize`: the derives would give this type
+/// a second encoding (`"Match"`) that disagrees with [`Self::as_metadata_str`]
+/// (`"match"`) and decodes back to `Unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OnDiskState {
     /// Not probed: no implementation for this platform, or the probe itself
     /// failed. Carries no claim in either direction.
-    #[default]
     Unknown,
-    /// Probed: the running image matches its on-disk executable.
+    /// Probed: the backing file is still linked at its path and is not flagged
+    /// deleted. This does **not** attest that the running image's contents
+    /// equal the file's current bytes — nothing is compared. See
+    /// `classify_exe_target` in procmond's Linux collector for the ceiling.
     Match,
     /// Probed: the on-disk executable was deleted or replaced while the
     /// process keeps running.
@@ -99,9 +114,12 @@ pub enum OnDiskState {
 
 impl OnDiskState {
     /// Wire-stable string for `platform_metadata`, or `None` for
-    /// [`Self::Unknown`] — which is encoded as an absent key so the default
-    /// costs no allocation on the 10k+ process path.
-    #[must_use]
+    /// [`Self::Unknown`], which is encoded as an absent key so an unprobed
+    /// platform allocates nothing.
+    ///
+    /// Note the cost this accepts: a collector that *does* probe records
+    /// `Match` explicitly and therefore allocates per process on the 10k+
+    /// path. That is the price of not letting silence mean clean.
     pub const fn as_metadata_str(self) -> Option<&'static str> {
         match self {
             Self::Unknown => None,
@@ -123,9 +141,11 @@ impl OnDiskState {
 
     /// Whether this state is a positive mismatch finding.
     ///
-    /// Use this rather than `!= Match` when deciding to alert: `Unknown` is not
-    /// a finding, and treating it as one makes every unprobed platform alert on
-    /// every process.
+    /// Use this rather than `!= Match`: `Unknown` is not a finding, and
+    /// treating it as one makes every unprobed platform act on every process.
+    /// Callers are the Linux collector's `file_exists` derivation and
+    /// procmond's hash pass, which refuses to attribute a path-derived hash to
+    /// a process whose executable was replaced.
     #[must_use]
     pub const fn is_mismatch(self) -> bool {
         matches!(self, Self::Mismatch)
@@ -482,10 +502,14 @@ impl ProcessEvent {
     /// Remove the given integrity keys from `platform_metadata` without creating
     /// a metadata object, and drop the metadata entirely if it becomes empty.
     ///
-    /// Default integrity signals (no digest, no flags) must not force an
-    /// otherwise-absent `platform_metadata` object to exist — on the hot 10k+
-    /// process path that would be avoidable allocation per process. The getters
-    /// already default to `None`/`false` when the keys are absent.
+    /// Default integrity signals must not force an otherwise-absent
+    /// `platform_metadata` object to exist. The getters already default to
+    /// `None`/`false`/[`OnDiskState::Unknown`] when the keys are absent.
+    ///
+    /// This saves an allocation only for signals that genuinely stay absent —
+    /// the ssdeep pair, and the on-disk state on platforms with no probe. A
+    /// probing collector records `Match` explicitly, so it materializes the
+    /// object regardless.
     fn clear_integrity_keys(&mut self, keys: &[&str]) {
         if let Some(serde_json::Value::Object(map)) = self.platform_metadata.as_mut() {
             for key in keys {
