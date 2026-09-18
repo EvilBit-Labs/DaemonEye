@@ -64,7 +64,8 @@ use daemoneye_lib::ipc::IpcError;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Map the collector-core [`OnDiskState`] onto its protobuf counterpart.
+/// Map the collector-core [`collector_core::OnDiskState`] onto its protobuf
+/// counterpart.
 ///
 /// The two enums are deliberately separate types: `collector-core` is the
 /// collector SDK and keeps its event model independent of the wire contract,

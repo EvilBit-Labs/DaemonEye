@@ -54,7 +54,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// Bumped to 2 when the manifest's partition list became `Vec<String>`. Both
 /// layouts open with the same three scalar fields, so a version-1 bundle
 /// decodes its version correctly and then misreads the partition list; the
-/// bump is what lets [`split_bundle`]'s version gate reject it outright
+/// bump is what lets the bundle-splitting version gate reject it outright
 /// instead of surfacing the garbage downstream as a completeness failure.
 pub const BUNDLE_FORMAT_VERSION: u32 = 2;
 
