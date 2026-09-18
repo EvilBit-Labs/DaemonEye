@@ -1,4 +1,4 @@
-# T7 · M4 — Alerting delivery (network sinks, reliability, correlation)
+# T7 · M4 — Alerting delivery (network sinks, reliability, enrichment)
 
 **Milestone:** M4 · **Backlog:** T14.2 (#53), T15 (#55), T26.2
 
