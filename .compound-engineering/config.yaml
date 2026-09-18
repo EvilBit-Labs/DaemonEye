@@ -56,7 +56,7 @@
 
 # plan_output: html              # md | html (default: md)
 # brainstorm_output: html        # md | html (default: md)
-ideate_output: md                # md | html (default: html -- ideation docs are human-facing, so HTML is the default; set md to opt out)
+ideate_output: md # md | html (default: html -- ideation docs are human-facing, so HTML is the default; set md to opt out)
 
 # --- Model elevation ---
 # Send only the reasoning-heavy step of /ce-plan (interpret research, then author
@@ -128,7 +128,7 @@ ideate_output: md                # md | html (default: html -- ideation docs are
 # the peer cannot honor skips the pass with a stated reason -- never substituted.
 
 # cross_model_review_mode: off   # auto | off (default: auto)
-cross_model_peer: codex          # codex | claude | grok | cursor | composer | opencode
+cross_model_peer: codex # codex | claude | grok | cursor | composer | opencode
 # cross_model_model: fable         # model alias or full id for the resolved peer target (no default)
 # cross_model_effort: xhigh        # reasoning effort for the resolved peer target (no default)
 
@@ -165,9 +165,17 @@ cross_model_peer: codex          # codex | claude | grok | cursor | composer | o
 # Each entry: type (slack | github-issues | email), id (short name), target (channel ID /
 # owner/repo / mailbox), ack_action, closeout_action, sensitive (true withholds content
 # from committed state/plan text), approved (standing approval for source-side writes).
-# feedback_sources:
-#   - { type: slack, id: slack-alpha, target: C0XXXXXXX, ack_action: eyes, closeout_action: white_check_mark, sensitive: false, approved: true }
-#   - { type: github-issues, id: gh-issues, target: owner/repo, ack_action: "feedback:ack", closeout_action: "feedback:resolved", sensitive: false, approved: true }
+feedback_sources:
+    #   - { type: slack, id: slack-alpha, target: C0XXXXXXX, ack_action: eyes, closeout_action: white_check_mark, sensitive: false, approved: true }
+    - {
+          type: github-issues,
+          id: gh-issues,
+          target: EvilBit-Labs/DaemonEye,
+          ack_action: "feedback:ack",
+          closeout_action: "feedback:resolved",
+          sensitive: false,
+          approved: true,
+      }
 
 # Sweep-owned settings.
 # sweep_state_path: docs/feedback-sweep/state.yml   # committed (multi-agent) or /tmp path (solo)
