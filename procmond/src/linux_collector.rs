@@ -41,6 +41,17 @@ const DELETED_EXE_SUFFIX: &str = " (deleted)";
 /// compared, so it does not cover a bind-mount or overlay swap, an in-place
 /// overwrite where `ETXTBSY` is unenforced (NFS, some FUSE), or `ptrace`
 /// patching of the running image.
+/// Turn an optionally-read `/proc/<pid>/exe` target into a path and a probed
+/// state. `None` means the link could not be read, which is
+/// [`OnDiskState::Unknown`], never `Match`. Split out so that branch is
+/// testable — `read_process_info` hardcodes `/proc/<pid>`.
+fn classify_exe_link(target: Option<String>) -> (Option<String>, OnDiskState) {
+    target.map_or((None, OnDiskState::Unknown), |raw| {
+        let (clean, state) = classify_exe_target(raw);
+        (Some(clean), state)
+    })
+}
+
 fn classify_exe_target(mut target: String) -> (String, OnDiskState) {
     if target.ends_with(DELETED_EXE_SUFFIX) {
         target.truncate(target.len().saturating_sub(DELETED_EXE_SUFFIX.len()));
