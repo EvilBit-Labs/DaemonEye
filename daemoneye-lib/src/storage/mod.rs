@@ -424,25 +424,15 @@ impl EventStore {
     /// List the live bucket ids in ascending order (discovered via `list_tables`).
     pub fn list_buckets(&self) -> Result<Vec<u64>, StorageError> {
         let txn = self.db.begin_read()?;
-        let mut ids: Vec<u64> = txn
-            .list_tables()?
-            .filter_map(|handle| parse_bucket_name(handle.name()))
-            .collect();
-        ids.sort_unstable();
-        Ok(ids)
+        collect_bucket_ids(&txn)
     }
 
     /// Count the events across all buckets (test/diagnostic helper).
     pub fn event_count(&self) -> Result<u64, StorageError> {
         let txn = self.db.begin_read()?;
-        let names: Vec<String> = txn
-            .list_tables()?
-            .filter(|handle| parse_bucket_name(handle.name()).is_some())
-            .map(|handle| handle.name().to_owned())
-            .collect();
         let mut total = 0_u64;
-        for name in &names {
-            let table = txn.open_table(bucket_def(name))?;
+        for id in collect_bucket_ids(&txn)? {
+            let table = txn.open_table(bucket_def(&bucket_table_name(id)))?;
             total = total.saturating_add(table.len()?);
         }
         Ok(total)
