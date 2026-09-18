@@ -50,7 +50,13 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// Bundle envelope format version (the manifest framing), independent of
 /// [`SCHEMA_VERSION`] so the archive format can evolve on its own axis.
-pub const BUNDLE_FORMAT_VERSION: u32 = 1;
+///
+/// Bumped to 2 when the manifest's partition list became `Vec<String>`. Both
+/// layouts open with the same three scalar fields, so a version-1 bundle
+/// decodes its version correctly and then misreads the partition list; the
+/// bump is what lets [`split_bundle`]'s version gate reject it outright
+/// instead of surfacing the garbage downstream as a completeness failure.
+pub const BUNDLE_FORMAT_VERSION: u32 = 2;
 
 /// Maximum consecutive rebuild failures before the store enters the read-only
 /// degraded terminal state (R17). A deterministic failure (e.g. a bad signer)
@@ -1061,6 +1067,59 @@ mod tests {
         assert!(
             message.contains("unsupported bundle format version"),
             "expected the version gate to reject it, got: {message}"
+        );
+    }
+
+    /// The concrete upgrade case the version bump exists for: a manifest in the
+    /// version-1 layout, whose partition list was a struct per partition rather
+    /// than a bare name. Its leading scalars decode identically under the
+    /// current layout, so only the version gate can reject it.
+    #[test]
+    fn a_version_1_layout_manifest_is_rejected_rather_than_misread() {
+        /// The v1 partition entry: a name plus an always-zero forensic count.
+        #[derive(serde::Serialize)]
+        struct V1Partition {
+            name: String,
+            entries: u64,
+        }
+        /// The v1 manifest: same leading scalars, different partition list.
+        #[derive(serde::Serialize)]
+        struct V1Manifest {
+            format_version: u32,
+            schema_version: u32,
+            written_at_ms: u64,
+            partitions: Vec<V1Partition>,
+        }
+
+        let legacy = V1Manifest {
+            format_version: 1,
+            schema_version: 1,
+            written_at_ms: 1,
+            partitions: vec![
+                V1Partition {
+                    name: "processes.events@7".to_owned(),
+                    entries: 0,
+                },
+                V1Partition {
+                    name: "detection_rules".to_owned(),
+                    entries: 0,
+                },
+            ],
+        };
+        let manifest_bytes = postcard::to_allocvec(&legacy).unwrap();
+        let mut bundle = Vec::new();
+        let manifest_len = u64::try_from(manifest_bytes.len()).unwrap();
+        bundle.extend_from_slice(&manifest_len.to_le_bytes());
+        bundle.extend_from_slice(&manifest_bytes);
+        bundle.extend_from_slice(b"db-bytes");
+
+        let err = split_bundle(&bundle).unwrap_err();
+        let StorageError::Bucket { ref message, .. } = err else {
+            panic!("expected a bucket error, got {err:?}");
+        };
+        assert!(
+            message.contains("unsupported bundle format version 1"),
+            "a v1 bundle must be named as such, not misread; got: {message}"
         );
     }
 
