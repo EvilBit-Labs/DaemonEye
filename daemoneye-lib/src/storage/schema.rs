@@ -396,32 +396,15 @@ fn export_bundle(
     Ok(())
 }
 
-/// The drop gate (R15): re-read the bundle and signature from disk (never the
+/// The drop gate (R15): read the bundle + signature back from disk (never the
 /// in-memory buffer, so read-back corruption is caught), verify the signature,
-/// and prove partition completeness by re-deriving the archived store's table set
-/// and asserting it equals the manifest's. Additionally assert the bundle's
-/// embedded manifest equals `expected`. Any failure aborts before the drop.
-fn verify_bundle(
-    bundle_path: &Path,
-    signer: &dyn BundleSigner,
-    expected: &BundleManifest,
-) -> Result<(), StorageError> {
-    let embedded = verify_bundle_self(bundle_path, signer)?;
-    if &embedded != expected {
-        return Err(StorageError::Bucket {
-            bucket: "schema-rebuild".to_owned(),
-            message: "bundle manifest does not match the expected manifest".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-/// Self-consistent bundle verification: read the bundle + signature from disk,
-/// verify the signature, and prove the embedded manifest's partition set matches
-/// what the archived db actually holds. Returns the embedded manifest. Used both
-/// at export time (via [`verify_bundle`]) and — critically — again before a
-/// *resumed* drop, so a bundle that was deleted or corrupted between runs aborts
-/// the destruction instead of emptying the store with no archive (R15).
+/// and prove completeness by re-deriving the archived store's table set and
+/// asserting it equals the embedded manifest's. Returns that embedded manifest.
+///
+/// This is the single verification entry point. It runs at export time and —
+/// critically — again before a *resumed* drop, so a bundle deleted or corrupted
+/// between runs aborts the destruction instead of emptying the store with no
+/// archive. Any failure aborts before the drop.
 fn verify_bundle_self(
     bundle_path: &Path,
     signer: &dyn BundleSigner,
@@ -706,7 +689,13 @@ fn run_rebuild(
         marker.phase = MigrationPhase::Exporting;
         write_marker(db_path, marker)?;
         export_bundle(db_path, &marker.bundle_path, &manifest, signer)?;
-        verify_bundle(&marker.bundle_path, signer, &manifest)?;
+        let embedded = verify_bundle_self(&marker.bundle_path, signer)?;
+        if embedded != manifest {
+            return Err(StorageError::Bucket {
+                bucket: "schema-rebuild".to_owned(),
+                message: "bundle manifest does not match the expected manifest".to_owned(),
+            });
+        }
         marker.phase = MigrationPhase::Verified;
         write_marker(db_path, marker)?;
     }
@@ -991,25 +980,30 @@ mod tests {
         seed_old_store(&path, 5_000);
         let signer = FakeSigner::new();
 
-        // Build a real bundle, then verify against a manifest claiming an extra
-        // partition the archive does not contain.
+        // Archive a bundle whose *embedded* manifest claims a partition the
+        // archived store does not hold. The completeness gate re-derives the
+        // archived table set and must reject it before any destructive drop.
         let (from_version, mut partitions, _gap) = inspect_store(&path).unwrap();
-        let real_manifest = BundleManifest {
+        partitions.push("phantom.partition".to_owned());
+        let inflated = BundleManifest {
             format_version: BUNDLE_FORMAT_VERSION,
             schema_version: from_version,
             written_at_ms: 1,
-            partitions: partitions.clone(),
+            partitions,
         };
         let bundle_path = default_bundle_path(&path);
-        export_bundle(&path, &bundle_path, &real_manifest, &signer).unwrap();
+        export_bundle(&path, &bundle_path, &inflated, &signer).unwrap();
 
-        partitions.push("phantom.partition".to_owned());
-        let inflated = BundleManifest {
-            partitions,
-            ..real_manifest
+        let err = verify_bundle_self(&bundle_path, &signer).unwrap_err();
+        // Specifically the completeness gate, not the signature check: the bundle
+        // is correctly signed, so a pass here would mean the gate never ran.
+        let StorageError::Bucket { ref message, .. } = err else {
+            panic!("expected a bucket error, got {err:?}");
         };
-        let err = verify_bundle(&bundle_path, &signer, &inflated).unwrap_err();
-        assert!(matches!(err, StorageError::Bucket { .. }));
+        assert!(
+            message.contains("incomplete archive"),
+            "expected the completeness gate to reject it, got: {message}"
+        );
     }
 
     // ---- Verify read-back: bit flip fails the gate ------------------------
@@ -1037,7 +1031,7 @@ mod tests {
         }
         fs::write(&bundle_path, &bytes).unwrap();
 
-        let err = verify_bundle(&bundle_path, &signer, &manifest).unwrap_err();
+        let err = verify_bundle_self(&bundle_path, &signer).unwrap_err();
         assert!(matches!(err, StorageError::Bucket { .. }));
     }
 
