@@ -23,12 +23,12 @@
 - Coverage via `cargo llvm-cov` (>85%); runner `cargo-nextest`; property tests with `proptest`; snapshots with `insta`.
 - Criterion benches across crates: file:daemoneye-lib/benches/, file:procmond/benches/, file:collector-core/benches/, file:daemoneye-eventbus/benches/ (process enum, hashing, IPC, DB, alerting, SQL/detection, collector-core) + regression detection.
 - Stress/load tests (collector-core, enumeration, DB, alert delivery, IPC, system-wide); fuzz via `cargo-fuzz`; memory safety via Miri/ASan for any boundary code.
-- CI matrix & gates: file:.github/workflows/ci.yml (Linux/macOS/Windows × x86_64/ARM64 × stable/beta/MSRV 1.95), fmt/clippy/`cargo audit`/`cargo deny`, SLSA provenance, signed release pipeline.
+- CI matrix & gates: file:.github/workflows/ci.yml — as it stands today this is Linux/macOS/Windows on x86_64 with a single mise-managed toolchain (ARM64 rows are commented out as flaky; there are no beta/MSRV rows). T14 gates against that actual matrix; restoring ARM64 and beta/MSRV coverage is separate future work, not in scope here. Plus fmt/clippy/`cargo audit`/`cargo deny`, SLSA provenance, signed release pipeline.
 - Security suites: SQL-injection vectors, privilege-boundary verification, IPC pen-testing, audit-chain tampering detection.
 
 ## Testing & quality gates
 
-- All gates green in CI across the support matrix; criterion baselines stored for regression comparison.
+- All gates green in CI across the matrix ci.yml actually runs today; criterion baselines stored for regression comparison.
 - Performance budgets verified: `<5% CPU`, `<100MB RSS`, `<100ms/rule`, `>1,000` DB writes/sec, `<5s` enumeration for 10k+ processes.
 
 ## Dependencies

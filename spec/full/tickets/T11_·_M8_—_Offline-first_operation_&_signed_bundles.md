@@ -10,7 +10,7 @@
 - Signed bundle config/rule distribution: Ed25519 signature verification against trusted keys, reject unsigned/invalid, per-conflict resolution (`--yes` applies default policy), atomic all-or-nothing apply with rollback; re-validate affected rules post-apply.
 - Airgapped integration tests.
 
-**Out:** Bundle authoring/signing tooling beyond verification/apply.
+**Out:** Bundle authoring/signing tooling beyond verification/apply — for v1.0, bundles are authored and signed by a maintainer-side process outside this repo. Airgapped tests construct fixtures with that same format; state where a production bundle comes from so the flow is not left without a producer.
 
 ## Spec references
 
@@ -19,6 +19,7 @@
 
 ## Key touchpoints
 
+- Trusted-key store: trusted public keys are provisioned at install time into a root-owned file under `/etc/daemoneye/` (0644, writable only by root or the installer); adding a key is a privileged action, and revocation is removing the key and re-running verification against affected rules. Verification never consults a user-writable location.
 - New bundle module in `daemoneye-lib` — Ed25519 signature verification against configured trusted keys (reuse signing/verify primitives from T8 file:daemoneye-lib/src/crypto.rs); reject unsigned/invalid; per-conflict resolution with `--yes` default policy; atomic all-or-nothing apply + rollback.
 - file:daemoneye-lib/src/storage.rs — atomic apply via redb transactions (T3); post-apply rule re-validation via the planner (T5) with unhealthy-rule surfacing.
 - file:daemoneye-lib/src/config.rs — config layering for bundled config; offline/no-network operation verified end-to-end.

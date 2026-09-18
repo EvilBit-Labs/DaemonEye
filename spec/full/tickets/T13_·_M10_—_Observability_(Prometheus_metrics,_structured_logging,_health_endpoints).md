@@ -6,7 +6,7 @@
 
 **In:**
 
-- Prometheus-compatible metrics (collection rate, detection latency, alert delivery) via local CLI/IPC path or textfile export by default; any HTTP listener opt-in, loopback-only.
+- Prometheus-compatible metrics (collection rate, detection latency, alert delivery, redb write latency) exported via the local CLI/IPC path or Prometheus textfile collector. No HTTP listener ships in v1.0: the CLI `health` path (T10) already covers operator access, and textfile export covers scraping, so neither `hyper` nor `axum` is taken as a dependency.
 - Structured JSON logging with correlation IDs; performance metrics embedded in log entries.
 - Opt-in localhost-only HTTP health endpoint (disabled by default); resource-utilization + error-rate tracking; scraping-compat tests.
 
@@ -19,7 +19,7 @@
 
 ## Key touchpoints
 
-- file:daemoneye-lib/src/telemetry.rs — `TelemetryCollector`/`PerformanceTimer`; extend with Prometheus-compatible metrics (collection rate, detection latency, alert delivery) exported via local CLI/IPC path or textfile by default.
+- file:daemoneye-lib/src/telemetry.rs — `TelemetryCollector`/`PerformanceTimer`; extend with Prometheus-compatible metrics (collection rate, detection latency, alert delivery, redb write latency — the storage write path must be instrumented, since T10's health view and the v1.0 success condition both promise it) exported via local CLI/IPC path or textfile.
 - Structured JSON logging + correlation IDs via `tracing`/`tracing-subscriber` (already present); embed perf metrics in log entries.
 - Opt-in, loopback-only HTTP health/metrics listener (disabled by default) — new dep flagged for scrutiny (e.g., minimal `hyper`/`axum` rustls, or a Prometheus textfile exporter to avoid an inbound listener entirely); honor the no-inbound-network boundary.
 - Metric names per performance steering (e.g., `daemoneye_processes_collected_total`, `daemoneye_alerts_generated_total{severity=...}`).

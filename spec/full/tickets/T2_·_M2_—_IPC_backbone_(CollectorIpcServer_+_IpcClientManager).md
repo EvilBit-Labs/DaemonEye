@@ -1,4 +1,4 @@
-# T2 · M2 — IPC backbone (CollectorIpcServer + IpcClientManager)
+# T2 · M2 — IPC backbone (CollectorIpcServer + ResilientIpcClient)
 
 **Milestone:** M2 · **Backlog:** T15.1 (#78), T15.2 (#77)
 
@@ -6,8 +6,8 @@
 
 **In:**
 
-- Implement `CollectorIpcServer` in file:collector-core/src/ipc.rs: capability negotiation, task routing, connection management.
-- Complete `IpcClientManager` in daemoneye-agent: reconnection, capability negotiation, task distribution/result collection; compatible with procmond `ProcessMessageHandler`.
+- Wire the existing `CollectorIpcServer` (already constructed and started with a live handler in file:collector-core/src/collector.rs) into the production agent→collector path: capability negotiation, task routing, connection management. This is not net-new code — see file:docs/solutions/architecture-patterns/ipc-backbone-actual-state-transport-duality.md before starting.
+- Finish capability negotiation on the existing `ResilientIpcClient` (file:daemoneye-lib/src/ipc/client.rs). There is no type named `IpcClientManager` in the workspace; reconnection/backoff/failover already ship. The real gap: `negotiate_capabilities` sends a task, discards the peer's response, and returns a hardcoded `CollectionCapabilities` constant — replace it with a round-trip reflecting the peer's actual reply. Stays compatible with procmond `ProcessMessageHandler`.
 - Integration tests for both directions.
 
 **Out:** SQL→task generation (T5); DataFusion execution (T6).
@@ -19,10 +19,11 @@
 
 ## Key touchpoints
 
-- file:collector-core/src/ipc.rs — implement `CollectorIpcServer` (capability negotiation, task routing, connection mgmt); see file:collector-core/src/capability_router.rs, file:collector-core/src/rpc_services.rs.
-- file:daemoneye-agent/src/ipc_server.rs, file:daemoneye-agent/src/broker_manager.rs, file:daemoneye-agent/src/collector_registry.rs — complete `IpcClientManager` (reconnection w/ backoff, capability negotiation, task distribution/result collection).
+- file:collector-core/src/ipc.rs — `CollectorIpcServer` (capability negotiation, task routing, connection mgmt), already live at file:collector-core/src/collector.rs; see file:collector-core/src/capability_router.rs, file:collector-core/src/rpc_services.rs.
+- file:daemoneye-agent/src/ipc_server.rs, file:daemoneye-agent/src/broker_manager/, file:daemoneye-agent/src/collector_registry.rs — wire the agent side to `ResilientIpcClient` (reconnection w/ backoff already implemented; capability negotiation is the outstanding piece; task distribution/result collection).
 - file:daemoneye-lib/src/ipc/ — `codec.rs`, `client.rs` (`ResilientIpcClient`), `interprocess_transport.rs` (protobuf + CRC32 framing; honor 107-byte Unix socket path limit).
 - file:daemoneye-lib/proto/ipc.proto — `DetectionTask`/`DetectionResult`, capability messages.
+- **Frame format decision:** the codec frame (file:daemoneye-lib/src/ipc/codec.rs) is `length(u32 LE) + crc32(u32 LE) + protobuf bytes` with no message-type tag, and the interprocess server hardcodes `DetectionTask` as the only decodable type. T2 adds a **message-type discriminator** to the frame so capability and task messages are distinct types rather than conventions inside one envelope. Because this is a wire-format change, T2 states and tests the compatibility plan for existing peers.
 - procmond compatibility: file:procmond/src/rpc_service.rs (`ProcessMessageHandler` path).
 - Tests: file:collector-core/tests/ipc_integration.rs, file:daemoneye-lib/tests/ipc_integration.rs.
 

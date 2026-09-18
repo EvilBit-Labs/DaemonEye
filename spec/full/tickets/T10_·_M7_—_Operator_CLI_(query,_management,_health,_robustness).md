@@ -23,7 +23,7 @@
 - file:daemoneye-cli/src/main.rs — expand clap subcommands: `query`, `rules`, `alerts`, `health`, `data`, `config`, `service`, `audit`; CLI talks to agent over IPC only (never opens DB directly).
 - file:daemoneye-lib/src/ipc/client.rs — CLI→agent client; query request/response protobuf (extend file:daemoneye-lib/proto/ipc.proto).
 - file:daemoneye-lib/src/config.rs — YAML config hierarchy + precedence (flag > env > user > system > default).
-- Query path reuses the same SELECT-only allowlist as rules (T5); degraded results return distinct non-zero exit code; honor `NO_COLOR`/`TERM=dumb`.
+- Ad-hoc `--sql` goes through the **same planner as rules** (T5), not just the SELECT-only allowlist: operator queries are lowered to derived SQL before execution, so the Tech Plan's "original dialect never reaches execution" invariant holds on the query path too. Degraded results return a distinct non-zero exit code; honor `NO_COLOR`/`TERM=dumb`.
 - New dep: `clap_complete` (shell completions: bash/zsh/fish/PowerShell). Tests: file:daemoneye-cli/tests/cli.rs (insta snapshots).
 
 ## Testing & quality gates
@@ -33,7 +33,7 @@
 
 ## Dependencies
 
-T6 (query/detection), T8 (audit commands).
+T6 (query/detection), T8 (audit commands), T9 (ServiceManager, for the `service` subcommand).
 
 ## Acceptance criteria
 

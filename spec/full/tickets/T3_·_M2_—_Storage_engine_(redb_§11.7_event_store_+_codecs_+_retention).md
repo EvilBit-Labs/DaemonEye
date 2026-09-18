@@ -10,7 +10,8 @@
 - Custom `redb::Value`/`redb::Key` impls over postcard; secondaries store only 16-byte base pointers.
 - Single-writer ingest API (agent), CLI read-only handle, ACID transactions, batch/group-commit writes.
 - Time-bucket partitioning (configurable; hourly default), retention/cleanup at bucket granularity.
-- Schema-version tag with **rebuild-by-WAL-replay** on mismatch (explicit gaps if WAL retention insufficient).
+- Schema-version tag with **export-then-rebuild** on mismatch, never in-place migration: before dropping old tables, export the existing store to a signed, versioned bundle (raw key/value bytes + a manifest naming the old `schema_version` and enumerating the exported partitions + an Ed25519 signature supplied by the agent), and only drop and rebuild from available WAL after that export is durably written and verified. The bundle format is locked here; the importer and historical-codec registry are deferred (see the Backlog cross-version-importer ticket). Explicit gaps if WAL retention is insufficient.
+- WAL retention must cover at least the configured event-store retention window, so the rebuild gap is bounded rather than open-ended; the rebuild path records the resulting gap window (start, end, cause) so it is discoverable during a later investigation rather than silent.
 
 **Out:** DataFusion `TableProvider`s (T6); audit ledger DB (T8).
 
@@ -41,4 +42,4 @@ None (entry point).
 
 - All `DatabaseManager` methods persist/query real data; rules persist and reload (fixes "zero rules").
 - **> 1,000 records/sec** write rate validated; range/index scans return correct rows.
-- Schema-version mismatch triggers WAL-replay rebuild with explicit gap reporting; integration tests cover migrate/rebuild paths.
+- Schema-version mismatch exports a signed, verified bundle before any drop, then rebuilds from WAL with explicit gap reporting; an induced export or signing failure aborts and retains the old tables. The recorded gap window is queryable. Integration tests cover export, drop-gating, rebuild, and resumability.
