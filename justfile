@@ -577,3 +577,29 @@ release-minor:
 [group('release')]
 release-major:
     @{{ mise_exec }} cargo release major
+
+# --- T4 · M3 DataFusion feasibility spike (disposable) ---
+# The spike crate is excluded from the workspace, so `-p` cannot resolve it and
+# `just lint` / `just ci-check` never touch it. These recipes reach it by
+# manifest path. Delete this block when the gate decision is recorded.
+
+spike_gate := "spikes/datafusion-gate/Cargo.toml"
+
+[group('spike')]
+spike-datafusion-lint:
+    @{{ mise_exec }} cargo fmt --manifest-path {{ spike_gate }} --all --check
+    @{{ mise_exec }} cargo clippy --manifest-path {{ spike_gate }} --all-targets -- -D warnings
+
+[group('spike')]
+spike-datafusion-test:
+    @{{ mise_exec }} cargo test --manifest-path {{ spike_gate }}
+
+[group('spike')]
+spike-datafusion-fixture:
+    @{{ mise_exec }} cargo run --manifest-path {{ spike_gate }} --release --bin make-fixture
+
+[group('spike')]
+spike-datafusion-measure: spike-datafusion-fixture
+    @{{ mise_exec }} cargo build --manifest-path {{ spike_gate }} --release --bins
+    @spikes/datafusion-gate/target/release/control-arm
+    @spikes/datafusion-gate/target/release/datafusion-arm
