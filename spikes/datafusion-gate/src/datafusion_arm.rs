@@ -57,8 +57,9 @@ pub fn lineage_sql(start_ms: i64, end_ms: i64) -> String {
 /// Build a `SessionContext` with the provider registered.
 ///
 /// # Errors
-/// Returns an error when the provider cannot discover buckets or registration
-/// fails.
+/// Returns an error when the provider cannot discover buckets, when the store's
+/// bucket width is not the granularity the provider assumes, or when
+/// registration fails.
 pub fn build_context(
     store: Arc<EventStore>,
     settings: SessionSettings,

@@ -1,11 +1,12 @@
 //! U4 verification — the control arm decodes everything and answers correctly.
 //!
 //! The load-bearing one here is
-//! [`decoded_row_count_equals_the_generated_row_count`]. Every other check in
-//! the suite compares the two arms against *each other*; this is the only one
-//! that compares the control arm against what the generator actually wrote. If
-//! `scan_range` silently dropped rows at a range edge, both arms would agree on
-//! a wrong answer and every equivalence assertion would stay green.
+//! [`decoded_row_count_equals_the_generated_row_count`]: it compares the
+//! control arm against what the generator actually wrote, rather than against
+//! the other arm. If `scan_range` silently dropped rows at a range edge, both
+//! arms would agree on a wrong answer and every equivalence assertion would
+//! stay green. The measured-scale equivalence test makes the same ground-truth
+//! comparison at 120,000 rows.
 
 #![allow(
     clippy::unwrap_used,

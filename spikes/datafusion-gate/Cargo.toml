@@ -9,8 +9,12 @@ description = "T4 · M3 DataFusion feasibility spike. Disposable: delete this di
 
 [dependencies]
 # KTD3: default-features = false. The default set pulls `compression`
-# (liblzma/bzip2/flate2/zstd — all C FFI, against the FFI-free constraint) and
+# (liblzma/bzip2/flate2 — C FFI, against the FFI-free constraint) and
 # `parquet`, which is dead weight against a redb store.
+#
+# This does NOT make the tree FFI-free. `zstd-sys` still arrives through
+# arrow-ipc -> arrow -> datafusion, unconditionally, and no feature flag
+# removes it. See docs/decisions/2026-09-19-t4-datafusion-gate.md.
 datafusion = { version = "55.1", default-features = false, features = [
     "sql",
     "recursive_protection",

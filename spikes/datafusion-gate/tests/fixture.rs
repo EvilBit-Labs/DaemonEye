@@ -190,10 +190,101 @@ fn planted_matches_are_spread_across_the_whole_span_not_clustered_in_one_bucket(
         "every planted match must be found exactly once across the buckets"
     );
     assert!(
-        buckets_with_matches >= 20,
+        buckets_with_matches >= stats.buckets.saturating_sub(2),
         "planted matches must reach nearly every bucket, not cluster in one: \
          only {buckets_with_matches} of {} buckets hold a match",
         stats.buckets
+    );
+}
+
+#[test]
+fn the_spread_guard_holds_at_the_spec_the_measurements_use() {
+    // The guard above runs the small spec. The recorded numbers come from
+    // FixtureSpec::default(), and a guard that only checks a smaller fixture is
+    // not guarding the published result — the same gap this crate already had
+    // once for the equivalence check.
+    let d = TempDir::new().unwrap();
+    let spec = FixtureSpec::default();
+    let stats = fixture::generate(&d.path().join("f.redb"), spec).unwrap();
+    let store = EventStore::open(&d.path().join("f.redb")).unwrap();
+
+    let services: HashSet<u32> = store
+        .scan_range(stats.start_ms, stats.end_ms)
+        .unwrap()
+        .iter()
+        .filter(|r| r.name == SERVICE_NAME)
+        .map(|r| r.pid.raw())
+        .collect();
+
+    let mut buckets_with_matches = 0_usize;
+    let mut total = 0_u64;
+    for bucket in store.list_buckets().unwrap() {
+        let start = bucket * HOUR_MS;
+        let here = store
+            .scan_range(start, start + HOUR_MS)
+            .unwrap()
+            .iter()
+            .filter(|r| r.name == SHELL_NAME)
+            .filter_map(|r| r.ppid)
+            .filter(|p| services.contains(&p.raw()))
+            .count();
+        if here > 0 {
+            buckets_with_matches += 1;
+        }
+        total += u64::try_from(here).unwrap();
+    }
+
+    assert_eq!(
+        total, stats.planted,
+        "every planted match found exactly once"
+    );
+    assert!(
+        buckets_with_matches >= stats.buckets.saturating_sub(2),
+        "at the measured spec, matches must reach nearly every bucket: \
+         only {buckets_with_matches} of {} hold a match",
+        stats.buckets
+    );
+}
+
+#[test]
+fn the_reported_planted_count_is_what_was_written_not_what_was_asked_for() {
+    // `planted` used to echo the request. `plant_stride` clamps for an
+    // infeasible spec, so the two can diverge and only a counted value is safe
+    // to read into the decision artifact.
+    let d = TempDir::new().unwrap();
+    // Deliberately infeasible: more planted pairs than the row budget allows.
+    let spec = FixtureSpec {
+        rows: 100,
+        span_hours: 25,
+        planted: 400,
+        start_ms: 1_767_225_600_000,
+    };
+    let stats = fixture::generate(&d.path().join("f.redb"), spec).unwrap();
+    assert!(
+        stats.planted < spec.planted,
+        "an infeasible spec must report the smaller count it actually wrote, \
+         got {} for a request of {}",
+        stats.planted,
+        spec.planted
+    );
+
+    let store = EventStore::open(&d.path().join("f.redb")).unwrap();
+    let rows = store.scan_range(stats.start_ms, stats.end_ms).unwrap();
+    let services: HashSet<u32> = rows
+        .iter()
+        .filter(|r| r.name == SERVICE_NAME)
+        .map(|r| r.pid.raw())
+        .collect();
+    let observed = rows
+        .iter()
+        .filter(|r| r.name == SHELL_NAME)
+        .filter_map(|r| r.ppid)
+        .filter(|p| services.contains(&p.raw()))
+        .count();
+    assert_eq!(
+        u64::try_from(observed).unwrap(),
+        stats.planted,
+        "the reported count must equal what is actually in the store"
     );
 }
 

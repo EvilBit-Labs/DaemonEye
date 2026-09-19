@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let lat = measure::Latency::new(samples);
-    let watched_peak = watcher.stop();
+    let watched = watcher.stop();
 
     println!("arm=datafusion");
     println!("platform={}", measure::platform());
@@ -65,6 +65,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("batch_size={}", settings.batch_size);
     println!("matches={}", first.len());
     println!("after_context_rss_bytes={after_context_bytes}");
-    measure::print_rss_and_latency(&rss, baseline_bytes, after_first_bytes, &lat, watched_peak);
+    measure::print_rss_and_latency(&rss, baseline_bytes, after_first_bytes, &lat, watched);
     Ok(())
 }

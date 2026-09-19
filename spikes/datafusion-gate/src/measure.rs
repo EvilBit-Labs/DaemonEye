@@ -1,7 +1,9 @@
 //! U7 — measurement harness.
 //!
-//! Peak RSS, a latency distribution over repeated runs, and release binary
-//! size, all tagged with the platform they were measured on (R6, R7, R8, R9).
+//! Peak RSS and a latency distribution over repeated runs, tagged with the
+//! platform they were measured on (R6, R7, R9). Release binary size (R8) is
+//! not measured here — the `just spike-datafusion-size` recipe computes it
+//! from the two built binaries.
 //!
 //! RSS is sampled from the OS at process level rather than by instrumenting
 //! allocations (KTD9): the budget in question is resident set, not heap. The
@@ -24,6 +26,7 @@ pub struct RssSampler {
     system: System,
     pid: Pid,
     peak_bytes: u64,
+    failed_reads: u64,
 }
 
 impl RssSampler {
@@ -34,24 +37,40 @@ impl RssSampler {
             system: System::new(),
             pid: Pid::from_u32(std::process::id()),
             peak_bytes: 0,
+            failed_reads: 0,
         };
         s.sample();
         s
     }
 
     /// Take a sample, updating the high-water mark.
-    pub fn sample(&mut self) -> u64 {
+    ///
+    /// A live process never has a zero resident set, so a `None` from `sysinfo`
+    /// is a failed read rather than a real measurement. Counting it instead of
+    /// folding a zero into the maximum keeps a broken sampler from reporting a
+    /// flatteringly small peak; [`Self::failed_reads`] surfaces the count.
+    pub fn sample(&mut self) -> Option<u64> {
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[self.pid]),
             true,
             ProcessRefreshKind::nothing().with_memory(),
         );
-        let current = self
-            .system
-            .process(self.pid)
-            .map_or(0, sysinfo::Process::memory);
-        self.peak_bytes = self.peak_bytes.max(current);
-        current
+        let read = self.system.process(self.pid).map(sysinfo::Process::memory);
+        if let Some(current) = read {
+            self.peak_bytes = self.peak_bytes.max(current);
+        } else {
+            self.failed_reads = self.failed_reads.saturating_add(1);
+        }
+        read
+    }
+
+    /// How many samples could not be read at all.
+    ///
+    /// Non-zero means the reported peak is based on fewer observations than the
+    /// run attempted, so the measurement is incomplete rather than merely low.
+    #[must_use]
+    pub const fn failed_reads(&self) -> u64 {
+        self.failed_reads
     }
 
     /// The highest resident set observed so far, in bytes.
@@ -158,14 +177,26 @@ impl Latency {
 ///
 /// [`RssSampler`] only records a value when something calls `sample()`, so a
 /// peak that rises and falls *inside* one query — a hash join's build phase,
-/// for instance — is invisible to call-boundary sampling. With only ~11 MiB of
-/// headroom against the 100 MiB budget, that blind spot is large enough to hide
+/// for instance — is invisible to call-boundary sampling. That blind spot is large enough to hide
 /// a real breach, so the measured sections run under this watcher instead.
 #[derive(Debug)]
 pub struct RssWatcher {
     peak: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
+    failed_reads: Arc<AtomicU64>,
     handle: Option<JoinHandle<()>>,
+}
+
+/// What a finished [`RssWatcher`] observed.
+#[derive(Debug, Clone, Copy)]
+pub struct WatchResult {
+    /// Highest resident set the background thread saw.
+    pub peak_bytes: u64,
+    /// Samples the thread could not read.
+    pub failed_reads: u64,
+    /// False when the sampling thread died before it was asked to stop, which
+    /// makes `peak_bytes` a partial trace rather than a complete one.
+    pub complete: bool,
 }
 
 impl RssWatcher {
@@ -174,7 +205,12 @@ impl RssWatcher {
     pub fn start() -> Self {
         let peak = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
-        let (p, s) = (Arc::clone(&peak), Arc::clone(&stop));
+        let failed_reads = Arc::new(AtomicU64::new(0));
+        let (p, s, f) = (
+            Arc::clone(&peak),
+            Arc::clone(&stop),
+            Arc::clone(&failed_reads),
+        );
         let handle = thread::spawn(move || {
             let pid = Pid::from_u32(std::process::id());
             let mut system = System::new();
@@ -184,25 +220,39 @@ impl RssWatcher {
                     true,
                     ProcessRefreshKind::nothing().with_memory(),
                 );
-                let current = system.process(pid).map_or(0, sysinfo::Process::memory);
-                p.fetch_max(current, Ordering::Relaxed);
+                // A failed read is counted, never folded in as a zero.
+                match system.process(pid).map(sysinfo::Process::memory) {
+                    Some(current) => {
+                        p.fetch_max(current, Ordering::Relaxed);
+                    }
+                    None => {
+                        f.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
                 thread::sleep(WATCH_INTERVAL);
             }
         });
         Self {
             peak,
             stop,
+            failed_reads,
             handle: Some(handle),
         }
     }
 
-    /// Stop sampling and return the highest resident set observed.
-    pub fn stop(mut self) -> u64 {
+    /// Stop sampling and report what the thread observed.
+    ///
+    /// A thread that panicked before being asked to stop leaves a partial
+    /// trace; `complete: false` says so rather than letting the caller treat a
+    /// truncated peak as the whole run.
+    pub fn stop(mut self) -> WatchResult {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.handle.take() {
-            drop(h.join());
+        let complete = self.handle.take().is_none_or(|h| h.join().is_ok());
+        WatchResult {
+            peak_bytes: self.peak.load(Ordering::Relaxed),
+            failed_reads: self.failed_reads.load(Ordering::Relaxed),
+            complete,
         }
-        self.peak.load(Ordering::Relaxed)
     }
 }
 
@@ -219,9 +269,10 @@ pub fn print_rss_and_latency(
     baseline_bytes: u64,
     after_first_bytes: u64,
     lat: &Latency,
-    watched_peak_bytes: u64,
+    watched: WatchResult,
 ) {
-    let peak = rss.peak_bytes().max(watched_peak_bytes);
+    let peak = rss.peak_bytes().max(watched.peak_bytes);
+    let failed = rss.failed_reads().saturating_add(watched.failed_reads);
     #[expect(
         clippy::as_conversions,
         reason = "RSS in bytes is far below f64's exact-integer range"
@@ -231,9 +282,19 @@ pub fn print_rss_and_latency(
     println!("baseline_rss_bytes={baseline_bytes}");
     println!("after_first_run_rss_bytes={after_first_bytes}");
     println!("sampled_peak_rss_bytes={}", rss.peak_bytes());
-    println!("watched_peak_rss_bytes={watched_peak_bytes}");
+    println!("watched_peak_rss_bytes={}", watched.peak_bytes);
     println!("peak_rss_bytes={peak}");
     println!("peak_rss_mib={peak_mib:.2}");
+    // A peak built from failed reads or a dead watcher is incomplete, not low.
+    println!("rss_failed_reads={failed}");
+    println!("rss_watch_complete={}", watched.complete);
+    if failed > 0 || !watched.complete {
+        println!(
+            "WARNING=peak RSS is incomplete ({failed} failed read(s), watch_complete={}); \
+             do not record this number",
+            watched.complete
+        );
+    }
     println!("latency_samples={}", lat.count());
     println!("latency_min_ms={:.3}", lat.min().as_secs_f64() * 1000.0);
     println!("latency_p50_ms={:.3}", lat.p50().as_secs_f64() * 1000.0);

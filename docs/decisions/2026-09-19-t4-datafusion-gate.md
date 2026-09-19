@@ -8,7 +8,7 @@ DataFusion clears all three measured criteria. T6 proceeds on DataFusion; the ha
 
 | Criterion                             | Threshold           | Measured                           | Result                                              |
 | ------------------------------------- | ------------------- | ---------------------------------- | --------------------------------------------------- |
-| Absolute peak RSS                     | `< 100 MiB`         | **89.03 MiB**                      | pass, 10.97 MiB headroom                            |
+| Absolute peak RSS                     | `< 100 MiB`         | **88.72 MiB**                      | pass, 11.28 MiB headroom                            |
 | Per-rule latency                      | `< 100 ms`          | **10.15 ms** p50, **12.33 ms** max | pass, ~10x headroom                                 |
 | Cross-arm equivalence (R18)           | both arms identical | **500 = 500**, enforced by test    | pass                                                |
 | Marginal RSS over the control ceiling | `<= 40 MiB`         | −391.78 MiB                        | see below: an upper bound, not a test that can fail |
@@ -29,21 +29,23 @@ The query is a ShadowHunt parent/child lineage self-join: a shell process whose 
 
 ### Full measurements
 
-|                                         | control arm      | DataFusion arm   | delta                |
-| --------------------------------------- | ---------------- | ---------------- | -------------------- |
-| Baseline RSS (store open, nothing else) | 6.56 MiB         | 9.78 MiB         | **+3.22 MiB**        |
-| After building the `SessionContext`     | —                | 17.33 MiB        | —                    |
-| RSS after one query                     | 66.05 MiB        | 80.23 MiB        | **+14.18 MiB**       |
-| Peak RSS over 11 queries                | 480.81 MiB       | 89.03 MiB        | −391.78 MiB          |
-| Latency p50 / max                       | 25.28 / 26.52 ms | 10.15 / 12.33 ms | **2.5x faster**      |
-| Decode-only pass                        | 23.11 ms         | —                | —                    |
-| Release binary, stripped                | 1.18 MiB         | 63.84 MiB        | **+62.66 MiB**       |
-| Release binary, unstripped              | 1.43 MiB         | 80.16 MiB        | +78.73 MiB           |
-| Crates in lockfile                      | —                | 349              | workspace today: 352 |
+|                                         | control arm      | DataFusion arm  | delta                |
+| --------------------------------------- | ---------------- | --------------- | -------------------- |
+| Baseline RSS (store open, nothing else) | 6.53 MiB         | 9.87 MiB        | **+3.34 MiB**        |
+| After building the `SessionContext`     | —                | 17.44 MiB       | —                    |
+| RSS after one query                     | 66.00 MiB        | 82.09 MiB       | **+16.09 MiB**       |
+| Peak RSS over 11 queries                | 480.75 MiB       | 88.72 MiB       | −392.03 MiB          |
+| Latency p50 / max                       | 24.64 / 24.93 ms | 9.75 / 10.63 ms | **2.5x faster**      |
+| Decode-only pass                        | 23.41 ms         | —               | —                    |
+| Release binary, stripped                | 1.18 MiB         | 63.84 MiB       | **+62.66 MiB**       |
+| Release binary, unstripped              | 1.43 MiB         | 80.16 MiB       | +78.73 MiB           |
+| Crates in lockfile                      | —                | 349             | workspace today: 352 |
 
-**DataFusion's own resident footprint is +3.22 MiB** — the baseline difference with both arms sampled at the same point, after opening the store and before either does any work. That is the cleanest answer to "what does the engine cost in memory," and it is under a tenth of the 40 MiB carve-out. Building the `SessionContext` and registering the provider takes the arm to 17.33 MiB, though most of that step is the provider's granularity check decoding one bucket rather than DataFusion itself.
+**DataFusion's own resident footprint is +3.34 MiB** — the baseline difference with both arms sampled at the same point, after opening the store and before either does any work. That is the cleanest answer to "what does the engine cost in memory," and it is under a tenth of the 40 MiB carve-out. Building the `SessionContext` and registering the provider takes the arm to 17.44 MiB, though most of that step is the provider's granularity check decoding one bucket rather than DataFusion itself.
 
-Peak RSS is sampled two ways and the larger is reported: at call boundaries, and continuously from a background thread every 5 ms across the measured section. The continuous sampler exists because a peak that rises and falls inside one query would otherwise be invisible, and 10.97 MiB of headroom cannot absorb one. For the DataFusion arm both methods report the same value. That is reassurance rather than proof — a spike shorter than the 5 ms interval could still slip between samples — but nothing longer-lived is hiding.
+Peak RSS is sampled two ways and the larger is reported: at call boundaries, and continuously from a background thread every 5 ms across the measured section. The continuous sampler exists because a peak that rises and falls inside one query would otherwise be invisible, and 11.28 MiB of headroom cannot absorb one. For the DataFusion arm both methods report the same value — reassurance rather than proof, since a spike shorter than the 5 ms interval could still slip between samples, but nothing longer-lived is hiding.
+
+Both arms reported `rss_failed_reads=0` and `rss_watch_complete=true`, so every peak above rests on a complete sampling trace. Those two fields exist because a review pass found that a total `sysinfo` failure would previously have printed `peak_rss_mib=0.00` — a spectacularly favourable number — with no signal at all. A failed read is now counted rather than folded in as a zero, and a watcher thread that dies before it is asked to stop reports its trace as incomplete.
 
 Latency is reported as p50 and max. At ten samples the nearest-rank p95 is arithmetically the maximum, so quoting both would imply tail information the sample size does not carry.
 
@@ -61,20 +63,20 @@ An adversarial review of the spike found that the original fixture planted every
 
 Three other things were wrong before that review and are fixed here: an inclusive `<=` upper bound pruned one bucket too few, which would have silently dropped rows the re-filter could never recover; a pruned-to-nothing scan still planned one partition; and R18's cross-arm check ran only against a 6,000-row spec, so the "500 = 500" in this document was a human comparing two stdout lines. A test now enforces the equivalence at the measured 120,000-row scale.
 
-The gate is worth no more than the fixture behind it, and this is the fixture it now rests on: 120,000 events, 26 hourly buckets, 500 matches distributed across them, 39 tests covering generation, both arms, pruning, and the measurement harness itself.
+The gate is worth no more than the fixture behind it, and this is the fixture it now rests on: 120,000 events, 26 hourly buckets, 500 matches distributed across them, 43 tests covering generation, both arms, pruning, and the measurement harness itself.
 
 ## Two findings that qualify the verdict
 
 **DataFusion and Arrow are not FFI-free.** The Tech Plan's cross-cutting constraints say new deps must be "FFI-free where feasible (DataFusion/Arrow, `caps`, `windows-service`, `fuzzyhash`)". They are not. `zstd-sys` — which compiles C through a build script — reaches the normal build graph via `arrow-ipc` → `arrow` → `datafusion`, unconditionally. Building with `default-features = false` and a minimal feature set (`sql`, `recursive_protection`, `datetime_expressions`, `string_expressions`) removes `parquet`, `liblzma`, `bzip2`, and `flate2`, but no feature flag removes `zstd-sys`. Adopting DataFusion means accepting one C FFI dependency, and the Tech Plan's parenthetical should be corrected rather than left implying otherwise.
 
-**The 481 MiB control-arm peak is a T3 read-path finding, not a DataFusion one.** `EventStore::scan_range` over the whole 26-hour window materializes all 120,000 `ProcessRecord`s; repeated full-range scans retain roughly 481 MiB resident. The DataFusion arm stays at 89.03 MiB over the same eleven queries purely because its provider reads one bucket per partition as that partition executes. **T6 must not read detection windows through a single whole-range `scan_range` call** — bucket-at-a-time streaming is what keeps RSS bounded, and this spike is the evidence.
+**The 481 MiB control-arm peak is a T3 read-path finding, not a DataFusion one.** `EventStore::scan_range` over the whole 26-hour window materializes all 120,000 `ProcessRecord`s; repeated full-range scans retain roughly 481 MiB resident. The DataFusion arm stays at 88.72 MiB over the same eleven queries purely because its provider reads one bucket per partition as that partition executes. **T6 must not read detection windows through a single whole-range `scan_range` call** — bucket-at-a-time streaming is what keeps RSS bounded, and this spike is the evidence.
 
 ## What this does not answer
 
 - **Linux and Windows are unmeasured.** The dev host cannot build the Windows target at all ([GOTCHAS.md](../../GOTCHAS.md) §1.1). Binary size and RSS both move across targets.
 - **The arm carries no MRC or index pushdown.** T6's real implementation would add both, so these numbers are a conservative floor on performance, not a ceiling.
 - **Only one query shape was measured.** Aggregations and window functions are unmeasured.
-- **Peak RSS does not generalize past 26 buckets.** The provider plans one partition per surviving bucket with no cap, so partition count tracks bucket count. This fixture holds 26; the event store's default seven-day hourly retention holds up to 168. `target_partitions` caps DataFusion's execution concurrency, not the scan's partition count, so it does not bound this. A T6 query over a full retention window is unmeasured and is the most likely place the 10.97 MiB headroom goes.
+- **Peak RSS does not generalize past 26 buckets.** The provider plans one partition per surviving bucket with no cap, so partition count tracks bucket count. This fixture holds 26; the event store's default seven-day hourly retention holds up to 168. `target_partitions` caps DataFusion's execution concurrency, not the scan's partition count, so it does not bound this. A T6 query over a full retention window is unmeasured and is the most likely place the 11.28 MiB headroom goes.
 - **No bucket in the fixture exceeds one Arrow batch.** At ~4,615 rows per bucket against `batch_size = 8192`, every partition emits exactly one `RecordBatch`. Behavior once a bucket needs several batches per partition — higher event volume, or a coarser granularity — is unmeasured.
 - **The control arm's 481 MiB is partly a repeat-count artifact.** It is the high-water mark across eleven identical whole-range scans, not the cost of one. The growth from 66 MiB after one query is consistent with allocator fragmentation across many small per-record allocations, not with a single call's working set. Bucket-at-a-time reads shrink each burst, but whether they bound a long-running agent's steady-state RSS needs a longer run than this spike's eleven calls.
 - **Both arms read through the same `EventStore` calls.** A defect inside `scan_range` or `list_buckets` would make both arms agree while both were wrong, and nothing here would catch it. T3's own tests are the guard for that.
@@ -102,7 +104,7 @@ Three things carry into T6 as inputs rather than changes:
 ```bash
 just spike-datafusion-measure   # fixture, both arms, RSS, latency, and binary size
 just spike-datafusion-size      # binary-size delta on its own
-just spike-datafusion-test      # 36 validation tests
+just spike-datafusion-test      # 43 validation tests
 just spike-datafusion-lint      # fmt + clippy -D warnings
 ```
 

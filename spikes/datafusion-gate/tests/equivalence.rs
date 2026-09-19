@@ -474,9 +474,14 @@ async fn both_arms_agree_on_the_default_spec_the_measurements_use() {
         .unwrap();
 
     assert_eq!(
-        df, control.matches,
-        "R18 at the measured scale: the arms must return the same set, \
-         or no number recorded from this spec counts"
+        df,
+        control.matches,
+        "R18 at the measured scale: the arms must return the same set, or no \
+         number recorded from this spec counts. {} pid(s) differ: {:?}",
+        df.symmetric_difference(&control.matches).count(),
+        df.symmetric_difference(&control.matches)
+            .take(10)
+            .collect::<Vec<_>>()
     );
     assert_eq!(
         u64::try_from(df.len()).unwrap(),

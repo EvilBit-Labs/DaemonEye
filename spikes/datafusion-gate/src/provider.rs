@@ -101,8 +101,9 @@ impl EventTable {
     /// and every derived window would be wrong.
     ///
     /// # Errors
-    /// Returns an error when a bucket's computed window holds no rows although
-    /// the bucket exists.
+    /// Returns an error when the bucket's window arithmetic overflows, when the
+    /// range scan fails, or when a bucket's computed window holds no rows
+    /// although the bucket exists.
     pub fn assert_granularity(&self) -> DfResult<()> {
         let Some(&first) = self.buckets.first() else {
             return Ok(());
@@ -349,14 +350,18 @@ impl ExecutionPlan for BucketScanExec {
         let window = self.windows.get(partition).copied();
         let store = Arc::clone(&self.store);
         let full = Arc::clone(&self.full_schema);
-        let projected = Arc::clone(&self.projected_schema);
         let projection = self.projection.clone();
 
         let stream = futures::stream::once(async move {
             let Some((start, end)) = window else {
-                // Pruning left no bucket for this partition. The batch must
-                // still carry one empty array per field, not zero columns.
-                return Ok(RecordBatch::new_empty(Arc::clone(&projected)));
+                // Unreachable: the partition count is windows.len(), so every
+                // partition index has a window. If that invariant ever breaks,
+                // say so rather than returning an empty batch that reads as
+                // "this bucket held no rows".
+                return Err(DataFusionError::Internal(format!(
+                    "partition {partition} has no window; \
+                     the plan declared more partitions than buckets"
+                )));
             };
             let rows = store
                 .scan_range(start, end)

@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let lat = measure::Latency::new(samples);
-    let watched_peak = watcher.stop();
+    let watched = watcher.stop();
 
     // A decode-only pass separates codec cost from the match computation.
     let t0 = Instant::now();
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("rows_decoded={}", first.rows_decoded);
     println!("decode_only_rows={decoded}");
     println!("matches={}", first.matches.len());
-    measure::print_rss_and_latency(&rss, baseline_bytes, after_first_bytes, &lat, watched_peak);
+    measure::print_rss_and_latency(&rss, baseline_bytes, after_first_bytes, &lat, watched);
     println!("decode_only_ms={:.3}", decode_only.as_secs_f64() * 1000.0);
     Ok(())
 }

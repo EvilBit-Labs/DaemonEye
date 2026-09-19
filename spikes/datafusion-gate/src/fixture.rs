@@ -48,7 +48,9 @@ pub struct FixtureSpec {
     pub start_ms: u64,
 }
 
-/// Index distance between planted pairs, so matches land in every bucket.
+/// Index distance between planted pairs, so matches reach nearly every
+/// bucket rather than clustering at the start of the span. The tested bar is
+/// at least 20 of 26 buckets, not all of them.
 ///
 /// At least 2 so a pair's service and shell occupy distinct indices.
 const fn plant_stride(spec: FixtureSpec) -> u64 {
@@ -90,7 +92,9 @@ pub struct FixtureStats {
     pub rows: u64,
     /// Distinct bucket partitions the store reports.
     pub buckets: usize,
-    /// Planted matches the arms must both find.
+    /// Planted matches actually written, counted during generation rather than
+    /// copied from the request. `plant_stride` clamps for an infeasible spec,
+    /// so the two can differ and only the counted value is trustworthy.
     pub planted: u64,
     /// First event timestamp, inclusive.
     pub start_ms: u64,
@@ -126,6 +130,7 @@ pub fn generate(path: &Path, spec: FixtureSpec) -> Result<FixtureStats, StorageE
 
     let mut batch: Vec<IngestRecord> = Vec::with_capacity(BATCH_ROWS);
     let mut written: u64 = 0;
+    let mut planted_written: u64 = 0;
     let mut last_ts = spec.start_ms;
 
     while written < spec.rows {
@@ -139,12 +144,17 @@ pub fn generate(path: &Path, spec: FixtureSpec) -> Result<FixtureStats, StorageE
             .ok_or_else(|| overflow("start + offset"))?;
         last_ts = ts_ms;
 
+        let record = row_for(written, spec, ts_ms)?;
+        // Count the shell half of each planted pair as it is actually written.
+        if record.name == SHELL_NAME && record.ppid.is_some_and(|p| p.raw() != NOISE_PARENT_PID) {
+            planted_written = planted_written.saturating_add(1);
+        }
         batch.push(IngestRecord {
             collector_id: COLLECTOR_ID.to_owned(),
             source_seq: written,
             ts_ms,
             seq: 0,
-            record: row_for(written, spec, ts_ms),
+            record,
         });
 
         written = written
@@ -161,7 +171,7 @@ pub fn generate(path: &Path, spec: FixtureSpec) -> Result<FixtureStats, StorageE
     Ok(FixtureStats {
         rows: written,
         buckets,
-        planted: spec.planted,
+        planted: planted_written,
         start_ms: spec.start_ms,
         end_ms: last_ts
             .checked_add(1)
@@ -177,9 +187,9 @@ const NOISE_PARENT_PID: u32 = 1;
 ///
 /// Pids are unique and the planted matches are exact. A service/shell pair is
 /// planted every `rows / planted` indices, so matches are distributed across
-/// every bucket in the span rather than clustered at its start. Every other row
+/// nearly every bucket in the span rather than clustered at its start. Every other row
 /// is noise whose parent is [`NOISE_PARENT_PID`], which is never emitted.
-fn row_for(index: u64, spec: FixtureSpec, ts_ms: u64) -> ProcessRecord {
+fn row_for(index: u64, spec: FixtureSpec, ts_ms: u64) -> Result<ProcessRecord, StorageError> {
     // SAFETY: pid space is u32; the fixture never generates more than u32::MAX
     // rows, and the offset keeps pids away from the low reserved range.
     #[expect(
@@ -222,14 +232,20 @@ fn row_for(index: u64, spec: FixtureSpec, ts_ms: u64) -> ProcessRecord {
         r
     };
 
-    record.collection_time = ts_to_utc(ts_ms);
-    record
+    record.collection_time = ts_to_utc(ts_ms)?;
+    Ok(record)
 }
 
 /// Convert an epoch millisecond to the `DateTime<Utc>` stored on the record.
-fn ts_to_utc(ts_ms: u64) -> DateTime<Utc> {
-    let millis = ts_ms.cast_signed();
-    DateTime::from_timestamp_millis(millis).unwrap_or_else(Utc::now)
+///
+/// Errors rather than substituting the wall clock: `collection_time` is the
+/// only event time the provider can see, so a silent fallback to "now" would
+/// scatter a row into the wrong bucket and break the determinism the decision
+/// artifact rests on.
+fn ts_to_utc(ts_ms: u64) -> Result<DateTime<Utc>, StorageError> {
+    DateTime::from_timestamp_millis(ts_ms.cast_signed()).ok_or_else(|| StorageError::Overflow {
+        context: format!("ts_ms {ts_ms} is outside the representable timestamp range"),
+    })
 }
 
 /// Build an overflow error with context.
