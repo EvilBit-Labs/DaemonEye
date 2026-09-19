@@ -577,3 +577,57 @@ release-minor:
 [group('release')]
 release-major:
     @{{ mise_exec }} cargo release major
+
+# --- T4 · M3 DataFusion feasibility spike (disposable) ---
+# The spike crate is excluded from the workspace, so `-p` cannot resolve it and
+# `just lint` / `just ci-check` never touch it. These recipes reach it by
+# manifest path. The gate decision is recorded in docs/decisions/, and that
+# decision cites these recipes as the way to reproduce its numbers, so keep the
+# block until T6 lands and then delete it with the spike.
+
+spike_gate := "spikes/datafusion-gate/Cargo.toml"
+
+[group('spike')]
+spike-datafusion-lint:
+    @{{ mise_exec }} cargo fmt --manifest-path {{ spike_gate }} --all --check
+    @{{ mise_exec }} cargo clippy --manifest-path {{ spike_gate }} --all-targets -- -D warnings
+
+[group('spike')]
+spike-datafusion-test:
+    @{{ mise_exec }} cargo test --manifest-path {{ spike_gate }}
+
+[group('spike')]
+spike-datafusion-fixture:
+    @{{ mise_exec }} cargo run --manifest-path {{ spike_gate }} --release --bin make-fixture
+
+[group('spike')]
+spike-datafusion-measure: spike-datafusion-fixture
+    @{{ mise_exec }} cargo build --manifest-path {{ spike_gate }} --release --bins
+    @spikes/datafusion-gate/target/release/control-arm
+    @spikes/datafusion-gate/target/release/datafusion-arm
+    @just spike-datafusion-size
+
+# Release binary size delta (R8). The DataFusion arm minus the control arm,
+# which links everything except DataFusion, so the delta is what DataFusion costs.
+[group('spike')]
+spike-datafusion-size:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    d=spikes/datafusion-gate/target/release
+    for b in control-arm datafusion-arm; do
+      test -f "$d/$b" || { echo "missing binary: $d/$b" >&2; exit 1; }
+    done
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+    cp "$d/control-arm" "$d/datafusion-arm" "$tmp/"
+    strip "$tmp/control-arm" "$tmp/datafusion-arm"
+    cu=$(wc -c < "$d/control-arm"); du=$(wc -c < "$d/datafusion-arm")
+    cs=$(wc -c < "$tmp/control-arm"); ds=$(wc -c < "$tmp/datafusion-arm")
+    echo "measurement=binary_size"
+    echo "platform=$(uname -s | tr 'A-Z' 'a-z')/$(uname -m)"
+    echo "control_unstripped_bytes=$cu"
+    echo "control_stripped_bytes=$cs"
+    echo "datafusion_unstripped_bytes=$du"
+    echo "datafusion_stripped_bytes=$ds"
+    echo "delta_stripped_bytes=$((ds - cs))"
+    echo "delta_unstripped_bytes=$((du - cu))"
+    awk -v a="$cs" -v b="$ds" 'BEGIN{printf "delta_stripped_mib=%.2f\nratio_stripped=%.1f\n",(b-a)/1048576,b/a}'

@@ -71,7 +71,7 @@ ideate_output: md # md | html (default: html -- ideation docs are human-facing, 
 # on your session model and the run says so. Invalid/commented/missing -> no
 # elevation.
 
-# plan_model: fable              # model alias for plan authoring; candidate preference when a Bake-off runs (no default)
+plan_model: fable # model alias for plan authoring; candidate preference when a Bake-off runs (no default)
 # brainstorm_model: fable        # model alias for approach generation; candidate preference when a Bake-off runs (no default)
 
 # --- PR concept teaching (ce-commit-push-pr) ---
@@ -130,7 +130,7 @@ ideate_output: md # md | html (default: html -- ideation docs are human-facing, 
 # cross_model_review_mode: off   # auto | off (default: auto)
 cross_model_peer: codex # codex | claude | grok | cursor | composer | opencode
 # cross_model_model: fable         # model alias or full id for the resolved peer target (no default)
-# cross_model_effort: xhigh        # reasoning effort for the resolved peer target (no default)
+cross_model_effort: xhigh # reasoning effort for the resolved peer target (no default)
 
 # --- ce-work implementation engine ---
 # Standing preferences for who authors implementation units. Live

@@ -147,3 +147,7 @@ todos/
 docs/brainstorms/
 docs/plans/
 .agents/skills/
+
+# Spike crates are excluded from the workspace and carry their own lockfile;
+# the bare `Cargo.lock` pattern above would otherwise swallow it.
+!spikes/datafusion-gate/Cargo.lock
