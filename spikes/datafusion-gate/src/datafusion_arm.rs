@@ -38,15 +38,6 @@ impl Default for SessionSettings {
     }
 }
 
-/// What one `DataFusion`-arm run observed.
-#[derive(Debug, Clone)]
-pub struct ArmResult {
-    /// Child pids whose parent is a service.
-    pub matches: BTreeSet<u32>,
-    /// Buckets the provider discovered before pruning.
-    pub buckets_total: usize,
-}
-
 /// The derived standard SQL the arm executes.
 ///
 /// A parent/child lineage self-join in the `ShadowHunt` shape: a shell process

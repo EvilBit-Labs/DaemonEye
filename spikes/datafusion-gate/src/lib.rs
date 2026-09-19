@@ -27,5 +27,19 @@ pub fn fixture_path() -> PathBuf {
     )
 }
 
+/// Fail early when the fixture has not been generated.
+///
+/// # Errors
+/// Returns a message naming the missing path and how to create it.
+pub fn require_fixture(path: &std::path::Path) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    Err(format!(
+        "fixture missing at {}; run `just spike-datafusion-fixture` first",
+        path.display()
+    ))
+}
+
 /// Repetitions each arm times, so R7 reports a distribution rather than one sample.
 pub const REPEATS: usize = 10;

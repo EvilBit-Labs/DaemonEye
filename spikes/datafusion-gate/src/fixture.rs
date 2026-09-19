@@ -48,6 +48,29 @@ pub struct FixtureSpec {
     pub start_ms: u64,
 }
 
+/// Index distance between planted pairs, so matches land in every bucket.
+///
+/// At least 2 so a pair's service and shell occupy distinct indices.
+const fn plant_stride(spec: FixtureSpec) -> u64 {
+    let divisor = if spec.planted == 0 { 1 } else { spec.planted };
+    match spec.rows.checked_div(divisor) {
+        Some(stride) if stride >= 2 => stride,
+        _ => 2,
+    }
+}
+
+impl FixtureSpec {
+    /// One past the last timestamp the spec covers.
+    ///
+    /// Both arms bound their query with this, so it lives here rather than
+    /// being recomputed in each binary where the two copies could drift.
+    #[must_use]
+    pub const fn end_ms(&self) -> u64 {
+        self.start_ms
+            .saturating_add(self.span_hours.saturating_mul(HOUR_MS))
+    }
+}
+
 impl Default for FixtureSpec {
     fn default() -> Self {
         Self {
@@ -146,12 +169,16 @@ pub fn generate(path: &Path, spec: FixtureSpec) -> Result<FixtureStats, StorageE
     })
 }
 
+/// Pid reserved for noise parents. Never emitted as a row, so a noise child can
+/// never resolve to a service and inflate the match count.
+const NOISE_PARENT_PID: u32 = 1;
+
 /// Build the record for row `index`.
 ///
-/// Rows are laid out so pids are unique and the planted matches are exact:
-/// the first `2 * planted` rows alternate service parent and shell child, each
-/// child's `ppid` pointing at the parent emitted just before it. Every later row
-/// is noise whose parent is another noise process, never a service.
+/// Pids are unique and the planted matches are exact. A service/shell pair is
+/// planted every `rows / planted` indices, so matches are distributed across
+/// every bucket in the span rather than clustered at its start. Every other row
+/// is noise whose parent is [`NOISE_PARENT_PID`], which is never emitted.
 fn row_for(index: u64, spec: FixtureSpec, ts_ms: u64) -> ProcessRecord {
     // SAFETY: pid space is u32; the fixture never generates more than u32::MAX
     // rows, and the offset keeps pids away from the low reserved range.
@@ -161,25 +188,27 @@ fn row_for(index: u64, spec: FixtureSpec, ts_ms: u64) -> ProcessRecord {
     )]
     let pid = (index.wrapping_add(1000) & u64::from(u32::MAX)) as u32;
 
-    let planted_rows = spec.planted.saturating_mul(2);
-    let mut record = if index < planted_rows {
-        if index.is_multiple_of(2) {
-            // Service parent.
-            let mut r = ProcessRecord::new(pid, SERVICE_NAME.to_owned());
-            r.executable_path = Some(format!("/usr/sbin/{SERVICE_NAME}").into());
-            r
-        } else {
-            // Shell child of the service emitted immediately before it.
-            let mut r = ProcessRecord::new(pid, SHELL_NAME.to_owned());
-            r.ppid = Some(daemoneye_lib::models::process::ProcessId::new(
-                pid.saturating_sub(1),
-            ));
-            r.executable_path = Some(format!("/bin/{SHELL_NAME}").into());
-            r
-        }
+    let stride = plant_stride(spec);
+    let slot = index.checked_rem(stride).unwrap_or(0);
+    let is_planted_pair = index.checked_div(stride).is_some_and(|k| k < spec.planted);
+
+    let mut record = if is_planted_pair && slot == 0 {
+        // Service parent.
+        let mut r = ProcessRecord::new(pid, SERVICE_NAME.to_owned());
+        r.executable_path = Some(format!("/usr/sbin/{SERVICE_NAME}").into());
+        r
+    } else if is_planted_pair && slot == 1 {
+        // Shell child of the service emitted immediately before it.
+        let mut r = ProcessRecord::new(pid, SHELL_NAME.to_owned());
+        r.ppid = Some(daemoneye_lib::models::process::ProcessId::new(
+            pid.saturating_sub(1),
+        ));
+        r.executable_path = Some(format!("/bin/{SHELL_NAME}").into());
+        r
     } else {
         // Noise. Some of it is named `bash` so the join cannot pass by matching
-        // the child name alone; its parent is never the service.
+        // the child name alone; its parent is a pid that is never emitted, so a
+        // noise row can never resolve to a service whatever the spec.
         let name = if index.is_multiple_of(7) {
             SHELL_NAME
         } else {
@@ -187,7 +216,7 @@ fn row_for(index: u64, spec: FixtureSpec, ts_ms: u64) -> ProcessRecord {
         };
         let mut r = ProcessRecord::new(pid, name.to_owned());
         r.ppid = Some(daemoneye_lib::models::process::ProcessId::new(
-            pid.saturating_sub(2),
+            NOISE_PARENT_PID,
         ));
         r.executable_path = Some(format!("/usr/bin/{name}").into());
         r

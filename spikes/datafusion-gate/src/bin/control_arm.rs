@@ -11,28 +11,28 @@
 )]
 
 use daemoneye_lib::storage::EventStore;
-use datafusion_gate::{REPEATS, control, fixture, fixture_path, measure};
+use datafusion_gate::{REPEATS, control, fixture, fixture_path, measure, require_fixture};
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path();
-    if !path.exists() {
-        return Err(format!(
-            "fixture missing at {}; run `just spike-datafusion-fixture` first",
-            path.display()
-        )
-        .into());
-    }
+    require_fixture(&path)?;
 
     let mut rss = measure::RssSampler::new();
+
+    // Baseline is the store open and nothing else, matched to the DataFusion
+    // arm's baseline so the marginal comparison is between like and like.
     let store = EventStore::open(&path)?;
     rss.sample();
     let baseline_bytes = rss.peak_bytes();
+
     let spec = fixture::FixtureSpec::default();
-    let start = spec.start_ms;
-    let end = spec
-        .start_ms
-        .saturating_add(spec.span_hours.saturating_mul(fixture::HOUR_MS));
+    let (start, end) = (spec.start_ms, spec.end_ms());
+
+    // Watch resident set continuously across the measured section: a peak
+    // that rises and falls inside one query is invisible to call-boundary
+    // sampling alone.
+    let watcher = measure::RssWatcher::start();
 
     // One warm run establishes the answer; the timed loop measures.
     let first = control::run(&store, start, end)?;
@@ -40,16 +40,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let after_first_bytes = rss.peak_bytes();
 
     let mut samples = Vec::with_capacity(REPEATS);
-    for _ in 0..REPEATS {
+    for i in 0..REPEATS {
         let t0 = Instant::now();
         let r = control::run(&store, start, end)?;
         samples.push(t0.elapsed());
         rss.sample();
         if r.matches != first.matches {
-            return Err("control arm is not deterministic across runs".into());
+            return Err(format!(
+                "control arm run {i} diverged from the warm run: {} pid(s) differ",
+                first.matches.symmetric_difference(&r.matches).count()
+            )
+            .into());
         }
     }
     let lat = measure::Latency::new(samples);
+    let watched_peak = watcher.stop();
 
     // A decode-only pass separates codec cost from the match computation.
     let t0 = Instant::now();
@@ -62,15 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("rows_decoded={}", first.rows_decoded);
     println!("decode_only_rows={decoded}");
     println!("matches={}", first.matches.len());
-    println!("baseline_rss_bytes={baseline_bytes}");
-    println!("after_first_run_rss_bytes={after_first_bytes}");
-    println!("peak_rss_bytes={}", rss.peak_bytes());
-    println!("peak_rss_mib={:.2}", rss.peak_mib());
-    println!("latency_samples={}", lat.count());
-    println!("latency_min_ms={:.3}", lat.min().as_secs_f64() * 1000.0);
-    println!("latency_p50_ms={:.3}", lat.p50().as_secs_f64() * 1000.0);
-    println!("latency_p95_ms={:.3}", lat.p95().as_secs_f64() * 1000.0);
-    println!("latency_max_ms={:.3}", lat.max().as_secs_f64() * 1000.0);
+    measure::print_rss_and_latency(&rss, baseline_bytes, after_first_bytes, &lat, watched_peak);
     println!("decode_only_ms={:.3}", decode_only.as_secs_f64() * 1000.0);
     Ok(())
 }

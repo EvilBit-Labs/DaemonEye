@@ -5,7 +5,10 @@
     clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::needless_borrows_for_generic_args
 )]
 
 use daemoneye_lib::storage::EventStore;
@@ -139,5 +142,87 @@ fn refuses_to_append_to_a_store_that_already_holds_events() {
     assert!(
         msg.contains("already holds") && msg.contains("refusing to append"),
         "a stale fixture must be rejected by name, got: {msg}"
+    );
+}
+
+#[test]
+fn planted_matches_are_spread_across_the_whole_span_not_clustered_in_one_bucket() {
+    // This is the guard on the gate itself. An earlier layout emitted every
+    // planted pair as the first 2*planted rows, which put all of them inside
+    // the first hourly bucket: the measured query still decoded all 26 buckets,
+    // so the cost numbers were real, but the cross-arm match count only ever
+    // exercised one of them. A pruning or decode defect in any later bucket
+    // would have moved every measured number while leaving the match count
+    // exactly right, and nothing would have caught it.
+    let d = TempDir::new().unwrap();
+    let spec = small_spec();
+    let stats = fixture::generate(&d.path().join("f.redb"), spec).unwrap();
+    let store = EventStore::open(&d.path().join("f.redb")).unwrap();
+
+    let services: HashSet<u32> = store
+        .scan_range(stats.start_ms, stats.end_ms)
+        .unwrap()
+        .iter()
+        .filter(|r| r.name == SERVICE_NAME)
+        .map(|r| r.pid.raw())
+        .collect();
+
+    let mut buckets_with_matches = 0_usize;
+    let mut total_matches = 0_u64;
+    for bucket in store.list_buckets().unwrap() {
+        let start = bucket * HOUR_MS;
+        let here = store
+            .scan_range(start, start + HOUR_MS)
+            .unwrap()
+            .iter()
+            .filter(|r| r.name == SHELL_NAME)
+            .filter_map(|r| r.ppid)
+            .filter(|p| services.contains(&p.raw()))
+            .count();
+        if here > 0 {
+            buckets_with_matches += 1;
+        }
+        total_matches += u64::try_from(here).unwrap();
+    }
+
+    assert_eq!(
+        total_matches, spec.planted,
+        "every planted match must be found exactly once across the buckets"
+    );
+    assert!(
+        buckets_with_matches >= 20,
+        "planted matches must reach nearly every bucket, not cluster in one: \
+         only {buckets_with_matches} of {} buckets hold a match",
+        stats.buckets
+    );
+}
+
+#[test]
+fn no_noise_row_can_resolve_to_a_service_parent() {
+    // Noise parents point at a reserved pid that is never emitted, so an
+    // accidental match cannot inflate the planted constant for any spec.
+    let d = TempDir::new().unwrap();
+    let spec = small_spec();
+    let stats = fixture::generate(&d.path().join("f.redb"), spec).unwrap();
+    let store = EventStore::open(&d.path().join("f.redb")).unwrap();
+    let rows = store.scan_range(stats.start_ms, stats.end_ms).unwrap();
+
+    let services: HashSet<u32> = rows
+        .iter()
+        .filter(|r| r.name == SERVICE_NAME)
+        .map(|r| r.pid.raw())
+        .collect();
+    let matching_shells = rows
+        .iter()
+        .filter(|r| r.name == SHELL_NAME)
+        .filter_map(|r| r.ppid)
+        .filter(|p| services.contains(&p.raw()))
+        .count();
+
+    assert_eq!(
+        u64::try_from(matching_shells).unwrap(),
+        spec.planted,
+        "exactly the planted shells may resolve to a service; \
+         a noise row matching would silently inflate the gate's answer"
     );
 }

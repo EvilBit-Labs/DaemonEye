@@ -5,9 +5,12 @@
 //! checked against (R18), the RSS ceiling, and the latency floor.
 //!
 //! It reads through `EventStore::scan_range`, the same public call the provider
-//! (U5) uses per partition. Both arms therefore pay the same
-//! `Vec<ProcessRecord>` materialization, which is what keeps R6's marginal
-//! comparison honest (KTD10).
+//! (U5) uses — but over the whole range in one call, where the provider issues
+//! one call per bucket. The two arms therefore pay the *same kind* of
+//! `Vec<ProcessRecord>` materialization at very different sizes, which is the
+//! point: this arm is the ceiling, not a matched baseline. A marginal figure
+//! taken against it bounds `DataFusion` from above and cannot fail, so the
+//! absolute peak is the real memory gate (KTD10).
 
 use crate::fixture::{SERVICE_NAME, SHELL_NAME};
 use daemoneye_lib::models::process::ProcessRecord;

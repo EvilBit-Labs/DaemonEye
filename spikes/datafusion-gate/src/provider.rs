@@ -72,9 +72,9 @@ impl EventTable {
     /// Discover the store's live buckets and build the provider.
     ///
     /// # Errors
-    /// Returns an error when bucket discovery fails, or when the store's bucket
-    /// width is not the hourly granularity this provider assumes. `EventStore`
-    /// exposes no accessor for granularity, so it is asserted rather than read.
+    /// Returns an error when bucket discovery fails. This does **not** validate
+    /// the store's bucket width — call [`Self::assert_granularity`] separately
+    /// for that, as `EventStore` exposes no accessor for granularity.
     pub fn try_new(store: Arc<EventStore>) -> DfResult<Self> {
         let mut buckets = store
             .list_buckets()
@@ -226,8 +226,17 @@ impl TableProvider for EventTable {
                 Some((Operator::GtEq | Operator::Gt, v)) => {
                     lo = Some(lo.map_or(v, |cur: i64| cur.max(v)));
                 }
-                Some((Operator::Lt | Operator::LtEq, v)) => {
+                Some((Operator::Lt, v)) => {
                     hi = Some(hi.map_or(v, |cur: i64| cur.min(v)));
+                }
+                Some((Operator::LtEq, v)) => {
+                    // `surviving()` compares with a strict `<`, so an inclusive
+                    // bound must be widened by one before it is merged.
+                    // Without this a bucket whose window starts exactly at the
+                    // bound is pruned away, and because pruning happens before
+                    // DataFusion's re-filter those rows can never come back.
+                    let exclusive = v.saturating_add(1);
+                    hi = Some(hi.map_or(exclusive, |cur: i64| cur.min(exclusive)));
                 }
                 _ => {}
             }
@@ -283,7 +292,7 @@ impl BucketScanExec {
     ) -> Self {
         let properties = Arc::new(PlanProperties::new(
             EquivalenceProperties::new(Arc::clone(&projected_schema)),
-            Partitioning::UnknownPartitioning(windows.len().max(1)),
+            Partitioning::UnknownPartitioning(windows.len()),
             EmissionType::Incremental,
             Boundedness::Bounded,
         ));
@@ -396,4 +405,87 @@ fn rows_to_batch(
         ],
     )
     .map_err(DataFusionError::from)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects
+    )]
+
+    use super::{EventTable, event_schema};
+    use crate::fixture::{self, FixtureSpec, HOUR_MS};
+    use daemoneye_lib::storage::EventStore;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    const SPEC: FixtureSpec = FixtureSpec {
+        rows: 3_000,
+        span_hours: 25,
+        planted: 20,
+        start_ms: 1_767_225_600_000,
+    };
+
+    fn store() -> (TempDir, Arc<EventStore>) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("f.redb");
+        fixture::generate(&path, SPEC).unwrap();
+        let s = Arc::new(EventStore::open(&path).unwrap());
+        (dir, s)
+    }
+
+    #[test]
+    fn the_granularity_assertion_fails_loudly_on_a_mismatched_bucket_width() {
+        // The Ok path is covered in tests/equivalence.rs. This is the branch
+        // that stops the provider from silently reading wrong windows, so it
+        // needs its own proof: build a table whose assumed width is wrong and
+        // confirm it refuses rather than returning empty windows.
+        let (_dir, s) = store();
+        let mut table = EventTable::try_new(Arc::clone(&s)).unwrap();
+        table.granularity_ms = HOUR_MS * 24; // daily, but the store is hourly
+
+        let err = table
+            .assert_granularity()
+            .expect_err("a mismatched bucket width must fail loudly");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("granularity is not what the provider assumed"),
+            "the error must name the mismatch, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_zero_granularity_is_rejected_rather_than_dividing_by_zero() {
+        let (_dir, s) = store();
+        let mut table = EventTable::try_new(Arc::clone(&s)).unwrap();
+        table.granularity_ms = 0;
+        // window() multiplies by granularity; zero yields a zero-width window,
+        // which must surface as an empty-bucket error rather than a panic.
+        let err = table
+            .assert_granularity()
+            .expect_err("a zero-width window cannot hold the bucket's rows");
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn the_schema_exposes_exactly_the_columns_the_join_needs() {
+        let s = event_schema();
+        let names: Vec<&str> = s.fields().iter().map(|f| f.name().as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["ts_ms", "pid", "ppid", "name"],
+            "the join reads these four columns; a change here silently changes the measured query"
+        );
+        assert!(
+            s.field_with_name("ppid").unwrap().is_nullable(),
+            "a root process has no parent, so ppid must be nullable"
+        );
+        assert!(
+            !s.field_with_name("pid").unwrap().is_nullable(),
+            "every row has a pid"
+        );
+    }
 }
