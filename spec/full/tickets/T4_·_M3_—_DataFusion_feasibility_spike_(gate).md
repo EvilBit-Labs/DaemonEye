@@ -29,6 +29,10 @@
 
 T3 (needs a real event-store table to read).
 
+## Decision
+
+**GO** — recorded 2026-09-19 in [docs/decisions/2026-09-19-t4-datafusion-gate.md](../../../docs/decisions/2026-09-19-t4-datafusion-gate.md). All three measured criteria pass; T6, T7, T10, and T12 are unchanged. Two qualifications are in that artifact: DataFusion/Arrow is not FFI-free (`zstd-sys` via `arrow-ipc`), and whole-range `scan_range` is a T3 read-path memory trap T6 must avoid.
+
 ## Acceptance criteria
 
 - Recorded measurements show `<100MB RSS` and `<100ms/rule` are achievable; **go/no-go decision documented** before T6 proceeds. Binary size has no numeric threshold — record the release-binary delta and let the maintainer judge it explicitly in the decision artifact rather than implying a bar the repo does not define. If no-go, the fallback is the hand-rolled executor (see Tech Plan, no-go contingency).
