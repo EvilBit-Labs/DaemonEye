@@ -6,13 +6,13 @@ DataFusion clears all three measured criteria. T6 proceeds on DataFusion; the ha
 
 ## Verdict against the gate
 
-| Criterion                             | Threshold           | Measured                           | Result                                              |
-| ------------------------------------- | ------------------- | ---------------------------------- | --------------------------------------------------- |
-| Absolute peak RSS                     | `< 100 MiB`         | **88.72 MiB**                      | pass, 11.28 MiB headroom                            |
-| Per-rule latency                      | `< 100 ms`          | **10.15 ms** p50, **12.33 ms** max | pass, ~10x headroom                                 |
-| Cross-arm equivalence (R18)           | both arms identical | **500 = 500**, enforced by test    | pass                                                |
-| Marginal RSS over the control ceiling | `<= 40 MiB`         | −391.78 MiB                        | see below: an upper bound, not a test that can fail |
-| Release binary size delta             | no threshold        | **+62.66 MiB** stripped (54.2x)    | maintainer's judgment, below                        |
+| Criterion                             | Threshold           | Measured                          | Result                                              |
+| ------------------------------------- | ------------------- | --------------------------------- | --------------------------------------------------- |
+| Absolute peak RSS                     | `< 100 MiB`         | **88.72 MiB**                     | pass, 11.28 MiB headroom                            |
+| Per-rule latency                      | `< 100 ms`          | **9.75 ms** p50, **10.63 ms** max | pass, ~10x headroom                                 |
+| Cross-arm equivalence (R18)           | both arms identical | **500 = 500**, enforced by test   | pass                                                |
+| Marginal RSS over the control ceiling | `<= 40 MiB`         | −392.03 MiB                       | see below: an upper bound, not a test that can fail |
+| Release binary size delta             | no threshold        | **+62.66 MiB** stripped (54.2x)   | maintainer's judgment, below                        |
 
 **The absolute peak is the real memory gate.** The marginal criterion compares DataFusion against the control arm's 480.81 MiB ceiling, and the control arm materializes the whole 26-hour range in one call while the provider reads one bucket at a time. Those are different memory strategies at very different sizes, so the marginal number bounds DataFusion from above and cannot fail. It is reported because it is informative, not because passing it means anything.
 
