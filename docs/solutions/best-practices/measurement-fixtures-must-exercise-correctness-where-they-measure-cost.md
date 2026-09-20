@@ -66,7 +66,9 @@ assert!(
 );
 ```
 
-The fix in the generator was to plant a pair every `rows / planted` indices instead of packing them at the front, so matches land in at least 20 of 26 partitions. See `plant_stride` and `row_for` in `spikes/datafusion-gate/src/fixture.rs`, and the guard test `planted_matches_are_spread_across_the_whole_span_not_clustered_in_one_bucket` in `spikes/datafusion-gate/tests/fixture.rs`.
+The fix in the generator was to plant a pair every `rows / planted` indices instead of packing them at the front, so matches land in at least 20 of 26 partitions, with a guard test asserting that spread at the same scale the recorded numbers came from.
+
+The harness itself no longer exists — the spike was deleted once its gate decision was recorded, which is the point the last bullet below makes. It is preserved at commit `bfa6782`; `plant_stride` and `row_for` in `spikes/datafusion-gate/src/fixture.rs` and the guard test `planted_matches_are_spread_across_the_whole_span_not_clustered_in_one_bucket` in `spikes/datafusion-gate/tests/fixture.rs` are readable there.
 
 ## Why agreement between two implementations is not the guarantee it looks like
 
@@ -74,10 +76,19 @@ Two arms agreeing bounds one class of defect: one arm being wrong on its own. It
 
 In this harness both arms read through the same storage calls and the same generated fixture. A defect in either would move both arms identically, and the equivalence check would stay green. The same review pass surfaced a second version of this: the equivalence test ran a 6,000-row spec while the recorded numbers came from a 120,000-row one, so the "both arms agree" claim behind the published figures was a human comparing two lines of program output, not a test. Run the gate against the spec the numbers come from.
 
+## The same blindness shows up in the instrumentation, not just the fixture
+
+A later review round on the same harness found the measuring code could fail in exactly the favorable direction. A failed process-memory read was folded in as `0` bytes, indistinguishable from a real reading, so a sampler that could not read the process at all would have reported a peak of `0.00 MiB` — comfortably under a budget it never measured. A background sampling thread that died mid-run had its result discarded, so a partial trace reported as complete.
+
+Neither would have failed a test or tripped a lint. Both were fixed by making the instrument report its own integrity alongside the number: a failed read is counted rather than substituted, and an incomplete trace says so.
+
+The rule that catches this: **a measurement must be able to say it failed.** If the failure value is also a plausible measurement — zero bytes, zero milliseconds, an empty result set — the instrument cannot distinguish "nothing happened" from "I could not look," and a reader cannot either. That matters most where the budget is a threshold, because the failure value is almost always on the passing side of it.
+
 ## Prevention
 
+- Make the instrument report its own integrity next to its number. A metric whose failure value is also a plausible reading will pass a threshold it never measured.
 - Name both signals explicitly when designing a harness, then state which data feeds each. If the answer differs, that gap is the bug.
 - Assert where planted data lives, not only how much of it there is.
 - Run the correctness gate on the same configuration the recorded numbers come from. A gate that only runs against a smaller fixture is not guarding the published result.
 - Treat cross-implementation agreement as covering independent defects only. Enumerate what both sides share — the fixture, the storage layer, the clock — and accept that agreement is silent about all of it.
-- When a harness is disposable, remember its guard tests die with it. The reasoning has to live somewhere that outlasts the crate.
+- When a harness is disposable, remember its guard tests die with it. The reasoning has to live somewhere that outlasts the crate. This is not hypothetical: the crate behind this learning was deleted in the same week the learning was written, and every guard described above went with it. What survives is this document and the decision it protected.

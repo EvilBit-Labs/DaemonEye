@@ -588,6 +588,7 @@ When generating code:
 | Development                   | [.kiro/steering/development.md](./.kiro/steering/development.md)                                                                                                                                                        |
 | SQL-to-IPC Pipeline           | [spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md](./spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md)                                                                                                |
 | Detection Execution (binding) | ADR-0006: Apache DataFusion over redb TableProviders (spec §9/§11). Detection-engine requirements are R17–R24 in the core spec (merged 2026-06-09; the former `upcoming-specs/sql-to-ipc-detection-engine/` is deleted) |
+| Architecture Decision Records | [docs/adr/](./docs/adr/) for ADRs recorded in this repo; ADR-0001 through ADR-0007 live in the Confluence ES space and are cited by number only                                                                         |
 | v1.0 Scope                    | Priority Tiers table in [.kiro/specs/daemoneye-core-monitoring/requirements.md](./.kiro/specs/daemoneye-core-monitoring/requirements.md) — R1–R10 are the v1.0 bar                                                      |
 
 ### Cross-References

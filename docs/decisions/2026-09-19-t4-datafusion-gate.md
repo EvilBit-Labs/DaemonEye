@@ -101,14 +101,19 @@ Three things carry into T6 as inputs rather than changes:
 
 ## Reproducing
 
+**The spike crate has been removed.** It did its job and requirement R12 called for its deletion, so `spikes/datafusion-gate/`, its `.gitignore` negation, the root `[workspace] exclude` entry, and its `just` recipes are gone.
+
+The harness is preserved in history at commit `bfa6782` (the squash of PR #260). To re-run these measurements:
+
 ```bash
-just spike-datafusion-measure   # fixture, both arms, RSS, latency, and binary size
-just spike-datafusion-size      # binary-size delta on its own
+git checkout bfa6782 -- spikes/datafusion-gate
+git show bfa6782:justfile | sed -n '/T4 · M3 DataFusion feasibility spike/,$p' >> justfile
+# add `exclude = ["spikes"]` under [workspace] in the root Cargo.toml
+just spike-datafusion-measure   # fixture, both arms, RSS, latency, binary size
 just spike-datafusion-test      # 43 validation tests
-just spike-datafusion-lint      # fmt + clippy -D warnings
 ```
 
-The fixture is deterministic (pure index arithmetic, no randomness) and refuses to append to a non-empty store, so a rerun reproduces these numbers. No measurement counts unless the arms agree (R18); the equivalence test is what enforces that.
+The fixture is deterministic (pure index arithmetic, no randomness) and refuses to append to a non-empty store, so a rerun on the same hardware reproduces these numbers. No measurement counted unless both arms agreed (R18); that equivalence test is what enforced it.
 
 ## Compatibility facts worth keeping
 

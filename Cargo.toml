@@ -10,9 +10,6 @@ members = [
     "daemoneye-lib",
     "procmond",
 ]
-# Disposable feasibility spikes live outside the workspace: their own lockfile,
-# no effect on the CI matrix. See spikes/datafusion-gate (T4 · M3).
-exclude = ["spikes"]
 resolver = "3"
 
 [workspace.package]
