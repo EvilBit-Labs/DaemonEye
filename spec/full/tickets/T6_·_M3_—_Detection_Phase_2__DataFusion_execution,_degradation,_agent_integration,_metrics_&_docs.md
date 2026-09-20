@@ -21,7 +21,14 @@
 
 ## Key touchpoints
 
-- `datafusion`/`arrow` (adopted only if T4 gate passes): per-collector redb `TableProvider`s with filter/projection pushdown into base scans + multimap secondary indexes; `SessionContext` restricted to the approved function allowlist, bounded memory pool, cardinality caps; aggregations require explicit time windows; derived-SQL only.
+- `datafusion`/`arrow` (**adopted — T4 gate passed GO, 2026-09-19**, see [decision](../../../docs/decisions/2026-09-19-t4-datafusion-gate.md)): per-collector redb `TableProvider`s with filter/projection pushdown into base scans + multimap secondary indexes; `SessionContext` restricted to the approved function allowlist, bounded memory pool, cardinality caps; aggregations require explicit time windows; derived-SQL only.
+- **Carried from the T4 measurements** (each is a measured result, not a preference):
+  - Read detection windows **bucket-at-a-time** ([ADR-0008](../../../docs/adr/0008-bucket-at-a-time-detection-reads.md)). A single whole-range `EventStore::scan_range` retained ~481 MiB over 120,000 records; the partitioned provider stayed under 89 MiB on the same workload. This is the largest single memory lever T6 has.
+  - Pin `datafusion` with `default-features = false`. The default set pulls `parquet` plus `liblzma`/`bzip2`/`flate2`. `zstd-sys` arrives unconditionally via `arrow-ipc` regardless, so the dependency is not FFI-free.
+  - Take Arrow through `datafusion::arrow`; a direct `arrow` dependency resolves to a different major and yields two incompatible `arrow_schema::Schema` types.
+  - `sqlparser` needs no second copy: DataFusion 55.1 requires `^0.62.0` and the workspace already pins 0.62.0.
+  - Partition count tracks bucket count with no cap in the spike's provider. At seven-day hourly retention that is up to 168 partitions against the 26 measured, and `target_partitions` does not bound it — cap it or measure it before trusting the RSS headroom.
+  - Run `cargo deny` against the new tree once it enters the workspace. The spike's 349-crate graph passed advisories, bans, licenses, and sources, but it was checked by hand outside CI.
 - file:daemoneye-lib/src/detection/mod.rs — extract a `DetectionEngine` trait; remove the substring/category placeholder `execute_rule`.
 - file:daemoneye-agent/src/main.rs (detection loop), file:daemoneye-agent/src/broker_manager/ — wire `ResilientIpcClient` (file:daemoneye-lib/src/ipc/client.rs) + capability negotiation; load persisted rules from storage (T3).
 - file:daemoneye-lib/src/models/alert.rs — add persisted `Completeness { status, reasons[] }`; `CompletenessTracker` threads executor/collector signals.

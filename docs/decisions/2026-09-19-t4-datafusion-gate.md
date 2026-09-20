@@ -6,13 +6,13 @@ DataFusion clears all three measured criteria. T6 proceeds on DataFusion; the ha
 
 ## Verdict against the gate
 
-| Criterion                             | Threshold           | Measured                           | Result                                              |
-| ------------------------------------- | ------------------- | ---------------------------------- | --------------------------------------------------- |
-| Absolute peak RSS                     | `< 100 MiB`         | **88.72 MiB**                      | pass, 11.28 MiB headroom                            |
-| Per-rule latency                      | `< 100 ms`          | **10.15 ms** p50, **12.33 ms** max | pass, ~10x headroom                                 |
-| Cross-arm equivalence (R18)           | both arms identical | **500 = 500**, enforced by test    | pass                                                |
-| Marginal RSS over the control ceiling | `<= 40 MiB`         | −391.78 MiB                        | see below: an upper bound, not a test that can fail |
-| Release binary size delta             | no threshold        | **+62.66 MiB** stripped (54.2x)    | maintainer's judgment, below                        |
+| Criterion                             | Threshold           | Measured                          | Result                                              |
+| ------------------------------------- | ------------------- | --------------------------------- | --------------------------------------------------- |
+| Absolute peak RSS                     | `< 100 MiB`         | **88.72 MiB**                     | pass, 11.28 MiB headroom                            |
+| Per-rule latency                      | `< 100 ms`          | **9.75 ms** p50, **10.63 ms** max | pass, ~10x headroom                                 |
+| Cross-arm equivalence (R18)           | both arms identical | **500 = 500**, enforced by test   | pass                                                |
+| Marginal RSS over the control ceiling | `<= 40 MiB`         | −392.03 MiB                       | see below: an upper bound, not a test that can fail |
+| Release binary size delta             | no threshold        | **+62.66 MiB** stripped (54.2x)   | maintainer's judgment, below                        |
 
 **The absolute peak is the real memory gate.** The marginal criterion compares DataFusion against the control arm's 480.81 MiB ceiling, and the control arm materializes the whole 26-hour range in one call while the provider reads one bucket at a time. Those are different memory strategies at very different sizes, so the marginal number bounds DataFusion from above and cannot fail. It is reported because it is informative, not because passing it means anything.
 
@@ -101,14 +101,19 @@ Three things carry into T6 as inputs rather than changes:
 
 ## Reproducing
 
+**The spike crate has been removed.** It did its job and requirement R12 called for its deletion, so `spikes/datafusion-gate/`, its `.gitignore` negation, the root `[workspace] exclude` entry, and its `just` recipes are gone.
+
+The harness is preserved in history at commit `bfa6782` (the squash of PR #260). To re-run these measurements:
+
 ```bash
-just spike-datafusion-measure   # fixture, both arms, RSS, latency, and binary size
-just spike-datafusion-size      # binary-size delta on its own
+git checkout bfa6782 -- spikes/datafusion-gate
+git show bfa6782:justfile | sed -n '/T4 · M3 DataFusion feasibility spike/,$p' >> justfile
+# add `exclude = ["spikes"]` under [workspace] in the root Cargo.toml
+just spike-datafusion-measure   # fixture, both arms, RSS, latency, binary size
 just spike-datafusion-test      # 43 validation tests
-just spike-datafusion-lint      # fmt + clippy -D warnings
 ```
 
-The fixture is deterministic (pure index arithmetic, no randomness) and refuses to append to a non-empty store, so a rerun reproduces these numbers. No measurement counts unless the arms agree (R18); the equivalence test is what enforces that.
+The fixture is deterministic (pure index arithmetic, no randomness) and refuses to append to a non-empty store, so a rerun on the same hardware reproduces these numbers. No measurement counted unless both arms agreed (R18); that equivalence test is what enforced it.
 
 ## Compatibility facts worth keeping
 
