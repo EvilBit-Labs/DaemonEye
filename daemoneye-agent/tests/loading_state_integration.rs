@@ -75,6 +75,8 @@ fn create_registration_request(collector_id: &str) -> RegistrationRequest {
         capabilities: vec!["enumerate".to_string()],
         attributes: HashMap::new(),
         heartbeat_interval_ms: Some(30000),
+        descriptor: None,
+        spawn_token: None,
     }
 }
 

@@ -213,3 +213,126 @@ message PerformanceRecord {
   /// Collection timestamp (Unix timestamp in milliseconds)
   int64 collection_time = 7;
 }
+
+// ---------------------------------------------------------------------------
+// Detection pushdown vocabulary (R10, R13, R16, R22)
+//
+// A pushdown plan is a typed, domain-agnostic predicate list over
+// catalog-declared columns — deliberately NOT more fields on ProcessFilter, so
+// conformance vectors have one surface to test and later collectors reuse it
+// unchanged.
+// ---------------------------------------------------------------------------
+
+// Comparison operations a pushed predicate can express.
+//
+// Field numbers are wire-stable: prost stores proto enums as i32 and a
+// collector built against an older schema skips variants it does not know.
+// Never renumber; append new variants only.
+enum PredicateOp {
+  // Unset or unrecognized. Never treat as a comparison — a garbage op must not
+  // silently read as equality. Zero value by proto3 requirement.
+  PREDICATE_OP_UNSPECIFIED = 0;
+  PREDICATE_OP_EQ = 1;
+  PREDICATE_OP_NE = 2;
+  PREDICATE_OP_LT = 3;
+  PREDICATE_OP_LE = 4;
+  PREDICATE_OP_GT = 5;
+  PREDICATE_OP_GE = 6;
+  // Membership; the predicate's `values` list holds every candidate.
+  PREDICATE_OP_IN = 7;
+  // SQL LIKE pattern match against a string column.
+  PREDICATE_OP_LIKE = 8;
+  // Regular-expression match against a string column.
+  PREDICATE_OP_REGEXP = 9;
+}
+
+// Declared type of a catalog column. Mirrors the Literal variants one-for-one.
+enum ColumnType {
+  COLUMN_TYPE_UNSPECIFIED = 0;
+  COLUMN_TYPE_STRING = 1;
+  COLUMN_TYPE_INT = 2;
+  COLUMN_TYPE_UINT = 3;
+  COLUMN_TYPE_FLOAT = 4;
+  COLUMN_TYPE_BOOL = 5;
+}
+
+// A single typed constant in a predicate.
+//
+// NULL is an explicit variant, not an unset oneof: an empty Literal from a
+// buggy sender must not read as SQL NULL.
+message Literal {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    uint64 uint_value = 3;
+    double float_value = 4;
+    bool bool_value = 5;
+    // Marker for SQL NULL. The oneof variant carries the meaning; the bool is
+    // always true when set and carries none.
+    bool null_value = 6;
+  }
+}
+
+// One `column op values` comparison. Predicates in a plan are ANDed together.
+message Predicate {
+  // Column name as declared by the owning TableDescriptor.
+  string column = 1;
+  PredicateOp op = 2;
+  // Arity by op: exactly one value for EQ/NE/LT/LE/GT/GE/LIKE/REGEXP; one or
+  // more for IN. A single repeated field keeps IN from needing its own shape.
+  repeated Literal values = 3;
+}
+
+// The pushed half of a compiled rule, addressed to the collector that owns
+// `table` (R13).
+message PushdownPlan {
+  // Catalog table this plan reads.
+  string table = 1;
+  // Conjunction: every predicate must hold. An empty list means no filtering.
+  repeated Predicate predicates = 2;
+  // Columns the rule needs. An empty list means every declared column.
+  repeated string projection = 3;
+  // Lifetime of the task carrying this plan (R16). The agent renews before
+  // expiry while the rule is enabled; expiry marks the rule unhealthy.
+  uint64 ttl_ms = 4;
+}
+
+// One column a collector declares it can serve.
+message ColumnDescriptor {
+  string name = 1;
+  ColumnType column_type = 2;
+  // Whether the column can carry SQL NULL.
+  bool nullable = 3;
+  // Operations the collector claims it can evaluate for this column. A
+  // predicate over an operation not listed here stays in the residual (R15).
+  repeated PredicateOp supported_ops = 4;
+}
+
+// One table a collector declares.
+message TableDescriptor {
+  string name = 1;
+  repeated ColumnDescriptor columns = 2;
+}
+
+// Everything a collector advertises about the data it can serve (R10).
+//
+// Mirrored as a plain serde Rust struct in
+// `daemoneye-eventbus/src/rpc/descriptor.rs`, because the live eventbus
+// registration exchange that carries a descriptor is JSON and that crate does
+// not depend on prost. Field names and semantics are identical on both sides
+// (SchemaDescriptor, TableDescriptor, ColumnDescriptor, ColumnType,
+// PredicateOp) — change one side and change the other.
+//
+// Conformance-vector results (R22) attach here, so a result is always bound to
+// the collector and the descriptor version it was produced against. The
+// ConformanceResult shape itself is deferred to U10 — no field tag is spent on
+// it yet, deliberately: an unclaimed tag can be defined later, a reused one
+// silently misreads old data.
+message SchemaDescriptor {
+  // Collector that owns these tables.
+  string collector_id = 1;
+  // Opaque version of this descriptor. The agent binds conformance results and
+  // compiled rules to it.
+  string descriptor_version = 2;
+  repeated TableDescriptor tables = 3;
+}

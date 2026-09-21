@@ -198,6 +198,7 @@ async fn test_task_validation_logic() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
 
     // Just verify the task structure is correct
@@ -242,6 +243,7 @@ async fn test_protobuf_message_compatibility() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
 
     // Verify serialization works
@@ -351,6 +353,7 @@ async fn test_multi_domain_task_types() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
     assert_eq!(process_task.task_type, 0); // EnumerateProcesses = 0
 
@@ -364,6 +367,7 @@ async fn test_multi_domain_task_types() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
     assert_eq!(network_task.task_type, 4); // MonitorNetworkConnections = 4
 
@@ -377,6 +381,7 @@ async fn test_multi_domain_task_types() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
     assert_eq!(fs_task.task_type, 5); // TrackFileOperations = 5
 
@@ -390,6 +395,7 @@ async fn test_multi_domain_task_types() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
     assert_eq!(perf_task.task_type, 6); // CollectPerformanceMetrics = 6
 }

@@ -27,5 +27,7 @@ fn sample_registration_request() -> RegistrationRequest {
         capabilities: vec!["process".to_owned()],
         attributes: std::collections::HashMap::new(),
         heartbeat_interval_ms: Some(5_000),
+        descriptor: None,
+        spawn_token: None,
     }
 }

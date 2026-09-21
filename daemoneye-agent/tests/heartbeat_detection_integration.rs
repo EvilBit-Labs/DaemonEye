@@ -35,6 +35,8 @@ fn create_registration_request(collector_id: &str) -> RegistrationRequest {
         capabilities: vec!["process".to_string()],
         attributes: HashMap::new(),
         heartbeat_interval_ms: Some(1000), // 1 second heartbeat
+        descriptor: None,
+        spawn_token: None,
     }
 }
 

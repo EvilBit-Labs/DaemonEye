@@ -390,6 +390,7 @@ impl SqlToIpcTranslator {
                 network_filter: None,
                 filesystem_filter: None,
                 performance_filter: None,
+                pushdown_plan: None,
             });
         }
 
@@ -422,6 +423,7 @@ impl SqlToIpcTranslator {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         });
 
         // Add hash verification task if needed
@@ -435,6 +437,7 @@ impl SqlToIpcTranslator {
                 network_filter: None,
                 filesystem_filter: None,
                 performance_filter: None,
+                pushdown_plan: None,
             });
         }
 

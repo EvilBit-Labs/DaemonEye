@@ -1,5 +1,6 @@
 //! Request/response and data types for collector RPC operations.
 
+use crate::rpc::descriptor::SchemaDescriptor;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -294,6 +295,17 @@ pub struct RegistrationRequest {
     pub attributes: HashMap<String, serde_json::Value>,
     /// Requested heartbeat interval in milliseconds
     pub heartbeat_interval_ms: Option<u64>,
+    /// Schema the collector advertises: its tables, columns, and the pushdown
+    /// operations it claims per column. Mirrors the `SchemaDescriptor`
+    /// protobuf message in `daemoneye-lib/proto/common.proto`; see
+    /// [`SchemaDescriptor`] for the field-by-field correspondence. `None` from
+    /// a collector that does not advertise one.
+    #[serde(default)]
+    pub descriptor: Option<SchemaDescriptor>,
+    /// Spawn-token *value* the collector read from its token file, proving the
+    /// agent spawned it. Never the token's path.
+    #[serde(default)]
+    pub spawn_token: Option<String>,
 }
 
 /// Collector registration response payload

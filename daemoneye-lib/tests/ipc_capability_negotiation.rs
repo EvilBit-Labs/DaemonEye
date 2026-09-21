@@ -269,6 +269,7 @@ async fn test_task_routing_with_capabilities() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
 
     // Should fail with no endpoints available

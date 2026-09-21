@@ -345,6 +345,8 @@ mod tests {
             capabilities: vec!["process".to_string()],
             attributes: HashMap::new(),
             heartbeat_interval_ms: Some(10_000),
+            descriptor: None,
+            spawn_token: None,
         }
     }
 

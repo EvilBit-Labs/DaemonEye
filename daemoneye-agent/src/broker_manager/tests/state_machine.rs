@@ -340,6 +340,8 @@ async fn test_registration_marks_collector_ready() {
         capabilities: vec![],
         attributes: std::collections::HashMap::new(),
         heartbeat_interval_ms: None,
+        descriptor: None,
+        spawn_token: None,
     };
 
     let response = manager
@@ -362,6 +364,8 @@ async fn test_registration_marks_collector_ready() {
         capabilities: vec![],
         attributes: std::collections::HashMap::new(),
         heartbeat_interval_ms: None,
+        descriptor: None,
+        spawn_token: None,
     };
 
     let response = manager
@@ -420,6 +424,8 @@ async fn test_wait_for_collectors_ready_success() {
             capabilities: vec![],
             attributes: std::collections::HashMap::new(),
             heartbeat_interval_ms: None,
+            descriptor: None,
+            spawn_token: None,
         };
 
         manager_for_task

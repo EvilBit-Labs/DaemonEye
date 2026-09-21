@@ -355,6 +355,8 @@ impl RegistrationManager {
             heartbeat_interval_ms: Some(
                 u64::try_from(self.config.heartbeat_interval.as_millis()).unwrap_or(u64::MAX),
             ),
+            descriptor: None,
+            spawn_token: None,
         }
     }
 

@@ -915,6 +915,7 @@ mod tests {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         };
 
         let result = handler.handle_detection_task(task).await;

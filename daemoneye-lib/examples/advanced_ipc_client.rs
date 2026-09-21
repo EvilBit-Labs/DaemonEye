@@ -216,6 +216,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         };
 
         println!("  \u{1f4e4} Routing {} task: {}", description, task.task_id);

@@ -459,6 +459,8 @@ impl Collector {
             capabilities: self.capability_labels(),
             attributes: registration.attributes.clone(),
             heartbeat_interval_ms: Some(heartbeat_ms),
+            descriptor: None,
+            spawn_token: None,
         };
 
         let timeout = registration.timeout;

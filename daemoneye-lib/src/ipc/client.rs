@@ -955,6 +955,7 @@ impl ResilientIpcClient {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         };
 
         // Send capability negotiation request using existing task mechanism.

@@ -148,6 +148,7 @@ impl DetectionTask {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         }
     }
 
@@ -175,6 +176,7 @@ impl DetectionTask {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         }
     }
 
@@ -196,6 +198,7 @@ impl DetectionTask {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         }
     }
 
@@ -227,6 +230,7 @@ impl DetectionTask {
             network_filter: filter,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         }
     }
 
@@ -257,6 +261,7 @@ impl DetectionTask {
             network_filter: None,
             filesystem_filter: filter,
             performance_filter: None,
+            pushdown_plan: None,
         }
     }
 
@@ -291,6 +296,7 @@ impl DetectionTask {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: filter,
+            pushdown_plan: None,
         }
     }
 }
