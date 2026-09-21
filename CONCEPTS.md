@@ -34,6 +34,10 @@ A unit of collection work the agent sends to a collector, naming a monitoring do
 
 The agent-managed redb database of collected telemetry — `processes.events` and its sibling tables (scans, detection rules, alerts, alert deliveries). The agent is the single writer; the operator CLI and the detection engine read it. Distinct from the procmond-owned audit ledger, which is write-only forensic provenance, not queryable telemetry.
 
+### Audit ledger
+
+The write-once, hash-chained record of what a privileged collector observed and did. procmond is its only writer; the agent and the operator CLI read it. That asymmetry is the point — a component that cannot write the chain cannot forge history in it, so the ledger stays trustworthy even if everything above it is compromised. Distinct from the Event store, which holds collected telemetry and which the agent does write.
+
 ### Time bucket
 
 The partition unit of `processes.events`: one base table (plus its secondary indexes) per time window, hourly by default and daily for low-volume hosts. Retention works at bucket granularity — expiring history is an O(1) drop of a whole bucket, not a row scan.
@@ -66,4 +70,4 @@ The per-operation check that a collector's evaluation of a pushdown operation ma
 
 ### Unhealthy rule
 
-An enabled rule that no longer validates against the current schema catalog — typically because a collector re-registered with a descriptor that dropped a table or column the rule references. The rule is marked and surfaced to the operator through daemoneye-cli rather than being silently dropped or left to match nothing.
+An enabled rule the agent has stopped trusting to run correctly. The usual cause is a collector re-registering with a descriptor that dropped a table or column the rule references, but a pushdown task expiring without renewal and a regex pattern exceeding its latency threshold both mark a rule unhealthy too. The rule is surfaced to the operator through daemoneye-cli rather than being silently dropped or left to match nothing.
