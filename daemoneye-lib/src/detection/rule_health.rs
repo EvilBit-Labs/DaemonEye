@@ -117,6 +117,26 @@ impl RuleHealthRegistry {
         let _removed = self.rules.remove(rule_id);
     }
 
+    /// Mark a tracked rule unhealthy for a reason no catalog re-validation could find (R12).
+    ///
+    /// The one caller today is pushed-task expiry: a rule whose task lapsed while it was still
+    /// enabled has lost its pushed half, which is a health fact about the rule and belongs with
+    /// every other one rather than in a second notion of health beside it.
+    ///
+    /// An untracked rule is **not** inserted, and `false` is returned. Inserting would create a
+    /// rule with no references, which the next [`Self::revalidate`] would launder back to
+    /// [`RuleHealth::Healthy`] without checking anything. Every rule that owns a task went through
+    /// [`Self::track`] when it was planned, so the untracked case does not arise on the live path.
+    pub fn mark_unhealthy(&mut self, rule_id: &str, reason: &str) -> bool {
+        let Some(rule) = self.rules.get_mut(rule_id) else {
+            return false;
+        };
+        rule.health = RuleHealth::Unhealthy {
+            reason: reason.to_owned(),
+        };
+        true
+    }
+
     /// Current health of a rule, if it is tracked.
     #[must_use]
     pub fn health(&self, rule_id: &str) -> Option<&RuleHealth> {

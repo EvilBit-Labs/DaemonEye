@@ -152,6 +152,40 @@ impl DetectionTask {
         }
     }
 
+    /// Create a task carrying a rule's pushed half (R13, R16).
+    ///
+    /// `task_id` is the stable per-rule-per-collector identifier from
+    /// [`crate::detection::task_renewal::task_id`], not a fresh value per send: re-issuing the
+    /// active task set after a collector re-registers must overwrite the collector's entry rather
+    /// than add a second one. The plan carries its own TTL, so the lifetime travels with the work.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use daemoneye_lib::proto::{DetectionTask, PushdownPlan};
+    /// let plan = PushdownPlan {
+    ///     table: "processes".to_string(),
+    ///     predicates: vec![],
+    ///     projection: vec![],
+    ///     ttl_ms: 300_000,
+    /// };
+    /// let task = DetectionTask::new_pushdown("rule-1@procmond", plan);
+    /// assert!(task.pushdown_plan.is_some());
+    /// ```
+    pub fn new_pushdown(task_id: impl Into<String>, plan: PushdownPlan) -> Self {
+        Self {
+            task_id: task_id.into(),
+            task_type: i32::from(TaskType::EnumerateProcesses),
+            process_filter: None,
+            hash_check: None,
+            metadata: None,
+            network_filter: None,
+            filesystem_filter: None,
+            performance_filter: None,
+            pushdown_plan: Some(plan),
+        }
+    }
+
     /// Create a new hash check task.
     ///
     /// # Examples

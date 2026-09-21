@@ -2,7 +2,7 @@
 
 use clap::Parser;
 use daemoneye_lib::{alerting, config, detection, storage, telemetry};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, error, info, warn};
 
 mod broker_manager;
@@ -12,6 +12,7 @@ mod collector_registry;
 mod health;
 mod integrity_alerts;
 mod ipc_server;
+mod pushdown_renewal;
 
 use broker_manager::BrokerManager;
 use collector_config::CollectorsConfig;
@@ -253,7 +254,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // =========================================================================
 
     // Initialize detection engine
-    let detection_engine = detection::DetectionEngine::new();
+    let mut detection_engine = detection::DetectionEngine::new();
 
     // TODO(#006): Load detection rules from the database via `storage::DatabaseManager::get_all_rules`
     // once the redb storage layer is implemented (Task 8). Until then, the detection engine starts
@@ -338,6 +339,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+
+                // Keep every enabled rule's pushed half alive, and mark unhealthy the ones whose
+                // task lapsed (R16). This evaluates nothing; it only runs the TTL clock.
+                let _renewal = pushdown_renewal::run_renewal_cycle(
+                    &mut detection_engine,
+                    &broker_manager,
+                    SystemTime::now(),
+                )
+                .await;
 
                 // Request process enumeration from procmond via RPC
                 let task = daemoneye_lib::proto::DetectionTask::new_enumerate_processes(
