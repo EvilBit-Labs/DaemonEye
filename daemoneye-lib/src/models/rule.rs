@@ -8,53 +8,9 @@ use thiserror::Error;
 
 use crate::models::alert::AlertSeverity;
 
-// Import sqlparser types for AST-based validation
-use sqlparser::ast::{Expr, Function, Query, Select, SetExpr, Statement};
-
-// Banned SQL functions for rule validation (case-insensitive match).
-// These functions are banned because they either:
-// 1. Cannot be translated to simple protobuf collection tasks (SQL-to-IPC translation)
-// 2. Have no meaningful application in process monitoring context
-// 3. Could cause performance issues or crashes in the detection engine
-// 4. Are not supported by the underlying redb database
-//
-// Hoisted as a module-level constant to avoid re-allocating per validation call.
-const BANNED_FUNCTIONS: &[&str] = &[
-    // File system operations - not applicable to process monitoring
-    "load_extension", // SQLite extension loading - not supported in redb
-    "load",           // Generic load function - ambiguous purpose
-    "readfile",       // File reading - not applicable to process data
-    "writefile",      // File writing - not applicable to process data
-    "edit",           // File editing - not applicable to process data
-    // System/execution functions - security and applicability concerns
-    "eval",   // Code evaluation - security risk, not applicable
-    "exec",   // Command execution - security risk, not applicable
-    "system", // System calls - security risk, not applicable
-    "shell",  // Shell execution - security risk, not applicable
-    // Pattern matching functions - selectively allowed for process data analysis
-    "glob", // Glob patterns - complex to translate to simple filters
-    // "like",    // ALLOWED - Useful for pattern matching in process names, paths, command lines
-    // "match",   // ALLOWED - Useful for pattern matching in process data
-    // "regexp",  // ALLOWED - Useful for complex pattern matching in process data
-    "replace", // String replacement - not applicable to process monitoring
-    // "substr",  // ALLOWED - Useful for extracting parts of command lines, paths, environment variables
-    // "instr",   // ALLOWED - Useful for finding substrings in process data
-    // "length",  // ALLOWED - Useful for analyzing string lengths in process data
-    // Mathematical functions - not applicable to process monitoring
-    "abs",        // Absolute value - not applicable to process data
-    "random",     // Random numbers - not applicable to process monitoring
-    "randomblob", // Random binary data - not applicable to process monitoring
-    // Encoding/formatting functions - selectively allowed for process data analysis
-    // "hex",        // ALLOWED - Useful for analyzing executable_hash and binary metadata
-    // "unhex",      // ALLOWED - Useful for converting hex data back to binary for analysis
-    "quote",      // SQL quoting - not applicable to process monitoring
-    "printf",     // String formatting - not applicable to process monitoring
-    "format",     // String formatting - not applicable to process monitoring
-    "char",       // Character conversion - not applicable to process monitoring
-    "unicode",    // Unicode functions - not applicable to process monitoring
-    "soundex",    // Soundex algorithm - not applicable to process monitoring
-    "difference", // String difference - not applicable to process monitoring
-];
+use crate::config::DetectionConfig;
+use crate::detection::rejection::SqlRejection;
+use crate::detection::sql_validation::validate_detection_sql;
 
 /// Strongly-typed rule identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -361,18 +317,16 @@ impl DetectionRule {
         }
     }
 
-    /// Validate the rule's SQL for safety and structural constraints using sqlparser's AST.
+    /// Validate the rule's SQL at the default subquery-depth limit.
     ///
-    /// This checks that:
-    /// - the SQL parses successfully,
-    /// - exactly one statement is present,
-    /// - the single statement is a `SELECT` query,
-    ///   and then delegates to lower-level validators for the query/SELECT/expression checks
-    ///   (e.g., projection, FROM/JOIN limits, banned functions).
+    /// Equivalent to [`DetectionRule::validate_sql_with_depth`] called with
+    /// `DetectionConfig::default().max_subquery_depth`. Callers that have an operator's
+    /// configuration in hand should pass it rather than relying on this default.
     ///
-    /// Returns `Ok(())` when the query passes parsing and the top-level checks. Returns
-    /// `Err(RuleError::InvalidSql(...))` if parsing fails, if multiple statements are present,
-    /// or if the statement is not a `SELECT`.
+    /// # Errors
+    ///
+    /// Returns [`RuleError::SqlRejected`] carrying the [`SqlRejection`] that names the offending
+    /// construct and its position.
     ///
     /// # Examples
     ///
@@ -389,349 +343,39 @@ impl DetectionRule {
     /// );
     /// assert!(rule.validate_sql().is_ok());
     /// ```
-    #[allow(clippy::pattern_type_mismatch, clippy::indexing_slicing)]
     pub fn validate_sql(&self) -> Result<(), RuleError> {
-        use sqlparser::dialect::GenericDialect;
-        use sqlparser::parser::Parser;
-
-        let dialect = GenericDialect {};
-        let statements = Parser::parse_sql(&dialect, &self.sql_query)
-            .map_err(|e| RuleError::InvalidSql(format!("Failed to parse SQL: {e}")))?;
-
-        // Ensure single statement
-        if statements.len() != 1 {
-            return Err(RuleError::InvalidSql(
-                "Only single SQL statements are allowed".to_owned(),
-            ));
-        }
-
-        // Ensure it's a SELECT statement - we checked length above so this is safe
-        #[allow(clippy::wildcard_enum_match_arm)]
-        match &statements[0] {
-            Statement::Query(query) => {
-                // Basic validation - ensure it's a SELECT query
-                Self::validate_query_basic(query)?;
-            }
-            // Only SELECT statements are allowed; reject all other statement types
-            // including any new variants added in future sqlparser versions
-            _ => {
-                return Err(RuleError::InvalidSql(
-                    "Only SELECT statements are allowed".to_owned(),
-                ));
-            }
-        }
-
-        Ok(())
+        self.validate_sql_with_depth(DetectionConfig::default().max_subquery_depth)
     }
 
-    /// Validate that a parsed `Query` is a single SELECT query and delegate to select-level checks.
+    /// Validate the rule's SQL against the rule-load gate at an explicit subquery-depth limit.
     ///
-    /// This performs a basic safety check: the query body must be a `SELECT`. If not, returns
-    /// `RuleError::InvalidSql`.
+    /// The gate rejects anything that is not a single `SELECT`, any function outside the
+    /// detection allowlist, and any subquery nested deeper than `max_subquery_depth` levels
+    /// below the top-level `SELECT`. No rule is executed here.
     ///
-    /// # Examples
+    /// # Errors
     ///
-    /// ```ignore
-    /// use sqlparser::dialect::GenericDialect;
-    /// use sqlparser::parser::Parser;
-    /// use daemoneye_lib::models::rule::{RuleError, DetectionRule};
-    ///
-    /// // Parse a simple SELECT and validate its Query body.
-    /// let sql = "SELECT 1";
-    /// let dialect = GenericDialect {};
-    /// let statements = Parser::parse_sql(&dialect, sql).unwrap();
-    /// let stmt = &statements[0];
-    /// if let sqlparser::ast::Statement::Query(q) = stmt {
-    ///     // This calls the internal basic query validator.
-    ///     DetectionRule::validate_query_basic(q).unwrap();
-    /// } else {
-    ///     panic!("expected a query statement");
-    /// }
-    /// ```
-    #[allow(clippy::pattern_type_mismatch)]
-    fn validate_query_basic(query: &Query) -> Result<(), RuleError> {
-        // Validate the main query body is a SELECT
-        match query.body.as_ref() {
-            SetExpr::Select(select) => {
-                Self::validate_select_basic(select)?;
-            }
-            SetExpr::Query(_)
-            | SetExpr::SetOperation { .. }
-            | SetExpr::Values(_)
-            | SetExpr::Insert(_)
-            | SetExpr::Update(_)
-            | SetExpr::Delete(_)
-            | SetExpr::Table(_)
-            | SetExpr::Merge(_) => {
-                return Err(RuleError::InvalidSql(
-                    "Only SELECT statements are allowed".to_owned(),
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Validate a parsed `SELECT` for allowed structure and safety.
-    ///
-    /// Performs conservative checks on the provided `SELECT` node and returns
-    /// `RuleError::InvalidSql` when a structural or safety constraint is violated.
-    ///
-    /// Enforced constraints:
-    /// - Projection count: at most 50 items.
-    /// - Projections: each unnamed expression or expression-with-alias is validated
-    ///   via `validate_expr_basic`.
-    /// - `FROM` clause: must be present and non-empty.
-    /// - Join count: total joins across all `FROM` items must be <= 4.
-    /// - `WHERE`, `HAVING`, and explicit `GROUP BY` expressions (when present) are
-    ///   validated via `validate_expr_basic`.
-    /// - `GROUP BY` expressions: at most 10 expressions when explicit expressions
-    ///   are used; `GROUP BY ALL` is allowed.
-    ///
-    /// Returns `Ok(())` when the `SELECT` passes all checks.
+    /// Returns [`RuleError::SqlRejected`] carrying the [`SqlRejection`] that names the offending
+    /// construct and its position.
     ///
     /// # Examples
     ///
     /// ```
-    /// use sqlparser::dialect::GenericDialect;
-    /// use sqlparser::parser::Parser;
-    /// use daemoneye_lib::models::rule::{DetectionRule, RuleId};
-    /// use daemoneye_lib::models::alert::AlertSeverity;
-    ///
-    /// // Create a simple rule with a safe SELECT and validate it.
-    /// let sql = "SELECT id, name FROM users WHERE active = 1";
-    /// let rule = DetectionRule::new(RuleId::from("r1"), "name", "desc", sql, "cat", AlertSeverity::Low);
-    /// assert!(rule.validate_sql().is_ok());
+    /// # use daemoneye_lib::models::rule::{DetectionRule, RuleId};
+    /// # use daemoneye_lib::models::alert::AlertSeverity;
+    /// let rule = DetectionRule::new(
+    ///     RuleId::from("r1"),
+    ///     "Example",
+    ///     "Example rule",
+    ///     "SELECT pid FROM processes WHERE pid IN (SELECT pid FROM processes)",
+    ///     "example",
+    ///     AlertSeverity::Low,
+    /// );
+    /// assert!(rule.validate_sql_with_depth(1).is_ok());
+    /// assert!(rule.validate_sql_with_depth(0).is_err());
     /// ```
-    #[allow(clippy::pattern_type_mismatch)]
-    fn validate_select_basic(select: &Select) -> Result<(), RuleError> {
-        // Validate FROM clause exists
-        if select.from.is_empty() {
-            return Err(RuleError::InvalidSql(
-                "SELECT statement must have a FROM clause".to_owned(),
-            ));
-        }
-
-        // Validate projection count
-        if select.projection.len() > 50 {
-            return Err(RuleError::InvalidSql(
-                "Too many columns in SELECT (max 50)".to_owned(),
-            ));
-        }
-
-        // Validate SELECT columns for functions
-        for projection in &select.projection {
-            match projection {
-                sqlparser::ast::SelectItem::UnnamedExpr(expr)
-                | sqlparser::ast::SelectItem::ExprWithAlias { expr, .. }
-                | sqlparser::ast::SelectItem::ExprWithAliases { expr, .. } => {
-                    Self::validate_expr_basic(expr)?;
-                }
-                sqlparser::ast::SelectItem::QualifiedWildcard(..)
-                | sqlparser::ast::SelectItem::Wildcard(_) => {
-                    // Allow other projection types (wildcards, etc.)
-                }
-            }
-        }
-
-        // Validate join count
-        let join_count = select
-            .from
-            .iter()
-            .map(|item| item.joins.len())
-            .sum::<usize>();
-        if join_count > 4 {
-            return Err(RuleError::InvalidSql("Too many JOINs (max 4)".to_owned()));
-        }
-
-        // Validate WHERE clause if present
-        if let Some(where_clause) = &select.selection {
-            Self::validate_expr_basic(where_clause)?;
-        }
-
-        // Validate GROUP BY clause if present
-        match &select.group_by {
-            sqlparser::ast::GroupByExpr::All(_) => {
-                // GROUP BY ALL is allowed
-            }
-            sqlparser::ast::GroupByExpr::Expressions(exprs, _) => {
-                if exprs.len() > 10 {
-                    return Err(RuleError::InvalidSql(
-                        "GROUP BY has too many columns (max 10)".to_owned(),
-                    ));
-                }
-                for expr in exprs {
-                    Self::validate_expr_basic(expr)?;
-                }
-            }
-        }
-
-        // Validate HAVING clause if present
-        if let Some(having) = &select.having {
-            Self::validate_expr_basic(having)?;
-        }
-
-        Ok(())
-    }
-
-    /// Validate an SQL expression for disallowed or unsafe constructs used in detection rules.
-    ///
-    /// Recursively inspects the expression and enforces safety checks:
-    /// - Functions are validated via `validate_function_basic`.
-    /// - Subqueries are validated via `validate_query_basic`.
-    /// - Binary and unary expressions are validated recursively.
-    /// - `CASE` expressions validate each condition/result and the optional `ELSE`.
-    ///   Other expression types (identifiers, literals, simple qualifiers, etc.) are allowed.
-    ///
-    /// Returns `Ok(())` when the expression and all nested sub-expressions pass validation,
-    /// or a `RuleError` propagated from deeper checks when a disallowed construct is found.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use sqlparser::ast::{Expr, Ident};
-    /// // Simple identifier expressions are allowed:
-    /// let expr = Expr::Identifier(Ident::new("column"));
-    /// // Call the validator (found on the same impl as this method):
-    /// let _ = DetectionRule::validate_expr_basic(&expr);
-    /// ```
-    #[allow(clippy::pattern_type_mismatch)]
-    fn validate_expr_basic(expr: &Expr) -> Result<(), RuleError> {
-        match expr {
-            Expr::Function(func) => {
-                Self::validate_function_basic(func)?;
-            }
-            Expr::Subquery(query) => {
-                // Validate subquery
-                Self::validate_query_basic(query)?;
-            }
-            Expr::BinaryOp { left, right, .. } => {
-                Self::validate_expr_basic(left)?;
-                Self::validate_expr_basic(right)?;
-            }
-            Expr::UnaryOp {
-                expr: inner_expr, ..
-            } => {
-                Self::validate_expr_basic(inner_expr)?;
-            }
-            Expr::Case {
-                conditions,
-                else_result,
-                ..
-            } => {
-                for condition in conditions {
-                    Self::validate_expr_basic(&condition.condition)?;
-                    Self::validate_expr_basic(&condition.result)?;
-                }
-                if let Some(else_expr) = else_result {
-                    Self::validate_expr_basic(else_expr)?;
-                }
-            }
-            Expr::Identifier(_)
-            | Expr::CompoundIdentifier(_)
-            | Expr::CompoundFieldAccess { .. }
-            | Expr::JsonAccess { .. }
-            | Expr::IsFalse(_)
-            | Expr::IsNotFalse(_)
-            | Expr::IsTrue(_)
-            | Expr::IsNotTrue(_)
-            | Expr::IsNull(_)
-            | Expr::IsNotNull(_)
-            | Expr::IsUnknown(_)
-            | Expr::IsNotUnknown(_)
-            | Expr::IsDistinctFrom(..)
-            | Expr::IsNotDistinctFrom(..)
-            | Expr::IsNormalized { .. }
-            | Expr::InList { .. }
-            | Expr::InSubquery { .. }
-            | Expr::InUnnest { .. }
-            | Expr::Between { .. }
-            | Expr::Like { .. }
-            | Expr::ILike { .. }
-            | Expr::SimilarTo { .. }
-            | Expr::RLike { .. }
-            | Expr::AnyOp { .. }
-            | Expr::AllOp { .. }
-            | Expr::Convert { .. }
-            | Expr::Cast { .. }
-            | Expr::AtTimeZone { .. }
-            | Expr::Extract { .. }
-            | Expr::Ceil { .. }
-            | Expr::Floor { .. }
-            | Expr::Position { .. }
-            | Expr::Substring { .. }
-            | Expr::Trim { .. }
-            | Expr::Overlay { .. }
-            | Expr::Collate { .. }
-            | Expr::Nested(_)
-            | Expr::Value(_)
-            | Expr::Prefixed { .. }
-            | Expr::TypedString { .. }
-            | Expr::Exists { .. }
-            | Expr::GroupingSets(_)
-            | Expr::Cube(_)
-            | Expr::Rollup(_)
-            | Expr::Tuple(_)
-            | Expr::Struct { .. }
-            | Expr::Named { .. }
-            | Expr::Dictionary(_)
-            | Expr::Map(_)
-            | Expr::Array(_)
-            | Expr::Interval(_)
-            | Expr::MatchAgainst { .. }
-            | Expr::Wildcard(_)
-            | Expr::QualifiedWildcard(..)
-            | Expr::OuterJoin(_)
-            | Expr::Prior(_)
-            | Expr::Lambda(_)
-            | Expr::MemberOf(_) => {
-                // Allow other expressions (identifiers, literals, etc.)
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Basic function validation for security.
-    #[allow(clippy::pattern_type_mismatch)]
-    fn validate_function_basic(func: &Function) -> Result<(), RuleError> {
-        // Check for banned functions (case-insensitive)
-        let name = func.name.to_string();
-        if BANNED_FUNCTIONS
-            .iter()
-            .any(|banned| name.eq_ignore_ascii_case(banned))
-        {
-            return Err(RuleError::InvalidSql(format!(
-                "Function '{name}' is not allowed"
-            )));
-        }
-
-        // Validate function arguments recursively for security
-        // This ensures that arguments don't contain dangerous subqueries or expressions
-        match &func.args {
-            sqlparser::ast::FunctionArguments::None => {
-                // Functions with no arguments are safe
-            }
-            sqlparser::ast::FunctionArguments::Subquery(query) => {
-                // Validate subquery arguments
-                Self::validate_query_basic(query)?;
-            }
-            sqlparser::ast::FunctionArguments::List(arg_list) => {
-                for func_arg in &arg_list.args {
-                    match func_arg {
-                        sqlparser::ast::FunctionArg::Unnamed(arg_expr)
-                        | sqlparser::ast::FunctionArg::Named { arg: arg_expr, .. }
-                        | sqlparser::ast::FunctionArg::ExprNamed { arg: arg_expr, .. } => {
-                            if let sqlparser::ast::FunctionArgExpr::Expr(e) = arg_expr {
-                                Self::validate_expr_basic(e)?;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
+    pub fn validate_sql_with_depth(&self, max_subquery_depth: u32) -> Result<(), RuleError> {
+        validate_detection_sql(&self.sql_query, max_subquery_depth).map_err(RuleError::SqlRejected)
     }
 
     /// Update the rule's `updated_at` timestamp to the current system time.
@@ -898,8 +542,8 @@ impl DetectionRule {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RuleError {
-    #[error("Invalid SQL query: {0}")]
-    InvalidSql(String),
+    #[error("SQL rejected at rule load: {0}")]
+    SqlRejected(#[from] SqlRejection),
     #[error("Missing required field: {0}")]
     MissingField(&'static str),
     #[error("Rule validation failed: {0}")]
@@ -911,9 +555,28 @@ pub enum RuleError {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::str_to_string)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::str_to_string
+)]
 mod tests {
     use super::*;
+
+    /// Assert the rule is rejected and that `predicate` accepts the *specific* rejection.
+    ///
+    /// Asserting on `RuleError::SqlRejected` alone would prove nothing: every gate in this module
+    /// shares that one variant, so a test could sit on a branch it was never meant to cover.
+    fn assert_rejected_as(rule: &DetectionRule, predicate: impl Fn(&SqlRejection) -> bool) {
+        let err = rule
+            .validate_sql()
+            .expect_err("expected the rule to be rejected");
+        let RuleError::SqlRejected(ref rejection) = err else {
+            panic!("expected an SQL rejection, got {err:?}");
+        };
+        assert!(predicate(rejection), "the wrong gate fired: {rejection:?}");
+    }
 
     #[test]
     fn test_detection_rule_creation() {
@@ -977,7 +640,10 @@ mod tests {
             "test",
             AlertSeverity::Low,
         );
-        assert!(invalid_rule.validate_sql().is_err());
+        assert_rejected_as(
+            &invalid_rule,
+            |rejection| matches!(*rejection, SqlRejection::NotASelect { ref statement_kind } if statement_kind == "DROP"),
+        );
 
         // Test INSERT statement (should fail)
         let insert_rule = DetectionRule::new(
@@ -988,7 +654,10 @@ mod tests {
             "test",
             AlertSeverity::Low,
         );
-        assert!(insert_rule.validate_sql().is_err());
+        assert_rejected_as(
+            &insert_rule,
+            |rejection| matches!(*rejection, SqlRejection::NotASelect { ref statement_kind } if statement_kind == "INSERT"),
+        );
 
         // Test complex SELECT (should pass)
         let complex_rule = DetectionRule::new(
@@ -1010,7 +679,10 @@ mod tests {
             "test",
             AlertSeverity::Low,
         );
-        assert!(banned_func_rule.validate_sql().is_err());
+        assert_rejected_as(
+            &banned_func_rule,
+            |rejection| matches!(*rejection, SqlRejection::FunctionNotAllowed { ref function, .. } if function == "load_extension"),
+        );
 
         // Test too many joins (should fail)
         let many_joins_rule = DetectionRule::new(
@@ -1021,7 +693,16 @@ mod tests {
             "test",
             AlertSeverity::Low,
         );
-        assert!(many_joins_rule.validate_sql().is_err());
+        assert_rejected_as(&many_joins_rule, |rejection| {
+            matches!(
+                *rejection,
+                SqlRejection::TooManyOf {
+                    construct: "JOIN",
+                    found: 5,
+                    limit: 4
+                }
+            )
+        });
     }
 
     #[test]
@@ -1110,7 +791,10 @@ mod tests {
             "test",
             AlertSeverity::Low,
         );
-        assert!(banned_func_rule.validate_sql().is_err());
+        assert_rejected_as(
+            &banned_func_rule,
+            |rejection| matches!(*rejection, SqlRejection::FunctionNotAllowed { ref function, .. } if function == "load_extension"),
+        );
 
         // Test allowed function (should pass)
         let length_func_rule = DetectionRule::new(
@@ -1143,7 +827,10 @@ mod tests {
             "test",
             AlertSeverity::Low,
         );
-        assert!(func_with_subquery_rule.validate_sql().is_err());
+        assert_rejected_as(
+            &func_with_subquery_rule,
+            |rejection| matches!(*rejection, SqlRejection::FunctionNotAllowed { ref function, .. } if function == "load_extension"),
+        );
 
         // Test multiple banned functions (should fail)
         let multiple_banned_rule = DetectionRule::new(
@@ -1154,7 +841,10 @@ mod tests {
             "test",
             AlertSeverity::Low,
         );
-        assert!(multiple_banned_rule.validate_sql().is_err());
+        assert_rejected_as(
+            &multiple_banned_rule,
+            |rejection| matches!(*rejection, SqlRejection::FunctionNotAllowed { ref function, .. } if function == "load_extension"),
+        );
 
         // Test banned function in WHERE clause (should fail)
         let banned_in_where_rule = DetectionRule::new(
@@ -1165,6 +855,9 @@ mod tests {
             "test",
             AlertSeverity::Low,
         );
-        assert!(banned_in_where_rule.validate_sql().is_err());
+        assert_rejected_as(
+            &banned_in_where_rule,
+            |rejection| matches!(*rejection, SqlRejection::FunctionNotAllowed { ref function, .. } if function == "load_extension"),
+        );
     }
 }
