@@ -44,6 +44,14 @@ To call a trait method on a type from another crate, the trait must be imported 
 - **Fix:** keep `uv = "latest"` in `[tools]`.
 - **This is NOT a Python-version problem** (3.14 works locally). Full write-up + the misdiagnosis trail: [`docs/solutions/build-errors/mise-pipx-uploaded-prior-to-pip-uvx-fix.md`](docs/solutions/build-errors/mise-pipx-uploaded-prior-to-pip-uvx-fix.md).
 
+### 2.2 A pipx Tool Keeps Its Old Interpreter After the Python Pin Moves
+
+A `pipx:`/`uvx:` tool is installed once into its own venv, and that venv hard-codes the interpreter present at install time. Bumping `python` in `mise.toml` does not migrate it, so the tool keeps running on the old version indefinitely and fails only when it needs a newer feature — with a message that reads like a config error. `just format-docs` failed with `'exclude' patterns are only available on Python 3.13+` while `python3 --version` reported 3.14.7, because mdformat's venv was built on 3.11.15.
+
+- **Unlike §2.1, this one *is* a Python-version problem** — just not the one on `PATH`. Read `head -1` of the tool's shim to find the interpreter it actually uses.
+- **Fix:** `mise uninstall "pipx:<tool>@<ver>"` then `mise install "pipx:<tool>@<ver>"`. Do this for every `pipx:` entry whenever the `python` pin changes.
+- Full write-up: [`docs/solutions/build-errors/mise-pipx-venv-stale-after-python-pin-change.md`](docs/solutions/build-errors/mise-pipx-venv-stale-after-python-pin-change.md).
+
 ## 3. CI Infrastructure & Bots
 
 ### 3.1 Benchmarks Don't Run on PRs
