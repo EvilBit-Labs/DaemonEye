@@ -25,11 +25,11 @@ tags:
 
 ## Context
 
-Requirement R17 AC6 for the detection engine defers its regex-cache bounds to §4.2, whose "Regex Implementation Requirements" set 1 MB per pattern against `cache_size: 1000` (`spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md:172`). That product is roughly 1 GB, against a stated resident budget of under 100 MB.
+Requirement R17 AC6 for the detection engine defers its regex-cache bounds to §4.2 of `spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md`. Those bounds read 1MB per pattern against `cache_size: 1000` — a product of roughly 1GB, against a stated resident budget of under 100MB.
 
-Planning T5 wrote its own numbers before that section was found, as a per-pattern compile limit plus a cache entry count plus a 16 MiB aggregate ceiling, with prose claiming they were "sized against the 100 MB resident budget." Two reviewers did the arithmetic and found the stated factors permitted several times the budget the requirement invoked.
+Planning T5 wrote its own numbers before that section was found, as a per-pattern compile limit plus a cache entry count plus a 16MiB aggregate ceiling, with prose claiming they were "sized against the 100MB resident budget." Two reviewers did the arithmetic and found the stated factors permitted several times the budget the requirement invoked.
 
-Correcting the arithmetic surfaced the deeper problem, and it is the same problem the spec has: an aggregate ceiling could not be enforced at any numbers, because nothing can measure what it counts.
+Correcting the arithmetic surfaced the deeper problem, and it was the same problem the spec had: an aggregate ceiling cannot be enforced at any numbers, because nothing can measure what it counts. §4.2 has since been amended to 256KiB against 64 entries, a 16MiB product that fits.
 
 ## Guidance
 
@@ -55,6 +55,8 @@ The same shape recurs whenever a spec caps something by bytes: compiled programs
 
 Apply when a requirement, ticket, or design doc states a memory ceiling in bytes for a collection of objects the process holds. Apply when picking a cache implementation against a requirement that specifies eviction order. Apply when a crate exposes two similarly named limits and only one of them fails loudly.
 
+Sizing the per-item limit is its own question, and the crate usually answers it. `regex`'s doctest has a bare Unicode `\w` failing to compile at 45KB (`regex-1.13.1/src/builders.rs:688`), which is why 256KiB is generous and 64KiB would reject ordinary patterns. Pick the per-item limit from what the common case actually costs, then let the count fall out of the budget.
+
 Do not apply to bounds over things the process does measure — byte buffers, string lengths, file sizes, row counts — where an aggregate total is both meaningful and checkable.
 
 ## Examples
@@ -63,7 +65,7 @@ Unenforceable, as originally written:
 
 > Compiled patterns are cached keyed by the full pattern string. The cache is bounded by total compiled size with a 16 MiB ceiling, and by a 256-pattern count, whichever binds first.
 
-Nothing can evaluate "total compiled size," and the count and per-pattern limit permit many times 16 MiB between them. §4.2 has the same defect at different numbers.
+Nothing can evaluate "total compiled size," and the count and per-pattern limit permit many times 16MiB between them. §4.2 carried the same defect at different numbers until it was amended.
 
 Enforceable, as it now reads:
 
