@@ -12,6 +12,7 @@ applies_when:
   - reviewing a requirement that cites a per-item limit and an item count as if their presence implied an aggregate ceiling
   - choosing between `quick_cache` and `lru` for a cache that must evict in a stated order
   - reading a `size_limit`/`dfa_size_limit` pair and assuming both reject oversized input
+  - a spec already states bounds whose own product exceeds the budget it was written against
 tags:
   - regex
   - memory-budget
@@ -24,9 +25,11 @@ tags:
 
 ## Context
 
-Requirement R17 AC6 for the detection engine defers regex-cache bounds to a spec section (`§4.2`/`§4.5`) that does not exist anywhere in this repo. Planning T5 had to supply concrete numbers, and the first attempt wrote them as a per-pattern compile limit plus a cache entry count plus a 16 MiB aggregate ceiling, with prose claiming the numbers were "sized against the 100 MB resident budget."
+Requirement R17 AC6 for the detection engine defers its regex-cache bounds to §4.2, whose "Regex Implementation Requirements" set 1 MB per pattern against `cache_size: 1000` (`spec/daemon_eye_spec_sql_to_ipc_detection_architecture.md:172`). That product is roughly 1 GB, against a stated resident budget of under 100 MB.
 
-Two independent reviewers did the arithmetic: 256 entries against a 1 MiB per-pattern limit permits roughly 320 MiB, more than triple the budget the requirement invoked. Fixing the arithmetic surfaced the deeper problem — the aggregate ceiling could not have been enforced at any numbers, because nothing can measure what it was counting.
+Planning T5 wrote its own numbers before that section was found, as a per-pattern compile limit plus a cache entry count plus a 16 MiB aggregate ceiling, with prose claiming they were "sized against the 100 MB resident budget." Two reviewers did the arithmetic and found the stated factors permitted several times the budget the requirement invoked.
+
+Correcting the arithmetic surfaced the deeper problem, and it is the same problem the spec has: an aggregate ceiling could not be enforced at any numbers, because nothing can measure what it counts.
 
 ## Guidance
 
@@ -60,7 +63,7 @@ Unenforceable, as originally written:
 
 > Compiled patterns are cached keyed by the full pattern string. The cache is bounded by total compiled size with a 16 MiB ceiling, and by a 256-pattern count, whichever binds first.
 
-Nothing can evaluate "total compiled size," and the two stated numbers permit 320 MiB between them.
+Nothing can evaluate "total compiled size," and the count and per-pattern limit permit many times 16 MiB between them. §4.2 has the same defect at different numbers.
 
 Enforceable, as it now reads:
 
