@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::models::alert::AlertSeverity;
 
 use crate::config::DetectionConfig;
-use crate::detection::rejection::SqlRejection;
+use crate::detection::rejection::{RegexRejection, SqlRejection};
 use crate::detection::sql_validation::validate_detection_sql;
 
 /// Strongly-typed rule identifier.
@@ -544,6 +544,8 @@ impl DetectionRule {
 pub enum RuleError {
     #[error("SQL rejected at rule load: {0}")]
     SqlRejected(#[from] SqlRejection),
+    #[error("regex pattern rejected at rule load: {0}")]
+    RegexRejected(#[from] RegexRejection),
     #[error("Missing required field: {0}")]
     MissingField(&'static str),
     #[error("Rule validation failed: {0}")]

@@ -4,6 +4,7 @@
 //! against process data with comprehensive security validation to prevent SQL injection.
 
 pub mod allowlist;
+pub mod regex_cache;
 pub mod rejection;
 pub mod sql_to_ipc;
 pub mod sql_validation;
@@ -14,7 +15,8 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 pub use allowlist::{ALLOWED_SQL_FUNCTIONS, is_allowed_sql_function};
-pub use rejection::{SqlPosition, SqlRejection};
+pub use regex_cache::{RegexCache, RegexCacheStats, compile_rule_patterns};
+pub use rejection::{RegexConstruct, RegexRejection, SqlPosition, SqlRejection};
 pub use sql_to_ipc::{
     CollectionRequirements, FilesystemRequirements, NetworkRequirements, PerformanceRequirements,
     ProcessRequirements, SqlToIpcTranslator,

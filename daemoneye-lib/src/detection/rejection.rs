@@ -101,3 +101,73 @@ pub enum SqlRejection {
     #[error("SELECT statement must have a FROM clause")]
     MissingFrom,
 }
+
+/// A regex construct the `regex` crate cannot compile.
+///
+/// The crate is a linear-time engine, so backreferences and lookaround are not slow — they are
+/// absent. Naming the construct turns an opaque parser diagnostic into something an operator can
+/// act on, and gives the rejection ledger a value to record rather than a sentence to re-parse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RegexConstruct {
+    /// A backreference, spelled `\1` or `\k<name>`.
+    Backreference,
+    /// Positive or negative lookahead, spelled `(?=...)` or `(?!...)`.
+    Lookahead,
+    /// Positive or negative lookbehind, spelled `(?<=...)` or `(?<!...)`.
+    Lookbehind,
+}
+
+impl fmt::Display for RegexConstruct {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match *self {
+            Self::Backreference => "a backreference",
+            Self::Lookahead => "lookahead",
+            Self::Lookbehind => "lookbehind",
+        };
+        formatter.write_str(name)
+    }
+}
+
+/// A single reason a rule's `REGEXP` pattern failed the rule-load compilation gate.
+///
+/// This is a sibling of [`SqlRejection`] rather than more variants on it. `SqlRejection` is what
+/// `validate_detection_sql` returns, and that function walks an AST: every one of its variants
+/// carries an [`SqlPosition`], which a pattern failure has no honest value for. A regex rejection
+/// identifies itself by the pattern text instead, so folding the two together would force each
+/// type to carry fields the other never populates.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum RegexRejection {
+    /// The compiled program exceeded `regex::RegexBuilder::size_limit`.
+    ///
+    /// This is the only bound that can fail a build. `dfa_size_limit` bounds a runtime cache that
+    /// resets rather than failing, so it never reaches this type.
+    #[error("pattern `{pattern}` compiles to more than the {size_limit_bytes}-byte limit")]
+    CompiledTooBig {
+        /// The pattern exactly as the rule spelled it.
+        pattern: String,
+        /// The ceiling it exceeded, `detection_bounds::REGEX_SIZE_LIMIT_BYTES`.
+        size_limit_bytes: usize,
+    },
+
+    /// The pattern used a construct the engine has no implementation for.
+    #[error(
+        "pattern `{pattern}` uses {construct}, which the detection regex engine cannot compile"
+    )]
+    UnsupportedConstruct {
+        /// The pattern exactly as the rule spelled it.
+        pattern: String,
+        /// Which construct was found.
+        construct: RegexConstruct,
+    },
+
+    /// The pattern did not parse for any other reason.
+    #[error("pattern `{pattern}` is not valid: {message}")]
+    InvalidSyntax {
+        /// The pattern exactly as the rule spelled it.
+        pattern: String,
+        /// The `regex` crate's own diagnostic, verbatim.
+        message: String,
+    },
+}

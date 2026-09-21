@@ -26,7 +26,7 @@ default = ["process-collection", "detection-engine", "alerting", "ipc", "fuzzy-h
 
 # Component features
 process-collection = []
-detection-engine = ["sqlparser"]
+detection-engine = ["sqlparser", "dep:lru", "dep:regex"]
 alerting = []
 kernel-monitoring = []
 network-correlation = []
@@ -101,6 +101,12 @@ fuzzyhash = { workspace = true, optional = true }
 
 # Shared bounded hash-result cache (inline path + triggered path share one instance)
 quick_cache = { workspace = true }
+
+# Bounded LRU cache for compiled detection regexes
+lru = { workspace = true, optional = true }
+
+# Regex compilation for REGEXP detection patterns
+regex = { workspace = true, optional = true }
 
 # SQL parsing and validation
 sqlparser = { workspace = true, optional = true }
