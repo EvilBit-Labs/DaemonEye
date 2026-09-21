@@ -49,3 +49,21 @@ The recovery path when the event store's `schema_version` tag does not match the
 ### Drop gate
 
 The checks a schema-version rebuild must pass before it destroys the live store. Three distinct properties, each rejecting on its own: the archive bundle is authentic (signature), it holds every partition its manifest claims (completeness), and it is the archive this run just wrote rather than an older one (this-run identity). Any failure aborts before the drop, leaving the old store intact.
+
+## Detection rules
+
+### Schema catalog
+
+The agent's registry of what collectors can actually serve: per collector, the tables it contributes to the shared namespace, each table's columns and types, and the pushdown operations it claims per column. Populated by authenticated registration at collector startup and static thereafter — a collector changes its descriptor by re-registering, not by pushing an update.
+
+### Pushdown plan
+
+The two halves a detection rule lowers into at load time. The pushed half is the typed predicate conjunction and projection sent to the owning collector as a Detection task; the residual half is everything the collector was not verified to handle, which the agent evaluates itself. Both halves are recorded, so "not pushed" is always distinguishable from "nothing to push."
+
+### Conformance vector
+
+The per-operation check that a collector's evaluation of a pushdown operation matches the agent's own. An operation the collector advertises but has no passing vector for is treated as unadvertised, and its predicates stay in the residual. The gate is a capability boolean, never a cost estimate.
+
+### Unhealthy rule
+
+An enabled rule that no longer validates against the current schema catalog — typically because a collector re-registered with a descriptor that dropped a table or column the rule references. The rule is marked and surfaced to the operator through daemoneye-cli rather than being silently dropped or left to match nothing.
