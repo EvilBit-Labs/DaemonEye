@@ -126,6 +126,9 @@ prost-build = { workspace = true }
 [dev-dependencies]
 assert_cmd = { workspace = true }
 criterion = { workspace = true }
+# `test` enables figment::Jail, the only way to exercise environment-variable overrides without
+# std::env::set_var, which is unsafe under Rust 2024 and forbidden workspace-wide.
+figment = { workspace = true, features = ["test"] }
 insta = { workspace = true }
 predicates = { workspace = true }
 proptest = { workspace = true }

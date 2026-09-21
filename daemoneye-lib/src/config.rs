@@ -52,6 +52,9 @@ pub struct Config {
     pub logging: LoggingConfig,
     /// `EventBus` broker configuration
     pub broker: BrokerConfig,
+    /// Detection rule-load configuration
+    #[serde(default)]
+    pub detection: DetectionConfig,
 }
 
 /// Application-specific configuration.
@@ -91,6 +94,63 @@ pub struct AlertingConfig {
     pub max_alerts_per_minute: Option<u32>,
     /// Threshold in seconds for considering an alert as recent
     pub recent_threshold_seconds: u64,
+}
+
+/// Detection rule-load configuration.
+///
+/// Only the two values the Product Contract declares tunable live here. Every other detection
+/// bound is a fixed constant in [`crate::detection_bounds`], because each of those backs a
+/// guarantee that would not survive being made configurable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DetectionConfig {
+    /// Maximum subquery nesting depth accepted in a detection rule.
+    ///
+    /// A rule nesting subqueries more deeply than this is rejected at load. Valid range is
+    /// [`DetectionConfig::MAX_SUBQUERY_DEPTH_MIN`] to
+    /// [`DetectionConfig::MAX_SUBQUERY_DEPTH_MAX`]; zero is rejected because it would reject
+    /// every rule containing a subquery at all.
+    pub max_subquery_depth: u32,
+    /// Per-pattern latency threshold in milliseconds.
+    ///
+    /// A `REGEXP` pattern observed to exceed this disables the rule that owns it and marks that
+    /// rule unhealthy. Valid range is
+    /// [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN`] to
+    /// [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX`]. Milliseconds are stored as an
+    /// integer so that [`Config`] can keep deriving [`Eq`].
+    pub pattern_latency_threshold_ms: u64,
+}
+
+impl DetectionConfig {
+    /// Smallest accepted subquery nesting depth. Zero would reject every subquery.
+    pub const MAX_SUBQUERY_DEPTH_MIN: u32 = 1;
+    /// Largest accepted subquery nesting depth, comfortably under
+    /// [`crate::detection_bounds::SQL_PARSER_RECURSION_LIMIT`].
+    pub const MAX_SUBQUERY_DEPTH_MAX: u32 = 16;
+    /// Smallest accepted per-pattern latency threshold. Below 1ms the threshold is finer than the
+    /// measurement it would be compared against.
+    pub const PATTERN_LATENCY_THRESHOLD_MS_MIN: u64 = 1;
+    /// Largest accepted per-pattern latency threshold. One minute is already far past the point
+    /// where a pattern should have disabled its rule.
+    pub const PATTERN_LATENCY_THRESHOLD_MS_MAX: u64 = 60_000;
+}
+
+impl Default for DetectionConfig {
+    /// Defaults are the values the requirements state: depth 3 and a 10ms latency threshold.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use daemoneye_lib::config::DetectionConfig;
+    /// let cfg = DetectionConfig::default();
+    /// assert_eq!(cfg.max_subquery_depth, 3);
+    /// assert_eq!(cfg.pattern_latency_threshold_ms, 10);
+    /// ```
+    fn default() -> Self {
+        Self {
+            max_subquery_depth: 3,
+            pattern_latency_threshold_ms: 10,
+        }
+    }
 }
 
 /// Individual alert sink configuration.
@@ -660,7 +720,20 @@ impl ConfigLoader {
     }
 
     /// Validate the final configuration.
+    ///
+    /// Delegates to [`Config::validate`], which is the public seam callers outside this module
+    /// (including integration tests) use.
     fn validate_config(config: &Config) -> Result<(), ConfigError> {
+        config.validate()
+    }
+}
+
+impl Config {
+    /// Validate numeric ranges, path safety, and OS socket-path limits.
+    ///
+    /// Applied automatically by [`ConfigLoader::load`] after the TOML and environment layers have
+    /// been merged, so a value out of range is rejected from either source rather than clamped.
+    pub fn validate(&self) -> Result<(), ConfigError> {
         // --- Numeric range validation ---
 
         const SCAN_INTERVAL_MIN: u64 = 100;
@@ -669,6 +742,12 @@ impl ConfigLoader {
         const BATCH_SIZE_MAX: usize = 10_000;
         const RETENTION_DAYS_MIN: u32 = 1;
         const RETENTION_DAYS_MAX: u32 = 3_650;
+        const DEPTH_MIN: u32 = DetectionConfig::MAX_SUBQUERY_DEPTH_MIN;
+        const DEPTH_MAX: u32 = DetectionConfig::MAX_SUBQUERY_DEPTH_MAX;
+        const LATENCY_MIN: u64 = DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN;
+        const LATENCY_MAX: u64 = DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX;
+
+        let config = self;
 
         if config.app.scan_interval_ms < SCAN_INTERVAL_MIN
             || config.app.scan_interval_ms > SCAN_INTERVAL_MAX
@@ -701,20 +780,44 @@ impl ConfigLoader {
             });
         }
 
+        // --- Detection bounds validation ---
+
+        if config.detection.max_subquery_depth < DEPTH_MIN
+            || config.detection.max_subquery_depth > DEPTH_MAX
+        {
+            return Err(ConfigError::ValidationError {
+                message: format!(
+                    "detection.max_subquery_depth must be between {DEPTH_MIN} and {DEPTH_MAX}, got {}",
+                    config.detection.max_subquery_depth
+                ),
+            });
+        }
+
+        if config.detection.pattern_latency_threshold_ms < LATENCY_MIN
+            || config.detection.pattern_latency_threshold_ms > LATENCY_MAX
+        {
+            return Err(ConfigError::ValidationError {
+                message: format!(
+                    "detection.pattern_latency_threshold_ms must be between {LATENCY_MIN} and {LATENCY_MAX}, got {}",
+                    config.detection.pattern_latency_threshold_ms
+                ),
+            });
+        }
+
         // --- Path traversal validation ---
 
-        Self::validate_path_no_traversal(&config.database.path, "database.path")?;
-        Self::validate_path_no_traversal(
+        ConfigLoader::validate_path_no_traversal(&config.database.path, "database.path")?;
+        ConfigLoader::validate_path_no_traversal(
             &config.broker.config_directory,
             "broker.config_directory",
         )?;
 
         if let Some(ref log_file) = config.logging.file {
-            Self::validate_path_no_traversal(log_file, "logging.file")?;
+            ConfigLoader::validate_path_no_traversal(log_file, "logging.file")?;
         }
 
         for (collector_type, binary_path) in &config.broker.collector_binaries {
-            Self::validate_path_no_traversal(
+            ConfigLoader::validate_path_no_traversal(
                 binary_path,
                 &format!("broker.collector_binaries[{collector_type}]"),
             )?;
@@ -722,11 +825,13 @@ impl ConfigLoader {
 
         // --- Socket path validation ---
 
-        Self::validate_socket_path(&config.broker.socket_path)?;
+        ConfigLoader::validate_socket_path(&config.broker.socket_path)?;
 
         Ok(())
     }
+}
 
+impl ConfigLoader {
     /// Validate that a path does not contain `..` components (directory traversal).
     fn validate_path_no_traversal(path: &std::path::Path, field: &str) -> Result<(), ConfigError> {
         use std::path::Component;
@@ -826,6 +931,41 @@ mod tests {
     }
 
     // --- Numeric range validation tests ---
+
+    #[test]
+    fn test_validate_detection_subquery_depth_zero() {
+        let mut config = Config::default();
+        config.detection.max_subquery_depth = 0;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("detection.max_subquery_depth"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_detection_latency_threshold_above_maximum() {
+        let mut config = Config::default();
+        config.detection.pattern_latency_threshold_ms =
+            DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX + 1;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("detection.pattern_latency_threshold_ms"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_detection_defaults_are_in_range() {
+        let config = Config::default();
+        assert_eq!(config.detection.max_subquery_depth, 3);
+        assert_eq!(config.detection.pattern_latency_threshold_ms, 10);
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+    }
 
     #[test]
     fn test_validate_scan_interval_below_minimum() {
