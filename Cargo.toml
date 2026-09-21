@@ -58,7 +58,7 @@ bytes = "1.12.1"
 
 # Capability-based filesystem access (TOCTOU-safe opens)
 cap-fs-ext = "=4.0.2"
-cap-std = "=4.0.2"
+cap-std = "=4.0.3"
 
 # Date/time and utilities
 chrono = { version = "0.4.45", features = ["serde"] }
