@@ -8,8 +8,10 @@ use crate::hash_pass::populate_hashes;
 use crate::process_collector::{
     FallbackProcessCollector, ProcessCollectionConfig, ProcessCollector, SysinfoProcessCollector,
 };
+use crate::pushdown_eval::{DEFAULT_COLLECTOR_ID, PushdownError, PushdownEvaluator};
 use async_trait::async_trait;
-use collector_core::{CollectionEvent, EventSource, SourceCaps};
+use collector_core::{CollectionEvent, EventSource, PushdownRejection, SourceCaps};
+use daemoneye_lib::proto::DetectionTask;
 use daemoneye_lib::{integrity::MultiAlgorithmHasher, storage, telemetry::PerformanceTimer};
 use std::sync::{
     Arc,
@@ -107,6 +109,8 @@ pub struct ProcessEventSource {
     /// The engine is shared via `Arc` with the actor-mode holder so that
     /// combined concurrent operations always respect a single policy.
     hasher: Option<Arc<MultiAlgorithmHasher>>,
+    /// Acceptance and typed evaluation of pushed detection plans (R20, R21).
+    pushdown: PushdownEvaluator,
 }
 
 /// Runtime statistics for process event source monitoring.
@@ -231,6 +235,7 @@ impl ProcessEventSource {
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
             hasher: None,
+            pushdown: PushdownEvaluator::new(DEFAULT_COLLECTOR_ID),
         }
     }
 
@@ -279,6 +284,7 @@ impl ProcessEventSource {
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
             hasher: None,
+            pushdown: PushdownEvaluator::new(DEFAULT_COLLECTOR_ID),
         }
     }
 
@@ -351,6 +357,7 @@ impl ProcessEventSource {
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
             hasher: None,
+            pushdown: PushdownEvaluator::new(DEFAULT_COLLECTOR_ID),
         }
     }
 
@@ -900,10 +907,55 @@ impl ProcessEventSource {
     }
 }
 
+/// Wire name of the operation the plan pushed over `column`, for a refusal message.
+fn offending_op(task: &DetectionTask, column: &str) -> String {
+    task.pushdown_plan
+        .as_ref()
+        .and_then(|plan| {
+            plan.predicates
+                .iter()
+                .find(|predicate| predicate.column == column)
+        })
+        .map_or_else(
+            || "PREDICATE_OP_UNSPECIFIED".to_owned(),
+            |predicate| predicate.op().as_str_name().to_owned(),
+        )
+}
+
 #[async_trait]
 impl EventSource for ProcessEventSource {
     fn name(&self) -> &'static str {
         "process-monitor"
+    }
+
+    /// Accepts a pushed detection plan, or refuses it with the reason.
+    ///
+    /// `PushdownRejection` carries no variant for a mistyped literal or an uncompilable pattern,
+    /// so those three refusals collapse onto `UnsupportedOperation` — the right category, coarser
+    /// words — and the precise reason is logged. A variant for them belongs in `collector-core`.
+    fn accept_pushdown_task(
+        &self,
+        task: &DetectionTask,
+        now: std::time::SystemTime,
+    ) -> Result<(), PushdownRejection> {
+        match self.pushdown.accept(task, now) {
+            Ok(()) => Ok(()),
+            Err(PushdownError::Identity(rejection)) => Err(rejection),
+            Err(typed) => {
+                let reason = typed.to_string();
+                let column = typed.column().unwrap_or_default().to_owned();
+                warn!(
+                    task_id = %task.task_id,
+                    column = %column,
+                    reason = %reason,
+                    "refusing pushed detection plan"
+                );
+                Err(PushdownRejection::UnsupportedOperation {
+                    op: offending_op(task, &column),
+                    column,
+                })
+            }
+        }
     }
 
     fn capabilities(&self) -> SourceCaps {
@@ -1227,6 +1279,67 @@ mod tests {
             storage::DatabaseManager::new(&db_path)
                 .expect("Failed to create database manager for test"),
         ))
+    }
+
+    /// A single-predicate plan over `processes`, with `literal` compared to `pid`.
+    fn pid_task(task_id: &str, literal: daemoneye_lib::proto::literal::Value) -> DetectionTask {
+        DetectionTask {
+            task_id: task_id.to_owned(),
+            pushdown_plan: Some(daemoneye_lib::proto::PushdownPlan {
+                table: "processes".to_owned(),
+                predicates: vec![daemoneye_lib::proto::Predicate {
+                    column: "pid".to_owned(),
+                    op: i32::from(daemoneye_lib::proto::PredicateOp::Eq),
+                    values: vec![daemoneye_lib::proto::Literal {
+                        value: Some(literal),
+                    }],
+                }],
+                projection: vec!["pid".to_owned()],
+                ttl_ms: 60_000,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_a_pushed_plan_over_the_schema_it_advertises() {
+        // Arrange
+        let source = ProcessEventSource::new(create_test_database());
+        let task = pid_task(
+            "well-typed",
+            daemoneye_lib::proto::literal::Value::UintValue(1),
+        );
+
+        // Act
+        let accepted = source.accept_pushdown_task(&task, std::time::SystemTime::now());
+
+        // Assert
+        assert!(
+            accepted.is_ok(),
+            "well-typed plan was refused: {accepted:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refuses_a_pushed_plan_whose_literal_does_not_match_the_column_type() {
+        // Arrange: `pid` is declared UINT, so a string literal is a static defect of the plan.
+        let source = ProcessEventSource::new(create_test_database());
+        let task = pid_task(
+            "mistyped",
+            daemoneye_lib::proto::literal::Value::StringValue("1".to_owned()),
+        );
+
+        // Act
+        let refused = source.accept_pushdown_task(&task, std::time::SystemTime::now());
+
+        // Assert
+        assert!(
+            matches!(
+                refused,
+                Err(PushdownRejection::UnsupportedOperation { ref column, .. }) if column == "pid"
+            ),
+            "expected a refusal naming `pid`, got {refused:?}"
+        );
     }
 
     #[tokio::test]

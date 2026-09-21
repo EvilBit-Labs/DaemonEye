@@ -7,6 +7,7 @@ pub(crate) mod hash_pass;
 pub mod lifecycle;
 pub mod monitor_collector;
 pub mod process_collector;
+pub mod pushdown_eval;
 pub mod registration;
 pub mod rpc_service;
 pub mod security;
