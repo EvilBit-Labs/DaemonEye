@@ -1,0 +1,433 @@
+//! Per-spawn collector authentication tokens (R9).
+//!
+//! The agent mints a fresh 32-byte random token every time it spawns a collector, writes it to a
+//! file only the account that created it can read, and passes the collector the **path**. The
+//! value never appears in an argument vector, an environment variable, or a log line, because both
+//! of those are visible in a process listing. The path is not secret; the file's permissions are
+//! what protect the value.
+//!
+//! A token is valid for exactly one process lifetime. Issuing again for the same identity — which
+//! is what a respawn does — replaces the stored value, so a token captured from a previous spawn
+//! authenticates nothing once the agent restarts that collector. [`SpawnTokenStore::revoke`] does
+//! the same when the agent reaps one.
+//!
+//! Verification lives in `daemoneye-lib` (`detection::catalog::verify_spawn_token`), not here:
+//! this crate and that one are siblings, and `daemoneye-agent` is the composition point that
+//! fetches the expected value from this store and hands it to the verifier.
+//!
+//! # Platform note (R9's owner-only property)
+//!
+//! On Unix the file is created with `create_new` and mode `0o400` in a single `open(2)`, so there
+//! is no create-then-`chmod` window and no pre-existing file or symlink is followed.
+//!
+//! On Windows the file is created with the same `create_new` exclusivity and marked read-only, but
+//! **the explicit owner-only DACL R9 names is not applied**: every Win32 security API that could
+//! set one (`SetNamedSecurityInfoW`, `SetEntriesInAclW`) is an `unsafe fn` in the `windows` crate,
+//! and this workspace sets `unsafe_code = "forbid"`. The file therefore inherits the DACL of the
+//! token directory, which [`SpawnTokenStore::new`] creates rather than adopting. Closing this gap
+//! needs either a vetted safe wrapper crate or an approved `unsafe` block.
+
+use std::collections::HashMap;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use thiserror::Error;
+
+/// Command-line flag the agent uses to hand a collector its token file path.
+pub const SPAWN_TOKEN_ARG: &str = "--spawn-token-file";
+
+/// Raw token length in bytes before hex encoding (R9).
+const SPAWN_TOKEN_BYTES: usize = 32;
+
+/// Token length in ASCII characters after hex encoding.
+const SPAWN_TOKEN_HEX_LEN: usize = SPAWN_TOKEN_BYTES * 2;
+
+/// Filename suffix for a collector's token file.
+const TOKEN_FILE_SUFFIX: &str = ".spawn-token";
+
+/// Subdirectory the store creates under the socket directory to hold token files.
+///
+/// The store creates and owns this rather than writing straight into the socket directory: a
+/// directory it created is a directory whose mode it knows, which is what makes the check in
+/// [`check_private_dir`] meaningful instead of a formality over someone else's bits.
+const TOKEN_DIR_NAME: &str = "spawn-tokens";
+
+/// Why a token could not be issued or read.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum SpawnTokenError {
+    /// The collector identity would not produce a safe filename inside the token directory.
+    #[error("collector id `{0}` is not usable as a token filename")]
+    InvalidCollectorId(String),
+    /// The token directory is reachable by accounts other than the one that owns it.
+    #[error("token directory {path} is group- or world-accessible (mode {mode:#o})")]
+    InsecureDirectory {
+        /// The offending directory.
+        path: PathBuf,
+        /// Its permission bits.
+        mode: u32,
+    },
+    /// The token file did not hold a well-formed token.
+    #[error("token file {0} does not contain a 64-character hex token")]
+    Malformed(PathBuf),
+    /// Filesystem failure.
+    #[error("spawn token I/O failed: {0}")]
+    Io(#[from] io::Error),
+}
+
+/// A token that has just been issued for one spawn.
+///
+/// Carries the path, never the value: everything a caller needs to launch the collector, and
+/// nothing it needs to authenticate as one.
+#[derive(Debug, Clone)]
+pub struct IssuedToken {
+    path: PathBuf,
+}
+
+impl IssuedToken {
+    /// Path to the file holding the token.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The two arguments to append to the collector's command line.
+    #[must_use]
+    pub fn command_args(&self) -> Vec<String> {
+        vec![SPAWN_TOKEN_ARG.to_owned(), self.path.display().to_string()]
+    }
+}
+
+/// The tokens currently valid, one per live collector spawn.
+#[derive(Debug)]
+pub struct SpawnTokenStore {
+    directory: PathBuf,
+    /// Synchronous lock, never held across an `.await`.
+    tokens: Mutex<HashMap<String, String>>,
+}
+
+impl SpawnTokenStore {
+    /// Open a store under `socket_directory`, in an owner-only `spawn-tokens` subdirectory.
+    ///
+    /// An existing token directory is checked rather than corrected: one that other accounts can
+    /// already reach may already have been tampered with, so this refuses instead of tightening the
+    /// bits and carrying on. That is the directory-ownership half of the spawn-token question —
+    /// the store owns its directory, it does not adopt a shared one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpawnTokenError::InsecureDirectory`] when an existing token directory is group- or
+    /// world-accessible, or [`SpawnTokenError::Io`] when it cannot be created or inspected.
+    pub fn new(socket_directory: impl AsRef<Path>) -> Result<Self, SpawnTokenError> {
+        let directory = socket_directory.as_ref().join(TOKEN_DIR_NAME);
+        create_private_dir(&directory)?;
+        check_private_dir(&directory)?;
+        Ok(Self {
+            directory,
+            tokens: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// The directory this store writes token files into.
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    /// Mint a fresh token for `collector_id`, replacing any token issued for a previous spawn.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpawnTokenError::InvalidCollectorId`] for an identity that would not stay inside
+    /// the token directory, or [`SpawnTokenError::Io`] on a filesystem failure.
+    pub fn issue(&self, collector_id: &str) -> Result<IssuedToken, SpawnTokenError> {
+        let path = self.token_path(collector_id)?;
+        let token = random_token();
+
+        // A previous spawn's file is removed first so the create below can stay exclusive.
+        remove_token_file(&path)?;
+        write_owner_only(&path, &token)?;
+
+        let mut tokens = self
+            .tokens
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _previous = tokens.insert(collector_id.to_owned(), token);
+        drop(tokens);
+
+        Ok(IssuedToken { path })
+    }
+
+    /// The token currently valid for `collector_id`, or `None` if none was ever issued.
+    ///
+    /// This is the value `daemoneye-lib`'s constant-time verifier compares against.
+    #[must_use]
+    pub fn expected_token(&self, collector_id: &str) -> Option<String> {
+        let tokens = self
+            .tokens
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        tokens.get(collector_id).cloned()
+    }
+
+    /// Invalidate a collector's token and delete its file, as the agent reaps it.
+    pub fn revoke(&self, collector_id: &str) {
+        let mut tokens = self
+            .tokens
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _removed = tokens.remove(collector_id);
+        drop(tokens);
+
+        if let Ok(path) = self.token_path(collector_id)
+            && let Err(error) = remove_token_file(&path)
+        {
+            tracing::warn!(error = %error, "Failed to remove spawn token file");
+        }
+    }
+
+    /// Path for `collector_id`'s token file, refusing an identity that would escape the directory.
+    fn token_path(&self, collector_id: &str) -> Result<PathBuf, SpawnTokenError> {
+        let usable = !collector_id.is_empty()
+            && collector_id.len() <= 64
+            && collector_id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            });
+        if !usable {
+            return Err(SpawnTokenError::InvalidCollectorId(collector_id.to_owned()));
+        }
+        Ok(self
+            .directory
+            .join(format!("{collector_id}{TOKEN_FILE_SUFFIX}")))
+    }
+}
+
+/// Read a token a collector was handed by path.
+///
+/// Collectors call this; it validates shape at the boundary so a truncated or padded file is a
+/// named error rather than a registration that mysteriously fails to authenticate.
+///
+/// # Errors
+///
+/// Returns [`SpawnTokenError::Malformed`] when the file does not hold 64 lowercase hex characters,
+/// or [`SpawnTokenError::Io`] when it cannot be read.
+pub fn read_token_file(path: &Path) -> Result<String, SpawnTokenError> {
+    let raw = fs::read_to_string(path)?;
+    let token = raw.trim().to_owned();
+    let well_formed = token.len() == SPAWN_TOKEN_HEX_LEN
+        && token
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase());
+    if well_formed {
+        return Ok(token);
+    }
+    Err(SpawnTokenError::Malformed(path.to_owned()))
+}
+
+/// 32 random bytes as lowercase hex.
+///
+/// `rand::random` draws from the thread RNG, a ChaCha-family CSPRNG seeded from the operating
+/// system's entropy source and periodically reseeded from it. The hex encoding is written by hand
+/// rather than pulled in from a crate: two nibble lookups are smaller than a dependency.
+fn random_token() -> String {
+    /// Lowercase hex alphabet.
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let bytes: [u8; SPAWN_TOKEN_BYTES] = rand::random();
+    let mut hex = String::with_capacity(SPAWN_TOKEN_HEX_LEN);
+    for byte in bytes {
+        let high = HEX.get(usize::from(byte >> 4_u32)).copied().unwrap_or(b'0');
+        let low = HEX
+            .get(usize::from(byte & 0x0f_u8))
+            .copied()
+            .unwrap_or(b'0');
+        hex.push(char::from(high));
+        hex.push(char::from(low));
+    }
+    hex
+}
+
+/// Delete a token file if it exists.
+///
+/// On Unix the file's own mode is left alone: unlinking is governed by the directory's
+/// permissions, and `set_readonly(false)` would grant write to group and other as well, briefly
+/// widening a `0o400` token file before it is removed. Windows refuses to delete a read-only file,
+/// so there the attribute has to come off first.
+fn remove_token_file(path: &Path) -> Result<(), SpawnTokenError> {
+    #[cfg(not(unix))]
+    {
+        if let Ok(metadata) = fs::metadata(path) {
+            let mut permissions = metadata.permissions();
+            if permissions.readonly() {
+                #[allow(clippy::permissions_set_readonly_false)]
+                permissions.set_readonly(false);
+                fs::set_permissions(path, permissions)?;
+            }
+        }
+    }
+
+    match fs::remove_file(path) {
+        Err(ref error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(()) => Ok(()),
+    }
+}
+
+/// Create `directory` owner-only if it is absent.
+#[cfg(unix)]
+fn create_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    if directory.exists() {
+        return Ok(());
+    }
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(directory)?;
+    Ok(())
+}
+
+/// Create `directory` if it is absent. See the module note on the Windows DACL gap.
+#[cfg(not(unix))]
+fn create_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
+    if directory.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(directory)?;
+    Ok(())
+}
+
+/// Refuse a token directory other accounts can reach.
+#[cfg(unix)]
+fn check_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let mode = fs::metadata(directory)?.permissions().mode() & 0o777;
+    // Owner-only means the low six bits — group and other — are all clear.
+    if mode.trailing_zeros() >= 6 {
+        return Ok(());
+    }
+    Err(SpawnTokenError::InsecureDirectory {
+        path: directory.to_owned(),
+        mode,
+    })
+}
+
+/// No portable, `unsafe`-free equivalent exists on Windows; see the module note.
+#[cfg(not(unix))]
+fn check_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
+    let _metadata = fs::metadata(directory)?;
+    Ok(())
+}
+
+/// Create the token file and write the value in one exclusive `open`, with no `chmod` window.
+#[cfg(unix)]
+fn write_owner_only(path: &Path, token: &str) -> Result<(), SpawnTokenError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o400)
+        .open(path)?;
+    file.write_all(token.as_bytes())?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// Create the token file exclusively and mark it read-only. See the module note on the DACL gap.
+#[cfg(not(unix))]
+fn write_owner_only(path: &Path, token: &str) -> Result<(), SpawnTokenError> {
+    use std::io::Write as _;
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(token.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+/// Find the token file path in an argument vector and read the token it holds.
+///
+/// Collectors call this at startup with their own `argv`. It returns `None` when the agent did not
+/// hand this process a token — an unmanaged or manually launched collector — and logs, rather than
+/// fails, when the path is present but unreadable: the registration will then be refused by the
+/// agent's gate, which is where that decision belongs.
+#[must_use]
+pub fn spawn_token_from_args<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut iterator = args.into_iter();
+    while let Some(raw) = iterator.next() {
+        let argument = raw.as_ref();
+        // Both `--spawn-token-file <path>` and `--spawn-token-file=<path>` are accepted; the
+        // second form is split with `split_once` rather than sliced, per the `string_slice` ban.
+        let candidate = if argument == SPAWN_TOKEN_ARG {
+            iterator.next().map(|next| next.as_ref().to_owned())
+        } else {
+            argument
+                .split_once('=')
+                .filter(|entry| entry.0 == SPAWN_TOKEN_ARG)
+                .map(|entry| entry.1.to_owned())
+        };
+        let Some(token_path) = candidate else {
+            continue;
+        };
+        return match read_token_file(Path::new(&token_path)) {
+            Ok(token) => Some(token),
+            Err(error) => {
+                tracing::warn!(error = %error, "Failed to read the spawn token file");
+                None
+            }
+        };
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn both_argument_forms_resolve_to_the_same_token() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let store = SpawnTokenStore::new(dir.path()).unwrap();
+        let issued = store.issue("procmond").unwrap();
+        let path = issued.path().display().to_string();
+        let expected = store.expected_token("procmond").unwrap();
+
+        // Act
+        let separate = spawn_token_from_args(["procmond", SPAWN_TOKEN_ARG, &path]);
+        let joined = spawn_token_from_args(["procmond", &format!("{SPAWN_TOKEN_ARG}={path}")]);
+
+        // Assert
+        assert_eq!(separate.as_deref(), Some(expected.as_str()));
+        assert_eq!(joined.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn an_argument_vector_without_the_flag_yields_no_token() {
+        assert!(spawn_token_from_args(["procmond", "--verbose"]).is_none());
+    }
+
+    #[test]
+    fn an_unreadable_path_yields_no_token_rather_than_a_panic() {
+        assert!(spawn_token_from_args([SPAWN_TOKEN_ARG, "/nonexistent/token"]).is_none());
+    }
+}

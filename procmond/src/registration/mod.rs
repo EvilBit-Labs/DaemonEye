@@ -356,7 +356,10 @@ impl RegistrationManager {
                 u64::try_from(self.config.heartbeat_interval.as_millis()).unwrap_or(u64::MAX),
             ),
             descriptor: None,
-            spawn_token: None,
+            // The value the agent wrote to the file it named on our command line (R9).
+            spawn_token: daemoneye_eventbus::process_manager::spawn_token::spawn_token_from_args(
+                std::env::args(),
+            ),
         }
     }
 

@@ -3,13 +3,14 @@
 //! The registry stores metadata for registered collectors, enforces uniqueness,
 //! and tracks the most recent heartbeat timestamp for liveness monitoring.
 
+use crate::collector_admission::{AdmissionError, CollectorAdmission, gate_for_admission};
 use daemoneye_eventbus::rpc::{DeregistrationRequest, RegistrationRequest, RegistrationResponse};
 use daemoneye_lib::rejection_log::{
     RegistrationGate, RejectionLog, RejectionReason, RejectionRecord,
 };
 use std::{
     collections::HashMap,
-    sync::{Mutex, PoisonError},
+    sync::{Arc, Mutex, PoisonError},
     time::{Duration, SystemTime},
 };
 use thiserror::Error;
@@ -26,6 +27,9 @@ pub struct CollectorRegistry {
     /// Agent-side chain of refused registrations (R8). Kept behind a synchronous lock that is
     /// never held across an `.await`; the `audit_ledger` table is procmond's to write.
     rejections: Mutex<RejectionLog>,
+    /// Spawn-token and schema-catalog gate (R8, R10). `None` only in configurations that predate
+    /// authenticated registration, such as the existing heartbeat tests.
+    admission: Option<Arc<CollectorAdmission>>,
 }
 
 impl CollectorRegistry {
@@ -35,6 +39,15 @@ impl CollectorRegistry {
             records: RwLock::new(HashMap::new()),
             default_heartbeat,
             rejections: Mutex::new(RejectionLog::new()),
+            admission: None,
+        }
+    }
+
+    /// Create a registry that admits only collectors presenting their issued spawn token (R8).
+    pub fn with_admission(admission: Arc<CollectorAdmission>) -> Self {
+        Self {
+            admission: Some(admission),
+            ..Self::new(DEFAULT_HEARTBEAT_INTERVAL)
         }
     }
 
@@ -82,10 +95,19 @@ impl CollectorRegistry {
     ) -> Result<RegistrationResponse, RegistryError> {
         validate_registration(&request)?;
 
+        // The registry lock is held across authentication on purpose. Admission mutates the schema
+        // catalog and re-plans rules, and a registration this function goes on to refuse must not
+        // leave either of them changed — so every reason to refuse is evaluated first, and no
+        // concurrent registration can slip between the duplicate check and the admission.
+        #[allow(clippy::significant_drop_tightening)]
         let mut records = self.records.write().await;
         let collector_id = request.collector_id.clone();
         if records.contains_key(&collector_id) {
             return Err(RegistryError::AlreadyRegistered(collector_id));
+        }
+
+        if let Some(ref admission) = self.admission {
+            admission.admit(&request).await?;
         }
 
         let now = SystemTime::now();
@@ -345,6 +367,24 @@ pub enum RegistryError {
     /// Registration request failed validation.
     #[error("registration validation failed: {0}")]
     Validation(String),
+    /// The registration did not authenticate, or its descriptor was refused.
+    #[error("{message}")]
+    NotAdmitted {
+        /// The admission error's own diagnostic, verbatim. Never the presented token.
+        message: String,
+        /// Which gate refused it, carried so the rejection record names the specific gate instead
+        /// of collapsing every admission failure into a generic validation failure.
+        gate: RegistrationGate,
+    },
+}
+
+impl From<AdmissionError> for RegistryError {
+    fn from(error: AdmissionError) -> Self {
+        Self::NotAdmitted {
+            message: error.to_string(),
+            gate: gate_for_admission(&error),
+        }
+    }
 }
 
 /// Map a registration failure onto the gate that refused it.
@@ -353,6 +393,7 @@ const fn gate_for(error: &RegistryError) -> RegistrationGate {
         RegistryError::AlreadyRegistered(_) => RegistrationGate::AlreadyRegistered,
         // `NotFound` means "absent from the registry map", not U6's "no token was issued", so
         // it deliberately does not claim `UnknownCollector`.
+        RegistryError::NotAdmitted { gate, .. } => gate,
         RegistryError::Validation(_) | RegistryError::NotFound(_) => {
             RegistrationGate::MalformedRequest
         }

@@ -26,7 +26,7 @@ default = ["process-collection", "detection-engine", "alerting", "ipc", "fuzzy-h
 
 # Component features
 process-collection = []
-detection-engine = ["sqlparser", "dep:lru", "dep:regex"]
+detection-engine = ["sqlparser", "dep:lru", "dep:regex", "dep:subtle"]
 alerting = []
 kernel-monitoring = []
 network-correlation = []
@@ -110,6 +110,9 @@ regex = { workspace = true, optional = true }
 
 # SQL parsing and validation
 sqlparser = { workspace = true, optional = true }
+
+# Constant-time spawn-token comparison (R8)
+subtle = { workspace = true, optional = true }
 
 # System information
 sysinfo = { workspace = true }

@@ -69,10 +69,21 @@ impl BrokerManager {
         *self.broker.write().await = Some(Arc::clone(&broker_arc));
         *self.event_bus.lock().await = Some(event_bus);
 
-        // Initialize collector registry
-        *self.collector_registry.write().await = Some(Arc::new(
-            crate::collector_registry::CollectorRegistry::default(),
-        ));
+        // Initialize collector registry behind the spawn-token gate. The assertion checks the
+        // behavioural consequence — that the gate verifies against the very store the process
+        // manager mints into — not merely that a store was constructed.
+        let registry = match self.collector_admission {
+            Some(ref admission) => {
+                let minting = self.process_manager.spawn_token_store();
+                anyhow::ensure!(
+                    minting.is_some_and(|store| admission.shares_token_store_with(store)),
+                    "collector registration gate is not wired to the spawn-token store the process manager mints into"
+                );
+                crate::collector_registry::CollectorRegistry::with_admission(Arc::clone(admission))
+            }
+            None => crate::collector_registry::CollectorRegistry::default(),
+        };
+        *self.collector_registry.write().await = Some(Arc::new(registry));
 
         // Update health status to healthy
         *self.health_status.write().await = BrokerHealth::Healthy;

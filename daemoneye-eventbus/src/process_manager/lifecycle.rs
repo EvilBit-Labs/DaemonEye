@@ -116,7 +116,20 @@ impl CollectorProcessManager {
             binary_path.display()
         );
 
-        let mut child = Self::spawn_process_with_retries(&binary_path, &config)
+        // Mint a fresh token for this spawn and hand the collector its *path* (R9). The argument
+        // goes onto a spawn-time clone: `config` is what a later restart replays, and an argument
+        // appended to it would accumulate across restarts and point at a stale token.
+        let mut spawn_config = config.clone();
+        if let Some(ref tokens) = self.spawn_tokens {
+            let issued = tokens.issue(collector_id).map_err(|error| {
+                ProcessManagerError::SpawnFailed(format!(
+                    "Failed to issue spawn token for {collector_id}: {error}"
+                ))
+            })?;
+            spawn_config.args.extend(issued.command_args());
+        }
+
+        let mut child = Self::spawn_process_with_retries(&binary_path, &spawn_config)
             .await
             .map_err(|e| {
                 ProcessManagerError::SpawnFailed(format!(
@@ -205,6 +218,27 @@ impl CollectorProcessManager {
         Ok(pid)
     }
 
+    /// The token store this manager mints into, if it was given one.
+    ///
+    /// A composition root compares this against the store its registration gate verifies with:
+    /// two stores that merely look alike issue tokens that never verify against each other.
+    #[must_use]
+    pub const fn spawn_token_store(&self) -> Option<&Arc<super::spawn_token::SpawnTokenStore>> {
+        self.spawn_tokens.as_ref()
+    }
+
+    /// The configuration a collector was started with, as it will be replayed on restart.
+    ///
+    /// Notably this does **not** include the spawn-token argument: that is minted per spawn and
+    /// appended to a clone, so this is the right thing to assert against when checking that a
+    /// restart cannot inherit a predecessor's token.
+    pub async fn collector_config(&self, collector_id: &str) -> Option<CollectorConfig> {
+        let processes = self.processes.lock().await;
+        processes
+            .get(collector_id)
+            .map(|process| process.config.clone())
+    }
+
     /// Spawn a monitoring task for a collector process
     ///
     /// This task waits for the process to exit and handles auto-restart if configured.
@@ -219,6 +253,7 @@ impl CollectorProcessManager {
         let processes = Arc::clone(&self.processes);
         let process_manager_config = self.config.clone();
         let restart_tx = self.restart_tx.clone();
+        let spawn_tokens = self.spawn_tokens.clone();
 
         tokio::spawn(async move {
             loop {
@@ -301,6 +336,14 @@ impl CollectorProcessManager {
                     }
                 };
                 // Lock dropped here
+
+                // The process this token was issued for is gone. Revoke before any restart is
+                // requested, so a token captured from the dead process authenticates nothing even
+                // if the respawn is delayed or never happens (R9).
+                let still_running = processes.lock().await.contains_key(&collector_id);
+                if !still_running && let Some(ref tokens) = spawn_tokens {
+                    tokens.revoke(&collector_id);
+                }
 
                 // Send restart request if needed, then exit monitor
                 if let Some(req) = restart_request {

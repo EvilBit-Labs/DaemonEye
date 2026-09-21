@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 mod broker_manager;
+mod collector_admission;
 mod collector_config;
 mod collector_registry;
 mod health;

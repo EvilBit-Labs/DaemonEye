@@ -71,6 +71,7 @@
 
 mod control;
 mod lifecycle;
+pub mod spawn_token;
 mod termination;
 mod types;
 
@@ -103,6 +104,12 @@ pub struct CollectorProcessManager {
     pub(super) restart_tx: mpsc::UnboundedSender<RestartRequest>,
     /// Optional broker for heartbeat publishing
     pub(super) broker: Option<Arc<DaemoneyeBroker>>,
+    /// Optional per-spawn authentication token store (R9).
+    ///
+    /// Held here, at the single point every spawn passes through, rather than by whoever builds a
+    /// [`CollectorConfig`]: a restart reuses the stored config, so a caller that injected the token
+    /// argument itself would hand a respawned collector the token of its predecessor.
+    pub(super) spawn_tokens: Option<Arc<spawn_token::SpawnTokenStore>>,
 }
 
 /// Internal restart request used by the monitor task
@@ -142,6 +149,18 @@ impl CollectorProcessManager {
         config: ProcessManagerConfig,
         broker: Option<Arc<DaemoneyeBroker>>,
     ) -> Arc<Self> {
+        Self::with_spawn_tokens(config, broker, None)
+    }
+
+    /// Create a process manager that mints a fresh spawn token for every collector it starts.
+    ///
+    /// The agent passes the same [`SpawnTokenStore`](spawn_token::SpawnTokenStore) it gives its
+    /// collector registry; tokens minted by one store do not verify against another instance.
+    pub fn with_spawn_tokens(
+        config: ProcessManagerConfig,
+        broker: Option<Arc<DaemoneyeBroker>>,
+        spawn_tokens: Option<Arc<spawn_token::SpawnTokenStore>>,
+    ) -> Arc<Self> {
         let (shutdown_tx, _) = broadcast::channel(16);
         let (restart_tx, mut restart_rx) = mpsc::unbounded_channel();
 
@@ -151,6 +170,7 @@ impl CollectorProcessManager {
             shutdown_tx,
             restart_tx,
             broker,
+            spawn_tokens,
         });
 
         // Spawn restart handler task

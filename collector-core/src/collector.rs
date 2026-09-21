@@ -460,7 +460,11 @@ impl Collector {
             attributes: registration.attributes.clone(),
             heartbeat_interval_ms: Some(heartbeat_ms),
             descriptor: None,
-            spawn_token: None,
+            // The value the agent wrote to the file it named on our command line (R9). The path
+            // travelled in argv; the value never does.
+            spawn_token: daemoneye_eventbus::process_manager::spawn_token::spawn_token_from_args(
+                env::args(),
+            ),
         };
 
         let timeout = registration.timeout;

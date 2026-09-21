@@ -64,6 +64,12 @@ pub struct BrokerManager {
     config_manager: Arc<ConfigManager>,
     /// Registry tracking registered collectors
     collector_registry: Arc<RwLock<Option<Arc<CollectorRegistry>>>>,
+    /// Spawn-token and schema-catalog gate, sharing the process manager's token store (R8).
+    ///
+    /// `None` only when the token directory could not be created, and in that case the process
+    /// manager is left without a store too, so the two can never disagree about whether
+    /// registration is authenticated.
+    collector_admission: Option<Arc<crate::collector_admission::CollectorAdmission>>,
     /// RPC clients for collector lifecycle management
     rpc_clients: Arc<RwLock<std::collections::HashMap<String, Arc<CollectorRpcClient>>>>,
     /// Current agent state (loading state machine)
@@ -96,7 +102,16 @@ impl BrokerManager {
             heartbeat_timeout_multiplier: 3, // Default: 3 missed heartbeats = timeout
         };
 
-        let process_manager = CollectorProcessManager::new(pm_config);
+        // One store, shared by the side that mints tokens and the side that verifies them. Built
+        // here rather than at either use site so there is exactly one of it; `start` asserts the
+        // sharing held, because a mis-wired authorizer fails silently — every collector simply
+        // stops registering — which is the defect class described in
+        // `docs/solutions/security-issues/binary-hashing-authorization-and-toctou-fixes.md`.
+        let spawn_tokens = spawn_token_store(&config.socket_path);
+        let process_manager =
+            CollectorProcessManager::with_spawn_tokens(pm_config, None, spawn_tokens.clone());
+        let collector_admission = spawn_tokens
+            .map(|store| Arc::new(crate::collector_admission::CollectorAdmission::new(store)));
 
         // Initialize configuration manager with configured directory
         let config_manager = Arc::new(ConfigManager::new(config.config_directory.clone()));
@@ -110,10 +125,51 @@ impl BrokerManager {
             process_manager,
             config_manager,
             collector_registry: Arc::new(RwLock::new(None)),
+            collector_admission,
             rpc_clients: Arc::new(RwLock::new(std::collections::HashMap::new())),
             agent_state: Arc::new(RwLock::new(AgentState::Loading)),
             collectors_config: Arc::new(RwLock::new(CollectorsConfig::default())),
             readiness_tracker: Arc::new(RwLock::new(CollectorReadinessTracker::empty())),
+        }
+    }
+}
+
+impl BrokerManager {
+    /// The spawn-token store this manager mints into and verifies against (R9).
+    ///
+    /// `None` when the token directory could not be opened, in which case registration is not
+    /// authenticated at all.
+    // Read path used by integration tests and by future operator tooling.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn spawn_token_store(
+        &self,
+    ) -> Option<&Arc<daemoneye_eventbus::process_manager::spawn_token::SpawnTokenStore>> {
+        self.process_manager.spawn_token_store()
+    }
+}
+
+/// Open the spawn-token store beside the broker socket.
+///
+/// A failure here is logged and yields `None`: the agent still starts, but with **no** collector
+/// authenticated rather than with collectors authenticated against a store only one half of the
+/// system can see.
+fn spawn_token_store(
+    socket_path: &str,
+) -> Option<Arc<daemoneye_eventbus::process_manager::spawn_token::SpawnTokenStore>> {
+    use daemoneye_eventbus::process_manager::spawn_token::SpawnTokenStore;
+
+    let directory = std::path::Path::new(socket_path)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    match SpawnTokenStore::new(directory) {
+        Ok(store) => Some(Arc::new(store)),
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                "Failed to open the spawn-token store; collector registration will not authenticate"
+            );
+            None
         }
     }
 }

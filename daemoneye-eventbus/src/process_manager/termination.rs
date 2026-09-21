@@ -51,6 +51,12 @@ impl CollectorProcessManager {
                 .get_mut(collector_id)
                 .ok_or_else(|| ProcessManagerError::ProcessNotFound(collector_id.to_owned()))?;
 
+            // The spawn token dies with the decision to stop, not with the last removal site:
+            // there are five of those below and a future edit would only have to miss one.
+            if let Some(ref tokens) = self.spawn_tokens {
+                tokens.revoke(collector_id);
+            }
+
             // If child is None, process already stopped or being stopped
             if proc.child.is_none() {
                 info!(

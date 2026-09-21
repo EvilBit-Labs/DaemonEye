@@ -4,8 +4,10 @@
 //! against process data with comprehensive security validation to prevent SQL injection.
 
 pub mod allowlist;
+pub mod catalog;
 pub mod regex_cache;
 pub mod rejection;
+pub mod rule_health;
 pub mod sql_to_ipc;
 pub mod sql_validation;
 

@@ -64,8 +64,21 @@ fn create_test_collectors_config(collector_ids: &[&str]) -> CollectorsConfig {
     CollectorsConfig { collectors }
 }
 
-/// Create a registration request for testing
-fn create_registration_request(collector_id: &str) -> RegistrationRequest {
+/// Create a registration request for testing.
+///
+/// Registration now authenticates against the spawn token the agent issues when it starts a
+/// collector (R8), so a test that registers a collector the manager never spawned has to mint one
+/// the same way a real spawn would.
+fn create_registration_request(manager: &BrokerManager, collector_id: &str) -> RegistrationRequest {
+    let spawn_token = manager.spawn_token_store().map(|store| {
+        let _issued = store
+            .issue(collector_id)
+            .expect("issuing a spawn token must succeed");
+        store
+            .expected_token(collector_id)
+            .expect("a just-issued token must be readable back")
+    });
+
     RegistrationRequest {
         collector_id: collector_id.to_string(),
         collector_type: "process".to_string(),
@@ -76,7 +89,7 @@ fn create_registration_request(collector_id: &str) -> RegistrationRequest {
         attributes: HashMap::new(),
         heartbeat_interval_ms: Some(30000),
         descriptor: None,
-        spawn_token: None,
+        spawn_token,
     }
 }
 
@@ -128,7 +141,7 @@ async fn test_registration_marks_collector_ready() -> anyhow::Result<()> {
     manager.set_collectors_config(config).await;
 
     // Simulate collector registration
-    let request = create_registration_request("collector-a");
+    let request = create_registration_request(&manager, "collector-a");
     let response = manager.register_collector(request).await?;
     assert!(response.accepted, "Registration should be accepted");
 
@@ -156,7 +169,7 @@ async fn test_multiple_collectors_registration_and_ready() -> anyhow::Result<()>
 
     // Register collectors one by one
     for id in &["collector-a", "collector-b"] {
-        let request = create_registration_request(id);
+        let request = create_registration_request(&manager, id);
         let _ = manager.register_collector(request).await?;
     }
 
@@ -164,7 +177,7 @@ async fn test_multiple_collectors_registration_and_ready() -> anyhow::Result<()>
     assert!(manager.transition_to_ready().await.is_err());
 
     // Register the last collector
-    let request = create_registration_request("collector-c");
+    let request = create_registration_request(&manager, "collector-c");
     let _ = manager.register_collector(request).await?;
 
     // Now transition should succeed
@@ -236,7 +249,7 @@ async fn test_wait_for_collectors_ready_success_before_timeout() -> anyhow::Resu
     // Spawn a task to register collector after a short delay
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(50)).await;
-        let request = create_registration_request("quick-collector");
+        let request = create_registration_request(&manager_clone, "quick-collector");
         let _ = manager_clone.register_collector(request).await;
     });
 
@@ -275,7 +288,7 @@ async fn test_full_loading_state_lifecycle() -> anyhow::Result<()> {
     manager.set_collectors_config(config).await;
 
     // 3. Register collector
-    let request = create_registration_request("procmond");
+    let request = create_registration_request(&manager, "procmond");
     let _ = manager.register_collector(request).await?;
 
     // 4. Transition to Ready
@@ -341,7 +354,7 @@ async fn test_disabled_collectors_not_expected() -> anyhow::Result<()> {
     manager.set_collectors_config(config).await;
 
     // Only register the enabled collector
-    let request = create_registration_request("enabled-collector");
+    let request = create_registration_request(&manager, "enabled-collector");
     let _ = manager.register_collector(request).await?;
 
     // Should be able to transition to Ready (disabled collector not expected)

@@ -27,7 +27,11 @@ impl BrokerManager {
         match error {
             RegistryError::AlreadyRegistered(id) => RegistrationError::AlreadyRegistered(id),
             RegistryError::NotFound(id) => RegistrationError::NotFound(id),
-            RegistryError::Validation(msg) => RegistrationError::Validation(msg),
+            RegistryError::Validation(msg)
+            | RegistryError::NotAdmitted {
+                message: msg,
+                gate: _,
+            } => RegistrationError::Validation(msg),
         }
     }
 
