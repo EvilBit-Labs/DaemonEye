@@ -106,6 +106,10 @@ pub fn process_schema_descriptor(collector_id: &str) -> SchemaDescriptor {
                 column("collection_time", ColumnType::Int, false, &SCALAR_OPS),
             ],
         }],
+        // Populated by [`super::conformance::descriptor_with_conformance`] on the registration
+        // path. Empty here on purpose: this same value is what pushed tasks are validated
+        // against, and validation has no business reading a self-test result.
+        conformance_results: Vec::new(),
     }
 }
 

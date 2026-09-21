@@ -116,6 +116,14 @@ pub const MAX_COLUMNS_PER_TABLE: usize = 128;
 /// above any legitimate descriptor and well below a count worth allocating for blindly.
 pub const MAX_OPERATIONS_PER_COLUMN: usize = 16;
 
+/// Maximum number of conformance-vector results one registration may carry (R22).
+///
+/// One result per advertised operation is the shape R22 asks for, so the ceiling is exactly what
+/// a maximally-sized descriptor could advertise. A collector sending more is malformed, and the
+/// bound is checked before any of them is stored.
+pub const MAX_CONFORMANCE_RESULTS: usize =
+    MAX_TABLES_PER_DESCRIPTOR * MAX_COLUMNS_PER_TABLE * MAX_OPERATIONS_PER_COLUMN;
+
 /// Maximum byte length of a table, column, or operation identifier in a descriptor.
 ///
 /// Identifiers come from a fixed catalog whose longest entry is far shorter; 128 bytes rejects

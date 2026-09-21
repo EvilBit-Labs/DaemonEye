@@ -18,10 +18,12 @@ use std::fmt;
 use subtle::ConstantTimeEq;
 
 use crate::detection_bounds::{
-    MAX_COLUMNS_PER_TABLE, MAX_IDENTIFIER_LENGTH, MAX_OPERATIONS_PER_COLUMN,
-    MAX_TABLES_PER_DESCRIPTOR,
+    MAX_COLUMNS_PER_TABLE, MAX_CONFORMANCE_RESULTS, MAX_IDENTIFIER_LENGTH,
+    MAX_OPERATIONS_PER_COLUMN, MAX_TABLES_PER_DESCRIPTOR,
 };
-use crate::proto::{ColumnDescriptor, PredicateOp, SchemaDescriptor, TableDescriptor};
+use crate::proto::{
+    ColumnDescriptor, ConformanceResult, PredicateOp, SchemaDescriptor, TableDescriptor,
+};
 
 /// Length in ASCII characters of an issued spawn token: 32 random bytes, lowercase hex (R9).
 pub const SPAWN_TOKEN_HEX_LEN: usize = 64;
@@ -146,6 +148,11 @@ pub enum CatalogError {
         /// Its byte length.
         length: usize,
     },
+    /// The registration carried more conformance results than [`MAX_CONFORMANCE_RESULTS`].
+    TooManyConformanceResults {
+        /// Number of results it carried.
+        count: usize,
+    },
     /// Two tables in one descriptor, or two columns in one table, share a name.
     DuplicateIdentifier {
         /// The repeated identifier.
@@ -185,6 +192,10 @@ impl fmt::Display for CatalogError {
             } => write!(
                 formatter,
                 "identifier `{identifier}` is {length} bytes, over the limit of {MAX_IDENTIFIER_LENGTH}"
+            ),
+            Self::TooManyConformanceResults { count } => write!(
+                formatter,
+                "registration carries {count} conformance results, over the limit of {MAX_CONFORMANCE_RESULTS}"
             ),
             Self::DuplicateIdentifier { ref identifier } => {
                 write!(formatter, "identifier `{identifier}` is declared twice")
@@ -325,7 +336,21 @@ impl SchemaCatalog {
         }
         validate_descriptor(&descriptor)?;
 
-        let change = self.diff(collector_id, &descriptor);
+        // Lifted off the descriptor before it is moved into the map below. R22 puts the results on
+        // the same authenticated exchange as the descriptor precisely so they cannot be separated.
+        let mut stored = descriptor;
+        let results = std::mem::take(&mut stored.conformance_results);
+        let change = self.diff(collector_id, &stored);
+        // Read while the previous descriptor is still in the map. `change` only compares column
+        // *names*, so a descriptor that retyped a column, flipped its nullability or altered its
+        // advertised operations while keeping every name produces an empty change — and the
+        // semantics a pass was produced against would have moved underneath it. The version is
+        // the collector's own statement that they did; `schema.rs` documents bumping it for
+        // exactly those edits.
+        let version_changed = self
+            .descriptors
+            .get(collector_id)
+            .is_none_or(|previous| previous.descriptor_version != stored.descriptor_version);
 
         for table in self
             .descriptors
@@ -336,21 +361,49 @@ impl SchemaCatalog {
         {
             self.owners.remove(&table.name);
         }
-        for table in &descriptor.tables {
+        for table in &stored.tables {
             let _previous = self
                 .owners
                 .insert(table.name.clone(), collector_id.to_owned());
         }
-        let _previous = self.descriptors.insert(collector_id.to_owned(), descriptor);
+        let _previous = self.descriptors.insert(collector_id.to_owned(), stored);
         // A conformance result is bound to the `descriptor_version` it was produced against, so a
-        // descriptor that changed at all invalidates every result this collector had. Evicting only
-        // results for tables it dropped would let an operation whose *semantics* changed carry a
-        // stale pass forward, and `is_pushable` would answer for a proof that no longer exists.
-        if !change.is_empty() {
+        // descriptor that changed at all — by version or by shape — invalidates every result this
+        // collector had. Evicting only results for tables it dropped would let an operation whose
+        // *semantics* changed carry a stale pass forward, and `is_pushable` would answer for a
+        // proof that no longer exists.
+        if version_changed || !change.is_empty() {
             self.conformance.retain(|entry| entry.0 != collector_id);
         }
+        // *After* the eviction, so a result riding on this descriptor is never wiped by the very
+        // registration that stored it. Re-recording an entry the eviction left alone is a no-op:
+        // the set is keyed, not counted.
+        self.record_carried_results(collector_id, &results);
 
         Ok(change)
+    }
+
+    /// Record the passes a registration carried, ignoring anything its descriptor does not
+    /// advertise (R15, R22).
+    ///
+    /// A `passed = false` result records nothing: R15 treats an operation with no passing result
+    /// exactly as it treats an unadvertised one. A result naming a `table.column.op` outside the
+    /// descriptor just stored is dropped rather than refused — it grants nothing either way,
+    /// because [`Self::is_pushable`] also demands the advertisement.
+    fn record_carried_results(&mut self, collector_id: &str, results: &[ConformanceResult]) {
+        for result in results {
+            if !result.passed {
+                continue;
+            }
+            let op = result.op();
+            if !self.is_advertised(&result.table, &result.column, op) {
+                continue;
+            }
+            if self.owners.get(&result.table).map(String::as_str) != Some(collector_id) {
+                continue;
+            }
+            self.record_conformance_pass(collector_id, &result.table, &result.column, op);
+        }
     }
 
     /// Look up a table by the name a rule addresses it with.
@@ -508,6 +561,12 @@ fn reference_set(descriptor: &SchemaDescriptor) -> BTreeSet<(String, String)> {
 fn validate_descriptor(descriptor: &SchemaDescriptor) -> Result<(), CatalogError> {
     check_identifier(&descriptor.collector_id)?;
     check_identifier(&descriptor.descriptor_version)?;
+
+    if descriptor.conformance_results.len() > MAX_CONFORMANCE_RESULTS {
+        return Err(CatalogError::TooManyConformanceResults {
+            count: descriptor.conformance_results.len(),
+        });
+    }
 
     if descriptor.tables.len() > MAX_TABLES_PER_DESCRIPTOR {
         return Err(CatalogError::TooManyTables {

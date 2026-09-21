@@ -40,6 +40,7 @@ fn descriptor(collector_id: &str, columns: Vec<ColumnDescriptor>) -> SchemaDescr
             name: "processes".to_owned(),
             columns,
         }],
+        conformance_results: Vec::new(),
     }
 }
 

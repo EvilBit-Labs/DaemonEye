@@ -2,7 +2,8 @@
 //!
 //! These types mirror the protobuf messages of the same names in
 //! `daemoneye-lib/proto/common.proto` (`SchemaDescriptor`, `TableDescriptor`,
-//! `ColumnDescriptor`, `PredicateOp`, `ColumnType`). Field names and semantics
+//! `ColumnDescriptor`, `ConformanceResult`, `PredicateOp`, `ColumnType`). Field
+//! names and semantics
 //! are identical on both sides; the mirror exists because the eventbus RPC
 //! surface is plain serde JSON and this crate does not depend on `prost`.
 //! Change one side and change the other.
@@ -96,11 +97,35 @@ pub struct TableDescriptor {
     pub columns: Vec<ColumnDescriptor>,
 }
 
+/// One conformance-vector result the collector produced for itself before
+/// registering (R22).
+///
+/// Mirrors `ConformanceResult` in `common.proto`. A `passed = false` result is
+/// carried rather than dropped so an operator can see which operation diverged;
+/// the agent records only passes, and R15 treats an operation with no passing
+/// result exactly as it treats an unadvertised one.
+///
+/// A pass proves the collector agrees with
+/// `daemoneye_lib::detection::conformance`'s reference evaluation — not with
+/// the eventual `DataFusion` executor, which T6 builds and which the reference
+/// must be re-verified against when it lands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceResult {
+    /// Table the verified column belongs to.
+    pub table: String,
+    /// Column the operation was verified on.
+    pub column: String,
+    /// The operation verified.
+    pub op: PredicateOp,
+    /// Whether every applicable corpus case agreed with the reference.
+    pub passed: bool,
+}
+
 /// Everything a collector advertises about the data it can serve.
 ///
 /// Mirrors `SchemaDescriptor` in `common.proto`. Conformance-vector results
-/// attach here in a later unit so a result is always bound to the collector and
-/// the `descriptor_version` it was produced against.
+/// ride here so a result is always bound to the collector and the
+/// `descriptor_version` it was produced against.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaDescriptor {
     /// Collector that owns these tables.
@@ -110,6 +135,11 @@ pub struct SchemaDescriptor {
     pub descriptor_version: String,
     /// Tables the collector can serve.
     pub tables: Vec<TableDescriptor>,
+    /// One result per advertised operation the collector self-tested. Defaults
+    /// to empty so a collector built before conformance vectors existed still
+    /// registers — it simply has nothing pushable.
+    #[serde(default)]
+    pub conformance_results: Vec<ConformanceResult>,
 }
 
 impl PredicateOp {

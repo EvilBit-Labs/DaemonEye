@@ -76,6 +76,7 @@ fn descriptor() -> SchemaDescriptor {
                 supported_ops: ops.iter().copied().map(i32::from).collect(),
             }],
         }],
+        conformance_results: Vec::new(),
     }
 }
 

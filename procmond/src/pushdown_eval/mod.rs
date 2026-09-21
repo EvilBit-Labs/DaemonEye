@@ -19,6 +19,7 @@
 //!   is dispatched, so `column != literal` over a NULL yields UNKNOWN like every other comparison.
 //!   A conjunction admits a row only when every predicate is `Some(true)`.
 
+pub mod conformance;
 mod predicate;
 pub mod schema;
 
@@ -35,6 +36,7 @@ use std::collections::BTreeMap;
 use std::time::SystemTime;
 use thiserror::Error;
 
+pub use conformance::descriptor_with_conformance;
 pub use schema::{DESCRIPTOR_VERSION, FieldValue, PROCESS_TABLE, process_schema_descriptor};
 
 /// The collector id procmond advertises unless its registration config names another.

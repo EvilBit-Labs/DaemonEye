@@ -153,6 +153,13 @@ pub struct ProcessSourceConfig {
     pub event_batch_size: usize,
     /// Timeout for event batching
     pub batch_timeout: Duration,
+    /// Identity this source advertises in the schema descriptor it validates pushed tasks
+    /// against.
+    ///
+    /// It must be the same identity registration presents, or the agent would plan against one
+    /// descriptor while this source validated against another. The composition root sets it from
+    /// the registration config.
+    pub collector_id: String,
 }
 
 impl Default for ProcessSourceConfig {
@@ -168,6 +175,7 @@ impl Default for ProcessSourceConfig {
             max_backpressure_wait: Duration::from_secs(5),
             event_batch_size: 100,
             batch_timeout: Duration::from_millis(500),
+            collector_id: DEFAULT_COLLECTOR_ID.to_owned(),
         }
     }
 }
@@ -228,6 +236,10 @@ impl ProcessEventSource {
         // Create platform-specific collector with fallback to sysinfo
         let collector = Self::create_platform_collector(&config);
 
+        // Built from the same id registration presents, so the descriptor this source validates
+        // against and the one the agent plans against cannot drift apart.
+        let pushdown = PushdownEvaluator::new(&config.collector_id);
+
         Self {
             database,
             config,
@@ -235,7 +247,7 @@ impl ProcessEventSource {
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
             hasher: None,
-            pushdown: PushdownEvaluator::new(DEFAULT_COLLECTOR_ID),
+            pushdown,
         }
     }
 
@@ -277,6 +289,10 @@ impl ProcessEventSource {
         // Create platform-specific collector with fallback to sysinfo
         let collector = Self::create_platform_collector(&config);
 
+        // Built from the same id registration presents, so the descriptor this source validates
+        // against and the one the agent plans against cannot drift apart.
+        let pushdown = PushdownEvaluator::new(&config.collector_id);
+
         Self {
             database,
             config,
@@ -284,7 +300,7 @@ impl ProcessEventSource {
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
             hasher: None,
-            pushdown: PushdownEvaluator::new(DEFAULT_COLLECTOR_ID),
+            pushdown,
         }
     }
 
@@ -350,6 +366,10 @@ impl ProcessEventSource {
     ) -> Self {
         let backpressure_semaphore = Arc::new(Semaphore::new(config.max_events_in_flight));
 
+        // Built from the same id registration presents, so the descriptor this source validates
+        // against and the one the agent plans against cannot drift apart.
+        let pushdown = PushdownEvaluator::new(&config.collector_id);
+
         Self {
             database,
             config,
@@ -357,7 +377,7 @@ impl ProcessEventSource {
             stats: ProcessSourceStats::default(),
             backpressure_semaphore,
             hasher: None,
-            pushdown: PushdownEvaluator::new(DEFAULT_COLLECTOR_ID),
+            pushdown,
         }
     }
 
@@ -907,19 +927,33 @@ impl ProcessEventSource {
     }
 }
 
-/// Wire name of the operation the plan pushed over `column`, for a refusal message.
-fn offending_op(task: &DetectionTask, column: &str) -> String {
-    task.pushdown_plan
-        .as_ref()
-        .and_then(|plan| {
-            plan.predicates
-                .iter()
-                .find(|predicate| predicate.column == column)
-        })
-        .map_or_else(
-            || "PREDICATE_OP_UNSPECIFIED".to_owned(),
-            |predicate| predicate.op().as_str_name().to_owned(),
-        )
+/// The `collector-core` refusal that names a typed evaluation failure.
+///
+/// Exhaustive on purpose. `PushdownError` is `#[non_exhaustive]` only to other crates; here in its
+/// own crate a new variant must break this match rather than fall into a wildcard that would report
+/// a defect it cannot know.
+fn rejection_for(error: PushdownError) -> PushdownRejection {
+    match error {
+        PushdownError::Identity(rejection) => rejection,
+        PushdownError::LiteralTypeMismatch {
+            column,
+            column_type,
+            literal_kind,
+        } => PushdownRejection::LiteralTypeMismatch {
+            column,
+            column_type: column_type.to_owned(),
+            literal_kind: literal_kind.to_owned(),
+        },
+        PushdownError::NullLiteralOnNonNullable { column } => {
+            PushdownRejection::NullLiteralOnNonNullable { column }
+        }
+        PushdownError::PatternRejected { column, rejection } => {
+            PushdownRejection::PatternRejected { column, rejection }
+        }
+        // `accept` never returns this — it is `evaluate_task`'s refusal — but the mapping has to
+        // be total, and "the task id names nothing accepted" is what it would mean here.
+        PushdownError::TaskNotActive { .. } => PushdownRejection::MissingTaskId,
+    }
 }
 
 #[async_trait]
@@ -930,32 +964,25 @@ impl EventSource for ProcessEventSource {
 
     /// Accepts a pushed detection plan, or refuses it with the reason.
     ///
-    /// `PushdownRejection` carries no variant for a mistyped literal or an uncompilable pattern,
-    /// so those three refusals collapse onto `UnsupportedOperation` — the right category, coarser
-    /// words — and the precise reason is logged. A variant for them belongs in `collector-core`.
+    /// Every typed refusal maps onto the `PushdownRejection` variant that names it, so the trait
+    /// boundary carries the actual reason rather than a coarser stand-in.
     fn accept_pushdown_task(
         &self,
         task: &DetectionTask,
         now: std::time::SystemTime,
     ) -> Result<(), PushdownRejection> {
-        match self.pushdown.accept(task, now) {
-            Ok(()) => Ok(()),
-            Err(PushdownError::Identity(rejection)) => Err(rejection),
-            Err(typed) => {
-                let reason = typed.to_string();
-                let column = typed.column().unwrap_or_default().to_owned();
-                warn!(
-                    task_id = %task.task_id,
-                    column = %column,
-                    reason = %reason,
-                    "refusing pushed detection plan"
-                );
-                Err(PushdownRejection::UnsupportedOperation {
-                    op: offending_op(task, &column),
-                    column,
-                })
-            }
-        }
+        let Err(typed) = self.pushdown.accept(task, now) else {
+            return Ok(());
+        };
+        let reason = typed.to_string();
+        let column = typed.column().unwrap_or_default().to_owned();
+        warn!(
+            task_id = %task.task_id,
+            column = %column,
+            reason = %reason,
+            "refusing pushed detection plan"
+        );
+        Err(rejection_for(typed))
     }
 
     fn capabilities(&self) -> SourceCaps {
@@ -1302,6 +1329,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_advertised_descriptor_carries_the_configured_collector_id() {
+        // Arrange: registration presents `config.collector_id`, so the evaluator must too.
+        let config = ProcessSourceConfig {
+            collector_id: "procmond-alpha".to_owned(),
+            ..Default::default()
+        };
+
+        // Act
+        let source = ProcessEventSource::with_config(create_test_database(), config);
+
+        // Assert
+        assert_eq!(source.pushdown.descriptor().collector_id, "procmond-alpha");
+    }
+
+    #[tokio::test]
     async fn accepts_a_pushed_plan_over_the_schema_it_advertises() {
         // Arrange
         let source = ProcessEventSource::new(create_test_database());
@@ -1332,13 +1374,42 @@ mod tests {
         // Act
         let refused = source.accept_pushdown_task(&task, std::time::SystemTime::now());
 
+        // Assert: the boundary carries the actual reason, not a coarser stand-in.
+        assert!(
+            matches!(
+                refused,
+                Err(PushdownRejection::LiteralTypeMismatch { ref column, .. }) if column == "pid"
+            ),
+            "expected a mistyped-literal refusal naming `pid`, got {refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refuses_a_pushed_plan_whose_pattern_this_collector_cannot_compile() {
+        // Arrange: an unparseable pattern on a text column that advertises REGEXP.
+        let source = ProcessEventSource::new(create_test_database());
+        let mut task = pid_task(
+            "bad-pattern",
+            daemoneye_lib::proto::literal::Value::StringValue("(unclosed".to_owned()),
+        );
+        if let Some(ref mut plan) = task.pushdown_plan {
+            plan.projection = vec!["name".to_owned()];
+            for predicate in &mut plan.predicates {
+                predicate.column = "name".to_owned();
+                predicate.op = i32::from(daemoneye_lib::proto::PredicateOp::Regexp);
+            }
+        }
+
+        // Act
+        let refused = source.accept_pushdown_task(&task, std::time::SystemTime::now());
+
         // Assert
         assert!(
             matches!(
                 refused,
-                Err(PushdownRejection::UnsupportedOperation { ref column, .. }) if column == "pid"
+                Err(PushdownRejection::PatternRejected { ref column, .. }) if column == "name"
             ),
-            "expected a refusal naming `pid`, got {refused:?}"
+            "expected a pattern refusal naming `name`, got {refused:?}"
         );
     }
 
@@ -1731,6 +1802,7 @@ mod tests {
             max_backpressure_wait: Duration::from_millis(200),
             event_batch_size: 25,
             batch_timeout: Duration::from_millis(250),
+            collector_id: DEFAULT_COLLECTOR_ID.to_owned(),
         };
 
         let source = ProcessEventSource::with_config(db_manager, custom_config.clone());

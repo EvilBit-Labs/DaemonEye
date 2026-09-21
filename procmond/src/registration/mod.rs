@@ -58,7 +58,7 @@ pub use state::RegistrationState;
 
 use crate::event_bus_connector::EventBusConnector;
 use crate::monitor_collector::ActorHandle;
-use crate::pushdown_eval::process_schema_descriptor;
+use crate::pushdown_eval::descriptor_with_conformance;
 use daemoneye_eventbus::{
     DeregistrationRequest, HealthStatus, RegistrationRequest, RegistrationResponse,
 };
@@ -359,7 +359,7 @@ impl RegistrationManager {
             // The same value `PushdownEvaluator` validates pushed tasks against: a rule planned
             // against one descriptor and validated against another would be accepted for a
             // schema this collector never served.
-            descriptor: Some(process_schema_descriptor(&self.config.collector_id)),
+            descriptor: Some(descriptor_with_conformance(&self.config.collector_id)),
             // The value the agent wrote to the file it named on our command line (R9).
             spawn_token: daemoneye_eventbus::process_manager::spawn_token::spawn_token_from_args(
                 std::env::args(),

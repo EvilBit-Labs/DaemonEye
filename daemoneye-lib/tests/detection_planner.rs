@@ -45,6 +45,7 @@ fn descriptor(columns: Vec<ColumnDescriptor>) -> SchemaDescriptor {
             name: "processes".to_owned(),
             columns,
         }],
+        conformance_results: Vec::new(),
     }
 }
 

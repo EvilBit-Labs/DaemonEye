@@ -40,6 +40,7 @@ fn descriptor() -> SchemaDescriptor {
                 },
             ],
         }],
+        conformance_results: Vec::new(),
     }
 }
 

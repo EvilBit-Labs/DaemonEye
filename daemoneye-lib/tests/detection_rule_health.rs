@@ -32,6 +32,7 @@ fn descriptor(columns: &[&str]) -> SchemaDescriptor {
                 })
                 .collect(),
         }],
+        conformance_results: Vec::new(),
     }
 }
 

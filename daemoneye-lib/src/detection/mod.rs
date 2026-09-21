@@ -5,6 +5,7 @@
 
 pub mod allowlist;
 pub mod catalog;
+pub mod conformance;
 pub mod planner;
 pub mod regex_cache;
 pub mod rejection;
@@ -22,6 +23,10 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 pub use allowlist::{ALLOWED_SQL_FUNCTIONS, is_allowed_sql_function};
+pub use conformance::{
+    ConformanceAxis, ConformanceCase, ConformanceOutcome, cases_for, corpus, reference_outcome,
+    verify_operation,
+};
 pub use planner::{CompiledRule, PlanError, plan_rule};
 pub use regex_cache::{RegexCache, RegexCacheStats, compile_rule_patterns};
 pub use rejection::{RegexConstruct, RegexRejection, SqlPosition, SqlRejection};

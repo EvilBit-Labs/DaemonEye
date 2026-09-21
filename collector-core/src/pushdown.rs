@@ -18,6 +18,7 @@
 use daemoneye_eventbus::rpc::{
     ColumnDescriptor, PredicateOp as DescriptorOp, SchemaDescriptor, TableDescriptor,
 };
+use daemoneye_lib::detection::RegexRejection;
 use daemoneye_lib::detection_bounds::{MAX_IDENTIFIER_LENGTH, PUSHDOWN_TASK_TTL};
 use daemoneye_lib::proto::{DetectionTask, Predicate, PredicateOp, PushdownPlan};
 use parking_lot::Mutex;
@@ -95,6 +96,40 @@ pub enum PushdownRejection {
         op: String,
         /// Number of values the predicate carried.
         values: usize,
+    },
+
+    /// A literal's kind did not match the column's declared type.
+    ///
+    /// Distinct from [`Self::UnsupportedOperation`]: the operation is advertised and the column
+    /// exists, and only the literal is wrong. Collapsing the two told an operator to look at an
+    /// operation that was never the problem.
+    #[error(
+        "column `{column}` is declared {column_type} and cannot be compared to a {literal_kind} literal"
+    )]
+    LiteralTypeMismatch {
+        /// Column the offending predicate reads.
+        column: String,
+        /// Wire name of the column's declared type.
+        column_type: String,
+        /// Wire name of the literal's kind.
+        literal_kind: String,
+    },
+
+    /// A NULL literal was pushed against a column declared `NOT NULL`.
+    #[error("column `{column}` is declared NOT NULL, so a NULL literal can never match")]
+    NullLiteralOnNonNullable {
+        /// Column the offending predicate reads.
+        column: String,
+    },
+
+    /// A `LIKE` or `REGEXP` pattern exceeded the collector's own compile bounds, or did not
+    /// compile at all (R21).
+    #[error("pattern on column `{column}` cannot be compiled by this collector: {rejection}")]
+    PatternRejected {
+        /// Column the offending predicate reads.
+        column: String,
+        /// The bounded compiler's own reason.
+        rejection: RegexRejection,
     },
 
     /// The plan's TTL was zero or beyond the fixed ceiling.

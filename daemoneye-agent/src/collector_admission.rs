@@ -14,13 +14,16 @@ use std::sync::Arc;
 
 use daemoneye_eventbus::process_manager::spawn_token::SpawnTokenStore;
 use daemoneye_eventbus::rpc::{
-    ColumnDescriptor as WireColumn, RegistrationRequest, SchemaDescriptor as WireDescriptor,
+    ColumnDescriptor as WireColumn, ConformanceResult as WireConformanceResult,
+    RegistrationRequest, SchemaDescriptor as WireDescriptor,
 };
 use daemoneye_lib::detection::catalog::{
     CatalogError, SchemaCatalog, TokenRejection, VerifiedRegistration, verify_spawn_token,
 };
 use daemoneye_lib::detection::rule_health::{ReplanOutcome, RuleHealthRegistry};
-use daemoneye_lib::proto::{ColumnDescriptor, SchemaDescriptor, TableDescriptor};
+use daemoneye_lib::proto::{
+    ColumnDescriptor, ConformanceResult, SchemaDescriptor, TableDescriptor,
+};
 use daemoneye_lib::rejection_log::RegistrationGate;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -198,6 +201,25 @@ fn to_proto_descriptor(wire: &WireDescriptor) -> SchemaDescriptor {
                 columns: table.columns.iter().map(to_proto_column).collect(),
             })
             .collect(),
+        conformance_results: wire
+            .conformance_results
+            .iter()
+            .map(to_proto_conformance_result)
+            .collect(),
+    }
+}
+
+/// Convert one conformance-vector result across the mirror (R22).
+///
+/// The results cross with the descriptor rather than in a separate call, because the catalog binds
+/// a result to the `descriptor_version` it was produced against and drops every result a collector
+/// held whenever its descriptor changes.
+fn to_proto_conformance_result(wire: &WireConformanceResult) -> ConformanceResult {
+    ConformanceResult {
+        table: wire.table.clone(),
+        column: wire.column.clone(),
+        op: op_value(wire.op),
+        passed: wire.passed,
     }
 }
 
@@ -249,4 +271,65 @@ fn op_value(op: daemoneye_eventbus::rpc::PredicateOp) -> i32 {
         _unrecognized => Proto::Unspecified,
     };
     i32::from(mapped)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::to_proto_descriptor;
+    use daemoneye_eventbus::rpc::{
+        ColumnDescriptor as WireColumn, ColumnType as WireColumnType,
+        ConformanceResult as WireResult, PredicateOp as WireOp, SchemaDescriptor as WireDescriptor,
+        TableDescriptor as WireTable,
+    };
+    use daemoneye_lib::proto::PredicateOp;
+
+    /// The only hop between the collector that produces a conformance result and the catalog that
+    /// records it. A field dropped here is silent: every operation simply stops being pushable.
+    #[test]
+    fn conformance_results_cross_the_mirror_with_their_operation_and_verdict() {
+        // Arrange
+        let wire = WireDescriptor {
+            collector_id: "procmond".to_owned(),
+            descriptor_version: "processes-v1".to_owned(),
+            tables: vec![WireTable {
+                name: "processes".to_owned(),
+                columns: vec![WireColumn {
+                    name: "name".to_owned(),
+                    column_type: WireColumnType::String,
+                    nullable: false,
+                    supported_ops: vec![WireOp::Like],
+                }],
+            }],
+            conformance_results: vec![
+                WireResult {
+                    table: "processes".to_owned(),
+                    column: "name".to_owned(),
+                    op: WireOp::Like,
+                    passed: true,
+                },
+                WireResult {
+                    table: "processes".to_owned(),
+                    column: "name".to_owned(),
+                    op: WireOp::Regexp,
+                    passed: false,
+                },
+            ],
+        };
+
+        // Act
+        let proto = to_proto_descriptor(&wire);
+
+        // Assert
+        assert_eq!(proto.conformance_results.len(), 2);
+        let passed = proto.conformance_results.first().unwrap();
+        assert_eq!(passed.table, "processes");
+        assert_eq!(passed.column, "name");
+        assert_eq!(passed.op(), PredicateOp::Like);
+        assert!(passed.passed);
+        let failed = proto.conformance_results.last().unwrap();
+        assert_eq!(failed.op(), PredicateOp::Regexp);
+        assert!(!failed.passed, "a failure must cross as a failure");
+    }
 }
