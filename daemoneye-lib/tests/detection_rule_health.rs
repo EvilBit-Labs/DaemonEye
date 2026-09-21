@@ -113,11 +113,16 @@ fn a_rejected_descriptor_triggers_no_replanning() {
     rules.track("needs-name", [("processes", "name")]);
     let verified = verify_spawn_token("procmond", Some(&token()), Some(&token())).unwrap();
 
+    let before = rules.health("needs-name").cloned();
+
     let mut oversized = descriptor(&["name"]);
     oversized.tables[0].name = "t".repeat(200);
     assert!(catalog.register(&verified, oversized).is_err());
 
-    assert_eq!(rules.health("needs-name"), Some(&RuleHealth::Unknown));
+    // The claim is that nothing moved, so compare against what health actually was beforehand
+    // rather than against a named variant: pinning the literal state here made this test fail for
+    // an unrelated correction to what `track` records, which is not what it is guarding.
+    assert_eq!(rules.health("needs-name").cloned(), before);
     assert!(catalog.is_empty());
 }
 

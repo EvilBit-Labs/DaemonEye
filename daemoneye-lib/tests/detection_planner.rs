@@ -9,6 +9,7 @@
 
 use daemoneye_lib::detection::catalog::{SchemaCatalog, VerifiedRegistration, verify_spawn_token};
 use daemoneye_lib::detection::planner::{PlanError, plan_rule};
+use daemoneye_lib::detection::rule_health::RuleHealth;
 use daemoneye_lib::detection::{DetectionEngine, RegexCache};
 use daemoneye_lib::detection_bounds::PUSHDOWN_TASK_TTL;
 use daemoneye_lib::models::{AlertSeverity, DetectionRule};
@@ -443,6 +444,38 @@ fn a_deferred_rule_that_cannot_be_planned_is_rejected_on_the_drain_not_marked_un
         "first load, so rejected"
     );
     assert_eq!(engine.rejection_log().records().len(), 1);
+}
+
+/// A rule planned against a live catalog reports as healthy, not as unjudged.
+///
+/// Regression test. Health was reset to `Unknown` every time the planner tracked a rule's
+/// references, which happens *after* a registration re-plans it — so a rule that had just been
+/// validated against a real descriptor still read `Unknown`, and no rule was ever observably
+/// `Healthy` following a registration. Nothing caught it because each unit asserted only on
+/// `Unhealthy`, the state that does get set. T10 renders this field, and would have shown every
+/// rule as unjudged forever.
+#[test]
+fn a_rule_planned_against_a_live_catalog_reports_healthy() {
+    let mut engine = DetectionEngine::new();
+    engine
+        .load_rule(rule("SELECT cpu_usage FROM processes WHERE cpu_usage > 90"))
+        .unwrap();
+
+    // Deferred: R18 holds rule load until a collector has advertised something.
+    assert_eq!(engine.rule_health("rule-1"), None, "nothing judged it yet");
+
+    engine
+        .register_collector(
+            &verified("procmond"),
+            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+        )
+        .unwrap();
+
+    assert_eq!(
+        engine.rule_health("rule-1"),
+        Some(&RuleHealth::Healthy),
+        "the rule planned against a real descriptor, so it has been judged and passed"
+    );
 }
 
 // --- The property: pushed then residual loses no row ---------------------------------------

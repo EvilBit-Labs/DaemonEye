@@ -15,7 +15,11 @@ use daemoneye_eventbus::rpc::{
     ColumnDescriptor, ColumnType, PredicateOp, RegistrationRequest, SchemaDescriptor,
     TableDescriptor,
 };
+use daemoneye_lib::detection::DetectionEngine;
+use daemoneye_lib::detection::rule_health::RuleHealth;
+use daemoneye_lib::models::{AlertSeverity, DetectionRule};
 use daemoneye_lib::rejection_log::{RegistrationGate, RejectionReason};
+use tokio::sync::Mutex;
 
 fn descriptor(columns: &[&str]) -> SchemaDescriptor {
     SchemaDescriptor {
@@ -56,10 +60,71 @@ fn request(
     }
 }
 
-fn admission(dir: &tempfile::TempDir) -> (Arc<SpawnTokenStore>, Arc<CollectorAdmission>) {
+type Engine = Arc<Mutex<DetectionEngine>>;
+
+/// A gate over a fresh token store and the one engine it feeds.
+///
+/// The engine is handed back so assertions read the state the planner actually plans against,
+/// rather than a second copy inside the gate — which is the mis-wiring these tests exist to catch.
+fn admission(dir: &tempfile::TempDir) -> (Arc<SpawnTokenStore>, Engine, Arc<CollectorAdmission>) {
     let store = Arc::new(SpawnTokenStore::new(dir.path()).unwrap());
-    let admission = Arc::new(CollectorAdmission::new(Arc::clone(&store)));
-    (store, admission)
+    let engine = Arc::new(Mutex::new(DetectionEngine::new()));
+    let admission = Arc::new(CollectorAdmission::new(
+        Arc::clone(&store),
+        Arc::clone(&engine),
+    ));
+    (store, engine, admission)
+}
+
+/// Load a rule that reads exactly `column`, so its health tracks that one reference.
+async fn load_rule(engine: &Engine, rule_id: &str, column: &str) {
+    engine
+        .lock()
+        .await
+        .load_rule(DetectionRule::new(
+            rule_id.to_owned(),
+            rule_id.to_owned(),
+            format!("Reads processes.{column}"),
+            format!("SELECT {column} FROM processes WHERE {column} = 'evil'"),
+            "test".to_owned(),
+            AlertSeverity::Medium,
+        ))
+        .unwrap();
+}
+
+async fn catalog_is_empty(engine: &Engine) -> bool {
+    engine.lock().await.catalog().is_empty()
+}
+
+async fn has_column(engine: &Engine, table: &str, column: &str) -> bool {
+    engine
+        .lock()
+        .await
+        .catalog()
+        .column(table, column)
+        .is_some()
+}
+
+/// Whether `rule_id` is planned and still validates against the catalog.
+///
+/// Deliberately "not unhealthy" rather than `RuleHealth::Healthy`: re-planning a rule re-tracks
+/// its references, which resets health to `Unknown`, so a rule that just came through a re-plan
+/// never reads `Healthy`. What matters here is the pair — a plan exists and nothing invalidated
+/// it — which is exactly what the `ReplanOutcome::to_replan()` assertion used to stand for.
+async fn is_planned_and_not_unhealthy(engine: &Engine, rule_id: &str) -> bool {
+    let guard = engine.lock().await;
+    guard.compiled_rule(rule_id).is_some()
+        && !matches!(
+            guard.rule_health(rule_id),
+            Some(&RuleHealth::Unhealthy { .. })
+        )
+}
+
+async fn is_unhealthy(engine: &Engine, rule_id: &str) -> bool {
+    matches!(
+        engine.lock().await.rule_health(rule_id),
+        Some(&RuleHealth::Unhealthy { .. })
+    )
 }
 
 fn gates(registry: &CollectorRegistry) -> Vec<RegistrationGate> {
@@ -80,7 +145,7 @@ fn gates(registry: &CollectorRegistry) -> Vec<RegistrationGate> {
 async fn a_registration_with_no_token_is_refused_by_the_no_token_gate_and_enters_no_catalog() {
     // Arrange
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
+    let (store, engine, admission) = admission(&dir);
     let _issued = store.issue("procmond").unwrap();
     let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
 
@@ -96,13 +161,13 @@ async fn a_registration_with_no_token_is_refused_by_the_no_token_gate_and_enters
         "{error}"
     );
     assert_eq!(gates(&registry), [RegistrationGate::NoTokenPresented]);
-    assert!(admission.catalog_is_empty().await);
+    assert!(catalog_is_empty(&engine).await);
 }
 
 #[tokio::test]
 async fn a_token_issued_to_another_collector_is_refused_by_the_mismatch_gate() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
+    let (store, engine, admission) = admission(&dir);
     let _procmond = store.issue("procmond").unwrap();
     let _netmond = store.issue("netmond").unwrap();
     let other = store.expected_token("netmond").unwrap();
@@ -119,13 +184,13 @@ async fn a_token_issued_to_another_collector_is_refused_by_the_mismatch_gate() {
 
     assert!(error.to_string().contains("did not match"), "{error}");
     assert_eq!(gates(&registry), [RegistrationGate::TokenMismatch]);
-    assert!(admission.catalog_is_empty().await);
+    assert!(catalog_is_empty(&engine).await);
 }
 
 #[tokio::test]
 async fn a_collector_that_was_never_spawned_is_refused_by_the_unknown_collector_gate() {
     let dir = tempfile::tempdir().unwrap();
-    let (_store, admission) = admission(&dir);
+    let (_store, _engine, admission) = admission(&dir);
     let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
 
     let error = registry
@@ -147,7 +212,7 @@ async fn a_collector_that_was_never_spawned_is_refused_by_the_unknown_collector_
 #[tokio::test]
 async fn the_correct_token_admits_the_descriptor_and_lookup_can_see_it() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
+    let (store, engine, admission) = admission(&dir);
     let _issued = store.issue("procmond").unwrap();
     let token = store.expected_token("procmond").unwrap();
     let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
@@ -163,14 +228,14 @@ async fn the_correct_token_admits_the_descriptor_and_lookup_can_see_it() {
 
     assert!(response.accepted);
     assert!(gates(&registry).is_empty());
-    assert!(!admission.catalog_is_empty().await);
-    assert!(admission.has_column("processes", "name").await);
+    assert!(!catalog_is_empty(&engine).await);
+    assert!(has_column(&engine, "processes", "name").await);
 }
 
 #[tokio::test]
 async fn a_descriptor_over_the_identifier_bound_is_refused_before_storage() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
+    let (store, engine, admission) = admission(&dir);
     let _issued = store.issue("procmond").unwrap();
     let token = store.expected_token("procmond").unwrap();
     let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
@@ -183,13 +248,13 @@ async fn a_descriptor_over_the_identifier_bound_is_refused_before_storage() {
 
     assert!(error.to_string().contains("over the limit"), "{error}");
     assert_eq!(gates(&registry), [RegistrationGate::MalformedRequest]);
-    assert!(admission.catalog_is_empty().await);
+    assert!(catalog_is_empty(&engine).await);
 }
 
 #[tokio::test]
 async fn a_descriptor_claiming_another_identity_is_refused() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
+    let (store, engine, admission) = admission(&dir);
     let _issued = store.issue("procmond").unwrap();
     let token = store.expected_token("procmond").unwrap();
     let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
@@ -203,24 +268,20 @@ async fn a_descriptor_claiming_another_identity_is_refused() {
 
     assert!(error.to_string().contains("netmond"), "{error}");
     assert_eq!(gates(&registry), [RegistrationGate::MalformedRequest]);
-    assert!(admission.catalog_is_empty().await);
+    assert!(catalog_is_empty(&engine).await);
 }
 
 #[tokio::test]
 async fn a_re_registration_dropping_a_column_leaves_only_the_rule_that_needs_it_unhealthy() {
     // Arrange
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
-    admission
-        .track_rule("needs-cmdline", [("processes", "cmdline")])
-        .await;
-    admission
-        .track_rule("needs-name", [("processes", "name")])
-        .await;
+    let (store, engine, admission) = admission(&dir);
+    load_rule(&engine, "needs-cmdline", "cmdline").await;
+    load_rule(&engine, "needs-name", "name").await;
 
     let _issued = store.issue("procmond").unwrap();
     let token = store.expected_token("procmond").unwrap();
-    let first = admission
+    admission
         .admit(&request(
             "procmond",
             Some(token),
@@ -228,12 +289,13 @@ async fn a_re_registration_dropping_a_column_leaves_only_the_rule_that_needs_it_
         ))
         .await
         .unwrap();
-    assert_eq!(first.to_replan().len(), 2);
+    assert!(is_planned_and_not_unhealthy(&engine, "needs-cmdline").await);
+    assert!(is_planned_and_not_unhealthy(&engine, "needs-name").await);
 
     // Act: the collector restarts and re-registers without `cmdline`.
     let _reissued = store.issue("procmond").unwrap();
     let reissued_token = store.expected_token("procmond").unwrap();
-    let outcome = admission
+    admission
         .admit(&request(
             "procmond",
             Some(reissued_token),
@@ -242,22 +304,16 @@ async fn a_re_registration_dropping_a_column_leaves_only_the_rule_that_needs_it_
         .await
         .unwrap();
 
-    // Assert
-    assert_eq!(outcome.newly_unhealthy(), ["needs-cmdline"]);
-    assert_eq!(outcome.to_replan(), ["needs-name"]);
-    assert_eq!(
-        admission.unhealthy_rules().await,
-        [String::from("needs-cmdline")]
-    );
+    // Assert: exactly the rule whose column vanished is unhealthy; the other is re-planned.
+    assert!(is_unhealthy(&engine, "needs-cmdline").await);
+    assert!(is_planned_and_not_unhealthy(&engine, "needs-name").await);
 }
 
 #[tokio::test]
 async fn a_refused_descriptor_triggers_no_replanning() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
-    admission
-        .track_rule("needs-name", [("processes", "name")])
-        .await;
+    let (store, engine, admission) = admission(&dir);
+    load_rule(&engine, "needs-name", "name").await;
     let _issued = store.issue("procmond").unwrap();
     let token = store.expected_token("procmond").unwrap();
     let long = "n".repeat(200);
@@ -271,31 +327,34 @@ async fn a_refused_descriptor_triggers_no_replanning() {
         .await
         .expect_err("an oversized identifier must be refused");
 
-    assert!(admission.unhealthy_rules().await.is_empty());
-    assert!(admission.catalog_is_empty().await);
+    assert_eq!(
+        engine.lock().await.deferred_rule_ids(),
+        ["needs-name"],
+        "a refused descriptor must leave the rule deferred, not planned or judged"
+    );
+    assert!(catalog_is_empty(&engine).await);
 }
 
 #[tokio::test]
 async fn a_registration_carrying_no_descriptor_still_authenticates_but_widens_nothing() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
+    let (store, engine, admission) = admission(&dir);
     let _issued = store.issue("procmond").unwrap();
     let token = store.expected_token("procmond").unwrap();
 
-    let outcome = admission
+    admission
         .admit(&request("procmond", Some(token), None))
         .await
-        .unwrap();
+        .expect("a descriptorless registration still authenticates");
 
-    assert!(outcome.to_replan().is_empty());
-    assert!(admission.catalog_is_empty().await);
+    assert!(catalog_is_empty(&engine).await);
 }
 
 #[tokio::test]
 async fn a_duplicate_registration_is_refused_without_moving_the_catalog() {
     // Arrange: a collector already registered with one descriptor.
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
+    let (store, engine, admission) = admission(&dir);
     let _issued = store.issue("procmond").unwrap();
     let token = store.expected_token("procmond").unwrap();
     let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
@@ -324,7 +383,7 @@ async fn a_duplicate_registration_is_refused_without_moving_the_catalog() {
     assert!(error.to_string().contains("already registered"), "{error}");
     assert_eq!(gates(&registry), [RegistrationGate::AlreadyRegistered]);
     assert!(
-        admission.has_column("processes", "cmdline").await,
+        has_column(&engine, "processes", "cmdline").await,
         "a refused registration must not have narrowed the catalog"
     );
 }
@@ -334,13 +393,9 @@ async fn a_restarted_collector_re_registers_after_deregistration_and_replans_rul
     // Covers AE6 through the public registration path, including the deregistration a real
     // collector restart implies.
     let dir = tempfile::tempdir().unwrap();
-    let (store, admission) = admission(&dir);
-    admission
-        .track_rule("needs-cmdline", [("processes", "cmdline")])
-        .await;
-    admission
-        .track_rule("needs-name", [("processes", "name")])
-        .await;
+    let (store, engine, admission) = admission(&dir);
+    load_rule(&engine, "needs-cmdline", "cmdline").await;
+    load_rule(&engine, "needs-name", "name").await;
     let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
 
     let _issued = store.issue("procmond").unwrap();
@@ -353,7 +408,8 @@ async fn a_restarted_collector_re_registers_after_deregistration_and_replans_rul
         ))
         .await
         .unwrap();
-    assert!(admission.unhealthy_rules().await.is_empty());
+    assert!(is_planned_and_not_unhealthy(&engine, "needs-cmdline").await);
+    assert!(is_planned_and_not_unhealthy(&engine, "needs-name").await);
 
     // Act: the collector is reaped and restarts without `cmdline`.
     registry
@@ -376,9 +432,47 @@ async fn a_restarted_collector_re_registers_after_deregistration_and_replans_rul
         .unwrap();
 
     // Assert: exactly the rule that filtered on the dropped column is unhealthy.
+    assert!(is_unhealthy(&engine, "needs-cmdline").await);
+    assert!(is_planned_and_not_unhealthy(&engine, "needs-name").await);
+    assert!(!has_column(&engine, "processes", "cmdline").await);
+}
+
+#[tokio::test]
+async fn a_rule_deferred_against_an_empty_catalog_is_planned_once_a_collector_registers() {
+    // R18 defers a rule loaded before any collector advertised a schema; R12 makes the first
+    // registration re-validate and re-plan it. Both only hold end to end if the *real* admission
+    // path reaches the planner's engine, which is what this exercises.
+    let dir = tempfile::tempdir().unwrap();
+    let (store, engine, admission) = admission(&dir);
+    let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
+
+    load_rule(&engine, "needs-name", "name").await;
     assert_eq!(
-        admission.unhealthy_rules().await,
-        [String::from("needs-cmdline")]
+        engine.lock().await.deferred_rule_ids(),
+        ["needs-name"],
+        "a rule loaded against an empty catalog waits for the first collector"
     );
-    assert!(!admission.has_column("processes", "cmdline").await);
+
+    // Act: a collector registers through the authenticated registration path.
+    let _issued = store.issue("procmond").unwrap();
+    let token = store.expected_token("procmond").unwrap();
+    let _accepted = registry
+        .register(request(
+            "procmond",
+            Some(token),
+            Some(descriptor(&["name"])),
+        ))
+        .await
+        .unwrap();
+
+    // Assert
+    let guard = engine.lock().await;
+    let drained = guard.deferred_rule_ids().is_empty();
+    let planned = guard.compiled_rule("needs-name").is_some();
+    drop(guard);
+    assert!(drained, "the registration must drain the deferred queue");
+    assert!(
+        planned,
+        "the registration must reach the planner and plan the deferred rule"
+    );
 }

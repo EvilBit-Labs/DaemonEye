@@ -17,15 +17,32 @@
 //!
 //! # Platform note (R9's owner-only property)
 //!
-//! On Unix the file is created with `create_new` and mode `0o400` in a single `open(2)`, so there
-//! is no create-then-`chmod` window and no pre-existing file or symlink is followed.
+//! R9 names a permission property — readable only by the account that created it — and states the
+//! Unix expression of it. Each platform reaches that property the way that platform actually
+//! offers it.
 //!
-//! On Windows the file is created with the same `create_new` exclusivity and marked read-only, but
-//! **the explicit owner-only DACL R9 names is not applied**: every Win32 security API that could
-//! set one (`SetNamedSecurityInfoW`, `SetEntriesInAclW`) is an `unsafe fn` in the `windows` crate,
-//! and this workspace sets `unsafe_code = "forbid"`. The file therefore inherits the DACL of the
-//! token directory, which [`SpawnTokenStore::new`] creates rather than adopting. Closing this gap
-//! needs either a vetted safe wrapper crate or an approved `unsafe` block.
+//! On **Unix** the file is created with `create_new` and mode `0o400` in a single `open(2)`, so
+//! there is no create-then-`chmod` window and no pre-existing file or symlink is followed. The
+//! directory is created `0o700` under the socket directory.
+//!
+//! On **Windows** the property comes from *placement* rather than from setting a DACL. The token
+//! directory is rooted at `%LOCALAPPDATA%` instead of the socket directory, and the file inherits
+//! that location's ACL, which grants the owning user, `SYSTEM` and `Administrators`. That is the
+//! same shape as the Unix arm, where `0o400` inside `0o700` grants the owner and `root` — in both
+//! cases the account and the machine's superuser, and nobody else. There is no socket directory to
+//! sit in on Windows regardless: the transport there is named pipes.
+//!
+//! Setting an explicit DACL was rejected rather than deferred. Every Win32 API that could
+//! (`SetNamedSecurityInfoW`, `SetEntriesInAclW`) is an `unsafe fn` in the `windows` crate against
+//! a workspace that sets `unsafe_code = "forbid"`, and the crates that wrap them safely are either
+//! dormant since 2021 or pre-1.0 from an unvetted publisher — neither is a dependency this
+//! codebase should take on a credential path.
+//!
+//! **The asymmetry that remains is verification, not protection.** The Unix arm *checks* an
+//! existing directory and refuses to issue when other accounts can reach it, because a reachable
+//! directory may already have been tampered with. Reading a DACL back needs the same API being
+//! avoided, so the Windows arm sets the property but cannot confirm it. `check_private_dir` is
+//! therefore a real gate on Unix and a no-op on Windows; the test names say which is which.
 
 use std::collections::HashMap;
 use std::fs;
@@ -69,6 +86,13 @@ pub enum SpawnTokenError {
         /// Its permission bits.
         mode: u32,
     },
+    /// No private per-user directory could be resolved to root the token directory at.
+    ///
+    /// Only reachable off Unix, where the owner-only property comes from placing the directory
+    /// under the account's own local application-data directory. Falling back to a shared location
+    /// would silently drop the protection, so this fails closed instead.
+    #[error("no private per-user directory is available to hold spawn tokens")]
+    NoPrivateRoot,
     /// The token file did not hold a well-formed token.
     #[error("token file {0} does not contain a 64-character hex token")]
     Malformed(PathBuf),
@@ -121,7 +145,7 @@ impl SpawnTokenStore {
     /// Returns [`SpawnTokenError::InsecureDirectory`] when an existing token directory is group- or
     /// world-accessible, or [`SpawnTokenError::Io`] when it cannot be created or inspected.
     pub fn new(socket_directory: impl AsRef<Path>) -> Result<Self, SpawnTokenError> {
-        let directory = socket_directory.as_ref().join(TOKEN_DIR_NAME);
+        let directory = token_directory(socket_directory.as_ref())?;
         create_private_dir(&directory)?;
         check_private_dir(&directory)?;
         Ok(Self {
@@ -276,6 +300,27 @@ fn remove_token_file(path: &Path) -> Result<(), SpawnTokenError> {
 }
 
 /// Create `directory` owner-only if it is absent.
+/// Where the token directory lives: beside the socket, which is owner-only by its own mode.
+///
+/// Infallible on Unix, but it returns `Result` so both `cfg` arms present one signature to the
+/// single call site; off Unix resolving a private per-user root genuinely can fail.
+#[allow(clippy::unnecessary_wraps)]
+#[cfg(unix)]
+fn token_directory(socket_directory: &Path) -> Result<PathBuf, SpawnTokenError> {
+    Ok(socket_directory.join(TOKEN_DIR_NAME))
+}
+
+/// Where the token directory lives off Unix: under the account's own local application-data
+/// directory, whose ACL already grants that account, `SYSTEM` and `Administrators` and nobody
+/// else. `socket_directory` is deliberately unused — rooting the tokens there would inherit
+/// whatever ACL a shared path carries, which is the protection this arm exists to provide. See the
+/// module's platform note.
+#[cfg(not(unix))]
+fn token_directory(_socket_directory: &Path) -> Result<PathBuf, SpawnTokenError> {
+    let base = dirs::data_local_dir().ok_or(SpawnTokenError::NoPrivateRoot)?;
+    Ok(base.join("DaemonEye").join(TOKEN_DIR_NAME))
+}
+
 #[cfg(unix)]
 fn create_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
     use std::os::unix::fs::DirBuilderExt as _;
@@ -290,7 +335,8 @@ fn create_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
     Ok(())
 }
 
-/// Create `directory` if it is absent. See the module note on the Windows DACL gap.
+/// Create `directory` if it is absent. Off Unix its ACL is inherited from the private per-user
+/// root [`token_directory`] chose; see the module's platform note.
 #[cfg(not(unix))]
 fn create_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
     if directory.exists() {
@@ -316,7 +362,9 @@ fn check_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
     })
 }
 
-/// No portable, `unsafe`-free equivalent exists on Windows; see the module note.
+/// A no-op off Unix: the property is established by placement, and reading an ACL back to confirm
+/// it needs the very API the module note explains is unavailable. This exists so the call site
+/// reads the same on both platforms, not because it verifies anything here.
 #[cfg(not(unix))]
 fn check_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
     let _metadata = fs::metadata(directory)?;

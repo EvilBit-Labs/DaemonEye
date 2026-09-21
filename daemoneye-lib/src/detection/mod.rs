@@ -54,6 +54,7 @@ pub enum DetectionEngineError {
 }
 
 /// Detection engine for executing SQL-based rules.
+#[derive(Debug)]
 pub struct DetectionEngine {
     rules: HashMap<String, DetectionRule>,
     /// Compiled plans, one per rule that has been lowered. This is the enabled set: a rule with no

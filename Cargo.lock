@@ -662,6 +662,7 @@ dependencies = [
  "blake3",
  "criterion",
  "dashmap",
+ "dirs",
  "insta",
  "interprocess",
  "nix",

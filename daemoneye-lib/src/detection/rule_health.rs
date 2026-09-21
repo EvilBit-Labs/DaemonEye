@@ -89,10 +89,17 @@ impl RuleHealthRegistry {
         Self::default()
     }
 
-    /// Track `rule_id` and the `(table, column)` references it reads.
+    /// Track `rule_id` and the `(table, column)` references it reads, as [`RuleHealth::Healthy`].
     ///
-    /// A rule starts [`RuleHealth::Unknown`]: it has not been judged against a catalog yet, which
-    /// is a different state from having been judged and passed.
+    /// Tracking happens on exactly one path: immediately after the planner lowered the rule against
+    /// the current catalog, which it could only do because every reference resolved. So the rule
+    /// has already been judged and passed by the time it arrives here, and recording it as
+    /// [`RuleHealth::Unknown`] would be false — it also silently undid a `Healthy` set moments
+    /// earlier by [`Self::revalidate`], leaving no rule ever observably healthy after a
+    /// registration-triggered re-plan.
+    ///
+    /// [`RuleHealth::Unknown`] remains the default for a rule nothing has judged yet, which is a
+    /// real and different state; it is simply not reachable through this method.
     pub fn track<I, T, C>(&mut self, rule_id: &str, references: I)
     where
         I: IntoIterator<Item = (T, C)>,
@@ -107,7 +114,7 @@ impl RuleHealthRegistry {
             rule_id.to_owned(),
             TrackedRule {
                 references: resolved,
-                health: RuleHealth::Unknown,
+                health: RuleHealth::Healthy,
             },
         );
     }

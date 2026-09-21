@@ -10,6 +10,7 @@
 //! bounds-checked only after conversion, and stored only after both — so an unauthenticated or
 //! pathological descriptor never reaches the catalog, and a refused one triggers no re-planning.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use daemoneye_eventbus::process_manager::spawn_token::SpawnTokenStore;
@@ -17,10 +18,10 @@ use daemoneye_eventbus::rpc::{
     ColumnDescriptor as WireColumn, ConformanceResult as WireConformanceResult,
     RegistrationRequest, SchemaDescriptor as WireDescriptor,
 };
+use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::detection::catalog::{
-    CatalogError, SchemaCatalog, TokenRejection, VerifiedRegistration, verify_spawn_token,
+    CatalogError, TokenRejection, VerifiedRegistration, verify_spawn_token,
 };
-use daemoneye_lib::detection::rule_health::{ReplanOutcome, RuleHealthRegistry};
 use daemoneye_lib::proto::{
     ColumnDescriptor, ConformanceResult, SchemaDescriptor, TableDescriptor,
 };
@@ -62,25 +63,39 @@ pub const fn gate_for_admission(error: &AdmissionError) -> RegistrationGate {
     }
 }
 
-/// Authenticates registrations and maintains the catalog and rule-health state behind them.
+/// Authenticates registrations and feeds admitted descriptors to the one detection engine.
+///
+/// The gate owns no catalog and no rule health of its own. A second copy of either would be
+/// invisible: registrations would land in one and the planner would read the other, so every rule
+/// would defer forever under R18 while every unit test still passed.
 #[derive(Debug)]
 pub struct CollectorAdmission {
     tokens: Arc<SpawnTokenStore>,
-    catalog: Mutex<SchemaCatalog>,
-    rules: Mutex<RuleHealthRegistry>,
+    /// The engine that owns the catalog, rule health, the compiled plans and the task ledger.
+    ///
+    /// A `tokio` mutex, not a `std` one: the renewal cycle that shares this engine is `async`, and
+    /// a synchronous guard held across its sends would trip `clippy::await_holding_lock`.
+    engine: Arc<Mutex<DetectionEngine>>,
+    /// Collectors that registered since the last renewal tick and are owed their task set (R16).
+    ///
+    /// Recorded rather than sent here: admission has no dispatch, and keeping every IPC send in
+    /// the renewal loop keeps one place responsible for the wire.
+    pending_reissue: Mutex<BTreeSet<String>>,
 }
 
 impl CollectorAdmission {
-    /// Build an admission gate over the token store the process manager mints into.
+    /// Build an admission gate over the token store the process manager mints into and the engine
+    /// the planner reads.
     ///
     /// The *same* [`SpawnTokenStore`] must back both, or nothing this agent spawned will ever
-    /// authenticate; [`Self::shares_token_store_with`] is the startup check for that.
+    /// authenticate; [`Self::shares_token_store_with`] is the startup check for that. The same
+    /// holds for the engine, checked by [`Self::shares_engine_with`].
     #[must_use]
-    pub fn new(tokens: Arc<SpawnTokenStore>) -> Self {
+    pub fn new(tokens: Arc<SpawnTokenStore>, engine: Arc<Mutex<DetectionEngine>>) -> Self {
         Self {
             tokens,
-            catalog: Mutex::new(SchemaCatalog::new()),
-            rules: Mutex::new(RuleHealthRegistry::new()),
+            engine,
+            pending_reissue: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -96,49 +111,50 @@ impl CollectorAdmission {
         Arc::ptr_eq(&self.tokens, other)
     }
 
-    /// Track an enabled rule and the `(table, column)` references it reads.
-    // U7 calls this as it loads a rule; exercised today by this crate's tests.
-    #[allow(dead_code)]
-    pub async fn track_rule<I, T, C>(&self, rule_id: &str, references: I)
-    where
-        I: IntoIterator<Item = (T, C)>,
-        T: Into<String>,
-        C: Into<String>,
-    {
-        let mut rules = self.rules.lock().await;
-        rules.track(rule_id, references);
+    /// Whether this gate feeds exactly the engine `other` plans against.
+    ///
+    /// The engine equivalent of [`Self::shares_token_store_with`], and asserted at startup for the
+    /// same reason: two engines fail silently, with every rule deferring forever.
+    #[must_use]
+    pub fn shares_engine_with(&self, other: &Arc<Mutex<DetectionEngine>>) -> bool {
+        Arc::ptr_eq(&self.engine, other)
     }
 
-    /// Authenticate a registration and, if it carries one, admit its descriptor.
+    /// Take the collectors owed a task re-issue, clearing the set (R16).
+    pub async fn drain_pending_reissue(&self) -> Vec<String> {
+        let mut pending = self.pending_reissue.lock().await;
+        std::mem::take(&mut *pending).into_iter().collect()
+    }
+
+    /// Authenticate a registration and, if it carries one, admit its descriptor into the engine.
     ///
-    /// Returns what the catalog change means for enabled rules: which still validate and need
-    /// re-planning, and which no longer do.
+    /// Nothing is returned beyond success: `DetectionEngine::register_collector` already drains
+    /// the rules deferred under R18, re-validates rule health and re-plans everything the change
+    /// unblocked. Handing a `ReplanOutcome` back here would invite a caller to re-plan a second
+    /// time against a catalog that has already moved.
     ///
     /// # Errors
     ///
     /// Returns [`AdmissionError`] naming the specific gate that refused the registration.
-    pub async fn admit(
-        &self,
-        request: &RegistrationRequest,
-    ) -> Result<ReplanOutcome, AdmissionError> {
+    pub async fn admit(&self, request: &RegistrationRequest) -> Result<(), AdmissionError> {
         let verified = self.verify(request)?;
 
-        let Some(ref wire) = request.descriptor else {
-            // An authenticated collector that advertises nothing widens nothing. It is not an
-            // error: registration and schema advertisement are separate facts.
-            return Ok(ReplanOutcome::default());
-        };
+        // An authenticated collector that advertises nothing widens nothing. It is not an error:
+        // registration and schema advertisement are separate facts. It is still a re-registration,
+        // so it is still owed its task set.
+        if let Some(ref wire) = request.descriptor {
+            let descriptor = to_proto_descriptor(wire);
+            let mut engine = self.engine.lock().await;
+            let _change = engine
+                .register_collector(&verified, descriptor)
+                .map_err(AdmissionError::Descriptor)?;
+            drop(engine);
+        }
 
-        let descriptor = to_proto_descriptor(wire);
-        let mut catalog = self.catalog.lock().await;
-        let change = catalog
-            .register(&verified, descriptor)
-            .map_err(AdmissionError::Descriptor)?;
-        let mut rules = self.rules.lock().await;
-        let outcome = rules.revalidate(&catalog, &change);
-        drop(rules);
-        drop(catalog);
-        Ok(outcome)
+        let mut pending = self.pending_reissue.lock().await;
+        let _first = pending.insert(request.collector_id.clone());
+        drop(pending);
+        Ok(())
     }
 
     /// Verify the presented spawn token against the one issued for this identity (R8).
@@ -153,34 +169,6 @@ impl CollectorAdmission {
             request.spawn_token.as_deref(),
         )
         .map_err(AdmissionError::Token)
-    }
-
-    /// Whether no collector has advertised a schema yet. R18's check.
-    // R18's check, called by the rule loader U7 adds.
-    #[allow(dead_code)]
-    pub async fn catalog_is_empty(&self) -> bool {
-        let catalog = self.catalog.lock().await;
-        catalog.is_empty()
-    }
-
-    /// Whether the catalog currently resolves `table.column`.
-    // Lookup surface U7 plans against.
-    #[allow(dead_code)]
-    pub async fn has_column(&self, table: &str, column: &str) -> bool {
-        let catalog = self.catalog.lock().await;
-        catalog.column(table, column).is_some()
-    }
-
-    /// Identifiers of every rule currently marked unhealthy. T10 renders these; U6 owns the state.
-    // Read path for T10's CLI.
-    #[allow(dead_code)]
-    pub async fn unhealthy_rules(&self) -> Vec<String> {
-        let rules = self.rules.lock().await;
-        rules
-            .unhealthy()
-            .into_iter()
-            .map(|(rule_id, _reason)| rule_id.to_owned())
-            .collect()
     }
 }
 

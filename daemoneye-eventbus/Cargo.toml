@@ -83,3 +83,9 @@ harness = false
 
 [lints]
 workspace = true
+
+# Off Unix the spawn-token directory is rooted at the account's own local application-data
+# directory, which is where its owner-only ACL comes from. Unix uses the socket directory and an
+# explicit mode instead, so this is not pulled in there.
+[target.'cfg(not(unix))'.dependencies]
+dirs = { workspace = true }

@@ -79,6 +79,13 @@ impl BrokerManager {
                     minting.is_some_and(|store| admission.shares_token_store_with(store)),
                     "collector registration gate is not wired to the spawn-token store the process manager mints into"
                 );
+                // The same check for the engine, and for the same reason: a gate feeding a second
+                // engine admits every registration into a catalog the planner never reads, so
+                // every rule defers forever under R18 without a single error surfacing.
+                anyhow::ensure!(
+                    admission.shares_engine_with(&self.detection_engine),
+                    "collector registration gate is not wired to the detection engine the agent plans against"
+                );
                 crate::collector_registry::CollectorRegistry::with_admission(Arc::clone(admission))
             }
             None => crate::collector_registry::CollectorRegistry::default(),
