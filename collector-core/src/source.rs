@@ -4,8 +4,10 @@
 //! must implement, along with capability flags for feature negotiation.
 
 use crate::event::CollectionEvent;
+use crate::pushdown::PushdownRejection;
 use async_trait::async_trait;
 use bitflags::bitflags;
+use daemoneye_lib::proto::DetectionTask;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::mpsc;
 
@@ -140,6 +142,32 @@ pub trait EventSource: Send + Sync {
     /// collection duties.
     async fn health_check(&self) -> anyhow::Result<()> {
         Ok(())
+    }
+
+    /// Accepts a pushed detection task, or refuses it (R19).
+    ///
+    /// The default implementation **refuses every task**: a source that has not advertised a
+    /// schema descriptor cannot have advertised the columns or operations a plan names, so
+    /// accepting one would mean evaluating work the collector never claimed. Sources that do
+    /// serve pushdown hold a [`PushdownTasks`](crate::pushdown::PushdownTasks) built from the
+    /// descriptor they registered and delegate to its
+    /// [`accept`](crate::pushdown::PushdownTasks::accept), which validates every column and
+    /// operation against that descriptor and starts the task's TTL.
+    ///
+    /// `now` is supplied by the caller rather than read from the clock, so task expiry is
+    /// deterministic and testable.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`PushdownRejection`] naming the offending table, column, operation or TTL.
+    fn accept_pushdown_task(
+        &self,
+        _task: &DetectionTask,
+        _now: std::time::SystemTime,
+    ) -> Result<(), PushdownRejection> {
+        Err(PushdownRejection::PushdownUnsupported {
+            event_source: self.name(),
+        })
     }
 }
 
