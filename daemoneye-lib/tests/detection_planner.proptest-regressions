@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 83764169e0ae4f4a976c5f0db30d4a202a71627b0db0ea08a698a6905f90328a # shrinks to predicate = And(Or(Cmp { column: 0, op: "=", value: 1 }, Cmp { column: 0, op: "=", value: 0 }), Or(Cmp { column: 0, op: "=", value: 0 }, Cmp { column: 0, op: "=", value: 2 }))
