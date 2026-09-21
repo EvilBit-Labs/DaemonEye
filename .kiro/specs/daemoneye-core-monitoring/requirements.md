@@ -234,7 +234,7 @@ Decided 2026-06-09 to sequence solo-maintainer effort toward OSS v1.0.0:
 3. WHEN validating queries THEN the system SHALL only allow SELECT statements with approved functions (aggregations, string operations, date/time helpers) and SHALL limit subquery nesting depth to a configurable maximum (default: 3)
 4. WHEN SQL contains forbidden constructs THEN the system SHALL reject the query with detailed error messages and log the attempt for audit purposes
 5. WHEN rules reference tables THEN the system SHALL validate references against the collector schema catalog (Requirement 19)
-6. WHEN rules contain REGEXP operators THEN the system SHALL compile patterns at rule load time using a linear-time regex engine (Rust regex crate) with compile-time size and complexity limits — eliminating catastrophic backtracking by construction — and SHALL cache compiled patterns keyed by the full pattern string with LRU eviction (bounds per spec §4.2/§4.5)
+6. WHEN rules contain REGEXP operators THEN the system SHALL compile patterns at rule load time using a linear-time regex engine (Rust regex crate) with compile-time size and complexity limits — eliminating catastrophic backtracking by construction — and SHALL cache compiled patterns keyed by the full pattern string with LRU eviction. Bounds: a 256 KiB per-pattern `size_limit`, and a cache of at most 64 entries. A compiled pattern's memory cannot be read back at runtime, so the product of those two is the ceiling rather than a separately stated aggregate
 7. WHEN monitoring regex performance THEN the system SHALL track compilation time, execution time, and cache hit rates, with a per-pattern observed-latency threshold (default: 10ms) used to flag or disable slow patterns
 
 ### Requirement 18

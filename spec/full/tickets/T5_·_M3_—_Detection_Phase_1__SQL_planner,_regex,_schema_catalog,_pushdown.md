@@ -24,7 +24,7 @@
 - file:daemoneye-lib/src/detection/sql_to_ipc.rs — grow `SqlToIpcTranslator` into the validating planner; migrate `CollectionRequirements` to typed form; enforce SELECT-only + function allowlist + subquery depth (default 3). **Ship the enumerated allowlist itself** as a named constant in file:daemoneye-lib/src/detection/ — membership is the control, and T6's `SessionContext` restriction and T14's SQL-injection suite both need something concrete to reference.
 - file:daemoneye-lib/src/detection/mod.rs — `DetectionEngine` load path / `load_rule` validation hook.
 - Regex cache: `regex` crate (linear-time) with `RegexBuilder::size_limit`/`dfa_size_limit`; full-pattern-string-keyed LRU (`quick_cache` already present, or `lru`); AST-validate before compile.
-- Schema catalog (R19): authenticated startup registration via file:collector-core/src/capability_router.rs / file:collector-core/src/rpc_services.rs + peer-cred/spawn-token check; table-ref validation; re-plan + unhealthy-rule surfacing.
+- Schema catalog (R19): authenticated startup registration via file:collector-core/src/capability_router.rs / file:collector-core/src/rpc_services/ + peer-cred/spawn-token check; table-ref validation; re-plan + unhealthy-rule surfacing.
 - Pushdown: emit protobuf `DetectionTask`s (file:daemoneye-lib/proto/ipc.proto) with conformance gating + TTL renewal.
 - Collector-side (T12.4): file:collector-core/src/source.rs (`EventSource` accepts `DetectionTask`), procmond file:procmond/src/event_source.rs.
 - Deps present: `sqlparser`, `regex`.

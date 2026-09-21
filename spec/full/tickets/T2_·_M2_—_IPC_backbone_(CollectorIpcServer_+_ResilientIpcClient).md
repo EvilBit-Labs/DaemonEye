@@ -19,7 +19,7 @@
 
 ## Key touchpoints
 
-- file:collector-core/src/ipc.rs — `CollectorIpcServer` (capability negotiation, task routing, connection mgmt), already live at file:collector-core/src/collector.rs; see file:collector-core/src/capability_router.rs, file:collector-core/src/rpc_services.rs.
+- file:collector-core/src/ipc.rs — `CollectorIpcServer` (capability negotiation, task routing, connection mgmt), already live at file:collector-core/src/collector.rs; see file:collector-core/src/capability_router.rs, file:collector-core/src/rpc_services/.
 - file:daemoneye-agent/src/ipc_server.rs, file:daemoneye-agent/src/broker_manager/, file:daemoneye-agent/src/collector_registry.rs — wire the agent side to `ResilientIpcClient` (reconnection w/ backoff already implemented; capability negotiation is the outstanding piece; task distribution/result collection).
 - file:daemoneye-lib/src/ipc/ — `codec.rs`, `client.rs` (`ResilientIpcClient`), `interprocess_transport.rs` (protobuf + CRC32 framing; honor 107-byte Unix socket path limit).
 - file:daemoneye-lib/proto/ipc.proto — `DetectionTask`/`DetectionResult`, capability messages.
