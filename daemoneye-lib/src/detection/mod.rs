@@ -9,7 +9,8 @@ pub mod rejection;
 pub mod sql_to_ipc;
 pub mod sql_validation;
 
-use crate::models::{Alert, DetectionRule, ProcessRecord};
+use crate::models::{Alert, DetectionRule, ProcessRecord, RuleError};
+use crate::rejection_log::{RejectionLog, RejectionReason};
 // Removed unused imports
 use std::collections::HashMap;
 use thiserror::Error;
@@ -43,6 +44,7 @@ pub enum DetectionEngineError {
 /// Detection engine for executing SQL-based rules.
 pub struct DetectionEngine {
     rules: HashMap<String, DetectionRule>,
+    rejections: RejectionLog,
     #[allow(dead_code)]
     max_execution_time_ms: u64,
     #[allow(dead_code)]
@@ -54,6 +56,7 @@ impl DetectionEngine {
     pub fn new() -> Self {
         Self {
             rules: HashMap::new(),
+            rejections: RejectionLog::new(),
             max_execution_time_ms: 30000, // 30 seconds
             max_memory_mb: 100,           // 100 MB
         }
@@ -75,12 +78,34 @@ impl DetectionEngine {
     /// // engine.load_rule(rule).unwrap();
     /// ```
     pub fn load_rule(&mut self, rule: DetectionRule) -> Result<(), DetectionEngineError> {
-        // Validate the rule before loading
-        rule.validate_sql()
-            .map_err(|e| DetectionEngineError::SqlValidationError(e.to_string()))?;
+        // Validate the rule before loading. A rejection is recorded with its structured cause
+        // intact (R4) before it is flattened into the engine's error type.
+        if let Err(error) = rule.validate_sql() {
+            let rule_id = rule.id.raw();
+            let message = error.to_string();
+            let reason = match error {
+                RuleError::SqlRejected(rejection) => RejectionReason::rule_sql(rule_id, rejection),
+                RuleError::RegexRejected(rejection) => {
+                    RejectionReason::rule_regex(rule_id, rejection)
+                }
+                RuleError::MissingField(_)
+                | RuleError::ValidationFailed(_)
+                | RuleError::RuleNotFound(_)
+                | RuleError::ExecutionFailed(_) => RejectionReason::rule_other(rule_id, &message),
+            };
+            self.rejections.record(reason);
+            return Err(DetectionEngineError::SqlValidationError(message));
+        }
 
         self.rules.insert(rule.id.raw().to_owned(), rule);
         Ok(())
+    }
+
+    /// The rejections this engine has recorded, oldest first.
+    ///
+    /// The chain is in-memory and agent-side: the `audit_ledger` table is procmond's to write.
+    pub const fn rejection_log(&self) -> &RejectionLog {
+        &self.rejections
     }
 
     /// Execute all enabled rules against process data.

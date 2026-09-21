@@ -23,6 +23,8 @@ pub mod integrity;
 pub mod ipc;
 pub mod models;
 pub mod proto;
+/// Agent-side hash-chained record of rule-load and registration rejections.
+pub mod rejection_log;
 pub mod storage;
 pub mod telemetry;
 

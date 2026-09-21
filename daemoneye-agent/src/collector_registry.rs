@@ -4,8 +4,12 @@
 //! and tracks the most recent heartbeat timestamp for liveness monitoring.
 
 use daemoneye_eventbus::rpc::{DeregistrationRequest, RegistrationRequest, RegistrationResponse};
+use daemoneye_lib::rejection_log::{
+    RegistrationGate, RejectionLog, RejectionReason, RejectionRecord,
+};
 use std::{
     collections::HashMap,
+    sync::{Mutex, PoisonError},
     time::{Duration, SystemTime},
 };
 use thiserror::Error;
@@ -19,6 +23,9 @@ const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 pub struct CollectorRegistry {
     records: RwLock<HashMap<String, CollectorRecord>>,
     default_heartbeat: Duration,
+    /// Agent-side chain of refused registrations (R8). Kept behind a synchronous lock that is
+    /// never held across an `.await`; the `audit_ledger` table is procmond's to write.
+    rejections: Mutex<RejectionLog>,
 }
 
 impl CollectorRegistry {
@@ -27,11 +34,49 @@ impl CollectorRegistry {
         Self {
             records: RwLock::new(HashMap::new()),
             default_heartbeat,
+            rejections: Mutex::new(RejectionLog::new()),
         }
     }
 
     /// Register a collector, returning the assigned registration response.
+    ///
+    /// Every refusal is recorded in the registry's rejection chain before it is returned.
     pub async fn register(
+        &self,
+        request: RegistrationRequest,
+    ) -> Result<RegistrationResponse, RegistryError> {
+        let collector_id = request.collector_id.clone();
+        let result = self.register_inner(request).await;
+        if let Err(ref error) = result {
+            self.record_registration_rejection(&collector_id, gate_for(error));
+        }
+        result
+    }
+
+    /// Record a refused registration against `collector_id`.
+    ///
+    /// The gate is the whole reason: no spawn token, nor any prefix, length or digest of one,
+    /// crosses this boundary, because [`RegistrationGate`] has nowhere to hold it.
+    pub fn record_registration_rejection(&self, collector_id: &str, gate: RegistrationGate) {
+        let mut log = self
+            .rejections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let _record = log.record(RejectionReason::registration(collector_id, gate));
+    }
+
+    /// Every registration rejection recorded so far, oldest first.
+    // Read path for the rejection chain; unused by the binary until the CLI surfaces it.
+    #[allow(dead_code)]
+    pub fn rejection_records(&self) -> Vec<RejectionRecord> {
+        let log = self
+            .rejections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        log.records().to_vec()
+    }
+
+    async fn register_inner(
         &self,
         request: RegistrationRequest,
     ) -> Result<RegistrationResponse, RegistryError> {
@@ -302,6 +347,18 @@ pub enum RegistryError {
     Validation(String),
 }
 
+/// Map a registration failure onto the gate that refused it.
+const fn gate_for(error: &RegistryError) -> RegistrationGate {
+    match *error {
+        RegistryError::AlreadyRegistered(_) => RegistrationGate::AlreadyRegistered,
+        // `NotFound` means "absent from the registry map", not U6's "no token was issued", so
+        // it deliberately does not claim `UnknownCollector`.
+        RegistryError::Validation(_) | RegistryError::NotFound(_) => {
+            RegistrationGate::MalformedRequest
+        }
+    }
+}
+
 fn validate_registration(request: &RegistrationRequest) -> Result<(), RegistryError> {
     if request.collector_id.trim().is_empty() {
         return Err(RegistryError::Validation(
@@ -378,6 +435,46 @@ mod tests {
             .await
             .expect_err("duplicate registration rejected");
         assert!(matches!(error, RegistryError::AlreadyRegistered(id) if id == "procmond"));
+    }
+
+    #[tokio::test]
+    async fn rejected_registration_is_recorded_without_the_presented_token() {
+        // Arrange
+        const TOKEN: &str = "ZZsupersecretspawntokenZZ";
+        let registry = CollectorRegistry::default();
+        let mut request = sample_request();
+        request.hostname = String::new();
+        request.spawn_token = Some(TOKEN.to_string());
+
+        // Act
+        let error = registry
+            .register(request)
+            .await
+            .expect_err("blank hostname is refused");
+
+        // Assert
+        assert!(matches!(error, RegistryError::Validation(_)));
+        let records = registry.rejection_records();
+        assert_eq!(records.len(), 1);
+        let surfaces = [records[0].reason.to_string(), format!("{:?}", records[0])];
+        for surface in &surfaces {
+            // Message carries no secret material: CodeQL rust/cleartext-logging.
+            assert!(
+                !surface.contains(TOKEN),
+                "a record surface reproduced the presented token"
+            );
+        }
+        assert!(records[0].reason.to_string().contains("procmond"));
+    }
+
+    #[tokio::test]
+    async fn accepted_registration_records_nothing() {
+        let registry = CollectorRegistry::default();
+        registry
+            .register(sample_request())
+            .await
+            .expect("registration succeeds");
+        assert!(registry.rejection_records().is_empty());
     }
 
     #[tokio::test]
