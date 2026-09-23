@@ -274,6 +274,7 @@ impl MockDaemonEyeAgentClient {
                 network_filter: None,
                 filesystem_filter: None,
                 performance_filter: None,
+                pushdown_plan: None,
             },
             DetectionTask {
                 task_id: "compat_task_2".to_string(),
@@ -284,6 +285,7 @@ impl MockDaemonEyeAgentClient {
                 network_filter: None,
                 filesystem_filter: None,
                 performance_filter: None,
+                pushdown_plan: None,
             },
         ];
 
@@ -543,6 +545,7 @@ async fn test_protobuf_backward_compatibility() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
 
     // Serialize and deserialize to verify compatibility

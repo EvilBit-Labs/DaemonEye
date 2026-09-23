@@ -171,7 +171,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 | Runtime       | tokio     | 1.0+    |
 | Serialization | serde     | 1.0+    |
 | CLI           | clap      | 4.0+    |
-| Database      | redb      | 3.0+    |
+| Database      | redb      | 4.2+    |
 | Process       | sysinfo   | 0.37+   |
 | Logging       | tracing   | 0.1+    |
 | Errors        | thiserror | 2.0+    |

@@ -59,7 +59,7 @@ async fn test_registration_provider_delegates_to_registry() {
 
     {
         let mut guard = manager.collector_registry.write().await;
-        *guard = Some(Arc::new(CollectorRegistry::default()))
+        *guard = Some(Arc::new(CollectorRegistry::unauthenticated()))
     };
 
     let request = sample_registration_request();

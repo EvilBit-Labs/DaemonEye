@@ -42,6 +42,7 @@ fn detection_task_strategy() -> impl Strategy<Value = DetectionTask> {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         })
 }
 
@@ -262,7 +263,8 @@ proptest! {
                 metadata: Some(large_metadata),
         network_filter: None,
         filesystem_filter: None,
-        performance_filter: None
+                performance_filter: None,
+                pushdown_plan: None,
             };
 
             // Should fail with TooLarge error
@@ -452,6 +454,7 @@ mod edge_case_tests {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         };
 
         // This might succeed or fail depending on exact serialized size

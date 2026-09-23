@@ -125,6 +125,7 @@ fn create_test_task(task_id: &str) -> DetectionTask {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     }
 }
 

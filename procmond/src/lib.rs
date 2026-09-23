@@ -7,6 +7,7 @@ pub(crate) mod hash_pass;
 pub mod lifecycle;
 pub mod monitor_collector;
 pub mod process_collector;
+pub mod pushdown_eval;
 pub mod registration;
 pub mod rpc_service;
 pub mod security;
@@ -915,6 +916,7 @@ mod tests {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         };
 
         let result = handler.handle_detection_task(task).await;

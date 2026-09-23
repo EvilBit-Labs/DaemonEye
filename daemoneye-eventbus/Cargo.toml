@@ -52,7 +52,9 @@ freebsd        = [  ]
 high-load      = [ "tokio/rt-multi-thread" ]
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31.2", features = [ "signal", "process" ] }
+# `user` is for `geteuid`: the spawn-token directory check compares the directory's owner to this
+# process's effective uid, and the workspace forbids the `unsafe` a raw syscall would need.
+nix = { version = "0.31.2", features = [ "signal", "process", "user" ] }
 
 [target.'cfg(target_os = "freebsd")'.dependencies]
 nix = { version = "0.31.2", features = [ "socket" ] }
@@ -83,3 +85,9 @@ harness = false
 
 [lints]
 workspace = true
+
+# Off Unix the spawn-token directory is rooted at the account's own local application-data
+# directory, which is where its owner-only ACL comes from. Unix uses the socket directory and an
+# explicit mode instead, so this is not pulled in there.
+[target.'cfg(not(unix))'.dependencies]
+dirs = { workspace = true }

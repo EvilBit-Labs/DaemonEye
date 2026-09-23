@@ -255,8 +255,10 @@ All collectors MUST implement regex pattern matching with the following specific
 **Default Configuration:**
 
 - **Per-Pattern Latency:** 10ms (configurable via `regex.max_pattern_latency_ms`)
-- **Compilation Timeout:** 100ms (configurable via `regex.compilation_timeout_ms`)
-- **Memory Limit:** 1MB per pattern (configurable via `regex.max_memory_per_pattern`)
+- **Compilation Timeout:** 100ms (configurable via `regex.compilation_timeout_ms`) — advisory under a linear-time engine, which bounds compilation by program size rather than by wall clock and offers no way to interrupt a build in progress
+- **Memory Limit:** 256KiB per pattern (configurable via `regex.max_memory_per_pattern`)
+
+The per-pattern limit and `cache_size` are a single decision, not two. A compiled pattern's memory cannot be read back at runtime, so their product — 16MiB here — is the only enforceable ceiling, and it must fit inside the process-wide resident budget. Raising either without lowering the other raises the real ceiling. 256KiB leaves roughly five times the headroom a Unicode-aware `\w` needs; patterns that only ever match ASCII can shrink far below it with `(?-u:...)`.
 
 **Configuration Example:**
 
@@ -265,9 +267,9 @@ detection:
   regex:
     max_pattern_latency_ms: 10        # Per-pattern execution timeout
     compilation_timeout_ms: 100        # Pattern compilation timeout
-    max_memory_per_pattern: 1048576    # 1MB memory limit per pattern
+    max_memory_per_pattern: 262144     # 256KiB compiled-program limit per pattern
     enable_precompilation: true        # Pre-compile patterns at startup
-    cache_size: 1000                   # Maximum cached patterns
+    cache_size: 64                     # Maximum cached patterns
     monitoring:
       enable_metrics: true             # Track pattern performance
       alert_threshold_ms: 5            # Alert when patterns exceed threshold
@@ -279,13 +281,15 @@ detection:
 
 - **Simple Patterns:** Basic literals, character classes, and quantifiers (`*`, `+`, `?`)
 - **Moderate Patterns:** Alternation with limited branches (`(a|b|c)`)
-- **Complex Patterns:** Backreferences, lookahead/lookbehind (with execution limits)
+- **Complex Patterns:** Bounded repetition, nested groups, and Unicode classes
+
+**Unsupported:** backreferences and lookaround. A linear-time engine cannot express them, so a rule using either is rejected at load rather than degraded.
 
 **Performance Optimization Strategies:**
 
 1. **Pre-compilation:** Compile all patterns at startup to avoid runtime compilation overhead
 2. **Safe Regex Engines:** Use RE2-like engines with guaranteed linear time complexity
-3. **Backtrack Limits:** Implement backtrack limits to prevent catastrophic backtracking
+3. **Backtrack Limits:** Not applicable to a linear-time engine — catastrophic backtracking is impossible by construction rather than bounded after the fact
 4. **Pattern Validation:** Reject patterns with exponential complexity characteristics
 5. **Compilation Caching:** Cache compiled patterns with LRU eviction policy
 
@@ -293,8 +297,8 @@ detection:
 
 - Patterns exceeding compilation timeout
 - Patterns requiring excessive memory allocation
-- Patterns with exponential backtracking potential
-- Patterns with nested quantifiers beyond safe limits
+- Patterns using backreferences or lookaround, which the engine cannot compile
+- Patterns whose compiled program exceeds the per-pattern memory limit
 
 **Monitoring and Metrics:**
 

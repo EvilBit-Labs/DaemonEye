@@ -662,6 +662,7 @@ dependencies = [
  "blake3",
  "criterion",
  "dashmap",
+ "dirs",
  "insta",
  "interprocess",
  "nix",
@@ -699,6 +700,7 @@ dependencies = [
  "fuzzyhash",
  "insta",
  "interprocess",
+ "lru",
  "postcard",
  "predicates",
  "proptest",
@@ -708,12 +710,14 @@ dependencies = [
  "quick_cache",
  "rand 0.10.2",
  "redb",
+ "regex",
  "rs_merkle",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "sha3",
  "sqlparser",
+ "subtle",
  "sysinfo",
  "tempfile",
  "thiserror",
@@ -864,9 +868,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8cb01cd46b0cf372153850f4c6c272d9cbea2da513e07538405148f95bd789f3"
 dependencies = [
  "atomic",
+ "parking_lot",
  "pear",
  "serde",
  "serde_json",
+ "tempfile",
  "toml 0.8.23",
  "uncased",
  "version_check",
@@ -1323,6 +1329,12 @@ name = "log"
 version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
+
+[[package]]
+name = "lru"
+version = "0.18.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff9840bcc50b71349309900da0ce7279aa336ae71d73250b07998932c7d97c25"
 
 [[package]]
 name = "matchers"
@@ -2296,6 +2308,18 @@ checksum = "13c6d1b651dc4edf07eead2a0c6c78016ce971bc2c10da5266861b13f25e7cec"
 dependencies = [
  "log",
  "recursive",
+ "sqlparser_derive",
+]
+
+[[package]]
+name = "sqlparser_derive"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6dd45d8fc1c79299bfbb7190e42ccbbdf6a5f52e4a6ad98d92357ea965bd289"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2325,6 +2349,12 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "subtle"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"

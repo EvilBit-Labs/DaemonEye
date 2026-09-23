@@ -1,16 +1,18 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use daemoneye_lib::{alerting, config, detection, storage, telemetry};
-use std::time::{Duration, Instant};
+use daemoneye_lib::{alerting, config, detection_bounds, storage, telemetry};
+use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, error, info, warn};
 
 mod broker_manager;
+mod collector_admission;
 mod collector_config;
 mod collector_registry;
 mod health;
 mod integrity_alerts;
 mod ipc_server;
+mod pushdown_renewal;
 
 use broker_manager::BrokerManager;
 use collector_config::CollectorsConfig;
@@ -251,8 +253,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize Detection and Alerting
     // =========================================================================
 
-    // Initialize detection engine
-    let detection_engine = detection::DetectionEngine::new();
+    // The detection engine the admission gate already feeds. It is *not* constructed here: a
+    // second engine would leave this one's catalog empty forever, so every rule would defer under
+    // R18 and never plan, with nothing to see in the logs.
+    let detection_engine = std::sync::Arc::clone(broker_manager.detection_engine());
 
     // TODO(#006): Load detection rules from the database via `storage::DatabaseManager::get_all_rules`
     // once the redb storage layer is implemented (Task 8). Until then, the detection engine starts
@@ -288,7 +292,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Main loop task
-    // detection_engine already mutable above; reuse directly
     let mut iteration: u64 = 0;
 
     // Session-scoped ssdeep binary-change tracker (R2 AC7). Holds the last
@@ -301,6 +304,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     )
     .unwrap_or_default();
 
+    // R16's clock. Deliberately its own ticker rather than a step inside the scan branch:
+    // scan_interval_ms is an operator-tunable up to an hour, and a scan interval above the task
+    // TTL would expire every pushed task before the loop next woke, marking every rule unhealthy
+    // on a timer. Task lifetime and collection cadence are unrelated concerns, so they get
+    // unrelated timers. Ticking at half the renewal interval bounds how late a due renewal can be
+    // by that half, which keeps two consecutive failed sends inside the TTL.
+    // `checked_div` rather than `/`: `clippy::arithmetic_side_effects` is denied, and a divisor
+    // that cannot be zero here still has to say so in the types.
+    let tick = detection_bounds::PUSHDOWN_TASK_RENEWAL_INTERVAL
+        .checked_div(2)
+        .unwrap_or(detection_bounds::PUSHDOWN_TASK_RENEWAL_INTERVAL);
+    let mut renewal_ticker = tokio::time::interval(tick);
+    renewal_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
     tokio::pin!(shutdown_signal);
 
     loop {
@@ -308,6 +325,39 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             () = &mut shutdown_signal => {
                 info!("Shutdown signal received; commencing graceful shutdown");
                 break;
+            }
+            _ = renewal_ticker.tick() => {
+                // Keep every enabled rule's pushed half alive, and mark unhealthy the ones whose
+                // task lapsed (R16). This evaluates nothing; it only runs the TTL clock.
+                let now = SystemTime::now();
+                // R16's re-issue trigger, before the renewal pass: a collector that registered
+                // since the last tick lost its accepted-task map, so its whole active set is sent
+                // anew. Doing it first refreshes those tasks, so the renewal pass that follows
+                // does not send them a second time.
+                if let Some(admission) = broker_manager.collector_admission() {
+                    let reissued = pushdown_renewal::reissue_registered_collectors(
+                        &detection_engine,
+                        admission,
+                        &broker_manager,
+                        now,
+                    )
+                    .await;
+                    if !reissued.failed.is_empty() {
+                        let failed = reissued.failed.len();
+                        warn!(failed_tasks = failed, "Task re-issue did not reach its collector");
+                    }
+                }
+
+                let renewal = pushdown_renewal::run_renewal_cycle(
+                    &detection_engine,
+                    &broker_manager,
+                    now,
+                )
+                .await;
+                if !renewal.expired_rules.is_empty() {
+                    let expired = renewal.expired_rules.len();
+                    warn!(expired_rules = expired, "Pushed halves lapsed; rules marked unhealthy");
+                }
             }
             () = tokio::time::sleep(scan_interval) => {
                 iteration = iteration.saturating_add(1);
@@ -383,7 +433,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Execute detection rules against collected processes
                 let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_owned());
-                let mut alerts = detection_engine.execute_rules(&processes);
+                let mut alerts = {
+                    // Scoped so the engine lock is released before the alert-delivery awaits
+                    // below; the admission gate takes the same lock on every registration.
+                    let engine = detection_engine.lock().await;
+                    engine.execute_rules(&processes)
+                };
                 // Fold in integrity-signal alerts so they share the dedup,
                 // rate-limit, and delivery path of detection-rule alerts.
                 alerts.extend(integrity_alert_batch);

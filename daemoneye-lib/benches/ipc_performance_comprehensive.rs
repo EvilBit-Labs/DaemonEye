@@ -79,6 +79,7 @@ fn create_benchmark_task(task_id: &str, metadata_size: usize) -> DetectionTask {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     }
 }
 

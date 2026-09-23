@@ -72,7 +72,7 @@ ideate_output: md # md | html (default: html -- ideation docs are human-facing, 
 # elevation.
 
 plan_model: fable # model alias for plan authoring; candidate preference when a Bake-off runs (no default)
-# brainstorm_model: fable        # model alias for approach generation; candidate preference when a Bake-off runs (no default)
+brainstorm_model: opus # model alias for approach generation; candidate preference when a Bake-off runs (no default)
 
 # --- PR concept teaching (ce-commit-push-pr) ---
 # When a PR introduces a concept new to the codebase, the generated PR
@@ -82,8 +82,8 @@ plan_model: fable # model alias for plan authoring; candidate preference when a 
 # and links it from the PR (full-workflow runs only; override per run with
 # archive:on|off). Ordinary cascade: local, then this file, then the skill default.
 
-# pr_teaching_section: false     # true | false (default: true)
-# pr_teaching_archive: true      # true | false (default: false; full-workflow runs only)
+pr_teaching_section: true # true | false (default: true)
+pr_teaching_archive: true # true | false (default: false; full-workflow runs only)
 
 # --- ce-commit-push-pr babysit handoff ---
 # After a full-workflow PR is opened, ce-commit-push-pr auto-invokes ce-babysit-pr

@@ -85,6 +85,7 @@ fn create_security_test_task(task_id: &str) -> DetectionTask {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     }
 }
 
@@ -336,6 +337,7 @@ async fn test_message_size_limits() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
 
     let result = timeout(Duration::from_secs(5), client.send_task(large_task)).await;
