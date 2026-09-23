@@ -13,6 +13,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use collector_core::pushdown::{proto_column_type, proto_op};
 use daemoneye_eventbus::process_manager::spawn_token::SpawnTokenStore;
 use daemoneye_eventbus::rpc::{
     ColumnDescriptor as WireColumn, ConformanceResult as WireConformanceResult,
@@ -222,43 +223,25 @@ fn to_proto_column(wire: &WireColumn) -> ColumnDescriptor {
 }
 
 /// Wire value of a mirrored column type.
+///
+/// `collector_core` owns the one table for this direction of the mirror. It refuses a type that is
+/// unset or newer than this build by returning `None`, and an unrecognized type carries no claim,
+/// so the refusal is encoded on the wire as `ColumnType::Unspecified`.
 fn column_type_value(column_type: daemoneye_eventbus::rpc::ColumnType) -> i32 {
-    use daemoneye_eventbus::rpc::ColumnType as Wire;
     use daemoneye_lib::proto::ColumnType as Proto;
 
-    let mapped = match column_type {
-        Wire::Unspecified => Proto::Unspecified,
-        Wire::String => Proto::String,
-        Wire::Int => Proto::Int,
-        Wire::Uint => Proto::Uint,
-        Wire::Float => Proto::Float,
-        Wire::Bool => Proto::Bool,
-        // `ColumnType` is `#[non_exhaustive]`; an unrecognized type carries no claim.
-        _unrecognized => Proto::Unspecified,
-    };
-    i32::from(mapped)
+    i32::from(proto_column_type(column_type).unwrap_or(Proto::Unspecified))
 }
 
 /// Wire value of a mirrored predicate operation.
+///
+/// As with [`column_type_value`], `collector_core`'s table refuses an operation this build cannot
+/// name, and an unrecognized operation is not pushable, so it crosses as
+/// `PredicateOp::Unspecified`.
 fn op_value(op: daemoneye_eventbus::rpc::PredicateOp) -> i32 {
-    use daemoneye_eventbus::rpc::PredicateOp as Wire;
     use daemoneye_lib::proto::PredicateOp as Proto;
 
-    let mapped = match op {
-        Wire::Unspecified => Proto::Unspecified,
-        Wire::Eq => Proto::Eq,
-        Wire::Ne => Proto::Ne,
-        Wire::Lt => Proto::Lt,
-        Wire::Le => Proto::Le,
-        Wire::Gt => Proto::Gt,
-        Wire::Ge => Proto::Ge,
-        Wire::In => Proto::In,
-        Wire::Like => Proto::Like,
-        Wire::Regexp => Proto::Regexp,
-        // `PredicateOp` is `#[non_exhaustive]`; an unrecognized op is not pushable.
-        _unrecognized => Proto::Unspecified,
-    };
-    i32::from(mapped)
+    i32::from(proto_op(op).unwrap_or(Proto::Unspecified))
 }
 
 #[cfg(test)]

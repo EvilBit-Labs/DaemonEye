@@ -666,7 +666,9 @@ mod tests {
             "rule-004",
             "Complex Rule",
             "Complex description",
-            "SELECT p.name, p.pid FROM processes p WHERE p.name LIKE '%test%' ORDER BY p.pid LIMIT 10",
+            // ORDER BY and LIMIT were dropped from this rule when the clause gate began refusing
+            // them; the intent here is that a structurally complex SELECT is accepted.
+            "SELECT p.name, p.pid FROM processes p WHERE p.name LIKE '%test%' AND p.pid > 0",
             "test",
             AlertSeverity::Low,
         );

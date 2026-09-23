@@ -86,6 +86,25 @@ pub enum SpawnTokenError {
         /// Its permission bits.
         mode: u32,
     },
+    /// The token directory path is a symlink, so its mode says nothing about where it leads.
+    ///
+    /// Checked rather than followed: a symlink to an attacker-owned `0o700` directory passes
+    /// every mode check while the credentials land somewhere the attacker reads.
+    #[error("token directory path {0} is a symlink, not a directory this store created")]
+    SymlinkedDirectory(PathBuf),
+    /// The token directory exists but belongs to another account.
+    ///
+    /// Mode bits alone do not establish the owner-only property R9 names: `0o700` owned by
+    /// somebody else grants that somebody, not this process.
+    #[error("token directory {path} is owned by uid {owner}, not this process's uid {expected}")]
+    ForeignDirectory {
+        /// The offending directory.
+        path: PathBuf,
+        /// The uid that owns it.
+        owner: u32,
+        /// This process's effective uid.
+        expected: u32,
+    },
     /// No private per-user directory could be resolved to root the token directory at.
     ///
     /// Only reachable off Unix, where the owner-only property comes from placing the directory
@@ -125,11 +144,31 @@ impl IssuedToken {
 }
 
 /// The tokens currently valid, one per live collector spawn.
-#[derive(Debug)]
 pub struct SpawnTokenStore {
     directory: PathBuf,
     /// Synchronous lock, never held across an `.await`.
     tokens: Mutex<HashMap<String, String>>,
+}
+
+/// Hand-written so the store's `Debug` cannot reproduce a live token.
+///
+/// `Mutex`'s derived `Debug` prints its contents whenever the lock is free, so a derive here made
+/// `format!("{store:?}")` print every token the agent had issued — and `CollectorAdmission`, which
+/// holds an `Arc<SpawnTokenStore>`, inherited that. The count is the useful part; the values are
+/// the credential.
+impl std::fmt::Debug for SpawnTokenStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let issued = self
+            .tokens
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        formatter
+            .debug_struct("SpawnTokenStore")
+            .field("directory", &self.directory)
+            .field("issued", &issued)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SpawnTokenStore {
@@ -299,7 +338,6 @@ fn remove_token_file(path: &Path) -> Result<(), SpawnTokenError> {
     }
 }
 
-/// Create `directory` owner-only if it is absent.
 /// Where the token directory lives: beside the socket, which is owner-only by its own mode.
 ///
 /// Infallible on Unix, but it returns `Result` so both `cfg` arms present one signature to the
@@ -321,6 +359,7 @@ fn token_directory(_socket_directory: &Path) -> Result<PathBuf, SpawnTokenError>
     Ok(base.join("DaemonEye").join(TOKEN_DIR_NAME))
 }
 
+/// Create `directory` owner-only if it is absent, with the mode set at creation.
 #[cfg(unix)]
 fn create_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
     use std::os::unix::fs::DirBuilderExt as _;
@@ -347,11 +386,36 @@ fn create_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
 }
 
 /// Refuse a token directory other accounts can reach.
+///
+/// Three properties, in the order an attacker would try them:
+///
+/// 1. **Not a symlink.** Read with `symlink_metadata`, so the entry itself is inspected rather
+///    than whatever it points at. `fs::metadata` follows the link, and a symlink to an
+///    attacker-owned `0o700` directory then passes both remaining checks.
+/// 2. **Owned by this process.** `0o700` says only that one account may reach it, never which
+///    account. The effective uid comes from `nix::unistd::geteuid`, a safe wrapper: the workspace
+///    forbids the `unsafe` a direct syscall would take.
+/// 3. **Owner-only mode.** The original check, unchanged.
 #[cfg(unix)]
 fn check_private_dir(directory: &Path) -> Result<(), SpawnTokenError> {
-    use std::os::unix::fs::PermissionsExt as _;
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
-    let mode = fs::metadata(directory)?.permissions().mode() & 0o777;
+    let metadata = fs::symlink_metadata(directory)?;
+    if metadata.file_type().is_symlink() {
+        return Err(SpawnTokenError::SymlinkedDirectory(directory.to_owned()));
+    }
+
+    let expected = nix::unistd::geteuid().as_raw();
+    let owner = metadata.uid();
+    if owner != expected {
+        return Err(SpawnTokenError::ForeignDirectory {
+            path: directory.to_owned(),
+            owner,
+            expected,
+        });
+    }
+
+    let mode = metadata.permissions().mode() & 0o777;
     // Owner-only means the low six bits — group and other — are all clear.
     if mode.trailing_zeros() >= 6 {
         return Ok(());
@@ -477,5 +541,60 @@ mod tests {
     #[test]
     fn an_unreadable_path_yields_no_token_rather_than_a_panic() {
         assert!(spawn_token_from_args([SPAWN_TOKEN_ARG, "/nonexistent/token"]).is_none());
+    }
+
+    /// A symlinked token directory is refused rather than followed.
+    ///
+    /// The target is `0o700` and owned by this account, so it passes both the mode and the
+    /// ownership check; only inspecting the entry itself catches it. Off Unix `check_private_dir`
+    /// is a no-op by design (see the module's platform note), so the test is Unix-only.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_token_directory_is_refused() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("elsewhere");
+        fs::create_dir_all(&target).unwrap();
+        fs::set_permissions(
+            &target,
+            <fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o700),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join(TOKEN_DIR_NAME)).unwrap();
+
+        // Act
+        let opened = SpawnTokenStore::new(dir.path());
+
+        // Assert
+        assert!(
+            matches!(opened, Err(SpawnTokenError::SymlinkedDirectory(_))),
+            "a symlinked token directory must be refused, not followed"
+        );
+    }
+
+    #[test]
+    fn the_stores_debug_rendering_holds_no_token() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let store = SpawnTokenStore::new(dir.path()).unwrap();
+        let _issued = store.issue("procmond").unwrap();
+        let token = store.expected_token("procmond").unwrap();
+
+        // Act
+        let rendered = format!("{store:?}");
+
+        // Assert: the message carries no secret material (CodeQL rust/cleartext-logging).
+        assert!(
+            !rendered.contains(&token),
+            "the store's Debug rendering reproduced a live token"
+        );
+        assert!(rendered.contains("issued: 1"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_this_account_owns_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(SpawnTokenStore::new(dir.path()).is_ok());
     }
 }

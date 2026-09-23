@@ -23,13 +23,13 @@ pub mod conformance;
 mod predicate;
 pub mod schema;
 
+use collector_core::pushdown::descriptor_op;
 use collector_core::{PushdownRejection, PushdownTasks, TaskStatus};
 use daemoneye_eventbus::rpc::{ColumnType, PredicateOp as DescriptorOp};
-use daemoneye_lib::detection::{RegexCache, RegexCacheStats, RegexRejection};
+use daemoneye_lib::detection::{CompiledPattern, RegexCache, RegexCacheStats, RegexRejection};
 use daemoneye_lib::proto::{DetectionTask, Predicate, PredicateOp, ProcessRecord, PushdownPlan};
 use predicate::{
-    check_literal, compare_first, descriptor_op, in_holds, pattern_rejected, pattern_source,
-    project,
+    check_literal, compare_first, in_holds, pattern_rejected, pattern_source, project,
 };
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -215,6 +215,11 @@ impl PushdownEvaluator {
     /// producing rows, which is what makes the TTL mean anything. [`Self::evaluate`] is the
     /// lifetime-free primitive beneath it, for callers that have already checked.
     ///
+    /// The plan comes from the task set, **not** from the caller. Taking one as an argument made
+    /// the task id a name for nothing: acceptance validated one plan, and evaluation could then be
+    /// handed another — which is how a predicate on an operation the column never advertised, or a
+    /// literal of the wrong type, would reach the per-record path with every static check bypassed.
+    ///
     /// # Errors
     ///
     /// Returns [`PushdownError::TaskNotActive`] when `task_id` is unknown or expired, or whatever
@@ -222,16 +227,15 @@ impl PushdownEvaluator {
     pub fn evaluate_task(
         &self,
         task_id: &str,
-        plan: &PushdownPlan,
         records: &[ProcessRecord],
         now: SystemTime,
     ) -> Result<Vec<ProjectedRow>, PushdownError> {
-        if !self.is_active(task_id, now) {
+        let Some(plan) = self.tasks.active_plan(task_id, now) else {
             return Err(PushdownError::TaskNotActive {
                 task_id: task_id.to_owned(),
             });
-        }
-        self.evaluate(plan, records)
+        };
+        self.evaluate(&plan, records)
     }
 
     /// Evaluates `plan` against `records`, returning the projected columns of every admitted row.
@@ -253,21 +257,68 @@ impl PushdownEvaluator {
             }));
         }
         let projection = self.projected_columns(plan)?;
+        let compiled = self.compiled_patterns(plan, records);
         let mut rows = Vec::new();
         for record in records {
-            if self.admits(plan, record)? {
+            if self.admits(plan, record, &compiled)? {
                 rows.push(project(record, &projection)?);
             }
         }
         Ok(rows)
     }
 
+    /// Resolves each pattern predicate's compiled program once for the whole batch.
+    ///
+    /// `pattern_source` allocates and `get_or_compile` takes the cache lock, and neither result
+    /// varies across records; doing both per record costs one allocation and one lock acquisition
+    /// per record per pattern predicate against a 10,000-record scrape.
+    ///
+    /// Only a *successful* resolution is hoisted. A predicate that cannot be resolved leaves its
+    /// slot empty and takes the per-record path below, which produces the identical refusal from
+    /// the identical place — so the fast path fires exactly when the slow path would have
+    /// succeeded, and no refusal is reordered or invented. An empty batch resolves nothing, so a
+    /// plan evaluated against no records still does no pattern work at all.
+    fn compiled_patterns(
+        &self,
+        plan: &PushdownPlan,
+        records: &[ProcessRecord],
+    ) -> Vec<Option<CompiledPattern>> {
+        if records.is_empty() {
+            // Same length, nothing resolved: an empty batch does no pattern work at all.
+            return vec![None; plan.predicates.len()];
+        }
+        plan.predicates
+            .iter()
+            .map(|predicate| {
+                // `matches!` rather than a wildcard match arm: an operation newer than this build
+                // simply has no pattern to hoist, and is refused per record exactly as before.
+                if !matches!(predicate.op(), PredicateOp::Like | PredicateOp::Regexp) {
+                    return None;
+                }
+                pattern_source(predicate)
+                    .ok()
+                    .and_then(|source| self.patterns.get_or_compile(&source).ok())
+            })
+            .collect()
+    }
+
     /// Whether every predicate in the plan holds for `record`.
     ///
     /// UNKNOWN does not admit: SQL's three-valued `AND` requires every conjunct to be true.
-    fn admits(&self, plan: &PushdownPlan, record: &ProcessRecord) -> Result<bool, PushdownError> {
-        for predicate in &plan.predicates {
-            if self.predicate_holds(predicate, record)? != Some(true) {
+    fn admits(
+        &self,
+        plan: &PushdownPlan,
+        record: &ProcessRecord,
+        compiled: &[Option<CompiledPattern>],
+    ) -> Result<bool, PushdownError> {
+        // Built once per record: `command_line` is joined at most once here, however many
+        // predicates read it, and every other column is borrowed rather than copied.
+        let reader = schema::RecordReader::new(record);
+        // Zipped rather than indexed: `compiled` is built one slot per predicate by
+        // `compiled_patterns`, and an index would be a bounds check on every predicate of every
+        // record.
+        for (predicate, pattern) in plan.predicates.iter().zip(compiled) {
+            if self.predicate_holds(predicate, &reader, pattern.as_ref())? != Some(true) {
                 return Ok(false);
             }
         }
@@ -281,22 +332,25 @@ impl PushdownEvaluator {
     fn predicate_holds(
         &self,
         predicate: &Predicate,
-        record: &ProcessRecord,
+        reader: &schema::RecordReader<'_>,
+        compiled: Option<&CompiledPattern>,
     ) -> Result<Option<bool>, PushdownError> {
-        let Some(observed) = schema::field_value(record, &predicate.column)? else {
+        let Some(observed) = reader.field(&predicate.column)? else {
             return Ok(None);
         };
         // KTD8: the wildcard arm refuses. `PredicateOp` is `#[non_exhaustive]`, and an operation
         // this build cannot name must never be read as a comparison it is not.
         match predicate.op() {
-            PredicateOp::Eq => Ok(compare_first(&observed, predicate)?.map(Ordering::is_eq)),
-            PredicateOp::Ne => Ok(compare_first(&observed, predicate)?.map(Ordering::is_ne)),
-            PredicateOp::Lt => Ok(compare_first(&observed, predicate)?.map(Ordering::is_lt)),
-            PredicateOp::Le => Ok(compare_first(&observed, predicate)?.map(Ordering::is_le)),
-            PredicateOp::Gt => Ok(compare_first(&observed, predicate)?.map(Ordering::is_gt)),
-            PredicateOp::Ge => Ok(compare_first(&observed, predicate)?.map(Ordering::is_ge)),
-            PredicateOp::In => in_holds(&observed, predicate),
-            PredicateOp::Like | PredicateOp::Regexp => self.pattern_holds(&observed, predicate),
+            PredicateOp::Eq => Ok(compare_first(observed, predicate)?.map(Ordering::is_eq)),
+            PredicateOp::Ne => Ok(compare_first(observed, predicate)?.map(Ordering::is_ne)),
+            PredicateOp::Lt => Ok(compare_first(observed, predicate)?.map(Ordering::is_lt)),
+            PredicateOp::Le => Ok(compare_first(observed, predicate)?.map(Ordering::is_le)),
+            PredicateOp::Gt => Ok(compare_first(observed, predicate)?.map(Ordering::is_gt)),
+            PredicateOp::Ge => Ok(compare_first(observed, predicate)?.map(Ordering::is_ge)),
+            PredicateOp::In => in_holds(observed, predicate),
+            PredicateOp::Like | PredicateOp::Regexp => {
+                self.pattern_holds(observed, predicate, compiled)
+            }
             PredicateOp::Unspecified => Err(PushdownError::unusable_operation(&predicate.column)),
             _unrecognized => Err(PushdownError::unusable_operation(&predicate.column)),
         }
@@ -305,28 +359,37 @@ impl PushdownEvaluator {
     /// Evaluates a `LIKE` or `REGEXP` predicate through this collector's bounded cache.
     fn pattern_holds(
         &self,
-        observed: &FieldValue,
+        observed: schema::FieldRef<'_>,
         predicate: &Predicate,
+        compiled: Option<&CompiledPattern>,
     ) -> Result<Option<bool>, PushdownError> {
-        let FieldValue::Str(ref text) = *observed else {
+        let schema::FieldRef::Str(text) = observed else {
             return Err(PushdownError::LiteralTypeMismatch {
                 column: predicate.column.clone(),
                 column_type: ColumnType::String.as_wire_name(),
                 literal_kind: "pattern",
             });
         };
-        self.pattern_matches(predicate, text).map(Some)
+        self.pattern_matches(predicate, text, compiled).map(Some)
     }
 
     /// Compiles the predicate's pattern under this collector's own bounds (R21) and reports
     /// whether it matches `text`.
-    fn pattern_matches(&self, predicate: &Predicate, text: &str) -> Result<bool, PushdownError> {
+    fn pattern_matches(
+        &self,
+        predicate: &Predicate,
+        text: &str,
+        compiled: Option<&CompiledPattern>,
+    ) -> Result<bool, PushdownError> {
+        if let Some(resolved) = compiled {
+            return Ok(resolved.is_match(text));
+        }
         let source = pattern_source(predicate)?;
-        let compiled = self
+        let resolved = self
             .patterns
             .get_or_compile(&source)
             .map_err(|rejection| pattern_rejected(predicate, rejection))?;
-        Ok(compiled.is_match(text))
+        Ok(resolved.is_match(text))
     }
 
     /// Refuses a plan whose literals do not match the declared column types, and compiles every

@@ -17,16 +17,14 @@
 //! skipped does not pass, so the skip cannot be used to earn one.
 
 use super::PushdownEvaluator;
+use collector_core::pushdown::{proto_column_type, proto_op};
 use daemoneye_eventbus::rpc::{
-    ColumnDescriptor, ColumnType as WireColumnType, ConformanceResult,
-    PredicateOp as WirePredicateOp, SchemaDescriptor,
+    ColumnDescriptor, ConformanceResult, PredicateOp as WirePredicateOp, SchemaDescriptor,
 };
 use daemoneye_lib::detection::conformance::{
     ConformanceCase, ConformanceOutcome, verify_operation,
 };
-use daemoneye_lib::proto::{
-    ColumnType, Literal, Predicate, PredicateOp, ProcessRecord, PushdownPlan, literal,
-};
+use daemoneye_lib::proto::{Literal, Predicate, PredicateOp, ProcessRecord, PushdownPlan, literal};
 
 /// procmond's descriptor with its own conformance results attached (R22).
 ///
@@ -242,39 +240,5 @@ const fn string_of(value: &literal::Value) -> Option<&str> {
     match *value {
         literal::Value::StringValue(ref inner) => Some(inner.as_str()),
         ref _other => None,
-    }
-}
-
-/// Maps the descriptor's operation vocabulary onto the protobuf one the corpus is keyed by.
-///
-/// `None` for an operation this build cannot name; the wildcard arm refuses, because
-/// `PredicateOp` is `#[non_exhaustive]` and an unnameable operation must never be verified as one
-/// it is not.
-const fn proto_op(op: WirePredicateOp) -> Option<PredicateOp> {
-    match op {
-        WirePredicateOp::Eq => Some(PredicateOp::Eq),
-        WirePredicateOp::Ne => Some(PredicateOp::Ne),
-        WirePredicateOp::Lt => Some(PredicateOp::Lt),
-        WirePredicateOp::Le => Some(PredicateOp::Le),
-        WirePredicateOp::Gt => Some(PredicateOp::Gt),
-        WirePredicateOp::Ge => Some(PredicateOp::Ge),
-        WirePredicateOp::In => Some(PredicateOp::In),
-        WirePredicateOp::Like => Some(PredicateOp::Like),
-        WirePredicateOp::Regexp => Some(PredicateOp::Regexp),
-        WirePredicateOp::Unspecified => None,
-        _unrecognized => None,
-    }
-}
-
-/// Maps the descriptor's column types onto the protobuf ones, refusing anything unnameable.
-const fn proto_column_type(column_type: WireColumnType) -> Option<ColumnType> {
-    match column_type {
-        WireColumnType::String => Some(ColumnType::String),
-        WireColumnType::Int => Some(ColumnType::Int),
-        WireColumnType::Uint => Some(ColumnType::Uint),
-        WireColumnType::Float => Some(ColumnType::Float),
-        WireColumnType::Bool => Some(ColumnType::Bool),
-        WireColumnType::Unspecified => None,
-        _unrecognized => None,
     }
 }

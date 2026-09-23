@@ -129,3 +129,49 @@ pub const MAX_CONFORMANCE_RESULTS: usize =
 /// Identifiers come from a fixed catalog whose longest entry is far shorter; 128 bytes rejects
 /// padded or adversarial identifiers early, before they reach any lookup or log line.
 pub const MAX_IDENTIFIER_LENGTH: usize = 128;
+
+// --- Pushdown plan shape bounds ---------------------------------------------------------------
+
+/// Maximum number of predicates one pushed plan may carry.
+///
+/// A plan's predicates are evaluated per record across a scrape of 10,000+ processes, and the
+/// agent — the *lower*-privileged component — is what pushes them to the elevated collector. A
+/// conjunction is a lowered `WHERE` clause over a table of at most [`MAX_COLUMNS_PER_TABLE`]
+/// columns, so 64 is far above any rule an operator would write and far below a count worth
+/// multiplying by a scrape.
+pub const MAX_PREDICATES_PER_PLAN: usize = 64;
+
+/// Maximum number of columns one pushed plan may project.
+///
+/// A projection names columns of a single table, so the table's own column ceiling is the natural
+/// bound: a plan asking for more than the widest table declares is malformed by construction.
+pub const MAX_PROJECTION_COLUMNS: usize = MAX_COLUMNS_PER_TABLE;
+
+/// Maximum number of literals a single `IN` predicate may carry.
+///
+/// `IN` is the one operation whose arity is unbounded by shape, and it is scanned per record. 256
+/// covers a realistic allow- or deny-list while keeping the per-record work proportional to the
+/// plan rather than to whatever the sender chose to send.
+pub const MAX_IN_VALUES: usize = 256;
+
+// --- Agent rejection log bounds -----------------------------------------------------------------
+
+/// Maximum number of rejection records the agent's in-memory chain retains.
+///
+/// Collector registration is reachable over IPC and every refusal writes a record, so a collector
+/// retrying with a stale or rotated token would otherwise grow the chain without limit against the
+/// agent's 100 MB resident budget. 1024 is wide enough that an operator still sees the whole of a
+/// realistic rule-load or registration failure burst, and the retained window stays a few megabytes
+/// even where records carry long rendered detail.
+///
+/// Every identifier a record retains is itself truncated to [`MAX_IDENTIFIER_LENGTH`] *bytes* at
+/// the point it is recorded, so the retained identities are bounded by the product of two fixed
+/// numbers — 1024 × 128 bytes, or 128 KiB — rather than by the count alone. It is still not a byte ceiling for the whole chain: a rule-load rejection's
+/// rendered reason can quote a pattern or a SQL fragment, and those are bounded by their own
+/// load-time gates rather than by this constant.
+pub const MAX_REJECTION_RECORDS: usize = 1024;
+
+const _: () = assert!(
+    MAX_REJECTION_RECORDS > 0,
+    "the rejection log must retain at least one record"
+);

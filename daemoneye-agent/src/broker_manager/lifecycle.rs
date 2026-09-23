@@ -72,23 +72,34 @@ impl BrokerManager {
         // Initialize collector registry behind the spawn-token gate. The assertion checks the
         // behavioural consequence — that the gate verifies against the very store the process
         // manager mints into — not merely that a store was constructed.
-        let registry = match self.collector_admission {
-            Some(ref admission) => {
-                let minting = self.process_manager.spawn_token_store();
-                anyhow::ensure!(
-                    minting.is_some_and(|store| admission.shares_token_store_with(store)),
-                    "collector registration gate is not wired to the spawn-token store the process manager mints into"
-                );
-                // The same check for the engine, and for the same reason: a gate feeding a second
-                // engine admits every registration into a catalog the planner never reads, so
-                // every rule defers forever under R18 without a single error surfacing.
-                anyhow::ensure!(
-                    admission.shares_engine_with(&self.detection_engine),
-                    "collector registration gate is not wired to the detection engine the agent plans against"
-                );
-                crate::collector_registry::CollectorRegistry::with_admission(Arc::clone(admission))
-            }
-            None => crate::collector_registry::CollectorRegistry::default(),
+        let registry = if let Some(ref admission) = self.collector_admission {
+            let minting = self.process_manager.spawn_token_store();
+            anyhow::ensure!(
+                minting.is_some_and(|store| admission.shares_token_store_with(store)),
+                "collector registration gate is not wired to the spawn-token store the process manager mints into"
+            );
+            // The same check for the engine, and for the same reason: a gate feeding a second
+            // engine admits every registration into a catalog the planner never reads, so
+            // every rule defers forever under R18 without a single error surfacing.
+            anyhow::ensure!(
+                admission.shares_engine_with(&self.detection_engine),
+                "collector registration gate is not wired to the detection engine the agent plans against"
+            );
+            crate::collector_registry::CollectorRegistry::with_admission(Arc::clone(admission))
+        } else {
+            // The mirror of the two assertions above, for the arm that previously had none:
+            // with no gate there is nothing to check sharing against, so what must hold is
+            // that the minting half is equally absent. The two halves disagreeing would mean
+            // the agent hands out tokens nothing will ever verify.
+            anyhow::ensure!(
+                self.process_manager.spawn_token_store().is_none(),
+                "the process manager holds a spawn-token store but registration has no gate"
+            );
+            error!(
+                "No spawn-token store could be opened; registration is closed and every \
+                 collector will be refused"
+            );
+            crate::collector_registry::CollectorRegistry::closed()
         };
         *self.collector_registry.write().await = Some(Arc::new(registry));
 

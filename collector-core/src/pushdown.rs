@@ -16,11 +16,15 @@
 //! decides whether a task may be evaluated at all.
 
 use daemoneye_eventbus::rpc::{
-    ColumnDescriptor, PredicateOp as DescriptorOp, SchemaDescriptor, TableDescriptor,
+    ColumnDescriptor, ColumnType as DescriptorColumnType, PredicateOp as DescriptorOp,
+    SchemaDescriptor, TableDescriptor,
 };
 use daemoneye_lib::detection::RegexRejection;
-use daemoneye_lib::detection_bounds::{MAX_IDENTIFIER_LENGTH, PUSHDOWN_TASK_TTL};
-use daemoneye_lib::proto::{DetectionTask, Predicate, PredicateOp, PushdownPlan};
+use daemoneye_lib::detection_bounds::{
+    MAX_IDENTIFIER_LENGTH, MAX_IN_VALUES, MAX_PREDICATES_PER_PLAN, MAX_PROJECTION_COLUMNS,
+    PUSHDOWN_TASK_TTL,
+};
+use daemoneye_lib::proto::{ColumnType, DetectionTask, Predicate, PredicateOp, PushdownPlan};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -132,6 +136,22 @@ pub enum PushdownRejection {
         rejection: RegexRejection,
     },
 
+    /// The plan named more predicates, projected columns or `IN` values than the fixed bound.
+    ///
+    /// Identifier *lengths* are bounded by [`Self::IdentifierTooLong`]; this bounds the *counts*,
+    /// which is the other half of what a plan can inflate. Each is evaluated per record across a
+    /// scrape of 10,000+ processes, so an unbounded count is unbounded work.
+    #[error("plan carries {count} {what}, beyond the bound of {limit}")]
+    PlanTooLarge {
+        /// What was over the bound, named for the operator: `predicates`, `projected columns` or
+        /// `IN values`.
+        what: &'static str,
+        /// How many the plan carried.
+        count: usize,
+        /// The fixed ceiling.
+        limit: usize,
+    },
+
     /// The plan's TTL was zero or beyond the fixed ceiling.
     #[error("ttl of {ttl_ms}ms is outside the permitted range")]
     InvalidTtl {
@@ -152,6 +172,17 @@ pub enum TaskStatus {
     Expired,
 }
 
+/// An accepted task: the plan it was validated against, and when it stops being evaluable.
+///
+/// The plan is kept, not discarded. Holding only the deadline made the task id the whole binding,
+/// so an evaluator had to be handed a plan by its caller and could be handed a *different* one —
+/// evaluating something this module never validated, which is exactly what validation is for.
+#[derive(Debug, Clone)]
+struct AcceptedTask {
+    plan: PushdownPlan,
+    deadline: SystemTime,
+}
+
 /// The pushdown tasks a single collector has accepted, and the descriptor it validates against.
 ///
 /// The descriptor held here is the same value the collector advertises in its registration
@@ -159,7 +190,7 @@ pub enum TaskStatus {
 #[derive(Debug)]
 pub struct PushdownTasks {
     descriptor: SchemaDescriptor,
-    accepted: Mutex<HashMap<String, SystemTime>>,
+    accepted: Mutex<HashMap<String, AcceptedTask>>,
 }
 
 impl PushdownTasks {
@@ -197,18 +228,19 @@ impl PushdownTasks {
                     ttl_ms: plan.ttl_ms,
                 })?;
 
-        self.record(task.task_id.clone(), deadline, now);
+        self.record(task.task_id.clone(), plan.clone(), deadline, now);
         Ok(())
     }
 
-    /// Records a validated task's deadline, dropping entries that already expired.
+    /// Records a validated task's plan and deadline, dropping entries that already expired.
     ///
-    /// Re-accepting a task id that is already known refreshes its deadline; that is the seam a
-    /// later renewal unit drives, so renewal needs no separate mechanism.
-    fn record(&self, task_id: String, deadline: SystemTime, now: SystemTime) {
+    /// Re-accepting a task id that is already known refreshes both its deadline *and* its plan;
+    /// that is the seam renewal drives, so renewal needs no separate mechanism — and a renewal
+    /// that narrows a rule takes effect rather than being shadowed by the plan first accepted.
+    fn record(&self, task_id: String, plan: PushdownPlan, deadline: SystemTime, now: SystemTime) {
         let mut accepted = self.accepted.lock();
-        accepted.retain(|_task_id, expires_at| *expires_at > now);
-        accepted.insert(task_id, deadline);
+        accepted.retain(|_task_id, task| task.deadline > now);
+        accepted.insert(task_id, AcceptedTask { plan, deadline });
     }
 
     /// Lifecycle state of `task_id` as of `now`.
@@ -216,9 +248,22 @@ impl PushdownTasks {
     pub fn status(&self, task_id: &str, now: SystemTime) -> TaskStatus {
         match self.accepted.lock().get(task_id) {
             None => TaskStatus::Unknown,
-            Some(expires_at) if *expires_at > now => TaskStatus::Active,
+            Some(task) if task.deadline > now => TaskStatus::Active,
             Some(_expired) => TaskStatus::Expired,
         }
+    }
+
+    /// The validated plan `task_id` was accepted with, if it is still within its TTL.
+    ///
+    /// This is what an evaluator must evaluate. Taking a plan from the caller instead would make
+    /// the task id a name for nothing: validation ran over *this* plan, and no other.
+    #[must_use]
+    pub fn active_plan(&self, task_id: &str, now: SystemTime) -> Option<PushdownPlan> {
+        self.accepted
+            .lock()
+            .get(task_id)
+            .filter(|task| task.deadline > now)
+            .map(|task| task.plan.clone())
     }
 
     /// Number of accepted tasks still within their TTL as of `now`.
@@ -227,12 +272,18 @@ impl PushdownTasks {
         self.accepted
             .lock()
             .values()
-            .filter(|expires_at| **expires_at > now)
+            .filter(|task| task.deadline > now)
             .count()
     }
 
     /// Validates the plan's table, predicates and projection against the descriptor.
     fn validate_plan(&self, plan: &PushdownPlan) -> Result<(), PushdownRejection> {
+        check_count("predicates", plan.predicates.len(), MAX_PREDICATES_PER_PLAN)?;
+        check_count(
+            "projected columns",
+            plan.projection.len(),
+            MAX_PROJECTION_COLUMNS,
+        )?;
         check_identifier(&plan.table)?;
         let table = self
             .descriptor
@@ -252,6 +303,18 @@ impl PushdownTasks {
         }
         Ok(())
     }
+}
+
+/// Rejects a plan carrying more of something than the fixed bound allows.
+const fn check_count(
+    what: &'static str,
+    count: usize,
+    limit: usize,
+) -> Result<(), PushdownRejection> {
+    if count > limit {
+        return Err(PushdownRejection::PlanTooLarge { what, count, limit });
+    }
+    Ok(())
 }
 
 /// Rejects an identifier longer than the fixed bound before it is used in any lookup.
@@ -303,6 +366,9 @@ fn validate_predicate(
 
     let values = predicate.values.len();
     let arity_ok = if op == DescriptorOp::In {
+        // `IN` is the one operation whose arity is unbounded by shape, and its list is scanned per
+        // record, so the ceiling is checked here rather than left to the arity test below.
+        check_count("IN values", values, MAX_IN_VALUES)?;
         values >= 1
     } else {
         values == 1
@@ -317,12 +383,17 @@ fn validate_predicate(
     Ok(())
 }
 
-/// Maps a wire operation onto the descriptor's operation vocabulary.
+/// Maps a protobuf operation onto the descriptor's operation vocabulary.
 ///
 /// `None` means the operation is unset or newer than this build, which is always a refusal. The
 /// wildcard arm exists because the protobuf enum is `#[non_exhaustive]` and may grow; it rejects,
 /// so a variant this build predates can never be read as a comparison it is not.
-const fn descriptor_op(op: PredicateOp) -> Option<DescriptorOp> {
+///
+/// This crate is the only one that depends on both sides of the mirror, so the three conversions
+/// between them live here and every caller shares one table per direction rather than keeping its
+/// own copy.
+#[must_use]
+pub const fn descriptor_op(op: PredicateOp) -> Option<DescriptorOp> {
     match op {
         PredicateOp::Eq => Some(DescriptorOp::Eq),
         PredicateOp::Ne => Some(DescriptorOp::Ne),
@@ -334,6 +405,45 @@ const fn descriptor_op(op: PredicateOp) -> Option<DescriptorOp> {
         PredicateOp::Like => Some(DescriptorOp::Like),
         PredicateOp::Regexp => Some(DescriptorOp::Regexp),
         PredicateOp::Unspecified => None,
+        _unrecognized => None,
+    }
+}
+
+/// Maps a descriptor operation onto the protobuf vocabulary, the reverse of [`descriptor_op`].
+///
+/// `None` for an operation that is unset or newer than this build. The wildcard arm refuses for
+/// the same reason [`descriptor_op`]'s does: `PredicateOp` is `#[non_exhaustive]`, and an
+/// operation this build cannot name must never be read as one it is not.
+#[must_use]
+pub const fn proto_op(op: DescriptorOp) -> Option<PredicateOp> {
+    match op {
+        DescriptorOp::Eq => Some(PredicateOp::Eq),
+        DescriptorOp::Ne => Some(PredicateOp::Ne),
+        DescriptorOp::Lt => Some(PredicateOp::Lt),
+        DescriptorOp::Le => Some(PredicateOp::Le),
+        DescriptorOp::Gt => Some(PredicateOp::Gt),
+        DescriptorOp::Ge => Some(PredicateOp::Ge),
+        DescriptorOp::In => Some(PredicateOp::In),
+        DescriptorOp::Like => Some(PredicateOp::Like),
+        DescriptorOp::Regexp => Some(PredicateOp::Regexp),
+        DescriptorOp::Unspecified => None,
+        _unrecognized => None,
+    }
+}
+
+/// Maps a descriptor column type onto the protobuf vocabulary.
+///
+/// `None` for a type that is unset or newer than this build; `ColumnType` is `#[non_exhaustive]`,
+/// and a type this build cannot name carries no claim about what a literal may be compared to.
+#[must_use]
+pub const fn proto_column_type(column_type: DescriptorColumnType) -> Option<ColumnType> {
+    match column_type {
+        DescriptorColumnType::String => Some(ColumnType::String),
+        DescriptorColumnType::Int => Some(ColumnType::Int),
+        DescriptorColumnType::Uint => Some(ColumnType::Uint),
+        DescriptorColumnType::Float => Some(ColumnType::Float),
+        DescriptorColumnType::Bool => Some(ColumnType::Bool),
+        DescriptorColumnType::Unspecified => None,
         _unrecognized => None,
     }
 }

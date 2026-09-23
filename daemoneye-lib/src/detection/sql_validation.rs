@@ -1,4 +1,4 @@
-//! The rule-load SQL validation gate (requirements R1-R4).
+//! The rule-load SQL validation gate (requirements R1-R4, and R17 for the clause gate).
 //!
 //! A rule's SQL is parsed once, under the parser's own recursion limit, and then walked with a
 //! single `sqlparser` [`Visitor`]. The visitor is what makes the gate total: the derived
@@ -6,13 +6,18 @@
 //! past — CTE bodies, parenthesised expressions, `IN` lists, and function arguments — so a
 //! forbidden construct cannot hide in a corner of the tree that no arm happened to name.
 //!
+//! The gate also refuses any clause the planner has no representation for — `LIMIT`, `ORDER BY`,
+//! `GROUP BY`, `HAVING` and the rest. See `unsupported_query_clause` for why that is a
+//! rejection rather than something to tolerate.
+//!
 //! Nothing here executes a rule. Execution is ticket T6's.
 
 use crate::detection::allowlist::is_allowed_sql_function;
 use crate::detection::rejection::{SqlPosition, SqlRejection};
 use crate::detection_bounds::SQL_PARSER_RECURSION_LIMIT;
 use sqlparser::ast::{
-    Expr, Query, Select, SetExpr, Spanned as _, Statement, TableFactor, Visit as _, Visitor,
+    Expr, GroupByExpr, Query, Select, SetExpr, Spanned as _, Statement, TableFactor, Visit as _,
+    Visitor,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -24,9 +29,6 @@ const MAX_PROJECTION_ITEMS: usize = 50;
 
 /// Maximum number of `JOIN`s across all `FROM` items of a single `SELECT`.
 const MAX_JOINS: usize = 4;
-
-/// Maximum number of explicit `GROUP BY` expressions in a single `SELECT`.
-const MAX_GROUP_BY_EXPRESSIONS: usize = 10;
 
 /// Validate a detection rule's SQL, rejecting every construct the rule-load gate forbids.
 ///
@@ -181,6 +183,9 @@ impl Visitor for SqlGate {
 /// added by a future `sqlparser` release must break the build rather than slip through a
 /// wildcard unexamined.
 fn validate_query_structure(query: &Query) -> Result<(), SqlRejection> {
+    if let Some(clause) = unsupported_query_clause(query) {
+        return Err(SqlRejection::UnsupportedClause { clause });
+    }
     match *query.body {
         SetExpr::Select(ref select) => validate_select_structure(select),
         SetExpr::Query(_) => Err(not_a_select("parenthesised subquery body")),
@@ -230,17 +235,126 @@ fn validate_select_structure(select: &Select) -> Result<(), SqlRejection> {
         });
     }
 
-    match select.group_by {
-        sqlparser::ast::GroupByExpr::All(_) => Ok(()),
-        sqlparser::ast::GroupByExpr::Expressions(ref expressions, _) => {
-            if expressions.len() > MAX_GROUP_BY_EXPRESSIONS {
-                return Err(SqlRejection::TooManyOf {
-                    construct: "GROUP BY column",
-                    found: expressions.len(),
-                    limit: MAX_GROUP_BY_EXPRESSIONS,
-                });
-            }
-            Ok(())
+    if let Some(clause) = unsupported_select_clause(select) {
+        return Err(SqlRejection::UnsupportedClause { clause });
+    }
+
+    Ok(())
+}
+
+/// The first clause on a `Query` that the planner has no representation for, if any.
+///
+/// `planner::plan_rule` reads a rule's `body` and nothing else off the `Query`. Every other field
+/// here would be parsed, accepted and then dropped, so the compiled rule would match a different
+/// set of rows than the operator wrote — `LIMIT 1` compiling to "every match" is the plainest
+/// case. Refusing at load is R17: a rule that cannot be lowered into tasks plus a residual is
+/// rejected on first load.
+///
+/// KTD8: the destructuring names every field rather than ending in `..`, so a field added by a
+/// future `sqlparser` release breaks the build instead of joining the silently-dropped set.
+fn unsupported_query_clause(query: &Query) -> Option<&'static str> {
+    let Query {
+        // Not a clause the planner drops: a CTE body is walked by this visitor like any other
+        // query, and a rule whose `FROM` names a CTE fails to resolve against the catalog.
+        with: _,
+        // Read by the planner.
+        body: _,
+        ref order_by,
+        ref limit_clause,
+        ref fetch,
+        ref locks,
+        ref for_clause,
+        ref settings,
+        ref format_clause,
+        ref pipe_operators,
+    } = *query;
+
+    order_by
+        .is_some()
+        .then_some("ORDER BY")
+        .or_else(|| limit_clause.is_some().then_some("LIMIT"))
+        .or_else(|| fetch.is_some().then_some("FETCH"))
+        .or_else(|| (!locks.is_empty()).then_some("FOR UPDATE/SHARE"))
+        .or_else(|| for_clause.is_some().then_some("FOR XML/JSON"))
+        .or_else(|| settings.is_some().then_some("SETTINGS"))
+        .or_else(|| format_clause.is_some().then_some("FORMAT"))
+        .or_else(|| (!pipe_operators.is_empty()).then_some("a pipe operator"))
+}
+
+/// The first clause on a `Select` that the planner has no representation for, if any.
+///
+/// The planner reads `projection`, `from` and `selection`. Everything else either filters rows
+/// (`HAVING`, `QUALIFY`, `PREWHERE`), reshapes them (`GROUP BY`, `DISTINCT`), orders them or caps
+/// them (`TOP`) without the plan recording it. See [`unsupported_query_clause`] for the reasoning
+/// and for why this destructuring is exhaustive.
+fn unsupported_select_clause(select: &Select) -> Option<&'static str> {
+    let Select {
+        // Positional metadata, not a clause.
+        select_token: _,
+        ref optimizer_hints,
+        ref distinct,
+        ref select_modifiers,
+        ref top,
+        // Only meaningful alongside `top`, which is rejected above.
+        top_before_distinct: _,
+        // Read by the planner.
+        projection: _,
+        ref exclude,
+        ref into,
+        // Read by the planner.
+        from: _,
+        ref lateral_views,
+        ref prewhere,
+        // Read by the planner.
+        selection: _,
+        ref connect_by,
+        ref group_by,
+        ref cluster_by,
+        ref distribute_by,
+        ref sort_by,
+        ref having,
+        ref named_window,
+        ref qualify,
+        // Only a spelling difference in where `QUALIFY` and `WINDOW` sit; both are rejected.
+        window_before_qualify: _,
+        ref value_table_mode,
+        // `FROM`-first spelling of the same `SELECT`; the planner reads the fields, not the order.
+        flavor: _,
+    } = *select;
+
+    (!optimizer_hints.is_empty())
+        .then_some("an optimizer hint")
+        .or_else(|| distinct.is_some().then_some("DISTINCT"))
+        .or_else(|| select_modifiers.is_some().then_some("a SELECT modifier"))
+        .or_else(|| top.is_some().then_some("TOP"))
+        .or_else(|| exclude.is_some().then_some("EXCLUDE"))
+        .or_else(|| into.is_some().then_some("INTO"))
+        .or_else(|| (!lateral_views.is_empty()).then_some("LATERAL VIEW"))
+        .or_else(|| prewhere.is_some().then_some("PREWHERE"))
+        .or_else(|| (!connect_by.is_empty()).then_some("CONNECT BY"))
+        .or_else(|| group_by_clause(group_by))
+        .or_else(|| (!cluster_by.is_empty()).then_some("CLUSTER BY"))
+        .or_else(|| (!distribute_by.is_empty()).then_some("DISTRIBUTE BY"))
+        .or_else(|| (!sort_by.is_empty()).then_some("SORT BY"))
+        .or_else(|| having.is_some().then_some("HAVING"))
+        .or_else(|| (!named_window.is_empty()).then_some("WINDOW"))
+        .or_else(|| qualify.is_some().then_some("QUALIFY"))
+        .or_else(|| {
+            value_table_mode
+                .is_some()
+                .then_some("SELECT AS VALUE/STRUCT")
+        })
+}
+
+/// Name `GROUP BY` when it is actually present.
+///
+/// A `SELECT` with no `GROUP BY` still carries `Expressions` — with both lists empty — so the
+/// absent state has to be recognised by contents rather than by variant.
+fn group_by_clause(group_by: &GroupByExpr) -> Option<&'static str> {
+    match *group_by {
+        GroupByExpr::All(_) => Some("GROUP BY ALL"),
+        GroupByExpr::Expressions(ref expressions, ref modifiers) => {
+            (!expressions.is_empty() || !modifiers.is_empty()).then_some("GROUP BY")
         }
     }
 }

@@ -283,3 +283,45 @@ fn an_unchanged_re_registration_keeps_its_conformance_passes() {
 
     assert!(catalog.is_pushable("processes", "name", PredicateOp::Eq));
 }
+
+/// Build a descriptor naming an arbitrary set of tables, each with one `Eq` column.
+fn descriptor_with_tables(collector_id: &str, tables: &[&str]) -> SchemaDescriptor {
+    SchemaDescriptor {
+        collector_id: collector_id.to_owned(),
+        descriptor_version: "v1".to_owned(),
+        tables: tables
+            .iter()
+            .map(|name| TableDescriptor {
+                name: (*name).to_owned(),
+                columns: vec![column("name", &[PredicateOp::Eq])],
+            })
+            .collect(),
+        conformance_results: Vec::new(),
+    }
+}
+
+#[test]
+fn a_re_registration_leaves_a_table_another_collector_now_owns_alone() {
+    let mut catalog = SchemaCatalog::new();
+    let first = verify_spawn_token("procmond", Some(&token('a')), Some(&token('a'))).unwrap();
+    let second = verify_spawn_token("netmond", Some(&token('b')), Some(&token('b'))).unwrap();
+
+    catalog
+        .register(&first, descriptor_with_tables("procmond", &["processes"]))
+        .unwrap();
+    // A second authenticated collector declares the same table and becomes its owner.
+    catalog
+        .register(&second, descriptor_with_tables("netmond", &["processes"]))
+        .unwrap();
+    assert_eq!(catalog.owner_of("processes"), Some("netmond"));
+
+    // The first collector re-registers without that table. Removing every table its *previous*
+    // descriptor named would delete an entry it no longer owns, orphaning a table netmond still
+    // serves — `owner_of` would answer `None` and every rule on it would fail to plan.
+    catalog
+        .register(&first, descriptor_with_tables("procmond", &["sockets"]))
+        .unwrap();
+
+    assert_eq!(catalog.owner_of("processes"), Some("netmond"));
+    assert_eq!(catalog.owner_of("sockets"), Some("procmond"));
+}

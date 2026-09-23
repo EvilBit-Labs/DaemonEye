@@ -69,7 +69,8 @@ pub struct BrokerManager {
     ///
     /// `None` only when the token directory could not be created, and in that case the process
     /// manager is left without a store too, so the two can never disagree about whether
-    /// registration is authenticated.
+    /// registration is authenticated. `start` then builds a **closed** registry that refuses
+    /// every registration, never a permissive one.
     collector_admission: Option<Arc<crate::collector_admission::CollectorAdmission>>,
     /// The one detection engine: catalog, rule health, compiled plans and the pushed-task ledger.
     ///
@@ -164,8 +165,8 @@ impl BrokerManager {
 
     /// The spawn-token store this manager mints into and verifies against (R9).
     ///
-    /// `None` when the token directory could not be opened, in which case registration is not
-    /// authenticated at all.
+    /// `None` when the token directory could not be opened, in which case registration is closed
+    /// and every collector is refused.
     // Read path used by integration tests and by future operator tooling.
     #[allow(dead_code)]
     #[must_use]
@@ -178,9 +179,12 @@ impl BrokerManager {
 
 /// Open the spawn-token store beside the broker socket.
 ///
-/// A failure here is logged and yields `None`: the agent still starts, but with **no** collector
-/// authenticated rather than with collectors authenticated against a store only one half of the
-/// system can see.
+/// A failure here is logged and yields `None`, which `start` turns into a registry that refuses
+/// **every** registration. The agent still runs — a daemon with no collectors is degraded but
+/// observable — but nothing registers unauthenticated. `SpawnTokenStore::new` fails on an
+/// `InsecureDirectory` (a group- or world-reachable token directory), on `NoPrivateRoot` off Unix,
+/// and on any I/O failure such as ENOSPC, EMFILE or a read-only filesystem; every one of them
+/// closes registration rather than opening it.
 fn spawn_token_store(
     socket_path: &str,
 ) -> Option<Arc<daemoneye_eventbus::process_manager::spawn_token::SpawnTokenStore>> {

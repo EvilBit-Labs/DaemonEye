@@ -339,6 +339,58 @@ fn a_projection_naming_three_of_five_columns_returns_exactly_those_three() {
     }
 }
 
+/// A process with no readable argument vector has a NULL `command_line`, not an empty string.
+///
+/// The distinction is load-bearing and easy to lose: modelling an absent argument vector as `""`
+/// would make `command_line = ''` match every process the collector cannot read, which is the
+/// opposite of what an operator writing that rule means. Nothing else in the suite constructs a
+/// record with an empty vector, so this is the only place the semantic is exercised rather than
+/// merely inspected.
+#[test]
+fn an_empty_argument_vector_reads_as_null_rather_than_as_the_empty_string() {
+    let evaluator = evaluator();
+    let mut unreadable = record(30, "unreadable");
+    unreadable.command_line = vec![];
+    let records = vec![record(10, "rooted"), unreadable];
+
+    // `= ''` must not match the unreadable process: NULL is not the empty string.
+    let empty_match = matching_pids(
+        &evaluator,
+        &plan(
+            vec![predicate(
+                "command_line",
+                PredicateOp::Eq,
+                vec![string_literal("")],
+            )],
+            &["pid"],
+        ),
+        &records,
+    );
+    assert!(
+        empty_match.is_empty(),
+        "an absent argument vector must not match the empty string, got {empty_match:?}"
+    );
+
+    // `!= 'x'` must not match it either: a comparison against NULL is UNKNOWN, not true.
+    let unequal = matching_pids(
+        &evaluator,
+        &plan(
+            vec![predicate(
+                "command_line",
+                PredicateOp::Ne,
+                vec![string_literal("x")],
+            )],
+            &["pid"],
+        ),
+        &records,
+    );
+    assert_eq!(
+        unequal,
+        vec![10],
+        "only the readable process may match; NULL != 'x' is UNKNOWN"
+    );
+}
+
 #[test]
 fn a_predicate_over_a_null_column_is_unknown_so_the_row_never_matches() {
     // Arrange: `ppid` is NULL on the second record.
@@ -597,15 +649,15 @@ fn an_expired_task_stops_producing_rows() {
     );
     let records = vec![record(10, "nginx")];
     evaluator
-        .accept(&task("expiring", accepted.clone()), now)
+        .accept(&task("expiring", accepted), now)
         .expect("accepted");
     let after_ttl = now
         .checked_add(Duration::from_millis(TTL_MS + 1))
         .expect("a representable deadline");
 
     // Act
-    let while_active = evaluator.evaluate_task("expiring", &accepted, &records, now);
-    let once_expired = evaluator.evaluate_task("expiring", &accepted, &records, after_ttl);
+    let while_active = evaluator.evaluate_task("expiring", &records, now);
+    let once_expired = evaluator.evaluate_task("expiring", &records, after_ttl);
 
     // Assert
     assert_eq!(while_active.expect("active task evaluates").len(), 1);
@@ -639,4 +691,58 @@ fn an_accepted_task_is_active_until_its_ttl_elapses() {
         .checked_add(Duration::from_millis(TTL_MS + 1))
         .expect("a representable deadline");
     assert!(!evaluator.is_active("lifetime", after_ttl));
+}
+
+/// Evaluating by task id uses the plan the task was accepted with, and renewal replaces it.
+///
+/// The binding cannot be tested by substituting a plan — `evaluate_task` no longer takes one, which
+/// is the fix. What it can show is that the stored plan is the one evaluated: accept a plan
+/// matching one pid, evaluate by id, then re-accept the same id with a plan matching a different
+/// pid and evaluate by id again.
+#[test]
+fn evaluating_by_task_id_uses_the_stored_plan() {
+    // Arrange
+    let evaluator = evaluator();
+    let now = SystemTime::now();
+    let records = vec![record(10, "nginx"), record(20, "bash")];
+    let first = plan(
+        vec![predicate("pid", PredicateOp::Eq, vec![uint_literal(10)])],
+        &["pid"],
+    );
+    let renewed = plan(
+        vec![predicate("pid", PredicateOp::Eq, vec![uint_literal(20)])],
+        &["pid"],
+    );
+
+    // Act
+    evaluator
+        .accept(&task("bound", first), now)
+        .expect("the first plan is accepted");
+    let before = evaluator
+        .evaluate_task("bound", &records, now)
+        .expect("an active task evaluates");
+    evaluator
+        .accept(&task("bound", renewed), now)
+        .expect("renewal is accepted");
+    let after = evaluator
+        .evaluate_task("bound", &records, now)
+        .expect("the renewed task evaluates");
+
+    // Assert
+    assert_eq!(pids_of(&before), vec![10]);
+    assert_eq!(
+        pids_of(&after),
+        vec![20],
+        "renewal must replace the stored plan, not be shadowed by the one first accepted"
+    );
+}
+
+/// The pids in a set of projected rows, in row order.
+fn pids_of(rows: &[ProjectedRow]) -> Vec<u64> {
+    rows.iter()
+        .map(|row| match row.get("pid") {
+            Some(&Some(FieldValue::Uint(pid))) => pid,
+            other => panic!("expected a uint pid, got {other:?}"),
+        })
+        .collect()
 }

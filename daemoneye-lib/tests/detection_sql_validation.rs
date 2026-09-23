@@ -322,3 +322,92 @@ proptest! {
         prop_assert_eq!(function.to_lowercase(), name);
     }
 }
+
+// --- R17: a clause the planner cannot lower is refused, never silently dropped ----------------
+
+/// Assert that `sql` is refused by the clause gate specifically, naming `clause`.
+fn assert_clause_refused(sql: &str, clause: &str) {
+    let rejection = reject(sql);
+    let SqlRejection::UnsupportedClause { clause: named, .. } = rejection else {
+        panic!("expected the clause gate to fire for {sql}, got {rejection:?}");
+    };
+    assert_eq!(named, clause, "wrong clause named for {sql}");
+}
+
+#[test]
+fn a_clause_the_planner_cannot_lower_is_refused_by_name() {
+    // Each of these loaded clean before the clause gate existed, with the compiled rule carrying
+    // no record of the clause — `LIMIT 1` meaning "one matching process" became "every match".
+    for (sql, clause) in [
+        ("SELECT pid FROM processes WHERE pid = 1 LIMIT 1", "LIMIT"),
+        (
+            "SELECT pid FROM processes WHERE pid = 1 ORDER BY pid",
+            "ORDER BY",
+        ),
+        ("SELECT DISTINCT pid FROM processes", "DISTINCT"),
+        ("SELECT count(pid) FROM processes GROUP BY name", "GROUP BY"),
+        ("SELECT pid FROM processes GROUP BY ALL", "GROUP BY ALL"),
+        (
+            "SELECT count(pid) FROM processes GROUP BY name HAVING count(pid) > 1",
+            "GROUP BY",
+        ),
+        (
+            "SELECT pid FROM processes WHERE pid = 1 QUALIFY pid > 0",
+            "QUALIFY",
+        ),
+        ("SELECT TOP 1 pid FROM processes", "TOP"),
+        (
+            "SELECT pid FROM processes WHERE pid = 1 FETCH FIRST 1 ROW ONLY",
+            "FETCH",
+        ),
+        ("SELECT pid FROM processes PREWHERE pid = 1", "PREWHERE"),
+        (
+            "SELECT pid FROM processes WHERE pid = 1 SORT BY pid",
+            "SORT BY",
+        ),
+        (
+            "SELECT pid FROM processes WHERE pid = 1 CLUSTER BY pid",
+            "CLUSTER BY",
+        ),
+        (
+            "SELECT pid FROM processes WHERE pid = 1 FOR UPDATE",
+            "FOR UPDATE/SHARE",
+        ),
+        (
+            "SELECT pid FROM processes WHERE pid = 1 SETTINGS a = 1",
+            "SETTINGS",
+        ),
+        (
+            "SELECT pid FROM processes WHERE pid = 1 |> WHERE pid = 2",
+            "a pipe operator",
+        ),
+    ] {
+        assert_clause_refused(sql, clause);
+    }
+}
+
+#[test]
+fn a_bare_having_without_a_group_by_is_still_refused() {
+    // `HAVING` carries its own filter, which the planner reads no more than it reads `GROUP BY`.
+    assert_clause_refused(
+        "SELECT count(pid) FROM processes HAVING count(pid) > 1",
+        "HAVING",
+    );
+}
+
+#[test]
+fn the_clause_gate_reaches_a_subquery() {
+    // A subquery's clauses are as invisible to the planner as the top level's.
+    assert_clause_refused(
+        "SELECT pid FROM processes WHERE pid IN (SELECT pid FROM processes LIMIT 1)",
+        "LIMIT",
+    );
+}
+
+#[test]
+fn an_ordinary_rule_with_no_extra_clause_still_loads() {
+    // `GroupByExpr::Expressions` with empty lists is the *absent* GROUP BY, carried by every
+    // plain SELECT: gating on the variant rather than its contents would refuse every rule.
+    accept("SELECT pid FROM processes WHERE pid = 1");
+    accept("SELECT p.name, p.pid FROM processes p WHERE p.name LIKE '%test%'");
+}

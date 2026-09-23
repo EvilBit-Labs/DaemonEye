@@ -314,7 +314,7 @@ async fn test_registration_marks_collector_ready() {
     // Initialize registry
     {
         let mut guard = manager.collector_registry.write().await;
-        *guard = Some(Arc::new(CollectorRegistry::default()));
+        *guard = Some(Arc::new(CollectorRegistry::unauthenticated()));
     }
 
     // Configure expected collectors
@@ -394,7 +394,7 @@ async fn test_wait_for_collectors_ready_success() {
     // Initialize registry
     {
         let mut guard = manager.collector_registry.write().await;
-        *guard = Some(Arc::new(CollectorRegistry::default()));
+        *guard = Some(Arc::new(CollectorRegistry::unauthenticated()));
     }
 
     // Configure with a single collector

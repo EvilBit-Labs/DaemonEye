@@ -352,15 +352,11 @@ impl SchemaCatalog {
             .get(collector_id)
             .is_none_or(|previous| previous.descriptor_version != stored.descriptor_version);
 
-        for table in self
-            .descriptors
-            .get(collector_id)
-            .map(|previous| &previous.tables)
-            .into_iter()
-            .flatten()
-        {
-            self.owners.remove(&table.name);
-        }
+        // Scoped to entries this collector actually owns. Dropping every table its *previous*
+        // descriptor named would also delete an entry another collector has since taken over,
+        // orphaning a table that collector still serves: `owner_of` would answer `None` and every
+        // rule on it would fail to plan until that collector re-registered.
+        self.owners.retain(|_table, owner| owner != collector_id);
         for table in &stored.tables {
             let _previous = self
                 .owners

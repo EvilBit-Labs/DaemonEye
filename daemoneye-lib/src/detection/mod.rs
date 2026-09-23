@@ -28,7 +28,7 @@ pub use conformance::{
     verify_operation,
 };
 pub use planner::{CompiledRule, PlanError, plan_rule};
-pub use regex_cache::{RegexCache, RegexCacheStats, compile_rule_patterns};
+pub use regex_cache::{CompiledPattern, RegexCache, RegexCacheStats, compile_rule_patterns};
 pub use rejection::{RegexConstruct, RegexRejection, SqlPosition, SqlRejection};
 pub use sql_validation::validate_detection_sql;
 pub use task_renewal::{PendingRenewal, RenewalCycle, TaskRenewalLedger};

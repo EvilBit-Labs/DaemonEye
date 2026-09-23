@@ -5,6 +5,7 @@
 
 use crate::collector_admission::{AdmissionError, CollectorAdmission, gate_for_admission};
 use daemoneye_eventbus::rpc::{DeregistrationRequest, RegistrationRequest, RegistrationResponse};
+use daemoneye_lib::detection_bounds::MAX_IDENTIFIER_LENGTH;
 use daemoneye_lib::rejection_log::{
     RegistrationGate, RejectionLog, RejectionReason, RejectionRecord,
 };
@@ -27,28 +28,72 @@ pub struct CollectorRegistry {
     /// Agent-side chain of refused registrations (R8). Kept behind a synchronous lock that is
     /// never held across an `.await`; the `audit_ledger` table is procmond's to write.
     rejections: Mutex<RejectionLog>,
-    /// Spawn-token and schema-catalog gate (R8, R10). `None` only in configurations that predate
-    /// authenticated registration, such as the existing heartbeat tests.
-    admission: Option<Arc<CollectorAdmission>>,
+    /// Whether, and how, a registration is authenticated (R8, R10).
+    admission: AdmissionPolicy,
+}
+
+/// How a registry treats an arriving registration.
+///
+/// An enum rather than an `Option<Arc<CollectorAdmission>>` because the absent case is not one
+/// state but two with opposite meanings, and the old shape silently defaulted to the permissive
+/// one: when the spawn-token store could not be opened, every collector registered unauthenticated.
+/// Naming the three states makes that downgrade impossible to reach without writing its name.
+#[derive(Debug)]
+enum AdmissionPolicy {
+    /// Every registration must present the spawn token issued for its identity.
+    Gated(Arc<CollectorAdmission>),
+    /// No gate could be opened, so nothing may register. Fail-closed: a monitoring daemon with no
+    /// collectors is degraded and observable; one that admits unauthenticated collectors is not.
+    Closed,
+    /// No gate at all, and every registration admitted.
+    ///
+    /// **Test-only.** Nothing in the agent constructs this; it exists so tests that exercise
+    /// heartbeats and the state machine need not stand up a token store. It is `pub`-reachable
+    /// only through [`CollectorRegistry::unauthenticated`], whose name is the warning.
+    // Dead in the binary on purpose: that the agent never constructs this is the property, and
+    // the compiler saying so is the proof. The library's tests and `tests/` do construct it.
+    #[allow(dead_code)]
+    Unauthenticated,
 }
 
 impl CollectorRegistry {
-    /// Create a new registry with the provided default heartbeat interval.
-    pub fn new(default_heartbeat: Duration) -> Self {
+    /// Create a registry with the provided default heartbeat interval and admission policy.
+    fn new(default_heartbeat: Duration, admission: AdmissionPolicy) -> Self {
         Self {
             records: RwLock::new(HashMap::new()),
             default_heartbeat,
             rejections: Mutex::new(RejectionLog::new()),
-            admission: None,
+            admission,
         }
     }
 
     /// Create a registry that admits only collectors presenting their issued spawn token (R8).
     pub fn with_admission(admission: Arc<CollectorAdmission>) -> Self {
-        Self {
-            admission: Some(admission),
-            ..Self::new(DEFAULT_HEARTBEAT_INTERVAL)
-        }
+        Self::new(
+            DEFAULT_HEARTBEAT_INTERVAL,
+            AdmissionPolicy::Gated(admission),
+        )
+    }
+
+    /// Create a registry that refuses every registration, for use when no gate could be opened.
+    ///
+    /// The spawn-token store is what authenticates a collector, so a store that cannot be opened
+    /// leaves nothing to authenticate against. Every registration is refused as
+    /// [`RegistrationGate::NoTokenPresented`] and recorded, so the condition is visible in the
+    /// rejection chain rather than inferred from collectors that silently succeed.
+    pub fn closed() -> Self {
+        Self::new(DEFAULT_HEARTBEAT_INTERVAL, AdmissionPolicy::Closed)
+    }
+
+    /// Create a registry that admits every registration without authenticating it.
+    ///
+    /// **Test-only**, and deliberately not reachable by accident: there is no `Default` impl, so
+    /// every construction names which of the three policies it meant. Nothing in the agent calls
+    /// this.
+    // Dead in the binary for the same reason the variant is; see its note.
+    #[allow(dead_code)]
+    pub fn unauthenticated() -> Self {
+        Self::new(DEFAULT_HEARTBEAT_INTERVAL, AdmissionPolicy::Unauthenticated)
     }
 
     /// Register a collector, returning the assigned registration response.
@@ -70,12 +115,28 @@ impl CollectorRegistry {
     ///
     /// The gate is the whole reason: no spawn token, nor any prefix, length or digest of one,
     /// crosses this boundary, because [`RegistrationGate`] has nowhere to hold it.
+    ///
+    /// The identity is truncated to [`MAX_IDENTIFIER_LENGTH`] characters here as well as refused
+    /// by `validate_registration`. Refusing bounds what may register; truncating bounds what is
+    /// *retained*, and the retention path is reached before authentication, so the bound has to
+    /// sit on the recording side too or the chain still holds up to a transport frame per record.
     pub fn record_registration_rejection(&self, collector_id: &str, gate: RegistrationGate) {
+        // Bounded in *bytes*, matching how `validate_registration` reads the same constant:
+        // `chars().take(..)` would bound characters and admit four times the bytes for multi-byte
+        // UTF-8. `char_indices` keeps the split on a character boundary without slicing, which
+        // `clippy::string_slice` forbids on untrusted input.
+        let bounded: String = collector_id
+            .char_indices()
+            .take_while(|&(offset, character)| {
+                offset.saturating_add(character.len_utf8()) <= MAX_IDENTIFIER_LENGTH
+            })
+            .map(|(_offset, character)| character)
+            .collect();
         let mut log = self
             .rejections
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let _record = log.record(RejectionReason::registration(collector_id, gate));
+        let _record = log.record(RejectionReason::registration(&bounded, gate));
     }
 
     /// Every registration rejection recorded so far, oldest first.
@@ -86,7 +147,7 @@ impl CollectorRegistry {
             .rejections
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        log.records().to_vec()
+        log.records().iter().cloned().collect()
     }
 
     async fn register_inner(
@@ -106,8 +167,18 @@ impl CollectorRegistry {
             return Err(RegistryError::AlreadyRegistered(collector_id));
         }
 
-        if let Some(ref admission) = self.admission {
-            admission.admit(&request).await?;
+        // Exhaustive on purpose: a fourth policy must break this match rather than fall into a
+        // wildcard that would decide, by default, not to authenticate.
+        match self.admission {
+            AdmissionPolicy::Gated(ref admission) => admission.admit(&request).await?,
+            AdmissionPolicy::Closed => {
+                return Err(RegistryError::NotAdmitted {
+                    message: "collector registration cannot be authenticated: no spawn-token store"
+                        .to_owned(),
+                    gate: RegistrationGate::NoTokenPresented,
+                });
+            }
+            AdmissionPolicy::Unauthenticated => {}
         }
 
         let now = SystemTime::now();
@@ -292,12 +363,6 @@ impl CollectorRegistry {
     }
 }
 
-impl Default for CollectorRegistry {
-    fn default() -> Self {
-        Self::new(DEFAULT_HEARTBEAT_INTERVAL)
-    }
-}
-
 /// Registry entry for a registered collector.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -401,24 +466,29 @@ const fn gate_for(error: &RegistryError) -> RegistrationGate {
 }
 
 fn validate_registration(request: &RegistrationRequest) -> Result<(), RegistryError> {
-    if request.collector_id.trim().is_empty() {
-        return Err(RegistryError::Validation(
-            "collector_id cannot be empty".to_owned(),
-        ));
-    }
+    check_identity_field("collector_id", &request.collector_id)?;
+    check_identity_field("collector_type", &request.collector_type)?;
+    check_identity_field("hostname", &request.hostname)?;
+    Ok(())
+}
 
-    if request.collector_type.trim().is_empty() {
-        return Err(RegistryError::Validation(
-            "collector_type cannot be empty".to_owned(),
-        ));
+/// Reject a blank or over-long registration identity field.
+///
+/// The length bound is what keeps a pre-authentication path from retaining unbounded bytes: this
+/// runs before `admit`, and every refusal here writes a rejection record. `SpawnTokenStore::issue`
+/// already caps a collector id at 64 characters, so an identity longer than
+/// [`MAX_IDENTIFIER_LENGTH`] could never have authenticated — it only ever reached the recorder.
+fn check_identity_field(field: &str, value: &str) -> Result<(), RegistryError> {
+    if value.trim().is_empty() {
+        return Err(RegistryError::Validation(format!(
+            "{field} cannot be empty"
+        )));
     }
-
-    if request.hostname.trim().is_empty() {
-        return Err(RegistryError::Validation(
-            "hostname cannot be empty".to_owned(),
-        ));
+    if value.len() > MAX_IDENTIFIER_LENGTH {
+        return Err(RegistryError::Validation(format!(
+            "{field} exceeds the {MAX_IDENTIFIER_LENGTH}-byte bound"
+        )));
     }
-
     Ok(())
 }
 
@@ -450,7 +520,7 @@ mod tests {
 
     #[tokio::test]
     async fn register_and_list() {
-        let registry = CollectorRegistry::default();
+        let registry = CollectorRegistry::unauthenticated();
         let response = registry
             .register(sample_request())
             .await
@@ -465,7 +535,7 @@ mod tests {
 
     #[tokio::test]
     async fn prevent_duplicate_registration() {
-        let registry = CollectorRegistry::default();
+        let registry = CollectorRegistry::unauthenticated();
         registry
             .register(sample_request())
             .await
@@ -482,7 +552,7 @@ mod tests {
     async fn rejected_registration_is_recorded_without_the_presented_token() {
         // Arrange
         const TOKEN: &str = "ZZsupersecretspawntokenZZ";
-        let registry = CollectorRegistry::default();
+        let registry = CollectorRegistry::unauthenticated();
         let mut request = sample_request();
         request.hostname = String::new();
         request.spawn_token = Some(TOKEN.to_string());
@@ -510,7 +580,7 @@ mod tests {
 
     #[tokio::test]
     async fn accepted_registration_records_nothing() {
-        let registry = CollectorRegistry::default();
+        let registry = CollectorRegistry::unauthenticated();
         registry
             .register(sample_request())
             .await
@@ -519,8 +589,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_closed_registry_refuses_and_records_every_registration() {
+        // Arrange: the registry the agent builds when no spawn-token store could be opened.
+        let registry = CollectorRegistry::closed();
+
+        // Act
+        let error = registry
+            .register(sample_request())
+            .await
+            .expect_err("a closed registry authenticates nothing, so it admits nothing");
+
+        // Assert
+        assert!(matches!(
+            error,
+            RegistryError::NotAdmitted {
+                gate: RegistrationGate::NoTokenPresented,
+                ..
+            }
+        ));
+        assert!(registry.list().await.is_empty());
+        let records = registry.rejection_records();
+        assert_eq!(records.len(), 1);
+        assert!(
+            records[0]
+                .reason
+                .to_string()
+                .contains("no spawn token presented")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_over_long_identity_is_refused_and_its_record_is_bounded() {
+        // Arrange
+        let registry = CollectorRegistry::unauthenticated();
+        let mut request = sample_request();
+        request.collector_id = "a".repeat(MAX_IDENTIFIER_LENGTH * 16);
+        let presented_length = request.collector_id.len();
+
+        // Act
+        let error = registry
+            .register(request)
+            .await
+            .expect_err("an identity past the bound is refused");
+
+        // Assert
+        assert!(matches!(error, RegistryError::Validation(_)));
+        let records = registry.rejection_records();
+        assert_eq!(records.len(), 1);
+        // The whole rendered reason, not just the identity: an untruncated record would carry the
+        // full presented id, and the bound has to hold for what is actually retained.
+        let rendered_length = records[0].reason.to_string().len();
+        assert!(
+            rendered_length <= MAX_IDENTIFIER_LENGTH * 2,
+            "the recorded reason must stay bounded by the identifier bound, got {rendered_length}"
+        );
+        // Removing the truncation leaves the whole presented identity in the record, so the
+        // rendered reason would be longer than what was presented rather than a fraction of it.
+        assert!(
+            rendered_length < presented_length,
+            "the recorded reason must be far shorter than the {presented_length}-byte identity \
+             presented, got {rendered_length}"
+        );
+    }
+
+    #[tokio::test]
     async fn deregister_removes_entry() {
-        let registry = CollectorRegistry::default();
+        let registry = CollectorRegistry::unauthenticated();
         registry
             .register(sample_request())
             .await

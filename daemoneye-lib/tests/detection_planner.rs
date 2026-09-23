@@ -446,6 +446,47 @@ fn a_deferred_rule_that_cannot_be_planned_is_rejected_on_the_drain_not_marked_un
     assert_eq!(engine.rejection_log().records().len(), 1);
 }
 
+/// A rule carrying a CTE is refused rather than planned against the table the CTE shadows.
+///
+/// Regression test. The planner resolves the FROM name against the catalog and never reads
+/// `query.with`, so this did not merely ignore the CTE — it planned against the real `processes`
+/// table and discarded the CTE's own `pid > 100` filter, admitting rows the operator excluded.
+/// That is the same silent mis-lowering as a dropped LIMIT, reached by a different route.
+///
+/// The validation gate still accepts CTEs on purpose: three tests in `detection_sql_validation.rs`
+/// exist to prove the gate reaches constructs hidden inside a CTE body, and refusing `WITH` there
+/// would delete that coverage. The refusal belongs where the mis-lowering happens.
+#[test]
+fn a_rule_carrying_a_cte_is_refused_rather_than_planned_against_the_shadowed_table() {
+    let mut catalog = SchemaCatalog::new();
+    catalog
+        .register(
+            &verified("procmond"),
+            descriptor(vec![int_column("pid", &[PredicateOp::Eq, PredicateOp::Gt])]),
+        )
+        .unwrap();
+    let cache = RegexCache::new();
+
+    let shadowing = rule(
+        "WITH processes AS (SELECT pid FROM processes WHERE pid > 100) \
+         SELECT pid FROM processes WHERE pid = 1",
+    );
+    assert!(
+        matches!(
+            plan_rule(&catalog, &cache, &shadowing, 3),
+            Err(PlanError::CommonTableExpression)
+        ),
+        "a CTE shadowing a catalog table must be refused, not silently planned against the table"
+    );
+
+    // A CTE that shadows nothing is refused by the same gate: the planner cannot lower any of them.
+    let unshadowing = rule("WITH recent AS (SELECT pid FROM processes) SELECT pid FROM processes");
+    assert!(matches!(
+        plan_rule(&catalog, &cache, &unshadowing, 3),
+        Err(PlanError::CommonTableExpression)
+    ));
+}
+
 /// A rule planned against a live catalog reports as healthy, not as unjudged.
 ///
 /// Regression test. Health was reset to `Unknown` every time the planner tracked a rule's

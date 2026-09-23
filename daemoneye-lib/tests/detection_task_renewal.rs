@@ -97,11 +97,15 @@ fn a_task_is_renewed_before_expiry_while_its_rule_stays_enabled() {
         engine.compiled_rule("rule-1").is_some(),
         "a renewed rule stays covered"
     );
-    assert_ne!(
-        engine.rule_health("rule-1"),
-        Some(&RuleHealth::Unhealthy {
-            reason: String::new()
-        })
+    // `assert_ne!` against an empty-reason sentinel would pass for a real regression: every
+    // Unhealthy raised in production carries a descriptive reason, which is unequal to the
+    // sentinel. Match the variant instead, as the sibling tests in this file do.
+    assert!(
+        !matches!(
+            engine.rule_health("rule-1"),
+            Some(&RuleHealth::Unhealthy { .. })
+        ),
+        "a rule whose renewals keep landing must not be marked unhealthy"
     );
 }
 

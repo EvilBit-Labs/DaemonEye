@@ -56,6 +56,12 @@ pub enum PlanError {
     /// A `REGEXP` pattern in the rule failed the load-time compilation bounds.
     #[error("{0}")]
     Pattern(#[from] RuleError),
+    /// The rule defines a common table expression, which the planner cannot lower.
+    #[error(
+        "the planner cannot lower a WITH clause, so this rule is refused rather than planned \
+         against the catalog table its CTE shadows"
+    )]
+    CommonTableExpression,
 }
 
 /// A rule lowered into the half a collector evaluates and the half the agent keeps (R13).
@@ -126,6 +132,17 @@ pub fn plan_rule(
     let SetExpr::Select(ref select) = *query.body else {
         return Err(PlanError::NotASelect);
     };
+
+    // The planner resolves the FROM name against the catalog and never reads `with`, so a CTE is
+    // not merely unsupported — it silently mis-lowers. `WITH processes AS (SELECT pid FROM
+    // processes WHERE pid > 100) SELECT pid FROM processes WHERE pid = 1` planned against the
+    // catalog's `processes` and discarded the CTE's own filter entirely, matching more rows than
+    // the operator asked for. R17 refuses a rule that cannot be lowered rather than lowering it
+    // wrongly. The validation gate still accepts CTEs, which is what keeps its own coverage of
+    // constructs hidden inside a CTE body meaningful.
+    if query.with.is_some() {
+        return Err(PlanError::CommonTableExpression);
+    }
 
     // Every `REGEXP` literal is compiled at load whether or not it ends up pushed, so a pushed
     // pattern has provably compiled and a residual one has too. `compile_rule_patterns` runs the

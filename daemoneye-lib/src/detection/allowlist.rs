@@ -15,7 +15,10 @@
 ///
 /// Membership is derived from what process analysis actually needs:
 ///
-/// - `avg`, `count`, `max`, `min`, `sum` — aggregates a rule needs to express a threshold.
+/// - `avg`, `count`, `max`, `min`, `sum` — aggregates over a single result set. A *threshold* on
+///   an aggregate is a `HAVING`, and `sql_validation` now refuses `GROUP BY` and `HAVING` outright
+///   because the planner can represent neither; these names remain reachable only in a projection
+///   or a `WHERE`. Whether they should stay on the list at all is a product call, not this gate's.
 /// - `hex`, `unhex` — inspecting `executable_hash` and other binary metadata.
 /// - `instr`, `length` — locating and measuring substrings in names, paths and command lines.
 /// - `like`, `match`, `regexp` — pattern matching over process fields.

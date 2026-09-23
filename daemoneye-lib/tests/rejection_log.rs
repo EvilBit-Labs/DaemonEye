@@ -12,6 +12,7 @@
 
 use daemoneye_lib::{
     detection::{DetectionEngine, SqlRejection},
+    detection_bounds::MAX_REJECTION_RECORDS,
     models::{AlertSeverity, DetectionRule},
     rejection_log::{RegistrationGate, RejectionLog, RejectionReason},
 };
@@ -128,4 +129,63 @@ fn consecutive_rejections_form_a_chain_that_verifies() {
         Some(log.records()[0].entry_hash.as_str())
     );
     log.verify_integrity().expect("an untouched chain verifies");
+}
+
+#[test]
+fn the_log_stops_growing_at_the_cap_and_drops_the_oldest_first() {
+    // Arrange: registration is reachable over IPC, so a collector retrying with a stale token is
+    // the shape this bound exists for.
+    const OVERFLOW: usize = 5;
+
+    let mut log = RejectionLog::new();
+    let evicted = u64::try_from(OVERFLOW).unwrap();
+    let last_sequence = u64::try_from(MAX_REJECTION_RECORDS + OVERFLOW - 1).unwrap();
+
+    // Act
+    for index in 0..MAX_REJECTION_RECORDS + OVERFLOW {
+        log.record(RejectionReason::registration(
+            &format!("collector-{index}"),
+            RegistrationGate::TokenMismatch,
+        ));
+    }
+
+    // Assert: the window is full, not longer, and it is the *newest* records that survived.
+    assert_eq!(log.records().len(), MAX_REJECTION_RECORDS);
+    assert_eq!(
+        log.records()[0].sequence,
+        evicted,
+        "the oldest retained record must be the first one not evicted"
+    );
+    assert_eq!(
+        log.records()[MAX_REJECTION_RECORDS - 1].sequence,
+        last_sequence,
+        "sequence numbers must keep counting past the cap rather than repeating"
+    );
+    assert!(
+        log.records()
+            .iter()
+            .all(|record| !matches!(record.reason, RejectionReason::RuleSql { .. })),
+        "only registration rejections were written"
+    );
+}
+
+#[test]
+fn the_retained_window_still_verifies_after_eviction() {
+    // Arrange
+    let mut log = RejectionLog::new();
+
+    // Act: write one more than the cap, so the chain head has been evicted.
+    for index in 0..=MAX_REJECTION_RECORDS {
+        log.record(RejectionReason::registration(
+            &format!("collector-{index}"),
+            RegistrationGate::NoTokenPresented,
+        ));
+    }
+
+    // Assert: the oldest retained record names a predecessor that is gone, and that is not a
+    // discontinuity — every link that *is* still checkable holds.
+    assert!(log.records()[0].previous_hash.is_some());
+    assert_ne!(log.records()[0].sequence, 0);
+    log.verify_integrity()
+        .expect("an evicted prefix is not a chain break");
 }

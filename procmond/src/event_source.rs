@@ -236,9 +236,7 @@ impl ProcessEventSource {
         // Create platform-specific collector with fallback to sysinfo
         let collector = Self::create_platform_collector(&config);
 
-        // Built from the same id registration presents, so the descriptor this source validates
-        // against and the one the agent plans against cannot drift apart.
-        let pushdown = PushdownEvaluator::new(&config.collector_id);
+        let pushdown = Self::create_pushdown_evaluator(&config);
 
         Self {
             database,
@@ -289,9 +287,7 @@ impl ProcessEventSource {
         // Create platform-specific collector with fallback to sysinfo
         let collector = Self::create_platform_collector(&config);
 
-        // Built from the same id registration presents, so the descriptor this source validates
-        // against and the one the agent plans against cannot drift apart.
-        let pushdown = PushdownEvaluator::new(&config.collector_id);
+        let pushdown = Self::create_pushdown_evaluator(&config);
 
         Self {
             database,
@@ -366,9 +362,7 @@ impl ProcessEventSource {
     ) -> Self {
         let backpressure_semaphore = Arc::new(Semaphore::new(config.max_events_in_flight));
 
-        // Built from the same id registration presents, so the descriptor this source validates
-        // against and the one the agent plans against cannot drift apart.
-        let pushdown = PushdownEvaluator::new(&config.collector_id);
+        let pushdown = Self::create_pushdown_evaluator(&config);
 
         Self {
             database,
@@ -408,6 +402,14 @@ impl ProcessEventSource {
     /// # Returns
     ///
     /// A boxed `ProcessCollector` implementation suitable for the current platform.
+    /// Builds the pushdown evaluator every constructor installs.
+    ///
+    /// Built from the same id registration presents, so the descriptor this source validates
+    /// against and the one the agent plans against cannot drift apart.
+    fn create_pushdown_evaluator(config: &ProcessSourceConfig) -> PushdownEvaluator {
+        PushdownEvaluator::new(&config.collector_id)
+    }
+
     fn create_platform_collector(config: &ProcessSourceConfig) -> Box<dyn ProcessCollector> {
         let base_collector_config = ProcessCollectionConfig {
             collect_enhanced_metadata: config.collect_enhanced_metadata,

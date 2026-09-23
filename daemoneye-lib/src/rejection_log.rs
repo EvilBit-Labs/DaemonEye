@@ -2,17 +2,20 @@
 //!
 //! Rejections happen in `daemoneye-agent`, and the `audit_ledger` table is procmond-write /
 //! others-read. Routing agent-observed rejections through procmond would invert that boundary for
-//! no forensic gain, so the agent keeps its own chain here. This store is in-memory; persistence
-//! and Merkle inclusion proofs belong to the audit-ledger work and are deliberately absent.
+//! no forensic gain, so the agent keeps its own chain here. This store is a **bounded in-memory
+//! window**, not durable retention: persistence and Merkle inclusion proofs belong to the
+//! audit-ledger work and are deliberately absent.
 //!
 //! The chain reuses [`crate::crypto::AuditEntry::compute_entry_hash_input`] so there is exactly one
 //! canonical hash-input format in the workspace for a later persistence layer to adopt.
 
+use std::collections::VecDeque;
 use std::fmt;
 
 use crate::{
     crypto::{AuditEntry, Blake3Hasher, CryptoError},
     detection::{RegexRejection, SqlRejection},
+    detection_bounds::MAX_REJECTION_RECORDS,
 };
 
 /// The actor recorded on every entry: this store only ever holds the agent's own observations.
@@ -195,60 +198,84 @@ impl RejectionRecord {
     }
 }
 
-/// Append-only, hash-chained store of the agent's own rejections.
+/// Hash-chained store of the agent's own rejections, bounded to a fixed window.
 ///
-/// In-memory only. Nothing here opens the `audit_ledger` table, for reading or for writing.
+/// In-memory only. Nothing here opens the `audit_ledger` table, for reading or for writing — the
+/// durable, forensically complete record is the audit ledger, which is T8's work. This is the
+/// agent's live view of its own refusals, and it is **lossy by design**: registration is reachable
+/// over IPC, so an unbounded chain would let a collector retrying with a stale token exhaust the
+/// agent's memory budget. At [`MAX_REJECTION_RECORDS`] the oldest record is evicted to make room
+/// for the newest.
+///
+/// `sequence` keeps counting across evictions, so a gap between the newest record's sequence and
+/// the retained count is exactly how much has been dropped.
 #[derive(Debug, Default)]
 pub struct RejectionLog {
-    records: Vec<RejectionRecord>,
+    records: VecDeque<RejectionRecord>,
+    /// The sequence the next record takes. Counted separately from the retained length, which
+    /// stops growing at the cap and would otherwise reissue one sequence number forever.
+    next_sequence: u64,
 }
 
 impl RejectionLog {
     /// Create an empty log.
     pub const fn new() -> Self {
         Self {
-            records: Vec::new(),
+            records: VecDeque::new(),
+            next_sequence: 0,
         }
     }
 
     /// Append a rejection, returning the record that was written.
+    ///
+    /// Evicts the oldest retained record once the log is at [`MAX_REJECTION_RECORDS`].
     pub fn record(&mut self, reason: RejectionReason) -> RejectionRecord {
-        let sequence = u64::try_from(self.records.len()).unwrap_or(u64::MAX);
-        let previous_hash = self.records.last().map(|record| record.entry_hash.clone());
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        let previous_hash = self.records.back().map(|record| record.entry_hash.clone());
         let timestamp = chrono::Utc::now();
         let payload_hash = Blake3Hasher::hash_string(&reason.to_string());
-        let entry_hash = Blake3Hasher::hash_string(&AuditEntry::compute_entry_hash_input(
-            sequence,
-            &timestamp,
-            ACTOR,
-            reason.action(),
-            &payload_hash,
-            previous_hash.as_deref(),
-        ));
 
-        let record = RejectionRecord {
+        // The record is built first and hashed through its own `hash_input`, so the format written
+        // here and the one `verify_integrity` recomputes are the same call site rather than two
+        // argument lists that can drift. `hash_input` never reads `entry_hash`, so the placeholder
+        // below does not enter the digest.
+        let mut record = RejectionRecord {
             sequence,
             timestamp,
             reason,
             payload_hash,
             previous_hash,
-            entry_hash,
+            entry_hash: String::new(),
         };
-        self.records.push(record.clone());
+        record.entry_hash = Blake3Hasher::hash_string(&record.hash_input());
+        self.records.push_back(record.clone());
+        while self.records.len() > MAX_REJECTION_RECORDS {
+            self.records.pop_front();
+        }
         record
     }
 
-    /// Every record written so far, oldest first.
-    pub fn records(&self) -> &[RejectionRecord] {
+    /// The retained window, oldest first.
+    ///
+    /// Not every record ever written: anything past [`MAX_REJECTION_RECORDS`] has been evicted.
+    pub const fn records(&self) -> &VecDeque<RejectionRecord> {
         &self.records
     }
 
-    /// Whether any rejection has been recorded.
-    pub const fn is_empty(&self) -> bool {
+    /// Whether any rejection is retained.
+    pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
-    /// Verify every record's own hash and its link to its predecessor.
+    /// Verify every retained record's own hash and its link to its predecessor.
+    ///
+    /// Eviction is not a discontinuity. The record the oldest retained entry chains to may be gone,
+    /// so its `previous_hash` has nothing in the window to be compared against — it is covered by
+    /// that entry's own `entry_hash`, which is checked here regardless. What stays checkable at the
+    /// window's edge is the structural claim, and `sequence` is inside the digest too: only the
+    /// chain head has no predecessor, and every later record must name one. Links between retained
+    /// records are checked exactly as before.
     ///
     /// # Errors
     ///
@@ -256,7 +283,7 @@ impl RejectionLog {
     /// whose `previous_hash` does not match the record before it.
     pub fn verify_integrity(&self) -> Result<(), CryptoError> {
         let mut expected_previous: Option<&str> = None;
-        for record in &self.records {
+        for (position, record) in self.records.iter().enumerate() {
             let expected = Blake3Hasher::hash_string(&record.hash_input());
             if record.entry_hash != expected {
                 let sequence = record.sequence;
@@ -264,7 +291,12 @@ impl RejectionLog {
                     "rejection record {sequence} hash mismatch"
                 )));
             }
-            if record.previous_hash.as_deref() != expected_previous {
+            let linked = if position == 0 {
+                record.previous_hash.is_none() == (record.sequence == 0)
+            } else {
+                record.previous_hash.as_deref() == expected_previous
+            };
+            if !linked {
                 let sequence = record.sequence;
                 return Err(CryptoError::Hash(format!(
                     "rejection chain discontinuity at record {sequence}"

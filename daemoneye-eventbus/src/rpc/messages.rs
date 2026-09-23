@@ -277,7 +277,7 @@ pub struct CollectorLifecycleRequest {
 }
 
 /// Collector registration request data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RegistrationRequest {
     /// Collector identifier requested by the collector
     pub collector_id: String,
@@ -306,6 +306,36 @@ pub struct RegistrationRequest {
     /// agent spawned it. Never the token's path.
     #[serde(default)]
     pub spawn_token: Option<String>,
+}
+
+/// Hand-written so the presented spawn token cannot reach a log line through `Debug`.
+///
+/// `Serialize` still carries the value — the token has to cross the wire to be verified — but the
+/// formatting path renders a fixed placeholder. This is the only wire type that holds the
+/// credential, so redacting it here also covers everything that merely embeds it, such as the
+/// agent's `CollectorRecord`.
+impl std::fmt::Debug for RegistrationRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        /// What stands in for a presented token; the absent case still reads as absent.
+        const REDACTED: &str = "<redacted>";
+
+        formatter
+            .debug_struct("RegistrationRequest")
+            .field("collector_id", &self.collector_id)
+            .field("collector_type", &self.collector_type)
+            .field("hostname", &self.hostname)
+            .field("version", &self.version)
+            .field("pid", &self.pid)
+            .field("capabilities", &self.capabilities)
+            .field("attributes", &self.attributes)
+            .field("heartbeat_interval_ms", &self.heartbeat_interval_ms)
+            .field("descriptor", &self.descriptor)
+            .field(
+                "spawn_token",
+                &self.spawn_token.as_ref().map(|_present| REDACTED),
+            )
+            .finish()
+    }
 }
 
 /// Collector registration response payload
@@ -695,5 +725,62 @@ impl RpcRequest {
             RpcPayload::Shutdown(shutdown_request),
             timeout,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn a_registration_requests_debug_rendering_holds_no_spawn_token() {
+        // Arrange
+        const TOKEN: &str = "ZZsupersecretspawntokenZZ";
+        let request = RegistrationRequest {
+            collector_id: "procmond".to_owned(),
+            collector_type: "procmond".to_owned(),
+            hostname: "localhost".to_owned(),
+            version: None,
+            pid: None,
+            capabilities: Vec::new(),
+            attributes: HashMap::new(),
+            heartbeat_interval_ms: None,
+            descriptor: None,
+            spawn_token: Some(TOKEN.to_owned()),
+        };
+
+        // Act
+        let rendered = format!("{request:?}");
+
+        // Assert: the message carries no secret material (CodeQL rust/cleartext-logging).
+        assert!(
+            !rendered.contains(TOKEN),
+            "the request's Debug rendering reproduced the presented token"
+        );
+        assert!(rendered.contains("procmond"));
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn serializing_a_registration_request_still_carries_the_spawn_token() {
+        // The token has to reach the agent to be verified; only the Debug path is redacted.
+        let request = RegistrationRequest {
+            collector_id: "procmond".to_owned(),
+            collector_type: "procmond".to_owned(),
+            hostname: "localhost".to_owned(),
+            version: None,
+            pid: None,
+            capabilities: Vec::new(),
+            attributes: HashMap::new(),
+            heartbeat_interval_ms: None,
+            descriptor: None,
+            spawn_token: Some("ZZsupersecretspawntokenZZ".to_owned()),
+        };
+
+        let round_tripped: RegistrationRequest =
+            serde_json::from_str(&serde_json::to_string(&request).unwrap()).unwrap();
+        assert_eq!(round_tripped.spawn_token, request.spawn_token);
     }
 }

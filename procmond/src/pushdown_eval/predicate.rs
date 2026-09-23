@@ -4,8 +4,9 @@
 //! readable. Nothing here holds state: every function decides one predicate, one literal or one
 //! projection.
 
-use super::{FieldValue, ProjectedRow, PushdownError, schema};
-use daemoneye_eventbus::rpc::{ColumnDescriptor, ColumnType, PredicateOp as DescriptorOp};
+use super::schema::FieldRef;
+use super::{ProjectedRow, PushdownError, schema};
+use daemoneye_eventbus::rpc::{ColumnDescriptor, ColumnType};
 use daemoneye_lib::detection::RegexRejection;
 use daemoneye_lib::proto::{Literal, Predicate, PredicateOp, ProcessRecord, literal};
 use std::cmp::Ordering;
@@ -25,7 +26,7 @@ pub(super) fn project(
 
 /// Compares the observed value with the predicate's single literal. `None` is UNKNOWN.
 pub(super) fn compare_first(
-    observed: &FieldValue,
+    observed: FieldRef<'_>,
     predicate: &Predicate,
 ) -> Result<Option<Ordering>, PushdownError> {
     let value = first_value(predicate)?;
@@ -35,7 +36,7 @@ pub(super) fn compare_first(
 /// `IN` over three-valued logic: a match wins, otherwise an UNKNOWN comparison makes the whole
 /// predicate UNKNOWN rather than false.
 pub(super) fn in_holds(
-    observed: &FieldValue,
+    observed: FieldRef<'_>,
     predicate: &Predicate,
 ) -> Result<Option<bool>, PushdownError> {
     if predicate.values.is_empty() {
@@ -58,40 +59,28 @@ pub(super) fn in_holds(
 
 /// Same-kind comparison. A cross-kind literal is a refusal, and a NULL literal is UNKNOWN.
 pub(super) fn compare(
-    observed: &FieldValue,
+    observed: FieldRef<'_>,
     value: &literal::Value,
     column: &str,
 ) -> Result<Option<Ordering>, PushdownError> {
     // Text is compared ahead of the match below so neither side needs a `ref` binding inside a
     // `&`-pattern, which no spelling of satisfies both `pattern_type_mismatch` and
     // `needless_borrowed_reference`.
-    if let (Some(left), Some(right)) = (field_text(observed), literal_text(value)) {
+    if let (Some(left), Some(right)) = (observed.text(), literal_text(value)) {
         return Ok(Some(left.cmp(right)));
     }
     match (observed, value) {
-        (&FieldValue::Int(left), &literal::Value::IntValue(right)) => Ok(Some(left.cmp(&right))),
-        (&FieldValue::Uint(left), &literal::Value::UintValue(right)) => Ok(Some(left.cmp(&right))),
+        (FieldRef::Int(left), &literal::Value::IntValue(right)) => Ok(Some(left.cmp(&right))),
+        (FieldRef::Uint(left), &literal::Value::UintValue(right)) => Ok(Some(left.cmp(&right))),
         // `partial_cmp` yields `None` for NaN, which is UNKNOWN in SQL as well.
-        (&FieldValue::Float(left), &literal::Value::FloatValue(right)) => {
-            Ok(left.partial_cmp(&right))
-        }
-        (&FieldValue::Bool(left), &literal::Value::BoolValue(right)) => Ok(Some(left.cmp(&right))),
+        (FieldRef::Float(left), &literal::Value::FloatValue(right)) => Ok(left.partial_cmp(&right)),
+        (FieldRef::Bool(left), &literal::Value::BoolValue(right)) => Ok(Some(left.cmp(&right))),
         (_observed, &literal::Value::NullValue(_marker)) => Ok(None),
         (observed_value, literal_value) => Err(PushdownError::LiteralTypeMismatch {
             column: column.to_owned(),
-            column_type: field_kind(observed_value),
+            column_type: observed_value.kind(),
             literal_kind: literal_kind(literal_value),
         }),
-    }
-}
-
-/// The text an observed value carries, if it is a text column at all.
-pub(super) const fn field_text(value: &FieldValue) -> Option<&str> {
-    match *value {
-        FieldValue::Str(ref text) => Some(text.as_str()),
-        FieldValue::Int(_) | FieldValue::Uint(_) | FieldValue::Float(_) | FieldValue::Bool(_) => {
-            None
-        }
     }
 }
 
@@ -214,34 +203,6 @@ pub(super) const fn literal_kind(value: &literal::Value) -> &'static str {
         // Description only. A literal kind this build cannot name is refused by
         // `literal_matches_type`, which never returns true for one.
         ref _unrecognized => "unrecognized",
-    }
-}
-
-/// Wire name of an observed value's kind, for a refusal message.
-pub(super) const fn field_kind(value: &FieldValue) -> &'static str {
-    match *value {
-        FieldValue::Int(_) => ColumnType::Int.as_wire_name(),
-        FieldValue::Uint(_) => ColumnType::Uint.as_wire_name(),
-        FieldValue::Float(_) => ColumnType::Float.as_wire_name(),
-        FieldValue::Bool(_) => ColumnType::Bool.as_wire_name(),
-        FieldValue::Str(_) => ColumnType::String.as_wire_name(),
-    }
-}
-
-/// Maps a wire operation onto the descriptor's vocabulary. `None` is never pushable.
-pub(super) const fn descriptor_op(op: PredicateOp) -> Option<DescriptorOp> {
-    match op {
-        PredicateOp::Eq => Some(DescriptorOp::Eq),
-        PredicateOp::Ne => Some(DescriptorOp::Ne),
-        PredicateOp::Lt => Some(DescriptorOp::Lt),
-        PredicateOp::Le => Some(DescriptorOp::Le),
-        PredicateOp::Gt => Some(DescriptorOp::Gt),
-        PredicateOp::Ge => Some(DescriptorOp::Ge),
-        PredicateOp::In => Some(DescriptorOp::In),
-        PredicateOp::Like => Some(DescriptorOp::Like),
-        PredicateOp::Regexp => Some(DescriptorOp::Regexp),
-        PredicateOp::Unspecified => None,
-        _unrecognized => None,
     }
 }
 

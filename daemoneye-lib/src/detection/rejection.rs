@@ -100,6 +100,20 @@ pub enum SqlRejection {
     /// A `SELECT` had no `FROM` clause, so it names no table to collect from.
     #[error("SELECT statement must have a FROM clause")]
     MissingFrom,
+
+    /// The rule carried a clause the planner has no representation for.
+    ///
+    /// R17 admits a rule only when it lowers into collection tasks plus a residual. A clause the
+    /// planner never reads would be dropped on the floor, and the compiled rule would match a
+    /// different set of rows than the operator wrote — `LIMIT 1` becoming "every match" is the
+    /// plainest case. Refusing at load is the only honest answer.
+    #[error(
+        "the planner cannot lower {clause}, so this rule is refused rather than silently matching a different set of rows"
+    )]
+    UnsupportedClause {
+        /// The clause keyword, for example `LIMIT`, `HAVING` or `ORDER BY`.
+        clause: &'static str,
+    },
 }
 
 /// A regex construct the `regex` crate cannot compile.

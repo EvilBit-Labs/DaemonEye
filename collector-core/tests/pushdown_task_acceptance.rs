@@ -11,6 +11,7 @@ use collector_core::{
 use daemoneye_eventbus::rpc::{
     ColumnDescriptor, ColumnType, PredicateOp as DescriptorOp, SchemaDescriptor, TableDescriptor,
 };
+use daemoneye_lib::detection_bounds::{MAX_IN_VALUES, MAX_PREDICATES_PER_PLAN};
 use daemoneye_lib::proto;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -458,4 +459,77 @@ fn a_source_that_does_not_override_the_defaulted_method_rejects_every_task() {
             event_source: "bare"
         })
     );
+}
+
+/// A plan carrying more predicates than the fixed bound is refused whole.
+#[test]
+fn a_plan_beyond_the_predicate_bound_is_refused() {
+    // Arrange
+    let tasks = PushdownTasks::new(descriptor());
+    let predicates = (0..=MAX_PREDICATES_PER_PLAN)
+        .map(|_ordinal| predicate("pid", proto::PredicateOp::Eq, vec![literal_uint(1)]))
+        .collect();
+    let oversized = task("too-many", predicates, vec!["pid".to_owned()]);
+
+    // Act
+    let refusal = tasks.accept(&oversized, SystemTime::now());
+
+    // Assert
+    assert!(
+        matches!(
+            refusal,
+            Err(PushdownRejection::PlanTooLarge {
+                what: "predicates",
+                ..
+            })
+        ),
+        "an unbounded predicate count must be refused, got {refusal:?}"
+    );
+    assert_eq!(
+        tasks.status("too-many", SystemTime::now()),
+        TaskStatus::Unknown
+    );
+}
+
+/// An `IN` list beyond the fixed bound is refused; its values are scanned per record.
+#[test]
+fn an_in_list_beyond_the_value_bound_is_refused() {
+    // Arrange
+    let tasks = PushdownTasks::new(in_capable_descriptor());
+    let values = (0..=MAX_IN_VALUES)
+        .map(|ordinal| literal_uint(u64::try_from(ordinal).expect("an ordinal below the bound")))
+        .collect();
+    let oversized = task(
+        "wide-in",
+        vec![predicate("pid", proto::PredicateOp::In, values)],
+        vec!["pid".to_owned()],
+    );
+
+    // Act
+    let refusal = tasks.accept(&oversized, SystemTime::now());
+
+    // Assert
+    assert!(
+        matches!(
+            refusal,
+            Err(PushdownRejection::PlanTooLarge {
+                what: "IN values",
+                ..
+            })
+        ),
+        "an unbounded IN list must be refused, got {refusal:?}"
+    );
+}
+
+/// The descriptor above, with `pid` additionally advertising `IN`.
+fn in_capable_descriptor() -> SchemaDescriptor {
+    let mut schema = descriptor();
+    for table in &mut schema.tables {
+        for column in &mut table.columns {
+            if column.name == "pid" {
+                column.supported_ops.push(DescriptorOp::In);
+            }
+        }
+    }
+    schema
 }

@@ -82,7 +82,7 @@ fn test_heartbeat_status_is_healthy() {
 
 #[tokio::test]
 async fn test_registry_update_heartbeat_resets_missed_count() {
-    let registry = CollectorRegistry::default();
+    let registry = CollectorRegistry::unauthenticated();
 
     // Register a collector
     let request = create_registration_request("heartbeat-test");
@@ -107,7 +107,7 @@ async fn test_registry_update_heartbeat_resets_missed_count() {
 
 #[tokio::test]
 async fn test_registry_update_heartbeat_unknown_collector() {
-    let registry = CollectorRegistry::default();
+    let registry = CollectorRegistry::unauthenticated();
 
     // Update heartbeat for non-existent collector should fail
     let result = registry.update_heartbeat("unknown-collector").await;
@@ -116,7 +116,7 @@ async fn test_registry_update_heartbeat_unknown_collector() {
 
 #[tokio::test]
 async fn test_registry_heartbeat_status_healthy() {
-    let registry = CollectorRegistry::default();
+    let registry = CollectorRegistry::unauthenticated();
 
     // Register a collector
     let request = create_registration_request("healthy-collector");
@@ -133,7 +133,7 @@ async fn test_registry_heartbeat_status_healthy() {
 
 #[tokio::test]
 async fn test_registry_heartbeat_status_unknown_collector() {
-    let registry = CollectorRegistry::default();
+    let registry = CollectorRegistry::unauthenticated();
 
     // Status for non-existent collector should be None
     let status = registry.heartbeat_status("unknown-collector").await;
@@ -142,7 +142,7 @@ async fn test_registry_heartbeat_status_unknown_collector() {
 
 #[tokio::test]
 async fn test_registry_reset_missed_heartbeats() {
-    let registry = CollectorRegistry::default();
+    let registry = CollectorRegistry::unauthenticated();
 
     // Register a collector
     let request = create_registration_request("reset-test");
@@ -286,7 +286,7 @@ fn test_recovery_state_exhaustion() {
 
 #[tokio::test]
 async fn test_heartbeat_to_recovery_workflow() {
-    let registry = CollectorRegistry::default();
+    let registry = CollectorRegistry::unauthenticated();
 
     // Register collector with short heartbeat interval
     let mut request = create_registration_request("workflow-test");
@@ -314,7 +314,7 @@ async fn test_heartbeat_to_recovery_workflow() {
 
 #[tokio::test]
 async fn test_multiple_collectors_heartbeat_tracking() {
-    let registry = CollectorRegistry::default();
+    let registry = CollectorRegistry::unauthenticated();
 
     // Register multiple collectors
     let collectors = vec!["collector-a", "collector-b", "collector-c"];
@@ -346,7 +346,7 @@ async fn test_multiple_collectors_heartbeat_tracking() {
 
 #[tokio::test]
 async fn test_list_collector_ids() {
-    let registry = CollectorRegistry::default();
+    let registry = CollectorRegistry::unauthenticated();
 
     // Register multiple collectors
     let expected_ids = vec!["list-test-a", "list-test-b"];

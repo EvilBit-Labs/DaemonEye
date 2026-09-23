@@ -41,6 +41,13 @@ const _: () = assert!(
     "the regex cache capacity must be non-zero"
 );
 
+/// A compiled pattern as the cache hands it out.
+///
+/// Shared rather than owned so a caller may hold one across calls — a collector resolves a
+/// predicate's pattern once per batch and matches it against every record without returning to the
+/// cache.
+pub type CompiledPattern = Arc<Regex>;
+
 /// Observable counters for the regex cache.
 ///
 /// These exist because "the pattern was not recompiled" and "no compilation was attempted" are
