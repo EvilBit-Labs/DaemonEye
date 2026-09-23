@@ -58,7 +58,7 @@ bytes = "1.12.1"
 
 # Capability-based filesystem access (TOCTOU-safe opens)
 cap-fs-ext = "=4.0.2"
-cap-std = "=4.0.2"
+cap-std = "=4.0.3"
 
 # Date/time and utilities
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -142,7 +142,7 @@ thiserror = "2.0.20"
 # Exact-pinned: Tokio is the async runtime underpinning privilege
 # separation, IPC, and agent coordination. See AGENTS.md "Pin
 # security-critical deps".
-tokio = { version = "=1.52.3", features = [
+tokio = { version = "=1.53.1", features = [
     "rt",
     "rt-multi-thread",
     "net",
