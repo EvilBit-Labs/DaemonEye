@@ -39,7 +39,7 @@ pub use conformance::descriptor_with_conformance;
 pub use schema::{DESCRIPTOR_VERSION, FieldValue, PROCESS_TABLE, process_schema_descriptor};
 
 /// The collector id procmond advertises unless its registration config names another.
-pub const DEFAULT_COLLECTOR_ID: &str = "procmond";
+pub const DEFAULT_COLLECTOR_ID: &str = daemoneye_lib::detection::catalog::PROCESS_COLLECTOR_ID;
 
 /// The row a collector returns: exactly the columns the plan's projection names, each carrying its
 /// value or SQL NULL.

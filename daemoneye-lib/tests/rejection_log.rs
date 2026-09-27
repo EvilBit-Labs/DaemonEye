@@ -61,6 +61,46 @@ fn rejected_rule_produces_one_record_naming_rule_and_construct() {
     );
 }
 
+/// Covers AE1's audit half: the record `load_rule` writes when the allowlist gate refuses a rule.
+/// `readfile` rather than an aggregate, which T6 may re-admit.
+#[test]
+fn a_disallowed_function_is_named_in_exactly_one_rejection_record() {
+    // Arrange
+    let mut engine = DetectionEngine::new();
+
+    // Act
+    let result = engine.load_rule(rule(
+        "ae1-rule",
+        "SELECT readfile('/etc/passwd') FROM processes",
+    ));
+
+    // Assert
+    assert!(result.is_err());
+    let records = engine.rejection_log().records();
+    assert_eq!(
+        records.len(),
+        1,
+        "one refusal must write exactly one record"
+    );
+    let RejectionReason::RuleSql {
+        rejection: SqlRejection::FunctionNotAllowed { ref function, .. },
+        ..
+    } = records[0].reason
+    else {
+        // Five gates share the outer error variant, so only the rejection identifies this one.
+        panic!(
+            "expected the allowlist gate in the record, got {:?}",
+            records[0].reason
+        );
+    };
+    assert_eq!(function, "readfile");
+    let rendered = records[0].reason.to_string();
+    assert!(
+        rendered.contains("ae1-rule"),
+        "record must name the rule: {rendered}"
+    );
+}
+
 #[test]
 fn successful_load_writes_no_rejection_record() {
     // Arrange

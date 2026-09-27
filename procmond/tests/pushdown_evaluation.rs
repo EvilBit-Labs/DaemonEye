@@ -264,6 +264,21 @@ fn regexp_matches_the_rows_its_pattern_describes() {
     assert_eq!(selected, vec![10, 30]);
 }
 
+/// Covers AE8.
+///
+/// What this proves: a `REGEXP` pattern whose compiled program exceeds the fixed per-pattern
+/// byte ceiling is refused with `PushdownRejection::PatternRejected` carrying
+/// `RegexRejection::CompiledTooBig`, and the pattern never becomes resident in the bounded cache
+/// (`is_pattern_cached` is `false`, `cached_pattern_count` is `0`).
+///
+/// What it does NOT prove: "without compiling the pattern" is not literal here. The assertion
+/// `pattern_stats().compiles == 1` shows a compile *was* attempted — the bounded cache classifies
+/// a `CompiledTooBig` rejection by attempting the build and measuring the result, since a
+/// program's compiled size cannot be known without building it. The narrower, provable claim is
+/// that the pattern never became resident and the task never became active; this test does not
+/// call `is_active` to assert the latter directly, but `PushdownEvaluator::accept` delegates to
+/// `PushdownTasks::accept`, which records a plan only once compilation succeeds, so a
+/// `CompiledTooBig` rejection here means nothing was recorded under this task id either.
 #[test]
 fn an_over_bounds_regexp_pattern_refuses_the_task_and_never_enters_the_pattern_cache() {
     // Arrange: a pattern whose compiled program cannot fit the fixed byte ceiling.
@@ -303,6 +318,13 @@ fn an_over_bounds_regexp_pattern_refuses_the_task_and_never_enters_the_pattern_c
         evaluator.cached_pattern_count(),
         0,
         "the cache must hold nothing after a refusal"
+    );
+    // Asserted directly rather than inferred from the refusal: "rejects the task" is only true if
+    // the task never became evaluable, and a future reordering that recorded before compiling
+    // would still satisfy every assertion above.
+    assert!(
+        !evaluator.is_active("oversized", SystemTime::now()),
+        "a refused task must never become active"
     );
 }
 

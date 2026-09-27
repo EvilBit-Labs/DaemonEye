@@ -312,31 +312,33 @@ fn a_second_collector_claiming_an_owned_table_is_refused_and_ownership_does_not_
             descriptor_with_tables("procmond", &["processes", "files"]),
         )
         .unwrap();
-    catalog.record_conformance_pass("procmond", "processes", "name", PredicateOp::Eq);
+    catalog.record_conformance_pass("procmond", "files", "name", PredicateOp::Eq);
 
     // The spawn token authenticates *who* netmond is; it does not authorize it to take over a
-    // table name procmond already serves. Letting the claim through would re-address every
-    // `processes` rule to netmond and void procmond's conformance passes, which are keyed on the
-    // owner. `sockets` comes first so the refusal has an unowned table in front of the contested
-    // one: nothing may be stored when any part of the descriptor is refused.
+    // table name procmond already serves. Letting the claim through would re-address every `files`
+    // rule to netmond and void procmond's conformance passes, which are keyed on the owner.
+    // `sockets` comes first so the refusal has an unowned table in front of the contested one:
+    // nothing may be stored when any part of the descriptor is refused. The contested name is
+    // `files` rather than `processes` precisely because `processes` is reserved — the reserved
+    // refusal is a different gate, covered by its own test below.
     let error = catalog
         .register(
             &second,
-            descriptor_with_tables("netmond", &["sockets", "processes"]),
+            descriptor_with_tables("netmond", &["sockets", "files"]),
         )
         .unwrap_err();
     assert_eq!(
         error,
         CatalogError::TableOwnedByAnotherCollector {
-            table: "processes".to_owned(),
+            table: "files".to_owned(),
             owner: "procmond".to_owned(),
         }
     );
 
     // The refusal changed nothing: procmond still owns the table, still serves its column, still
     // holds its conformance pass, and netmond's uncontested table was not stored either.
-    assert_eq!(catalog.owner_of("processes"), Some("procmond"));
-    assert!(catalog.is_pushable("processes", "name", PredicateOp::Eq));
+    assert_eq!(catalog.owner_of("files"), Some("procmond"));
+    assert!(catalog.is_pushable("files", "name", PredicateOp::Eq));
     assert_eq!(catalog.owner_of("sockets"), None);
 
     // Contention only blocks the contested name. netmond can still register the tables it alone
@@ -351,6 +353,63 @@ fn a_second_collector_claiming_an_owned_table_is_refused_and_ownership_does_not_
     assert_eq!(catalog.owner_of("processes"), Some("procmond"));
     assert_eq!(catalog.owner_of("files"), None);
     assert_eq!(catalog.owner_of("sockets"), Some("netmond"));
+}
+
+#[test]
+fn a_reserved_table_is_refused_to_a_collector_it_is_not_reserved_for() {
+    let mut catalog = SchemaCatalog::new();
+    let intruder = verify_spawn_token("ghostmond", Some(&token('c')), Some(&token('c'))).unwrap();
+
+    // procmond has never registered, so first-claim would hand `processes` over. A reserved name is
+    // not first-claim: the token proves who ghostmond is, never that it may serve the table every
+    // process-lineage rule is planned against. `sockets` comes first so the refusal has an unowned
+    // table in front of the reserved one.
+    let error = catalog
+        .register(
+            &intruder,
+            descriptor_with_tables("ghostmond", &["sockets", "processes"]),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CatalogError::TableReservedForAnotherCollector {
+            table: "processes".to_owned(),
+            reserved_for: "procmond".to_owned(),
+        }
+    );
+
+    // Validate-before-mutate: nothing in the refused descriptor was stored, not even the table
+    // nobody contested.
+    assert_eq!(catalog.owner_of("processes"), None);
+    assert_eq!(catalog.owner_of("sockets"), None);
+    assert!(catalog.is_empty());
+
+    // The reservation is per name, not per collector: ghostmond keeps the tables it may serve.
+    catalog
+        .register(&intruder, descriptor_with_tables("ghostmond", &["sockets"]))
+        .unwrap();
+    assert_eq!(catalog.owner_of("sockets"), Some("ghostmond"));
+}
+
+#[test]
+fn the_reserved_collector_claims_its_reserved_table() {
+    let mut catalog = SchemaCatalog::new();
+    let intruder = verify_spawn_token("ghostmond", Some(&token('c')), Some(&token('c'))).unwrap();
+    let procmond = verify_spawn_token("procmond", Some(&token('a')), Some(&token('a'))).unwrap();
+
+    // Registering ahead of procmond buys nothing: `processes` is still procmond's when it arrives.
+    catalog
+        .register(&intruder, descriptor_with_tables("ghostmond", &["sockets"]))
+        .unwrap();
+    catalog
+        .register(
+            &procmond,
+            descriptor_with_tables("procmond", &["processes"]),
+        )
+        .unwrap();
+
+    assert_eq!(catalog.owner_of("processes"), Some("procmond"));
+    assert_eq!(catalog.owner_of("sockets"), Some("ghostmond"));
 }
 
 #[test]

@@ -12,7 +12,7 @@ use daemoneye_lib::proto::ProcessRecord;
 use std::cell::OnceCell;
 
 /// The only table procmond serves.
-pub const PROCESS_TABLE: &str = "processes";
+pub const PROCESS_TABLE: &str = daemoneye_lib::detection::catalog::PROCESS_TABLE_NAME;
 
 /// Opaque version of the descriptor below.
 ///

@@ -167,6 +167,17 @@ fn accepts_a_task_naming_an_advertised_column_and_operation() {
     assert_eq!(source.tasks.status("task-accept", now), TaskStatus::Active);
 }
 
+/// Covers AE7.
+///
+/// What this proves: a task whose second predicate names a column the collector never
+/// advertised is refused with `PushdownRejection::UnknownColumn`, and nothing from it is kept —
+/// `status` stays `Unknown` and `active_count` is `0`. `PushdownTasks::accept` calls `record`
+/// only after every predicate and the whole plan validate, so a task that fails partway can
+/// never leave a partial plan behind for a later evaluator to run.
+///
+/// What it does NOT prove: it does not run any records through an evaluator to show no rows
+/// came out. That is unreachable by construction here — with nothing recorded under this task
+/// id, no evaluator has a plan to run — so no such assertion is needed.
 #[test]
 fn rejects_a_task_naming_an_unadvertised_column_without_partial_evaluation() {
     let source = advertising();

@@ -1068,7 +1068,9 @@ pub struct RegexCache {
 
 ### Execution and Storage (R20)
 
-**DataFusion configuration:** the `SessionContext` is locked down to mirror load-time validation — the scalar/aggregate function registry is restricted to the approved allowlist, memory is bounded via DataFusion's memory manager (per-query memory pool), and cardinality caps are configurable; aggregations require explicit time windows.
+**DataFusion configuration:** the `SessionContext` is locked down to mirror load-time validation — the function registry is restricted to `ALLOWED_SQL_FUNCTIONS`, memory is bounded via DataFusion's memory manager (per-query memory pool), and cardinality caps are configurable.
+
+**Aggregates are refused today, and windowed aggregation is the T6 target.** `avg`, `count`, `max`, `min` and `sum` are absent from `ALLOWED_SQL_FUNCTIONS`, and `GROUP BY`/`HAVING` are refused by the rule-load clause gate, because no planner can lower an aggregate into a pushed half plus a residual — a projected `count(pid)` reduces to the bare column `pid`, returning rows where a count was asked for. R17 rejects such a rule at first load with no fallback. Admitting a windowed aggregate means changing three things together: the aggregate names return to `ALLOWED_SQL_FUNCTIONS` (`daemoneye-lib/src/detection/allowlist.rs`), `GROUP BY`/`HAVING` come out of the clause gate (`daemoneye-lib/src/detection/sql_validation.rs`), and the planner gains a representation for a windowed aggregate so the projection builder no longer flattens it to a column. Aggregations will then require explicit time windows to bound memory, per §11.5–11.7.
 
 **TableProvider pushdown:** each per-collector `TableProvider` implements filter and projection pushdown into redb scans — time predicates resolve to partition plus primary-key range scans, and indexed equality predicates resolve through the multimap secondary indexes (posting-list intersection per §11.7) before any row is materialized into Arrow batches.
 

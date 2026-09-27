@@ -168,6 +168,18 @@ pub enum CatalogError {
         /// The collector that already owns it.
         owner: String,
     },
+    /// The descriptor claims a table reserved for a different first-party collector.
+    ///
+    /// Distinct from [`Self::TableOwnedByAnotherCollector`] on purpose: that one says the name was
+    /// taken, this one says the claimant was never entitled to it. The refusal stands even when the
+    /// reserved collector has never registered, so a third-party collector cannot win `processes`
+    /// by racing procmond to the catalog.
+    TableReservedForAnotherCollector {
+        /// The reserved table.
+        table: String,
+        /// The only collector identity that may own it.
+        reserved_for: String,
+    },
 }
 
 impl fmt::Display for CatalogError {
@@ -216,6 +228,13 @@ impl fmt::Display for CatalogError {
             } => write!(
                 formatter,
                 "table `{table}` is already owned by collector `{owner}`"
+            ),
+            Self::TableReservedForAnotherCollector {
+                ref table,
+                ref reserved_for,
+            } => write!(
+                formatter,
+                "table `{table}` is reserved for collector `{reserved_for}`"
             ),
         }
     }
@@ -294,6 +313,42 @@ impl CatalogChange {
     pub fn is_empty(&self) -> bool {
         !self.first_registration && self.tables.is_empty()
     }
+}
+
+/// Table names only one collector identity may ever own, whatever the registration order.
+///
+/// Keyed on `collector_id`, because that is the identity the spawn token authenticates and the one
+/// [`VerifiedRegistration`] carries. `RegistrationRequest::collector_type` is self-declared on the
+/// wire and never verified, so keying on it would hand `processes` to any collector willing to
+/// claim that type.
+///
+/// `.kiro/specs/daemoneye-core-monitoring/design.md` reserves four collector identities —
+/// `procmond`, `netmond`, `fsmond`, `perfmond`. Only procmond exists today, and the one table it
+/// declares is `processes` (`procmond/src/pushdown_eval/schema.rs`). The other three get entries
+/// here when they declare tables; inventing names for them now would reserve names nothing serves.
+/// The collector identity the process table is reserved for.
+///
+/// Exported so the collector that owns it can define its own default id *from* this constant
+/// rather than repeating the literal. The dependency only runs one way — `procmond` depends on
+/// this crate — so this is the single place the name can live and still be checked by the
+/// compiler. Repeating it would mean a future change to either copy silently refuses procmond
+/// its own table.
+pub const PROCESS_COLLECTOR_ID: &str = "procmond";
+
+/// The reserved process table, for the same reason as [`PROCESS_COLLECTOR_ID`].
+///
+/// The collector that serves it derives its own `PROCESS_TABLE` from this, so the reservation and
+/// the descriptor cannot name different tables without the compiler noticing.
+pub const PROCESS_TABLE_NAME: &str = "processes";
+
+const RESERVED_TABLES: [(&str, &str); 1] = [(PROCESS_TABLE_NAME, PROCESS_COLLECTOR_ID)];
+
+/// The collector identity `table` is reserved for, if it is reserved at all.
+fn reserved_owner_of(table: &str) -> Option<&'static str> {
+    RESERVED_TABLES
+        .iter()
+        .find(|entry| entry.0 == table)
+        .map(|entry| entry.1)
 }
 
 /// Key for the per-operation conformance-pass slot (R15).
@@ -397,7 +452,12 @@ impl SchemaCatalog {
         Ok(change)
     }
 
-    /// Refuse a descriptor that claims a table some *other* collector already owns (R10).
+    /// Refuse a descriptor that claims a table it is not entitled to serve (R10).
+    ///
+    /// Two layers. A name in [`RESERVED_TABLES`] may only ever be owned by the collector identity
+    /// it is reserved for — refused otherwise even when that collector has never registered, so
+    /// first-claim cannot hand `processes` to whatever registered before procmond. Every other name
+    /// is first-claim, as below.
     ///
     /// The token proves identity, not authority over a table name. Without this check the last
     /// registration wins: a lower-trust collector declaring `processes` would become the address
@@ -413,6 +473,18 @@ impl SchemaCatalog {
         descriptor: &SchemaDescriptor,
     ) -> Result<(), CatalogError> {
         for table in &descriptor.tables {
+            if let Some(reserved_for) = reserved_owner_of(&table.name) {
+                if reserved_for != collector_id {
+                    return Err(CatalogError::TableReservedForAnotherCollector {
+                        table: table.name.clone(),
+                        reserved_for: reserved_for.to_owned(),
+                    });
+                }
+                // Reserved names are not first-claim: the designated collector takes its own name
+                // back even from a holder that predates this check, so procmond is never locked
+                // out of `processes` by whoever registered first.
+                continue;
+            }
             if let Some(owner) = self.owners.get(&table.name)
                 && owner != collector_id
             {

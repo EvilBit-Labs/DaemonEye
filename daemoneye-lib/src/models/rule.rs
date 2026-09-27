@@ -493,30 +493,32 @@ impl DetectionRule {
         self.touch();
     }
 
-    /// Returns true if the rule appears valid.
+    /// Returns true when the rule carries a non-empty `name` and `sql_query`.
     ///
-    /// This checks that:
-    /// - the SQL query parses and passes basic safety checks (via `validate_sql()`), and
-    /// - both the rule `name` and `sql_query` are non-empty.
+    /// This makes no claim about the SQL. Whether a rule loads depends on the operator's
+    /// `DetectionConfig::max_subquery_depth`, on the regex bounds its `REGEXP` patterns are
+    /// compiled under, and on the collector catalog its references resolve against — none of which
+    /// a method on `DetectionRule` can see. Use [`DetectionRule::validate_sql_with_depth`] for the
+    /// SQL gate at a known depth, and `DetectionEngine::load_rule` for the whole decision.
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// # use daemoneye_lib::models::rule::DetectionRule;
     /// # use daemoneye_lib::models::alert::AlertSeverity;
     /// let rule = DetectionRule::new(
     ///     "rule-1",
     ///     "Example rule",
     ///     "Detects something",
-    ///     "SELECT 1",
+    ///     "SELECT pid FROM processes",
     ///     "example",
     ///     AlertSeverity::Low,
     /// );
-    /// assert!(rule.is_valid());
+    /// assert!(rule.has_required_fields());
     /// ```
-    pub fn is_valid(&self) -> bool {
-        // Cheap checks first to avoid SQL parsing on obviously invalid rules.
-        !self.name.is_empty() && !self.sql_query.is_empty() && self.validate_sql().is_ok()
+    #[must_use]
+    pub const fn has_required_fields(&self) -> bool {
+        !self.name.is_empty() && !self.sql_query.is_empty()
     }
 
     /// Returns the age of the rule in whole seconds.
@@ -600,7 +602,8 @@ mod tests {
         );
         assert_eq!(rule.severity, AlertSeverity::High);
         assert!(rule.enabled);
-        assert!(rule.is_valid());
+        assert!(rule.has_required_fields());
+        assert!(rule.validate_sql().is_ok());
     }
 
     #[test]

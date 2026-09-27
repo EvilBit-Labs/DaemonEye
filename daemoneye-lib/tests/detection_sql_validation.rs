@@ -54,6 +54,9 @@ fn nested_subqueries(levels: u32) -> String {
 
 // --- R2: function allowlist -------------------------------------------------------------------
 
+/// Covers AE1's gate half: the rejection and the named function at the gate `load_rule` calls. The
+/// record `load_rule` writes is covered by `rejection_log.rs`'s
+/// `a_disallowed_function_is_named_in_exactly_one_rejection_record`.
 #[test]
 fn a_function_outside_the_allowlist_is_rejected_and_named() {
     let rejection = reject("SELECT readfile('/etc/passwd') FROM processes");
@@ -99,9 +102,30 @@ fn every_function_the_old_denylist_banned_is_still_rejected_by_name() {
     }
 }
 
+/// An aggregate is refused by the allowlist, because no plan can compute one.
+///
+/// `build_projection` collects bare identifiers, so admitting `SELECT count(pid)` would plan the
+/// projection `["pid"]` — rows where the operator asked for a count. R17 refuses it.
+///
+/// One statement per name: the visitor breaks on the first disallowed function, so a single
+/// statement naming all five would only prove the first.
 #[test]
-fn an_allowlisted_aggregate_loads() {
-    accept("SELECT count(pid), min(pid), max(pid), sum(pid), avg(pid) FROM processes");
+fn an_aggregate_is_rejected_because_no_plan_can_compute_one() {
+    for aggregate in ["avg", "count", "max", "min", "sum"] {
+        let sql = format!("SELECT {aggregate}(pid) FROM processes");
+        let rejection = reject(&sql);
+        let SqlRejection::FunctionNotAllowed { ref function, .. } = rejection else {
+            panic!("expected the allowlist gate to fire for {aggregate}, got {rejection:?}");
+        };
+        assert_eq!(function.to_lowercase(), aggregate);
+    }
+
+    // A projected aggregate beside a pushable predicate: the shape that mis-plans most quietly.
+    let rejection = reject("SELECT count(pid) FROM processes WHERE pid > 1");
+    let SqlRejection::FunctionNotAllowed { ref function, .. } = rejection else {
+        panic!("expected the allowlist gate to fire, got {rejection:?}");
+    };
+    assert_eq!(function.to_lowercase(), "count");
 }
 
 #[test]

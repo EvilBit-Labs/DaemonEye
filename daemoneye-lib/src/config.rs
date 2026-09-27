@@ -20,7 +20,7 @@ use tracing::{info, warn};
 use unidirs::Directories;
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
 /// Configuration loading and validation errors.
 #[derive(Debug, Error)]
@@ -382,57 +382,34 @@ impl Default for BrokerConfig {
     }
 }
 
-/// Determines the default socket path with platform-specific fallbacks.
+/// Determines the default socket path.
 ///
 /// Uses `unidirs::ServiceDirs` to access the system-wide data directory for
 /// system-level components (daemoneye-agent and collectors). The socket is placed
 /// in the data directory rather than runtime directory for persistence across
 /// system restarts.
 ///
-/// Platform-specific paths (via `ServiceDirs` `data_dir`):
-/// - **Linux**: `/var/lib/evilbitlabs/daemoneye/daemoneye-eventbus.sock`
-/// - **macOS**: `/Library/Application Support/evilbitlabs/daemoneye/daemoneye-eventbus.sock`
+/// Platform-specific paths (via `ServiceDirs` `data_dir`, which ignores the organization on Unix):
+/// - **Unix** (Linux and macOS alike): `/var/lib/daemoneye/daemoneye-eventbus.sock`
 /// - **Windows**: Uses named pipes (`\\.\pipe\daemoneye-eventbus`) which don't
 ///   require directory paths
 ///
-/// The function validates path length against Unix domain socket limits
-/// (108 bytes including null terminator) and falls back to `/tmp/de.sock` if the
-/// computed path exceeds the limit.
+/// The returned path is not length-checked here, because [`Default`] cannot fail. A path that
+/// exceeds the Unix limit is refused at startup by [`BrokerConfig::ensure_socket_directory`]
+/// rather than relocated: the socket directory also holds collector spawn tokens, so silently
+/// moving it would move credentials somewhere the operator never nominated.
 ///
 /// # Platform Limitations
 ///
-/// - **Unix**: Paths must be ≤ 107 characters (108 including null terminator)
+/// - **Unix**: Paths must be ≤ 107 bytes (108 including the trailing NUL)
 /// - **Windows**: Named pipes are used (no path length concerns)
 fn default_socket_path() -> String {
     #[cfg(unix)]
     {
-        // Unix domain sockets have a 108-byte limit (including null terminator)
-        // We check against 107 to leave room for the null terminator
-        const UNIX_SOCKET_MAX_LEN: usize = 107;
-
         // Use ServiceDirs for system-wide data directory
         let service_dirs = unidirs::ServiceDirs::new("evilbitlabs", "daemoneye");
         let data_dir = service_dirs.data_dir();
-
-        // Build socket path
-        let socket_name = "daemoneye-eventbus.sock";
-        let socket_path = data_dir.join(socket_name);
-        let socket_path_str = socket_path.to_string();
-
-        if socket_path_str.len() <= UNIX_SOCKET_MAX_LEN {
-            socket_path_str
-        } else {
-            // Fallback to shorter path in /tmp
-            // Use a very short filename to ensure we stay under the limit
-            let short_path = "/tmp/de.sock".to_owned();
-            warn!(
-                original_path = %socket_path_str,
-                fallback_path = %short_path,
-                "Socket path exceeds Unix domain socket length limit ({} bytes), using fallback",
-                UNIX_SOCKET_MAX_LEN + 1
-            );
-            short_path
-        }
+        data_dir.join("daemoneye-eventbus.sock").to_string()
     }
 
     #[cfg(windows)]
@@ -468,8 +445,15 @@ impl BrokerConfig {
     ///
     /// # Errors
     ///
-    /// Returns an error if directory creation or permission setting fails.
+    /// Returns [`ConfigError::ValidationError`] when the configured path cannot fit a Unix domain
+    /// socket address, or an error if directory creation or permission setting fails.
     pub fn ensure_socket_directory(&self) -> anyhow::Result<std::path::PathBuf> {
+        // Refused rather than relocated: this directory also holds collector spawn tokens, so a
+        // fallback to a shorter shared path would put credentials somewhere the operator never
+        // chose. A `BrokerConfig::default()` never passes through `ConfigLoader::validate_config`,
+        // so the same check runs here, on the startup path every caller takes.
+        ConfigLoader::validate_socket_path(&self.socket_path)?;
+
         let socket_path = std::path::Path::new(&self.socket_path);
 
         #[cfg(windows)]
@@ -488,6 +472,20 @@ impl BrokerConfig {
             })?;
 
             if !parent_dir.exists() {
+                // Created owner-only by the create itself, so the directory is never briefly
+                // reachable. A directory this process made is ours to tighten.
+                #[cfg(unix)]
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(parent_dir)
+                    .with_context(|| {
+                        format!(
+                            "Failed to create socket directory: {}",
+                            parent_dir.display()
+                        )
+                    })?;
+                #[cfg(not(unix))]
                 std::fs::create_dir_all(parent_dir).with_context(|| {
                     format!(
                         "Failed to create socket directory: {}",
@@ -500,17 +498,39 @@ impl BrokerConfig {
                 );
             }
 
-            // Set restrictive permissions (owner read/write/execute only)
+            // A directory this process did not create is checked, never corrected. Chmodding one
+            // the agent found is how an earlier version came to run `chmod 700` on a shared path,
+            // and tightening someone else's directory is not this process's call to make.
+            //
+            // The check is on the group/other *write* bits, not on every group/other bit. Both
+            // attacks here need write on the parent: pre-creating the directory to own what lands
+            // in it, or replacing it with a symlink. Read or traverse access leaks directory
+            // names, and the credential itself lives in the `spawn-tokens` subdirectory, which its
+            // own store creates owner-only and verifies for owner and symlink separately. Refusing
+            // on the read bits would also refuse a legitimately shared data directory -- procmond
+            // creates it at 0o755 when it starts before the agent -- turning a deployment order
+            // into a startup failure for no security gain.
             #[cfg(unix)]
             {
-                use std::fs;
-                let perms = fs::Permissions::from_mode(0o700);
-                fs::set_permissions(parent_dir, perms).with_context(|| {
+                let metadata = std::fs::symlink_metadata(parent_dir).with_context(|| {
                     format!(
-                        "Failed to set permissions on socket directory: {}",
+                        "Failed to inspect socket directory: {}",
                         parent_dir.display()
                     )
                 })?;
+                anyhow::ensure!(
+                    !metadata.file_type().is_symlink(),
+                    "socket directory {} is a symlink; refusing to place a socket and collector \
+                     spawn tokens behind one",
+                    parent_dir.display()
+                );
+                let mode = metadata.permissions().mode() & 0o777;
+                anyhow::ensure!(
+                    mode & 0o022 == 0,
+                    "socket directory {} is group- or world-writable (mode {mode:#o}); refusing \
+                     rather than changing a directory this process did not create",
+                    parent_dir.display()
+                );
             };
 
             Ok(socket_path.to_path_buf())
@@ -877,7 +897,7 @@ impl ConfigLoader {
         if socket_path.len() > SOCKET_PATH_MAX_LEN {
             return Err(ConfigError::ValidationError {
                 message: format!(
-                    "broker.socket_path must not exceed {SOCKET_PATH_MAX_LEN} bytes (OS sun_path limit), got {}",
+                    "broker.socket_path must not exceed {SOCKET_PATH_MAX_LEN} bytes (OS sun_path limit), got {} bytes: {socket_path}",
                     socket_path.len()
                 ),
             });
@@ -1895,6 +1915,64 @@ enabled = true
                 config.socket_path
             );
         }
+    }
+
+    /// The default must fit the platform limit on its own, now that no fallback rewrites it.
+    #[cfg(unix)]
+    #[test]
+    fn test_default_socket_path_fits_unix_limit() {
+        let config = BrokerConfig::default();
+
+        assert!(
+            ConfigLoader::validate_socket_path(&config.socket_path).is_ok(),
+            "default socket path must be usable without a fallback: {}",
+            config.socket_path
+        );
+    }
+
+    /// An over-long path is refused, not relocated to a shorter shared directory.
+    #[cfg(unix)]
+    #[test]
+    fn test_ensure_socket_directory_refuses_overlong_path() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let long_component = "a".repeat(107);
+        let socket_path = temp_dir
+            .path()
+            .join(long_component)
+            .join("broker.sock")
+            .to_string_lossy()
+            .to_string();
+        let config = BrokerConfig {
+            socket_path: socket_path.clone(),
+            ..Default::default()
+        };
+
+        let error = config
+            .ensure_socket_directory()
+            .expect_err("over-long socket path must be refused");
+
+        let message = error.to_string();
+        assert!(
+            matches!(
+                error.downcast_ref::<ConfigError>(),
+                Some(ConfigError::ValidationError { .. })
+            ),
+            "expected a validation error, got: {message}"
+        );
+        assert!(
+            message.contains("107"),
+            "message must name the limit: {message}"
+        );
+        assert!(
+            message.contains(&socket_path),
+            "message must name the offending path: {message}"
+        );
+        assert!(
+            !std::path::Path::new(&socket_path)
+                .parent()
+                .is_some_and(std::path::Path::exists),
+            "refusal must not create the socket directory"
+        );
     }
 
     // ============================================================================
