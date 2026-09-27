@@ -6,8 +6,13 @@
     clippy::indexing_slicing
 )]
 
+use std::time::SystemTime;
+
+use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::detection::catalog::{SchemaCatalog, verify_spawn_token};
 use daemoneye_lib::detection::rule_health::{RuleHealth, RuleHealthRegistry};
+use daemoneye_lib::detection::task_renewal::task_id;
+use daemoneye_lib::models::{AlertSeverity, DetectionRule};
 use daemoneye_lib::proto::{
     ColumnDescriptor, ColumnType, PredicateOp, SchemaDescriptor, TableDescriptor,
 };
@@ -42,6 +47,18 @@ fn register(
 ) -> daemoneye_lib::detection::catalog::CatalogChange {
     let verified = verify_spawn_token("procmond", Some(&token()), Some(&token())).unwrap();
     catalog.register(&verified, descriptor(columns)).unwrap()
+}
+
+/// A rule whose only filter is `column = 'x'`, so dropping that column makes it stop validating.
+fn rule(id: &str, column: &str) -> DetectionRule {
+    DetectionRule::new(
+        id.to_owned(),
+        "Health test rule".to_owned(),
+        "Revalidation fixture".to_owned(),
+        format!("SELECT {column} FROM processes WHERE {column} = 'x'"),
+        "test".to_owned(),
+        AlertSeverity::Medium,
+    )
 }
 
 #[test]
@@ -142,4 +159,45 @@ fn a_rule_untouched_by_the_change_is_left_alone() {
     let second_outcome = rules.revalidate(&catalog, &widened);
     assert!(second_outcome.newly_unhealthy().is_empty());
     assert!(second_outcome.to_replan().is_empty());
+}
+
+/// A rule marked unhealthy by revalidation must also lose its compiled plan, or the renewal clock
+/// re-issues a task the current collector can no longer accept (R12 into R16).
+#[test]
+fn revalidation_takes_the_plan_away_from_the_rule_it_marks_unhealthy() {
+    // Arrange
+    let mut engine = DetectionEngine::new();
+    let verified = verify_spawn_token("procmond", Some(&token()), Some(&token())).unwrap();
+    engine
+        .register_collector(&verified, descriptor(&["name", "cmdline"]))
+        .unwrap();
+    engine.load_rule(rule("needs-cmdline", "cmdline")).unwrap();
+    engine.load_rule(rule("needs-name", "name")).unwrap();
+    assert!(engine.compiled_rule("needs-cmdline").is_some());
+
+    // Act: the collector re-registers without `cmdline`.
+    engine
+        .register_collector(&verified, descriptor(&["name"]))
+        .unwrap();
+
+    // Assert
+    assert!(matches!(
+        engine.rule_health("needs-cmdline"),
+        Some(&RuleHealth::Unhealthy { .. })
+    ));
+    assert!(
+        engine.compiled_rule("needs-cmdline").is_none(),
+        "an unhealthy rule must not keep a plan a task could be issued from"
+    );
+    assert!(
+        engine.compiled_rule("needs-name").is_some(),
+        "the still-healthy sibling keeps its plan"
+    );
+
+    let issued: Vec<String> = engine
+        .issue_tasks_for_collector("procmond", SystemTime::UNIX_EPOCH)
+        .iter()
+        .map(|pending| pending.task_id().to_owned())
+        .collect();
+    assert_eq!(issued, [task_id("needs-name", "procmond")]);
 }

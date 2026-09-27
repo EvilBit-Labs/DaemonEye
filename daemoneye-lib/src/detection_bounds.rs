@@ -24,10 +24,17 @@ pub const REGEX_SIZE_LIMIT_BYTES: usize = 256 * 1024;
 ///
 /// Unlike [`REGEX_SIZE_LIMIT_BYTES`] this is **never a rejection condition**. It bounds the lazy
 /// DFA's runtime cache, which resets and falls back to a slower engine when full rather than
-/// failing. It is set equal to the compile ceiling so that it survives the same multiplication:
-/// [`REGEX_CACHE_MAX_ENTRIES`] cached patterns cost at most 16 MiB of DFA cache on top of the
-/// 16 MiB of compiled programs, keeping total regex residency near 32 MiB against the process's
-/// 100 MB budget. The `regex` crate's own 2 MiB default would have permitted 128 MiB here.
+/// failing.
+///
+/// It does **not** multiply by [`REGEX_CACHE_MAX_ENTRIES`]. The crate documents this value as
+/// "the amount of capacity that *may* be used ... whatever you're willing to allocate for a single
+/// regex search" — it is a per-search cache ceiling, lazily filled, not a per-resident-pattern
+/// reservation. So total DFA memory scales with *concurrent searches*, each capped here, and there
+/// is no fixed product to add to the compiled-program ceiling. Only that ceiling
+/// ([`REGEX_CACHE_MAX_BYTES`]) is a provable resident bound; this one bounds a transient.
+///
+/// 256 KiB rather than the crate's 2 MiB default keeps a single search's cache an order of
+/// magnitude below the process's 100 MB budget instead of a fiftieth of it.
 pub const REGEX_DFA_SIZE_LIMIT_BYTES: usize = 256 * 1024;
 
 /// Maximum number of compiled patterns held in the least-recently-used regex cache.
@@ -175,3 +182,16 @@ const _: () = assert!(
     MAX_REJECTION_RECORDS > 0,
     "the rejection log must retain at least one record"
 );
+
+// --- Collector registration bounds --------------------------------------------------------------
+
+/// Maximum byte length of a hostname carried on a collector registration.
+///
+/// A hostname is not an identifier drawn from a fixed catalog, so [`MAX_IDENTIFIER_LENGTH`] does
+/// not apply to it: `collector-core` sends whatever the host reports, and any RFC 1123 name is
+/// legitimate. 253 is the DNS maximum for a fully-qualified name (the 255-byte wire form of a name
+/// less the length byte and the root label), so this refuses only what could not be a real
+/// hostname. The bound still exists because validation runs before authentication — but nothing
+/// bounded by it is retained: a rejection record holds only the collector id, truncated to
+/// [`MAX_IDENTIFIER_LENGTH`] bytes.
+pub const MAX_HOSTNAME_LENGTH: usize = 253;

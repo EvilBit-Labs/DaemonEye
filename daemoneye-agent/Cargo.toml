@@ -20,6 +20,12 @@ path-guid    = "6E74EC37-C9F9-4E4F-9586-299D2E02B22C"
 license      = false
 eula         = false
 
+[features]
+# Exposes `CollectorRegistry::unauthenticated()` and the `AdmissionPolicy::Unauthenticated` variant
+# it constructs. Integration tests under `tests/` are separate crates, so `cfg(test)` cannot reach
+# them; this feature can, and no released build enables it. Never enable it in production.
+test-only = []
+
 [dependencies]
 # Core dependencies
 anyhow      = { workspace = true }
@@ -44,6 +50,9 @@ uuid               = { workspace = true }
 prost-build = { workspace = true }
 
 [dev-dependencies]
+# Self-dependency so cargo enables `test-only` when building this crate's own test targets.
+daemoneye-agent = { path = ".", features = ["test-only"] }
+
 assert_cmd = { workspace = true }
 insta      = { workspace = true }
 predicates = { workspace = true }

@@ -301,27 +301,95 @@ fn descriptor_with_tables(collector_id: &str, tables: &[&str]) -> SchemaDescript
 }
 
 #[test]
-fn a_re_registration_leaves_a_table_another_collector_now_owns_alone() {
+fn a_second_collector_claiming_an_owned_table_is_refused_and_ownership_does_not_move() {
     let mut catalog = SchemaCatalog::new();
     let first = verify_spawn_token("procmond", Some(&token('a')), Some(&token('a'))).unwrap();
     let second = verify_spawn_token("netmond", Some(&token('b')), Some(&token('b'))).unwrap();
 
     catalog
+        .register(
+            &first,
+            descriptor_with_tables("procmond", &["processes", "files"]),
+        )
+        .unwrap();
+    catalog.record_conformance_pass("procmond", "processes", "name", PredicateOp::Eq);
+
+    // The spawn token authenticates *who* netmond is; it does not authorize it to take over a
+    // table name procmond already serves. Letting the claim through would re-address every
+    // `processes` rule to netmond and void procmond's conformance passes, which are keyed on the
+    // owner. `sockets` comes first so the refusal has an unowned table in front of the contested
+    // one: nothing may be stored when any part of the descriptor is refused.
+    let error = catalog
+        .register(
+            &second,
+            descriptor_with_tables("netmond", &["sockets", "processes"]),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        CatalogError::TableOwnedByAnotherCollector {
+            table: "processes".to_owned(),
+            owner: "procmond".to_owned(),
+        }
+    );
+
+    // The refusal changed nothing: procmond still owns the table, still serves its column, still
+    // holds its conformance pass, and netmond's uncontested table was not stored either.
+    assert_eq!(catalog.owner_of("processes"), Some("procmond"));
+    assert!(catalog.is_pushable("processes", "name", PredicateOp::Eq));
+    assert_eq!(catalog.owner_of("sockets"), None);
+
+    // Contention only blocks the contested name. netmond can still register the tables it alone
+    // serves, and procmond can still drop one of its own without disturbing netmond's.
+    catalog
+        .register(&second, descriptor_with_tables("netmond", &["sockets"]))
+        .unwrap();
+    catalog
         .register(&first, descriptor_with_tables("procmond", &["processes"]))
         .unwrap();
-    // A second authenticated collector declares the same table and becomes its owner.
-    catalog
-        .register(&second, descriptor_with_tables("netmond", &["processes"]))
-        .unwrap();
-    assert_eq!(catalog.owner_of("processes"), Some("netmond"));
 
-    // The first collector re-registers without that table. Removing every table its *previous*
-    // descriptor named would delete an entry it no longer owns, orphaning a table netmond still
-    // serves — `owner_of` would answer `None` and every rule on it would fail to plan.
+    assert_eq!(catalog.owner_of("processes"), Some("procmond"));
+    assert_eq!(catalog.owner_of("files"), None);
+    assert_eq!(catalog.owner_of("sockets"), Some("netmond"));
+}
+
+#[test]
+fn a_collector_replacing_its_own_table_still_succeeds() {
+    let mut catalog = SchemaCatalog::new();
+    let verified = verify_spawn_token("procmond", Some(&token('a')), Some(&token('a'))).unwrap();
+
     catalog
-        .register(&first, descriptor_with_tables("procmond", &["sockets"]))
+        .register(
+            &verified,
+            descriptor_with_tables("procmond", &["processes", "sockets"]),
+        )
         .unwrap();
 
-    assert_eq!(catalog.owner_of("processes"), Some("netmond"));
+    // Re-declaring a table it already owns is a replacement, not a takeover.
+    catalog
+        .register(
+            &verified,
+            descriptor_with_tables("procmond", &["processes", "sockets"]),
+        )
+        .unwrap();
+    assert_eq!(catalog.owner_of("processes"), Some("procmond"));
+    assert_eq!(catalog.owner_of("sockets"), Some("procmond"));
+
+    // Dropping one of its own tables still works, and re-claiming it afterwards still works.
+    catalog
+        .register(
+            &verified,
+            descriptor_with_tables("procmond", &["processes"]),
+        )
+        .unwrap();
+    assert_eq!(catalog.owner_of("processes"), Some("procmond"));
+    assert_eq!(catalog.owner_of("sockets"), None);
+
+    catalog
+        .register(
+            &verified,
+            descriptor_with_tables("procmond", &["processes", "sockets"]),
+        )
+        .unwrap();
     assert_eq!(catalog.owner_of("sockets"), Some("procmond"));
 }

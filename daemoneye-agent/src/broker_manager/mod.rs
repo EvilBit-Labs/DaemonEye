@@ -36,7 +36,7 @@ use daemoneye_eventbus::rpc::CollectorRpcClient;
 use daemoneye_eventbus::{
     DaemoneyeBroker, DaemoneyeEventBus, process_manager::CollectorProcessManager,
 };
-use daemoneye_lib::config::BrokerConfig;
+use daemoneye_lib::config::{BrokerConfig, DetectionConfig};
 use daemoneye_lib::detection::DetectionEngine;
 use state::CollectorReadinessTracker;
 use std::sync::Arc;
@@ -92,8 +92,19 @@ pub struct BrokerManager {
 }
 
 impl BrokerManager {
-    /// Create a new broker manager with the given configuration
+    /// Create a new broker manager with the given configuration and the default
+    /// [`DetectionConfig`].
+    // Used by this crate's tests and examples; the binary calls `with_detection_config` so the
+    // operator's loaded detection config reaches the engine, which leaves this unused in the bin
+    // target alone.
+    #[allow(dead_code)]
     pub fn new(config: BrokerConfig) -> Self {
+        Self::with_detection_config(config, &DetectionConfig::default())
+    }
+
+    /// Create a broker manager whose detection engine honors the operator's loaded
+    /// [`DetectionConfig`] (R3).
+    pub fn with_detection_config(config: BrokerConfig, detection: &DetectionConfig) -> Self {
         // Convert config to process manager config
         let pm_config = daemoneye_eventbus::process_manager::ProcessManagerConfig {
             collector_binaries: config.collector_binaries.clone(),
@@ -118,7 +129,7 @@ impl BrokerManager {
         let spawn_tokens = spawn_token_store(&config.socket_path);
         let process_manager =
             CollectorProcessManager::with_spawn_tokens(pm_config, None, spawn_tokens.clone());
-        let detection_engine = Arc::new(Mutex::new(DetectionEngine::new()));
+        let detection_engine = Arc::new(Mutex::new(DetectionEngine::with_config(detection)));
         let collector_admission = spawn_tokens.map(|store| {
             Arc::new(crate::collector_admission::CollectorAdmission::new(
                 store,

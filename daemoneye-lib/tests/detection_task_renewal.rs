@@ -248,3 +248,71 @@ fn an_expired_rule_stays_uncovered_until_something_re_plans_it() {
         "re-planning the rule clears the expiry mark"
     );
 }
+
+/// A descriptor with a second pushable column, so a reload can change the lowered plan.
+fn two_column_descriptor() -> SchemaDescriptor {
+    let mut descriptor = descriptor();
+    let ops: Vec<i32> = [PredicateOp::Eq, PredicateOp::Gt, PredicateOp::Lt]
+        .iter()
+        .copied()
+        .map(i32::from)
+        .collect();
+    descriptor.tables[0].columns.push(ColumnDescriptor {
+        name: "memory_usage".to_owned(),
+        column_type: i32::from(ColumnType::Int),
+        nullable: false,
+        supported_ops: ops,
+    });
+    descriptor
+}
+
+fn rule_projecting(column: &str) -> DetectionRule {
+    DetectionRule::new(
+        "rule-1".to_owned(),
+        "Test Rule".to_owned(),
+        "Renewal test rule".to_owned(),
+        format!("SELECT {column} FROM processes WHERE {column} > 80"),
+        "test".to_owned(),
+        AlertSeverity::Medium,
+    )
+}
+
+/// R16: a reload supersedes the tracked task rather than letting renewal keep the old plan alive
+/// for up to a full TTL. Task identifiers are derived, so a reload is invisible to the ledger
+/// unless the reload forgets the rule's tasks.
+#[test]
+fn reloading_a_rule_issues_the_new_plan_instead_of_renewing_the_old_task() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = DetectionEngine::new();
+    engine
+        .register_collector(&verified("procmond"), two_column_descriptor())
+        .unwrap();
+    engine.load_rule(rule_projecting("cpu_usage")).unwrap();
+    assert_eq!(engine.renewal_cycle(start).due().len(), 1);
+    let old_plan = engine.compiled_rule("rule-1").unwrap().plan().clone();
+
+    engine.load_rule(rule_projecting("memory_usage")).unwrap();
+    let new_plan = engine.compiled_rule("rule-1").unwrap().plan().clone();
+    assert_ne!(old_plan, new_plan, "the reload must lower a different plan");
+
+    // Deliberately earlier than the renewal interval: a ledger entry left in place has nothing due
+    // here, so only a reload that forgot the old task can produce a send.
+    let now = start + PUSHDOWN_TASK_RENEWAL_INTERVAL / 2;
+    let cycle = engine.renewal_cycle(now);
+    assert_eq!(
+        cycle.due().len(),
+        1,
+        "the reload must issue the new task rather than wait out the old TTL"
+    );
+    assert_eq!(cycle.due()[0].task_id(), task_id(), "the id stays stable");
+    assert_eq!(
+        cycle.due()[0].task().pushdown_plan.as_ref(),
+        Some(&new_plan),
+        "the issued task must carry the reloaded plan, not the superseded one"
+    );
+    assert_eq!(
+        engine.active_task_count(),
+        1,
+        "no duplicate task accumulated"
+    );
+}

@@ -12,6 +12,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
+use collector_core::PushdownRejection;
 use daemoneye_eventbus::rpc::{ColumnType, PredicateOp as DescriptorOp};
 use daemoneye_lib::detection::RegexRejection;
 use daemoneye_lib::proto::{
@@ -286,10 +287,10 @@ fn an_over_bounds_regexp_pattern_refuses_the_task_and_never_enters_the_pattern_c
     assert!(
         matches!(
             rejection,
-            PushdownError::PatternRejected {
+            PushdownError::Identity(PushdownRejection::PatternRejected {
                 rejection: RegexRejection::CompiledTooBig { .. },
                 ..
-            }
+            })
         ),
         "expected an over-bounds pattern rejection, got {rejection:?}"
     );
@@ -480,7 +481,10 @@ fn a_string_literal_against_an_integer_column_is_refused_rather_than_coerced() {
 
     // Assert
     assert!(
-        matches!(rejection, PushdownError::LiteralTypeMismatch { .. }),
+        matches!(
+            rejection,
+            PushdownError::Identity(PushdownRejection::LiteralTypeMismatch { .. })
+        ),
         "expected a literal type mismatch, got {rejection:?}"
     );
 }
@@ -501,7 +505,10 @@ fn a_null_literal_against_a_non_nullable_column_is_refused() {
 
     // Assert
     assert!(
-        matches!(rejection, PushdownError::NullLiteralOnNonNullable { .. }),
+        matches!(
+            rejection,
+            PushdownError::Identity(PushdownRejection::NullLiteralOnNonNullable { .. })
+        ),
         "expected a NULL-literal rejection, got {rejection:?}"
     );
 }

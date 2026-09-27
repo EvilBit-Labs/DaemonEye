@@ -5,7 +5,7 @@
 
 use crate::collector_admission::{AdmissionError, CollectorAdmission, gate_for_admission};
 use daemoneye_eventbus::rpc::{DeregistrationRequest, RegistrationRequest, RegistrationResponse};
-use daemoneye_lib::detection_bounds::MAX_IDENTIFIER_LENGTH;
+use daemoneye_lib::detection_bounds::{MAX_HOSTNAME_LENGTH, MAX_IDENTIFIER_LENGTH};
 use daemoneye_lib::rejection_log::{
     RegistrationGate, RejectionLog, RejectionReason, RejectionRecord,
 };
@@ -47,11 +47,15 @@ enum AdmissionPolicy {
     Closed,
     /// No gate at all, and every registration admitted.
     ///
-    /// **Test-only.** Nothing in the agent constructs this; it exists so tests that exercise
-    /// heartbeats and the state machine need not stand up a token store. It is `pub`-reachable
-    /// only through [`CollectorRegistry::unauthenticated`], whose name is the warning.
-    // Dead in the binary on purpose: that the agent never constructs this is the property, and
-    // the compiler saying so is the proof. The library's tests and `tests/` do construct it.
+    /// **Test-only**, and it does not exist in a production build: the variant and its constructor
+    /// are compiled only under `cfg(test)` or the `test-only` feature, which no released build
+    /// enables. A production caller therefore cannot reopen the fail-open path — there is nothing
+    /// to name. Tests that exercise heartbeats and the state machine use it so they need not stand
+    /// up a token store.
+    // Unused in the *binary* target when `--all-features` turns the feature on (the binary
+    // compiles these modules itself and never registers unauthenticated); that the agent never
+    // constructs it is still the property, now enforced by the cfg rather than only observed.
+    #[cfg(any(test, feature = "test-only"))]
     #[allow(dead_code)]
     Unauthenticated,
 }
@@ -87,10 +91,12 @@ impl CollectorRegistry {
 
     /// Create a registry that admits every registration without authenticating it.
     ///
-    /// **Test-only**, and deliberately not reachable by accident: there is no `Default` impl, so
-    /// every construction names which of the three policies it meant. Nothing in the agent calls
-    /// this.
+    /// **Test-only**, and absent from a production build: this is gated behind `cfg(test)` or the
+    /// `test-only` feature, which only the crate's own test targets enable. A build without the
+    /// feature has no unauthenticated constructor to call, so the fail-open registration path
+    /// cannot be reopened from outside.
     // Dead in the binary for the same reason the variant is; see its note.
+    #[cfg(any(test, feature = "test-only"))]
     #[allow(dead_code)]
     pub fn unauthenticated() -> Self {
         Self::new(DEFAULT_HEARTBEAT_INTERVAL, AdmissionPolicy::Unauthenticated)
@@ -178,6 +184,7 @@ impl CollectorRegistry {
                     gate: RegistrationGate::NoTokenPresented,
                 });
             }
+            #[cfg(any(test, feature = "test-only"))]
             AdmissionPolicy::Unauthenticated => {}
         }
 
@@ -466,27 +473,36 @@ const fn gate_for(error: &RegistryError) -> RegistrationGate {
 }
 
 fn validate_registration(request: &RegistrationRequest) -> Result<(), RegistryError> {
-    check_identity_field("collector_id", &request.collector_id)?;
-    check_identity_field("collector_type", &request.collector_type)?;
-    check_identity_field("hostname", &request.hostname)?;
+    check_bounded_field("collector_id", &request.collector_id, MAX_IDENTIFIER_LENGTH)?;
+    check_bounded_field(
+        "collector_type",
+        &request.collector_type,
+        MAX_IDENTIFIER_LENGTH,
+    )?;
+    // Not an identifier from the catalog: `collector-core` sends whatever RFC 1123 name the host
+    // reports, so the bound is the DNS maximum rather than the identifier limit. See
+    // [`MAX_HOSTNAME_LENGTH`].
+    check_bounded_field("hostname", &request.hostname, MAX_HOSTNAME_LENGTH)?;
     Ok(())
 }
 
-/// Reject a blank or over-long registration identity field.
+/// Reject a blank or over-long registration field.
 ///
 /// The length bound is what keeps a pre-authentication path from retaining unbounded bytes: this
 /// runs before `admit`, and every refusal here writes a rejection record. `SpawnTokenStore::issue`
 /// already caps a collector id at 64 characters, so an identity longer than
 /// [`MAX_IDENTIFIER_LENGTH`] could never have authenticated — it only ever reached the recorder.
-fn check_identity_field(field: &str, value: &str) -> Result<(), RegistryError> {
+/// What a record *retains* is bounded independently: `record_registration_rejection` truncates the
+/// collector id, and no other field of the request reaches the chain.
+fn check_bounded_field(field: &str, value: &str, max_bytes: usize) -> Result<(), RegistryError> {
     if value.trim().is_empty() {
         return Err(RegistryError::Validation(format!(
             "{field} cannot be empty"
         )));
     }
-    if value.len() > MAX_IDENTIFIER_LENGTH {
+    if value.len() > max_bytes {
         return Err(RegistryError::Validation(format!(
-            "{field} exceeds the {MAX_IDENTIFIER_LENGTH}-byte bound"
+            "{field} exceeds the {max_bytes}-byte bound"
         )));
     }
     Ok(())
@@ -650,6 +666,33 @@ mod tests {
             "the recorded reason must be far shorter than the {presented_length}-byte identity \
              presented, got {rendered_length}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_hostname_at_the_dns_maximum_registers_and_one_byte_past_it_is_refused() {
+        // Arrange
+        let registry = CollectorRegistry::unauthenticated();
+        let mut at_limit = sample_request();
+        at_limit.hostname = "h".repeat(MAX_HOSTNAME_LENGTH);
+        let mut past_limit = sample_request();
+        past_limit.collector_id = "other".to_string();
+        past_limit.hostname = "h".repeat(MAX_HOSTNAME_LENGTH + 1);
+
+        // Act
+        let accepted = registry.register(at_limit).await;
+        let refused = registry.register(past_limit).await;
+
+        // Assert
+        // A long FQDN is a real hostname, not a padded identifier: refusing it would leave that
+        // host with no collector at all, because registration now fails closed.
+        assert!(
+            accepted.is_ok(),
+            "a {MAX_HOSTNAME_LENGTH}-byte hostname is the DNS maximum and must register"
+        );
+        assert!(matches!(
+            refused,
+            Err(RegistryError::Validation(ref message)) if message.contains("hostname")
+        ));
     }
 
     #[tokio::test]

@@ -76,8 +76,17 @@ pub struct DetectionEngine {
 }
 
 impl DetectionEngine {
-    /// Create a new detection engine.
+    /// Create a new detection engine with the default [`DetectionConfig`].
     pub fn new() -> Self {
+        Self::with_config(&DetectionConfig::default())
+    }
+
+    /// Create a detection engine bound to the operator's loaded [`DetectionConfig`].
+    ///
+    /// The configured `max_subquery_depth` is what rule load validates against (R3), so an
+    /// engine built through [`DetectionEngine::new`] enforces the default depth and nothing else.
+    #[must_use]
+    pub fn with_config(config: &DetectionConfig) -> Self {
         Self {
             rules: HashMap::new(),
             compiled: HashMap::new(),
@@ -86,7 +95,7 @@ impl DetectionEngine {
             health: RuleHealthRegistry::new(),
             patterns: RegexCache::new(),
             tasks: TaskRenewalLedger::new(),
-            max_subquery_depth: DetectionConfig::default().max_subquery_depth,
+            max_subquery_depth: config.max_subquery_depth,
             rejections: RejectionLog::new(),
             max_execution_time_ms: 30000, // 30 seconds
             max_memory_mb: 100,           // 100 MB
@@ -140,6 +149,12 @@ impl DetectionEngine {
         }
 
         let outcome = self.health.revalidate(&self.catalog, &change);
+        // A rule that stopped validating keeps no plan: leaving one would let the renewal clock
+        // and `issue_tasks_for_collector` re-issue a task the collector can no longer accept. This
+        // is the same invariant the expiry path in `renewal_cycle` already holds.
+        for rule_id in outcome.newly_unhealthy() {
+            let _uncovered = self.compiled.remove(rule_id);
+        }
         for rule_id in outcome.to_replan().to_vec() {
             if let Err(error) = self.plan_and_record(&rule_id) {
                 // The rule's references still resolve — `revalidate` just checked — so this is a
@@ -177,9 +192,10 @@ impl DetectionEngine {
 
     /// Loads a detection rule into the engine.
     ///
-    /// Validates the rule's SQL using `rule.validate_sql()` and, on success,
-    /// inserts the rule into the engine's rule map keyed by `rule.id.raw().to_string()`.
-    /// If a rule with the same ID already exists it will be overwritten.
+    /// Validates the rule's SQL at this engine's configured maximum subquery depth (R3) and, on
+    /// success, inserts the rule into the engine's rule map keyed by `rule.id.raw().to_string()`.
+    /// If a rule with the same ID already exists it will be overwritten, and the tasks tracked for
+    /// the previous version stop being renewed.
     ///
     /// On validation failure this returns `DetectionEngineError::SqlValidationError`.
     ///
@@ -193,7 +209,7 @@ impl DetectionEngine {
     pub fn load_rule(&mut self, rule: DetectionRule) -> Result<(), DetectionEngineError> {
         // Validate the rule before loading. A rejection is recorded with its structured cause
         // intact (R4) before it is flattened into the engine's error type.
-        if let Err(error) = rule.validate_sql() {
+        if let Err(error) = rule.validate_sql_with_depth(self.max_subquery_depth) {
             let rule_id = rule.id.raw();
             let message = error.to_string();
             let reason = match error {
@@ -212,6 +228,10 @@ impl DetectionEngine {
 
         let rule_id = rule.id.raw().to_owned();
         let _previous = self.rules.insert(rule_id.clone(), rule);
+        // Task identifiers are derived from the rule, so a reload looks identical to the ledger and
+        // would keep renewing the superseded predicate for up to a full TTL. Drop the tracked tasks
+        // and let the next renewal cycle issue from the new plan.
+        self.tasks.forget_rule(&rule_id);
 
         // R18: no rule is judged against an empty catalog. It waits, it is not dropped.
         if self.catalog.is_empty() {
@@ -370,6 +390,66 @@ mod tests {
     async fn test_detection_engine_creation() {
         let engine = DetectionEngine::new();
         assert_eq!(engine.get_rules().len(), 0);
+    }
+
+    /// `levels` nested `IN (SELECT ...)` subqueries below one top-level SELECT.
+    fn nested_subqueries(levels: u32) -> String {
+        let mut sql = String::from("SELECT pid FROM processes");
+        for _level in 0..levels {
+            sql = format!("SELECT pid FROM processes WHERE pid IN ({sql})");
+        }
+        sql
+    }
+
+    fn nested_rule(levels: u32) -> DetectionRule {
+        DetectionRule::new(
+            "nested".to_owned(),
+            "Nested rule".to_owned(),
+            "Subquery depth fixture".to_owned(),
+            nested_subqueries(levels),
+            "test".to_owned(),
+            AlertSeverity::Low,
+        )
+    }
+
+    /// R3: the depth an operator configured is the depth `load_rule` enforces. No collector is
+    /// registered, so the rule defers after validation and the planner cannot confound the result.
+    #[tokio::test]
+    async fn a_configured_subquery_depth_changes_what_load_rule_accepts() {
+        const LEVELS: u32 = 2;
+
+        let mut default_engine = DetectionEngine::new();
+        assert!(
+            default_engine.load_rule(nested_rule(LEVELS)).is_ok(),
+            "the default depth of 3 accepts {LEVELS} nesting levels"
+        );
+
+        let mut shallow = DetectionEngine::with_config(&DetectionConfig {
+            max_subquery_depth: 1,
+            ..DetectionConfig::default()
+        });
+        let error = shallow
+            .load_rule(nested_rule(LEVELS))
+            .expect_err("a depth of 1 must reject a rule nested 2 deep");
+        assert!(
+            matches!(error, DetectionEngineError::SqlValidationError(_)),
+            "expected an SQL validation rejection, got {error:?}"
+        );
+        let last = shallow
+            .rejection_log()
+            .records()
+            .back()
+            .map(|record| record.reason.clone());
+        assert!(
+            matches!(
+                last,
+                Some(RejectionReason::RuleSql {
+                    rejection: SqlRejection::SubqueryTooDeep { depth, max_depth },
+                    ..
+                }) if depth == LEVELS && max_depth == 1
+            ),
+            "expected the depth gate to fire at the configured ceiling of 1, got {last:?}"
+        );
     }
 
     #[tokio::test]

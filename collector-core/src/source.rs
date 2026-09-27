@@ -151,8 +151,12 @@ pub trait EventSource: Send + Sync {
     /// accepting one would mean evaluating work the collector never claimed. Sources that do
     /// serve pushdown hold a [`PushdownTasks`](crate::pushdown::PushdownTasks) built from the
     /// descriptor they registered and delegate to its
-    /// [`accept`](crate::pushdown::PushdownTasks::accept), which validates every column and
-    /// operation against that descriptor and starts the task's TTL.
+    /// [`accept`](crate::pushdown::PushdownTasks::accept), which needs no collector-specific code:
+    /// it validates the plan's bounds, then every column, operation, arity and **literal** against
+    /// that descriptor — refusing a wrong-kind literal, a NULL literal against a `NOT NULL` column
+    /// and an empty literal oneof — then compiles every pushed `LIKE`/`REGEXP` pattern through its
+    /// own bounded cache under the same ceilings the agent applies at rule load (R21), and only
+    /// then starts the task's TTL.
     ///
     /// `now` is supplied by the caller rather than read from the clock, so task expiry is
     /// deterministic and testable.

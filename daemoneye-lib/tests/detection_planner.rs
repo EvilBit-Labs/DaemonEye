@@ -7,11 +7,14 @@
     clippy::indexing_slicing
 )]
 
-use daemoneye_lib::detection::catalog::{SchemaCatalog, VerifiedRegistration, verify_spawn_token};
+use daemoneye_lib::detection::catalog::{
+    SchemaCatalog, UnknownReference, VerifiedRegistration, verify_spawn_token,
+};
 use daemoneye_lib::detection::planner::{PlanError, plan_rule};
 use daemoneye_lib::detection::rule_health::RuleHealth;
-use daemoneye_lib::detection::{DetectionEngine, RegexCache};
+use daemoneye_lib::detection::{DetectionEngine, RegexCache, RegexConstruct, RegexRejection};
 use daemoneye_lib::detection_bounds::PUSHDOWN_TASK_TTL;
+use daemoneye_lib::models::rule::RuleError;
 use daemoneye_lib::models::{AlertSeverity, DetectionRule};
 use daemoneye_lib::proto::{
     ColumnDescriptor, ColumnType, PredicateOp, SchemaDescriptor, TableDescriptor,
@@ -603,4 +606,258 @@ fn property_catalog() -> SchemaCatalog {
         }
     }
     catalog
+}
+
+// --- R11: every table reference, including inside a subquery --------------------------------
+
+/// A catalog where one collector serves both `processes` and `sockets`.
+fn two_table_catalog() -> SchemaCatalog {
+    let mut catalog = SchemaCatalog::new();
+    let columns = vec![int_column("cpu_usage", &[PredicateOp::Gt])];
+    catalog
+        .register(
+            &verified("procmond"),
+            SchemaDescriptor {
+                collector_id: "procmond".to_owned(),
+                descriptor_version: "v1".to_owned(),
+                tables: vec![
+                    TableDescriptor {
+                        name: "processes".to_owned(),
+                        columns: columns.clone(),
+                    },
+                    TableDescriptor {
+                        name: "sockets".to_owned(),
+                        columns,
+                    },
+                ],
+                conformance_results: Vec::new(),
+            },
+        )
+        .unwrap();
+    catalog
+}
+
+#[test]
+fn a_table_named_only_inside_a_subquery_is_resolved_against_the_catalog() {
+    let catalog = both_verified_catalog();
+    let cache = RegexCache::new();
+
+    let error = plan_rule(
+        &catalog,
+        &cache,
+        &rule("SELECT cpu_usage FROM processes WHERE cpu_usage IN (SELECT cpu_usage FROM sockets)"),
+        3,
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            PlanError::UnknownReference(UnknownReference::Table { ref table }) if table == "sockets"
+        ),
+        "expected `sockets` to be named as the unresolvable table, got {error:?}"
+    );
+}
+
+#[test]
+fn a_subquery_over_a_second_registered_table_is_refused_as_multiple_tables() {
+    let catalog = two_table_catalog();
+    let cache = RegexCache::new();
+
+    let error = plan_rule(
+        &catalog,
+        &cache,
+        &rule("SELECT cpu_usage FROM processes WHERE cpu_usage IN (SELECT cpu_usage FROM sockets)"),
+        3,
+    )
+    .unwrap_err();
+
+    // Both tables resolve, and one collector owns both, yet a plan carries a single table — so
+    // this is the multiple-tables refusal, not an unknown reference.
+    assert!(
+        matches!(error, PlanError::MultipleTables { count: 2 }),
+        "expected the multiple-tables refusal, got {error:?}"
+    );
+}
+
+#[test]
+fn a_subquery_over_the_outer_table_itself_still_plans() {
+    let catalog = both_verified_catalog();
+    let cache = RegexCache::new();
+
+    let compiled = plan_rule(
+        &catalog,
+        &cache,
+        &rule(
+            "SELECT cpu_usage FROM processes WHERE cpu_usage IN (SELECT cpu_usage FROM processes)",
+        ),
+        3,
+    )
+    .unwrap();
+
+    assert_eq!(compiled.plan().table, "processes");
+}
+
+// --- R5/R6: the function spelling of REGEXP compiles at load --------------------------------
+
+#[test]
+fn the_regexp_function_form_compiles_its_pattern_at_load() {
+    let catalog = string_catalog();
+    let cache = RegexCache::new();
+
+    let compiled = plan_rule(
+        &catalog,
+        &cache,
+        &rule("SELECT name FROM processes WHERE regexp(name, '^alpha$')"),
+        3,
+    )
+    .unwrap();
+
+    assert!(
+        cache.is_cached("^alpha$"),
+        "the function form loaded without its pattern ever being compiled"
+    );
+    assert_eq!(compiled.residual(), Some("(regexp(name, '^alpha$'))"));
+}
+
+#[test]
+fn a_lookahead_in_the_regexp_function_form_is_rejected_at_load() {
+    let catalog = string_catalog();
+    let cache = RegexCache::new();
+
+    let error = plan_rule(
+        &catalog,
+        &cache,
+        &rule("SELECT name FROM processes WHERE REGEXP(name, '(?=x)')"),
+        3,
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            PlanError::Pattern(RuleError::RegexRejected(
+                RegexRejection::UnsupportedConstruct {
+                    construct: RegexConstruct::Lookahead,
+                    ..
+                }
+            ))
+        ),
+        "expected the lookahead gate to fire on the uppercase function form, got {error:?}"
+    );
+}
+
+#[test]
+fn a_non_literal_pattern_in_the_regexp_function_form_is_refused() {
+    let catalog = string_catalog();
+    let cache = RegexCache::new();
+
+    let error = plan_rule(
+        &catalog,
+        &cache,
+        &rule("SELECT name FROM processes WHERE regexp(name, name)"),
+        3,
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(error, PlanError::NonLiteralPattern { ref pattern } if pattern == "name"),
+        "expected the non-literal pattern refusal naming `name`, got {error:?}"
+    );
+}
+
+#[test]
+fn a_non_literal_pattern_in_the_regexp_operator_form_is_refused() {
+    let catalog = string_catalog();
+    let cache = RegexCache::new();
+
+    let error = plan_rule(
+        &catalog,
+        &cache,
+        &rule("SELECT name FROM processes WHERE name REGEXP name"),
+        3,
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(error, PlanError::NonLiteralPattern { ref pattern } if pattern == "name"),
+        "expected the operator form to be refused too, got {error:?}"
+    );
+}
+
+#[test]
+fn a_lookahead_in_the_rlike_spelling_is_rejected_at_load() {
+    let catalog = string_catalog();
+    let cache = RegexCache::new();
+
+    let error = plan_rule(
+        &catalog,
+        &cache,
+        &rule("SELECT name FROM processes WHERE name RLIKE '(?=x)'"),
+        3,
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            PlanError::Pattern(RuleError::RegexRejected(
+                RegexRejection::UnsupportedConstruct {
+                    construct: RegexConstruct::Lookahead,
+                    ..
+                }
+            ))
+        ),
+        "expected the lookahead gate to fire on the RLIKE spelling too, got {error:?}"
+    );
+}
+
+/// `GenericDialect` reads `"..."` as a delimited identifier, not a string value, so a
+/// double-quoted pattern never reaches the planner as a literal at all: it is refused as a
+/// non-literal pattern rather than compiled. Pinned here because the refusal used to come from
+/// the identifier resolver by accident, as an unknown column.
+#[test]
+fn a_double_quoted_pattern_is_refused_as_a_non_literal_pattern() {
+    let catalog = string_catalog();
+    let cache = RegexCache::new();
+
+    let error = plan_rule(
+        &catalog,
+        &cache,
+        &rule("SELECT name FROM processes WHERE regexp(name, \"(?=x)\")"),
+        3,
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(error, PlanError::NonLiteralPattern { ref pattern } if pattern == "\"(?=x)\""),
+        "expected the non-literal pattern refusal, got {error:?}"
+    );
+    assert!(
+        !cache.is_cached("(?=x)"),
+        "a refused pattern must never be cached"
+    );
+}
+
+#[test]
+fn a_regexp_call_of_the_wrong_arity_is_refused_rather_than_skipped() {
+    let catalog = string_catalog();
+    let cache = RegexCache::new();
+
+    let error = plan_rule(
+        &catalog,
+        &cache,
+        &rule("SELECT name FROM processes WHERE regexp(name, 'a', 'b')"),
+        3,
+    )
+    .unwrap_err();
+
+    // The whole call is named, which is what distinguishes the arity path from the operand path.
+    assert!(
+        matches!(
+            error,
+            PlanError::NonLiteralPattern { ref pattern } if pattern == "regexp(name, 'a', 'b')"
+        ),
+        "expected the whole call to be named in the refusal, got {error:?}"
+    );
 }

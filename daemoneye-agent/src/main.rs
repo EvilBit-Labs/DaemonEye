@@ -70,7 +70,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _db_manager = storage::DatabaseManager::new(&config.database.path)?;
 
     // Initialize embedded EventBus broker
-    let broker_manager = BrokerManager::new(config.broker.clone());
+    let broker_manager =
+        BrokerManager::with_detection_config(config.broker.clone(), &config.detection);
 
     // Start the embedded broker
     if let Err(e) = broker_manager.start().await {
@@ -318,6 +319,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut renewal_ticker = tokio::time::interval(tick);
     renewal_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    // The scan gets its own ticker for the same reason, and neither branch may be a bare
+    // `sleep(..)`: `tokio::select!` drops the losing futures, so a timer built inline restarts from
+    // zero every time the other branch wins. A scan_interval at or above the renewal tick would
+    // then never elapse and collection would stop silently. Two `Interval`s advance independently.
+    // Started one interval out so the first scan still waits `scan_interval` — `tokio::time::interval`
+    // otherwise fires immediately. `Delay` keeps at least `scan_interval` between scans when one
+    // overruns, matching what the previous `sleep` did; `Burst` would fire back-to-back to catch up.
+    let scan_start = tokio::time::Instant::now()
+        .checked_add(scan_interval)
+        .unwrap_or_else(tokio::time::Instant::now);
+    let mut scan_ticker = tokio::time::interval_at(scan_start, scan_interval);
+    scan_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
     tokio::pin!(shutdown_signal);
 
     loop {
@@ -359,7 +373,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     warn!(expired_rules = expired, "Pushed halves lapsed; rules marked unhealthy");
                 }
             }
-            () = tokio::time::sleep(scan_interval) => {
+            _ = scan_ticker.tick() => {
                 iteration = iteration.saturating_add(1);
                 let loop_start = Instant::now();
 

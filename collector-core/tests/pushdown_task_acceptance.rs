@@ -11,6 +11,7 @@ use collector_core::{
 use daemoneye_eventbus::rpc::{
     ColumnDescriptor, ColumnType, PredicateOp as DescriptorOp, SchemaDescriptor, TableDescriptor,
 };
+use daemoneye_lib::detection::RegexRejection;
 use daemoneye_lib::detection_bounds::{MAX_IN_VALUES, MAX_PREDICATES_PER_PLAN};
 use daemoneye_lib::proto;
 use std::sync::Arc;
@@ -532,4 +533,291 @@ fn in_capable_descriptor() -> SchemaDescriptor {
         }
     }
     schema
+}
+
+/// The descriptor above, with `name` additionally advertising `REGEXP`.
+fn regexp_capable_descriptor() -> SchemaDescriptor {
+    let mut schema = descriptor();
+    for table in &mut schema.tables {
+        for column in &mut table.columns {
+            if column.name == "name" {
+                column.supported_ops.push(DescriptorOp::Regexp);
+            }
+        }
+    }
+    schema
+}
+
+fn literal_string(value: &str) -> proto::Literal {
+    proto::Literal {
+        value: Some(proto::literal::Value::StringValue(value.to_owned())),
+    }
+}
+
+const fn literal_null() -> proto::Literal {
+    proto::Literal {
+        value: Some(proto::literal::Value::NullValue(true)),
+    }
+}
+
+/// The SDK path itself refuses a literal whose kind the column never declared, with no
+/// collector-specific code involved.
+#[test]
+fn rejects_a_literal_whose_kind_the_column_did_not_declare() {
+    // Arrange: `pid` is declared `UINT`.
+    let tasks = PushdownTasks::new(descriptor());
+    let mistyped = task(
+        "mistyped",
+        vec![predicate(
+            "pid",
+            proto::PredicateOp::Eq,
+            vec![literal_string("10")],
+        )],
+        vec!["pid".to_owned()],
+    );
+
+    // Act
+    let refusal = tasks.accept(&mistyped, SystemTime::UNIX_EPOCH);
+
+    // Assert
+    assert_eq!(
+        refusal,
+        Err(PushdownRejection::LiteralTypeMismatch {
+            column: "pid".to_owned(),
+            column_type: ColumnType::Uint.as_wire_name().to_owned(),
+            literal_kind: "string".to_owned(),
+        })
+    );
+    assert_eq!(tasks.active_count(SystemTime::UNIX_EPOCH), 0);
+}
+
+/// A NULL literal can never match a column declared `NOT NULL`, so the plan is a static defect.
+#[test]
+fn rejects_a_null_literal_against_a_non_nullable_column() {
+    // Arrange
+    let tasks = PushdownTasks::new(descriptor());
+    let impossible = task(
+        "null-literal",
+        vec![predicate(
+            "pid",
+            proto::PredicateOp::Eq,
+            vec![literal_null()],
+        )],
+        vec!["pid".to_owned()],
+    );
+
+    // Act
+    let refusal = tasks.accept(&impossible, SystemTime::UNIX_EPOCH);
+
+    // Assert
+    assert_eq!(
+        refusal,
+        Err(PushdownRejection::NullLiteralOnNonNullable {
+            column: "pid".to_owned(),
+        })
+    );
+}
+
+/// An empty literal oneof carries no value at all, and is refused rather than read as some default.
+#[test]
+fn rejects_a_literal_carrying_an_empty_oneof() {
+    // Arrange
+    let tasks = PushdownTasks::new(descriptor());
+    let empty = task(
+        "empty-oneof",
+        vec![predicate(
+            "pid",
+            proto::PredicateOp::Eq,
+            vec![proto::Literal { value: None }],
+        )],
+        vec!["pid".to_owned()],
+    );
+
+    // Act
+    let refusal = tasks.accept(&empty, SystemTime::UNIX_EPOCH);
+
+    // Assert
+    assert_eq!(
+        refusal,
+        Err(PushdownRejection::LiteralTypeMismatch {
+            column: "pid".to_owned(),
+            column_type: ColumnType::Uint.as_wire_name().to_owned(),
+            literal_kind: "unset".to_owned(),
+        })
+    );
+}
+
+/// A pattern beyond the shared compile ceiling is refused by the SDK, and never becomes resident.
+#[test]
+fn rejects_a_pattern_beyond_the_shared_compile_bounds() {
+    // Arrange: a pattern whose compiled program cannot fit the fixed byte ceiling.
+    let tasks = PushdownTasks::new(regexp_capable_descriptor());
+    let pattern = format!("(?:{}){{4096}}", "[0-9a-f]".repeat(64));
+    let oversized = task(
+        "oversized-pattern",
+        vec![predicate(
+            "name",
+            proto::PredicateOp::Regexp,
+            vec![literal_string(&pattern)],
+        )],
+        vec!["pid".to_owned()],
+    );
+
+    // Act
+    let refusal = tasks.accept(&oversized, SystemTime::UNIX_EPOCH);
+
+    // Assert
+    assert!(
+        matches!(
+            refusal,
+            Err(PushdownRejection::PatternRejected {
+                ref column,
+                rejection: RegexRejection::CompiledTooBig { .. },
+            }) if column == "name"
+        ),
+        "expected an over-bounds pattern rejection, got {refusal:?}"
+    );
+    assert!(
+        !tasks.patterns().is_cached(&pattern),
+        "an over-bounds pattern must never become resident"
+    );
+    assert_eq!(tasks.patterns().len(), 0);
+}
+
+/// A NULL literal is never a pattern, whatever the column's nullability allows.
+#[test]
+fn rejects_a_null_literal_pushed_as_a_pattern() {
+    // Arrange: `name` is `STRING` and advertises `REGEXP`.
+    let mut schema = regexp_capable_descriptor();
+    for table in &mut schema.tables {
+        for column in &mut table.columns {
+            if column.name == "name" {
+                column.nullable = true;
+            }
+        }
+    }
+    let tasks = PushdownTasks::new(schema);
+    let nulled = task(
+        "null-pattern",
+        vec![predicate(
+            "name",
+            proto::PredicateOp::Regexp,
+            vec![literal_null()],
+        )],
+        vec!["pid".to_owned()],
+    );
+
+    // Act
+    let refusal = tasks.accept(&nulled, SystemTime::UNIX_EPOCH);
+
+    // Assert
+    assert_eq!(
+        refusal,
+        Err(PushdownRejection::LiteralTypeMismatch {
+            column: "name".to_owned(),
+            column_type: ColumnType::String.as_wire_name().to_owned(),
+            literal_kind: "null".to_owned(),
+        })
+    );
+    assert_eq!(tasks.patterns().stats().compiles, 0);
+}
+
+/// A plan beyond the predicate bound is refused before any of its patterns reaches the cache.
+///
+/// The cache is fixed-size, so a compile on behalf of a plan that is refused anyway can evict a
+/// live task's resident pattern and force it to be recompiled on the next evaluation.
+#[test]
+fn a_plan_beyond_the_predicate_bound_compiles_no_patterns() {
+    // Arrange: the first predicate carries a perfectly compilable pattern.
+    let tasks = PushdownTasks::new(regexp_capable_descriptor());
+    let pattern = "^nginx$";
+    let mut predicates = vec![predicate(
+        "name",
+        proto::PredicateOp::Regexp,
+        vec![literal_string(pattern)],
+    )];
+    predicates.extend(
+        (0..=MAX_PREDICATES_PER_PLAN)
+            .map(|_ordinal| predicate("pid", proto::PredicateOp::Eq, vec![literal_uint(1)])),
+    );
+    let oversized = task("too-many-with-pattern", predicates, vec!["pid".to_owned()]);
+
+    // Act
+    let refusal = tasks.accept(&oversized, SystemTime::UNIX_EPOCH);
+
+    // Assert
+    assert!(
+        matches!(
+            refusal,
+            Err(PushdownRejection::PlanTooLarge {
+                what: "predicates",
+                ..
+            })
+        ),
+        "an unbounded predicate count must be refused, got {refusal:?}"
+    );
+    assert_eq!(
+        tasks.patterns().stats().compiles,
+        0,
+        "a plan refused on its bounds must attempt no compilation at all"
+    );
+    assert!(!tasks.patterns().is_cached(pattern));
+}
+
+/// The same ordering holds for a typed defect: nothing compiles until the whole plan is valid.
+#[test]
+fn a_plan_with_a_later_unknown_column_compiles_no_patterns() {
+    // Arrange: a valid pattern predicate followed by a column the collector never advertised.
+    let tasks = PushdownTasks::new(regexp_capable_descriptor());
+    let pattern = "^sshd$";
+    let mixed = task(
+        "pattern-then-unknown",
+        vec![
+            predicate(
+                "name",
+                proto::PredicateOp::Regexp,
+                vec![literal_string(pattern)],
+            ),
+            predicate("ppid", proto::PredicateOp::Eq, vec![literal_uint(2)]),
+        ],
+        vec!["pid".to_owned()],
+    );
+
+    // Act
+    let refusal = tasks.accept(&mixed, SystemTime::UNIX_EPOCH);
+
+    // Assert
+    assert_eq!(
+        refusal,
+        Err(PushdownRejection::UnknownColumn {
+            table: "processes".to_owned(),
+            column: "ppid".to_owned(),
+        })
+    );
+    assert_eq!(tasks.patterns().stats().compiles, 0);
+    assert!(!tasks.patterns().is_cached(pattern));
+}
+
+/// An accepted pattern *is* resident, so the evaluator that follows never recompiles it.
+#[test]
+fn an_accepted_pattern_is_resident_in_the_shared_cache() {
+    // Arrange
+    let tasks = PushdownTasks::new(regexp_capable_descriptor());
+    let pattern = "^bash$";
+    let accepted = task(
+        "resident",
+        vec![predicate(
+            "name",
+            proto::PredicateOp::Regexp,
+            vec![literal_string(pattern)],
+        )],
+        vec!["pid".to_owned()],
+    );
+
+    // Act
+    assert_eq!(tasks.accept(&accepted, SystemTime::UNIX_EPOCH), Ok(()));
+
+    // Assert
+    assert!(tasks.patterns().is_cached(pattern));
+    assert_eq!(tasks.patterns().stats().compiles, 1);
 }

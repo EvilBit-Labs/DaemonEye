@@ -112,8 +112,9 @@ pub struct DetectionConfig {
     pub max_subquery_depth: u32,
     /// Per-pattern latency threshold in milliseconds.
     ///
-    /// A `REGEXP` pattern observed to exceed this disables the rule that owns it and marks that
-    /// rule unhealthy. Valid range is
+    /// Reserved for T6 and **not enforced yet**: the threshold is validated and carried, but no
+    /// pattern latency is observed against it today. Once T6 lands, a `REGEXP` pattern observed to
+    /// exceed this disables the rule that owns it and marks that rule unhealthy. Valid range is
     /// [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN`] to
     /// [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX`]. Milliseconds are stored as an
     /// integer so that [`Config`] can keep deriving [`Eq`].

@@ -18,8 +18,8 @@
 use std::collections::BTreeSet;
 
 use sqlparser::ast::{
-    BinaryOperator, Expr, Select, SelectItem, SetExpr, Statement, TableFactor, Value, Visit,
-    Visitor,
+    BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, ObjectName,
+    Select, SelectItem, SetExpr, Statement, TableFactor, Value, Visit, Visitor,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -56,6 +56,15 @@ pub enum PlanError {
     /// A `REGEXP` pattern in the rule failed the load-time compilation bounds.
     #[error("{0}")]
     Pattern(#[from] RuleError),
+    /// A `REGEXP` pattern in the rule is not a string literal, so it cannot compile at load.
+    #[error(
+        "a REGEXP pattern must be a string literal so it compiles at load under the fixed \
+         bounds, this rule has `{pattern}`"
+    )]
+    NonLiteralPattern {
+        /// The pattern operand as the rule wrote it.
+        pattern: String,
+    },
     /// The rule defines a common table expression, which the planner cannot lower.
     #[error(
         "the planner cannot lower a WITH clause, so this rule is refused rather than planned \
@@ -115,7 +124,7 @@ impl CompiledRule {
 ///
 /// Returns a [`PlanError`] naming what refused the rule: an unparseable statement, a shape the
 /// planner cannot address to one collector, a reference the catalog cannot resolve (R11), or a
-/// `REGEXP` pattern that did not compile under the fixed bounds.
+/// `REGEXP` pattern that is not a literal or did not compile under the fixed bounds.
 ///
 /// A rule whose predicates all land in the residual is **not** an error: its plan carries a
 /// projection and no filter, which is a correct plan (R17).
@@ -148,11 +157,34 @@ pub fn plan_rule(
     // pattern has provably compiled and a residual one has too. `compile_rule_patterns` runs the
     // U3 validation gate first, so this call is also where SELECT-only, the function allowlist and
     // the subquery depth limit are enforced.
-    let patterns = collect_regex_patterns(select);
+    let patterns = collect_regex_patterns(select)?;
     let borrowed: Vec<&str> = patterns.iter().map(String::as_str).collect();
     let _compiled = compile_rule_patterns(cache, rule, &borrowed, max_subquery_depth)?;
 
     let table = single_table(select)?;
+
+    // `single_table` reads only the outer `FROM`, so a table named inside a subquery would never
+    // be resolved: the rule would load and T6 would hold a residual over a table no collector
+    // serves. R11 wants every table reference checked, so every relation in the statement is
+    // resolved here. An unresolvable one is named first, because that is the more specific fact;
+    // a resolvable one that is not the outer table is `MultipleTables`, since `PushdownPlan`
+    // carries a single `table` and one plan addresses one owning collector — comparing table
+    // names rather than owners, because two tables of the same collector still cannot share a
+    // plan.
+    let tables = collect_tables(&statement);
+    for name in &tables {
+        if catalog.owner_of(name).is_none() {
+            return Err(PlanError::UnknownReference(UnknownReference::Table {
+                table: name.clone(),
+            }));
+        }
+    }
+    if tables.len() > 1 {
+        return Err(PlanError::MultipleTables {
+            count: tables.len(),
+        });
+    }
+
     let owner = catalog
         .owner_of(&table)
         .ok_or_else(|| UnknownReference::Table {
@@ -450,15 +482,97 @@ fn collect_identifiers<N: Visit>(node: &N) -> BTreeSet<String> {
     collector.names
 }
 
-/// Every `REGEXP` pattern literal in the rule, so each is compiled at load.
-fn collect_regex_patterns(select: &Select) -> Vec<String> {
+/// Every table the statement names, the outer `FROM` and every subquery alike (R11).
+fn collect_tables(statement: &Statement) -> BTreeSet<String> {
+    let mut collector = TableCollector {
+        names: BTreeSet::new(),
+    };
+    let ControlFlow::Continue(()) = statement.visit(&mut collector) else {
+        return collector.names;
+    };
+    collector.names
+}
+
+/// Every `REGEXP` pattern in the rule, so each is compiled at load.
+///
+/// # Errors
+///
+/// Returns [`PlanError::NonLiteralPattern`] for a pattern operand that is not a string literal.
+/// Such a pattern cannot be compiled at load, and R17 refuses a rule that cannot be lowered
+/// rather than deferring the bounds check to runtime.
+fn collect_regex_patterns(select: &Select) -> Result<Vec<String>, PlanError> {
     let mut collector = PatternCollector {
         patterns: Vec::new(),
     };
-    let ControlFlow::Continue(()) = select.visit(&mut collector) else {
-        return collector.patterns;
+    match select.visit(&mut collector) {
+        ControlFlow::Continue(()) => Ok(collector.patterns),
+        ControlFlow::Break(error) => Err(error),
+    }
+}
+
+/// The function spellings of `REGEXP` the allowlist admits as ordinary calls.
+const REGEX_FUNCTIONS: [&str; 2] = ["regexp", "match"];
+
+/// Whether a function name is one of [`REGEX_FUNCTIONS`].
+///
+/// Compared case-insensitively, exactly as `is_allowed_sql_function` compares: a spelling that
+/// passes the allowlist must not slip past this collector.
+fn is_regex_function(name: &str) -> bool {
+    REGEX_FUNCTIONS
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
+
+/// The pattern operand of `regexp(column, pattern)` or `match(column, pattern)`.
+///
+/// The allowlist lets both names through as ordinary calls, so this is the only place their
+/// pattern reaches load-time compilation (R5, R6). Any other argument shape is refused rather
+/// than skipped: a shape this function cannot read is a pattern that would never be compiled.
+fn regex_function_pattern(function: &Function) -> Result<&Expr, PlanError> {
+    let refusal = || PlanError::NonLiteralPattern {
+        pattern: function.to_string(),
     };
-    collector.patterns
+    let FunctionArguments::List(ref list) = function.args else {
+        return Err(refusal());
+    };
+    let [_, FunctionArg::Unnamed(FunctionArgExpr::Expr(ref pattern))] = *list.args.as_slice()
+    else {
+        return Err(refusal());
+    };
+    Ok(pattern)
+}
+
+/// The pattern text a `REGEXP` operand carries, if it is a string literal at all.
+///
+/// Both quotings are accepted because both parse to a pattern the engine would use. KTD8: the
+/// catch-all declines, and its caller turns that into a refusal, so an operand shape this
+/// function does not understand fails the rule at load instead of reaching the runtime
+/// uncompiled.
+#[allow(clippy::wildcard_enum_match_arm)]
+fn pattern_literal(expr: &Expr) -> Option<String> {
+    let Expr::Value(ref spanned) = *expr else {
+        return None;
+    };
+    match spanned.value {
+        Value::SingleQuotedString(ref text) | Value::DoubleQuotedString(ref text) => {
+            Some(text.clone())
+        }
+        _ => None,
+    }
+}
+
+/// Visitor gathering every table name, so a subquery cannot name one the catalog never saw.
+struct TableCollector {
+    names: BTreeSet<String>,
+}
+
+impl Visitor for TableCollector {
+    type Break = ();
+
+    fn pre_visit_relation(&mut self, relation: &ObjectName) -> ControlFlow<Self::Break> {
+        let _inserted = self.names.insert(relation.to_string());
+        ControlFlow::Continue(())
+    }
 }
 
 /// Visitor gathering bare column names. Uses the derived traversal so a reference cannot hide in a
@@ -487,25 +601,47 @@ impl Visitor for IdentifierCollector {
     }
 }
 
-/// Visitor gathering `REGEXP` pattern literals.
+/// Visitor gathering `REGEXP` patterns from both spellings the rule dialect admits.
+///
+/// The operator form `col REGEXP 'p'` and the function form `regexp(col, 'p')` are one predicate
+/// written two ways, and the allowlist admits both. Collecting only the operator form left the
+/// function form loading with its pattern never compiled, so neither the size limit nor the
+/// lookaround and backreference rejection applied to it.
 struct PatternCollector {
     patterns: Vec<String>,
 }
 
-impl Visitor for PatternCollector {
-    type Break = ();
+impl PatternCollector {
+    /// Record one pattern operand, refusing the rule unless it is a string literal.
+    fn collect(&mut self, pattern: &Expr) -> ControlFlow<PlanError> {
+        match pattern_literal(pattern) {
+            Some(text) => {
+                self.patterns.push(text);
+                ControlFlow::Continue(())
+            }
+            None => ControlFlow::Break(PlanError::NonLiteralPattern {
+                pattern: pattern.to_string(),
+            }),
+        }
+    }
+}
 
-    #[allow(clippy::wildcard_enum_match_arm)]
+impl Visitor for PatternCollector {
+    type Break = PlanError;
+
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
-        if let Expr::RLike {
-            ref pattern,
-            regexp: true,
-            ..
-        } = *expr
-            && let Expr::Value(ref spanned) = **pattern
-            && let Value::SingleQuotedString(ref text) = spanned.value
+        // Both `regexp` flags: `RLIKE` is the same predicate spelled differently, the validation
+        // gate admits it, and its pattern needs the same load-time bounds.
+        if let Expr::RLike { ref pattern, .. } = *expr {
+            return self.collect(pattern);
+        }
+        if let Expr::Function(ref function) = *expr
+            && is_regex_function(&function.name.to_string())
         {
-            self.patterns.push(text.clone());
+            return match regex_function_pattern(function) {
+                Ok(pattern) => self.collect(pattern),
+                Err(error) => ControlFlow::Break(error),
+            };
         }
         ControlFlow::Continue(())
     }

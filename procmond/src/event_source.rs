@@ -389,6 +389,14 @@ impl ProcessEventSource {
         }
     }
 
+    /// Builds the pushdown evaluator every constructor installs.
+    ///
+    /// Built from the same id registration presents, so the descriptor this source validates
+    /// against and the one the agent plans against cannot drift apart.
+    fn create_pushdown_evaluator(config: &ProcessSourceConfig) -> PushdownEvaluator {
+        PushdownEvaluator::new(&config.collector_id)
+    }
+
     /// Creates a platform-specific process collector with fallback to sysinfo.
     ///
     /// This method attempts to create the most appropriate collector for the current
@@ -402,14 +410,6 @@ impl ProcessEventSource {
     /// # Returns
     ///
     /// A boxed `ProcessCollector` implementation suitable for the current platform.
-    /// Builds the pushdown evaluator every constructor installs.
-    ///
-    /// Built from the same id registration presents, so the descriptor this source validates
-    /// against and the one the agent plans against cannot drift apart.
-    fn create_pushdown_evaluator(config: &ProcessSourceConfig) -> PushdownEvaluator {
-        PushdownEvaluator::new(&config.collector_id)
-    }
-
     fn create_platform_collector(config: &ProcessSourceConfig) -> Box<dyn ProcessCollector> {
         let base_collector_config = ProcessCollectionConfig {
             collect_enhanced_metadata: config.collect_enhanced_metadata,
@@ -946,9 +946,6 @@ fn rejection_for(error: PushdownError) -> PushdownRejection {
             column_type: column_type.to_owned(),
             literal_kind: literal_kind.to_owned(),
         },
-        PushdownError::NullLiteralOnNonNullable { column } => {
-            PushdownRejection::NullLiteralOnNonNullable { column }
-        }
         PushdownError::PatternRejected { column, rejection } => {
             PushdownRejection::PatternRejected { column, rejection }
         }
@@ -978,8 +975,12 @@ impl EventSource for ProcessEventSource {
         };
         let reason = typed.to_string();
         let column = typed.column().unwrap_or_default().to_owned();
+        // The task id is logged by length, not by value. A refusal can be `IdentifierTooLong` on
+        // the id itself, and echoing an unbounded identifier that just failed its own bounds check
+        // is how an attacker-chosen string reaches the log. `reason` already names what failed.
+        let task_id_len = task.task_id.len();
         warn!(
-            task_id = %task.task_id,
+            task_id_len,
             column = %column,
             reason = %reason,
             "refusing pushed detection plan"

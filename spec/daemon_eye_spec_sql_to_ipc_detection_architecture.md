@@ -256,9 +256,9 @@ All collectors MUST implement regex pattern matching with the following specific
 
 - **Per-Pattern Latency:** 10ms (configurable via `regex.max_pattern_latency_ms`)
 - **Compilation Timeout:** 100ms (configurable via `regex.compilation_timeout_ms`) — advisory under a linear-time engine, which bounds compilation by program size rather than by wall clock and offers no way to interrupt a build in progress
-- **Memory Limit:** 256KiB per pattern (configurable via `regex.max_memory_per_pattern`)
+- **Memory Limit:** 256KiB of compiled program per pattern against a 64-entry compiled-pattern cache, plus a 256KiB per-search lazy-DFA cache ceiling — these three are **fixed constants, not configuration**: `REGEX_SIZE_LIMIT_BYTES`, `REGEX_CACHE_MAX_ENTRIES`, and `REGEX_DFA_SIZE_LIMIT_BYTES` in `daemoneye-lib/src/detection_bounds.rs`, which is their authority
 
-The per-pattern limit and `cache_size` are a single decision, not two. A compiled pattern's memory cannot be read back at runtime, so their product — 16MiB here — is the only enforceable ceiling, and it must fit inside the process-wide resident budget. Raising either without lowering the other raises the real ceiling. 256KiB leaves roughly five times the headroom a Unicode-aware `\w` needs; patterns that only ever match ASCII can shrink far below it with `(?-u:...)`.
+The per-pattern limit and the 64-entry cache count are a single decision, not two. A compiled pattern's memory cannot be read back at runtime, so their product — 16MiB of compiled programs here — is the only enforceable ceiling, and it must fit inside the process-wide resident budget. Raising either without lowering the other raises the real ceiling, which is why neither is configurable: the proof holds only while both values are fixed. A `dfa_size_limit` of 256KiB is set as well, but it does **not** join that product. The crate defines it as the capacity that *may* be used for a single regex search, so it is a per-search ceiling on a lazily filled cache, not a per-pattern reservation: transient DFA memory scales with concurrent searches, each capped at 256KiB, and adds no fixed amount to the 16MiB resident figure. Sizing memory as if it did — 64 times 256KiB of DFA on top — overstates the resident set. That second limit is also **never a rejection condition** — the DFA cache resets and falls back to a slower engine when full rather than failing — so only the compiled-program limit can reject a pattern. 256KiB leaves roughly five times the headroom a Unicode-aware `\w` needs; patterns that only ever match ASCII can shrink far below it with `(?-u:...)`.
 
 **Configuration Example:**
 
@@ -267,9 +267,7 @@ detection:
   regex:
     max_pattern_latency_ms: 10        # Per-pattern execution timeout
     compilation_timeout_ms: 100        # Pattern compilation timeout
-    max_memory_per_pattern: 262144     # 256KiB compiled-program limit per pattern
     enable_precompilation: true        # Pre-compile patterns at startup
-    cache_size: 64                     # Maximum cached patterns
     monitoring:
       enable_metrics: true             # Track pattern performance
       alert_threshold_ms: 5            # Alert when patterns exceed threshold
@@ -295,7 +293,6 @@ detection:
 
 **Pattern Rejection Criteria:**
 
-- Patterns exceeding compilation timeout
 - Patterns requiring excessive memory allocation
 - Patterns using backreferences or lookaround, which the engine cannot compile
 - Patterns whose compiled program exceeds the per-pattern memory limit

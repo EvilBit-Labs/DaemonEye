@@ -476,3 +476,27 @@ async fn a_rule_deferred_against_an_empty_catalog_is_planned_once_a_collector_re
         "the registration must reach the planner and plan the deferred rule"
     );
 }
+
+/// The identifier bound does not apply to a hostname, so a real FQDN authenticates (R8).
+///
+/// Exercised through `with_admission` rather than the unauthenticated registry: the concern is a
+/// host whose `HOSTNAME` is a long FQDN never registering at all, and registration fails closed, so
+/// the check has to run the gate a production collector runs.
+#[tokio::test]
+async fn a_gated_collector_with_a_dns_maximum_hostname_registers() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, _engine, admission) = admission(&dir);
+    let _issued = store.issue("procmond").unwrap();
+    let token = store.expected_token("procmond").unwrap();
+    let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
+    let mut registration = request("procmond", Some(token), None);
+    registration.hostname = "h".repeat(daemoneye_lib::detection_bounds::MAX_HOSTNAME_LENGTH);
+
+    let response = registry
+        .register(registration)
+        .await
+        .expect("a hostname at the DNS maximum must authenticate and register");
+
+    assert_eq!(response.collector_id, "procmond");
+    assert!(gates(&registry).is_empty(), "no registration was refused");
+}

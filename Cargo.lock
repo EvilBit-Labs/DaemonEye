@@ -624,6 +624,7 @@ dependencies = [
  "async-trait",
  "clap",
  "collector-core",
+ "daemoneye-agent",
  "daemoneye-eventbus",
  "daemoneye-lib",
  "insta",

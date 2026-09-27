@@ -158,6 +158,16 @@ pub enum CatalogError {
         /// The repeated identifier.
         identifier: String,
     },
+    /// The descriptor claims a table another collector already owns.
+    ///
+    /// The spawn token authenticates *which collector* is registering; it does not authorize that
+    /// collector to take over a table name another one already serves.
+    TableOwnedByAnotherCollector {
+        /// The contested table.
+        table: String,
+        /// The collector that already owns it.
+        owner: String,
+    },
 }
 
 impl fmt::Display for CatalogError {
@@ -200,6 +210,13 @@ impl fmt::Display for CatalogError {
             Self::DuplicateIdentifier { ref identifier } => {
                 write!(formatter, "identifier `{identifier}` is declared twice")
             }
+            Self::TableOwnedByAnotherCollector {
+                ref table,
+                ref owner,
+            } => write!(
+                formatter,
+                "table `{table}` is already owned by collector `{owner}`"
+            ),
         }
     }
 }
@@ -335,6 +352,7 @@ impl SchemaCatalog {
             });
         }
         validate_descriptor(&descriptor)?;
+        self.check_table_ownership(collector_id, &descriptor)?;
 
         // Lifted off the descriptor before it is moved into the map below. R22 puts the results on
         // the same authenticated exchange as the descriptor precisely so they cannot be separated.
@@ -377,6 +395,34 @@ impl SchemaCatalog {
         self.record_carried_results(collector_id, &results);
 
         Ok(change)
+    }
+
+    /// Refuse a descriptor that claims a table some *other* collector already owns (R10).
+    ///
+    /// The token proves identity, not authority over a table name. Without this check the last
+    /// registration wins: a lower-trust collector declaring `processes` would become the address
+    /// every `processes` rule is planned against, and procmond's conformance passes — keyed on the
+    /// owner — would stop applying. Ownership is therefore first-claim, and a collector only ever
+    /// replaces its own entries.
+    ///
+    /// Runs before anything is stored, so a refused registration leaves the catalog, the owners
+    /// map, the conformance slots and rule health untouched.
+    fn check_table_ownership(
+        &self,
+        collector_id: &str,
+        descriptor: &SchemaDescriptor,
+    ) -> Result<(), CatalogError> {
+        for table in &descriptor.tables {
+            if let Some(owner) = self.owners.get(&table.name)
+                && owner != collector_id
+            {
+                return Err(CatalogError::TableOwnedByAnotherCollector {
+                    table: table.name.clone(),
+                    owner: owner.clone(),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Record the passes a registration carried, ignoring anything its descriptor does not

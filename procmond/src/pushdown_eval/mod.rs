@@ -10,11 +10,12 @@
 //! - **A malformed plan is refused before it becomes active.** A literal whose kind does not match
 //!   the column's declared type, a NULL literal against a `NOT NULL` column, and a `REGEXP`
 //!   pattern beyond the fixed compile bounds are all static defects of the plan, checkable with no
-//!   row in hand. All three are refused at acceptance, ahead of
-//!   [`collector_core::PushdownTasks::accept`], so a refused task is never recorded.
+//!   row in hand. All three are refused by [`collector_core::PushdownTasks::accept`] — the generic
+//!   SDK path every collector shares, not a copy kept here — so a refused task is never recorded.
 //! - **The collector bounds its own patterns (R21).** A task arrives over IPC and may carry any
-//!   pattern; the agent's load-time compile protects the agent only. Patterns are compiled here
-//!   through this collector's own [`RegexCache`], under the same `detection_bounds` ceilings.
+//!   pattern; the agent's load-time compile protects the agent only. Patterns are compiled through
+//!   the bounded cache the task set owns, under the same `detection_bounds` ceilings, so the
+//!   program acceptance compiled is the program evaluation matches with.
 //! - **NULL is UNKNOWN, not false.** A column with no value short-circuits *before* the operation
 //!   is dispatched, so `column != literal` over a NULL yields UNKNOWN like every other comparison.
 //!   A conjunction admits a row only when every predicate is `Some(true)`.
@@ -23,14 +24,12 @@ pub mod conformance;
 mod predicate;
 pub mod schema;
 
-use collector_core::pushdown::descriptor_op;
+use collector_core::pushdown::{descriptor_op, pattern_source};
 use collector_core::{PushdownRejection, PushdownTasks, TaskStatus};
 use daemoneye_eventbus::rpc::{ColumnType, PredicateOp as DescriptorOp};
-use daemoneye_lib::detection::{CompiledPattern, RegexCache, RegexCacheStats, RegexRejection};
+use daemoneye_lib::detection::{CompiledPattern, RegexCacheStats, RegexRejection};
 use daemoneye_lib::proto::{DetectionTask, Predicate, PredicateOp, ProcessRecord, PushdownPlan};
-use predicate::{
-    check_literal, compare_first, in_holds, pattern_rejected, pattern_source, project,
-};
+use predicate::{compare_first, in_holds, pattern_rejected, project};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
@@ -48,9 +47,11 @@ pub type ProjectedRow = BTreeMap<String, Option<FieldValue>>;
 
 /// Why procmond refused or could not evaluate a pushed task.
 ///
-/// [`PushdownRejection`] has no variant for a mistyped literal or an uncompilable pattern, so the
-/// precise reason lives here and the trait boundary carries the coarser one. Callers that need the
-/// specific defect — the conformance vectors, and an operator reading a log line — read this type.
+/// Acceptance-time defects all arrive as [`Self::Identity`]: the SDK validates the whole plan,
+/// including its literals and patterns, and names the offender itself. The remaining variants are
+/// *evaluation*-time failures, which no plan-shaped check can predict — a column whose runtime
+/// value cannot be compared to the predicate's literal, and a pattern whose compile is only
+/// reached per record.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PushdownError {
@@ -69,13 +70,6 @@ pub enum PushdownError {
         column_type: &'static str,
         /// Wire name of the literal's kind.
         literal_kind: &'static str,
-    },
-
-    /// A NULL literal was pushed against a column declared `NOT NULL`.
-    #[error("column `{column}` is declared NOT NULL, so a NULL literal can never match")]
-    NullLiteralOnNonNullable {
-        /// Column the offending predicate reads.
-        column: String,
     },
 
     /// The task is not accepted, or its TTL elapsed without renewal.
@@ -98,15 +92,13 @@ pub enum PushdownError {
 impl PushdownError {
     /// The column a refusal names, when it names one.
     ///
-    /// The trait boundary returns [`PushdownRejection`], which has no variant for a mistyped
-    /// literal or an uncompilable pattern; the caller uses this to name the offender in the
-    /// coarser rejection it must hand back.
+    /// `None` for an [`Self::Identity`] refusal: that variant carries the [`PushdownRejection`]
+    /// whole, and its own message already names the offender.
     #[must_use]
     pub const fn column(&self) -> Option<&str> {
         match *self {
             Self::Identity(_) | Self::TaskNotActive { .. } => None,
             Self::LiteralTypeMismatch { ref column, .. }
-            | Self::NullLiteralOnNonNullable { ref column }
             | Self::PatternRejected { ref column, .. } => Some(column.as_str()),
         }
     }
@@ -140,14 +132,13 @@ impl PushdownError {
 
 /// procmond's evaluator for pushed typed predicates.
 ///
-/// It owns three things that must agree: the descriptor it advertises, the task set that validates
-/// against that descriptor, and the bounded pattern cache R21 requires the collector to keep for
-/// itself.
+/// It owns two things that must agree: the descriptor it advertises, and the task set that
+/// validates against that descriptor. The bounded pattern cache R21 requires belongs to the task
+/// set, so acceptance and evaluation share one cache rather than two with one stated bound.
 #[derive(Debug)]
 pub struct PushdownEvaluator {
     descriptor: daemoneye_eventbus::rpc::SchemaDescriptor,
     tasks: PushdownTasks,
-    patterns: RegexCache,
 }
 
 impl PushdownEvaluator {
@@ -158,7 +149,6 @@ impl PushdownEvaluator {
         Self {
             tasks: PushdownTasks::new(descriptor.clone()),
             descriptor,
-            patterns: RegexCache::new(),
         }
     }
 
@@ -170,16 +160,14 @@ impl PushdownEvaluator {
 
     /// Validates `task` and records it when it passes.
     ///
-    /// The typed checks and the pattern compile run *before* `collector_core` records anything, so
-    /// a task refused for a mistyped literal or an over-bounds pattern never becomes active.
+    /// Pure delegation: `collector_core` checks bounds, then the descriptor and the literals, then
+    /// compiles the patterns, and records nothing until all three pass. procmond keeps no second
+    /// copy of those checks, so one defect cannot be reported with two different error shapes.
     ///
     /// # Errors
     ///
     /// Returns the specific [`PushdownError`] naming the offending column, literal or pattern.
     pub fn accept(&self, task: &DetectionTask, now: SystemTime) -> Result<(), PushdownError> {
-        if let Some(plan) = task.pushdown_plan.as_ref() {
-            self.validate_types(plan)?;
-        }
         self.tasks
             .accept(task, now)
             .map_err(PushdownError::Identity)
@@ -194,19 +182,19 @@ impl PushdownEvaluator {
     /// A snapshot of the pattern cache's counters.
     #[must_use]
     pub fn pattern_stats(&self) -> RegexCacheStats {
-        self.patterns.stats()
+        self.tasks.patterns().stats()
     }
 
     /// Whether `pattern` is resident in this collector's bounded cache.
     #[must_use]
     pub fn is_pattern_cached(&self, pattern: &str) -> bool {
-        self.patterns.is_cached(pattern)
+        self.tasks.patterns().is_cached(pattern)
     }
 
     /// How many compiled patterns the bounded cache currently holds.
     #[must_use]
     pub fn cached_pattern_count(&self) -> usize {
-        self.patterns.len()
+        self.tasks.patterns().len()
     }
 
     /// Evaluates an accepted task's plan, refusing once its TTL has elapsed.
@@ -297,7 +285,7 @@ impl PushdownEvaluator {
                 }
                 pattern_source(predicate)
                     .ok()
-                    .and_then(|source| self.patterns.get_or_compile(&source).ok())
+                    .and_then(|source| self.tasks.patterns().get_or_compile(&source).ok())
             })
             .collect()
     }
@@ -386,57 +374,11 @@ impl PushdownEvaluator {
         }
         let source = pattern_source(predicate)?;
         let resolved = self
-            .patterns
+            .tasks
+            .patterns()
             .get_or_compile(&source)
             .map_err(|rejection| pattern_rejected(predicate, rejection))?;
         Ok(resolved.is_match(text))
-    }
-
-    /// Refuses a plan whose literals do not match the declared column types, and compiles every
-    /// pattern it pushes, before any of it is recorded.
-    ///
-    /// A predicate this collector cannot resolve — unknown table, unknown column, unadvertised
-    /// operation — is left alone here so that `collector_core` names it, rather than being
-    /// reported twice with two different words.
-    fn validate_types(&self, plan: &PushdownPlan) -> Result<(), PushdownError> {
-        let Some(table) = self
-            .descriptor
-            .tables
-            .iter()
-            .find(|candidate| candidate.name == plan.table)
-        else {
-            return Ok(());
-        };
-        for predicate in &plan.predicates {
-            let Some(column) = table
-                .columns
-                .iter()
-                .find(|candidate| candidate.name == predicate.column)
-            else {
-                continue;
-            };
-            let Some(op) = descriptor_op(predicate.op()) else {
-                continue;
-            };
-            if !column.supported_ops.contains(&op) {
-                continue;
-            }
-            for value in &predicate.values {
-                check_literal(column, value)?;
-            }
-            if matches!(op, DescriptorOp::Like | DescriptorOp::Regexp) {
-                // Compiled here so an over-bounds pattern refuses the task ahead of the record
-                // below. A pattern that does compile stays resident in the bounded cache even if
-                // the task is then refused for another reason; the cache is fixed-size, so that
-                // costs a slot and nothing else.
-                let source = pattern_source(predicate)?;
-                let _compiled = self
-                    .patterns
-                    .get_or_compile(&source)
-                    .map_err(|rejection| pattern_rejected(predicate, rejection))?;
-            }
-        }
-        Ok(())
     }
 
     /// The column names a plan's projection asks for, in descriptor order for an empty projection.

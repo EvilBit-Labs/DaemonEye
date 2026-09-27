@@ -6,9 +6,9 @@
 
 use super::schema::FieldRef;
 use super::{ProjectedRow, PushdownError, schema};
-use daemoneye_eventbus::rpc::{ColumnDescriptor, ColumnType};
+use collector_core::pushdown::{literal_kind, literal_text};
 use daemoneye_lib::detection::RegexRejection;
-use daemoneye_lib::proto::{Literal, Predicate, PredicateOp, ProcessRecord, literal};
+use daemoneye_lib::proto::{Predicate, ProcessRecord, literal};
 use std::cmp::Ordering;
 
 /// The projected row for one record: exactly the named columns, never a superset.
@@ -84,17 +84,6 @@ pub(super) fn compare(
     }
 }
 
-/// The text a literal carries, if it is a text literal at all.
-// KTD8: the wildcard arm yields `None`, which routes the comparison into the mismatch refusal
-// below. `literal::Value` is `#[non_exhaustive]`, and a kind this build cannot name is never text.
-#[allow(clippy::wildcard_enum_match_arm)]
-pub(super) const fn literal_text(value: &literal::Value) -> Option<&str> {
-    match *value {
-        literal::Value::StringValue(ref text) => Some(text.as_str()),
-        ref _non_text => None,
-    }
-}
-
 /// The predicate's single literal value.
 pub(super) fn first_value(predicate: &Predicate) -> Result<&literal::Value, PushdownError> {
     predicate
@@ -104,127 +93,10 @@ pub(super) fn first_value(predicate: &Predicate) -> Result<&literal::Value, Push
         .ok_or_else(|| PushdownError::bad_arity(predicate))
 }
 
-/// The predicate's single literal as text, for a pattern operation.
-// KTD8: the wildcard arm refuses. `literal::Value` is `#[non_exhaustive]`, and a literal kind this
-// build cannot name is never a pattern.
-#[allow(clippy::wildcard_enum_match_arm)]
-pub(super) fn first_string(predicate: &Predicate) -> Result<&str, PushdownError> {
-    match *first_value(predicate)? {
-        literal::Value::StringValue(ref text) => Ok(text.as_str()),
-        ref other => Err(PushdownError::LiteralTypeMismatch {
-            column: predicate.column.clone(),
-            column_type: ColumnType::String.as_wire_name(),
-            literal_kind: literal_kind(other),
-        }),
-    }
-}
-
 /// Names the column whose pattern the bounded compiler refused.
 pub(super) fn pattern_rejected(predicate: &Predicate, rejection: RegexRejection) -> PushdownError {
     PushdownError::PatternRejected {
         column: predicate.column.clone(),
         rejection,
     }
-}
-
-/// The regular-expression source a pattern predicate compiles to.
-///
-/// `LIKE` is translated rather than given a second matcher: one bounded compiler, one cache.
-// KTD8: the wildcard arm refuses. `PredicateOp` is `#[non_exhaustive]`; an operation newer than
-// this build must not be silently treated as `REGEXP`.
-#[allow(clippy::wildcard_enum_match_arm)]
-pub(super) fn pattern_source(predicate: &Predicate) -> Result<String, PushdownError> {
-    let source = first_string(predicate)?;
-    match predicate.op() {
-        PredicateOp::Like => Ok(like_to_regex(source)),
-        PredicateOp::Regexp => Ok(source.to_owned()),
-        _unsupported => Err(PushdownError::unusable_operation(&predicate.column)),
-    }
-}
-
-/// Refuses a literal whose kind does not match the column's declared type, and a NULL literal
-/// against a column declared `NOT NULL`.
-///
-/// Both are static defects of the plan: neither needs a row to detect, and neither can ever match.
-pub(super) fn check_literal(
-    column: &ColumnDescriptor,
-    value: &Literal,
-) -> Result<(), PushdownError> {
-    let Some(ref inner) = value.value else {
-        return Err(PushdownError::LiteralTypeMismatch {
-            column: column.name.clone(),
-            column_type: column.column_type.as_wire_name(),
-            literal_kind: "unset",
-        });
-    };
-    if matches!(*inner, literal::Value::NullValue(_marker)) {
-        if column.nullable {
-            return Ok(());
-        }
-        return Err(PushdownError::NullLiteralOnNonNullable {
-            column: column.name.clone(),
-        });
-    }
-    if literal_matches_type(inner, column.column_type) {
-        return Ok(());
-    }
-    Err(PushdownError::LiteralTypeMismatch {
-        column: column.name.clone(),
-        column_type: column.column_type.as_wire_name(),
-        literal_kind: literal_kind(inner),
-    })
-}
-
-/// Whether a literal's kind is the one a column of `column_type` compares against.
-///
-/// `ColumnType::Unspecified`, and any type newer than this build, match nothing: a literal whose
-/// column type cannot be named is never comparable.
-pub(super) const fn literal_matches_type(value: &literal::Value, column_type: ColumnType) -> bool {
-    match column_type {
-        ColumnType::String => matches!(*value, literal::Value::StringValue(_)),
-        ColumnType::Int => matches!(*value, literal::Value::IntValue(_)),
-        ColumnType::Uint => matches!(*value, literal::Value::UintValue(_)),
-        ColumnType::Float => matches!(*value, literal::Value::FloatValue(_)),
-        ColumnType::Bool => matches!(*value, literal::Value::BoolValue(_)),
-        ColumnType::Unspecified => false,
-        _unrecognized => false,
-    }
-}
-
-/// Wire name of a literal's kind, for a refusal message.
-pub(super) const fn literal_kind(value: &literal::Value) -> &'static str {
-    match *value {
-        literal::Value::StringValue(_) => "string",
-        literal::Value::IntValue(_) => "int",
-        literal::Value::UintValue(_) => "uint",
-        literal::Value::FloatValue(_) => "float",
-        literal::Value::BoolValue(_) => "bool",
-        literal::Value::NullValue(_) => "null",
-        // Description only. A literal kind this build cannot name is refused by
-        // `literal_matches_type`, which never returns true for one.
-        ref _unrecognized => "unrecognized",
-    }
-}
-
-/// Translates a SQL `LIKE` pattern into an anchored regular expression.
-///
-/// `%` and `_` are the only wildcards; everything else is literal, and ASCII punctuation is
-/// escaped so a pattern cannot smuggle regex syntax through `LIKE`. There is no `ESCAPE` clause,
-/// so a backslash in a `LIKE` pattern matches a backslash.
-pub(super) fn like_to_regex(pattern: &str) -> String {
-    let mut translated = String::from("(?s)^");
-    for character in pattern.chars() {
-        match character {
-            '%' => translated.push_str(".*"),
-            '_' => translated.push('.'),
-            literal_character => {
-                if literal_character.is_ascii_punctuation() {
-                    translated.push('\\');
-                }
-                translated.push(literal_character);
-            }
-        }
-    }
-    translated.push('$');
-    translated
 }
