@@ -18,6 +18,11 @@ use std::time::Duration;
 /// 256 KiB holds roughly five times what a Unicode-aware `\w` needs (the `regex` crate's own
 /// doctest has `\w` failing at 45 KB), so legitimate patterns are unaffected. Exceeding it is a
 /// hard compile failure, which is why it doubles as a rejection condition at rule load.
+///
+/// The crate calls this an *approximate* size limit ("Sets the approximate size limit, in bytes,
+/// of the compiled regex"). It bounds compilation, and a pattern over it is refused — but the
+/// figure is the crate's estimate of a compiled program's size, not a measured allocation. Nothing
+/// here can report what a compiled pattern actually costs.
 pub const REGEX_SIZE_LIMIT_BYTES: usize = 256 * 1024;
 
 /// Byte ceiling handed to `regex::RegexBuilder::dfa_size_limit`.
@@ -26,34 +31,42 @@ pub const REGEX_SIZE_LIMIT_BYTES: usize = 256 * 1024;
 /// DFA's runtime cache, which resets and falls back to a slower engine when full rather than
 /// failing.
 ///
-/// It does **not** multiply by [`REGEX_CACHE_MAX_ENTRIES`]. The crate documents this value as
-/// "the amount of capacity that *may* be used ... whatever you're willing to allocate for a single
-/// regex search" — it is a per-search cache ceiling, lazily filled, not a per-resident-pattern
-/// reservation. So total DFA memory scales with *concurrent searches*, each capped here, and there
-/// is no fixed product to add to the compiled-program ceiling. Only that ceiling
-/// ([`REGEX_CACHE_MAX_BYTES`]) is a provable resident bound; this one bounds a transient.
+/// It does **not** multiply by [`REGEX_CACHE_MAX_ENTRIES`]: the crate describes it as the capacity
+/// that *may* be used for a single regex search, so it is a per-cache ceiling rather than a
+/// per-resident-pattern reservation.
 ///
-/// 256 KiB rather than the crate's 2 MiB default keeps a single search's cache an order of
-/// magnitude below the process's 100 MB budget instead of a fiftieth of it.
+/// It is **not** transient either. `regex-automata` keeps these caches in a pool
+/// (`util/pool.rs`, a `Mutex<Vec<T>>` of reusable values) and hands them back for reuse rather
+/// than freeing them when a search ends, so they are retained memory. How many are live grows with
+/// the number of threads searching concurrently. There is therefore no fixed multiplicand to state
+/// here, and no total worth quoting.
+///
+/// 256 KiB rather than the crate's 2 MiB default keeps any one cache an order of magnitude below
+/// the process's 100 MB budget instead of a fiftieth of it.
 pub const REGEX_DFA_SIZE_LIMIT_BYTES: usize = 256 * 1024;
 
 /// Maximum number of compiled patterns held in the least-recently-used regex cache.
 ///
-/// A compiled pattern's real footprint cannot be read back at runtime, so a fixed entry count
-/// against the fixed per-pattern ceiling of [`REGEX_SIZE_LIMIT_BYTES`] is the only provable memory
-/// bound available. Making this a tunable would dissolve that proof, which is why it is a constant.
+/// A compiled pattern's real footprint cannot be read back at runtime, so bounding the count is the
+/// only lever available: it is what keeps the cache from growing without limit. Making it a tunable
+/// would remove that lever, which is why it is a constant rather than configuration.
 pub const REGEX_CACHE_MAX_ENTRIES: usize = 64;
 
-/// The proven worst-case memory held by the regex cache's compiled programs, in bytes.
+/// The product of the two configured limits on cached compiled programs, in bytes.
 ///
-/// This is the product [`REGEX_SIZE_LIMIT_BYTES`] × [`REGEX_CACHE_MAX_ENTRIES`] stated explicitly
-/// so the pairing cannot drift apart silently; the assertion below turns drift into a compile
-/// error.
+/// **This is not a proven resident bound, and must not be quoted as one.** It is
+/// [`REGEX_SIZE_LIMIT_BYTES`] × [`REGEX_CACHE_MAX_ENTRIES`], and the first of those is a limit the
+/// crate itself calls approximate. So this bounds how far the compiled-program cache can grow
+/// under its own configuration; it is not a measurement, it does not cover the pooled DFA caches
+/// described on [`REGEX_DFA_SIZE_LIMIT_BYTES`], and it is not the process's regex footprint.
+///
+/// It is stated explicitly so the pairing cannot drift apart silently; the assertion below turns
+/// drift into a compile error.
 pub const REGEX_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 
 const _: () = assert!(
     REGEX_SIZE_LIMIT_BYTES * REGEX_CACHE_MAX_ENTRIES == REGEX_CACHE_MAX_BYTES,
-    "regex per-pattern size limit times cache entry count must equal the stated memory ceiling"
+    "regex per-pattern size limit times cache entry count must equal the stated product"
 );
 
 const _: () = assert!(

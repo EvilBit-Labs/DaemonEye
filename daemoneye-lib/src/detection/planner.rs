@@ -544,9 +544,15 @@ fn regex_function_pattern(function: &Function) -> Result<&Expr, PlanError> {
 
 /// The pattern text a `REGEXP` operand carries, if it is a string literal at all.
 ///
-/// Both quotings are accepted because both parse to a pattern the engine would use. KTD8: the
-/// catch-all declines, and its caller turns that into a refusal, so an operand shape this
-/// function does not understand fails the rule at load instead of reaching the runtime
+/// The single-quoted arm is the one that fires. Under `GenericDialect` a double-quoted string is
+/// parsed as a *delimited identifier*, not a string value, so `Value::DoubleQuotedString` never
+/// reaches this function and `regexp(name, "…")` is refused as a non-literal pattern —
+/// `a_double_quoted_pattern_is_refused_as_a_non_literal_pattern` pins exactly that. The arm is
+/// kept to mirror `lower_literal`'s shape, not because this path accepts both quotings; do not
+/// read it as evidence that a double-quoted pattern is validated here.
+///
+/// KTD8: the catch-all declines, and its caller turns that into a refusal, so an operand shape
+/// this function does not understand fails the rule at load instead of reaching the runtime
 /// uncompiled.
 #[allow(clippy::wildcard_enum_match_arm)]
 fn pattern_literal(expr: &Expr) -> Option<String> {
