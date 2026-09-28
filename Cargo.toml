@@ -92,6 +92,11 @@ interprocess = { version = "2.4.3", features = ["tokio"] }
 # that security-critical code in procmond relies on. See AGENTS.md
 # "Pin security-critical deps".
 libc = "=0.2.189"
+# Least-recently-used cache backing the detection regex cache.
+# Exact-pinned per AGENTS.md "Pin security-critical deps" — KTD6 selects this
+# crate specifically because its eviction policy is *strict* LRU, which R6
+# requires; a silent upstream policy change would dissolve that guarantee.
+lru = { version = "=0.18.4", default-features = false }
 parking_lot = "0.12.5"
 
 # Serialization
@@ -111,6 +116,8 @@ prost-types = "0.14.4"
 # holds authoritative hash results so a silent upstream change here
 # could affect integrity decisions.
 quick_cache = "=0.6.23"
+# Exact-pinned: constant-time primitive; a version bump must be reviewed, not absorbed.
+subtle = { version = "=2.6.1", default-features = false }
 rand = "0.10.2"
 
 # Database and storage
@@ -127,7 +134,7 @@ sha2 = "0.11.0"
 # Exact-pinned: SHA-3 is a cryptographic primitive and must not change
 # silently under a caret update. See AGENTS.md "Pin security-critical deps".
 sha3 = "=0.12.0"
-sqlparser = "0.62.0"
+sqlparser = { version = "0.62.0", features = ["visitor"] }
 
 sysinfo = "0.39.6"
 tempfile = "3.27.0"

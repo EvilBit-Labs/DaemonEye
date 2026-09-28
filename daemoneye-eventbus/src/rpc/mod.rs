@@ -46,6 +46,7 @@
 //! ```
 
 mod client;
+mod descriptor;
 mod messages;
 mod providers;
 mod service;
@@ -54,6 +55,7 @@ mod service;
 mod tests;
 
 pub use client::*;
+pub use descriptor::*;
 pub use messages::*;
 pub use providers::{ConfigProvider, HealthProvider, RegistrationError, RegistrationProvider};
 pub use service::*;

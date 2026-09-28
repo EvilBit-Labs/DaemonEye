@@ -77,6 +77,7 @@ pub mod load_balancer;
 pub mod monitor_collector;
 pub mod performance;
 pub mod process_manager;
+pub mod pushdown;
 pub mod result_aggregator;
 pub mod rpc_services;
 pub mod shutdown_coordinator;
@@ -123,6 +124,7 @@ pub use performance::{
     PerformanceConfig, PerformanceDegradation, PerformanceMonitor, ResourceUsageMetrics,
     ThroughputMetrics, TriggerLatencyMetrics,
 };
+pub use pushdown::{PushdownRejection, PushdownTasks, TaskStatus};
 pub use result_aggregator::{
     AggregatedResult, AggregationConfig, AggregationStats, AggregationStatus, CollectorResult,
     ResultAggregator,

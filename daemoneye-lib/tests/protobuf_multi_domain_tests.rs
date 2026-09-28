@@ -107,6 +107,7 @@ fn test_extended_task_types() -> Result<(), Box<dyn std::error::Error>> {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         };
 
         let serialized = task.encode_to_vec();
@@ -169,6 +170,7 @@ fn test_detection_task_with_multi_domain_filters() -> Result<(), Box<dyn std::er
             .into_iter()
             .collect(),
         }),
+        pushdown_plan: None,
     };
 
     // Test serialization
@@ -361,6 +363,7 @@ fn test_backward_compatibility_detection_task() -> Result<(), Box<dyn std::error
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
 
     // Test that legacy task can be serialized and deserialized
@@ -612,6 +615,7 @@ fn test_message_size_limits() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|i| (format!("metric-{i}"), f64::from(i + 100)))
                 .collect(),
         }),
+        pushdown_plan: None,
     };
 
     // Should be able to serialize and deserialize large messages

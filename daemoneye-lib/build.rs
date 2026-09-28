@@ -12,6 +12,12 @@ fn main() -> Result<()> {
         .type_attribute(".", "#[allow(clippy::pattern_type_mismatch)]")
         // Add non_exhaustive to all generated enums
         .enum_attribute(".", "#[non_exhaustive]")
+        // prost derives Eq itself only for messages with no nested message fields, so these two
+        // need it added by hand or clippy::derive_partial_eq_without_eq denies the bare
+        // PartialEq. Messages reaching a float (Literal, Predicate, PushdownPlan) are
+        // deliberately absent: Eq is not implementable for them.
+        .message_attribute(".TableDescriptor", "#[derive(Eq)]")
+        .message_attribute(".SchemaDescriptor", "#[derive(Eq)]")
         // Enable optional features for proto3 optional fields
         .protoc_arg("--experimental_allow_proto3_optional")
         // Compile our protobuf files

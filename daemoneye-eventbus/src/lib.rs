@@ -103,10 +103,11 @@ pub use result_aggregation::{
 };
 pub use rpc::{
     CapabilitiesData, CollectorLifecycleRequest, CollectorOperation, CollectorRpcClient,
-    CollectorRpcService, ConfigProvider, ConfigUpdateRequest, ConfigUpdateResult,
-    DeregistrationRequest, HealthCheckData, HealthProvider, HealthStatus, RegistrationError,
-    RegistrationProvider, RegistrationRequest, RegistrationResponse, RpcPayload, RpcRequest,
-    RpcResponse, RpcStatus, ShutdownRequest, ShutdownType,
+    CollectorRpcService, ColumnDescriptor, ColumnType, ConfigProvider, ConfigUpdateRequest,
+    ConfigUpdateResult, DeregistrationRequest, HealthCheckData, HealthProvider, HealthStatus,
+    PredicateOp, RegistrationError, RegistrationProvider, RegistrationRequest,
+    RegistrationResponse, RpcPayload, RpcRequest, RpcResponse, RpcStatus, SchemaDescriptor,
+    ShutdownRequest, ShutdownType, TableDescriptor,
 };
 pub use task_distribution::{
     CollectorCapability, DistributionStats, RoutingStrategy, TaskDistributor, TaskRequest,

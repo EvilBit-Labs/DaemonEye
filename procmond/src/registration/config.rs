@@ -3,6 +3,7 @@
 use super::{
     DEFAULT_HEARTBEAT_INTERVAL_SECS, DEFAULT_REGISTRATION_TIMEOUT_SECS, MAX_REGISTRATION_RETRIES,
 };
+use crate::pushdown_eval::DEFAULT_COLLECTOR_ID;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -30,7 +31,7 @@ pub struct RegistrationConfig {
 impl Default for RegistrationConfig {
     fn default() -> Self {
         Self {
-            collector_id: "procmond".to_owned(),
+            collector_id: DEFAULT_COLLECTOR_ID.to_owned(),
             collector_type: "process-monitor".to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             capabilities: vec![

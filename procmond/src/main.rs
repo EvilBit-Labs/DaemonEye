@@ -12,6 +12,7 @@ use procmond::{
     ProcessEventSource, ProcessSourceConfig,
     event_bus_connector::EventBusConnector,
     monitor_collector::{ProcmondMonitorCollector, ProcmondMonitorConfig},
+    pushdown_eval::DEFAULT_COLLECTOR_ID,
     registration::{RegistrationConfig, RegistrationManager, RegistrationState},
     rpc_service::{RpcServiceConfig, RpcServiceHandler},
     security::detect_privileges,
@@ -806,7 +807,7 @@ pub async fn main() -> anyhow::Result<()> {
         collector_config.registration = Some(CollectorRegistrationConfig {
             enabled: true,
             broker: None,
-            collector_id: Some("procmond".to_owned()),
+            collector_id: Some(DEFAULT_COLLECTOR_ID.to_owned()),
             collector_type: Some("procmond".to_owned()),
             topic: "control.collector.registration".to_owned(),
             timeout: Duration::from_secs(10),
@@ -815,8 +816,18 @@ pub async fn main() -> anyhow::Result<()> {
             attributes: HashMap::new(),
         });
 
+        // The one collector id, read once and used for both the event source's descriptor and the
+        // registration that advertises it. Two independently-derived ids would silently plan
+        // against one descriptor while validating pushed tasks against another.
+        let collector_id_str = collector_config
+            .registration
+            .as_ref()
+            .and_then(|r| r.collector_id.as_deref())
+            .unwrap_or(DEFAULT_COLLECTOR_ID);
+
         // Create process source configuration
         let process_config = ProcessSourceConfig {
+            collector_id: collector_id_str.to_owned(),
             collection_interval: Duration::from_secs(cli.interval),
             collect_enhanced_metadata: cli.enhanced_metadata,
             max_processes_per_cycle: cli.max_processes,
@@ -833,12 +844,6 @@ pub async fn main() -> anyhow::Result<()> {
             .registration
             .as_ref()
             .is_some_and(|r| r.enabled);
-        let collector_id_str = collector_config
-            .registration
-            .as_ref()
-            .and_then(|r| r.collector_id.as_deref())
-            .unwrap_or("procmond");
-
         if registration_enabled {
             info!(
                 collector_id = %collector_id_str,

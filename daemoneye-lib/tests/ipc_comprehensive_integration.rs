@@ -81,6 +81,7 @@ fn create_test_task(task_id: &str) -> DetectionTask {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     }
 }
 
@@ -234,6 +235,7 @@ async fn test_task_distribution_workflows() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
 
     let enum_result = timeout(Duration::from_secs(10), client.send_task(enum_task))
@@ -255,6 +257,7 @@ async fn test_task_distribution_workflows() {
         network_filter: None,
         filesystem_filter: None,
         performance_filter: None,
+        pushdown_plan: None,
     };
 
     let hash_result = timeout(Duration::from_secs(10), client.send_task(hash_task))

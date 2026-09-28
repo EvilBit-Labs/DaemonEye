@@ -314,7 +314,7 @@ async fn test_registration_marks_collector_ready() {
     // Initialize registry
     {
         let mut guard = manager.collector_registry.write().await;
-        *guard = Some(Arc::new(CollectorRegistry::default()));
+        *guard = Some(Arc::new(CollectorRegistry::unauthenticated()));
     }
 
     // Configure expected collectors
@@ -340,6 +340,8 @@ async fn test_registration_marks_collector_ready() {
         capabilities: vec![],
         attributes: std::collections::HashMap::new(),
         heartbeat_interval_ms: None,
+        descriptor: None,
+        spawn_token: None,
     };
 
     let response = manager
@@ -362,6 +364,8 @@ async fn test_registration_marks_collector_ready() {
         capabilities: vec![],
         attributes: std::collections::HashMap::new(),
         heartbeat_interval_ms: None,
+        descriptor: None,
+        spawn_token: None,
     };
 
     let response = manager
@@ -390,7 +394,7 @@ async fn test_wait_for_collectors_ready_success() {
     // Initialize registry
     {
         let mut guard = manager.collector_registry.write().await;
-        *guard = Some(Arc::new(CollectorRegistry::default()));
+        *guard = Some(Arc::new(CollectorRegistry::unauthenticated()));
     }
 
     // Configure with a single collector
@@ -420,6 +424,8 @@ async fn test_wait_for_collectors_ready_success() {
             capabilities: vec![],
             attributes: std::collections::HashMap::new(),
             heartbeat_interval_ms: None,
+            descriptor: None,
+            spawn_token: None,
         };
 
         manager_for_task

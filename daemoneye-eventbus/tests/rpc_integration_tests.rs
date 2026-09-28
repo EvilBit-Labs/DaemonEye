@@ -292,6 +292,8 @@ async fn test_registration_and_deregistration() {
         capabilities: vec!["process-monitoring".to_string()],
         attributes: HashMap::new(),
         heartbeat_interval_ms: Some(15_000),
+        descriptor: None,
+        spawn_token: None,
     };
 
     let register_request = RpcRequest::register(

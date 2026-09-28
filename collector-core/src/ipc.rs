@@ -514,6 +514,7 @@ mod tests {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         };
 
         let result = validate_task_capabilities(&process_task, &capabilities).await;
@@ -529,6 +530,7 @@ mod tests {
             network_filter: None,
             filesystem_filter: None,
             performance_filter: None,
+            pushdown_plan: None,
         };
 
         let result = validate_task_capabilities(&network_task, &capabilities).await;

@@ -18,15 +18,20 @@
 | `HEX(data)`  | Convert to hexadecimal   | `HEX(executable_hash)` |
 | `UNHEX(hex)` | Convert from hexadecimal | `UNHEX('deadbeef')`    |
 
-### Mathematical Functions
+### Pattern Matching Functions
 
-| Function    | Description    | Example                     |
-| ----------- | -------------- | --------------------------- |
-| `COUNT(*)`  | Count rows     | `COUNT(*) as process_count` |
-| `SUM(expr)` | Sum values     | `SUM(memory_usage)`         |
-| `AVG(expr)` | Average values | `AVG(cpu_usage)`            |
-| `MAX(expr)` | Maximum value  | `MAX(memory_usage)`         |
-| `MIN(expr)` | Minimum value  | `MIN(start_time)`           |
+| Function              | Description                           | Example                        |
+| --------------------- | ------------------------------------- | ------------------------------ |
+| `REGEXP pattern`      | Regular-expression matching (infix)   | `name REGEXP '^svc[0-9]+$'`    |
+| `MATCH(str, pattern)` | Pattern matching (function-call form) | `MATCH(command_line, 'nc -l')` |
+
+Infix `MATCH` does not parse in this dialect — write it as a function call, as shown.
+
+## Refused: Aggregate Functions
+
+`COUNT`, `SUM`, `AVG`, `MAX` and `MIN` are **not allowed**. A rule that calls one is refused when it is loaded, with the offending function named — it never runs and never alerts.
+
+A rule is lowered into a pushed-down half (predicates and a projection the collector evaluates) plus a residual the agent evaluates. An aggregate is neither a predicate nor a column, so the planner has no way to compute one: a projected `COUNT(pid)` would lower to the bare column `pid`, and the rule would return rows where you asked for a count. Refusing at load is the point — a rule that cannot be lowered is rejected outright rather than silently answering the wrong question. `GROUP BY` and `HAVING` are refused for the same reason, as are `ORDER BY`, `LIMIT` and `DISTINCT`.
 
 ## Banned Functions
 
@@ -47,8 +52,6 @@
 ### Complex Pattern Matching (Performance Concerns)
 
 - `glob()` - Glob patterns
-- `regexp()` - Regular expressions
-- `match()` - Pattern matching
 
 ### Mathematical Functions (Not Applicable)
 
@@ -153,11 +156,13 @@ WHERE executable_path LIKE '/tmp/%'
 - Process ID queries: `WHERE pid = ?`
 - Name queries: `WHERE name = ?`
 
-### Limit Result Sets
+### Keep Result Sets Small
+
+`LIMIT` is refused at rule load — the planner has no representation for it, so the pushed-down half would ignore it. Narrow the result set with predicates instead.
 
 ```sql
--- Use LIMIT for large queries
-SELECT * FROM processes WHERE name LIKE '%test%' LIMIT 100;
+-- Narrow with predicates, not LIMIT
+SELECT * FROM processes WHERE name LIKE '%test%' AND collection_time > ?;
 ```
 
 ### Avoid Complex Operations

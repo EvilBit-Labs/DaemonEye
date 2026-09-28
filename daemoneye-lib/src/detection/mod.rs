@@ -3,17 +3,35 @@
 //! This module provides the core detection engine that executes SQL-based rules
 //! against process data with comprehensive security validation to prevent SQL injection.
 
-pub mod sql_to_ipc;
+pub mod allowlist;
+pub mod catalog;
+pub mod conformance;
+pub mod planner;
+pub mod regex_cache;
+pub mod rejection;
+pub mod rule_health;
+pub mod sql_validation;
+pub mod task_renewal;
 
-use crate::models::{Alert, DetectionRule, ProcessRecord};
-// Removed unused imports
+use crate::config::DetectionConfig;
+use crate::detection::catalog::{CatalogChange, CatalogError, SchemaCatalog, VerifiedRegistration};
+use crate::detection::rule_health::{RuleHealth, RuleHealthRegistry};
+use crate::models::{Alert, DetectionRule, ProcessRecord, RuleError};
+use crate::proto::SchemaDescriptor;
+use crate::rejection_log::{RejectionLog, RejectionReason};
 use std::collections::HashMap;
 use thiserror::Error;
 
-pub use sql_to_ipc::{
-    CollectionRequirements, FilesystemRequirements, NetworkRequirements, PerformanceRequirements,
-    ProcessRequirements, SqlToIpcTranslator,
+pub use allowlist::{ALLOWED_SQL_FUNCTIONS, is_allowed_sql_function};
+pub use conformance::{
+    ConformanceAxis, ConformanceCase, ConformanceOutcome, cases_for, corpus, reference_outcome,
+    verify_operation,
 };
+pub use planner::{CompiledRule, PlanError, plan_rule};
+pub use regex_cache::{CompiledPattern, RegexCache, RegexCacheStats, compile_rule_patterns};
+pub use rejection::{RegexConstruct, RegexRejection, SqlPosition, SqlRejection};
+pub use sql_validation::validate_detection_sql;
+pub use task_renewal::{PendingRenewal, RenewalCycle, TaskRenewalLedger};
 
 /// Detection engine errors.
 #[derive(Debug, Error)]
@@ -30,11 +48,27 @@ pub enum DetectionEngineError {
 
     #[error("Resource limit exceeded: {0}")]
     ResourceLimitExceeded(String),
+
+    #[error("Rule could not be lowered into a pushdown plan: {0}")]
+    PlanRejected(String),
 }
 
 /// Detection engine for executing SQL-based rules.
+#[derive(Debug)]
 pub struct DetectionEngine {
     rules: HashMap<String, DetectionRule>,
+    /// Compiled plans, one per rule that has been lowered. This is the enabled set: a rule with no
+    /// entry here has no task to issue.
+    compiled: HashMap<String, CompiledRule>,
+    /// Rules loaded before any collector registered, waiting for the first one (R18).
+    deferred: Vec<String>,
+    catalog: SchemaCatalog,
+    health: RuleHealthRegistry,
+    patterns: RegexCache,
+    /// Live pushdown tasks and when each was last confirmed on its collector (R16).
+    tasks: TaskRenewalLedger,
+    max_subquery_depth: u32,
+    rejections: RejectionLog,
     #[allow(dead_code)]
     max_execution_time_ms: u64,
     #[allow(dead_code)]
@@ -42,20 +76,126 @@ pub struct DetectionEngine {
 }
 
 impl DetectionEngine {
-    /// Create a new detection engine.
+    /// Create a new detection engine with the default [`DetectionConfig`].
     pub fn new() -> Self {
+        Self::with_config(&DetectionConfig::default())
+    }
+
+    /// Create a detection engine bound to the operator's loaded [`DetectionConfig`].
+    ///
+    /// The configured `max_subquery_depth` is what rule load validates against (R3), so an
+    /// engine built through [`DetectionEngine::new`] enforces the default depth and nothing else.
+    #[must_use]
+    pub fn with_config(config: &DetectionConfig) -> Self {
         Self {
             rules: HashMap::new(),
+            compiled: HashMap::new(),
+            deferred: Vec::new(),
+            catalog: SchemaCatalog::new(),
+            health: RuleHealthRegistry::new(),
+            patterns: RegexCache::new(),
+            tasks: TaskRenewalLedger::new(),
+            max_subquery_depth: config.max_subquery_depth,
+            rejections: RejectionLog::new(),
             max_execution_time_ms: 30000, // 30 seconds
             max_memory_mb: 100,           // 100 MB
         }
     }
 
+    /// The catalog rules are planned against.
+    #[must_use]
+    pub const fn catalog(&self) -> &SchemaCatalog {
+        &self.catalog
+    }
+
+    /// The compiled plan for a rule, if the rule is in the enabled set.
+    #[must_use]
+    pub fn compiled_rule(&self, id: &str) -> Option<&CompiledRule> {
+        self.compiled.get(id)
+    }
+
+    /// Rules waiting for the first collector registration (R18), in load order.
+    #[must_use]
+    pub fn deferred_rule_ids(&self) -> Vec<String> {
+        self.deferred.clone()
+    }
+
+    /// Current health of a rule, once it has been judged against a catalog (R12).
+    #[must_use]
+    pub fn rule_health(&self, id: &str) -> Option<&RuleHealth> {
+        self.health.health(id)
+    }
+
+    /// Register a collector's schema descriptor, then plan everything it unblocked (R10, R12, R18).
+    ///
+    /// A rule deferred under R18 has never been planned, so the drain here *is* its first load:
+    /// a lowering failure rejects it, exactly as a non-deferred first load would. Marking a rule
+    /// unhealthy is reserved for re-planning an already-loaded rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`CatalogError`] that refused the descriptor. Rules are untouched in that case.
+    pub fn register_collector(
+        &mut self,
+        verified: &VerifiedRegistration,
+        descriptor: SchemaDescriptor,
+    ) -> Result<CatalogChange, CatalogError> {
+        let change = self.catalog.register(verified, descriptor)?;
+
+        for rule_id in std::mem::take(&mut self.deferred) {
+            if let Err(error) = self.plan_and_record(&rule_id) {
+                self.reject_rule(&rule_id, &error.to_string());
+            }
+        }
+
+        let outcome = self.health.revalidate(&self.catalog, &change);
+        // A rule that stopped validating keeps no plan: leaving one would let the renewal clock
+        // and `issue_tasks_for_collector` re-issue a task the collector can no longer accept. This
+        // is the same invariant the expiry path in `renewal_cycle` already holds.
+        for rule_id in outcome.newly_unhealthy() {
+            let _uncovered = self.compiled.remove(rule_id);
+        }
+        for rule_id in outcome.to_replan().to_vec() {
+            if let Err(error) = self.plan_and_record(&rule_id) {
+                // The rule's references still resolve — `revalidate` just checked — so this is a
+                // shape the planner can no longer lower. Drop it from the enabled set so no task
+                // is re-issued, and record why.
+                let _dropped = self.compiled.remove(&rule_id);
+                self.rejections
+                    .record(RejectionReason::rule_other(&rule_id, &error.to_string()));
+            }
+        }
+
+        Ok(change)
+    }
+
+    /// Lower one loaded rule and record its plan and its references.
+    fn plan_and_record(&mut self, rule_id: &str) -> Result<(), PlanError> {
+        let Some(rule) = self.rules.get(rule_id) else {
+            return Ok(());
+        };
+        let compiled = plan_rule(&self.catalog, &self.patterns, rule, self.max_subquery_depth)?;
+        self.health
+            .track(rule_id, compiled.references().iter().cloned());
+        let _previous = self.compiled.insert(rule_id.to_owned(), compiled);
+        Ok(())
+    }
+
+    /// Record a first-load rejection and take the rule back out of the engine (R17).
+    fn reject_rule(&mut self, rule_id: &str, message: &str) {
+        self.rejections
+            .record(RejectionReason::rule_other(rule_id, message));
+        let _removed_rule = self.rules.remove(rule_id);
+        let _removed_plan = self.compiled.remove(rule_id);
+        self.health.forget(rule_id);
+    }
+
     /// Loads a detection rule into the engine.
     ///
-    /// Validates the rule's SQL using `rule.validate_sql()` and, on success,
-    /// inserts the rule into the engine's rule map keyed by `rule.id.raw().to_string()`.
-    /// If a rule with the same ID already exists it will be overwritten.
+    /// Validates the rule's SQL at this engine's configured maximum subquery depth (R3) and, on
+    /// success, inserts the rule into the engine's rule map keyed by `rule.id.raw().to_string()`.
+    /// If a rule with the same ID already exists it will be overwritten, and the tasks tracked for
+    /// the previous version stop being renewed.
     ///
     /// On validation failure this returns `DetectionEngineError::SqlValidationError`.
     ///
@@ -67,12 +207,51 @@ impl DetectionEngine {
     /// // engine.load_rule(rule).unwrap();
     /// ```
     pub fn load_rule(&mut self, rule: DetectionRule) -> Result<(), DetectionEngineError> {
-        // Validate the rule before loading
-        rule.validate_sql()
-            .map_err(|e| DetectionEngineError::SqlValidationError(e.to_string()))?;
+        // Validate the rule before loading. A rejection is recorded with its structured cause
+        // intact (R4) before it is flattened into the engine's error type.
+        if let Err(error) = rule.validate_sql_with_depth(self.max_subquery_depth) {
+            let rule_id = rule.id.raw();
+            let message = error.to_string();
+            let reason = match error {
+                RuleError::SqlRejected(rejection) => RejectionReason::rule_sql(rule_id, rejection),
+                RuleError::RegexRejected(rejection) => {
+                    RejectionReason::rule_regex(rule_id, rejection)
+                }
+                RuleError::MissingField(_)
+                | RuleError::ValidationFailed(_)
+                | RuleError::RuleNotFound(_)
+                | RuleError::ExecutionFailed(_) => RejectionReason::rule_other(rule_id, &message),
+            };
+            self.rejections.record(reason);
+            return Err(DetectionEngineError::SqlValidationError(message));
+        }
 
-        self.rules.insert(rule.id.raw().to_owned(), rule);
+        let rule_id = rule.id.raw().to_owned();
+        let _previous = self.rules.insert(rule_id.clone(), rule);
+        // Task identifiers are derived from the rule, so a reload looks identical to the ledger and
+        // would keep renewing the superseded predicate for up to a full TTL. Drop the tracked tasks
+        // and let the next renewal cycle issue from the new plan.
+        self.tasks.forget_rule(&rule_id);
+
+        // R18: no rule is judged against an empty catalog. It waits, it is not dropped.
+        if self.catalog.is_empty() {
+            self.deferred.push(rule_id);
+            return Ok(());
+        }
+
+        if let Err(error) = self.plan_and_record(&rule_id) {
+            let message = error.to_string();
+            self.reject_rule(&rule_id, &message);
+            return Err(DetectionEngineError::PlanRejected(message));
+        }
         Ok(())
+    }
+
+    /// The rejections this engine has recorded, oldest first.
+    ///
+    /// The chain is in-memory and agent-side: the `audit_ledger` table is procmond's to write.
+    pub const fn rejection_log(&self) -> &RejectionLog {
+        &self.rejections
     }
 
     /// Execute all enabled rules against process data.
@@ -211,6 +390,66 @@ mod tests {
     async fn test_detection_engine_creation() {
         let engine = DetectionEngine::new();
         assert_eq!(engine.get_rules().len(), 0);
+    }
+
+    /// `levels` nested `IN (SELECT ...)` subqueries below one top-level SELECT.
+    fn nested_subqueries(levels: u32) -> String {
+        let mut sql = String::from("SELECT pid FROM processes");
+        for _level in 0..levels {
+            sql = format!("SELECT pid FROM processes WHERE pid IN ({sql})");
+        }
+        sql
+    }
+
+    fn nested_rule(levels: u32) -> DetectionRule {
+        DetectionRule::new(
+            "nested".to_owned(),
+            "Nested rule".to_owned(),
+            "Subquery depth fixture".to_owned(),
+            nested_subqueries(levels),
+            "test".to_owned(),
+            AlertSeverity::Low,
+        )
+    }
+
+    /// R3: the depth an operator configured is the depth `load_rule` enforces. No collector is
+    /// registered, so the rule defers after validation and the planner cannot confound the result.
+    #[tokio::test]
+    async fn a_configured_subquery_depth_changes_what_load_rule_accepts() {
+        const LEVELS: u32 = 2;
+
+        let mut default_engine = DetectionEngine::new();
+        assert!(
+            default_engine.load_rule(nested_rule(LEVELS)).is_ok(),
+            "the default depth of 3 accepts {LEVELS} nesting levels"
+        );
+
+        let mut shallow = DetectionEngine::with_config(&DetectionConfig {
+            max_subquery_depth: 1,
+            ..DetectionConfig::default()
+        });
+        let error = shallow
+            .load_rule(nested_rule(LEVELS))
+            .expect_err("a depth of 1 must reject a rule nested 2 deep");
+        assert!(
+            matches!(error, DetectionEngineError::SqlValidationError(_)),
+            "expected an SQL validation rejection, got {error:?}"
+        );
+        let last = shallow
+            .rejection_log()
+            .records()
+            .back()
+            .map(|record| record.reason.clone());
+        assert!(
+            matches!(
+                last,
+                Some(RejectionReason::RuleSql {
+                    rejection: SqlRejection::SubqueryTooDeep { depth, max_depth },
+                    ..
+                }) if depth == LEVELS && max_depth == 1
+            ),
+            "expected the depth gate to fire at the configured ceiling of 1, got {last:?}"
+        );
     }
 
     #[tokio::test]

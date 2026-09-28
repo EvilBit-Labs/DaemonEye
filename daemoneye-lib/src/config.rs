@@ -20,7 +20,7 @@ use tracing::{info, warn};
 use unidirs::Directories;
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
 /// Configuration loading and validation errors.
 #[derive(Debug, Error)]
@@ -52,6 +52,9 @@ pub struct Config {
     pub logging: LoggingConfig,
     /// `EventBus` broker configuration
     pub broker: BrokerConfig,
+    /// Detection rule-load configuration
+    #[serde(default)]
+    pub detection: DetectionConfig,
 }
 
 /// Application-specific configuration.
@@ -91,6 +94,64 @@ pub struct AlertingConfig {
     pub max_alerts_per_minute: Option<u32>,
     /// Threshold in seconds for considering an alert as recent
     pub recent_threshold_seconds: u64,
+}
+
+/// Detection rule-load configuration.
+///
+/// Only the two values the Product Contract declares tunable live here. Every other detection
+/// bound is a fixed constant in [`crate::detection_bounds`], because each of those backs a
+/// guarantee that would not survive being made configurable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DetectionConfig {
+    /// Maximum subquery nesting depth accepted in a detection rule.
+    ///
+    /// A rule nesting subqueries more deeply than this is rejected at load. Valid range is
+    /// [`DetectionConfig::MAX_SUBQUERY_DEPTH_MIN`] to
+    /// [`DetectionConfig::MAX_SUBQUERY_DEPTH_MAX`]; zero is rejected because it would reject
+    /// every rule containing a subquery at all.
+    pub max_subquery_depth: u32,
+    /// Per-pattern latency threshold in milliseconds.
+    ///
+    /// Reserved for T6 and **not enforced yet**: the threshold is validated and carried, but no
+    /// pattern latency is observed against it today. Once T6 lands, a `REGEXP` pattern observed to
+    /// exceed this disables the rule that owns it and marks that rule unhealthy. Valid range is
+    /// [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN`] to
+    /// [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX`]. Milliseconds are stored as an
+    /// integer so that [`Config`] can keep deriving [`Eq`].
+    pub pattern_latency_threshold_ms: u64,
+}
+
+impl DetectionConfig {
+    /// Smallest accepted subquery nesting depth. Zero would reject every subquery.
+    pub const MAX_SUBQUERY_DEPTH_MIN: u32 = 1;
+    /// Largest accepted subquery nesting depth, comfortably under
+    /// [`crate::detection_bounds::SQL_PARSER_RECURSION_LIMIT`].
+    pub const MAX_SUBQUERY_DEPTH_MAX: u32 = 16;
+    /// Smallest accepted per-pattern latency threshold. Below 1ms the threshold is finer than the
+    /// measurement it would be compared against.
+    pub const PATTERN_LATENCY_THRESHOLD_MS_MIN: u64 = 1;
+    /// Largest accepted per-pattern latency threshold. One minute is already far past the point
+    /// where a pattern should have disabled its rule.
+    pub const PATTERN_LATENCY_THRESHOLD_MS_MAX: u64 = 60_000;
+}
+
+impl Default for DetectionConfig {
+    /// Defaults are the values the requirements state: depth 3 and a 10ms latency threshold.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use daemoneye_lib::config::DetectionConfig;
+    /// let cfg = DetectionConfig::default();
+    /// assert_eq!(cfg.max_subquery_depth, 3);
+    /// assert_eq!(cfg.pattern_latency_threshold_ms, 10);
+    /// ```
+    fn default() -> Self {
+        Self {
+            max_subquery_depth: 3,
+            pattern_latency_threshold_ms: 10,
+        }
+    }
 }
 
 /// Individual alert sink configuration.
@@ -321,57 +382,34 @@ impl Default for BrokerConfig {
     }
 }
 
-/// Determines the default socket path with platform-specific fallbacks.
+/// Determines the default socket path.
 ///
 /// Uses `unidirs::ServiceDirs` to access the system-wide data directory for
 /// system-level components (daemoneye-agent and collectors). The socket is placed
 /// in the data directory rather than runtime directory for persistence across
 /// system restarts.
 ///
-/// Platform-specific paths (via `ServiceDirs` `data_dir`):
-/// - **Linux**: `/var/lib/evilbitlabs/daemoneye/daemoneye-eventbus.sock`
-/// - **macOS**: `/Library/Application Support/evilbitlabs/daemoneye/daemoneye-eventbus.sock`
+/// Platform-specific paths (via `ServiceDirs` `data_dir`, which ignores the organization on Unix):
+/// - **Unix** (Linux and macOS alike): `/var/lib/daemoneye/daemoneye-eventbus.sock`
 /// - **Windows**: Uses named pipes (`\\.\pipe\daemoneye-eventbus`) which don't
 ///   require directory paths
 ///
-/// The function validates path length against Unix domain socket limits
-/// (108 bytes including null terminator) and falls back to `/tmp/de.sock` if the
-/// computed path exceeds the limit.
+/// The returned path is not length-checked here, because [`Default`] cannot fail. A path that
+/// exceeds the Unix limit is refused at startup by [`BrokerConfig::ensure_socket_directory`]
+/// rather than relocated: the socket directory also holds collector spawn tokens, so silently
+/// moving it would move credentials somewhere the operator never nominated.
 ///
 /// # Platform Limitations
 ///
-/// - **Unix**: Paths must be ≤ 107 characters (108 including null terminator)
+/// - **Unix**: Paths must be ≤ 107 bytes (108 including the trailing NUL)
 /// - **Windows**: Named pipes are used (no path length concerns)
 fn default_socket_path() -> String {
     #[cfg(unix)]
     {
-        // Unix domain sockets have a 108-byte limit (including null terminator)
-        // We check against 107 to leave room for the null terminator
-        const UNIX_SOCKET_MAX_LEN: usize = 107;
-
         // Use ServiceDirs for system-wide data directory
         let service_dirs = unidirs::ServiceDirs::new("evilbitlabs", "daemoneye");
         let data_dir = service_dirs.data_dir();
-
-        // Build socket path
-        let socket_name = "daemoneye-eventbus.sock";
-        let socket_path = data_dir.join(socket_name);
-        let socket_path_str = socket_path.to_string();
-
-        if socket_path_str.len() <= UNIX_SOCKET_MAX_LEN {
-            socket_path_str
-        } else {
-            // Fallback to shorter path in /tmp
-            // Use a very short filename to ensure we stay under the limit
-            let short_path = "/tmp/de.sock".to_owned();
-            warn!(
-                original_path = %socket_path_str,
-                fallback_path = %short_path,
-                "Socket path exceeds Unix domain socket length limit ({} bytes), using fallback",
-                UNIX_SOCKET_MAX_LEN + 1
-            );
-            short_path
-        }
+        data_dir.join("daemoneye-eventbus.sock").to_string()
     }
 
     #[cfg(windows)]
@@ -407,8 +445,15 @@ impl BrokerConfig {
     ///
     /// # Errors
     ///
-    /// Returns an error if directory creation or permission setting fails.
+    /// Returns [`ConfigError::ValidationError`] when the configured path cannot fit a Unix domain
+    /// socket address, or an error if directory creation or permission setting fails.
     pub fn ensure_socket_directory(&self) -> anyhow::Result<std::path::PathBuf> {
+        // Refused rather than relocated: this directory also holds collector spawn tokens, so a
+        // fallback to a shorter shared path would put credentials somewhere the operator never
+        // chose. A `BrokerConfig::default()` never passes through `ConfigLoader::validate_config`,
+        // so the same check runs here, on the startup path every caller takes.
+        ConfigLoader::validate_socket_path(&self.socket_path)?;
+
         let socket_path = std::path::Path::new(&self.socket_path);
 
         #[cfg(windows)]
@@ -427,6 +472,20 @@ impl BrokerConfig {
             })?;
 
             if !parent_dir.exists() {
+                // Created owner-only by the create itself, so the directory is never briefly
+                // reachable. A directory this process made is ours to tighten.
+                #[cfg(unix)]
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(parent_dir)
+                    .with_context(|| {
+                        format!(
+                            "Failed to create socket directory: {}",
+                            parent_dir.display()
+                        )
+                    })?;
+                #[cfg(not(unix))]
                 std::fs::create_dir_all(parent_dir).with_context(|| {
                     format!(
                         "Failed to create socket directory: {}",
@@ -439,17 +498,39 @@ impl BrokerConfig {
                 );
             }
 
-            // Set restrictive permissions (owner read/write/execute only)
+            // A directory this process did not create is checked, never corrected. Chmodding one
+            // the agent found is how an earlier version came to run `chmod 700` on a shared path,
+            // and tightening someone else's directory is not this process's call to make.
+            //
+            // The check is on the group/other *write* bits, not on every group/other bit. Both
+            // attacks here need write on the parent: pre-creating the directory to own what lands
+            // in it, or replacing it with a symlink. Read or traverse access leaks directory
+            // names, and the credential itself lives in the `spawn-tokens` subdirectory, which its
+            // own store creates owner-only and verifies for owner and symlink separately. Refusing
+            // on the read bits would also refuse a legitimately shared data directory -- procmond
+            // creates it at 0o755 when it starts before the agent -- turning a deployment order
+            // into a startup failure for no security gain.
             #[cfg(unix)]
             {
-                use std::fs;
-                let perms = fs::Permissions::from_mode(0o700);
-                fs::set_permissions(parent_dir, perms).with_context(|| {
+                let metadata = std::fs::symlink_metadata(parent_dir).with_context(|| {
                     format!(
-                        "Failed to set permissions on socket directory: {}",
+                        "Failed to inspect socket directory: {}",
                         parent_dir.display()
                     )
                 })?;
+                anyhow::ensure!(
+                    !metadata.file_type().is_symlink(),
+                    "socket directory {} is a symlink; refusing to place a socket and collector \
+                     spawn tokens behind one",
+                    parent_dir.display()
+                );
+                let mode = metadata.permissions().mode() & 0o777;
+                anyhow::ensure!(
+                    mode & 0o022 == 0,
+                    "socket directory {} is group- or world-writable (mode {mode:#o}); refusing \
+                     rather than changing a directory this process did not create",
+                    parent_dir.display()
+                );
             };
 
             Ok(socket_path.to_path_buf())
@@ -660,7 +741,20 @@ impl ConfigLoader {
     }
 
     /// Validate the final configuration.
+    ///
+    /// Delegates to [`Config::validate`], which is the public seam callers outside this module
+    /// (including integration tests) use.
     fn validate_config(config: &Config) -> Result<(), ConfigError> {
+        config.validate()
+    }
+}
+
+impl Config {
+    /// Validate numeric ranges, path safety, and OS socket-path limits.
+    ///
+    /// Applied automatically by [`ConfigLoader::load`] after the TOML and environment layers have
+    /// been merged, so a value out of range is rejected from either source rather than clamped.
+    pub fn validate(&self) -> Result<(), ConfigError> {
         // --- Numeric range validation ---
 
         const SCAN_INTERVAL_MIN: u64 = 100;
@@ -669,6 +763,12 @@ impl ConfigLoader {
         const BATCH_SIZE_MAX: usize = 10_000;
         const RETENTION_DAYS_MIN: u32 = 1;
         const RETENTION_DAYS_MAX: u32 = 3_650;
+        const DEPTH_MIN: u32 = DetectionConfig::MAX_SUBQUERY_DEPTH_MIN;
+        const DEPTH_MAX: u32 = DetectionConfig::MAX_SUBQUERY_DEPTH_MAX;
+        const LATENCY_MIN: u64 = DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN;
+        const LATENCY_MAX: u64 = DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX;
+
+        let config = self;
 
         if config.app.scan_interval_ms < SCAN_INTERVAL_MIN
             || config.app.scan_interval_ms > SCAN_INTERVAL_MAX
@@ -701,20 +801,44 @@ impl ConfigLoader {
             });
         }
 
+        // --- Detection bounds validation ---
+
+        if config.detection.max_subquery_depth < DEPTH_MIN
+            || config.detection.max_subquery_depth > DEPTH_MAX
+        {
+            return Err(ConfigError::ValidationError {
+                message: format!(
+                    "detection.max_subquery_depth must be between {DEPTH_MIN} and {DEPTH_MAX}, got {}",
+                    config.detection.max_subquery_depth
+                ),
+            });
+        }
+
+        if config.detection.pattern_latency_threshold_ms < LATENCY_MIN
+            || config.detection.pattern_latency_threshold_ms > LATENCY_MAX
+        {
+            return Err(ConfigError::ValidationError {
+                message: format!(
+                    "detection.pattern_latency_threshold_ms must be between {LATENCY_MIN} and {LATENCY_MAX}, got {}",
+                    config.detection.pattern_latency_threshold_ms
+                ),
+            });
+        }
+
         // --- Path traversal validation ---
 
-        Self::validate_path_no_traversal(&config.database.path, "database.path")?;
-        Self::validate_path_no_traversal(
+        ConfigLoader::validate_path_no_traversal(&config.database.path, "database.path")?;
+        ConfigLoader::validate_path_no_traversal(
             &config.broker.config_directory,
             "broker.config_directory",
         )?;
 
         if let Some(ref log_file) = config.logging.file {
-            Self::validate_path_no_traversal(log_file, "logging.file")?;
+            ConfigLoader::validate_path_no_traversal(log_file, "logging.file")?;
         }
 
         for (collector_type, binary_path) in &config.broker.collector_binaries {
-            Self::validate_path_no_traversal(
+            ConfigLoader::validate_path_no_traversal(
                 binary_path,
                 &format!("broker.collector_binaries[{collector_type}]"),
             )?;
@@ -722,11 +846,13 @@ impl ConfigLoader {
 
         // --- Socket path validation ---
 
-        Self::validate_socket_path(&config.broker.socket_path)?;
+        ConfigLoader::validate_socket_path(&config.broker.socket_path)?;
 
         Ok(())
     }
+}
 
+impl ConfigLoader {
     /// Validate that a path does not contain `..` components (directory traversal).
     fn validate_path_no_traversal(path: &std::path::Path, field: &str) -> Result<(), ConfigError> {
         use std::path::Component;
@@ -771,7 +897,7 @@ impl ConfigLoader {
         if socket_path.len() > SOCKET_PATH_MAX_LEN {
             return Err(ConfigError::ValidationError {
                 message: format!(
-                    "broker.socket_path must not exceed {SOCKET_PATH_MAX_LEN} bytes (OS sun_path limit), got {}",
+                    "broker.socket_path must not exceed {SOCKET_PATH_MAX_LEN} bytes (OS sun_path limit), got {} bytes: {socket_path}",
                     socket_path.len()
                 ),
             });
@@ -826,6 +952,41 @@ mod tests {
     }
 
     // --- Numeric range validation tests ---
+
+    #[test]
+    fn test_validate_detection_subquery_depth_zero() {
+        let mut config = Config::default();
+        config.detection.max_subquery_depth = 0;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("detection.max_subquery_depth"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_detection_latency_threshold_above_maximum() {
+        let mut config = Config::default();
+        config.detection.pattern_latency_threshold_ms =
+            DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX + 1;
+        let result = ConfigLoader::validate_config(&config);
+        assert!(result.is_err());
+        let msg = format!("{}", result.expect_err("expected validation error"));
+        assert!(
+            msg.contains("detection.pattern_latency_threshold_ms"),
+            "error should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_detection_defaults_are_in_range() {
+        let config = Config::default();
+        assert_eq!(config.detection.max_subquery_depth, 3);
+        assert_eq!(config.detection.pattern_latency_threshold_ms, 10);
+        assert!(ConfigLoader::validate_config(&config).is_ok());
+    }
 
     #[test]
     fn test_validate_scan_interval_below_minimum() {
@@ -1754,6 +1915,64 @@ enabled = true
                 config.socket_path
             );
         }
+    }
+
+    /// The default must fit the platform limit on its own, now that no fallback rewrites it.
+    #[cfg(unix)]
+    #[test]
+    fn test_default_socket_path_fits_unix_limit() {
+        let config = BrokerConfig::default();
+
+        assert!(
+            ConfigLoader::validate_socket_path(&config.socket_path).is_ok(),
+            "default socket path must be usable without a fallback: {}",
+            config.socket_path
+        );
+    }
+
+    /// An over-long path is refused, not relocated to a shorter shared directory.
+    #[cfg(unix)]
+    #[test]
+    fn test_ensure_socket_directory_refuses_overlong_path() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let long_component = "a".repeat(107);
+        let socket_path = temp_dir
+            .path()
+            .join(long_component)
+            .join("broker.sock")
+            .to_string_lossy()
+            .to_string();
+        let config = BrokerConfig {
+            socket_path: socket_path.clone(),
+            ..Default::default()
+        };
+
+        let error = config
+            .ensure_socket_directory()
+            .expect_err("over-long socket path must be refused");
+
+        let message = error.to_string();
+        assert!(
+            matches!(
+                error.downcast_ref::<ConfigError>(),
+                Some(ConfigError::ValidationError { .. })
+            ),
+            "expected a validation error, got: {message}"
+        );
+        assert!(
+            message.contains("107"),
+            "message must name the limit: {message}"
+        );
+        assert!(
+            message.contains(&socket_path),
+            "message must name the offending path: {message}"
+        );
+        assert!(
+            !std::path::Path::new(&socket_path)
+                .parent()
+                .is_some_and(std::path::Path::exists),
+            "refusal must not create the socket directory"
+        );
     }
 
     // ============================================================================

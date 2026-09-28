@@ -6,7 +6,8 @@
 
 **In:**
 
-- Per-collector redb `TableProvider`s with filter/projection pushdown into scans/indexes; locked-down `SessionContext` (function allowlist, memory pool, cardinality caps; aggregations require time windows); derived-SQL only.
+- Per-collector redb `TableProvider`s with filter/projection pushdown into scans/indexes; locked-down `SessionContext` (function allowlist, memory pool, cardinality caps); derived-SQL only.
+- Windowed aggregation. Aggregates are refused at rule load today: `avg`/`count`/`max`/`min`/`sum` are absent from `ALLOWED_SQL_FUNCTIONS` and `GROUP BY`/`HAVING` are refused by the clause gate, because no planner can lower an aggregate into a pushed half plus a residual (R17). Three things change together — the allowlist (`daemoneye-lib/src/detection/allowlist.rs`), the clause gate (`daemoneye-lib/src/detection/sql_validation.rs`), and a planner that can represent a windowed aggregate instead of flattening `count(pid)` to `pid`. Aggregations then require explicit time windows.
 - Detection storage wiring (T7.5) on the T3 layout.
 - Degradation/completeness (R20/R21): `Completeness { status, reasons[] }`, collector-disconnect handling, `(task_id, seq_no)` replay dedup + grace period, shed counting, seq-no recovery.
 - Agent integration: extract `DetectionEngine` trait, replace placeholder in file:daemoneye-lib/src/detection/mod.rs, wire `ResilientIpcClient` + `BrokerManager` capability negotiation into the agent loop.

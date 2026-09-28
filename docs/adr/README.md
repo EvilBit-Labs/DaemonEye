@@ -10,9 +10,11 @@ This directory continues that sequence rather than restarting it, so an ADR numb
 
 ## Index
 
-| ADR                                              | Title                                                                | Status   | Date       |
-| ------------------------------------------------ | -------------------------------------------------------------------- | -------- | ---------- |
-| 0001–0005                                        | *(Confluence ES space)*                                              | —        | —          |
-| 0006                                             | Apache DataFusion over redb `TableProvider`s *(Confluence ES space)* | accepted | —          |
-| 0007                                             | *(Confluence ES space)*                                              | —        | —          |
-| [0008](0008-bucket-at-a-time-detection-reads.md) | Read detection windows bucket-at-a-time                              | accepted | 2026-09-20 |
+| ADR                                                                    | Title                                                                | Status   | Date       |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------- | -------- | ---------- |
+| 0001–0005                                                              | *(Confluence ES space)*                                              | —        | —          |
+| 0006                                                                   | Apache DataFusion over redb `TableProvider`s *(Confluence ES space)* | accepted | —          |
+| 0007                                                                   | *(Confluence ES space)*                                              | —        | —          |
+| [0008](0008-bucket-at-a-time-detection-reads.md)                       | Read detection windows bucket-at-a-time                              | accepted | 2026-09-20 |
+| [0009](0009-refuse-rules-the-planner-cannot-lower.md)                  | Refuse a rule the planner cannot lower                               | accepted | 2026-09-27 |
+| [0010](0010-reserved-table-names-bind-to-an-authenticated-identity.md) | Reserved table names bind to an authenticated collector identity     | accepted | 2026-09-27 |

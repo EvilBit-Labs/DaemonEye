@@ -254,24 +254,21 @@ All collectors MUST implement regex pattern matching with the following specific
 
 **Default Configuration:**
 
-- **Per-Pattern Latency:** 10ms (configurable via `regex.max_pattern_latency_ms`)
-- **Compilation Timeout:** 100ms (configurable via `regex.compilation_timeout_ms`)
-- **Memory Limit:** 1MB per pattern (configurable via `regex.max_memory_per_pattern`)
+- **Per-Pattern Latency:** 10ms default (configurable via `detection.pattern_latency_threshold_ms`; validated and carried at config load, not yet enforced against observed pattern execution)
+- **Compilation Timeout:** Not configurable — no config field exists for it. A linear-time engine bounds compilation by program size rather than by wall clock, so there is no timeout to set and no way to interrupt a build in progress; the enforced bound is the fixed per-pattern compiled-program size limit described under Memory Limit below.
+- **Memory Limit:** 256KiB of compiled program per pattern against a 64-entry compiled-pattern cache, plus a 256KiB per-search lazy-DFA cache ceiling — these three are **fixed constants, not configuration**: `REGEX_SIZE_LIMIT_BYTES`, `REGEX_CACHE_MAX_ENTRIES`, and `REGEX_DFA_SIZE_LIMIT_BYTES` in `daemoneye-lib/src/detection_bounds.rs`, which is their authority
+
+The per-pattern limit and the 64-entry cache count are a single decision, not two. A compiled pattern's memory cannot be read back at runtime, so their product — 16MiB of compiled programs here — is the only ceiling that can be enforced at all, and it must fit inside the process-wide resident budget. Raising either without lowering the other raises the real ceiling, which is why neither is configurable: the proof holds only while both values are fixed. A `dfa_size_limit` of 256KiB is set as well, but it does **not** join that product: it is a per-cache ceiling on a lazily filled cache, not a per-pattern reservation. Those caches are pooled and handed back for reuse rather than freed when a search ends, so they are retained memory, and how many are live grows with the number of concurrent searches — there is no fixed multiplicand and no honest total to quote. Treat both figures as configured ceilings on growth rather than as a measured resident set: `size_limit` is what the crate itself calls an approximate limit, so even the 16MiB product is a configuration product and not a proof. That second limit is also **never a rejection condition** — the DFA cache resets and falls back to a slower engine when full rather than failing — so only the compiled-program limit can reject a pattern. 256KiB leaves roughly five times the headroom a Unicode-aware `\w` needs; patterns that only ever match ASCII can shrink far below it with `(?-u:...)`.
 
 **Configuration Example:**
 
 ```yaml
 detection:
-  regex:
-    max_pattern_latency_ms: 10        # Per-pattern execution timeout
-    compilation_timeout_ms: 100        # Pattern compilation timeout
-    max_memory_per_pattern: 1048576    # 1MB memory limit per pattern
-    enable_precompilation: true        # Pre-compile patterns at startup
-    cache_size: 1000                   # Maximum cached patterns
-    monitoring:
-      enable_metrics: true             # Track pattern performance
-      alert_threshold_ms: 5            # Alert when patterns exceed threshold
+  # Validated and carried at config load; no pattern latency is observed against it yet.
+  pattern_latency_threshold_ms: 10
 ```
+
+There is no `detection.regex` section. The memory bounds above are fixed constants rather than configuration, and the remaining knobs an earlier draft of this example showed — `compilation_timeout_ms`, `enable_precompilation` and a `monitoring` block — have no backing field. Nothing rejects unknown keys, so a config naming them parses and is silently discarded; they are listed here only so a reader who has seen them knows they do nothing.
 
 #### Pattern Complexity Guidelines
 
@@ -279,22 +276,23 @@ detection:
 
 - **Simple Patterns:** Basic literals, character classes, and quantifiers (`*`, `+`, `?`)
 - **Moderate Patterns:** Alternation with limited branches (`(a|b|c)`)
-- **Complex Patterns:** Backreferences, lookahead/lookbehind (with execution limits)
+- **Complex Patterns:** Bounded repetition, nested groups, and Unicode classes
+
+**Unsupported:** backreferences and lookaround. A linear-time engine cannot express them, so a rule using either is rejected at load rather than degraded.
 
 **Performance Optimization Strategies:**
 
 1. **Pre-compilation:** Compile all patterns at startup to avoid runtime compilation overhead
 2. **Safe Regex Engines:** Use RE2-like engines with guaranteed linear time complexity
-3. **Backtrack Limits:** Implement backtrack limits to prevent catastrophic backtracking
+3. **Backtrack Limits:** Not applicable to a linear-time engine — catastrophic backtracking is impossible by construction rather than bounded after the fact
 4. **Pattern Validation:** Reject patterns with exponential complexity characteristics
 5. **Compilation Caching:** Cache compiled patterns with LRU eviction policy
 
 **Pattern Rejection Criteria:**
 
-- Patterns exceeding compilation timeout
 - Patterns requiring excessive memory allocation
-- Patterns with exponential backtracking potential
-- Patterns with nested quantifiers beyond safe limits
+- Patterns using backreferences or lookaround, which the engine cannot compile
+- Patterns whose compiled program exceeds the per-pattern memory limit
 
 **Monitoring and Metrics:**
 
@@ -1847,8 +1845,8 @@ We use the **SQLite dialect** as implemented in `sqlparser`. Reasons:
 ### 11.2 Constraints
 
 - **Allowed Statements:** `SELECT` only.
-- **Banned Functions:** A curated list disallowed at AST validation (e.g., `load_extension`, `readfile`, `system`, `random`, `printf`).
-- **Allowed Functions:** Basic aggregations, string ops (`substr`, `length`, `instr`, `hex`), date/time helpers.
+- **Allowed Functions:** the `ALLOWED_SQL_FUNCTIONS` allowlist in `daemoneye-lib/src/detection/allowlist.rs` — `hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`. Membership is the control, so anything absent (`load_extension`, `readfile`, `system`, `random`, `printf`, …) is refused at rule load and there is no companion denylist to consult. `substr`, `cast`, `trim`, `position`, `extract`, `ceil` and `floor` parse into dedicated AST nodes and never reach the function gate.
+- **Aggregates:** refused at rule load. `avg`, `count`, `max`, `min` and `sum` are absent from the allowlist because the planner cannot compute an aggregate — a projected `count(pid)` would lower to the bare column `pid`, returning rows where a count was asked for — and `GROUP BY`/`HAVING` are refused by the clause gate for the same reason (R17: a rule that cannot be lowered is rejected, with no fallback). Windowed aggregation is T6 work; see §13.5.
 - **Security:** AST validation enforces constraints before execution.
 
 ---
@@ -1906,6 +1904,8 @@ WHERE f.path REGEXP '^/tmp/.*\.(exe|bat|cmd|ps1)$'  -- Executables in temp
 ```
 
 ### 13.5 Aggregation / Rare Events (pipeline-only logic)
+
+> Not loadable today: aggregates and `GROUP BY`/`HAVING` are refused at rule load (§11.2). This is the target shape for the T6 execution engine, not current behavior.
 
 ```sql
 SELECT name, COUNT(*) AS launches

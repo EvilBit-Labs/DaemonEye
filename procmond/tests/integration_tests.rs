@@ -81,6 +81,7 @@ fn create_test_config() -> ProcessSourceConfig {
         max_backpressure_wait: Duration::from_secs(1),
         event_batch_size: 5,
         batch_timeout: Duration::from_millis(500),
+        collector_id: "procmond".to_owned(),
     }
 }
 

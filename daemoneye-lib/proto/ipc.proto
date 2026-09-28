@@ -52,6 +52,10 @@ message DetectionTask {
   optional FilesystemFilter filesystem_filter = 7;
   /// Optional performance filtering criteria (future: perfmond)
   optional PerformanceFilter performance_filter = 8;
+  /// Optional typed pushdown plan for this task (R13). Carries the predicate
+  /// conjunction, the projection list, and the task TTL (R16) as one unit, so
+  /// a plan and the lifetime it was issued under cannot drift apart.
+  optional PushdownPlan pushdown_plan = 9;
 }
 
 /// Detection result returned from collector-core components to daemoneye-agent
