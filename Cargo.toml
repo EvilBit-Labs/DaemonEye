@@ -96,7 +96,7 @@ libc = "=0.2.189"
 # Exact-pinned per AGENTS.md "Pin security-critical deps" — KTD6 selects this
 # crate specifically because its eviction policy is *strict* LRU, which R6
 # requires; a silent upstream policy change would dissolve that guarantee.
-lru = { version = "=0.18.4", default-features = false }
+lru = { version = "=0.18.5", default-features = false }
 parking_lot = "0.12.5"
 
 # Serialization
