@@ -187,7 +187,13 @@ impl RuleHealthRegistry {
     /// keeps recovering it exactly as before, and the latency guard, with
     /// [`UnhealthyCause::LatencyBreach`] so re-validation may not (R8, KTD6).
     ///
-    /// A tracked rule has its health overwritten in place.
+    /// A tracked rule has its health overwritten in place, except that a cause which resists
+    /// auto-recovery is never replaced by one that does not. Without that, a later
+    /// `mark_unhealthy(.., TaskExpiry)` on a latency-breached rule would downgrade the verdict to
+    /// a recoverable one and the next [`Self::revalidate`] would clear it — laundering the breach
+    /// through the one health writer the surrounding policy does not otherwise reach. Today the
+    /// statement order in `renewal_cycle` happens to prevent that call, which is not a guarantee
+    /// worth resting on.
     ///
     /// An **untracked** rule is inserted only when `cause.resists_auto_recovery()` is `true`.
     /// Such a cause is never laundered back to healthy by [`Self::track`] or [`Self::revalidate`],
@@ -199,6 +205,15 @@ impl RuleHealthRegistry {
     /// returned instead.
     pub fn mark_unhealthy(&mut self, rule_id: &str, reason: &str, cause: UnhealthyCause) -> bool {
         if let Some(rule) = self.rules.get_mut(rule_id) {
+            if !cause.resists_auto_recovery()
+                && matches!(
+                    rule.health,
+                    RuleHealth::Unhealthy { cause: held, .. } if held.resists_auto_recovery()
+                )
+            {
+                // The rule is already unhealthy for a stronger reason; keep it.
+                return true;
+            }
             rule.health = RuleHealth::Unhealthy {
                 reason: reason.to_owned(),
                 cause,

@@ -156,12 +156,33 @@ fn a_breaching_observation_disables_the_rule_removes_its_plan_and_stops_its_task
 
     let cycle = engine.renewal_cycle(start + PUSHDOWN_TASK_RENEWAL_INTERVAL);
     assert!(
-        cycle.expired_rules().is_empty(),
+        cycle.due().is_empty(),
+        "no task is issued for a disabled rule"
+    );
+
+    // Run past the TTL, not just the renewal interval. At the renewal interval nothing could be
+    // reported expired whatever the disable did, so asserting an empty expiry set there proves
+    // nothing. Past the TTL the expiry path is genuinely live, and this pins two things: the rule
+    // never re-enters the coverable set, and — should it ever be reported expired — the breach
+    // verdict is not downgraded to the recoverable `TaskExpiry` cause, which `revalidate` would
+    // then clear. Today `renewal_cycle` prunes uncovered rules before expiring them, so the
+    // downgrade call is not reachable; that is statement order, not policy, and this asserts the
+    // outcome either way.
+    let expired = engine.renewal_cycle(start + PUSHDOWN_TASK_TTL);
+    assert!(
+        expired.expired_rules().is_empty(),
         "a rule the latency guard disabled was never covered, so it cannot be reported expired"
     );
     assert!(
-        cycle.due().is_empty(),
-        "no task is issued for a disabled rule"
+        matches!(
+            engine.rule_health("rule-1"),
+            Some(&RuleHealth::Unhealthy {
+                cause: UnhealthyCause::LatencyBreach,
+                ..
+            })
+        ),
+        "the breach verdict must survive the expiry path: {:?}",
+        engine.rule_health("rule-1")
     );
 
     assert!(
