@@ -2,13 +2,23 @@
 //! (R15, R22).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::collections::BTreeSet;
+
 use daemoneye_lib::detection::RegexCache;
 use daemoneye_lib::detection::catalog::{SchemaCatalog, VerifiedRegistration, verify_spawn_token};
 use daemoneye_lib::detection::planner::plan_rule;
 use daemoneye_lib::models::{AlertSeverity, DetectionRule};
+use daemoneye_lib::proto::literal::Value as LiteralValue;
 use daemoneye_lib::proto::{
     ColumnDescriptor, ColumnType, ConformanceResult, PredicateOp, SchemaDescriptor, TableDescriptor,
 };
+
+// `support` is shared with `detection_planner.rs`, which already allows `indexing_slicing`
+// crate-wide because it owns this same module. Scoping the allow to the module declaration here
+// keeps every new property test in this file subject to the lint, and only covers indexing that
+// is already load-bearing, pre-existing behaviour in `support::render`.
+#[allow(clippy::indexing_slicing)]
+mod support;
 
 fn token() -> String {
     "a".repeat(64)
@@ -302,4 +312,260 @@ fn a_descriptor_version_bump_drops_stale_passes_even_when_no_column_name_changed
         !catalog.is_pushable("processes", "name", PredicateOp::Eq),
         "a pass produced against v1 must not survive into v2"
     );
+}
+
+// --- Property gate: planner fallback for a generated conformance-passed set (R6) ------------
+
+/// The comparison operators a generated leaf may use, in the order its index selects from.
+const PROPERTY_OPS_TEXT: [&str; 6] = ["=", "!=", "<", "<=", ">", ">="];
+
+/// [`PROPERTY_OPS_TEXT`]'s operators as the enum the catalog and plan speak in.
+const PROPERTY_OPS: [PredicateOp; 6] = [
+    PredicateOp::Eq,
+    PredicateOp::Ne,
+    PredicateOp::Lt,
+    PredicateOp::Le,
+    PredicateOp::Gt,
+    PredicateOp::Ge,
+];
+
+/// A descriptor advertising every [`support::PROPERTY_COLUMNS`] column for every
+/// [`PROPERTY_OPS`] operation, mirroring `int_column` in `detection_planner.rs`.
+fn property_int_column(name: &str) -> ColumnDescriptor {
+    ColumnDescriptor {
+        name: name.to_owned(),
+        column_type: i32::from(ColumnType::Int),
+        nullable: false,
+        supported_ops: PROPERTY_OPS.iter().copied().map(i32::from).collect(),
+    }
+}
+
+/// A catalog advertising every property column and operation, with conformance passed only for
+/// the `(column, op)` pairs named in `passed` — the fallback case `property_catalog` in
+/// `detection_planner.rs` does not exercise, since that one passes everything.
+fn property_catalog(passed: &BTreeSet<(usize, usize)>) -> SchemaCatalog {
+    let mut catalog = SchemaCatalog::new();
+    let columns = support::PROPERTY_COLUMNS
+        .iter()
+        .map(|name| property_int_column(name))
+        .collect();
+    catalog
+        .register(
+            &verified("procmond"),
+            SchemaDescriptor {
+                collector_id: "procmond".to_owned(),
+                descriptor_version: "v1".to_owned(),
+                tables: vec![TableDescriptor {
+                    name: "processes".to_owned(),
+                    columns,
+                }],
+                conformance_results: Vec::new(),
+            },
+        )
+        .unwrap();
+    for &(column, op_index) in passed {
+        let column_name = support::PROPERTY_COLUMNS
+            .get(column)
+            .copied()
+            .expect("column index is drawn from 0..PROPERTY_COLUMNS.len()");
+        let op = PROPERTY_OPS
+            .get(op_index)
+            .copied()
+            .expect("op index is drawn from 0..PROPERTY_OPS.len()");
+        catalog.record_conformance_pass("procmond", "processes", column_name, op);
+    }
+    catalog
+}
+
+/// The planner pushes exactly the conjuncts whose `(column, op)` passed conformance, keeps every
+/// other conjunct in the residual, and the pushed-then-residual split loses no row over the
+/// fixture — the same row-equivalence idiom as `detection_planner.rs:565-585`, replayed here with
+/// a generated conformance-passed set standing in for the all-passed catalog.
+#[test]
+fn planner_pushes_exactly_the_conjuncts_whose_operation_conformance_passed() {
+    use proptest::prelude::*;
+    use support::{Pred, eval_sql_predicate, pushed_admits, render, rows_fixture};
+
+    let cache = RegexCache::new();
+    let rows = rows_fixture();
+
+    proptest!(|(
+        passed in prop::collection::btree_set(
+            (0..support::PROPERTY_COLUMNS.len(), 0..PROPERTY_OPS.len()),
+            0..=24_usize,
+        ),
+        leaves in prop::collection::vec(
+            (0..support::PROPERTY_COLUMNS.len(), 0..PROPERTY_OPS.len(), 0..4_i64),
+            1..=6,
+        ),
+    )| {
+        let catalog = property_catalog(&passed);
+
+        let where_sql = leaves
+            .iter()
+            .map(|&(column, op_index, value)| {
+                let op = PROPERTY_OPS_TEXT
+                    .get(op_index)
+                    .copied()
+                    .expect("op index is drawn from 0..PROPERTY_OPS_TEXT.len()");
+                render(&Pred::Cmp { column, op, value })
+            })
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let sql = format!("SELECT a FROM processes WHERE {where_sql}");
+        let compiled = plan_rule(&catalog, &cache, &rule(&sql), 3).unwrap();
+
+        let pushed: BTreeSet<(usize, i32, i64)> = compiled
+            .plan()
+            .predicates
+            .iter()
+            .map(|predicate| {
+                let column = support::PROPERTY_COLUMNS
+                    .iter()
+                    .position(|&name| name == predicate.column)
+                    .expect("a pushed predicate must read one of the property columns");
+                let value = match predicate
+                    .values
+                    .first()
+                    .and_then(|literal| literal.value.clone())
+                {
+                    Some(LiteralValue::IntValue(value)) => value,
+                    ref other => panic!("expected an integer literal, got {other:?}"),
+                };
+                (column, predicate.op, value)
+            })
+            .collect();
+
+        let expected: BTreeSet<(usize, i32, i64)> = leaves
+            .iter()
+            .filter(|&&(column, op_index, _value)| passed.contains(&(column, op_index)))
+            .map(|&(column, op_index, value)| {
+                let op = PROPERTY_OPS
+                    .get(op_index)
+                    .copied()
+                    .expect("op index is drawn from 0..PROPERTY_OPS.len()");
+                (column, i32::from(op), value)
+            })
+            .collect();
+
+        prop_assert_eq!(pushed, expected, "the pushed set must be exactly the passed leaves");
+
+        let every_leaf_passed = leaves
+            .iter()
+            .all(|&(column, op_index, _value)| passed.contains(&(column, op_index)));
+        prop_assert_eq!(
+            compiled.residual().is_none(),
+            every_leaf_passed,
+            "residual is empty iff every leaf's operation conformance-passed"
+        );
+
+        let whole: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|&(_index, row)| eval_sql_predicate(&where_sql, row))
+            .map(|(index, _row)| index)
+            .collect();
+
+        let projection = &compiled.plan().projection;
+        let split: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|&(_index, row)| pushed_admits(compiled.plan(), row))
+            .map(|(index, row)| (index, row.project(projection)))
+            .filter(|&(_index, ref row)| {
+                compiled
+                    .residual()
+                    .is_none_or(|residual| eval_sql_predicate(residual, row))
+            })
+            .map(|(index, _row)| index)
+            .collect();
+
+        prop_assert_eq!(
+            whole,
+            split,
+            "predicate {:?} lost or gained rows; plan {:?} residual {:?}",
+            where_sql,
+            compiled.plan(),
+            compiled.residual()
+        );
+    });
+}
+
+// --- Property gate: the corpus itself, for any applicable (column_type, nullable, op) (R6) ---
+
+/// For any corpus case of any applicable operation, a probe that disagrees on exactly that one
+/// case fails the operation, and a probe that merely cannot represent it does not.
+#[test]
+fn a_probe_disagreeing_on_one_case_fails_and_one_that_only_skips_it_does_not() {
+    use proptest::prelude::*;
+
+    let column_types = [
+        ColumnType::String,
+        ColumnType::Int,
+        ColumnType::Uint,
+        ColumnType::Float,
+        ColumnType::Bool,
+    ];
+    let predicate_ops = [
+        PredicateOp::Eq,
+        PredicateOp::Ne,
+        PredicateOp::Lt,
+        PredicateOp::Le,
+        PredicateOp::Gt,
+        PredicateOp::Ge,
+        PredicateOp::In,
+        PredicateOp::Like,
+        PredicateOp::Regexp,
+    ];
+
+    let strategy = (
+        prop::sample::select(column_types.to_vec()),
+        any::<bool>(),
+        prop::sample::select(predicate_ops.to_vec()),
+    )
+        .prop_filter(
+            "the combination must have at least one applicable corpus case",
+            |&(column_type, nullable, op)| cases_for(column_type, nullable, op).count() > 0,
+        )
+        .prop_flat_map(|(column_type, nullable, op)| {
+            let count = cases_for(column_type, nullable, op).count();
+            (Just(column_type), Just(nullable), Just(op), 0..count)
+        });
+
+    proptest!(|((column_type, nullable, op, index) in strategy)| {
+        let count = cases_for(column_type, nullable, op).count();
+        let target = cases_for(column_type, nullable, op)
+            .nth(index)
+            .expect("index is drawn from 0..count so a case exists at it");
+
+        let disagree_at_target = |case: &ConformanceCase| -> Option<ConformanceOutcome> {
+            if std::ptr::eq(case, target) {
+                let reference = reference_outcome(case);
+                Some(if reference == ConformanceOutcome::Admits {
+                    ConformanceOutcome::Excludes
+                } else {
+                    ConformanceOutcome::Admits
+                })
+            } else {
+                Some(reference_outcome(case))
+            }
+        };
+        prop_assert!(
+            !verify_operation(column_type, nullable, op, disagree_at_target),
+            "a probe disagreeing on one case must fail the operation"
+        );
+
+        let skip_target = |case: &ConformanceCase| -> Option<ConformanceOutcome> {
+            if std::ptr::eq(case, target) {
+                None
+            } else {
+                Some(reference_outcome(case))
+            }
+        };
+        prop_assert_eq!(
+            verify_operation(column_type, nullable, op, skip_target),
+            count > 1,
+            "skipping the only case must not pass; skipping one of several others must"
+        );
+    });
 }
