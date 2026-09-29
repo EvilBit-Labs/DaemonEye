@@ -24,6 +24,24 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::catalog::{CatalogChange, SchemaCatalog};
 
+/// Which mechanism disabled a rule, so [`RuleHealthRegistry::revalidate`] knows whether catalog
+/// re-validation has any standing to clear it (R8, KTD6).
+///
+/// Catalog re-validation is evidence about the schema; it says nothing about a pattern's observed
+/// execution cost. So it may re-heal [`Self::Reference`] — that is exactly the evidence it
+/// produces — but never [`Self::LatencyBreach`], which only [`super::DetectionEngine::load_rule`]
+/// may clear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnhealthyCause {
+    /// A reference the rule makes no longer resolves against the catalog. Also used for the
+    /// pushed-task-expiry path, which shares this recovery: re-validation restoring the reference
+    /// is what re-heals it.
+    Reference,
+    /// A measured pattern execution exceeded the configured latency budget (R3, R8).
+    LatencyBreach,
+}
+
 /// Whether a rule can still be planned against the current catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -33,10 +51,12 @@ pub enum RuleHealth {
     Unknown,
     /// Every reference the rule makes resolves.
     Healthy,
-    /// A reference the rule makes no longer resolves; the rule is kept, not dropped.
+    /// The rule is kept, not dropped, but is not currently plannable.
     Unhealthy {
-        /// The specific reference that stopped resolving.
+        /// Why the rule is unhealthy, as an operator reads it.
         reason: String,
+        /// Which mechanism disabled it, so re-validation knows whether it may clear this.
+        cause: UnhealthyCause,
     },
 }
 
@@ -126,20 +146,21 @@ impl RuleHealthRegistry {
 
     /// Mark a tracked rule unhealthy for a reason no catalog re-validation could find (R12).
     ///
-    /// The one caller today is pushed-task expiry: a rule whose task lapsed while it was still
-    /// enabled has lost its pushed half, which is a health fact about the rule and belongs with
-    /// every other one rather than in a second notion of health beside it.
+    /// Callers today are pushed-task expiry, with [`UnhealthyCause::Reference`] so re-validation
+    /// keeps recovering it exactly as before, and the latency guard, with
+    /// [`UnhealthyCause::LatencyBreach`] so re-validation may not (R8, KTD6).
     ///
     /// An untracked rule is **not** inserted, and `false` is returned. Inserting would create a
     /// rule with no references, which the next [`Self::revalidate`] would launder back to
     /// [`RuleHealth::Healthy`] without checking anything. Every rule that owns a task went through
     /// [`Self::track`] when it was planned, so the untracked case does not arise on the live path.
-    pub fn mark_unhealthy(&mut self, rule_id: &str, reason: &str) -> bool {
+    pub fn mark_unhealthy(&mut self, rule_id: &str, reason: &str, cause: UnhealthyCause) -> bool {
         let Some(rule) = self.rules.get_mut(rule_id) else {
             return false;
         };
         rule.health = RuleHealth::Unhealthy {
             reason: reason.to_owned(),
+            cause,
         };
         true
     }
@@ -156,7 +177,7 @@ impl RuleHealthRegistry {
         self.rules
             .iter()
             .filter_map(|(rule_id, rule)| {
-                if let RuleHealth::Unhealthy { ref reason } = rule.health {
+                if let RuleHealth::Unhealthy { ref reason, .. } = rule.health {
                     return Some((rule_id.as_str(), reason.as_str()));
                 }
                 None
@@ -169,6 +190,12 @@ impl RuleHealthRegistry {
     /// A rule is revisited when the registration was a first registration — which widens the
     /// catalog, so a rule that was waiting on an empty one must now be judged — or when it reads a
     /// table the registration altered.
+    ///
+    /// A rule the latency guard disabled ([`UnhealthyCause::LatencyBreach`]) is skipped
+    /// unconditionally, before either of those checks: re-validation is evidence about the
+    /// catalog, not about a pattern's cost, so it has no standing to re-heal it or to queue it for
+    /// re-planning (R8, KTD6). A rule unhealthy for [`UnhealthyCause::Reference`] — including one
+    /// pushed-task expiry marked — keeps the blanket re-heal below unchanged.
     pub fn revalidate(&mut self, catalog: &SchemaCatalog, change: &CatalogChange) -> ReplanOutcome {
         let mut outcome = ReplanOutcome::default();
         if change.is_empty() {
@@ -176,12 +203,24 @@ impl RuleHealthRegistry {
         }
 
         for (rule_id, rule) in &mut self.rules {
+            if matches!(
+                rule.health,
+                RuleHealth::Unhealthy {
+                    cause: UnhealthyCause::LatencyBreach,
+                    ..
+                }
+            ) {
+                continue;
+            }
             if !change.is_first_registration() && !touches(rule, change) {
                 continue;
             }
             let was_unhealthy = matches!(rule.health, RuleHealth::Unhealthy { .. });
             if let Some(reason) = first_unresolved(catalog, rule) {
-                rule.health = RuleHealth::Unhealthy { reason };
+                rule.health = RuleHealth::Unhealthy {
+                    reason,
+                    cause: UnhealthyCause::Reference,
+                };
                 if !was_unhealthy {
                     outcome.newly_unhealthy.push(rule_id.clone());
                 }

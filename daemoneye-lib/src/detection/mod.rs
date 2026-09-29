@@ -6,6 +6,7 @@
 pub mod allowlist;
 pub mod catalog;
 pub mod conformance;
+pub mod pattern_latency;
 pub mod planner;
 pub mod regex_cache;
 pub mod rejection;
@@ -20,6 +21,7 @@ use crate::models::{Alert, DetectionRule, ProcessRecord, RuleError};
 use crate::proto::SchemaDescriptor;
 use crate::rejection_log::{RejectionLog, RejectionReason};
 use std::collections::HashMap;
+use std::time::Duration;
 use thiserror::Error;
 
 pub use allowlist::{ALLOWED_SQL_FUNCTIONS, is_allowed_sql_function};
@@ -68,6 +70,9 @@ pub struct DetectionEngine {
     /// Live pushdown tasks and when each was last confirmed on its collector (R16).
     tasks: TaskRenewalLedger,
     max_subquery_depth: u32,
+    /// The operator's configured per-pattern latency budget; enforced by
+    /// [`DetectionEngine::observe_pattern_latency`] (R2, R3).
+    pattern_latency_threshold: Duration,
     rejections: RejectionLog,
     #[allow(dead_code)]
     max_execution_time_ms: u64,
@@ -96,6 +101,7 @@ impl DetectionEngine {
             patterns: RegexCache::new(),
             tasks: TaskRenewalLedger::new(),
             max_subquery_depth: config.max_subquery_depth,
+            pattern_latency_threshold: Duration::from_millis(config.pattern_latency_threshold_ms),
             rejections: RejectionLog::new(),
             max_execution_time_ms: 30000, // 30 seconds
             max_memory_mb: 100,           // 100 MB
@@ -106,6 +112,14 @@ impl DetectionEngine {
     #[must_use]
     pub const fn catalog(&self) -> &SchemaCatalog {
         &self.catalog
+    }
+
+    /// This engine's configured per-pattern latency budget (R2).
+    ///
+    /// [`DetectionEngine::observe_pattern_latency`] is the consequence enforced against it.
+    #[must_use]
+    pub const fn pattern_latency_threshold(&self) -> Duration {
+        self.pattern_latency_threshold
     }
 
     /// The compiled plan for a rule, if the rule is in the enabled set.

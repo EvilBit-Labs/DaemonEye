@@ -1,0 +1,321 @@
+//! The latency threshold's fail-closed consequence (R2, R3, R8).
+//!
+//! `DetectionEngine::observe_pattern_latency` is the entry point T6 will call with an
+//! already-measured [`Duration`]. This file proves the consequence side of that contract without
+//! T6's executor: a breach disables the owning rule in one unconditional pass, and only
+//! `load_rule` — never `set_rule_enabled(true)` nor a collector registering — restores it.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
+use std::time::{Duration, SystemTime};
+
+use daemoneye_lib::config::DetectionConfig;
+use daemoneye_lib::detection::DetectionEngine;
+use daemoneye_lib::detection::catalog::{VerifiedRegistration, verify_spawn_token};
+use daemoneye_lib::detection::rule_health::RuleHealth;
+use daemoneye_lib::detection_bounds::{PUSHDOWN_TASK_RENEWAL_INTERVAL, PUSHDOWN_TASK_TTL};
+use daemoneye_lib::models::{AlertSeverity, DetectionRule};
+use daemoneye_lib::proto::{
+    ColumnDescriptor, ColumnType, PredicateOp, SchemaDescriptor, TableDescriptor,
+};
+
+fn token() -> String {
+    "a".repeat(64)
+}
+
+fn verified(collector_id: &str) -> VerifiedRegistration {
+    verify_spawn_token(collector_id, Some(&token()), Some(&token())).unwrap()
+}
+
+/// procmond's descriptor: the one table `rule()` below filters on.
+fn descriptor() -> SchemaDescriptor {
+    let ops = [PredicateOp::Eq, PredicateOp::Gt, PredicateOp::Lt];
+    SchemaDescriptor {
+        collector_id: "procmond".to_owned(),
+        descriptor_version: "v1".to_owned(),
+        tables: vec![TableDescriptor {
+            name: "processes".to_owned(),
+            columns: vec![ColumnDescriptor {
+                name: "cpu_usage".to_owned(),
+                column_type: i32::from(ColumnType::Int),
+                nullable: false,
+                supported_ops: ops.iter().copied().map(i32::from).collect(),
+            }],
+        }],
+        conformance_results: Vec::new(),
+    }
+}
+
+/// A second, distinct collector identity registering for the first time. `is_first_registration`
+/// is true purely because this `collector_id` has never registered before — nothing about the
+/// tables it declares matters, so an empty table list is enough to trigger it (verified against
+/// `CatalogChange::is_first_registration` in `catalog.rs`).
+fn other_collector_descriptor(collector_id: &str) -> SchemaDescriptor {
+    SchemaDescriptor {
+        collector_id: collector_id.to_owned(),
+        descriptor_version: "v1".to_owned(),
+        tables: Vec::new(),
+        conformance_results: Vec::new(),
+    }
+}
+
+fn rule(enabled: bool) -> DetectionRule {
+    let mut rule = DetectionRule::new(
+        "rule-1".to_owned(),
+        "Test Rule".to_owned(),
+        "Pattern latency test rule".to_owned(),
+        "SELECT cpu_usage FROM processes WHERE cpu_usage > 80".to_owned(),
+        "test".to_owned(),
+        AlertSeverity::Medium,
+    );
+    rule.enabled = enabled;
+    rule
+}
+
+/// An engine with one enabled rule planned against one registered collector, and its first task
+/// already issued at `start`.
+fn engine_with_issued_task(start: SystemTime) -> DetectionEngine {
+    let mut engine = DetectionEngine::new();
+    engine
+        .register_collector(&verified("procmond"), descriptor())
+        .unwrap();
+    engine.load_rule(rule(true)).unwrap();
+    let cycle = engine.renewal_cycle(start);
+    assert_eq!(cycle.due().len(), 1, "the first cycle issues the task");
+    engine
+}
+
+/// The reason text of a rule's current `Unhealthy` health, panicking on any other state — used
+/// only after a test has already asserted the rule is unhealthy for a specific reason.
+fn unhealthy_reason(engine: &DetectionEngine, rule_id: &str) -> String {
+    let Some(health) = engine.rule_health(rule_id) else {
+        panic!("expected rule {rule_id} to be tracked");
+    };
+    match *health {
+        RuleHealth::Unhealthy { ref reason, .. } => reason.clone(),
+        RuleHealth::Healthy | RuleHealth::Unknown => {
+            panic!("expected rule {rule_id} to be Unhealthy")
+        }
+        ref other => panic!("expected rule {rule_id} to be Unhealthy, was {other:?}"),
+    }
+}
+
+#[test]
+fn with_config_carries_the_configured_threshold_and_new_reports_the_default() {
+    let configured = DetectionEngine::with_config(&DetectionConfig {
+        pattern_latency_threshold_ms: 25,
+        ..DetectionConfig::default()
+    });
+    assert_eq!(
+        configured.pattern_latency_threshold(),
+        Duration::from_millis(25)
+    );
+
+    let default_engine = DetectionEngine::new();
+    assert_eq!(
+        default_engine.pattern_latency_threshold(),
+        Duration::from_millis(10)
+    );
+}
+
+/// AE1: a breach flips `enabled`, drops the plan, marks the rule unhealthy with both millisecond
+/// figures in the reason, and stops the rule from ever being reported as expired or re-issued.
+#[test]
+fn a_breaching_observation_disables_the_rule_removes_its_plan_and_stops_its_task() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+
+    let breached = engine.observe_pattern_latency("rule-1", Duration::from_millis(11));
+    assert!(
+        breached,
+        "11 ms against a 10 ms default threshold breaches it"
+    );
+
+    assert!(
+        !engine.get_rule("rule-1").expect("rule tracked").enabled,
+        "a breach disables the rule"
+    );
+    assert!(
+        engine.compiled_rule("rule-1").is_none(),
+        "a breach removes the compiled plan"
+    );
+
+    let reason = unhealthy_reason(&engine, "rule-1");
+    assert!(
+        reason.contains("11"),
+        "reason must name the observed ms: {reason}"
+    );
+    assert!(
+        reason.contains("10"),
+        "reason must name the threshold ms: {reason}"
+    );
+
+    let cycle = engine.renewal_cycle(start + PUSHDOWN_TASK_RENEWAL_INTERVAL);
+    assert!(
+        cycle.expired_rules().is_empty(),
+        "a rule the latency guard disabled was never covered, so it cannot be reported expired"
+    );
+    assert!(
+        cycle.due().is_empty(),
+        "no task is issued for a disabled rule"
+    );
+
+    assert!(
+        engine.rejection_log().records().is_empty(),
+        "this is a health fact, not a load rejection"
+    );
+}
+
+/// AE2: an observation exactly at the threshold changes nothing.
+#[test]
+fn an_observation_at_the_threshold_changes_nothing() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+
+    let breached = engine.observe_pattern_latency("rule-1", Duration::from_millis(10));
+    assert!(!breached, "an observation at the threshold is not a breach");
+
+    assert!(engine.get_rule("rule-1").expect("rule tracked").enabled);
+    assert!(engine.compiled_rule("rule-1").is_some());
+    assert_eq!(engine.rule_health("rule-1"), Some(&RuleHealth::Healthy));
+}
+
+/// A second breach on an already-disabled rule still reports `true` (the observation itself did
+/// breach) but does not overwrite the first breach's reason with a second, different one.
+#[test]
+fn a_second_breach_on_an_already_disabled_rule_leaves_the_reason_byte_identical() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+
+    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+    let first_reason = unhealthy_reason(&engine, "rule-1");
+
+    let second_breach = engine.observe_pattern_latency("rule-1", Duration::from_millis(15));
+    assert!(
+        second_breach,
+        "the observation itself still breached the threshold"
+    );
+    assert_eq!(
+        unhealthy_reason(&engine, "rule-1"),
+        first_reason,
+        "an already-disabled rule is left exactly as it is"
+    );
+}
+
+/// A rule id the engine does not hold changes nothing and is not tracked afterward.
+#[test]
+fn an_unknown_rule_id_changes_nothing() {
+    let mut engine = DetectionEngine::new();
+    let breached = engine.observe_pattern_latency("does-not-exist", Duration::from_millis(999));
+    assert!(!breached);
+    assert_eq!(engine.rule_health("does-not-exist"), None);
+}
+
+/// AE3: after a breach, re-enabling the rule directly restores nothing; only `load_rule` does.
+#[test]
+fn only_reloading_the_rule_restores_it_after_a_latency_breach() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+
+    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+    let reason_before = unhealthy_reason(&engine, "rule-1");
+
+    engine
+        .set_rule_enabled("rule-1", true)
+        .expect("the operator flag itself is always settable");
+    assert!(
+        engine.compiled_rule("rule-1").is_none(),
+        "re-enabling alone does not restore a plan"
+    );
+    assert_eq!(
+        unhealthy_reason(&engine, "rule-1"),
+        reason_before,
+        "re-enabling alone does not clear the health reason"
+    );
+
+    engine.load_rule(rule(true)).unwrap();
+    assert!(
+        engine.compiled_rule("rule-1").is_some(),
+        "reloading restores a plan"
+    );
+    assert!(engine.get_rule("rule-1").expect("rule tracked").enabled);
+    assert_eq!(engine.rule_health("rule-1"), Some(&RuleHealth::Healthy));
+}
+
+/// AE5, and the reason step 2 of the mandatory execution order exists to observe failing: today,
+/// `RuleHealthRegistry::revalidate` re-heals *every* tracked rule whose references still resolve
+/// on any first registration, with no regard for why the rule was unhealthy. A second collector
+/// registering for the first time must not resurrect a rule the latency guard disabled.
+#[test]
+fn a_new_collectors_first_registration_does_not_re_heal_a_latency_disabled_rule() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+
+    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+    let reason_before = unhealthy_reason(&engine, "rule-1");
+
+    engine
+        .register_collector(
+            &verified("collector-2"),
+            other_collector_descriptor("collector-2"),
+        )
+        .expect("a fresh collector identity with no conflicting tables registers cleanly");
+
+    assert!(
+        engine.compiled_rule("rule-1").is_none(),
+        "the plan must not reappear after an unrelated collector's first registration"
+    );
+    assert_eq!(
+        unhealthy_reason(&engine, "rule-1"),
+        reason_before,
+        "the reason must be byte-identical after revalidation"
+    );
+
+    engine
+        .set_rule_enabled("rule-1", true)
+        .expect("the operator flag itself is always settable");
+    let cycle = engine.renewal_cycle(start + PUSHDOWN_TASK_RENEWAL_INTERVAL);
+    assert!(
+        cycle.due().is_empty(),
+        "no task is issued for a rule the latency guard disabled"
+    );
+}
+
+/// The blanket re-heal a new collector's first registration performs must still work for the
+/// mechanism it was written for: a rule whose reference genuinely stopped resolving (here, via
+/// pushed-task expiry, which shares `UnhealthyCause::Reference`) is re-healed and re-planned once
+/// a later registration shows its reference still resolves.
+#[test]
+fn a_task_expiry_reference_failure_is_still_re_healed_by_a_later_registration() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+
+    let expired = engine.renewal_cycle(start + PUSHDOWN_TASK_TTL);
+    assert_eq!(expired.expired_rules(), ["rule-1"]);
+    assert!(engine.compiled_rule("rule-1").is_none());
+    assert!(matches!(
+        engine.rule_health("rule-1"),
+        Some(&RuleHealth::Unhealthy { .. })
+    ));
+
+    engine
+        .register_collector(
+            &verified("collector-2"),
+            other_collector_descriptor("collector-2"),
+        )
+        .expect("a fresh collector identity with no conflicting tables registers cleanly");
+
+    assert_eq!(
+        engine.rule_health("rule-1"),
+        Some(&RuleHealth::Healthy),
+        "a reference failure is re-healed once revalidation runs"
+    );
+    assert!(
+        engine.compiled_rule("rule-1").is_some(),
+        "re-healing re-plans the rule"
+    );
+}

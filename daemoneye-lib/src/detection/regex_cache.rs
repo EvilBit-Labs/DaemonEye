@@ -11,10 +11,12 @@
 //!
 //! # Latency threshold (R7)
 //!
-//! `DetectionConfig::pattern_latency_threshold_ms` is the per-pattern budget, and a pattern that
-//! exceeds it disables the rule owning it. Observing that latency requires executing a pattern
-//! against real rows, which is ticket T6's work; this module compiles and caches only, and holds
-//! no timing state.
+//! `DetectionConfig::pattern_latency_threshold_ms` is the per-pattern budget, carried into
+//! `DetectionEngine` as a `Duration`. The consequence of a breach is
+//! `DetectionEngine::observe_pattern_latency` in `detection::pattern_latency`: it disables the
+//! rule owning the pattern and marks that rule unhealthy. Observing a pattern's execution against
+//! real rows is T6's work — it needs the `DataFusion` executor, which does not exist yet; this
+//! module compiles and caches only, and holds no timing state.
 
 use crate::detection::rejection::{RegexConstruct, RegexRejection};
 use crate::detection_bounds::{

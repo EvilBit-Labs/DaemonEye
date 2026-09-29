@@ -24,6 +24,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::detection::DetectionEngine;
 use crate::detection::planner::CompiledRule;
+use crate::detection::rule_health::UnhealthyCause;
 use crate::detection_bounds::PUSHDOWN_TASK_RENEWAL_INTERVAL;
 use crate::proto::DetectionTask;
 
@@ -293,7 +294,13 @@ impl DetectionEngine {
 
         let mut cycle = RenewalCycle::default();
         for rule_id in self.tasks.expire(now) {
-            let _marked = self.health.mark_unhealthy(&rule_id, TASK_EXPIRED_REASON);
+            // `UnhealthyCause::Reference` (not literally a reference failure) so re-validation
+            // keeps re-healing this exactly as it did before the latency guard existed (R8, KTD6).
+            let _marked = self.health.mark_unhealthy(
+                &rule_id,
+                TASK_EXPIRED_REASON,
+                UnhealthyCause::Reference,
+            );
             let _uncovered = self.compiled.remove(&rule_id);
             cycle.push_expired(rule_id);
         }

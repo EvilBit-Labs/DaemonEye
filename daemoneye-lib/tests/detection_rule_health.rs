@@ -116,7 +116,7 @@ fn an_unhealthy_rule_names_the_reference_that_stopped_resolving() {
 
     let health = rules.health("needs-cmdline").unwrap();
     match *health {
-        RuleHealth::Unhealthy { ref reason } => assert!(reason.contains("cmdline"), "{reason}"),
+        RuleHealth::Unhealthy { ref reason, .. } => assert!(reason.contains("cmdline"), "{reason}"),
         RuleHealth::Healthy | RuleHealth::Unknown => panic!("rule should be unhealthy"),
         ref other => panic!("rule should be unhealthy, was {other:?}"),
     }
