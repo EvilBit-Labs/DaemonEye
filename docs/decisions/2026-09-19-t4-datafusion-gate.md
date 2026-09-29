@@ -119,6 +119,7 @@ The fixture is deterministic (pure index arithmetic, no randomness) and refuses 
 
 - DataFusion 55.1.0 declares MSRV 1.94.0 and edition 2024 — inside the workspace's `rust-version = "1.95"` and the pinned 1.97.1 toolchain.
 - `sqlparser` aligns exactly: the repo pins 0.62.0 and DataFusion requires `^0.62.0`, so no second copy enters the graph. The Phase 1 planner and Phase 2 executor share one parser.
+- The line holds at 0.62 until T6 can move DataFusion forward with it; `.github/dependabot.yml` ignores `version-update:semver-minor` for `sqlparser` so the weekly bump to 0.63.0 stops being proposed. Taking 0.63 anyway breaks `check_table_factor` in `daemoneye-lib/src/detection/sql_validation.rs` with a non-exhaustive `TableFactor` match (`TableFactor::UnpivotExpr` is new in 0.63). The fix is one arm, `TableFactor::UnpivotExpr { .. } => Err(unsupported_from("UNPIVOT"))`, added after the existing `TableFactor::Unpivot` arm — it cannot be added now because the variant doesn't exist in 0.62.
 - DataFusion 55.1 requires `arrow ^59.2`, while the current arrow release is 60.0. Take Arrow through `datafusion::arrow`; a direct `arrow` dependency produces two incompatible `arrow_schema::Schema` types.
 - `object_store 0.13` is a non-optional DataFusion dependency and ships in the binary even though DaemonEye reads redb.
 - DataFusion 55.1's `TableProvider` and `ExecutionPlan` have **no** `as_any` member (`Any` is a supertrait), and `ExecutionPlan` requires `apply_expressions`. The published custom-table-provider guide is ahead of 55.1 here.

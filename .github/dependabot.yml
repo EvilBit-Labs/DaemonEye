@@ -67,6 +67,13 @@ updates:
             update-types: ["version-update:semver-major"]
           - dependency-name: "redb"
             update-types: ["version-update:semver-major"]
+          # DataFusion (ADR-0006) requires sqlparser ^0.62; 0.63 breaks check_table_factor
+          # in daemoneye-lib/src/detection/sql_validation.rs (non-exhaustive TableFactor
+          # match). Bumping needs a `TableFactor::UnpivotExpr { .. } =>
+          # Err(unsupported_from("UNPIVOT"))` arm added after the existing
+          # TableFactor::Unpivot arm — hold until T6 takes the DataFusion line forward.
+          - dependency-name: "sqlparser"
+            update-types: ["version-update:semver-minor"]
 
     # GitHub Actions dependencies
     - package-ecosystem: "github-actions"
