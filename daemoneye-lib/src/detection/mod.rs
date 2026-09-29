@@ -184,6 +184,11 @@ impl DetectionEngine {
     }
 
     /// Lower one loaded rule and record its plan and its references.
+    ///
+    /// This is the single choke point both the deferred-rule drain and `revalidate`'s
+    /// `to_replan` set go through, so it is also the single place that must refuse to hand a
+    /// fresh compiled plan to a rule whose health resists auto-recovery (R8, KTD6) — `track`
+    /// preserves that health verdict, but planning happened anyway and must not be applied.
     fn plan_and_record(&mut self, rule_id: &str) -> Result<(), PlanError> {
         let Some(rule) = self.rules.get(rule_id) else {
             return Ok(());
@@ -191,6 +196,15 @@ impl DetectionEngine {
         let compiled = plan_rule(&self.catalog, &self.patterns, rule, self.max_subquery_depth)?;
         self.health
             .track(rule_id, compiled.references().iter().cloned());
+
+        let resists = matches!(
+            self.health.health(rule_id),
+            Some(&RuleHealth::Unhealthy { cause, .. }) if cause.resists_auto_recovery()
+        );
+        if resists {
+            return Ok(());
+        }
+
         let _previous = self.compiled.insert(rule_id.to_owned(), compiled);
         Ok(())
     }
@@ -246,6 +260,12 @@ impl DetectionEngine {
         // would keep renewing the superseded predicate for up to a full TTL. Drop the tracked tasks
         // and let the next renewal cycle issue from the new plan.
         self.tasks.forget_rule(&rule_id);
+        // A reload is a fresh judgment, not a continuation of the previous instance's health
+        // history (R8, KTD6). This is the one call site `pattern_latency` documents as restoring
+        // a rule the latency guard disabled: forgetting here, before `plan_and_record` calls
+        // `RuleHealthRegistry::track`, is what lets that reload clear it, while every other path
+        // into `track` (a deferred-rule drain, a `revalidate` re-plan) preserves it.
+        self.health.forget(&rule_id);
 
         // R18: no rule is judged against an empty catalog. It waits, it is not dropped.
         if self.catalog.is_empty() {
@@ -269,11 +289,22 @@ impl DetectionEngine {
     }
 
     /// Execute all enabled rules against process data.
+    ///
+    /// A rule whose health resists auto-recovery (R8, KTD6) — currently, a latency breach — is
+    /// skipped even if `enabled` were somehow still `true`, so this local executor obeys the same
+    /// contract the pushdown path already gets for free from `compiled` holding no plan for it.
     pub fn execute_rules(&self, processes: &[ProcessRecord]) -> Vec<Alert> {
         let mut alerts = Vec::new();
 
         for rule in self.rules.values() {
             if !rule.enabled {
+                continue;
+            }
+            let resists = matches!(
+                self.health.health(rule.id.raw()),
+                Some(&RuleHealth::Unhealthy { cause, .. }) if cause.resists_auto_recovery()
+            );
+            if resists {
                 continue;
             }
 
@@ -372,19 +403,47 @@ impl DetectionEngine {
     }
 
     /// Enable or disable a rule.
+    ///
+    /// Disabling (`enabled == false`) is always allowed. Enabling is refused with a
+    /// [`DetectionEngineError::ExecutionError`] naming the reason when the rule's current health
+    /// resists auto-recovery (R8, KTD6) — today, a latency breach recorded by
+    /// [`Self::observe_pattern_latency`]. This is a deliberate public-API behavior change: this
+    /// method used to flip `enabled` back to `true` unconditionally, silently telling the
+    /// operator the rule was re-enabled while the guard's disablement was still in force
+    /// underneath it. Reload the rule with [`Self::load_rule`] to clear the health verdict and
+    /// re-enable it.
     pub fn set_rule_enabled(
         &mut self,
         id: &str,
         enabled: bool,
     ) -> Result<(), DetectionEngineError> {
+        if !self.rules.contains_key(id) {
+            return Err(DetectionEngineError::ExecutionError(format!(
+                "Rule not found: {id}"
+            )));
+        }
+
+        if enabled {
+            let refusal = match self.health.health(id) {
+                Some(&RuleHealth::Unhealthy { ref reason, cause })
+                    if cause.resists_auto_recovery() =>
+                {
+                    Some(format!(
+                        "rule {id} cannot be re-enabled while unhealthy ({reason}); reload it \
+                         with load_rule to clear this"
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(message) = refusal {
+                return Err(DetectionEngineError::ExecutionError(message));
+            }
+        }
+
         if let Some(rule) = self.rules.get_mut(id) {
             rule.enabled = enabled;
-            Ok(())
-        } else {
-            Err(DetectionEngineError::ExecutionError(format!(
-                "Rule not found: {id}"
-            )))
         }
+        Ok(())
     }
 }
 

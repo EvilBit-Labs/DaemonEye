@@ -13,15 +13,19 @@
 //! plan is what stops `renewal_cycle` from re-issuing — neither alone fails closed on its own
 //! against an operator flag flip or against T6's residual path (KTD3).
 //!
-//! The health this leaves behind carries [`UnhealthyCause::LatencyBreach`], which
-//! `RuleHealthRegistry::revalidate` will not clear (R8, KTD6) — a guard whose failure path could
-//! be undone by an unrelated collector registration would not be a guard at all. Only
+//! The health this leaves behind carries [`UnhealthyCause::LatencyBreach`], for which
+//! [`UnhealthyCause::resists_auto_recovery`] is `true`. `RuleHealthRegistry::revalidate` and
+//! `RuleHealthRegistry::track` both consult it and will not clear this cause or launder it back
+//! to healthy (R8, KTD6) — a guard whose failure path could be undone by an unrelated collector
+//! registration, or by the re-planning `track` call that registration triggers, would not be a
+//! guard at all. [`DetectionEngine::set_rule_enabled`] refuses to re-enable a rule this guard
+//! disabled, naming the reason in its error, rather than silently no-opping. Only
 //! [`DetectionEngine::load_rule`] restores a rule this guard disabled.
 
 use std::time::Duration;
 
 use super::DetectionEngine;
-use super::rule_health::UnhealthyCause;
+use super::rule_health::{RuleHealth, UnhealthyCause};
 
 /// Why a latency-disabled rule's health reason reads the way it does, beside
 /// `task_renewal::TASK_EXPIRED_REASON`'s shape (R3).
@@ -32,31 +36,43 @@ impl DetectionEngine {
     /// Report a measured pattern execution against this engine's threshold; disable the owning
     /// rule if it breached it (R3).
     ///
-    /// An observation strictly over the threshold runs three unconditional steps: `enabled` is
-    /// set `false`, the rule's compiled plan is removed, and the rule is marked
-    /// [`super::rule_health::RuleHealth::Unhealthy`] with a reason naming the observed and
-    /// threshold milliseconds, in that order (KTD3). A `tracing::warn!` records the same facts.
+    /// An observation strictly over the threshold runs three unconditional steps, regardless of
+    /// the rule's current `enabled` flag: `enabled` is set `false`, the rule's compiled plan is
+    /// removed, and the rule is marked [`super::rule_health::RuleHealth::Unhealthy`] with a
+    /// reason naming the observed and threshold milliseconds, in that order (KTD3). A
+    /// `tracing::warn!` records the same facts. If the health registry could not record the
+    /// verdict, a `tracing::error!` names the rule id — a silently unrecorded disable is worse
+    /// than no guard.
     ///
-    /// An observation at or under the threshold changes nothing. A rule already disabled is left
-    /// exactly as it is — a second breach does not overwrite the first breach's reason. A rule id
-    /// this engine does not hold changes nothing and is logged at `warn`.
+    /// An observation at or under the threshold changes nothing. Idempotency is keyed on health,
+    /// not on `enabled`: a rule already [`super::rule_health::RuleHealth::Unhealthy`] for a cause
+    /// that [`UnhealthyCause::resists_auto_recovery`] is left exactly as it is — a second breach
+    /// does not overwrite the first breach's reason, and does not re-run the three steps. Keying
+    /// on `enabled` instead was the bug: an operator's `set_rule_enabled(id, false)` on a
+    /// still-healthy rule also sets `enabled` to `false` without touching health or the compiled
+    /// plan, and used to take this same early return on a subsequent breach — leaving the plan
+    /// live for the operator to re-enable straight back into it. A rule id this engine does not
+    /// hold changes nothing and is logged at `warn`.
     ///
     /// Returns `true` exactly when the observation breached the threshold for a rule this engine
     /// holds.
     pub fn observe_pattern_latency(&mut self, rule_id: &str, observed: Duration) -> bool {
-        let was_enabled = if let Some(rule) = self.rules.get(rule_id) {
-            rule.enabled
-        } else {
+        if !self.rules.contains_key(rule_id) {
             tracing::warn!(
                 rule_id,
                 "pattern latency observed for a rule this engine does not hold"
             );
             return false;
-        };
+        }
         if observed <= self.pattern_latency_threshold {
             return false;
         }
-        if !was_enabled {
+
+        let already_latched = matches!(
+            self.health.health(rule_id),
+            Some(&RuleHealth::Unhealthy { cause, .. }) if cause.resists_auto_recovery()
+        );
+        if already_latched {
             return true;
         }
 
@@ -71,9 +87,16 @@ impl DetectionEngine {
             rule.enabled = false;
         }
         let _uncovered = self.compiled.remove(rule_id);
-        let _marked = self
+        let marked = self
             .health
             .mark_unhealthy(rule_id, &reason, UnhealthyCause::LatencyBreach);
+        if !marked {
+            tracing::error!(
+                rule_id,
+                "pattern latency breach could not be recorded in rule health; the rule is \
+                 disabled with no health record of why"
+            );
+        }
         tracing::warn!(
             rule_id,
             observed_ms,

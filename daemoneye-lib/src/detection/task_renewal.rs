@@ -294,12 +294,12 @@ impl DetectionEngine {
 
         let mut cycle = RenewalCycle::default();
         for rule_id in self.tasks.expire(now) {
-            // `UnhealthyCause::Reference` (not literally a reference failure) so re-validation
-            // keeps re-healing this exactly as it did before the latency guard existed (R8, KTD6).
+            // Re-validation keeps re-healing this exactly as it did before the latency guard
+            // existed; only `LatencyBreach` resists it (R8, KTD6).
             let _marked = self.health.mark_unhealthy(
                 &rule_id,
                 TASK_EXPIRED_REASON,
-                UnhealthyCause::Reference,
+                UnhealthyCause::TaskExpiry,
             );
             let _uncovered = self.compiled.remove(&rule_id);
             cycle.push_expired(rule_id);

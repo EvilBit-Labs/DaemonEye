@@ -562,10 +562,19 @@ fn a_probe_disagreeing_on_one_case_fails_and_one_that_only_skips_it_does_not() {
                 Some(reference_outcome(case))
             }
         };
-        prop_assert_eq!(
-            verify_operation(column_type, nullable, op, skip_target),
+        // Every `(column_type, nullable, op)` this strategy can select has at least five corpus
+        // cases today, so comparing against `count > 1` would be true on every generated input and
+        // the assertion would only ever exercise one side. Pin that precondition rather than
+        // hiding it, so a corpus that later admits a single-case operation fails here instead of
+        // quietly narrowing what this property proves. The zero-case half is proved directly by
+        // `an_operation_whose_cases_are_all_skipped_does_not_pass`.
+        prop_assert!(
             count > 1,
-            "skipping the only case must not pass; skipping one of several others must"
+            "this property assumes every selectable operation has several corpus cases"
+        );
+        prop_assert!(
+            verify_operation(column_type, nullable, op, skip_target),
+            "skipping one case of several must still pass the operation"
         );
     });
 }
