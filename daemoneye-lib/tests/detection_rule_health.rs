@@ -217,7 +217,9 @@ fn a_recoverable_cause_does_not_displace_a_resisting_one() {
     assert!(health.mark_unhealthy("rule-1", "too slow", UnhealthyCause::LatencyBreach));
     assert!(health.mark_unhealthy("rule-1", "task expired", UnhealthyCause::TaskExpiry));
 
-    let RuleHealth::Unhealthy { ref reason, cause } = *health
+    let RuleHealth::Unhealthy {
+        ref reason, cause, ..
+    } = *health
         .health("rule-1")
         .expect("the rule is tracked and unhealthy")
     else {

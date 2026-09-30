@@ -24,8 +24,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::catalog::{CatalogChange, SchemaCatalog};
 
-/// Which mechanism disabled a rule, so [`RuleHealthRegistry::revalidate`] knows whether catalog
-/// re-validation has any standing to clear it (R8, KTD6).
+/// Which mechanism made a rule unhealthy, so [`RuleHealthRegistry::revalidate`] knows whether
+/// catalog re-validation has any standing to clear it (R8, KTD6).
 ///
 /// Catalog re-validation is evidence about the schema; it says nothing about a pattern's observed
 /// execution cost. So it may re-heal a cause the catalog can answer for — [`Self::Reference`] and
@@ -36,8 +36,9 @@ use super::catalog::{CatalogChange, SchemaCatalog};
 pub enum UnhealthyCause {
     /// A reference the rule makes no longer resolves against the catalog.
     Reference,
-    /// The rule's pushed task expired without renewal (R16). Re-validation re-heals it, because
-    /// re-planning is what issues the task again.
+    /// The rule's pushed task expired without renewal (R16). A registration that actually
+    /// revalidates the rule — a first registration, or a later one that touches its tables —
+    /// re-heals it, because re-planning is what issues the task again.
     TaskExpiry,
     /// A measured pattern execution exceeded the configured latency budget (R3, R8).
     LatencyBreach,
@@ -48,9 +49,12 @@ impl UnhealthyCause {
     /// by the re-planning [`RuleHealthRegistry::track`] call a registration triggers — and may
     /// only be cleared by a fresh `DetectionEngine::load_rule`.
     ///
-    /// Catalog evidence can answer for [`Self::Reference`] and for [`Self::TaskExpiry`]:
-    /// re-planning is exactly the fix for both. It says nothing about a pattern's measured
-    /// execution cost, so [`Self::LatencyBreach`] resists it.
+    /// Catalog evidence can answer for [`Self::Reference`] and for [`Self::TaskExpiry`] once a
+    /// registration actually revalidates the rule — a first registration, or one whose change
+    /// touches the rule's tables; an identical re-registration produces an empty
+    /// [`CatalogChange`] and re-heals nothing. Re-planning is exactly the fix for both, once
+    /// revalidation runs at all. It says nothing about a pattern's measured execution cost, so
+    /// [`Self::LatencyBreach`] resists it.
     ///
     /// Matched exhaustively with no wildcard arm on purpose: a future variant must decide this
     /// explicitly rather than silently defaulting to recoverable (ADR-0009, KTD8).
@@ -63,7 +67,7 @@ impl UnhealthyCause {
     }
 }
 
-/// Whether a rule can still be planned against the current catalog.
+/// Whether a rule is currently trusted to run.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum RuleHealth {
@@ -72,20 +76,34 @@ pub enum RuleHealth {
     Unknown,
     /// Every reference the rule makes resolves.
     Healthy,
-    /// The rule is kept, not dropped, but is not currently plannable.
+    /// The rule is kept, not dropped, but is not currently trusted to run. A `LatencyBreach` rule
+    /// still plans and lowers fine — `plan_and_record` builds a plan for it and then discards it
+    /// (R8, KTD6) — so this is a trust verdict, not a "can this be planned" one. (A `TaskExpiry`
+    /// rule never reaches `plan_and_record` while still carrying that cause: `revalidate` sets it
+    /// `Healthy` before queueing it for replanning, and `load_rule` forgets health first.)
+    #[non_exhaustive]
     Unhealthy {
         /// Why the rule is unhealthy, as an operator reads it.
         reason: String,
-        /// Which mechanism disabled it, so re-validation knows whether it may clear this.
+        /// Which mechanism made the rule unhealthy, so re-validation knows whether it may clear
+        /// this.
         cause: UnhealthyCause,
     },
 }
 
 impl RuleHealth {
-    /// Whether the rule is currently plannable.
+    /// Whether the rule is currently trusted to run.
     #[must_use]
     pub const fn is_healthy(&self) -> bool {
         matches!(*self, Self::Healthy)
+    }
+
+    /// Whether this rule's current health resists automatic re-healing (R8, KTD6) — the one name
+    /// every reader of an `Unhealthy` verdict's resistance goes through, so a future cause can
+    /// change what resists in one place instead of at each call site.
+    #[must_use]
+    pub const fn resists_auto_recovery(&self) -> bool {
+        matches!(*self, Self::Unhealthy { cause, .. } if cause.resists_auto_recovery())
     }
 }
 
@@ -160,11 +178,9 @@ impl RuleHealthRegistry {
             .collect();
 
         let preserved_health = self.rules.get(rule_id).and_then(|rule| {
-            let resists = matches!(
-                rule.health,
-                RuleHealth::Unhealthy { cause, .. } if cause.resists_auto_recovery()
-            );
-            resists.then(|| rule.health.clone())
+            rule.health
+                .resists_auto_recovery()
+                .then(|| rule.health.clone())
         });
 
         let _previous = self.rules.insert(
@@ -177,23 +193,21 @@ impl RuleHealthRegistry {
     }
 
     /// Stop tracking a rule, for example when the operator disables it.
-    pub fn forget(&mut self, rule_id: &str) {
+    pub(crate) fn forget(&mut self, rule_id: &str) {
         let _removed = self.rules.remove(rule_id);
     }
 
-    /// Mark a tracked rule unhealthy for a reason no catalog re-validation could find (R12).
+    /// Mark a rule unhealthy for a reason no catalog re-validation could find (R12).
     ///
     /// Callers today are pushed-task expiry, with [`UnhealthyCause::TaskExpiry`] so re-validation
-    /// keeps recovering it exactly as before, and the latency guard, with
-    /// [`UnhealthyCause::LatencyBreach`] so re-validation may not (R8, KTD6).
+    /// keeps it recoverable, and the latency guard, with [`UnhealthyCause::LatencyBreach`] so
+    /// re-validation may not (R8, KTD6).
     ///
     /// A tracked rule has its health overwritten in place, except that a cause which resists
     /// auto-recovery is never replaced by one that does not. Without that, a later
     /// `mark_unhealthy(.., TaskExpiry)` on a latency-breached rule would downgrade the verdict to
     /// a recoverable one and the next [`Self::revalidate`] would clear it — laundering the breach
-    /// through the one health writer the surrounding policy does not otherwise reach. Today the
-    /// statement order in `renewal_cycle` happens to prevent that call, which is not a guarantee
-    /// worth resting on.
+    /// through the one health writer the surrounding policy does not otherwise reach.
     ///
     /// An **untracked** rule is inserted only when `cause.resists_auto_recovery()` is `true`.
     /// Such a cause is never laundered back to healthy by [`Self::track`] or [`Self::revalidate`],
@@ -205,12 +219,7 @@ impl RuleHealthRegistry {
     /// returned instead.
     pub fn mark_unhealthy(&mut self, rule_id: &str, reason: &str, cause: UnhealthyCause) -> bool {
         if let Some(rule) = self.rules.get_mut(rule_id) {
-            if !cause.resists_auto_recovery()
-                && matches!(
-                    rule.health,
-                    RuleHealth::Unhealthy { cause: held, .. } if held.resists_auto_recovery()
-                )
-            {
+            if !cause.resists_auto_recovery() && rule.health.resists_auto_recovery() {
                 // The rule is already unhealthy for a stronger reason; keep it.
                 return true;
             }
@@ -242,14 +251,20 @@ impl RuleHealthRegistry {
         self.rules.get(rule_id).map(|rule| &rule.health)
     }
 
-    /// Every rule currently marked unhealthy, with its reason. T10 renders this.
+    /// Every rule currently marked unhealthy, with its full health. T10 renders this.
+    ///
+    /// The health travels whole rather than being flattened to just the reason string, so a
+    /// consumer (T10's CLI) can tell "retry later" apart from "reload required" by calling
+    /// [`RuleHealth::resists_auto_recovery`] instead of string-matching the reason text — and,
+    /// because [`UnhealthyCause`] is `#[non_exhaustive]`, without needing a wildcard arm that
+    /// would silently treat a future cause as recoverable.
     #[must_use]
-    pub fn unhealthy(&self) -> Vec<(&str, &str)> {
+    pub fn unhealthy(&self) -> Vec<(&str, &RuleHealth)> {
         self.rules
             .iter()
             .filter_map(|(rule_id, rule)| {
-                if let RuleHealth::Unhealthy { ref reason, .. } = rule.health {
-                    return Some((rule_id.as_str(), reason.as_str()));
+                if matches!(rule.health, RuleHealth::Unhealthy { .. }) {
+                    return Some((rule_id.as_str(), &rule.health));
                 }
                 None
             })
@@ -274,11 +289,7 @@ impl RuleHealthRegistry {
         }
 
         for (rule_id, rule) in &mut self.rules {
-            let resists = matches!(
-                rule.health,
-                RuleHealth::Unhealthy { cause, .. } if cause.resists_auto_recovery()
-            );
-            if resists {
+            if rule.health.resists_auto_recovery() {
                 continue;
             }
             if !change.is_first_registration() && !touches(rule, change) {

@@ -14,14 +14,15 @@
 use std::time::{Duration, SystemTime};
 
 use daemoneye_lib::config::DetectionConfig;
-use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::detection::catalog::{VerifiedRegistration, verify_spawn_token};
 use daemoneye_lib::detection::rule_health::{RuleHealth, UnhealthyCause};
+use daemoneye_lib::detection::{DetectionEngine, DetectionEngineError};
 use daemoneye_lib::detection_bounds::{PUSHDOWN_TASK_RENEWAL_INTERVAL, PUSHDOWN_TASK_TTL};
 use daemoneye_lib::models::{AlertSeverity, DetectionRule, ProcessRecord};
 use daemoneye_lib::proto::{
     ColumnDescriptor, ColumnType, PredicateOp, SchemaDescriptor, TableDescriptor,
 };
+use daemoneye_lib::rejection_log::RejectionReason;
 
 fn token() -> String {
     "a".repeat(64)
@@ -146,12 +147,12 @@ fn a_breaching_observation_disables_the_rule_removes_its_plan_and_stops_its_task
 
     let reason = unhealthy_reason(&engine, "rule-1");
     assert!(
-        reason.contains("11"),
-        "reason must name the observed ms: {reason}"
+        reason.contains("11ms"),
+        "reason must name the observed duration: {reason}"
     );
     assert!(
-        reason.contains("10"),
-        "reason must name the threshold ms: {reason}"
+        reason.contains("10ms budget"),
+        "reason must name the threshold duration: {reason}"
     );
 
     let cycle = engine.renewal_cycle(start + PUSHDOWN_TASK_RENEWAL_INTERVAL);
@@ -185,9 +186,18 @@ fn a_breaching_observation_disables_the_rule_removes_its_plan_and_stops_its_task
         engine.rule_health("rule-1")
     );
 
+    let last_rejection = engine.rejection_log().records().back().expect(
+        "a latency breach must be recorded in the rejection log: it is the one queryable trace \
+         that survives a reload clearing the health row",
+    );
     assert!(
-        engine.rejection_log().records().is_empty(),
-        "this is a health fact, not a load rejection"
+        matches!(
+            last_rejection.reason,
+            RejectionReason::RuleOther { ref rule_id, ref message }
+                if rule_id == "rule-1" && message == &reason
+        ),
+        "expected a RuleOther rejection naming rule-1 with the breach reason, got {:?}",
+        last_rejection.reason
     );
 }
 
@@ -247,8 +257,8 @@ fn only_reloading_the_rule_restores_it_after_a_latency_breach() {
 
     let result = engine.set_rule_enabled("rule-1", true);
     assert!(
-        result.is_err(),
-        "re-enabling a latency-disabled rule must be refused"
+        matches!(result, Err(DetectionEngineError::RuleLatched { .. })),
+        "re-enabling a latency-disabled rule must be refused with RuleLatched, got {result:?}"
     );
     assert!(
         !engine.get_rule("rule-1").expect("rule tracked").enabled,
@@ -273,10 +283,10 @@ fn only_reloading_the_rule_restores_it_after_a_latency_breach() {
     assert_eq!(engine.rule_health("rule-1"), Some(&RuleHealth::Healthy));
 }
 
-/// AE5, and the reason step 2 of the mandatory execution order exists to observe failing: today,
-/// `RuleHealthRegistry::revalidate` re-heals *every* tracked rule whose references still resolve
-/// on any first registration, with no regard for why the rule was unhealthy. A second collector
-/// registering for the first time must not resurrect a rule the latency guard disabled.
+/// AE5: `RuleHealthRegistry::revalidate` checks `resists_auto_recovery` before either the
+/// first-registration or the `touches()` branch, so a cause that resists it is skipped
+/// unconditionally regardless of why the rule was unhealthy. A second collector registering for
+/// the first time must not resurrect a rule the latency guard disabled.
 #[test]
 fn a_new_collectors_first_registration_does_not_re_heal_a_latency_disabled_rule() {
     let start = SystemTime::UNIX_EPOCH;
@@ -304,8 +314,8 @@ fn a_new_collectors_first_registration_does_not_re_heal_a_latency_disabled_rule(
 
     let result = engine.set_rule_enabled("rule-1", true);
     assert!(
-        result.is_err(),
-        "re-enabling a latency-disabled rule must be refused"
+        matches!(result, Err(DetectionEngineError::RuleLatched { .. })),
+        "re-enabling a latency-disabled rule must be refused with RuleLatched, got {result:?}"
     );
     let cycle = engine.renewal_cycle(start + PUSHDOWN_TASK_RENEWAL_INTERVAL);
     assert!(
@@ -350,9 +360,9 @@ fn a_task_expiry_reference_failure_is_still_re_healed_by_a_later_registration() 
 }
 
 /// P1-A: `set_rule_enabled(id, false)` on a rule that is still `Healthy` must not give a
-/// subsequent breach a bypass. Before the fix, `observe_pattern_latency` keyed its idempotency
-/// check on `rule.enabled` alone, so an operator-disabled-but-healthy rule took the early return
-/// on a breach and kept both its compiled plan and its `Healthy` verdict.
+/// subsequent breach a bypass. `observe_pattern_latency` keys its idempotency check on health, not
+/// on `rule.enabled`, so an operator-disabled-but-healthy rule still loses its plan and its
+/// `Healthy` verdict on a later breach.
 #[test]
 fn an_operator_disabled_still_healthy_rule_still_loses_its_plan_and_health_on_breach() {
     let start = SystemTime::UNIX_EPOCH;
@@ -379,7 +389,7 @@ fn an_operator_disabled_still_healthy_rule_still_loses_its_plan_and_health_on_br
     );
     let reason = unhealthy_reason(&engine, "rule-1");
     assert!(
-        reason.contains("11"),
+        reason.contains("11ms"),
         "reason must name the observed ms: {reason}"
     );
 }
@@ -416,13 +426,18 @@ fn a_breach_on_a_deferred_rule_survives_the_registration_that_drains_it() {
     );
     let reason = unhealthy_reason(&engine, "rule-1");
     assert!(
-        reason.contains("11"),
+        reason.contains("11ms"),
         "the latency reason must survive the drain: {reason}"
     );
 }
 
-/// P1-C: after a breach, re-enabling must be refused outright, and even if that refusal were
-/// somehow bypassed, `execute_rules` carries its own independent gate on the same health verdict.
+/// P1-C: after a breach, re-enabling must be refused outright, and `execute_rules` must not alert
+/// for the rule while it stays disabled. This does *not* exercise `execute_rules`' own
+/// `resists_auto_recovery` gate — the refused enable leaves `enabled == false`, so the pre-existing
+/// `if !rule.enabled { continue; }` check short-circuits before that gate is ever reached. The
+/// `resists_auto_recovery` gate in `execute_rules` is what
+/// `a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled` actually exercises, via a
+/// recoverable cause that leaves `enabled == true`.
 #[test]
 fn a_breached_rule_refuses_re_enable_and_produces_no_alerts() {
     let mut engine = DetectionEngine::new();
@@ -445,8 +460,8 @@ fn a_breached_rule_refuses_re_enable_and_produces_no_alerts() {
 
     let result = engine.set_rule_enabled("rule-1", true);
     assert!(
-        result.is_err(),
-        "re-enabling a latency-disabled rule must be refused"
+        matches!(result, Err(DetectionEngineError::RuleLatched { .. })),
+        "re-enabling a latency-disabled rule must be refused with RuleLatched, got {result:?}"
     );
     assert!(
         !engine.get_rule("rule-1").expect("rule tracked").enabled,
@@ -484,7 +499,7 @@ fn a_latency_breach_on_a_task_expired_rule_overrides_and_then_resists_re_heal() 
     assert!(breached);
     let reason = unhealthy_reason(&engine, "rule-1");
     assert!(
-        reason.contains("11"),
+        reason.contains("11ms"),
         "the latency reason must have replaced the task-expiry one: {reason}"
     );
 
@@ -546,5 +561,139 @@ fn a_same_collectors_re_registration_that_touches_the_table_does_not_re_heal_a_l
         unhealthy_reason(&engine, "rule-1"),
         reason_before,
         "the reason must be byte-identical after revalidation via the touches() branch"
+    );
+}
+
+/// The recoverable-cause path through `execute_rules`' own `resists_auto_recovery` gate, which no
+/// other test in this file reaches. A task-expired rule keeps `enabled == true` — expiry never
+/// touches it — unlike the P1-C test above, whose refused enable leaves `enabled == false` and
+/// short-circuits on the earlier `if !rule.enabled` check. Here the gate is genuinely evaluated.
+/// Broadening it to match any `Unhealthy` cause (the natural-looking simplification of dropping
+/// the `resists_auto_recovery()` guard) would pass every other test in this file, since none of
+/// them reach a rule that is `Unhealthy` yet still `enabled == true` — and would silently stop
+/// alerting for every rule whose pushed task merely lapsed on transient IPC loss, a detection
+/// blackout for a condition that isn't even the rule's fault.
+#[test]
+fn a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = DetectionEngine::new();
+    engine
+        .register_collector(&verified("procmond"), descriptor())
+        .unwrap();
+
+    let mut high_cpu_rule = DetectionRule::new(
+        "rule-1".to_owned(),
+        "Test Rule".to_owned(),
+        "Pattern latency test rule".to_owned(),
+        "SELECT cpu_usage FROM processes WHERE cpu_usage > 80".to_owned(),
+        "high_cpu".to_owned(),
+        AlertSeverity::Medium,
+    );
+    high_cpu_rule.enabled = true;
+    engine.load_rule(high_cpu_rule).unwrap();
+    assert_eq!(
+        engine.renewal_cycle(start).due().len(),
+        1,
+        "the first cycle issues the task"
+    );
+
+    let expired = engine.renewal_cycle(start + PUSHDOWN_TASK_TTL);
+    assert_eq!(expired.expired_rules(), ["rule-1"]);
+    assert!(
+        matches!(
+            engine.rule_health("rule-1"),
+            Some(&RuleHealth::Unhealthy {
+                cause: UnhealthyCause::TaskExpiry,
+                ..
+            })
+        ),
+        "expiry must mark the rule unhealthy for a recoverable cause: {:?}",
+        engine.rule_health("rule-1")
+    );
+    assert!(
+        engine.get_rule("rule-1").expect("rule tracked").enabled,
+        "expiry never touches enabled -- this is what actually exercises execute_rules' gate"
+    );
+
+    let mut process = ProcessRecord::new(1234, "hog".to_owned());
+    process.cpu_usage = Some(95.0);
+    let alerts = engine.execute_rules(&[process]);
+    assert_eq!(
+        alerts.len(),
+        1,
+        "a recoverable cause (TaskExpiry) must not stop local alerting"
+    );
+
+    assert!(
+        engine.set_rule_enabled("rule-1", true).is_ok(),
+        "TaskExpiry is recoverable; re-enabling it must succeed"
+    );
+}
+
+/// `set_rule_enabled(id, true)` returning `Ok` on a genuinely `Healthy`, tracked rule — the
+/// documented, unrefused path. (A deferred, untracked rule also happens to return `Ok` here, since
+/// an untracked rule has no health for the guard to refuse against, but that is a weaker case than
+/// this one.)
+#[test]
+fn set_rule_enabled_true_succeeds_on_a_healthy_tracked_rule() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+    assert_eq!(engine.rule_health("rule-1"), Some(&RuleHealth::Healthy));
+
+    engine
+        .set_rule_enabled("rule-1", false)
+        .expect("disabling a healthy rule is always allowed");
+    assert!(!engine.get_rule("rule-1").expect("rule tracked").enabled);
+
+    assert!(
+        engine.set_rule_enabled("rule-1", true).is_ok(),
+        "re-enabling a healthy rule must succeed"
+    );
+    assert!(engine.get_rule("rule-1").expect("rule tracked").enabled);
+}
+
+/// An unknown rule id returns `Err` for either `enabled` value, as the specific `ExecutionError`
+/// variant rather than the `RuleLatched` refusal a health check would produce.
+#[test]
+fn set_rule_enabled_on_an_unknown_id_returns_execution_error() {
+    let mut engine = DetectionEngine::new();
+    let result = engine.set_rule_enabled("does-not-exist", true);
+    assert!(
+        matches!(result, Err(DetectionEngineError::ExecutionError(_))),
+        "an unknown id must be refused as ExecutionError, not RuleLatched: {result:?}"
+    );
+}
+
+/// The operator-facing reason must keep the sub-millisecond precision `Duration`'s own `Debug`
+/// rendering carries, not round down to a smaller, less alarming whole-number breach.
+#[test]
+fn a_fractional_millisecond_observation_is_not_truncated_in_the_reason() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+
+    let observed = Duration::from_micros(10_400); // 10.4ms, strictly over the 10ms default
+    assert!(engine.observe_pattern_latency("rule-1", observed));
+
+    let reason = unhealthy_reason(&engine, "rule-1");
+    assert!(
+        reason.contains("10.4ms"),
+        "a fractional ms observation must not be truncated to a whole number: {reason}"
+    );
+}
+
+/// A removed, latency-breached rule leaves no health row behind. A `LatencyBreach` row resists
+/// every self-heal, so unlike a `TaskExpiry` row it is never revalidated back to healthy on its
+/// own — a leaked row would sit unhealthy forever.
+#[test]
+fn removing_a_latency_breached_rule_leaves_no_health_row() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+
+    assert!(engine.remove_rule("rule-1").is_some());
+    assert_eq!(
+        engine.rule_health("rule-1"),
+        None,
+        "removal must forget the rule's health row"
     );
 }

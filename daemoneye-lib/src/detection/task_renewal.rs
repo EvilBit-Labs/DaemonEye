@@ -294,8 +294,8 @@ impl DetectionEngine {
 
         let mut cycle = RenewalCycle::default();
         for rule_id in self.tasks.expire(now) {
-            // Re-validation keeps re-healing this exactly as it did before the latency guard
-            // existed; only `LatencyBreach` resists it (R8, KTD6).
+            // `TaskExpiry` is a recoverable cause: a later registration that revalidates this
+            // rule re-heals it. Only `LatencyBreach` resists that (R8, KTD6).
             let _marked = self.health.mark_unhealthy(
                 &rule_id,
                 TASK_EXPIRED_REASON,

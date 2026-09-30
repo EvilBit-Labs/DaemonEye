@@ -112,11 +112,12 @@ pub struct DetectionConfig {
     pub max_subquery_depth: u32,
     /// Per-pattern latency threshold in milliseconds.
     ///
-    /// Validated and carried into `DetectionEngine` as a `Duration` at construction. A `REGEXP`
-    /// pattern T6 observes to exceed this is the consequence
-    /// `DetectionEngine::observe_pattern_latency` enforces: the rule that owns it is disabled and
-    /// marked unhealthy. Observing pattern execution against real rows is T6's work; this value is
-    /// only the budget. Valid range is [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN`] to
+    /// Validated and carried into `DetectionEngine` as a `Duration` at construction.
+    /// `DetectionEngine::observe_pattern_latency` is the consequence enforced against it: a
+    /// pattern execution reported over this budget disables the rule that owns it and marks it
+    /// unhealthy. Nothing observes pattern latency yet — that is T6's work, which needs the
+    /// `DataFusion` executor; this value is only the budget it will be measured against. Valid
+    /// range is [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN`] to
     /// [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX`]. Milliseconds are stored as an
     /// integer so that [`Config`] can keep deriving [`Eq`].
     pub pattern_latency_threshold_ms: u64,
