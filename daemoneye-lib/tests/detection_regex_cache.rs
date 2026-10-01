@@ -362,8 +362,18 @@ fn residency_follows_an_lru_model_for_any_lookup_sequence() {
         let cache = RegexCache::new();
         let mut model: Vec<usize> = Vec::new();
 
+        let mut expected_hits: u64 = 0;
+        let mut expected_compiles: u64 = 0;
+
         for &index in &sequence {
+            // Residency *before* this lookup decides whether it can be a hit.
+            let was_resident = model.contains(&index);
             cache.get_or_compile(&format!("^entry{index}$")).unwrap();
+            if was_resident {
+                expected_hits = expected_hits.saturating_add(1);
+            } else {
+                expected_compiles = expected_compiles.saturating_add(1);
+            }
 
             if let Some(position) = model.iter().position(|&modelled| modelled == index) {
                 model.remove(position);
@@ -390,11 +400,16 @@ fn residency_follows_an_lru_model_for_any_lookup_sequence() {
             }
         }
 
+        // Assert each counter against the model separately. Comparing only the sum would pass
+        // even if the cache reported every hit as a compile and every compile as a hit.
         let stats = cache.stats();
         prop_assert_eq!(
-            stats.hits.saturating_add(stats.compiles),
-            u64::try_from(sequence.len()).unwrap(),
-            "every lookup is either a hit or a compile, exactly once"
+            stats.hits, expected_hits,
+            "a lookup of a modelled-resident pattern must count as a hit"
+        );
+        prop_assert_eq!(
+            stats.compiles, expected_compiles,
+            "a lookup of a modelled-evicted or new pattern must count as a compile"
         );
     });
 }
