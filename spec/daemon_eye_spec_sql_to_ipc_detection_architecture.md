@@ -254,7 +254,7 @@ All collectors MUST implement regex pattern matching with the following specific
 
 **Default Configuration:**
 
-- **Per-Pattern Latency:** 10ms default (configurable via `detection.pattern_latency_threshold_ms`; validated and carried at config load, not yet enforced against observed pattern execution)
+- **Per-Pattern Latency:** 10ms default (configurable via `detection.pattern_latency_threshold_ms`; validated and carried into the engine at construction. The disable consequence is `DetectionEngine::observe_pattern_latency`; observation of pattern execution against real rows is T6's work)
 - **Compilation Timeout:** Not configurable — no config field exists for it. A linear-time engine bounds compilation by program size rather than by wall clock, so there is no timeout to set and no way to interrupt a build in progress; the enforced bound is the fixed per-pattern compiled-program size limit described under Memory Limit below.
 - **Memory Limit:** 256KiB of compiled program per pattern against a 64-entry compiled-pattern cache, plus a 256KiB per-search lazy-DFA cache ceiling — these three are **fixed constants, not configuration**: `REGEX_SIZE_LIMIT_BYTES`, `REGEX_CACHE_MAX_ENTRIES`, and `REGEX_DFA_SIZE_LIMIT_BYTES` in `daemoneye-lib/src/detection_bounds.rs`, which is their authority
 

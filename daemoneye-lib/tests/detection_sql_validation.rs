@@ -170,6 +170,27 @@ fn a_table_valued_function_call_in_from_is_rejected_and_named() {
 }
 
 #[test]
+fn a_table_valued_function_call_nested_in_a_derived_table_is_rejected_and_named() {
+    // `TableFactor::Derived` carries `Ok(())` itself, but its `subquery` field is not skipped by
+    // the derived `Visit` impl, so the visitor still descends into it and reaches the nested
+    // table-valued call. This pins that nothing changed to make that so.
+    let rejection = reject("SELECT * FROM (SELECT * FROM readfile('/etc/passwd')) AS t");
+    let SqlRejection::FunctionNotAllowed { ref function, .. } = rejection else {
+        panic!("expected the allowlist gate to fire on the nested FROM item, got {rejection:?}");
+    };
+    assert_eq!(function.to_lowercase(), "readfile");
+}
+
+#[test]
+fn a_table_valued_function_call_nested_in_a_cte_is_rejected_and_named() {
+    let rejection = reject("WITH t AS (SELECT * FROM readfile('/etc/passwd')) SELECT * FROM t");
+    let SqlRejection::FunctionNotAllowed { ref function, .. } = rejection else {
+        panic!("expected the allowlist gate to fire inside the CTE, got {rejection:?}");
+    };
+    assert_eq!(function.to_lowercase(), "readfile");
+}
+
+#[test]
 fn a_plain_table_and_a_derived_table_in_from_still_load() {
     accept("SELECT pid FROM processes");
     accept("SELECT pid FROM (SELECT pid FROM processes) AS inner_processes");

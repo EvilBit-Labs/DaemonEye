@@ -6,6 +6,7 @@
 pub mod allowlist;
 pub mod catalog;
 pub mod conformance;
+pub mod pattern_latency;
 pub mod planner;
 pub mod regex_cache;
 pub mod rejection;
@@ -20,6 +21,7 @@ use crate::models::{Alert, DetectionRule, ProcessRecord, RuleError};
 use crate::proto::SchemaDescriptor;
 use crate::rejection_log::{RejectionLog, RejectionReason};
 use std::collections::HashMap;
+use std::time::Duration;
 use thiserror::Error;
 
 pub use allowlist::{ALLOWED_SQL_FUNCTIONS, is_allowed_sql_function};
@@ -51,6 +53,17 @@ pub enum DetectionEngineError {
 
     #[error("Rule could not be lowered into a pushdown plan: {0}")]
     PlanRejected(String),
+
+    #[error(
+        "rule {rule_id} cannot be re-enabled while unhealthy ({reason}); reload it with \
+         load_rule to clear this"
+    )]
+    RuleLatched {
+        /// The rule an enable request was refused for.
+        rule_id: String,
+        /// The health reason recorded when the rule was marked unhealthy.
+        reason: String,
+    },
 }
 
 /// Detection engine for executing SQL-based rules.
@@ -68,6 +81,11 @@ pub struct DetectionEngine {
     /// Live pushdown tasks and when each was last confirmed on its collector (R16).
     tasks: TaskRenewalLedger,
     max_subquery_depth: u32,
+    /// The operator's configured per-pattern latency budget; enforced by
+    /// [`DetectionEngine::observe_pattern_latency`] (R2, R3). Observing a pattern's execution
+    /// against real rows is T6's work — it needs the `DataFusion` executor, which does not exist
+    /// yet, so nothing calls `observe_pattern_latency` today.
+    pattern_latency_threshold: Duration,
     rejections: RejectionLog,
     #[allow(dead_code)]
     max_execution_time_ms: u64,
@@ -96,6 +114,7 @@ impl DetectionEngine {
             patterns: RegexCache::new(),
             tasks: TaskRenewalLedger::new(),
             max_subquery_depth: config.max_subquery_depth,
+            pattern_latency_threshold: Duration::from_millis(config.pattern_latency_threshold_ms),
             rejections: RejectionLog::new(),
             max_execution_time_ms: 30000, // 30 seconds
             max_memory_mb: 100,           // 100 MB
@@ -106,6 +125,16 @@ impl DetectionEngine {
     #[must_use]
     pub const fn catalog(&self) -> &SchemaCatalog {
         &self.catalog
+    }
+
+    /// This engine's configured per-pattern latency budget (R2).
+    ///
+    /// [`DetectionEngine::observe_pattern_latency`] is the consequence enforced against it, once
+    /// something actually measures a pattern's execution and calls it — T6's work, not yet wired
+    /// up.
+    #[must_use]
+    pub const fn pattern_latency_threshold(&self) -> Duration {
+        self.pattern_latency_threshold
     }
 
     /// The compiled plan for a rule, if the rule is in the enabled set.
@@ -120,7 +149,11 @@ impl DetectionEngine {
         self.deferred.clone()
     }
 
-    /// Current health of a rule, once it has been judged against a catalog (R12).
+    /// Current health of a rule (R12).
+    ///
+    /// `None` until the rule has either been judged against a catalog or been marked unhealthy
+    /// directly — for example, a deferred rule that breaches its latency budget before any
+    /// collector has registered has health with no catalog judgment behind it at all.
     #[must_use]
     pub fn rule_health(&self, id: &str) -> Option<&RuleHealth> {
         self.health.health(id)
@@ -170,6 +203,14 @@ impl DetectionEngine {
     }
 
     /// Lower one loaded rule and record its plan and its references.
+    ///
+    /// Three call sites reach this: the deferred-rule drain and the `to_replan` loop above, both
+    /// in `register_collector`, and `load_rule`. It is also the single place that must refuse to
+    /// hand a fresh compiled plan to a rule whose health resists auto-recovery (R8, KTD6) —
+    /// `track` preserves that health verdict, but planning happened anyway and must not be
+    /// applied. `load_rule` never actually hits this refusal: it calls `self.health.forget`
+    /// immediately before calling this, so there is no resisting verdict left for `track` to
+    /// preserve, and a reload always gets its fresh plan.
     fn plan_and_record(&mut self, rule_id: &str) -> Result<(), PlanError> {
         let Some(rule) = self.rules.get(rule_id) else {
             return Ok(());
@@ -177,6 +218,15 @@ impl DetectionEngine {
         let compiled = plan_rule(&self.catalog, &self.patterns, rule, self.max_subquery_depth)?;
         self.health
             .track(rule_id, compiled.references().iter().cloned());
+
+        let resists = self
+            .health
+            .health(rule_id)
+            .is_some_and(RuleHealth::resists_auto_recovery);
+        if resists {
+            return Ok(());
+        }
+
         let _previous = self.compiled.insert(rule_id.to_owned(), compiled);
         Ok(())
     }
@@ -197,7 +247,10 @@ impl DetectionEngine {
     /// If a rule with the same ID already exists it will be overwritten, and the tasks tracked for
     /// the previous version stop being renewed.
     ///
-    /// On validation failure this returns `DetectionEngineError::SqlValidationError`.
+    /// On validation failure this returns `DetectionEngineError::SqlValidationError`. That check
+    /// runs before `self.health.forget` does, so a malformed reload is rejected without ever
+    /// clearing a latched health verdict (R8, KTD6) — an invalid reload cannot launder a rule
+    /// back to healthy.
     ///
     /// # Examples
     ///
@@ -232,6 +285,12 @@ impl DetectionEngine {
         // would keep renewing the superseded predicate for up to a full TTL. Drop the tracked tasks
         // and let the next renewal cycle issue from the new plan.
         self.tasks.forget_rule(&rule_id);
+        // A reload is a fresh judgment, not a continuation of the previous instance's health
+        // history (R8, KTD6). This is the one call site `pattern_latency` documents as restoring
+        // a rule the latency guard disabled: forgetting here, before `plan_and_record` calls
+        // `RuleHealthRegistry::track`, is what lets that reload clear it, while every other path
+        // into `track` (a deferred-rule drain, a `revalidate` re-plan) preserves it.
+        self.health.forget(&rule_id);
 
         // R18: no rule is judged against an empty catalog. It waits, it is not dropped.
         if self.catalog.is_empty() {
@@ -255,11 +314,22 @@ impl DetectionEngine {
     }
 
     /// Execute all enabled rules against process data.
+    ///
+    /// A rule whose health resists auto-recovery (R8, KTD6) — currently, a latency breach — is
+    /// skipped even if `enabled` were somehow still `true`, so this local executor obeys the same
+    /// contract the pushdown path already gets for free from `compiled` holding no plan for it.
     pub fn execute_rules(&self, processes: &[ProcessRecord]) -> Vec<Alert> {
         let mut alerts = Vec::new();
 
         for rule in self.rules.values() {
             if !rule.enabled {
+                continue;
+            }
+            let resists = self
+                .health
+                .health(rule.id.raw())
+                .is_some_and(RuleHealth::resists_auto_recovery);
+            if resists {
                 continue;
             }
 
@@ -353,24 +423,60 @@ impl DetectionEngine {
     }
 
     /// Remove a rule by ID.
+    ///
+    /// Mirrors `reject_rule`'s cleanup — the compiled plan, the health row, and any tracked
+    /// pushdown task are all forgotten along with the rule itself, so a removed rule leaves no
+    /// state behind for a stale renewal or a permanently unhealthy entry to trail on — and also
+    /// clears it from `deferred`, a case `reject_rule` never meets since a deferred rule has not
+    /// yet been planned.
     pub fn remove_rule(&mut self, id: &str) -> Option<DetectionRule> {
-        self.rules.remove(id)
+        let removed = self.rules.remove(id);
+        let _uncovered = self.compiled.remove(id);
+        self.health.forget(id);
+        self.tasks.forget_rule(id);
+        self.deferred.retain(|deferred_id| deferred_id != id);
+        removed
     }
 
-    /// Enable or disable a rule.
+    /// Enable or disable a loaded rule.
+    ///
+    /// Disabling a loaded rule (`enabled == false`) is always allowed. Enabling is refused with
+    /// [`DetectionEngineError::RuleLatched`] naming the reason when the rule's current health
+    /// resists auto-recovery (R8, KTD6) — today, a latency breach recorded by
+    /// [`Self::observe_pattern_latency`]. Reload the rule with [`Self::load_rule`] to clear the
+    /// health verdict and re-enable it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DetectionEngineError::ExecutionError`] if `id` names no loaded rule, or
+    /// [`DetectionEngineError::RuleLatched`] if `enabled` is `true` and the rule's health resists
+    /// auto-recovery.
     pub fn set_rule_enabled(
         &mut self,
         id: &str,
         enabled: bool,
     ) -> Result<(), DetectionEngineError> {
-        if let Some(rule) = self.rules.get_mut(id) {
-            rule.enabled = enabled;
-            Ok(())
-        } else {
-            Err(DetectionEngineError::ExecutionError(format!(
-                "Rule not found: {id}"
-            )))
+        if enabled
+            && let Some(health) = self.health.health(id)
+            && health.resists_auto_recovery()
+            && let &RuleHealth::Unhealthy {
+                ref reason,
+                cause: _cause,
+            } = health
+        {
+            return Err(DetectionEngineError::RuleLatched {
+                rule_id: id.to_owned(),
+                reason: reason.clone(),
+            });
         }
+
+        let Some(rule) = self.rules.get_mut(id) else {
+            return Err(DetectionEngineError::ExecutionError(format!(
+                "Rule not found: {id}"
+            )));
+        };
+        rule.enabled = enabled;
+        Ok(())
     }
 }
 
@@ -537,6 +643,29 @@ mod tests {
     async fn test_rule_removal_nonexistent() {
         let mut engine = DetectionEngine::new();
         assert!(engine.remove_rule("nonexistent-rule").is_none());
+    }
+
+    /// A removed rule that was still waiting in `deferred` (no collector ever registered) must not
+    /// keep appearing in `deferred_rule_ids()` after removal.
+    #[tokio::test]
+    async fn removing_a_deferred_rule_clears_it_from_deferred() {
+        let mut engine = DetectionEngine::new();
+        let rule = DetectionRule::new(
+            "rule-1".to_owned(),
+            "Test Rule".to_owned(),
+            "Test detection rule".to_owned(),
+            "SELECT * FROM processes WHERE name = 'test'".to_owned(),
+            "test".to_owned(),
+            AlertSeverity::Medium,
+        );
+        engine.load_rule(rule).expect("Failed to load rule");
+        assert_eq!(engine.deferred_rule_ids(), ["rule-1"]);
+
+        assert!(engine.remove_rule("rule-1").is_some());
+        assert!(
+            engine.deferred_rule_ids().is_empty(),
+            "removal must clear the rule from deferred too"
+        );
     }
 
     #[tokio::test]

@@ -269,3 +269,147 @@ fn a_rejected_pattern_fails_rule_load_after_the_sql_gate_passes() {
         "expected the lookahead gate to fire, got {error:?}"
     );
 }
+
+// --- Property gates: regex bounds (R5, R6) --------------------------------------------------
+
+/// An unsupported construct is named wherever it sits in an otherwise legal pattern.
+///
+/// `prefix` and `suffix` are plain `[a-z0-9]` runs, which can never introduce or mask a construct
+/// of their own, so any rejection here is attributable to the construct alone.
+#[test]
+fn an_unsupported_construct_is_named_wherever_it_sits_in_the_pattern() {
+    use proptest::prelude::*;
+
+    let constructs = vec![
+        ("(?=x)", RegexConstruct::Lookahead),
+        ("(?!x)", RegexConstruct::Lookahead),
+        ("(?<=x)", RegexConstruct::Lookbehind),
+        ("(?<!x)", RegexConstruct::Lookbehind),
+        (r"(x)\1", RegexConstruct::Backreference),
+        (r"(?<n>x)\k<n>", RegexConstruct::Backreference),
+    ];
+
+    proptest!(|(
+        prefix in "[a-z0-9]{0,6}",
+        suffix in "[a-z0-9]{0,6}",
+        (construct_text, expected_construct) in prop::sample::select(constructs),
+    )| {
+        let cache = RegexCache::new();
+        let pattern = format!("{prefix}{construct_text}{suffix}");
+
+        let rejection = cache
+            .get_or_compile(&pattern)
+            .expect_err("an unsupported construct must be rejected, never compiled");
+
+        match rejection {
+            RegexRejection::UnsupportedConstruct {
+                pattern: ref rejected,
+                construct,
+            } => {
+                prop_assert_eq!(rejected, &pattern, "rejection must name the pattern it was given");
+                prop_assert_eq!(construct, expected_construct, "rejection must name the construct that fired");
+            }
+            other => prop_assert!(false, "the wrong gate fired for `{pattern}`: {other:?}"),
+        }
+        prop_assert!(!cache.is_cached(&pattern), "a rejected pattern must never become resident");
+    });
+}
+
+/// A syntactically valid pattern is either resident after `get_or_compile` or rejected as
+/// [`RegexRejection::CompiledTooBig`], and never both.
+///
+/// `repeat` is deliberately narrow (see the module comment on why a wide range would leave this
+/// property exercising only one arm almost every run): compilation under the production bounds
+/// succeeds only for `repeat` in {1, 2, 3} and fails for every larger value in this range, so a
+/// run reliably samples both outcomes.
+#[test]
+fn a_valid_pattern_is_resident_or_rejected_as_too_big_and_never_both() {
+    use proptest::prelude::*;
+
+    proptest!(|(repeat in 1..=12_usize)| {
+        let cache = RegexCache::new();
+        let pattern = format!(r"(?:\p{{L}}\p{{N}}\p{{S}}\p{{P}}){{{repeat}}}");
+
+        match cache.get_or_compile(&pattern) {
+            Ok(_compiled) => {
+                prop_assert!(cache.is_cached(&pattern), "a compiled pattern must be resident");
+            }
+            Err(RegexRejection::CompiledTooBig { size_limit_bytes, .. }) => {
+                prop_assert_eq!(
+                    size_limit_bytes,
+                    REGEX_SIZE_LIMIT_BYTES,
+                    "the rejection must name the real ceiling"
+                );
+                prop_assert!(!cache.is_cached(&pattern), "a rejected pattern must never become resident");
+            }
+            Err(other) => prop_assert!(false, "unexpected rejection for repeat={repeat}: {other:?}"),
+        }
+    });
+}
+
+/// Residency after any sequence of lookups matches a least-recently-used model of that sequence.
+///
+/// The model moves each looked-up index to the back of a `Vec` and truncates from the front once
+/// it holds more than [`REGEX_CACHE_MAX_ENTRIES`] entries — the textbook LRU definition, replayed
+/// against one real cache instance for the same sequence.
+#[test]
+fn residency_follows_an_lru_model_for_any_lookup_sequence() {
+    use proptest::prelude::*;
+
+    let index_bound = REGEX_CACHE_MAX_ENTRIES.saturating_add(8);
+
+    proptest!(|(sequence in prop::collection::vec(0..index_bound, 1..=200))| {
+        let cache = RegexCache::new();
+        let mut model: Vec<usize> = Vec::new();
+
+        let mut expected_hits: u64 = 0;
+        let mut expected_compiles: u64 = 0;
+
+        for &index in &sequence {
+            // Residency *before* this lookup decides whether it can be a hit.
+            let was_resident = model.contains(&index);
+            cache.get_or_compile(&format!("^entry{index}$")).unwrap();
+            if was_resident {
+                expected_hits = expected_hits.saturating_add(1);
+            } else {
+                expected_compiles = expected_compiles.saturating_add(1);
+            }
+
+            if let Some(position) = model.iter().position(|&modelled| modelled == index) {
+                model.remove(position);
+            }
+            model.push(index);
+            if model.len() > REGEX_CACHE_MAX_ENTRIES {
+                model.remove(0);
+            }
+        }
+
+        prop_assert_eq!(cache.len(), model.len(), "cache size must match the LRU model's size");
+        for &index in &model {
+            prop_assert!(
+                cache.is_cached(&format!("^entry{index}$")),
+                "index {index} is modelled as resident"
+            );
+        }
+        for index in 0..index_bound {
+            if !model.contains(&index) {
+                prop_assert!(
+                    !cache.is_cached(&format!("^entry{index}$")),
+                    "index {index} is modelled as evicted"
+                );
+            }
+        }
+
+        // Assert each counter against the model separately. Comparing only the sum would pass
+        // even if the cache reported every hit as a compile and every compile as a hit.
+        let stats = cache.stats();
+        prop_assert_eq!(
+            stats.hits, expected_hits,
+            "a lookup of a modelled-resident pattern must count as a hit"
+        );
+        prop_assert_eq!(
+            stats.compiles, expected_compiles,
+            "a lookup of a modelled-evicted or new pattern must count as a compile"
+        );
+    });
+}

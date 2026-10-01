@@ -24,6 +24,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::detection::DetectionEngine;
 use crate::detection::planner::CompiledRule;
+use crate::detection::rule_health::UnhealthyCause;
 use crate::detection_bounds::PUSHDOWN_TASK_RENEWAL_INTERVAL;
 use crate::proto::DetectionTask;
 
@@ -293,7 +294,13 @@ impl DetectionEngine {
 
         let mut cycle = RenewalCycle::default();
         for rule_id in self.tasks.expire(now) {
-            let _marked = self.health.mark_unhealthy(&rule_id, TASK_EXPIRED_REASON);
+            // `TaskExpiry` is a recoverable cause: a later registration that revalidates this
+            // rule re-heals it. Only `LatencyBreach` resists that (R8, KTD6).
+            let _marked = self.health.mark_unhealthy(
+                &rule_id,
+                TASK_EXPIRED_REASON,
+                UnhealthyCause::TaskExpiry,
+            );
             let _uncovered = self.compiled.remove(&rule_id);
             cycle.push_expired(rule_id);
         }

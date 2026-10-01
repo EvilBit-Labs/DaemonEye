@@ -10,7 +10,7 @@ use std::time::SystemTime;
 
 use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::detection::catalog::{SchemaCatalog, verify_spawn_token};
-use daemoneye_lib::detection::rule_health::{RuleHealth, RuleHealthRegistry};
+use daemoneye_lib::detection::rule_health::{RuleHealth, RuleHealthRegistry, UnhealthyCause};
 use daemoneye_lib::detection::task_renewal::task_id;
 use daemoneye_lib::models::{AlertSeverity, DetectionRule};
 use daemoneye_lib::proto::{
@@ -116,7 +116,7 @@ fn an_unhealthy_rule_names_the_reference_that_stopped_resolving() {
 
     let health = rules.health("needs-cmdline").unwrap();
     match *health {
-        RuleHealth::Unhealthy { ref reason } => assert!(reason.contains("cmdline"), "{reason}"),
+        RuleHealth::Unhealthy { ref reason, .. } => assert!(reason.contains("cmdline"), "{reason}"),
         RuleHealth::Healthy | RuleHealth::Unknown => panic!("rule should be unhealthy"),
         ref other => panic!("rule should be unhealthy, was {other:?}"),
     }
@@ -200,4 +200,54 @@ fn revalidation_takes_the_plan_away_from_the_rule_it_marks_unhealthy() {
         .map(|pending| pending.task_id().to_owned())
         .collect();
     assert_eq!(issued, [task_id("needs-name", "procmond")]);
+}
+
+/// A recoverable cause must not displace a resisting one.
+///
+/// `mark_unhealthy` is the one health writer the surrounding policy does not otherwise reach: it
+/// overwrites in place, so without this guard a later `TaskExpiry` mark on a latency-breached rule
+/// would downgrade the verdict to a cause `revalidate` clears, laundering the breach. Production
+/// cannot currently make that call — `renewal_cycle` prunes uncovered rules before expiring them —
+/// but that is statement order, not policy, and a second caller arriving with T6 would not know it.
+#[test]
+fn a_recoverable_cause_does_not_displace_a_resisting_one() {
+    let mut health = RuleHealthRegistry::new();
+    health.track("rule-1", [("processes", "pid")]);
+
+    assert!(health.mark_unhealthy("rule-1", "too slow", UnhealthyCause::LatencyBreach));
+    assert!(health.mark_unhealthy("rule-1", "task expired", UnhealthyCause::TaskExpiry));
+
+    let RuleHealth::Unhealthy {
+        ref reason, cause, ..
+    } = *health
+        .health("rule-1")
+        .expect("the rule is tracked and unhealthy")
+    else {
+        panic!("expected the rule to be unhealthy");
+    };
+    assert_eq!(
+        cause,
+        UnhealthyCause::LatencyBreach,
+        "the resisting cause must survive a later recoverable mark"
+    );
+    assert_eq!(
+        reason, "too slow",
+        "the breach's own reason must survive too"
+    );
+
+    // The reverse order still overwrites: a breach is the stronger verdict and must win.
+    let mut reversed = RuleHealthRegistry::new();
+    reversed.track("rule-2", [("processes", "pid")]);
+    assert!(reversed.mark_unhealthy("rule-2", "task expired", UnhealthyCause::TaskExpiry));
+    assert!(reversed.mark_unhealthy("rule-2", "too slow", UnhealthyCause::LatencyBreach));
+    assert!(
+        matches!(
+            reversed.health("rule-2"),
+            Some(&RuleHealth::Unhealthy {
+                cause: UnhealthyCause::LatencyBreach,
+                ..
+            })
+        ),
+        "a breach must displace a recoverable cause"
+    );
 }
