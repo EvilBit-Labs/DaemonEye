@@ -6,6 +6,15 @@
 //! [`DetectionEngine::observe_pattern_latency`] is the single entry point T6 calls with an
 //! already-measured [`Duration`]; nothing in this module executes a pattern or starts a timer.
 //!
+//! Two decisions about that measurement are settled and belong to T6 to implement, not to
+//! re-open. ADR-0011: the budget is a breach detector checked at `RecordBatch` boundaries, not a
+//! per-match execution limit — `regex` exposes no cancellation, so abandoning a match would keep
+//! burning the CPU the budget protects, and the overrun is therefore bounded by one batch.
+//! ADR-0012: a report must name the rule *instance* it measured. The signature below takes only a
+//! rule id, which a reload leaves unchanged, so a measurement of a superseded instance can latch
+//! the fresh one and defeat the operator's only recovery. That signature is provisional for this
+//! reason: T6 adds the generation it is handed with the plan.
+//!
 //! Disabling a rule here is three unconditional steps, mirroring the pushed-task-expiry sibling
 //! in `task_renewal`: flip `enabled`, drop the compiled plan, mark the rule unhealthy. Expiry only
 //! needs the second and third steps — dropping the plan and marking the rule unhealthy — because
