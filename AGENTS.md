@@ -305,6 +305,8 @@ Use newtypes for domain constraints (ports vs PIDs vs timestamps). Implement `Tr
 | Alert Latency  | < 100ms per rule                |
 | Query Response | Sub-second for 100k+ events/min |
 
+These are targets for a reference host, not hard bounds. Resident memory in particular scales with the deployment: a large, busy server may sit higher and a constrained embedded or SCADA endpoint lower. Size the tunables that govern it to the host rather than treating the number as a pass/fail gate.
+
 ### Resource Management
 
 - Bounded channels with backpressure
