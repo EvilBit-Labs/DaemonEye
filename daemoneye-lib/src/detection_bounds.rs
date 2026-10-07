@@ -107,6 +107,41 @@ const _: () = assert!(
     "posting cache entry count times list length times posting size must fit the stated product"
 );
 
+// --- Executor defaults --------------------------------------------------------------------------
+
+/// Default byte capacity of the executor's `GreedyMemoryPool` (R6, KTD3).
+///
+/// **A ceiling on what `DataFusion` reserves, not on what the process holds.** The pool only sees
+/// allocations an operator registers with it. A filter or projection reserves nothing; the
+/// `RepartitionExec` the optimizer inserts to reach `EXECUTOR_TARGET_PARTITIONS` over a
+/// one-partition scan does, and is what exhausts a too-small pool. The store's row decode is
+/// bounded separately by R9. So this number is a default for an operator-configurable field, not
+/// a resident-set bound, and nothing here measures one.
+///
+/// A greedy pool, not a fair one: a fair pool divides memory across concurrent spillable operators,
+/// and this plan has none. Spilling is disabled outright, so exhausting the pool is a resource error
+/// that becomes a degraded reason, never a temp file.
+pub const EXECUTOR_MEMORY_POOL_BYTES: usize = 32 * 1024 * 1024;
+
+/// Default number of rows per `RecordBatch` the executor's session asks for (KTD14).
+///
+/// Also the granularity of the pattern-latency guard: a `REGEXP` pattern is timed once per batch,
+/// so a larger batch trades measurement precision for throughput. The configurable field is
+/// validated against a ceiling chosen to keep a single batch's worst-case matching cost from
+/// outgrowing that granularity.
+pub const EXECUTOR_BATCH_SIZE: usize = 8192;
+
+/// Default number of partitions `DataFusion` may fan a plan out over (KTD14).
+///
+/// Fixed rather than derived from the host's core count so a rule behaves the same on every
+/// deployment; partitions multiply per-batch memory, so this is also a memory-shaping knob.
+pub const EXECUTOR_TARGET_PARTITIONS: usize = 4;
+
+const _: () = assert!(
+    EXECUTOR_MEMORY_POOL_BYTES > 0 && EXECUTOR_BATCH_SIZE > 0 && EXECUTOR_TARGET_PARTITIONS > 0,
+    "the executor defaults must be non-zero"
+);
+
 // --- Parser bounds ----------------------------------------------------------------------------
 
 /// Recursion limit handed to `sqlparser::Parser::with_recursion_limit`.

@@ -6,6 +6,7 @@
 pub mod allowlist;
 pub mod catalog;
 pub mod conformance;
+pub mod execution;
 pub mod pattern_latency;
 pub mod planner;
 pub mod regex_cache;
