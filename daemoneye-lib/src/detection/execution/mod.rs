@@ -1,8 +1,9 @@
 //! Execution of detection rules over the event store with `DataFusion` (ADR-0006).
 //!
-//! This module root currently carries the locked-down session ([`session`]) and the allowlisted
-//! SQL functions ([`functions`], [`regexp`]), and plan derivation ([`mod@derive`]). The executor
-//! itself arrives in a later unit.
+//! This module root carries the locked-down session ([`session`]), the allowlisted SQL functions
+//! ([`functions`], [`regexp`]), plan derivation ([`mod@derive`]) and the rule executor
+//! ([`executor`]), whose two latency mechanisms are described there. The eligibility audit below
+//! is the reconciliation the executor's single entry point, `runnable_rules`, rests on.
 //!
 //! # Eligibility audit
 //!
@@ -63,6 +64,7 @@
 //!   with an `error` log and not run.
 
 pub mod derive;
+pub mod executor;
 pub mod functions;
 pub mod regexp;
 pub mod session;

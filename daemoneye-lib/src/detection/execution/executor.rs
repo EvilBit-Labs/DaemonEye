@@ -1,0 +1,406 @@
+//! The rule executor: evaluates each runnable rule over the event store with `DataFusion`
+//! (R1, R5, R7, R8; KTD3, KTD6, KTD7).
+//!
+//! [`RuleExecutor::evaluate`] takes a snapshot of [`RunnableRule`]s and never touches the engine:
+//! the agent clones the snapshot under a short lock, runs it here with no lock held, and applies
+//! the outcome under a second short lock. Two latency mechanisms follow from that and are not one:
+//!
+//! 1. **In `evaluate`, same cycle.** After every batch the executor drains the rule's
+//!    [`LatencySink`] and compares each pattern's worst latency to the rule's own
+//!    `pattern_latency_threshold`. A breach stops draining that rule at once, before the next rule
+//!    starts (ADR-0011: bounded by one batch, not by one scan).
+//! 2. **After `evaluate`, by the caller.** The [`LatencyReport`]s in [`CycleOutcome`] are applied
+//!    through `DetectionEngine::observe_pattern_latency`, which disables the rule for future cycles.
+//!
+//! The `LatencySink` and the postings cache take synchronous locks. Neither guard is ever held
+//! across an `.await`: the sink is drained into an owned map in one statement, and the cache is
+//! only reached through the provider's own scan.
+//!
+//! # Where the batch boundary is
+//!
+//! The stop is checked when the result stream yields a batch. A rule whose filter drops most rows
+//! may buffer several scan batches before it yields one, so the stop is bounded by one *yielded*
+//! batch, and a filter that never matches is checked only when the stream ends.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use datafusion::arrow::array::{Array, RecordBatch};
+use datafusion::common::cast::{as_string_array, as_uint64_array};
+use datafusion::error::{DataFusionError, Result as DfResult};
+use datafusion::execution::context::SessionContext;
+use futures_util::StreamExt;
+use tracing::{Instrument, info_span, warn};
+
+use crate::config::DetectionConfig;
+use crate::detection::execution::derive::{CycleWindow, derive};
+use crate::detection::execution::session::{
+    ExecutorRuntime, LatencySink, session_state_from_config,
+};
+use crate::detection::{Generation, RegexCache, RunnableRule};
+use crate::models::{Alert, DetectionRule, ProcessRecord};
+use crate::storage::EventStore;
+use crate::storage::postings_cache::PostingsCache;
+use crate::storage::provider::{EventStoreTableProvider, ScanCounters, ScanLimits};
+
+/// One pattern's worst batch latency, as measured during one evaluation.
+///
+/// Built at exactly one site, `take_reports`, so the generation is always the one on the
+/// [`RunnableRule`] the plan came from and is never cached or recomputed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LatencyReport {
+    /// The rule the pattern belongs to.
+    pub rule_id: String,
+    /// The generation the evaluation was issued for; the caller's `observe_pattern_latency`
+    /// ignores the report if the rule has since been reloaded.
+    pub generation: Generation,
+    /// The pattern text.
+    pub pattern: String,
+    /// The worst latency of one `RecordBatch` since the previous report for this rule.
+    pub observed: Duration,
+}
+
+/// What a rule's scan read, copied from the provider's `ScanCounters` once the stream is done.
+///
+/// U10 maps a non-zero `oversized_rows` to `CompletenessReason::ResourceLimit` naming `table`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanTotals {
+    /// The catalog table scanned.
+    pub table: String,
+    /// Rows decoded from the store.
+    pub rows_read: u64,
+    /// Rows excluded because one row alone exceeded the batch byte bound.
+    pub oversized_rows: u64,
+    /// `RecordBatch`es the scan sent.
+    pub batches: u64,
+}
+
+impl ScanTotals {
+    fn empty(table: &str) -> Self {
+        Self {
+            table: table.to_owned(),
+            rows_read: 0,
+            oversized_rows: 0,
+            batches: 0,
+        }
+    }
+
+    fn from_counters(counters: &ScanCounters) -> Self {
+        Self {
+            table: counters.table().to_owned(),
+            rows_read: counters.rows_read(),
+            oversized_rows: counters.oversized_rows(),
+            batches: counters.batches(),
+        }
+    }
+}
+
+/// Why an evaluation did not finish. U10 maps these to `ExecutionError` and `ResourceLimit`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EvaluationFailure {
+    /// The plan could not be built or the stream failed.
+    Execution(String),
+    /// The engine's memory pool refused an allocation.
+    ResourceLimit(String),
+}
+
+impl EvaluationFailure {
+    fn from_error(error: &DataFusionError) -> Self {
+        let message = error.to_string();
+        if matches!(*error.find_root(), DataFusionError::ResourcesExhausted(_)) {
+            Self::ResourceLimit(message)
+        } else {
+            Self::Execution(message)
+        }
+    }
+}
+
+/// The result of evaluating one rule for one cycle.
+///
+/// U10 seam: this gains a `completeness` field, folded from `result_capped`, `scan`,
+/// `stopped_on_latency` and `failure`. Until then they are recorded here in the shape that fold
+/// needs.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct RuleEvaluation {
+    /// The rule evaluated.
+    pub rule_id: String,
+    /// The generation it was evaluated under; the agent drops the result unless the engine's
+    /// `is_runnable(rule_id, generation)` still holds (R8).
+    pub generation: Generation,
+    /// One alert per matching row, at most the configured cap.
+    pub alerts: Vec<Alert>,
+    /// `Some(cap)` when more than `cap` rows matched; the alerts are the first `cap`. U10 turns
+    /// this into `CompletenessReason::ResultCapped`. Exactly `cap` matches leave it `None`.
+    pub result_capped: Option<u32>,
+    /// What the scan read.
+    pub scan: ScanTotals,
+    /// A pattern breached the rule's latency threshold and the remaining batches were not read.
+    pub stopped_on_latency: bool,
+    /// Why the evaluation ended early, if it did.
+    pub failure: Option<EvaluationFailure>,
+}
+
+/// Everything one cycle's evaluation produced.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct CycleOutcome {
+    /// One entry per rule, in the order given.
+    pub evaluations: Vec<RuleEvaluation>,
+    /// Every latency report, for the caller to apply with `observe_pattern_latency`.
+    pub reports: Vec<LatencyReport>,
+}
+
+/// Runs rules against the event store; holds the `RuntimeEnv` (KTD3) and the postings cache.
+#[derive(Debug)]
+pub struct RuleExecutor {
+    store: Arc<EventStore>,
+    regex_cache: Arc<RegexCache>,
+    postings: Arc<PostingsCache>,
+    runtime: ExecutorRuntime,
+    config: DetectionConfig,
+}
+
+impl RuleExecutor {
+    /// An executor over `store`, sized by `config`.
+    ///
+    /// # Errors
+    ///
+    /// The `DataFusion` error if the runtime cannot be built.
+    pub fn new(
+        store: Arc<EventStore>,
+        regex_cache: Arc<RegexCache>,
+        config: &DetectionConfig,
+    ) -> DfResult<Self> {
+        Ok(Self {
+            store,
+            regex_cache,
+            postings: Arc::new(PostingsCache::from_config(config)),
+            runtime: ExecutorRuntime::from_config(config)?,
+            config: config.clone(),
+        })
+    }
+
+    /// Evaluate `rules` in order over the rows stored in `window`.
+    ///
+    /// Takes no engine lock and never calls the engine. U10 seam: the plan's signature adds a
+    /// `signals: &CycleSignals` parameter here when the completeness tracker lands.
+    pub async fn evaluate(&self, rules: &[RunnableRule], window: CycleWindow) -> CycleOutcome {
+        let mut outcome = CycleOutcome::default();
+        for runnable in rules {
+            let span = info_span!(
+                "evaluate_rule",
+                rule_id = runnable.rule.id.raw(),
+                generation = %runnable.generation,
+            );
+            let (evaluation, reports) = self.evaluate_rule(runnable, window).instrument(span).await;
+            outcome.evaluations.push(evaluation);
+            outcome.reports.extend(reports);
+        }
+        outcome
+    }
+
+    async fn evaluate_rule(
+        &self,
+        runnable: &RunnableRule,
+        window: CycleWindow,
+    ) -> (RuleEvaluation, Vec<LatencyReport>) {
+        let sink = Arc::new(LatencySink::default());
+        let mut run = Run::new(runnable);
+        let prepared = self.prepare(runnable, window, &sink);
+        let (frame, counters) = match prepared {
+            Ok(parts) => parts,
+            Err(error) => return run.finish_failed(&error),
+        };
+        run.scan = ScanTotals::from_counters(&counters);
+        let mut stream = match frame.execute_stream().await {
+            Ok(stream) => stream,
+            Err(error) => return run.finish_failed(&error),
+        };
+        while let Some(next) = stream.next().await {
+            match next.and_then(|batch| run.take_rows(&batch, self.config.max_matches_per_rule)) {
+                Ok(()) => {}
+                Err(error) => {
+                    run.failure = Some(EvaluationFailure::from_error(&error));
+                    break;
+                }
+            }
+            run.note_batch(take_reports(&sink, runnable));
+            if run.result_capped.is_some() || run.stopped_on_latency {
+                break;
+            }
+        }
+        drop(stream);
+        run.reports.extend(take_reports(&sink, runnable));
+        run.scan = ScanTotals::from_counters(&counters);
+        run.finish()
+    }
+
+    /// The derived frame and the counters of the provider behind it.
+    fn prepare(
+        &self,
+        runnable: &RunnableRule,
+        window: CycleWindow,
+        sink: &Arc<LatencySink>,
+    ) -> DfResult<(datafusion::prelude::DataFrame, Arc<ScanCounters>)> {
+        let state = session_state_from_config(
+            self.runtime.env(),
+            Arc::clone(sink),
+            Arc::clone(&self.regex_cache),
+            &self.config,
+        )?;
+        let provider = Arc::new(
+            EventStoreTableProvider::new(
+                Arc::clone(&self.store),
+                Arc::clone(&self.postings),
+                &runnable.descriptor,
+                ScanLimits::from(&self.config),
+            )
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?,
+        );
+        let counters = Arc::clone(provider.counters());
+        let ctx = SessionContext::new_with_state(state);
+        let frame = derive(
+            &ctx,
+            provider,
+            &runnable.compiled,
+            window,
+            self.config.max_matches_per_rule,
+        )
+        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+        Ok((frame, counters))
+    }
+}
+
+/// Drain `sink` into reports. The only place a [`LatencyReport`] is constructed.
+fn take_reports(sink: &LatencySink, runnable: &RunnableRule) -> Vec<LatencyReport> {
+    sink.drain()
+        .into_iter()
+        .map(|(pattern, observed)| LatencyReport {
+            rule_id: runnable.rule.id.raw().to_owned(),
+            generation: runnable.generation,
+            pattern,
+            observed,
+        })
+        .collect()
+}
+
+/// One rule's evaluation while it is in progress.
+struct Run<'a> {
+    runnable: &'a RunnableRule,
+    alerts: Vec<Alert>,
+    reports: Vec<LatencyReport>,
+    result_capped: Option<u32>,
+    scan: ScanTotals,
+    stopped_on_latency: bool,
+    failure: Option<EvaluationFailure>,
+}
+
+impl<'a> Run<'a> {
+    fn new(runnable: &'a RunnableRule) -> Self {
+        Self {
+            runnable,
+            alerts: Vec::new(),
+            reports: Vec::new(),
+            result_capped: None,
+            scan: ScanTotals::empty(&runnable.descriptor.name),
+            stopped_on_latency: false,
+            failure: None,
+        }
+    }
+
+    /// Turn up to the remaining room's worth of `batch` rows into alerts; flag the cap when rows
+    /// are left over. The plan fetches `cap + 1`, so one surplus row is what tells "more than
+    /// `cap`" from "exactly `cap`".
+    fn take_rows(&mut self, batch: &RecordBatch, cap: u32) -> DfResult<()> {
+        let room = usize::try_from(cap)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(self.alerts.len());
+        if batch.num_rows() > room {
+            self.result_capped = Some(cap);
+        }
+        let alerts = alerts_from_batch(&self.runnable.rule, batch, room)?;
+        self.alerts.extend(alerts);
+        Ok(())
+    }
+
+    /// Record a batch's drained reports and decide whether any pattern breached the threshold.
+    fn note_batch(&mut self, reports: Vec<LatencyReport>) {
+        let threshold = self.runnable.pattern_latency_threshold;
+        for report in &reports {
+            if report.observed > threshold {
+                self.stopped_on_latency = true;
+                warn!(
+                    pattern = %report.pattern,
+                    observed = ?report.observed,
+                    threshold = ?threshold,
+                    "pattern latency breached; no further batches read for this rule this cycle",
+                );
+            }
+        }
+        self.reports.extend(reports);
+    }
+
+    fn finish_failed(mut self, error: &DataFusionError) -> (RuleEvaluation, Vec<LatencyReport>) {
+        self.failure = Some(EvaluationFailure::from_error(error));
+        self.finish()
+    }
+
+    fn finish(self) -> (RuleEvaluation, Vec<LatencyReport>) {
+        let evaluation = RuleEvaluation {
+            rule_id: self.runnable.rule.id.raw().to_owned(),
+            generation: self.runnable.generation,
+            alerts: self.alerts,
+            result_capped: self.result_capped,
+            scan: self.scan,
+            stopped_on_latency: self.stopped_on_latency,
+            failure: self.failure,
+        };
+        (evaluation, self.reports)
+    }
+}
+
+/// One alert per row of `batch`, the first `take` rows only.
+///
+/// The row carries only the columns the rule projected plus those it filtered on. `pid` and `name`
+/// are lifted into the alert's process record when present; a missing `pid` is 0. The title names
+/// the process, because the deduplication key is built from it and one title for every match
+/// would collapse a rule's matches into one alert downstream.
+///
+/// U10 seam: `Alert::new` gains a completeness argument; the call below is updated then.
+fn alerts_from_batch(
+    rule: &DetectionRule,
+    batch: &RecordBatch,
+    take: usize,
+) -> DfResult<Vec<Alert>> {
+    let pids = batch
+        .column_by_name("pid")
+        .map(|column| as_uint64_array(column.as_ref()))
+        .transpose()?;
+    let names = batch
+        .column_by_name("name")
+        .map(|column| as_string_array(column.as_ref()))
+        .transpose()?;
+    let mut alerts = Vec::with_capacity(take.min(batch.num_rows()));
+    for row in 0..batch.num_rows().min(take) {
+        let pid = pids
+            .filter(|column| column.is_valid(row))
+            .map_or(0, |column| {
+                u32::try_from(column.value(row)).unwrap_or(u32::MAX)
+            });
+        let name = names
+            .filter(|column| column.is_valid(row))
+            .map_or_else(String::new, |column| column.value(row).to_owned());
+        let title = format!("{}: {name} (pid {pid})", rule.name);
+        let description = format!("Process {name} (pid {pid}) matched rule {}", rule.name);
+        alerts.push(Alert::new(
+            rule.severity,
+            title,
+            description,
+            rule.id.raw().to_owned(),
+            ProcessRecord::new(pid, name),
+        ));
+    }
+    Ok(alerts)
+}
