@@ -10,3 +10,5 @@
 //! gate is exercised from the first commit. `EventStoreTableProvider` and
 //! `BucketScanExec` land in U5, over the read primitives of U2 and the Arrow
 //! encoding of U4.
+
+pub mod arrow;
