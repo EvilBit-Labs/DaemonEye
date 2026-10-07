@@ -293,6 +293,10 @@ async fn a_regexp_that_matches_nothing_still_reports_its_worst_batch_when_the_sc
     let outcome = run(&fx).await;
 
     assert!(only(&outcome).alerts.is_empty());
+    // Within its threshold (config() parks it at the maximum): every scan batch is read and the
+    // single report still arrives when the stream ends. This is the control for the selective
+    // breach test below.
+    assert!(!only(&outcome).stopped_on_latency);
     assert_eq!(only(&outcome).scan.batches, 3);
     assert_eq!(outcome.reports.len(), 1);
     assert_eq!(outcome.reports[0].generation, issued);
@@ -406,6 +410,69 @@ async fn the_same_rule_within_its_threshold_reads_every_batch() {
     assert!(!evaluation.stopped_on_latency);
     assert_eq!(evaluation.scan.batches, u64::try_from(BATCHES).unwrap());
     assert_eq!(evaluation.alerts.len(), SMALL_BATCH * BATCHES);
+}
+
+/// A rule that matches nothing, so `FilterExec` yields nothing between scan batches.
+fn selective_fixture() -> Fixture {
+    let mut fx = fixture(DetectionConfig {
+        executor_batch_size: SMALL_BATCH,
+        ..config()
+    });
+    put(
+        &fx,
+        rows_named("bash", u32::try_from(SMALL_BATCH * BATCHES).unwrap()),
+    );
+    load(
+        &mut fx,
+        "sel",
+        "SELECT name FROM processes WHERE name REGEXP '^zzz$'",
+    );
+    fx
+}
+
+#[tokio::test]
+async fn a_selective_breaching_rule_stops_scanning_instead_of_reading_every_batch() {
+    let fx = selective_fixture();
+    let issued = fx.engine.runnable_rules()[0].generation;
+    let mut rules = fx.engine.runnable_rules();
+    rules[0].pattern_latency_threshold = Duration::ZERO;
+
+    let outcome = executor(&fx).evaluate(&rules, WIDE).await;
+
+    let evaluation = only(&outcome);
+    assert!(
+        evaluation.scan.batches <= PRODUCER_LEAD,
+        "the scan stopped near the breaching batch, not at the end"
+    );
+    assert!(evaluation.stopped_on_latency);
+    assert!(
+        evaluation.failure.is_none(),
+        "a latency stop is not a failure"
+    );
+    assert!(evaluation.alerts.is_empty());
+    assert!(evaluation.scan.rows_read <= u64::try_from(SMALL_BATCH).unwrap() * PRODUCER_LEAD);
+    // The post-hoc path still sees the breach, under the issued generation.
+    assert_eq!(outcome.reports.len(), 1);
+    assert_eq!(outcome.reports[0].pattern, "^zzz$");
+    assert_eq!(outcome.reports[0].generation, issued);
+    assert!(outcome.reports[0].observed > Duration::ZERO);
+}
+
+#[tokio::test]
+async fn a_selective_rule_within_its_threshold_still_reads_every_batch() {
+    let fx = selective_fixture();
+
+    let outcome = run(&fx).await;
+
+    let evaluation = only(&outcome);
+    assert!(!evaluation.stopped_on_latency);
+    assert!(evaluation.failure.is_none());
+    assert_eq!(evaluation.scan.batches, u64::try_from(BATCHES).unwrap());
+    assert_eq!(
+        evaluation.scan.rows_read,
+        u64::try_from(SMALL_BATCH * BATCHES).unwrap()
+    );
+    assert_eq!(outcome.reports.len(), 1);
 }
 
 // --- failures and the scan counters ------------------------------------------------------------

@@ -5,22 +5,18 @@
 //! the agent clones the snapshot under a short lock, runs it here with no lock held, and applies
 //! the outcome under a second short lock. Two latency mechanisms follow from that and are not one:
 //!
-//! 1. **In `evaluate`, same cycle.** After every batch the executor drains the rule's
-//!    [`LatencySink`] and compares each pattern's worst latency to the rule's own
-//!    `pattern_latency_threshold`. A breach stops draining that rule at once, before the next rule
-//!    starts (ADR-0011: bounded by one batch, not by one scan).
+//! 1. **In `evaluate`, same cycle.** The rule's [`LatencySink`] carries its
+//!    `pattern_latency_threshold`. The `regexp` UDF runs once per *scan* batch, so when a batch
+//!    breaches, the UDF finishes it and refuses the next with a `LatencyAbort`, which `evaluate`
+//!    turns into `stopped_on_latency`. This holds for selective rules, whose filter yields nothing
+//!    between scan batches. The executor also checks after every *yielded* batch, as a second line
+//!    for rules that yield (ADR-0011: bounded by one batch, not by one scan).
 //! 2. **After `evaluate`, by the caller.** The [`LatencyReport`]s in [`CycleOutcome`] are applied
 //!    through `DetectionEngine::observe_pattern_latency`, which disables the rule for future cycles.
 //!
 //! The `LatencySink` and the postings cache take synchronous locks. Neither guard is ever held
 //! across an `.await`: the sink is drained into an owned map in one statement, and the cache is
 //! only reached through the provider's own scan.
-//!
-//! # Where the batch boundary is
-//!
-//! The stop is checked when the result stream yields a batch. A rule whose filter drops most rows
-//! may buffer several scan batches before it yields one, so the stop is bounded by one *yielded*
-//! batch, and a filter that never matches is checked only when the stream ends.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +30,7 @@ use tracing::{Instrument, info_span, warn};
 
 use crate::config::DetectionConfig;
 use crate::detection::execution::derive::{CycleWindow, derive};
+use crate::detection::execution::regexp::LatencyAbort;
 use crate::detection::execution::session::{
     ExecutorRuntime, LatencySink, session_state_from_config,
 };
@@ -206,7 +203,9 @@ impl RuleExecutor {
         runnable: &RunnableRule,
         window: CycleWindow,
     ) -> (RuleEvaluation, Vec<LatencyReport>) {
-        let sink = Arc::new(LatencySink::default());
+        let sink = Arc::new(LatencySink::with_threshold(
+            runnable.pattern_latency_threshold,
+        ));
         let mut run = Run::new(runnable);
         let prepared = self.prepare(runnable, window, &sink);
         let (frame, counters) = match prepared {
@@ -221,6 +220,10 @@ impl RuleExecutor {
         while let Some(next) = stream.next().await {
             match next.and_then(|batch| run.take_rows(&batch, self.config.max_matches_per_rule)) {
                 Ok(()) => {}
+                Err(error) if LatencyAbort::is_in(&error) => {
+                    run.stopped_on_latency = true;
+                    break;
+                }
                 Err(error) => {
                     run.failure = Some(EvaluationFailure::from_error(&error));
                     break;

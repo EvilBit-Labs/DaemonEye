@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -24,14 +25,54 @@ use crate::detection::regex_cache::RegexCache;
 /// Keyed by the pattern text, so `regexp` and its alias `match` share an entry. The mutex is
 /// synchronous and never held across an `.await`: a UDF's `invoke_with_args` is synchronous, and
 /// every method here takes the guard, finishes, and drops it.
+///
+/// A sink built [`with_threshold`](Self::with_threshold) also latches a breach: once any recorded
+/// batch exceeds the threshold, [`RegexpUdf`] refuses its next invocation with a [`LatencyAbort`].
+/// That is ADR-0011's "bounded by one batch" delivered at the scan-batch boundary, where the UDF
+/// is called once per scan batch. The in-flight batch is always finished, because `regex` has no
+/// cancellation and abandoning a match would keep burning the CPU the budget protects; the next
+/// batch is what is refused. A sink from [`Default`] has no threshold and never latches.
 #[derive(Debug, Default)]
 pub struct LatencySink {
     per_pattern: Mutex<BTreeMap<String, Duration>>,
+    threshold: Option<Duration>,
+    is_breached: AtomicBool,
+}
+
+/// The error `RegexpUdf` returns once its sink has latched a breach.
+///
+/// Carried as a `DataFusionError::External` and recognised by type, not by message text, through
+/// [`is_in`](Self::is_in), so the executor can tell a latency stop from a genuine failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("regexp latency threshold breached; no further batches are evaluated")]
+pub struct LatencyAbort;
+
+impl LatencyAbort {
+    /// Whether `error`, or the error it wraps, is a [`LatencyAbort`].
+    pub fn is_in(error: &DataFusionError) -> bool {
+        matches!(error.find_root(), DataFusionError::External(inner) if inner.is::<Self>())
+    }
 }
 
 impl LatencySink {
+    /// A sink that latches a breach when a recorded batch takes longer than `threshold`.
+    pub fn with_threshold(threshold: Duration) -> Self {
+        Self {
+            threshold: Some(threshold),
+            ..Self::default()
+        }
+    }
+
+    /// Whether a recorded batch has exceeded the threshold. Never reset by [`drain`](Self::drain).
+    pub fn is_breached(&self) -> bool {
+        self.is_breached.load(Ordering::Relaxed)
+    }
+
     /// Record one batch's `elapsed` time for `pattern`, keeping the larger of old and new.
     pub fn record(&self, pattern: &str, elapsed: Duration) {
+        if self.threshold.is_some_and(|limit| elapsed > limit) {
+            self.is_breached.store(true, Ordering::Relaxed);
+        }
         let mut guard = self
             .per_pattern
             .lock()
@@ -116,6 +157,9 @@ impl ScalarUDFImpl for RegexpUdf {
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
+        if self.sink.is_breached() {
+            return Err(DataFusionError::External(Box::new(LatencyAbort)));
+        }
         // Timed from here, so a cold compile in the batch that first sees a pattern counts.
         let started = Instant::now();
         let (Some(value), Some(pattern)) = (args.args.first(), args.args.get(1)) else {

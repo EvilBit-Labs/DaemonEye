@@ -375,6 +375,18 @@ fn session_sink_keeps_the_max_per_pattern_until_drained() {
     assert_eq!(sink.drain().get("p"), Some(&Duration::from_millis(1)));
 }
 
+#[test]
+fn session_sink_latches_a_breach_only_above_its_threshold_and_keeps_it_after_drain() {
+    let sink = LatencySink::with_threshold(Duration::from_millis(5));
+    sink.record("p", Duration::from_millis(5));
+    assert!(!sink.is_breached());
+    sink.record("p", Duration::from_millis(6));
+    assert!(sink.is_breached());
+    sink.drain();
+    assert!(sink.is_breached());
+    assert!(!LatencySink::default().is_breached());
+}
+
 #[tokio::test]
 async fn session_regexp_invalid_pattern_errors_and_records_nothing() {
     let h = harness(names(&["bash"]));
