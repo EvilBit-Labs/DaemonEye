@@ -32,6 +32,7 @@ pub use scan::BucketScanExec;
 use self::arrow::{ArrowEncodeError, schema_for};
 use self::filters::{PushedFilters, classify};
 use self::scan::ScanPlan;
+use crate::config::DetectionConfig;
 use crate::detection_bounds::{
     EXECUTOR_BATCH_MAX_BYTES, EXECUTOR_BATCH_SIZE, EXECUTOR_TARGET_PARTITIONS,
 };
@@ -67,6 +68,18 @@ impl Default for ScanLimits {
             target_partitions: EXECUTOR_TARGET_PARTITIONS,
             batch_size: EXECUTOR_BATCH_SIZE,
             batch_max_bytes: EXECUTOR_BATCH_MAX_BYTES,
+        }
+    }
+}
+
+impl From<&DetectionConfig> for ScanLimits {
+    /// The scan limits an operator configured; the values were range-checked by
+    /// [`DetectionConfig::validate`], which is what keeps them non-zero here.
+    fn from(config: &DetectionConfig) -> Self {
+        Self {
+            target_partitions: config.executor_target_partitions,
+            batch_size: config.executor_batch_size,
+            batch_max_bytes: config.executor_batch_max_bytes,
         }
     }
 }

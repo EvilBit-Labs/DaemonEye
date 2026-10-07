@@ -6,14 +6,14 @@
 //! [`DetectionEngine::observe_pattern_latency`] is the single entry point T6 calls with an
 //! already-measured [`Duration`]; nothing in this module executes a pattern or starts a timer.
 //!
-//! Two decisions about that measurement are settled and belong to T6 to implement, not to
-//! re-open. ADR-0011: the budget is a breach detector checked at `RecordBatch` boundaries, not a
-//! per-match execution limit — `regex` exposes no cancellation, so abandoning a match would keep
-//! burning the CPU the budget protects, and the overrun is therefore bounded by one batch.
-//! ADR-0012: a report must name the rule *instance* it measured. The signature below takes only a
-//! rule id, which a reload leaves unchanged, so a measurement of a superseded instance can latch
-//! the fresh one and defeat the operator's only recovery. That signature is provisional for this
-//! reason: T6 adds the generation it is handed with the plan.
+//! Two decisions about that measurement are settled. ADR-0011: the budget is a breach detector
+//! checked at `RecordBatch` boundaries, not a per-match execution limit — `regex` exposes no
+//! cancellation, so abandoning a match would keep burning the CPU the budget protects, and the
+//! overrun is therefore bounded by one batch. ADR-0012: a report must name the rule *instance* it
+//! measured, because a rule id survives a reload and a measurement of a superseded instance could
+//! otherwise latch the fresh one and defeat the operator's only recovery. The signature below
+//! therefore takes the [`Generation`] the measured plan was issued under, which only
+//! [`DetectionEngine::runnable_rules`] can produce, and compares it before doing anything else.
 //!
 //! Disabling a rule here is three unconditional steps, mirroring the pushed-task-expiry sibling
 //! in `task_renewal`: flip `enabled`, drop the compiled plan, mark the rule unhealthy. Expiry only
@@ -40,6 +40,7 @@
 use std::time::Duration;
 
 use super::DetectionEngine;
+use super::generation::Generation;
 use super::rule_health::{RuleHealth, UnhealthyCause};
 use crate::rejection_log::RejectionReason;
 
@@ -52,7 +53,13 @@ impl DetectionEngine {
     /// Report a measured pattern execution against this engine's threshold; disable the owning
     /// rule if it breached it (R3).
     ///
-    /// An observation strictly over the threshold runs three unconditional steps, regardless of
+    /// `generation` names the load of the rule that was measured. It is compared first, before the
+    /// threshold or any state is read: a report whose generation is not the one the engine
+    /// currently holds for `rule_id` — a reload superseded it, the rule was removed, or the id was
+    /// never loaded — is discarded with an `info` log naming both generations, and returns
+    /// `false` having changed nothing (ADR-0012).
+    ///
+    /// A current report strictly over the threshold runs three unconditional steps, regardless of
     /// the rule's current `enabled` flag: `enabled` is set `false`, the rule's compiled plan is
     /// removed, and the rule is marked [`super::rule_health::RuleHealth::Unhealthy`] with a
     /// reason naming the observed and threshold durations, in that order (KTD3). The durations
@@ -74,15 +81,23 @@ impl DetectionEngine {
     /// that [`UnhealthyCause::resists_auto_recovery`] is left exactly as it is — a second breach
     /// does not overwrite the first breach's reason, and does not re-run the three steps, so an
     /// operator's `set_rule_enabled(id, false)` on a still-healthy rule cannot suppress a later
-    /// breach on it. A rule id this engine does not hold changes nothing and is logged at `warn`.
+    /// breach on it.
     ///
-    /// Returns `true` exactly when the observation breached the threshold for a rule this engine
-    /// holds.
-    pub fn observe_pattern_latency(&mut self, rule_id: &str, observed: Duration) -> bool {
-        if !self.rules.contains_key(rule_id) {
-            tracing::warn!(
+    /// Returns `true` exactly when a current-generation observation breached the threshold.
+    pub fn observe_pattern_latency(
+        &mut self,
+        rule_id: &str,
+        generation: Generation,
+        observed: Duration,
+    ) -> bool {
+        let current = self.generations.current(rule_id);
+        if current != Some(generation) {
+            let current_generation = current.map_or_else(|| "none".to_owned(), |g| g.to_string());
+            tracing::info!(
                 rule_id,
-                "pattern latency observed for a rule this engine does not hold"
+                reported_generation = %generation,
+                current_generation = %current_generation,
+                "pattern latency report for a superseded rule instance discarded"
             );
             return false;
         }

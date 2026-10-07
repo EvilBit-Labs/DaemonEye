@@ -1,7 +1,9 @@
 //! Fixed bounds for the detection rule-load pipeline.
 //!
-//! These values are deliberately **not** configuration fields. Each one backs a guarantee that
-//! only holds if the value cannot be changed at runtime: the regex memory ceiling is a product of
+//! These values are deliberately **not** configuration fields, except the executor and posting-cache
+//! defaults below, which are the *default values* of fields on `DetectionConfig` and are documented
+//! there. Each of the others backs a guarantee that only holds if the value cannot be changed at
+//! runtime: the regex memory ceiling is a product of
 //! two fixed numbers, and the descriptor bounds are the only thing standing between a hostile rule
 //! and unbounded allocation during validation.
 //!
@@ -107,7 +109,28 @@ const _: () = assert!(
     "posting cache entry count times list length times posting size must fit the stated product"
 );
 
+/// Worst case of the posting cache at **both** configurable ceilings, in bytes (128 MiB).
+///
+/// [`crate::config::DetectionConfig::POSTING_CACHE_MAX_ENTRIES_MAX`] x
+/// [`crate::config::DetectionConfig::POSTING_CACHE_MAX_POSTINGS_MAX`] x
+/// `size_of::<(u64, u32)>()` (16 bytes, the padded tuple). An earlier draft of the plan said 96
+/// MiB by counting 12 payload bytes per posting; the real element is 16. A product, not a
+/// measurement, and it excludes the per-entry `Arc` and map overhead. An operator configuring both
+/// ceilings is choosing a large deployment on purpose.
+pub const POSTING_CACHE_CEILING_BYTES: usize = 128 * 1024 * 1024;
+
+const _: () = assert!(
+    crate::config::DetectionConfig::POSTING_CACHE_MAX_ENTRIES_MAX
+        * crate::config::DetectionConfig::POSTING_CACHE_MAX_POSTINGS_MAX
+        * size_of::<(u64, u32)>()
+        == POSTING_CACHE_CEILING_BYTES,
+    "the posting cache's configured ceilings must multiply out to the stated worst case"
+);
+
 // --- Executor defaults --------------------------------------------------------------------------
+
+/// Default cap on alerts one rule may raise in one cycle (KTD14).
+pub const MAX_MATCHES_PER_RULE_DEFAULT: u32 = 1_000;
 
 /// Default byte capacity of the executor's `GreedyMemoryPool` (R6, KTD3).
 ///

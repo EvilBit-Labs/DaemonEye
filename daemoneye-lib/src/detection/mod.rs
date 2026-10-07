@@ -7,21 +7,25 @@ pub mod allowlist;
 pub mod catalog;
 pub mod conformance;
 pub mod execution;
+pub mod generation;
 pub mod pattern_latency;
 pub mod planner;
 pub mod regex_cache;
 pub mod rejection;
 pub mod rule_health;
+pub mod runnable;
 pub mod sql_validation;
 pub mod task_renewal;
 
 use crate::config::DetectionConfig;
 use crate::detection::catalog::{CatalogChange, CatalogError, SchemaCatalog, VerifiedRegistration};
+use crate::detection::generation::Generations;
 use crate::detection::rule_health::{RuleHealth, RuleHealthRegistry};
 use crate::models::{Alert, DetectionRule, ProcessRecord, RuleError};
 use crate::proto::SchemaDescriptor;
 use crate::rejection_log::{RejectionLog, RejectionReason};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -30,9 +34,11 @@ pub use conformance::{
     ConformanceAxis, ConformanceCase, ConformanceOutcome, cases_for, corpus, reference_outcome,
     verify_operation,
 };
+pub use generation::Generation;
 pub use planner::{CompiledRule, PlanError, plan_rule};
 pub use regex_cache::{CompiledPattern, RegexCache, RegexCacheStats, compile_rule_patterns};
 pub use rejection::{RegexConstruct, RegexRejection, SqlPosition, SqlRejection};
+pub use runnable::RunnableRule;
 pub use sql_validation::validate_detection_sql;
 pub use task_renewal::{PendingRenewal, RenewalCycle, TaskRenewalLedger};
 
@@ -71,21 +77,26 @@ pub enum DetectionEngineError {
 #[derive(Debug)]
 pub struct DetectionEngine {
     rules: HashMap<String, DetectionRule>,
-    /// Compiled plans, one per rule that has been lowered. This is the enabled set: a rule with no
-    /// entry here has no task to issue.
+    /// Compiled plans, one per rule that has been lowered. A rule with no entry here has no task to
+    /// issue and is not runnable; an entry alone is not enough, see `is_eligible`.
     compiled: HashMap<String, CompiledRule>,
     /// Rules loaded before any collector registered, waiting for the first one (R18).
     deferred: Vec<String>,
     catalog: SchemaCatalog,
     health: RuleHealthRegistry,
-    patterns: RegexCache,
+    /// Shared with the executor, which compiles no patterns of its own: the plan and the run see
+    /// one cache, so a pattern compiled at load is the one matched at execution.
+    patterns: Arc<RegexCache>,
+    /// The configuration this engine was built from, so everything the executor is sized by comes
+    /// from the same validated source as the bounds enforced at load.
+    config: DetectionConfig,
+    /// Which load of each rule is current (ADR-0012); the only issuer of `Generation`.
+    generations: Generations,
     /// Live pushdown tasks and when each was last confirmed on its collector (R16).
     tasks: TaskRenewalLedger,
     max_subquery_depth: u32,
     /// The operator's configured per-pattern latency budget; enforced by
-    /// [`DetectionEngine::observe_pattern_latency`] (R2, R3). Observing a pattern's execution
-    /// against real rows is T6's work — it needs the `DataFusion` executor, which does not exist
-    /// yet, so nothing calls `observe_pattern_latency` today.
+    /// [`DetectionEngine::observe_pattern_latency`] (R2, R3) and carried on each `RunnableRule`.
     pattern_latency_threshold: Duration,
     rejections: RejectionLog,
     #[allow(dead_code)]
@@ -112,7 +123,9 @@ impl DetectionEngine {
             deferred: Vec::new(),
             catalog: SchemaCatalog::new(),
             health: RuleHealthRegistry::new(),
-            patterns: RegexCache::new(),
+            patterns: Arc::new(RegexCache::new()),
+            config: config.clone(),
+            generations: Generations::default(),
             tasks: TaskRenewalLedger::new(),
             max_subquery_depth: config.max_subquery_depth,
             pattern_latency_threshold: Duration::from_millis(config.pattern_latency_threshold_ms),
@@ -120,6 +133,22 @@ impl DetectionEngine {
             max_execution_time_ms: 30000, // 30 seconds
             max_memory_mb: 100,           // 100 MB
         }
+    }
+
+    /// The configuration this engine was built with.
+    ///
+    /// The executor is sized from it: the match cap, the session's partitions, batch size and
+    /// pool, the provider's scan limits and the posting cache's bounds.
+    #[must_use]
+    pub const fn config(&self) -> &DetectionConfig {
+        &self.config
+    }
+
+    /// The regex cache plan-time compilation fills, shared so the executor matches with the very
+    /// programs the planner validated.
+    #[must_use]
+    pub fn regex_cache(&self) -> Arc<RegexCache> {
+        Arc::clone(&self.patterns)
     }
 
     /// The catalog rules are planned against.
@@ -130,9 +159,7 @@ impl DetectionEngine {
 
     /// This engine's configured per-pattern latency budget (R2).
     ///
-    /// [`DetectionEngine::observe_pattern_latency`] is the consequence enforced against it, once
-    /// something actually measures a pattern's execution and calls it — T6's work, not yet wired
-    /// up.
+    /// [`DetectionEngine::observe_pattern_latency`] is the consequence enforced against it.
     #[must_use]
     pub const fn pattern_latency_threshold(&self) -> Duration {
         self.pattern_latency_threshold
@@ -239,6 +266,7 @@ impl DetectionEngine {
         let _removed_rule = self.rules.remove(rule_id);
         let _removed_plan = self.compiled.remove(rule_id);
         self.health.forget(rule_id);
+        self.generations.forget(rule_id);
     }
 
     /// Loads a detection rule into the engine.
@@ -282,6 +310,9 @@ impl DetectionEngine {
 
         let rule_id = rule.id.raw().to_owned();
         let _previous = self.rules.insert(rule_id.clone(), rule);
+        // Issued here, after validation and before planning, so every path that can leave this
+        // rule planned, deferred or rejected has already superseded the previous load's reports.
+        self.generations.issue(&rule_id);
         // Task identifiers are derived from the rule, so a reload looks identical to the ledger and
         // would keep renewing the superseded predicate for up to a full TTL. Drop the tracked tasks
         // and let the next renewal cycle issue from the new plan.
@@ -319,6 +350,10 @@ impl DetectionEngine {
     /// A rule whose health resists auto-recovery (R8, KTD6) — currently, a latency breach — is
     /// skipped even if `enabled` were somehow still `true`, so this local executor obeys the same
     /// contract the pushdown path already gets for free from `compiled` holding no plan for it.
+    ///
+    /// This reader does **not** share [`DetectionEngine::runnable_rules`]'s predicate: it ignores
+    /// `compiled`, so it still runs a rule with no plan. That divergence is audited in
+    /// `execution`'s module doc and ends when U13 replaces the agent's call site.
     pub fn execute_rules(&self, processes: &[ProcessRecord]) -> Vec<Alert> {
         let mut alerts = Vec::new();
 
@@ -434,6 +469,7 @@ impl DetectionEngine {
         let removed = self.rules.remove(id);
         let _uncovered = self.compiled.remove(id);
         self.health.forget(id);
+        self.generations.forget(id);
         self.tasks.forget_rule(id);
         self.deferred.retain(|deferred_id| deferred_id != id);
         removed

@@ -11,6 +11,7 @@ use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::SessionConfig;
 
+use crate::config::DetectionConfig;
 use crate::detection::execution::functions::allowlisted_udfs;
 use crate::detection::regex_cache::RegexCache;
 use crate::detection_bounds::{
@@ -55,6 +56,15 @@ impl ExecutorRuntime {
         Ok(Self { env })
     }
 
+    /// A runtime whose pool is the operator's configured `executor_memory_pool_bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `DataFusion` error if the runtime cannot be built.
+    pub fn from_config(config: &DetectionConfig) -> Result<Self> {
+        Self::with_pool_bytes(config.executor_memory_pool_bytes)
+    }
+
     /// The shared `RuntimeEnv`, for [`session_state`].
     pub fn env(&self) -> Arc<RuntimeEnv> {
         Arc::clone(&self.env)
@@ -77,6 +87,26 @@ pub fn session_state(
         cache,
         EXECUTOR_TARGET_PARTITIONS,
         EXECUTOR_BATCH_SIZE,
+    )
+}
+
+/// A session at the operator's configured partition count and batch size.
+///
+/// # Errors
+///
+/// Returns the `DataFusion` error if the state cannot be built.
+pub fn session_state_from_config(
+    runtime: Arc<RuntimeEnv>,
+    sink: Arc<LatencySink>,
+    cache: Arc<RegexCache>,
+    config: &DetectionConfig,
+) -> Result<SessionState> {
+    session_state_sized(
+        runtime,
+        sink,
+        cache,
+        config.executor_target_partitions,
+        config.executor_batch_size,
     )
 }
 

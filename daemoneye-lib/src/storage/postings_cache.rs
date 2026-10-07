@@ -9,6 +9,7 @@
 //! `get_or_load` is deliberately not `async`.
 
 use super::read::IndexKind;
+use crate::config::DetectionConfig;
 use lru::LruCache;
 use parking_lot::Mutex;
 use std::num::NonZeroUsize;
@@ -49,6 +50,15 @@ impl PostingsCache {
             bypassed_open: AtomicU64::new(0),
             bypassed_long: AtomicU64::new(0),
         }
+    }
+
+    /// A cache sized by the operator's configuration (R12).
+    #[must_use]
+    pub fn from_config(config: &DetectionConfig) -> Self {
+        Self::new(
+            config.posting_cache_max_entries,
+            config.posting_cache_max_postings,
+        )
     }
 
     /// Return the posting list for `key`, calling `loader` unless a resident entry serves it.

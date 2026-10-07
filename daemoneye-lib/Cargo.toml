@@ -149,6 +149,9 @@ figment = { workspace = true, features = ["test"] }
 insta = { workspace = true }
 predicates = { workspace = true }
 proptest = { workspace = true }
+# `no-env-filter`: the default filter admits only the test crate's own events, which would hide
+# the library logs the detection tests assert on.
+tracing-test = { workspace = true, features = ["no-env-filter"] }
 
 # Inherit workspace lint configuration
 [lints]
