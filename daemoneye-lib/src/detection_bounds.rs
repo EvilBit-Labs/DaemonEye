@@ -137,8 +137,33 @@ pub const EXECUTOR_BATCH_SIZE: usize = 8192;
 /// deployment; partitions multiply per-batch memory, so this is also a memory-shaping knob.
 pub const EXECUTOR_TARGET_PARTITIONS: usize = 4;
 
+/// Default ceiling on the estimated decoded bytes in one scan `RecordBatch` (R9, KTD2).
+///
+/// Bounds a batch independently of [`EXECUTOR_BATCH_SIZE`]: a batch closes on whichever bound is
+/// hit first, so rows with large `command_line` or `executable_path` values yield short batches
+/// instead of an 8192-row one. A single row whose estimated size alone exceeds this is excluded
+/// and its evaluation is degraded, so it must stay above one maximally-sized row (R28's floor).
+///
+/// **The floor rests on an assumption, not an enforced cap.** `MAX_EXECUTABLE_PATH_LEN` (4096)
+/// caps `executable_path` where it is authenticated, but `command_line` has no length cap
+/// anywhere in the collector, proto, ingest or store path. The nearest bounds are the 1 MiB frame of
+/// the IPC transport (`IpcConfig::max_frame_bytes`, which the event-bus ingest path is not shown to
+/// share) and the host's argument-length limit. The worst row assumed is a
+/// 255-byte name, a 4096-byte path, a 64-byte hash and a 1 MiB `command_line`: measured at
+/// 1,053,119 estimated bytes (1,057,632 allocated by Arrow), so 4 MiB leaves about 4x headroom.
+/// R28's validation of this field in U8 inherits that assumption and must be revisited if
+/// `command_line` ever gains, or loses, an enforced cap.
+///
+/// It bounds the *estimate*; Arrow's string builders may allocate up to 2x that for a batch of
+/// large rows. The estimate over-counts typical rows, so 8192 ordinary rows (about 2 MiB) still
+/// close on the row bound.
+pub const EXECUTOR_BATCH_MAX_BYTES: usize = 4 * 1024 * 1024;
+
 const _: () = assert!(
-    EXECUTOR_MEMORY_POOL_BYTES > 0 && EXECUTOR_BATCH_SIZE > 0 && EXECUTOR_TARGET_PARTITIONS > 0,
+    EXECUTOR_MEMORY_POOL_BYTES > 0
+        && EXECUTOR_BATCH_SIZE > 0
+        && EXECUTOR_TARGET_PARTITIONS > 0
+        && EXECUTOR_BATCH_MAX_BYTES > 0,
     "the executor defaults must be non-zero"
 );
 
