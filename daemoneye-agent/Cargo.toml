@@ -54,9 +54,13 @@ prost-build = { workspace = true }
 daemoneye-agent = { path = ".", features = ["test-only"] }
 
 assert_cmd = { workspace = true }
+chrono     = { workspace = true }
 insta      = { workspace = true }
+redb       = { workspace = true }
 predicates = { workspace = true }
 tempfile   = { workspace = true }
+# `no-env-filter` so a test sees the library's own log lines, not only this crate's.
+tracing-test = { workspace = true, features = ["no-env-filter"] }
 
 [lints]
 workspace = true

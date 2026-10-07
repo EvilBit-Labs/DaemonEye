@@ -90,12 +90,16 @@ fn put_all(fx: &Fixture, rows: Vec<(u64, ProcessRecord)>) {
     let batch: Vec<IngestRecord> = rows
         .into_iter()
         .enumerate()
-        .map(|(i, (ts_ms, record))| IngestRecord {
-            collector_id: "test".to_owned(),
-            source_seq: u64::try_from(i).unwrap(),
-            ts_ms,
-            seq: u32::try_from(i).unwrap(),
-            record,
+        .map(|(i, (ts_ms, record))| {
+            let row = IngestRecord::new(
+                "test",
+                u64::try_from(i).unwrap(),
+                u32::try_from(i).unwrap(),
+                record,
+            )
+            .unwrap();
+            assert_eq!(row.ts_ms(), ts_ms, "fixture ts must equal collection_time");
+            row
         })
         .collect();
     fx.store.put_batch(&batch).unwrap();

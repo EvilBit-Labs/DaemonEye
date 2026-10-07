@@ -18,8 +18,9 @@
 //!
 //! Buckets are keyed by the ingest `ts_ms`, and the scan prunes buckets and clamps key ranges by
 //! the `collection_time` predicates it is given. That is sound only while a row's key `ts_ms`
-//! equals its `collection_time` in milliseconds. Nothing in the store enforces it; the agent's
-//! ingest wiring (U12) must.
+//! equals its `collection_time` in milliseconds. `IngestRecord` enforces it: its key time is derived
+//! from the record and cannot be supplied. `EventStore::put_event` still takes a free `ts_ms`; it
+//! is a test and fixture path, not one production code calls.
 
 pub mod arrow;
 mod filters;

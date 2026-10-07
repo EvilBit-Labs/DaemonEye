@@ -109,12 +109,14 @@ fn put(fx: &Fixture, rows: Vec<ProcessRecord>) {
     let batch: Vec<IngestRecord> = rows
         .into_iter()
         .enumerate()
-        .map(|(i, record)| IngestRecord {
-            collector_id: "test".to_owned(),
-            source_seq: u64::try_from(i).unwrap(),
-            ts_ms: u64::try_from(record.collection_time.timestamp_millis()).unwrap(),
-            seq: u32::try_from(i).unwrap(),
-            record,
+        .map(|(i, record)| {
+            IngestRecord::new(
+                "test",
+                u64::try_from(i).unwrap(),
+                u32::try_from(i).unwrap(),
+                record,
+            )
+            .unwrap()
         })
         .collect();
     fx.store.put_batch(&batch).unwrap();

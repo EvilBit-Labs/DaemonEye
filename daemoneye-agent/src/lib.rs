@@ -10,6 +10,7 @@ pub mod broker_manager;
 pub mod collector_admission;
 pub mod collector_config;
 pub mod collector_registry;
+pub mod detection_cycle;
 pub mod health;
 pub mod ipc_server;
 pub mod pushdown_renewal;

@@ -58,14 +58,43 @@ use index::{
 use ingest::IngestRecord;
 use mrc::MrcMap;
 use redb::{
-    Database, MultimapTable, ReadTransaction, ReadableDatabase, ReadableTableMetadata, Table,
-    TableDefinition, TableHandle,
+    Database, MultimapTable, ReadTransaction, ReadableDatabase, ReadableTable,
+    ReadableTableMetadata, Table, TableDefinition, TableHandle,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, io, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs, io,
+    path::Path,
+};
 
 /// redb table type for a process-event bucket: `(ts_ms, seq)` → versioned bytes.
 type EventTable<'a> = TableDefinition<'a, TsSeqKey, &'static [u8]>;
+
+/// `ingest_watermarks` — collector id → highest committed `source_seq`.
+const WATERMARK_TABLE: TableDefinition<'static, &str, u64> =
+    TableDefinition::new("ingest_watermarks");
+
+/// Raise each batch collector's stored watermark to the batch maximum, inside
+/// the write transaction that carries the rows.
+fn persist_watermarks(
+    txn: &redb::WriteTransaction,
+    records: &[IngestRecord],
+) -> Result<(), StorageError> {
+    let mut batch_max: HashMap<&str, u64> = HashMap::new();
+    for rec in records {
+        let entry = batch_max.entry(rec.collector_id()).or_insert(0);
+        *entry = (*entry).max(rec.source_seq());
+    }
+    let mut table = txn.open_table(WATERMARK_TABLE)?;
+    for (collector, mark) in batch_max {
+        let stored = table.get(collector)?.map(|guard| guard.value());
+        if stored.is_none_or(|current| current < mark) {
+            table.insert(collector, mark)?;
+        }
+    }
+    Ok(())
+}
 
 /// Build the redb table definition for a bucket table name.
 const fn bucket_def(name: &str) -> EventTable<'_> {
@@ -264,7 +293,7 @@ impl EventStore {
         }
         let mut by_bucket: BTreeMap<u64, Vec<&IngestRecord>> = BTreeMap::new();
         for rec in records {
-            let id = bucket_id(rec.ts_ms, self.granularity_ms)?;
+            let id = bucket_id(rec.ts_ms(), self.granularity_ms)?;
             by_bucket.entry(id).or_default().push(rec);
         }
         let txn = self.db.begin_write()?;
@@ -281,8 +310,8 @@ impl EventStore {
                     &mut name_idx,
                     Some(&mut ppid_idx),
                     Some(&mut exe_idx),
-                    (rec.ts_ms, rec.seq),
-                    &rec.record,
+                    (rec.ts_ms(), rec.seq()),
+                    rec.record(),
                 )?;
             }
             drop(exe_idx);
@@ -291,8 +320,27 @@ impl EventStore {
             drop(pid_idx);
             drop(base);
         }
+        persist_watermarks(&txn, records)?;
         txn.commit()?;
         Ok(())
+    }
+
+    /// The per-collector ingest watermarks (highest committed `source_seq`),
+    /// committed in the same transaction as the rows they cover. The ingest
+    /// pipeline seeds itself from these so its idempotency gate survives a restart.
+    pub fn ingest_watermarks(&self) -> Result<HashMap<String, u64>, StorageError> {
+        let txn = self.db.begin_read()?;
+        let table = match txn.open_table(WATERMARK_TABLE) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(HashMap::new()),
+            Err(err) => return Err(err.into()),
+        };
+        let mut marks = HashMap::new();
+        for entry in table.iter()? {
+            let (collector, mark) = entry?;
+            marks.insert(collector.value().to_owned(), mark.value());
+        }
+        Ok(marks)
     }
 
     /// All process records whose `pid` matches, across every live bucket, via
@@ -1171,21 +1219,15 @@ mod tests {
             Some("abcdef0123456789abcdef0123456789ffffffffffffffffffffffffffffffff".to_owned());
         let late = ProcessRecord::new(22, "late".to_owned());
 
+        let at = |mut record: ProcessRecord, ts_ms: u64| {
+            record.collection_time =
+                chrono::DateTime::from_timestamp_millis(i64::try_from(ts_ms).expect("ts fits i64"))
+                    .expect("valid timestamp");
+            record
+        };
         let batch = vec![
-            IngestRecord {
-                collector_id: "c".to_owned(),
-                source_seq: 1,
-                ts_ms: base,
-                seq: 1,
-                record: early,
-            },
-            IngestRecord {
-                collector_id: "c".to_owned(),
-                source_seq: 2,
-                ts_ms: next,
-                seq: 2,
-                record: late,
-            },
+            IngestRecord::new("c", 1, 1, at(early, base)).expect("early record"),
+            IngestRecord::new("c", 2, 2, at(late, next)).expect("late record"),
         ];
         store.put_batch(&batch).expect("put batch");
 

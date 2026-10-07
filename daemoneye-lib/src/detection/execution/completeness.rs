@@ -40,16 +40,7 @@ impl CollectorHealth {
     }
 }
 
-/// A gap the ingest watermark saw in one collector's `source_seq`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SequenceGap {
-    /// The collector whose sequence skipped.
-    pub collector_id: String,
-    /// The sequence that should have come next.
-    pub expected_seq: u64,
-    /// The sequence that arrived.
-    pub observed_seq: u64,
-}
+pub use crate::storage::ingest::SequenceGap;
 
 /// What ingest did this cycle, as deltas since the previous cycle.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

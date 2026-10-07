@@ -103,13 +103,7 @@ fn put_named(fx: &Fixture, name: &str, count: u32) {
             record.collection_time = Utc
                 .timestamp_millis_opt(i64::try_from(ts_ms).unwrap())
                 .unwrap();
-            IngestRecord {
-                collector_id: "test".to_owned(),
-                source_seq: u64::from(pid),
-                ts_ms,
-                seq: pid,
-                record,
-            }
+            IngestRecord::new("test", u64::from(pid), pid, record).unwrap()
         })
         .collect();
     fx.store.put_batch(&batch).unwrap();
@@ -363,13 +357,7 @@ async fn completeness_oversized_row_degrades_as_a_resource_limit_naming_the_tabl
     big.collection_time = Utc
         .timestamp_millis_opt(i64::try_from(10 * HOUR + 2).unwrap())
         .unwrap();
-    let batch = [IngestRecord {
-        collector_id: "test".to_owned(),
-        source_seq: 1,
-        ts_ms: 10 * HOUR + 2,
-        seq: 0,
-        record: big,
-    }];
+    let batch = [IngestRecord::new("test", 1, 0, big).unwrap()];
     fx.store.put_batch(&batch).unwrap();
     load(
         &mut fx,

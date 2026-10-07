@@ -1,7 +1,12 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use daemoneye_lib::{alerting, config, detection_bounds, storage, telemetry};
+use daemoneye_agent::detection_cycle::{
+    PROCMOND_COLLECTOR_ID, ingest_cycle, load_persisted_rules, next_cycle_ordinal,
+    open_event_store, persist_alerts,
+};
+use daemoneye_lib::storage::ingest::{self, IngestConfig};
+use daemoneye_lib::{alerting, config, detection_bounds, telemetry};
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, error, info, warn};
 
@@ -66,8 +71,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize telemetry
     let mut telemetry = telemetry::TelemetryCollector::new("daemoneye-agent".to_owned());
 
-    // Initialize database
-    let _db_manager = storage::DatabaseManager::new(&config.database.path)?;
+    // Initialize the event store and the ingest pipeline that writes into it.
+    let event_store = std::sync::Arc::new(open_event_store(&config.database.path)?);
+    let ingest_handle = ingest::spawn(std::sync::Arc::clone(&event_store), IngestConfig::default());
+    // One above the last ordinal committed, so a restart never reuses a sequence the stored
+    // watermark would discard as already delivered.
+    let mut next_ordinal = Some(next_cycle_ordinal(&event_store, PROCMOND_COLLECTOR_ID)?);
 
     // Initialize embedded EventBus broker
     let broker_manager =
@@ -259,9 +268,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // R18 and never plan, with nothing to see in the logs.
     let detection_engine = std::sync::Arc::clone(broker_manager.detection_engine());
 
-    // TODO(#006): Load detection rules from the database via `storage::DatabaseManager::get_all_rules`
-    // once the redb storage layer is implemented (Task 8). Until then, the detection engine starts
-    // with no rules loaded. Rules should be persisted through the database and reloaded on startup.
+    // Reload every persisted rule; a rejected one is logged with its id and does not stop startup.
+    let mut startup_engine = detection_engine.lock().await;
+    let loaded = load_persisted_rules(&event_store, &mut startup_engine)?;
+    drop(startup_engine);
+    info!(loaded_rules = loaded, "Loaded persisted detection rules");
 
     // Initialize alert manager
     let mut alert_manager = alerting::AlertManager::new();
@@ -445,6 +456,37 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
+                // Commit this cycle's rows before anything evaluates them. A cycle that collected
+                // nothing consumes no ordinal, so the next one stays contiguous for the watermark.
+                match next_ordinal {
+                    Some(ordinal) if !processes.is_empty() => {
+                        let ingested = ingest_cycle(
+                            &ingest_handle,
+                            PROCMOND_COLLECTOR_ID,
+                            ordinal,
+                            &processes,
+                        )
+                        .await;
+                        match ingested {
+                            Ok(outcome) => {
+                                next_ordinal = ordinal.checked_add(1);
+                                debug!(
+                                    submitted = outcome.submitted,
+                                    high_water_ms = outcome.high_water_ms,
+                                    gaps = outcome.gaps.len(),
+                                    "Ingested cycle"
+                                );
+                            }
+                            Err(e) => {
+                                error!(error = %e, "Ingest failed; this cycle's rows are not durable");
+                                telemetry.record_error();
+                            }
+                        }
+                    }
+                    Some(_) => {}
+                    None => error!("Cycle ordinals exhausted; collected rows are not being stored"),
+                }
+
                 // Execute detection rules against collected processes
                 let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_owned());
                 let mut alerts = {
@@ -470,6 +512,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                             telemetry.record_error();
                         }
                     }
+                }
+                // Every delivered alert is also stored, so its completeness marker is readable later.
+                let stored_alerts = persist_alerts(&event_store, &alerts);
+                if stored_alerts != alerts.len() {
+                    warn!(stored = stored_alerts, total = alerts.len(), "Some alerts were not persisted");
                 }
                 let detection_duration = detection_timer.finish();
                 telemetry.record_operation(detection_duration);
@@ -541,6 +588,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = broker_result {
         error!(error = %e, "Failed to shutdown embedded broker gracefully");
     }
+
+    // After the broker, so nothing is still submitting; commits whatever is queued.
+    ingest_handle.flush_and_stop().await;
 
     #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
     {

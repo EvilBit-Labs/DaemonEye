@@ -6,7 +6,15 @@
 //! transaction (one fsync per group). The writer maintains a **per-collector
 //! watermark** (the highest committed `source_seq`) and discards any record at
 //! or below it, plus exact `(collector_id, source_seq)` duplicates within a
-//! batch — the idempotency gate (R7) that survives an in-session re-delivery.
+//! batch — the idempotency gate (R7). The watermark is committed in the same
+//! transaction as the rows it covers and seeded from the store when the pipeline
+//! spawns, so the gate survives a restart, not just an in-session re-delivery.
+//!
+//! A record more than one past the watermark is a **sequence gap**: it is still
+//! written, counted in [`IngestMetrics::sequence_gaps_detected`], and reported
+//! with its expected and observed values by the next [`IngestHandle::flush`].
+//! A `source_seq` may be epoch-structured (`epoch << 32 | index`); the first
+//! index of the next epoch counts as contiguous with the last of the previous.
 //!
 //! Backpressure is **bounded-block, never drop**: a full channel records a
 //! saturation alert and then blocks the producer until capacity frees, so
@@ -24,23 +32,93 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tracing::warn;
 
+/// Bits of a `source_seq` that index a record within its epoch.
+const EPOCH_SHIFT: u32 = 32;
+
+/// Size of one epoch of `source_seq` values.
+const EPOCH_SIZE: u64 = 1 << EPOCH_SHIFT;
+
+/// Most gaps held between flushes; further gaps are still counted, not listed.
+const MAX_PENDING_GAPS: usize = 1024;
+
 /// One record submitted to the ingest pipeline.
+///
+/// The key time `ts_ms` is **derived** from the record's `collection_time` and
+/// cannot be supplied. Buckets are pruned by the key time while queries filter
+/// on `collection_time`; letting the two diverge would drop rows a rule should
+/// have matched with no error anywhere.
+#[derive(Debug)]
 pub struct IngestRecord {
-    /// Source collector identity (procmond's `client_id`); the dedup namespace.
-    pub collector_id: String,
-    /// Monotonic per-collector sequence (procmond's WAL sequence); the dedup key.
-    pub source_seq: u64,
-    /// Event collection timestamp in milliseconds (the primary-key time).
-    pub ts_ms: u64,
-    /// Per-writer sequence disambiguator within a bucket.
-    pub seq: u32,
+    collector_id: String,
+    source_seq: u64,
+    ts_ms: u64,
+    seq: u32,
+    record: ProcessRecord,
+}
+
+impl IngestRecord {
+    /// Build a submission for `record`, keyed by its `collection_time`.
+    ///
+    /// `collector_id` is the source collector identity and dedup namespace;
+    /// `source_seq` the monotonic per-collector dedup key; `seq` disambiguates
+    /// rows sharing a millisecond within a bucket.
+    ///
+    /// # Errors
+    ///
+    /// [`IngestError::InvalidTimestamp`] if `collection_time` is before the Unix
+    /// epoch, which has no `u64` key.
+    pub fn new(
+        collector_id: impl Into<String>,
+        source_seq: u64,
+        seq: u32,
+        record: ProcessRecord,
+    ) -> Result<Self, IngestError> {
+        let millis = record.collection_time.timestamp_millis();
+        let ts_ms =
+            u64::try_from(millis).map_err(|_negative| IngestError::InvalidTimestamp { millis })?;
+        Ok(Self {
+            collector_id: collector_id.into(),
+            source_seq,
+            ts_ms,
+            seq,
+            record,
+        })
+    }
+
+    /// Source collector identity.
+    #[must_use]
+    pub fn collector_id(&self) -> &str {
+        &self.collector_id
+    }
+
+    /// Per-collector dedup sequence.
+    #[must_use]
+    pub const fn source_seq(&self) -> u64 {
+        self.source_seq
+    }
+
+    /// Key time in milliseconds: the record's `collection_time`.
+    #[must_use]
+    pub const fn ts_ms(&self) -> u64 {
+        self.ts_ms
+    }
+
+    /// Disambiguator within a bucket.
+    #[must_use]
+    pub const fn seq(&self) -> u32 {
+        self.seq
+    }
+
     /// The process event payload.
-    pub record: ProcessRecord,
+    #[must_use]
+    pub const fn record(&self) -> &ProcessRecord {
+        &self.record
+    }
 }
 
 /// Group-commit and channel tunables (defaults follow the §11.7.7 playbook).
@@ -75,6 +153,26 @@ pub struct IngestMetrics {
     pub duplicates_discarded: AtomicU64,
     /// Number of times a full channel forced bounded-block backpressure.
     pub saturation_alerts: AtomicU64,
+    /// Number of sequence gaps observed (a `source_seq` more than one past the watermark).
+    pub sequence_gaps_detected: AtomicU64,
+}
+
+/// A gap the ingest watermark saw in one collector's `source_seq`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequenceGap {
+    /// The collector whose sequence skipped.
+    pub collector_id: String,
+    /// The sequence that should have come next.
+    pub expected_seq: u64,
+    /// The sequence that arrived.
+    pub observed_seq: u64,
+}
+
+/// What a [`IngestHandle::flush`] observed since the previous flush.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FlushReport {
+    /// Gaps detected since the previous flush, in arrival order.
+    pub gaps: Vec<SequenceGap>,
 }
 
 /// Errors surfaced to the producer.
@@ -84,11 +182,26 @@ pub enum IngestError {
     /// The ingest pipeline has shut down and is no longer accepting records.
     #[error("ingest channel closed")]
     Closed,
+    /// A record's `collection_time` is before the Unix epoch and has no key.
+    #[error("collection_time {millis} ms is before the Unix epoch")]
+    InvalidTimestamp {
+        /// The offending timestamp in signed milliseconds.
+        millis: i64,
+    },
+    /// A group commit since the previous flush failed; its rows were not written.
+    #[error("an ingest group commit failed; rows submitted since the last flush are not durable")]
+    CommitFailed,
+}
+
+/// What the writer task is sent.
+enum WriterMessage {
+    Record(Box<IngestRecord>),
+    Flush(oneshot::Sender<Result<FlushReport, IngestError>>),
 }
 
 /// Producer-side handle to a running ingest pipeline.
 pub struct IngestHandle {
-    sender: mpsc::Sender<IngestRecord>,
+    sender: mpsc::Sender<WriterMessage>,
     metrics: Arc<IngestMetrics>,
     writer: JoinHandle<()>,
 }
@@ -97,7 +210,7 @@ impl IngestHandle {
     /// Submit a record. Bounded-block backpressure: on a full channel this
     /// records a saturation alert and then awaits capacity — it never drops.
     pub async fn submit(&self, rec: IngestRecord) -> Result<(), IngestError> {
-        match self.sender.try_send(rec) {
+        match self.sender.try_send(WriterMessage::Record(Box::new(rec))) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(pending)) => {
                 self.metrics
@@ -110,6 +223,23 @@ impl IngestHandle {
             }
             Err(mpsc::error::TrySendError::Closed(_rec)) => Err(IngestError::Closed),
         }
+    }
+
+    /// Barrier: returns once every record submitted before this call has been
+    /// group-committed (or discarded), so a caller can read what it just wrote.
+    ///
+    /// # Errors
+    ///
+    /// [`IngestError::CommitFailed`] if a group commit since the previous flush
+    /// failed, so the barrier never reports success over rows that did not land.
+    /// [`IngestError::Closed`] if the pipeline has shut down.
+    pub async fn flush(&self) -> Result<FlushReport, IngestError> {
+        let (reply, answer) = oneshot::channel();
+        self.sender
+            .send(WriterMessage::Flush(reply))
+            .await
+            .map_err(|_closed| IngestError::Closed)?;
+        answer.await.map_err(|_closed| IngestError::Closed)?
     }
 
     /// Observable counters for operability and tests.
@@ -127,6 +257,10 @@ impl IngestHandle {
 }
 
 /// Spawn the single-writer ingest pipeline over `store`.
+///
+/// The per-collector watermarks are seeded from the store. If they cannot be
+/// read the pipeline starts empty and logs it: the safe direction is to accept
+/// a re-delivery, never to discard fresh rows.
 pub fn spawn(store: Arc<EventStore>, config: IngestConfig) -> IngestHandle {
     let (sender, receiver) = mpsc::channel(config.channel_capacity);
     let metrics = Arc::new(IngestMetrics::default());
@@ -139,45 +273,129 @@ pub fn spawn(store: Arc<EventStore>, config: IngestConfig) -> IngestHandle {
     }
 }
 
+/// Writer-side state carried across batches.
+#[derive(Default)]
+struct WriterState {
+    watermarks: HashMap<String, u64>,
+    pending_gaps: Vec<SequenceGap>,
+    commit_failed: bool,
+}
+
+impl WriterState {
+    fn answer_flush(&mut self) -> Result<FlushReport, IngestError> {
+        let gaps = std::mem::take(&mut self.pending_gaps);
+        if std::mem::take(&mut self.commit_failed) {
+            return Err(IngestError::CommitFailed);
+        }
+        Ok(FlushReport { gaps })
+    }
+}
+
 /// The dedicated writer loop: batch by `N`/`T`, group-commit, advance watermarks.
 async fn run_writer(
     store: Arc<EventStore>,
-    mut receiver: mpsc::Receiver<IngestRecord>,
+    mut receiver: mpsc::Receiver<WriterMessage>,
     config: IngestConfig,
     metrics: Arc<IngestMetrics>,
 ) {
-    let mut watermarks: HashMap<String, u64> = HashMap::new();
+    let watermarks = store.ingest_watermarks().unwrap_or_else(|err| {
+        warn!(error = %err, "ingest watermarks unreadable; starting empty");
+        HashMap::new()
+    });
+    let mut state = WriterState {
+        watermarks,
+        ..WriterState::default()
+    };
     while let Some(first) = receiver.recv().await {
-        let mut batch = vec![first];
+        let mut batch = Vec::new();
+        let mut flush = match first {
+            WriterMessage::Record(rec) => {
+                batch.push(*rec);
+                None
+            }
+            WriterMessage::Flush(reply) => Some(reply),
+        };
         let started = Instant::now();
-        while batch.len() < config.batch_records {
+        while flush.is_none() && batch.len() < config.batch_records {
             let remaining = config.batch_window.saturating_sub(started.elapsed());
             if remaining.is_zero() {
                 break;
             }
             match tokio::time::timeout(remaining, receiver.recv()).await {
-                Ok(Some(rec)) => batch.push(rec),
+                Ok(Some(WriterMessage::Record(rec))) => batch.push(*rec),
+                Ok(Some(WriterMessage::Flush(reply))) => flush = Some(reply),
                 // Channel closed (None) or the batch window elapsed (Err): commit.
                 Ok(None) | Err(_) => break,
             }
         }
-        commit_batch(&store, &mut watermarks, batch, &metrics);
+        commit_batch(&store, &mut state, batch, &metrics);
+        if let Some(reply) = flush {
+            // A dropped receiver means the caller stopped waiting; nothing to do.
+            let _ignored = reply.send(state.answer_flush());
+        }
     }
 }
 
+/// The `source_seq` that follows `last` without a gap: the next integer, or the
+/// first index of the next epoch.
+fn is_contiguous(last: u64, observed: u64) -> bool {
+    let next = last.checked_add(1);
+    let next_epoch = last
+        .checked_shr(EPOCH_SHIFT)
+        .and_then(|epoch| epoch.checked_add(1))
+        .and_then(|epoch| epoch.checked_mul(EPOCH_SIZE));
+    Some(observed) == next || Some(observed) == next_epoch
+}
+
+/// Walk the survivors in arrival order against the running watermark, recording
+/// each gap. Returns the per-collector maximum to persist.
+fn observe_sequence(
+    state: &mut WriterState,
+    to_write: &[IngestRecord],
+    metrics: &IngestMetrics,
+) -> HashMap<String, u64> {
+    let mut running: HashMap<String, u64> = HashMap::new();
+    for rec in to_write {
+        let previous = running
+            .get(&rec.collector_id)
+            .or_else(|| state.watermarks.get(&rec.collector_id))
+            .copied();
+        if let Some(last) = previous
+            && !is_contiguous(last, rec.source_seq)
+        {
+            metrics
+                .sequence_gaps_detected
+                .fetch_add(1, Ordering::Relaxed);
+            if state.pending_gaps.len() < MAX_PENDING_GAPS {
+                state.pending_gaps.push(SequenceGap {
+                    collector_id: rec.collector_id.clone(),
+                    expected_seq: last.saturating_add(1),
+                    observed_seq: rec.source_seq,
+                });
+            }
+        }
+        let entry = running.entry(rec.collector_id.clone()).or_insert(0);
+        *entry = (*entry).max(rec.source_seq);
+    }
+    running
+}
+
 /// Filter a batch against the per-collector watermark + within-batch duplicates,
-/// group-commit the survivors, then advance the watermarks on success.
+/// group-commit the survivors and their watermarks, then advance the in-memory
+/// watermarks on success.
 fn commit_batch(
     store: &EventStore,
-    watermarks: &mut HashMap<String, u64>,
+    state: &mut WriterState,
     batch: Vec<IngestRecord>,
     metrics: &IngestMetrics,
 ) {
     let mut seen: HashSet<(String, u64)> = HashSet::new();
     let mut to_write: Vec<IngestRecord> = Vec::with_capacity(batch.len());
     for rec in batch {
-        let already_committed =
-            matches!(watermarks.get(&rec.collector_id), Some(&wm) if rec.source_seq <= wm);
+        let already_committed = matches!(
+            state.watermarks.get(&rec.collector_id),
+            Some(&wm) if rec.source_seq <= wm
+        );
         let within_batch_dup = !seen.insert((rec.collector_id.clone(), rec.source_seq));
         if already_committed || within_batch_dup {
             metrics.duplicates_discarded.fetch_add(1, Ordering::Relaxed);
@@ -188,13 +406,12 @@ fn commit_batch(
     if to_write.is_empty() {
         return;
     }
+    let committed_marks = observe_sequence(state, &to_write, metrics);
     match store.put_batch(&to_write) {
         Ok(()) => {
-            for rec in &to_write {
-                let entry = watermarks
-                    .entry(rec.collector_id.clone())
-                    .or_insert(rec.source_seq);
-                *entry = (*entry).max(rec.source_seq);
+            for (collector, mark) in committed_marks {
+                let entry = state.watermarks.entry(collector).or_insert(mark);
+                *entry = (*entry).max(mark);
             }
             metrics.commits.fetch_add(1, Ordering::Relaxed);
             let written = u64::try_from(to_write.len()).unwrap_or(u64::MAX);
@@ -203,10 +420,14 @@ fn commit_batch(
                 .fetch_add(written, Ordering::Relaxed);
         }
         Err(err) => {
+            state.commit_failed = true;
             warn!(error = %err, batch_len = to_write.len(), "ingest group commit failed");
         }
     }
 }
+
+#[cfg(test)]
+mod flush_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -215,13 +436,11 @@ mod tests {
     use tempfile::tempdir;
 
     fn record(collector: &str, source_seq: u64, ts_ms: u64, seq: u32, pid: u32) -> IngestRecord {
-        IngestRecord {
-            collector_id: collector.to_owned(),
-            source_seq,
-            ts_ms,
-            seq,
-            record: ProcessRecord::new(pid, format!("proc-{pid}")),
-        }
+        let mut process = ProcessRecord::new(pid, format!("proc-{pid}"));
+        process.collection_time =
+            chrono::DateTime::from_timestamp_millis(i64::try_from(ts_ms).expect("ts fits i64"))
+                .expect("valid timestamp");
+        IngestRecord::new(collector, source_seq, seq, process).expect("ingest record")
     }
 
     fn store_at(name: &str) -> (tempfile::TempDir, Arc<EventStore>) {
