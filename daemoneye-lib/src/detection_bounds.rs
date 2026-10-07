@@ -74,6 +74,39 @@ const _: () = assert!(
     "the DFA cache ceiling must also survive multiplication by the cache entry count"
 );
 
+// --- Posting-list cache bounds ------------------------------------------------------------------
+
+/// Default number of closed-bucket posting lists the page cache retains (R12).
+pub const POSTING_CACHE_MAX_ENTRIES: usize = 256;
+
+/// Default longest posting list, in postings, the page cache will retain (R12).
+///
+/// A longer list is served live from redb and never cached.
+pub const POSTING_CACHE_MAX_POSTINGS: usize = 1024;
+
+const _: () = assert!(
+    POSTING_CACHE_MAX_ENTRIES > 0 && POSTING_CACHE_MAX_POSTINGS > 0,
+    "the posting cache bounds must be non-zero"
+);
+
+/// Worst-case posting bytes the page cache can hold at its **default** bounds.
+///
+/// **This is a product, not a measurement.** It is [`POSTING_CACHE_MAX_ENTRIES`] ×
+/// [`POSTING_CACHE_MAX_POSTINGS`] × `size_of::<(u64, u32)>()` (16 bytes, the padded tuple; 12 of
+/// them are payload, so the payload alone is 3 MiB). It excludes the per-entry `Arc` and map
+/// overhead, and it bounds the *defaults* only: operator-configured values are bounded by their
+/// own ceilings, not by this constant.
+///
+/// The product currently *equals* this bound rather than fitting inside it, so raising either
+/// default is a build break by design: the assertion below is the review gate, not slack.
+pub const POSTING_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+const _: () = assert!(
+    POSTING_CACHE_MAX_ENTRIES * POSTING_CACHE_MAX_POSTINGS * size_of::<(u64, u32)>()
+        <= POSTING_CACHE_MAX_BYTES,
+    "posting cache entry count times list length times posting size must fit the stated product"
+);
+
 // --- Parser bounds ----------------------------------------------------------------------------
 
 /// Recursion limit handed to `sqlparser::Parser::with_recursion_limit`.

@@ -24,6 +24,11 @@ mod error;
 mod index;
 pub mod ingest;
 pub mod mrc;
+/// Bounded LRU cache of closed-bucket posting lists (R12, KTD8).
+///
+/// Gated on `detection-engine` with the `lru` dependency it wraps.
+#[cfg(feature = "detection-engine")]
+pub mod postings_cache;
 /// `DataFusion` `TableProvider` over the event store (ADR-0006, KTD2).
 ///
 /// Gated on `detection-engine` so `storage` stays buildable without the

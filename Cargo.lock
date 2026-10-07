@@ -1025,6 +1025,7 @@ dependencies = [
  "insta",
  "interprocess",
  "lru",
+ "parking_lot",
  "postcard",
  "predicates",
  "proptest",
