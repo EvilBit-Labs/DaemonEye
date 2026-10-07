@@ -843,7 +843,7 @@ pub struct DatabaseStats {
 #[allow(clippy::expect_used, clippy::let_underscore_must_use)]
 mod tests {
     use super::*;
-    use crate::models::AlertSeverity;
+    use crate::models::{AlertSeverity, Completeness};
     use tempfile::tempdir;
 
     #[test]
@@ -1388,6 +1388,7 @@ mod tests {
             "apache -> bash",
             "apache-bash-spawn",
             proc,
+            Completeness::complete(),
         );
         writer.store_alert(&alert).expect("store alert");
         drop(writer);
@@ -1660,6 +1661,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         // Test that store_alert doesn't panic (currently stubbed)

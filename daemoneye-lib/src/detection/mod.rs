@@ -19,12 +19,13 @@ pub mod task_renewal;
 
 use crate::config::DetectionConfig;
 use crate::detection::catalog::{CatalogChange, CatalogError, SchemaCatalog, VerifiedRegistration};
+use crate::detection::execution::completeness::EvaluationSummary;
 use crate::detection::generation::Generations;
 use crate::detection::rule_health::{RuleHealth, RuleHealthRegistry};
-use crate::models::{Alert, DetectionRule, ProcessRecord, RuleError};
+use crate::models::{Alert, Completeness, DetectionRule, ProcessRecord, RuleError};
 use crate::proto::SchemaDescriptor;
 use crate::rejection_log::{RejectionLog, RejectionReason};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -99,6 +100,9 @@ pub struct DetectionEngine {
     /// [`DetectionEngine::observe_pattern_latency`] (R2, R3) and carried on each `RunnableRule`.
     pattern_latency_threshold: Duration,
     rejections: RejectionLog,
+    /// The latest evaluation per rule, recorded by the agent after its generation gate. Forgotten
+    /// with the rule: a removed rule must not keep reporting a completeness.
+    last_evaluations: BTreeMap<String, EvaluationSummary>,
     #[allow(dead_code)]
     max_execution_time_ms: u64,
     #[allow(dead_code)]
@@ -130,6 +134,7 @@ impl DetectionEngine {
             max_subquery_depth: config.max_subquery_depth,
             pattern_latency_threshold: Duration::from_millis(config.pattern_latency_threshold_ms),
             rejections: RejectionLog::new(),
+            last_evaluations: BTreeMap::new(),
             max_execution_time_ms: 30000, // 30 seconds
             max_memory_mb: 100,           // 100 MB
         }
@@ -267,6 +272,7 @@ impl DetectionEngine {
         let _removed_plan = self.compiled.remove(rule_id);
         self.health.forget(rule_id);
         self.generations.forget(rule_id);
+        let _forgotten = self.last_evaluations.remove(rule_id);
     }
 
     /// Loads a detection rule into the engine.
@@ -417,6 +423,7 @@ impl DetectionEngine {
                             format!("Process {} matches suspicious pattern", process.name),
                             rule_id.clone(),
                             process.clone(),
+                            Completeness::complete(),
                         );
 
                         alerts.push(alert);
@@ -434,6 +441,7 @@ impl DetectionEngine {
                             format!("Process {} is using {}% CPU", process.name, cpu_usage),
                             rule_id.clone(),
                             process.clone(),
+                            Completeness::complete(),
                         );
 
                         alerts.push(alert);
@@ -470,9 +478,26 @@ impl DetectionEngine {
         let _uncovered = self.compiled.remove(id);
         self.health.forget(id);
         self.generations.forget(id);
+        let _forgotten = self.last_evaluations.remove(id);
         self.tasks.forget_rule(id);
         self.deferred.retain(|deferred_id| deferred_id != id);
         removed
+    }
+
+    /// Keep `summary` as its rule's latest evaluation, unless the rule is gone or has been
+    /// reloaded since the evaluation began (the same generation gate as the agent's result gate).
+    pub fn record_evaluation(&mut self, summary: EvaluationSummary) {
+        if self.generations.current(&summary.rule_id) == Some(summary.generation) {
+            let _previous = self
+                .last_evaluations
+                .insert(summary.rule_id.clone(), summary);
+        }
+    }
+
+    /// The latest recorded evaluation of `rule_id`, if any.
+    #[must_use]
+    pub fn last_evaluation(&self, rule_id: &str) -> Option<&EvaluationSummary> {
+        self.last_evaluations.get(rule_id)
     }
 
     /// Enable or disable a loaded rule.

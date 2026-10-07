@@ -29,13 +29,17 @@ use futures_util::StreamExt;
 use tracing::{Instrument, info_span, warn};
 
 use crate::config::DetectionConfig;
-use crate::detection::execution::derive::{CycleWindow, derive};
+use crate::detection::execution::completeness::{
+    CompletenessTracker, CycleSignals, execution_reasons,
+};
+use crate::detection::execution::derive::{CycleWindow, derive_from_parts};
 use crate::detection::execution::regexp::LatencyAbort;
 use crate::detection::execution::session::{
     ExecutorRuntime, LatencySink, session_state_from_config,
 };
 use crate::detection::{Generation, RegexCache, RunnableRule};
-use crate::models::{Alert, DetectionRule, ProcessRecord};
+use crate::models::{Alert, Completeness, DetectionRule, ProcessRecord};
+use crate::proto::PushdownPlan;
 use crate::storage::EventStore;
 use crate::storage::postings_cache::PostingsCache;
 use crate::storage::provider::{EventStoreTableProvider, ScanCounters, ScanLimits};
@@ -59,7 +63,7 @@ pub struct LatencyReport {
 
 /// What a rule's scan read, copied from the provider's `ScanCounters` once the stream is done.
 ///
-/// U10 maps a non-zero `oversized_rows` to `CompletenessReason::ResourceLimit` naming `table`.
+/// A non-zero `oversized_rows` becomes `CompletenessReason::ResourceLimit` naming `table`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanTotals {
     /// The catalog table scanned.
@@ -92,7 +96,7 @@ impl ScanTotals {
     }
 }
 
-/// Why an evaluation did not finish. U10 maps these to `ExecutionError` and `ResourceLimit`.
+/// Why an evaluation did not finish; becomes `ExecutionError` or `ResourceLimit`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EvaluationFailure {
@@ -115,9 +119,8 @@ impl EvaluationFailure {
 
 /// The result of evaluating one rule for one cycle.
 ///
-/// U10 seam: this gains a `completeness` field, folded from `result_capped`, `scan`,
-/// `stopped_on_latency` and `failure`. Until then they are recorded here in the shape that fold
-/// needs.
+/// `completeness` is folded from the cycle's signals and this run's own `result_capped`, `scan`,
+/// `stopped_on_latency` and `failure`; every alert carries a clone of it.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RuleEvaluation {
@@ -128,8 +131,8 @@ pub struct RuleEvaluation {
     pub generation: Generation,
     /// One alert per matching row, at most the configured cap.
     pub alerts: Vec<Alert>,
-    /// `Some(cap)` when more than `cap` rows matched; the alerts are the first `cap`. U10 turns
-    /// this into `CompletenessReason::ResultCapped`. Exactly `cap` matches leave it `None`.
+    /// `Some(cap)` when more than `cap` rows matched; the alerts are the first `cap`. Exactly
+    /// `cap` matches leave it `None`.
     pub result_capped: Option<u32>,
     /// What the scan read.
     pub scan: ScanTotals,
@@ -137,6 +140,8 @@ pub struct RuleEvaluation {
     pub stopped_on_latency: bool,
     /// Why the evaluation ended early, if it did.
     pub failure: Option<EvaluationFailure>,
+    /// Whether this evaluation saw everything it was meant to, and if not, why (R14).
+    pub completeness: Completeness,
 }
 
 /// Everything one cycle's evaluation produced.
@@ -181,9 +186,15 @@ impl RuleExecutor {
 
     /// Evaluate `rules` in order over the rows stored in `window`.
     ///
-    /// Takes no engine lock and never calls the engine. U10 seam: the plan's signature adds a
-    /// `signals: &CycleSignals` parameter here when the completeness tracker lands.
-    pub async fn evaluate(&self, rules: &[RunnableRule], window: CycleWindow) -> CycleOutcome {
+    /// Takes no engine lock and never calls the engine. `signals` is what the agent observed this
+    /// cycle; each evaluation's `completeness` folds it for the rule's own collector and table.
+    pub async fn evaluate(
+        &self,
+        rules: &[RunnableRule],
+        window: CycleWindow,
+        signals: &CycleSignals,
+    ) -> CycleOutcome {
+        let tracker = CompletenessTracker::new(signals);
         let mut outcome = CycleOutcome::default();
         for runnable in rules {
             let span = info_span!(
@@ -191,7 +202,10 @@ impl RuleExecutor {
                 rule_id = runnable.rule.id.raw(),
                 generation = %runnable.generation,
             );
-            let (evaluation, reports) = self.evaluate_rule(runnable, window).instrument(span).await;
+            let (evaluation, reports) = self
+                .evaluate_rule(runnable, window, &tracker)
+                .instrument(span)
+                .await;
             outcome.evaluations.push(evaluation);
             outcome.reports.extend(reports);
         }
@@ -202,6 +216,7 @@ impl RuleExecutor {
         &self,
         runnable: &RunnableRule,
         window: CycleWindow,
+        tracker: &CompletenessTracker,
     ) -> (RuleEvaluation, Vec<LatencyReport>) {
         let sink = Arc::new(LatencySink::with_threshold(
             runnable.pattern_latency_threshold,
@@ -210,12 +225,12 @@ impl RuleExecutor {
         let prepared = self.prepare(runnable, window, &sink);
         let (frame, counters) = match prepared {
             Ok(parts) => parts,
-            Err(error) => return run.finish_failed(&error),
+            Err(error) => return run.finish_failed(&error, tracker),
         };
         run.scan = ScanTotals::from_counters(&counters);
         let mut stream = match frame.execute_stream().await {
             Ok(stream) => stream,
-            Err(error) => return run.finish_failed(&error),
+            Err(error) => return run.finish_failed(&error, tracker),
         };
         while let Some(next) = stream.next().await {
             match next.and_then(|batch| run.take_rows(&batch, self.config.max_matches_per_rule)) {
@@ -237,7 +252,7 @@ impl RuleExecutor {
         drop(stream);
         run.reports.extend(take_reports(&sink, runnable));
         run.scan = ScanTotals::from_counters(&counters);
-        run.finish()
+        run.finish(tracker)
     }
 
     /// The derived frame and the counters of the provider behind it.
@@ -264,16 +279,37 @@ impl RuleExecutor {
         );
         let counters = Arc::clone(provider.counters());
         let ctx = SessionContext::new_with_state(state);
-        let frame = derive(
+        let frame = derive_from_parts(
             &ctx,
             provider,
-            &runnable.compiled,
+            &plan_with_pid(runnable),
+            runnable.compiled.residual(),
             window,
             self.config.max_matches_per_rule,
         )
         .map_err(|error| DataFusionError::Plan(error.to_string()))?;
         Ok((frame, counters))
     }
+}
+
+/// The rule's pushed plan with `pid` added to a non-empty projection that lacks it.
+///
+/// An alert names the process it fired on, and the derived projection keeps only the columns a
+/// rule selected and filtered on, so `SELECT name ... WHERE name = 'nc'` would otherwise reach the
+/// alert with no pid at all. `pid` is the process's identifier and costs one column of decode.
+/// An empty projection already means every column, and a table without a `pid` is left alone.
+fn plan_with_pid(runnable: &RunnableRule) -> PushdownPlan {
+    let mut plan = runnable.compiled.plan().clone();
+    let has_pid_column = runnable
+        .descriptor
+        .columns
+        .iter()
+        .any(|column| column.name == PID_COLUMN);
+    let selected = plan.projection.iter().any(|name| name == PID_COLUMN);
+    if has_pid_column && !plan.projection.is_empty() && !selected {
+        plan.projection.push(PID_COLUMN.to_owned());
+    }
+    plan
 }
 
 /// Drain `sink` into reports. The only place a [`LatencyReport`] is constructed.
@@ -289,10 +325,19 @@ fn take_reports(sink: &LatencySink, runnable: &RunnableRule) -> Vec<LatencyRepor
         .collect()
 }
 
+/// The column an alert's process is identified by.
+const PID_COLUMN: &str = "pid";
+
+/// One matching row, reduced to what an alert names.
+struct Hit {
+    pid: u32,
+    name: String,
+}
+
 /// One rule's evaluation while it is in progress.
 struct Run<'a> {
     runnable: &'a RunnableRule,
-    alerts: Vec<Alert>,
+    hits: Vec<Hit>,
     reports: Vec<LatencyReport>,
     result_capped: Option<u32>,
     scan: ScanTotals,
@@ -304,7 +349,7 @@ impl<'a> Run<'a> {
     fn new(runnable: &'a RunnableRule) -> Self {
         Self {
             runnable,
-            alerts: Vec::new(),
+            hits: Vec::new(),
             reports: Vec::new(),
             result_capped: None,
             scan: ScanTotals::empty(&runnable.descriptor.name),
@@ -319,12 +364,11 @@ impl<'a> Run<'a> {
     fn take_rows(&mut self, batch: &RecordBatch, cap: u32) -> DfResult<()> {
         let room = usize::try_from(cap)
             .unwrap_or(usize::MAX)
-            .saturating_sub(self.alerts.len());
+            .saturating_sub(self.hits.len());
         if batch.num_rows() > room {
             self.result_capped = Some(cap);
         }
-        let alerts = alerts_from_batch(&self.runnable.rule, batch, room)?;
-        self.alerts.extend(alerts);
+        self.hits.extend(hits_from_batch(batch, room)?);
         Ok(())
     }
 
@@ -345,47 +389,64 @@ impl<'a> Run<'a> {
         self.reports.extend(reports);
     }
 
-    fn finish_failed(mut self, error: &DataFusionError) -> (RuleEvaluation, Vec<LatencyReport>) {
+    fn finish_failed(
+        mut self,
+        error: &DataFusionError,
+        tracker: &CompletenessTracker,
+    ) -> (RuleEvaluation, Vec<LatencyReport>) {
         self.failure = Some(EvaluationFailure::from_error(error));
-        self.finish()
+        self.finish(tracker)
     }
 
-    fn finish(self) -> (RuleEvaluation, Vec<LatencyReport>) {
+    /// Fold the cycle's signals and this run's own shortfalls into the completeness, then build
+    /// the alerts carrying it. Alerts are built here, not as rows arrive, because the reasons are
+    /// not all known until the stream ends.
+    fn finish(self, tracker: &CompletenessTracker) -> (RuleEvaluation, Vec<LatencyReport>) {
+        let own_reasons = execution_reasons(
+            self.failure.as_ref(),
+            self.stopped_on_latency,
+            &self.scan,
+            self.result_capped,
+        );
+        let completeness = tracker.for_rule(
+            self.runnable.compiled.collector_id(),
+            &self.scan.table,
+            own_reasons,
+        );
+        let alerts = self
+            .hits
+            .iter()
+            .map(|hit| alert_for(&self.runnable.rule, hit, &completeness))
+            .collect();
         let evaluation = RuleEvaluation {
             rule_id: self.runnable.rule.id.raw().to_owned(),
             generation: self.runnable.generation,
-            alerts: self.alerts,
+            alerts,
             result_capped: self.result_capped,
             scan: self.scan,
             stopped_on_latency: self.stopped_on_latency,
             failure: self.failure,
+            completeness,
         };
         (evaluation, self.reports)
     }
 }
 
-/// One alert per row of `batch`, the first `take` rows only.
+/// The first `take` rows of `batch` as hits.
 ///
-/// The row carries only the columns the rule projected plus those it filtered on. `pid` and `name`
-/// are lifted into the alert's process record when present; a missing `pid` is 0. The title names
-/// the process, because the deduplication key is built from it and one title for every match
-/// would collapse a rule's matches into one alert downstream.
-///
-/// U10 seam: `Alert::new` gains a completeness argument; the call below is updated then.
-fn alerts_from_batch(
-    rule: &DetectionRule,
-    batch: &RecordBatch,
-    take: usize,
-) -> DfResult<Vec<Alert>> {
+/// The row carries the columns the rule projected plus those it filtered on, and `pid` always
+/// (`plan_with_pid`). A table with no `pid` column yields pid 0, the one case left where an alert
+/// cannot name its process; a null `name` is the empty string.
+fn hits_from_batch(batch: &RecordBatch, take: usize) -> DfResult<Vec<Hit>> {
     let pids = batch
-        .column_by_name("pid")
+        .column_by_name(PID_COLUMN)
         .map(|column| as_uint64_array(column.as_ref()))
         .transpose()?;
     let names = batch
         .column_by_name("name")
         .map(|column| as_string_array(column.as_ref()))
         .transpose()?;
-    let mut alerts = Vec::with_capacity(take.min(batch.num_rows()));
+    let mut hits = Vec::with_capacity(take.min(batch.num_rows()));
     for row in 0..batch.num_rows().min(take) {
         let pid = pids
             .filter(|column| column.is_valid(row))
@@ -395,15 +456,21 @@ fn alerts_from_batch(
         let name = names
             .filter(|column| column.is_valid(row))
             .map_or_else(String::new, |column| column.value(row).to_owned());
-        let title = format!("{}: {name} (pid {pid})", rule.name);
-        let description = format!("Process {name} (pid {pid}) matched rule {}", rule.name);
-        alerts.push(Alert::new(
-            rule.severity,
-            title,
-            description,
-            rule.id.raw().to_owned(),
-            ProcessRecord::new(pid, name),
-        ));
+        hits.push(Hit { pid, name });
     }
-    Ok(alerts)
+    Ok(hits)
+}
+
+/// One alert for `hit`. The title names the process, because the deduplication key is built from
+/// it and one title for every match would collapse a rule's matches into one alert downstream.
+fn alert_for(rule: &DetectionRule, hit: &Hit, completeness: &Completeness) -> Alert {
+    let (pid, name) = (hit.pid, &hit.name);
+    Alert::new(
+        rule.severity,
+        format!("{}: {name} (pid {pid})", rule.name),
+        format!("Process {name} (pid {pid}) matched rule {}", rule.name),
+        rule.id.raw().to_owned(),
+        ProcessRecord::new(pid, name.clone()),
+        completeness.clone(),
+    )
 }

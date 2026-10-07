@@ -4,11 +4,13 @@
 //! the `DaemonEye` system for representing processes, alerts, and detection rules.
 
 pub mod alert;
+pub mod completeness;
 pub mod process;
 pub mod rule;
 
 // Re-export the main types for convenience
 pub use alert::{Alert, AlertContext, AlertError, AlertId, AlertSeverity};
+pub use completeness::{Completeness, CompletenessError, CompletenessReason, CompletenessStatus};
 pub use process::{ProcessError, ProcessId, ProcessRecord, ProcessStatus, SystemInfo};
 pub use rule::{DetectionRule, RuleError, RuleId, RuleMetadata};
 

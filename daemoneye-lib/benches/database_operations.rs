@@ -12,7 +12,7 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use daemoneye_lib::models::{
-    Alert, AlertSeverity, DetectionRule, ProcessRecord, ProcessStatus, RuleId,
+    Alert, AlertSeverity, Completeness, DetectionRule, ProcessRecord, ProcessStatus, RuleId,
 };
 use daemoneye_lib::storage::DatabaseManager;
 use std::hint::black_box;
@@ -162,6 +162,7 @@ fn bench_alert_operations(c: &mut Criterion) {
                     "Test alert description",
                     "test_rule",
                     process_record,
+                    Completeness::complete(),
                 );
 
                 let start = std::time::Instant::now();
@@ -194,6 +195,7 @@ fn bench_alert_operations(c: &mut Criterion) {
                     format!("Alert description {i}"),
                     format!("rule_{i}"),
                     process_record,
+                    Completeness::complete(),
                 );
                 db_manager
                     .store_alert(0, &alert)

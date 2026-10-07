@@ -112,7 +112,7 @@ impl AlertSink for StdoutSink {
     ///
     /// ```no_run
     /// use daemoneye_lib::alerting::{AlertSink, StdoutSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
     ///
     /// let sink = StdoutSink::new("stdout-test".to_owned(), OutputFormat::Human);
     /// let alert = Alert::new(
@@ -121,6 +121,7 @@ impl AlertSink for StdoutSink {
     ///     "Example",
     ///     "rule-1",
     ///     ProcessRecord::new(1, "proc".to_owned()),
+    ///     Completeness::complete(),
     /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let res = rt.block_on(async { sink.send(&alert).await }).unwrap();
@@ -188,7 +189,7 @@ impl AlertSink for FileSink {
     ///
     /// ```no_run
     /// use daemoneye_lib::alerting::{AlertSink, FileSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
     /// use std::path::PathBuf;
     ///
     /// let path = PathBuf::from("/tmp/daemoneye-alerts.log");
@@ -199,6 +200,7 @@ impl AlertSink for FileSink {
     ///     "Desc",
     ///     "rule-1",
     ///     ProcessRecord::new(1, "proc".to_owned()),
+    ///     Completeness::complete(),
     /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let _ = rt.block_on(async { sink.send(&alert).await }).unwrap();
@@ -483,11 +485,14 @@ impl AlertManager {
     ///
     /// ```no_run
     /// use daemoneye_lib::alerting::{AlertManager, AlertSink, StdoutSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
     ///
     /// let mut mgr = AlertManager::new();
     /// mgr.add_sink(Box::new(StdoutSink::new("s".to_owned(), OutputFormat::Json)));
-    /// let alert = Alert::new(AlertSeverity::Low, "Title", "Desc", "rule-1", ProcessRecord::new(1, "proc".to_owned()));
+    /// let alert = Alert::new(
+    ///     AlertSeverity::Low, "Title", "Desc", "rule-1",
+    ///     ProcessRecord::new(1, "proc".to_owned()), Completeness::complete(),
+    /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let first = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
     /// let second = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
@@ -656,7 +661,7 @@ impl HealthSummary {
 )]
 mod tests {
     use super::*;
-    use crate::models::{AlertSeverity, ProcessRecord};
+    use crate::models::{AlertSeverity, Completeness, ProcessRecord};
 
     #[tokio::test]
     async fn test_stdout_sink() {
@@ -668,6 +673,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         let result = sink.send(&alert).await.expect("Failed to send alert");
@@ -687,6 +693,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         let results = manager
@@ -716,6 +723,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         // Send the same alert twice

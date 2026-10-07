@@ -17,6 +17,9 @@ use chrono::{TimeZone, Utc};
 use daemoneye_lib::config::DetectionConfig;
 use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::detection::catalog::verify_spawn_token;
+use daemoneye_lib::detection::execution::completeness::{
+    CollectorHealth, CycleSignals, IngestSnapshot,
+};
 use daemoneye_lib::detection::execution::derive::CycleWindow;
 use daemoneye_lib::detection::execution::executor::{
     CycleOutcome, EvaluationFailure, RuleEvaluation, RuleExecutor,
@@ -136,13 +139,22 @@ fn load(fx: &mut Fixture, id: &str, sql: &str) {
     fx.engine.load_rule(rule).unwrap();
 }
 
+/// Every collector reporting well: the signals that add no completeness reason.
+fn healthy() -> CycleSignals {
+    CycleSignals {
+        collection: [("procmond".to_owned(), Ok(()))].into(),
+        heartbeat: [("procmond".to_owned(), CollectorHealth::Healthy)].into(),
+        ingest: IngestSnapshot::default(),
+    }
+}
+
 fn executor(fx: &Fixture) -> RuleExecutor {
     RuleExecutor::new(Arc::clone(&fx.store), fx.engine.regex_cache(), &fx.config).unwrap()
 }
 
 async fn run(fx: &Fixture) -> CycleOutcome {
     executor(fx)
-        .evaluate(&fx.engine.runnable_rules(), WIDE)
+        .evaluate(&fx.engine.runnable_rules(), WIDE, &healthy())
         .await
 }
 
@@ -208,7 +220,7 @@ async fn a_row_outside_the_window_is_not_evaluated() {
     };
 
     let outcome = executor(&fx)
-        .evaluate(&fx.engine.runnable_rules(), window)
+        .evaluate(&fx.engine.runnable_rules(), window, &healthy())
         .await;
 
     assert_eq!(alert_pids(only(&outcome)), vec![3]);
@@ -377,7 +389,7 @@ async fn a_breaching_rule_stops_draining_in_the_same_call_while_the_next_rule_ru
         }
     }
 
-    let outcome = executor(&fx).evaluate(&rules, WIDE).await;
+    let outcome = executor(&fx).evaluate(&rules, WIDE, &healthy()).await;
 
     let breaching = by_id(&outcome, "a_regexp");
     let control = by_id(&outcome, "b_plain");
@@ -404,7 +416,7 @@ async fn the_same_rule_within_its_threshold_reads_every_batch() {
     let fx = stop_fixture();
     let rules = fx.engine.runnable_rules();
 
-    let outcome = executor(&fx).evaluate(&rules, WIDE).await;
+    let outcome = executor(&fx).evaluate(&rules, WIDE, &healthy()).await;
 
     let evaluation = by_id(&outcome, "a_regexp");
     assert!(!evaluation.stopped_on_latency);
@@ -437,7 +449,7 @@ async fn a_selective_breaching_rule_stops_scanning_instead_of_reading_every_batc
     let mut rules = fx.engine.runnable_rules();
     rules[0].pattern_latency_threshold = Duration::ZERO;
 
-    let outcome = executor(&fx).evaluate(&rules, WIDE).await;
+    let outcome = executor(&fx).evaluate(&rules, WIDE, &healthy()).await;
 
     let evaluation = only(&outcome);
     assert!(
@@ -497,7 +509,7 @@ async fn a_rule_that_cannot_be_planned_records_a_failure_and_the_next_rule_still
         .columns
         .push(column("not_a_real_column", ColumnType::String));
 
-    let outcome = executor(&fx).evaluate(&rules, WIDE).await;
+    let outcome = executor(&fx).evaluate(&rules, WIDE, &healthy()).await;
 
     let bad = by_id(&outcome, "a_bad");
     assert!(matches!(bad.failure, Some(EvaluationFailure::Execution(_))));

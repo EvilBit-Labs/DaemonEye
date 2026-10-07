@@ -63,6 +63,7 @@
 //!   eligible rule with no catalog table or generation, which no writer produces; it is skipped
 //!   with an `error` log and not run.
 
+pub mod completeness;
 pub mod derive;
 pub mod executor;
 pub mod functions;
