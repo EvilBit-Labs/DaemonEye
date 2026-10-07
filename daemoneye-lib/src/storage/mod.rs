@@ -31,6 +31,7 @@ pub mod mrc;
 /// exercised by CI before any provider code exists.
 #[cfg(feature = "detection-engine")]
 pub mod provider;
+pub mod read;
 mod records;
 pub mod schema;
 
