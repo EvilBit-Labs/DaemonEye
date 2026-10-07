@@ -75,6 +75,18 @@ criterion = "0.8.2"
 daemoneye-eventbus = { path = "daemoneye-eventbus" }
 daemoneye-lib = { path = "daemoneye-lib" }
 dashmap = "6.2.1"
+
+# Detection execution engine (ADR-0006). default-features = false keeps the
+# parquet/compression/crypto/regex expression families out of the graph: the
+# executor exposes only ALLOWED_SQL_FUNCTIONS, built from DaemonEye
+# implementations, so a DataFusion builtin must not be reachable by default.
+# Arrow is reached only through `datafusion::arrow`; there is no `arrow` line.
+datafusion = { version = "55.1.0", default-features = false, features = [
+    "sql",
+    "recursive_protection",
+    "datetime_expressions",
+    "string_expressions",
+] }
 dirs = "7.0.0"
 figment = { version = "0.10.19", features = ["toml", "json", "env"] }
 futures = "0.3.34"

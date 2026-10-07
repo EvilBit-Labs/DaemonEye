@@ -24,6 +24,13 @@ mod error;
 mod index;
 pub mod ingest;
 pub mod mrc;
+/// `DataFusion` `TableProvider` over the event store (ADR-0006, KTD2).
+///
+/// Gated on `detection-engine` so `storage` stays buildable without the
+/// execution engine. Declared from this unit onward so the feature gate is
+/// exercised by CI before any provider code exists.
+#[cfg(feature = "detection-engine")]
+pub mod provider;
 mod records;
 pub mod schema;
 
@@ -111,6 +118,15 @@ fn collect_bucket_ids(txn: &ReadTransaction) -> Result<Vec<u64>, StorageError> {
 /// codecs; secondary indexes (U4), the single-writer ingest pipeline (U5/U6),
 /// the read handle + MRC (U7), and the signed schema-rebuild path (U8) build on
 /// this foundation.
+///
+/// `Debug` is derived because `TableProvider` and `ExecutionPlan` both require it
+/// of whatever a provider holds. It is safe to derive here only because
+/// `redb::Database`'s own `Debug` is opaque — it renders as `Database`, with no
+/// file path — so nothing in this struct locates the store on disk. A field added
+/// later that does would start leaking through every plan `explain` and
+/// `DataFusion` error message; `event_store_debug_reports_bucketing_without_locating_the_store`
+/// is the guard that fails when one is.
+#[derive(Debug)]
 pub struct EventStore {
     db: Database,
     /// Bucket granularity in milliseconds (hourly by default; coarsens to daily
@@ -830,6 +846,38 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let _manager = DatabaseManager::new(&db_path).expect("Failed to create database manager");
         assert!(db_path.exists());
+    }
+
+    /// `Debug` prints the bucketing parameters and nothing that locates the store
+    /// on disk. A physical plan is rendered by `RuleExecutor::explain` and by
+    /// `DataFusion`'s own error text, both of which print whatever the provider
+    /// holds, so a store path reaching `Debug` would publish deployment topology
+    /// through an error message. Asserting the absence is what makes a later
+    /// `derive(Debug)`, or a `db` field added to this impl, fail here instead of
+    /// silently widening what a plan prints.
+    #[test]
+    fn event_store_debug_reports_bucketing_without_locating_the_store() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let marker = "topology-marker";
+        let db_path = temp_dir.path().join(format!("{marker}.redb"));
+        let store = EventStore::new(&db_path).expect("create event store");
+
+        let rendered = format!("{store:?}");
+
+        assert!(rendered.starts_with("EventStore"), "names the type");
+        assert!(rendered.contains("granularity_ms"), "reports granularity");
+        assert!(rendered.contains("retention_ms"), "reports retention");
+        assert!(rendered.contains("mrc_window_ms"), "reports mrc window");
+        // The two absence assertions are the point of the test.
+        assert!(
+            !rendered.contains(marker),
+            "Debug must not print the store file name"
+        );
+        let dir = temp_dir.path().display().to_string();
+        assert!(
+            !rendered.contains(&dir),
+            "Debug must not print the store directory"
+        );
     }
 
     #[test]

@@ -26,7 +26,7 @@ default = ["process-collection", "detection-engine", "alerting", "ipc", "fuzzy-h
 
 # Component features
 process-collection = []
-detection-engine = ["sqlparser", "dep:lru", "dep:regex", "dep:subtle"]
+detection-engine = ["sqlparser", "dep:datafusion", "dep:lru", "dep:regex", "dep:subtle"]
 alerting = []
 kernel-monitoring = []
 network-correlation = []
@@ -64,6 +64,11 @@ bytes = { workspace = true }
 # Date/time handling
 chrono = { workspace = true }
 crc32c = { workspace = true }
+
+# Detection execution engine (KTD1). Optional so `storage` and the rest of the
+# crate stay buildable without the engine; `storage::provider` is gated on the
+# same feature. Arrow arrives only as `datafusion::arrow`.
+datafusion = { workspace = true, optional = true }
 
 # Configuration management
 dirs = { workspace = true }
