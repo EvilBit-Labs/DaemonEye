@@ -314,12 +314,14 @@ fn input_nested_past_the_parser_recursion_limit_fails_as_a_parse_error() {
 /// if a future `sqlparser` release reclassifies any of them as an ordinary function call, they
 /// would start being rejected as unlisted, silently breaking rules that use them. This test fails
 /// at that moment instead.
+///
+/// `CAST` is no longer in the loading list: it is the one of these R27 refuses, by its own gate
+/// (`a_cast_is_refused_at_load_naming_the_construct_seen`).
 #[test]
 fn parser_level_constructs_do_not_reach_the_function_allowlist() {
     for sql in [
         "SELECT substr(name, 1, 3) FROM processes",
         "SELECT SUBSTRING(name FROM 1 FOR 3) FROM processes",
-        "SELECT cast(pid AS TEXT) FROM processes",
         "SELECT trim(name) FROM processes",
     ] {
         assert!(
@@ -455,4 +457,57 @@ fn an_ordinary_rule_with_no_extra_clause_still_loads() {
     // plain SELECT: gating on the variant rather than its contents would refuse every rule.
     accept("SELECT pid FROM processes WHERE pid = 1");
     accept("SELECT p.name, p.pid FROM processes p WHERE p.name LIKE '%test%'");
+}
+
+// --- R27: casts are refused at load, by construct ---------------------------------------------
+
+/// Each cast spelling parses to its own AST node and never reaches the function allowlist, so the
+/// assertion is on `CastNotAllowed` and its `construct`: a parse error or an allowlist hit would
+/// also refuse the rule and prove nothing about this gate.
+#[test]
+fn a_cast_is_refused_at_load_naming_the_construct_seen() {
+    for (sql, construct) in [
+        (
+            "SELECT pid FROM processes WHERE CAST(name AS INT) = 1",
+            "CAST",
+        ),
+        (
+            "SELECT pid FROM processes WHERE TRY_CAST(name AS INT) = 1",
+            "TRY_CAST",
+        ),
+        (
+            "SELECT pid FROM processes WHERE SAFE_CAST(name AS INT) = 1",
+            "SAFE_CAST",
+        ),
+        ("SELECT pid FROM processes WHERE name::INT = 1", "::"),
+        (
+            "SELECT pid FROM processes WHERE start_time > DATE '2020-01-01'",
+            "typed string literal",
+        ),
+    ] {
+        let rejection = reject(sql);
+        let SqlRejection::CastNotAllowed { construct: named } = rejection else {
+            panic!("expected the cast gate to fire for {sql}, got {rejection:?}");
+        };
+        assert_eq!(named, construct, "wrong construct named for {sql}");
+    }
+}
+
+#[test]
+fn a_cast_nested_in_a_subquery_or_projection_is_still_refused() {
+    for sql in [
+        "SELECT CAST(pid AS TEXT) FROM processes",
+        "SELECT pid FROM processes WHERE pid IN (SELECT pid FROM processes WHERE name::TEXT = 'x')",
+    ] {
+        assert!(
+            matches!(reject(sql), SqlRejection::CastNotAllowed { .. }),
+            "{sql}"
+        );
+    }
+}
+
+/// The control: a rule with no cast is not caught by the new gate.
+#[test]
+fn a_rule_with_no_cast_still_loads() {
+    accept("SELECT pid FROM processes WHERE pid = 1 AND name = 'bash'");
 }

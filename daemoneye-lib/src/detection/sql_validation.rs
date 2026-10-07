@@ -16,8 +16,8 @@ use crate::detection::allowlist::is_allowed_sql_function;
 use crate::detection::rejection::{SqlPosition, SqlRejection};
 use crate::detection_bounds::SQL_PARSER_RECURSION_LIMIT;
 use sqlparser::ast::{
-    Expr, GroupByExpr, Query, Select, SetExpr, Spanned as _, Statement, TableFactor, Visit as _,
-    Visitor,
+    CastKind, Expr, GroupByExpr, Query, Select, SetExpr, Spanned as _, Statement, TableFactor,
+    Visit as _, Visitor,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -163,6 +163,9 @@ impl Visitor for SqlGate {
     }
 
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
+        if let Some(construct) = cast_construct(expr) {
+            return ControlFlow::Break(Box::new(SqlRejection::CastNotAllowed { construct }));
+        }
         let Expr::Function(ref function) = *expr else {
             return ControlFlow::Continue(());
         };
@@ -175,6 +178,23 @@ impl Visitor for SqlGate {
             position: span_start(function.name.span()),
         }))
     }
+}
+
+/// The spelling of a cast-like node, if `expr` is one (R27).
+///
+/// Casts parse to their own `Expr` variants, so the function allowlist never sees them. The
+/// `CastKind` match is exhaustive on purpose (KTD8): a spelling added by a future `sqlparser`
+/// must break the build rather than load.
+fn cast_construct(expr: &Expr) -> Option<&'static str> {
+    if let Expr::Cast { ref kind, .. } = *expr {
+        return Some(match *kind {
+            CastKind::Cast => "CAST",
+            CastKind::TryCast => "TRY_CAST",
+            CastKind::SafeCast => "SAFE_CAST",
+            CastKind::DoubleColon => "::",
+        });
+    }
+    matches!(*expr, Expr::TypedString(_)).then_some("typed string literal")
 }
 
 /// Require a query body to be a `SELECT` and check the structural bounds on it.
