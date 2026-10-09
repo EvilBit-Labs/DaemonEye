@@ -2,9 +2,11 @@
 
 use clap::Parser;
 use daemoneye_agent::detection_cycle::{
-    PROCMOND_COLLECTOR_ID, ingest_cycle, load_persisted_rules, next_cycle_ordinal,
-    open_event_store, persist_alerts,
+    PROCMOND_COLLECTOR_ID, build_signals, ingest_cycle, load_persisted_rules, next_cycle_ordinal,
+    next_window, open_event_store, persist_alerts, run_detection_cycle,
 };
+use daemoneye_lib::detection::execution::completeness::IngestSnapshot;
+use daemoneye_lib::detection::execution::executor::RuleExecutor;
 use daemoneye_lib::storage::ingest::{self, IngestConfig};
 use daemoneye_lib::{alerting, config, detection_bounds, telemetry};
 use std::time::{Duration, Instant, SystemTime};
@@ -271,6 +273,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Reload every persisted rule; a rejected one is logged with its id and does not stop startup.
     let mut startup_engine = detection_engine.lock().await;
     let loaded = load_persisted_rules(&event_store, &mut startup_engine)?;
+    // One executor for the process, sharing the engine's compiled-pattern cache so a pattern the
+    // planner validated is not compiled twice.
+    let executor = RuleExecutor::new(
+        std::sync::Arc::clone(&event_store),
+        startup_engine.regex_cache(),
+        &config.detection,
+    )?;
     drop(startup_engine);
     info!(loaded_rules = loaded, "Loaded persisted detection rules");
 
@@ -305,6 +314,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Main loop task
     let mut iteration: u64 = 0;
+
+    // The previous cycle's high-water mark: the exclusive start of the next cycle's window (R3).
+    // Rows already stored when the agent starts belong to an earlier run and are not re-alerted.
+    let mut previous_high_water_ms = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or_default()
+        });
+    // Ingest's saturation counter at the end of the previous cycle, to report the delta.
+    let mut last_saturation_alerts = 0_u64;
 
     // Session-scoped ssdeep binary-change tracker (R2 AC7). Holds the last
     // ssdeep digest per executable path so a similarity drop versus the
@@ -425,6 +444,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // does not carry these flags.
                 let mut integrity_alert_batch: Vec<daemoneye_lib::models::Alert> = Vec::new();
 
+                let mut collection: Result<(), String> = Ok(());
                 let processes = match broker_manager.execute_task_rpc("procmond", task).await {
                     Ok(result) => {
                         if result.success {
@@ -443,21 +463,30 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 .map(Into::into)
                                 .collect()
                         } else {
+                            let message = result
+                                .error_message
+                                .as_deref()
+                                .unwrap_or("Unknown error")
+                                .to_owned();
                             warn!(
-                                error = %result.error_message.as_deref().unwrap_or("Unknown error"),
+                                error = %message,
                                 "Procmond returned error during process enumeration via RPC"
                             );
+                            collection = Err(message);
                             Vec::new()
                         }
                     }
                     Err(e) => {
                         warn!(error = %e, "Failed to collect processes from procmond via RPC");
+                        collection = Err(e.to_string());
                         Vec::new()
                     }
                 };
 
                 // Commit this cycle's rows before anything evaluates them. A cycle that collected
                 // nothing consumes no ordinal, so the next one stays contiguous for the watermark.
+                let mut ingested_high_water_ms = previous_high_water_ms;
+                let mut sequence_gaps = Vec::new();
                 match next_ordinal {
                     Some(ordinal) if !processes.is_empty() => {
                         let ingested = ingest_cycle(
@@ -470,12 +499,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         match ingested {
                             Ok(outcome) => {
                                 next_ordinal = ordinal.checked_add(1);
+                                ingested_high_water_ms =
+                                    ingested_high_water_ms.max(outcome.high_water_ms);
                                 debug!(
                                     submitted = outcome.submitted,
                                     high_water_ms = outcome.high_water_ms,
                                     gaps = outcome.gaps.len(),
                                     "Ingested cycle"
                                 );
+                                sequence_gaps = outcome.gaps;
                             }
                             Err(e) => {
                                 error!(error = %e, "Ingest failed; this cycle's rows are not durable");
@@ -487,14 +519,33 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     None => error!("Cycle ordinals exhausted; collected rows are not being stored"),
                 }
 
-                // Execute detection rules against collected processes
+                // Evaluate every eligible rule over what this cycle added to the store.
                 let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_owned());
-                let mut alerts = {
-                    // Scoped so the engine lock is released before the alert-delivery awaits
-                    // below; the admission gate takes the same lock on every registration.
-                    let engine = detection_engine.lock().await;
-                    engine.execute_rules(&processes)
-                };
+                let saturation_now = ingest_handle
+                    .metrics()
+                    .saturation_alerts
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                let heartbeat = broker_manager.collector_heartbeat_health(PROCMOND_COLLECTOR_ID).await;
+                let signals = build_signals(
+                    PROCMOND_COLLECTOR_ID,
+                    collection,
+                    heartbeat,
+                    IngestSnapshot {
+                        saturation_delta: saturation_now.saturating_sub(last_saturation_alerts),
+                        sequence_gaps,
+                    },
+                );
+                last_saturation_alerts = saturation_now;
+                let window = next_window(previous_high_water_ms, ingested_high_water_ms);
+                previous_high_water_ms = ingested_high_water_ms;
+                let cycle = run_detection_cycle(&*detection_engine, &executor, window, &signals).await;
+                if cycle.dropped_after_reeligibility > 0 {
+                    warn!(
+                        dropped = cycle.dropped_after_reeligibility,
+                        "Rules changed while they ran; their results were dropped"
+                    );
+                }
+                let mut alerts = cycle.alerts;
                 // Fold in integrity-signal alerts so they share the dedup,
                 // rate-limit, and delivery path of detection-rule alerts.
                 alerts.extend(integrity_alert_batch);

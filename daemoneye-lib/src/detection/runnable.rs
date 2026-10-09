@@ -1,6 +1,6 @@
 //! The single eligibility site: which rules may run, and under which generation (KTD6, R8).
 //!
-//! Whether a rule runs was once decided independently by `execute_rules`, `is_rule_covered` and
+//! Whether a rule runs was once decided independently by the old `execute_rules`, `is_rule_covered` and
 //! the planner, each reading a different subset of the three places a verdict lives (`enabled`,
 //! the compiled-plan map, rule health). `DetectionEngine::is_eligible` is now the only
 //! statement of the policy, and everything that gates work on it calls it:

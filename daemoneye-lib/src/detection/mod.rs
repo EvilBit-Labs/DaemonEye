@@ -22,7 +22,7 @@ use crate::detection::catalog::{CatalogChange, CatalogError, SchemaCatalog, Veri
 use crate::detection::execution::completeness::EvaluationSummary;
 use crate::detection::generation::Generations;
 use crate::detection::rule_health::{RuleHealth, RuleHealthRegistry};
-use crate::models::{Alert, Completeness, DetectionRule, ProcessRecord, RuleError};
+use crate::models::{DetectionRule, RuleError};
 use crate::proto::SchemaDescriptor;
 use crate::rejection_log::{RejectionLog, RejectionReason};
 use std::collections::{BTreeMap, HashMap};
@@ -103,10 +103,6 @@ pub struct DetectionEngine {
     /// The latest evaluation per rule, recorded by the agent after its generation gate. Forgotten
     /// with the rule: a removed rule must not keep reporting a completeness.
     last_evaluations: BTreeMap<String, EvaluationSummary>,
-    #[allow(dead_code)]
-    max_execution_time_ms: u64,
-    #[allow(dead_code)]
-    max_memory_mb: u64,
 }
 
 impl DetectionEngine {
@@ -135,8 +131,6 @@ impl DetectionEngine {
             pattern_latency_threshold: Duration::from_millis(config.pattern_latency_threshold_ms),
             rejections: RejectionLog::new(),
             last_evaluations: BTreeMap::new(),
-            max_execution_time_ms: 30000, // 30 seconds
-            max_memory_mb: 100,           // 100 MB
         }
     }
 
@@ -349,111 +343,6 @@ impl DetectionEngine {
     /// The chain is in-memory and agent-side: the `audit_ledger` table is procmond's to write.
     pub const fn rejection_log(&self) -> &RejectionLog {
         &self.rejections
-    }
-
-    /// Execute all enabled rules against process data.
-    ///
-    /// A rule whose health resists auto-recovery (R8, KTD6) — currently, a latency breach — is
-    /// skipped even if `enabled` were somehow still `true`, so this local executor obeys the same
-    /// contract the pushdown path already gets for free from `compiled` holding no plan for it.
-    ///
-    /// This reader does **not** share [`DetectionEngine::runnable_rules`]'s predicate: it ignores
-    /// `compiled`, so it still runs a rule with no plan. That divergence is audited in
-    /// `execution`'s module doc and ends when U13 replaces the agent's call site.
-    pub fn execute_rules(&self, processes: &[ProcessRecord]) -> Vec<Alert> {
-        let mut alerts = Vec::new();
-
-        for rule in self.rules.values() {
-            if !rule.enabled {
-                continue;
-            }
-            let resists = self
-                .health
-                .health(rule.id.raw())
-                .is_some_and(RuleHealth::resists_auto_recovery);
-            if resists {
-                continue;
-            }
-
-            let mut rule_alerts = Self::execute_rule(rule, processes);
-            alerts.append(&mut rule_alerts);
-        }
-
-        alerts
-    }
-
-    /// Execute a single detection rule against a slice of process records.
-    ///
-    /// This is a placeholder implementation that interprets the rule by its
-    /// metadata.category and generates Alerts for matching processes:
-    /// - "`suspicious_process"`: produces an alert for any process whose name
-    ///   contains the substring "suspicious".
-    /// - "`high_cpu"`: produces an alert for any process with `cpu_usage` > 80.0.
-    /// - other/unknown categories produce no alerts.
-    ///
-    /// Returns a vector of generated Alert objects or a `DetectionEngineError` on failure.
-    /// (Current implementation does not return errors; the Result wrapper is preserved
-    /// for future, real SQL-based execution.)
-    ///
-    /// # Examples
-    ///
-    /// ```text
-    /// // Illustrative async example; construct a rule and processes then call execute_rule().
-    /// ```
-    fn execute_rule(rule: &DetectionRule, processes: &[ProcessRecord]) -> Vec<Alert> {
-        // In a real implementation, this would:
-        // 1. Parse the SQL query using sqlparser
-        // 2. Validate it against a whitelist of allowed operations
-        // 3. Execute it against the process data
-        // 4. Generate alerts based on results
-
-        // For now, we'll create a simple placeholder implementation
-        // Pre-allocate with conservative capacity since most processes won't generate alerts
-        let mut alerts = Vec::with_capacity(4);
-        let rule_id = rule.id.raw().to_owned();
-
-        // Simple pattern matching based on rule category
-        match rule.metadata.category.as_deref().unwrap_or("unknown") {
-            "suspicious_process" => {
-                for process in processes {
-                    if process.name.contains("suspicious") {
-                        let alert = Alert::new(
-                            rule.severity,
-                            format!("Suspicious process detected: {}", process.name),
-                            format!("Process {} matches suspicious pattern", process.name),
-                            rule_id.clone(),
-                            process.clone(),
-                            Completeness::complete(),
-                        );
-
-                        alerts.push(alert);
-                    }
-                }
-            }
-            "high_cpu" => {
-                for process in processes {
-                    if let Some(cpu_usage) = process.cpu_usage
-                        && cpu_usage > 80.0
-                    {
-                        let alert = Alert::new(
-                            rule.severity,
-                            format!("High CPU usage detected: {cpu_usage}%"),
-                            format!("Process {} is using {}% CPU", process.name, cpu_usage),
-                            rule_id.clone(),
-                            process.clone(),
-                            Completeness::complete(),
-                        );
-
-                        alerts.push(alert);
-                    }
-                }
-            }
-            _ => {
-                // Default behavior for unknown categories
-            }
-        }
-
-        alerts
     }
 
     /// Get all loaded rules.
@@ -760,146 +649,6 @@ mod tests {
     async fn test_rule_enable_disable_nonexistent() {
         let mut engine = DetectionEngine::new();
         assert!(engine.set_rule_enabled("nonexistent-rule", false).is_err());
-    }
-
-    #[tokio::test]
-    async fn test_rule_execution() {
-        let mut engine = DetectionEngine::new();
-        let rule = DetectionRule::new(
-            "rule-1".to_owned(),
-            "Suspicious Process Rule".to_owned(),
-            "Detects suspicious processes".to_owned(),
-            "SELECT * FROM processes WHERE name LIKE '%suspicious%'".to_owned(),
-            "suspicious_process".to_owned(),
-            AlertSeverity::High,
-        );
-
-        engine.load_rule(rule).expect("Failed to load rule");
-
-        let mut process = ProcessRecord::new(1234, "suspicious-process".to_owned());
-        process.name = "suspicious-process".to_owned();
-        let processes = vec![process];
-
-        let alerts = engine.execute_rules(&processes);
-        assert_eq!(alerts.len(), 1);
-        assert_eq!(
-            alerts[0].title,
-            "Suspicious process detected: suspicious-process"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_rule_execution_no_matches() {
-        let mut engine = DetectionEngine::new();
-        let rule = DetectionRule::new(
-            "rule-1".to_owned(),
-            "Suspicious Process Rule".to_owned(),
-            "Detects suspicious processes".to_owned(),
-            "SELECT * FROM processes WHERE name LIKE '%suspicious%'".to_owned(),
-            "suspicious_process".to_owned(),
-            AlertSeverity::High,
-        );
-
-        engine.load_rule(rule).expect("Failed to load rule");
-
-        let process = ProcessRecord::new(1234, "normal-process".to_owned());
-        let processes = vec![process];
-
-        let alerts = engine.execute_rules(&processes);
-        assert_eq!(alerts.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_rule_execution_disabled_rule() {
-        let mut engine = DetectionEngine::new();
-        let rule = DetectionRule::new(
-            "rule-1".to_owned(),
-            "Suspicious Process Rule".to_owned(),
-            "Detects suspicious processes".to_owned(),
-            "SELECT * FROM processes WHERE name LIKE '%suspicious%'".to_owned(),
-            "suspicious_process".to_owned(),
-            AlertSeverity::High,
-        );
-
-        engine.load_rule(rule).expect("Failed to load rule");
-        engine
-            .set_rule_enabled("rule-1", false)
-            .expect("Failed to disable rule");
-
-        let mut process = ProcessRecord::new(1234, "suspicious-process".to_owned());
-        process.name = "suspicious-process".to_owned();
-        let processes = vec![process];
-
-        let alerts = engine.execute_rules(&processes);
-        assert_eq!(alerts.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_rule_execution_multiple_rules() {
-        let mut engine = DetectionEngine::new();
-
-        let rule1 = DetectionRule::new(
-            "rule-1".to_owned(),
-            "Suspicious Process Rule".to_owned(),
-            "Detects suspicious processes".to_owned(),
-            "SELECT * FROM processes WHERE name LIKE '%suspicious%'".to_owned(),
-            "suspicious_process".to_owned(),
-            AlertSeverity::High,
-        );
-
-        let rule2 = DetectionRule::new(
-            "rule-2".to_owned(),
-            "High CPU Rule".to_owned(),
-            "Detects high CPU processes".to_owned(),
-            "SELECT * FROM processes WHERE cpu_usage > 80".to_owned(),
-            "high_cpu".to_owned(),
-            AlertSeverity::Medium,
-        );
-
-        engine.load_rule(rule1).expect("Failed to load rule1");
-        engine.load_rule(rule2).expect("Failed to load rule2");
-
-        let mut process1 = ProcessRecord::new(1234, "suspicious-process".to_owned());
-        process1.name = "suspicious-process".to_owned();
-        process1.cpu_usage = Some(90.0);
-
-        let mut process2 = ProcessRecord::new(5678, "normal-process".to_owned());
-        process2.name = "normal-process".to_owned();
-        process2.cpu_usage = Some(50.0);
-
-        let processes = vec![process1, process2];
-
-        let alerts = engine.execute_rules(&processes);
-        assert_eq!(alerts.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_rule_execution_empty_processes() {
-        let mut engine = DetectionEngine::new();
-        let rule = DetectionRule::new(
-            "rule-1".to_owned(),
-            "Test Rule".to_owned(),
-            "Test detection rule".to_owned(),
-            "SELECT * FROM processes WHERE name = 'test'".to_owned(),
-            "test".to_owned(),
-            AlertSeverity::Medium,
-        );
-
-        engine.load_rule(rule).expect("Failed to load rule");
-
-        let processes = vec![];
-        let alerts = engine.execute_rules(&processes);
-        assert_eq!(alerts.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_rule_execution_no_rules() {
-        let engine = DetectionEngine::new();
-        let process = ProcessRecord::new(1234, "test-process".to_owned());
-        let processes = vec![process];
-
-        let alerts = engine.execute_rules(&processes);
-        assert_eq!(alerts.len(), 0);
     }
 
     #[test]

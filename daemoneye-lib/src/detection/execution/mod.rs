@@ -24,13 +24,13 @@
 //! | --- | --- | --- |
 //! | `runnable_rules`, `is_runnable` | the predicate | The new single site. |
 //! | `is_rule_covered` (via `coverable_rule_ids`, `renewal_cycle`, `issue_tasks_for_collector`) | the predicate | Delegates; was `compiled && enabled`, which ignored health. No behaviour change today because a latch always removes the plan, but the health check is now a second line rather than statement order. |
-//! | `execute_rules` | `enabled`, health; **not** `compiled` | **Diverges, by design, until U13 deletes it.** It still runs a rule with no plan: one deferred under R18, one whose pushed task expired, one whose references stopped resolving. `runnable_rules` runs none of those. The agent's collection loop still calls it. |
+//! | `execute_rules` (deleted in U13) | `enabled`, health; **not** `compiled` | Was the one divergent reader: it ran a rule with no plan (deferred under R18, task-expired, reference-broken). Replaced by `runnable_rules`, so such a rule is no longer evaluated until it is planned again; there is no SQL to execute without a plan. |
 //! | `plan_and_record` | health (to refuse a plan for a latched rule); not `enabled` | Consistent. Plans are kept for operator-disabled rules so re-enabling needs no re-plan; the predicate gates them on `enabled`. |
 //! | `set_rule_enabled` | health (refuses to enable a latched rule) | Consistent: a refused enable leaves `enabled == false`. |
 //! | `track` | health (preserves a resisting verdict) | Consistent: keeps health in step with the predicate. |
 //! | `revalidate` | health (skips a resisting verdict) | Consistent. |
 //! | `mark_unhealthy` | health (never downgrades a resisting verdict) | Consistent. |
-//! | the agent's result gate (U13) | `is_runnable(rule_id, generation)` | New; the predicate plus a generation match. |
+//! | the agent's result gate (`run_detection_cycle`) | `is_runnable(rule_id, generation)` | The predicate plus a generation match. |
 //!
 //! ## Writers
 //!
@@ -53,8 +53,8 @@
 //!
 //! ## What the audit found beyond the plan's list
 //!
-//! * `execute_rules` is the one reader that does not agree with the predicate (above), and a
-//!   test pins the divergence for a task-expired rule. U13 replaces its call site and deletes it.
+//! * `execute_rules` was the one reader that did not agree with the predicate (above). U13
+//!   replaced its call site and deleted it; a test now pins that a task-expired rule is not run.
 //! * `load_rule` is not called outside `daemoneye-lib`, so no production path loads rules into the
 //!   agent's engine yet.
 //! * A generation cannot be a per-rule counter that restarts on removal: a report for a removed

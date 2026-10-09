@@ -20,7 +20,7 @@ use daemoneye_lib::detection::catalog::{VerifiedRegistration, verify_spawn_token
 use daemoneye_lib::detection::rule_health::{RuleHealth, UnhealthyCause};
 use daemoneye_lib::detection::{DetectionEngine, DetectionEngineError, Generation};
 use daemoneye_lib::detection_bounds::{PUSHDOWN_TASK_RENEWAL_INTERVAL, PUSHDOWN_TASK_TTL};
-use daemoneye_lib::models::{AlertSeverity, DetectionRule, ProcessRecord};
+use daemoneye_lib::models::{AlertSeverity, DetectionRule};
 use daemoneye_lib::proto::{
     ColumnDescriptor, ColumnType, PredicateOp, SchemaDescriptor, TableDescriptor,
 };
@@ -460,13 +460,11 @@ fn a_breach_on_a_deferred_rule_survives_the_registration_that_drains_it() {
     );
 }
 
-/// P1-C: after a breach, re-enabling must be refused outright, and `execute_rules` must not alert
-/// for the rule while it stays disabled. This does *not* exercise `execute_rules`' own
-/// `resists_auto_recovery` gate — the refused enable leaves `enabled == false`, so the pre-existing
-/// `if !rule.enabled { continue; }` check short-circuits before that gate is ever reached. The
-/// `resists_auto_recovery` gate in `execute_rules` is what
-/// `a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled` actually exercises, via a
-/// recoverable cause that leaves `enabled == true`.
+/// P1-C: after a breach, re-enabling must be refused outright, and the rule must not be runnable
+/// while it stays disabled. The refused enable leaves `enabled == false`, so this does *not*
+/// reach the predicate's `resists_auto_recovery` clause; the breach also removed the plan, which
+/// is a second reason the rule is absent. The health clause is what
+/// `a_task_expired_rule_is_not_evaluated_until_it_is_re_planned` reaches via a recoverable cause.
 #[test]
 fn a_breached_rule_refuses_re_enable_and_produces_no_alerts() {
     let mut engine = DetectionEngine::new();
@@ -498,12 +496,9 @@ fn a_breached_rule_refuses_re_enable_and_produces_no_alerts() {
         "a refused enable must not flip the flag"
     );
 
-    let mut process = ProcessRecord::new(1234, "hog".to_owned());
-    process.cpu_usage = Some(95.0);
-    let alerts = engine.execute_rules(&[process]);
     assert!(
-        alerts.is_empty(),
-        "a latency-disabled rule must not alert even though its category would otherwise match"
+        engine.runnable_rules().is_empty(),
+        "a latency-disabled rule must not be handed to the executor"
     );
 }
 
@@ -596,33 +591,29 @@ fn a_same_collectors_re_registration_that_touches_the_table_does_not_re_heal_a_l
     );
 }
 
-/// The recoverable-cause path through `execute_rules`' own `resists_auto_recovery` gate, which no
-/// other test in this file reaches. A task-expired rule keeps `enabled == true` — expiry never
-/// touches it — unlike the P1-C test above, whose refused enable leaves `enabled == false` and
-/// short-circuits on the earlier `if !rule.enabled` check. Here the gate is genuinely evaluated.
-/// Broadening it to match any `Unhealthy` cause (the natural-looking simplification of dropping
-/// the `resists_auto_recovery()` guard) would pass every other test in this file, since none of
-/// them reach a rule that is `Unhealthy` yet still `enabled == true` — and would silently stop
-/// alerting for every rule whose pushed task merely lapsed on transient IPC loss, a detection
-/// blackout for a condition that isn't even the rule's fault.
+/// A pushed task that lapsed (transient IPC loss) removes the rule's plan, so the executor is not
+/// handed the rule until it is planned again.
+///
+/// This replaced `a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled`, which asserted
+/// the opposite. The category placeholder it exercised interpreted `metadata.category` and never
+/// needed a plan, so a rule whose pushed half lapsed kept alerting. `DataFusion` executes the
+/// rule's compiled SQL, and `renewal_cycle` removes the plan on expiry, so there is nothing to
+/// run: `runnable_rules` omits the rule (and `execute_rules` is gone). What still holds is that
+/// expiry is recoverable: it never touches `enabled`, `set_rule_enabled(true)` is not refused (a
+/// latency breach would be), and the health verdict is the non-latching `TaskExpiry`.
 #[test]
-fn a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled() {
+fn a_task_expired_rule_is_not_evaluated_until_it_is_re_planned() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = DetectionEngine::new();
     engine
         .register_collector(&verified("procmond"), descriptor())
         .unwrap();
-
-    let mut high_cpu_rule = DetectionRule::new(
-        "rule-1".to_owned(),
-        "Test Rule".to_owned(),
-        "Pattern latency test rule".to_owned(),
-        "SELECT cpu_usage FROM processes WHERE cpu_usage > 80".to_owned(),
-        "high_cpu".to_owned(),
-        AlertSeverity::Medium,
+    engine.load_rule(rule(true)).unwrap();
+    assert_eq!(
+        engine.runnable_rules().len(),
+        1,
+        "runnable before the task lapses"
     );
-    high_cpu_rule.enabled = true;
-    engine.load_rule(high_cpu_rule).unwrap();
     assert_eq!(
         engine.renewal_cycle(start).due().len(),
         1,
@@ -644,16 +635,11 @@ fn a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled() {
     );
     assert!(
         engine.get_rule("rule-1").expect("rule tracked").enabled,
-        "expiry never touches enabled -- this is what actually exercises execute_rules' gate"
+        "expiry never touches enabled"
     );
-
-    let mut process = ProcessRecord::new(1234, "hog".to_owned());
-    process.cpu_usage = Some(95.0);
-    let alerts = engine.execute_rules(&[process]);
-    assert_eq!(
-        alerts.len(),
-        1,
-        "a recoverable cause (TaskExpiry) must not stop local alerting"
+    assert!(
+        engine.runnable_rules().is_empty(),
+        "a rule with no compiled plan has no SQL to execute"
     );
 
     assert!(
