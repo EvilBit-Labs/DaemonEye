@@ -15,10 +15,14 @@ use std::mem;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
+use datafusion::arrow::datatypes::DataType;
+use datafusion::common::tree_node::{Transformed, TreeNode};
+use datafusion::common::{DFSchema, ExprSchema};
 use datafusion::datasource::TableProvider;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::SessionState;
-use datafusion::logical_expr::Expr;
+use datafusion::logical_expr::expr::{Case, Like};
+use datafusion::logical_expr::{Expr, Operator};
 use datafusion::prelude::{DataFrame, SessionContext, col, lit};
 use datafusion::scalar::ScalarValue;
 use sqlparser::ast::{
@@ -132,7 +136,8 @@ pub fn derive_from_parts(
     }
     if let Some(fragment) = residual {
         let rewritten = rewrite_residual(fragment)?;
-        let expr = state.create_logical_expr(&rewritten, frame.schema())?;
+        let planned = state.create_logical_expr(&rewritten, frame.schema())?;
+        let expr = harden_residual(planned, frame.schema())?;
         frame = frame.filter(expr)?;
     }
     if !plan.projection.is_empty() {
@@ -246,9 +251,94 @@ fn with_nan_guard(column: &str, values: &[ScalarValue], expr: Expr) -> Expr {
         return expr;
     }
     if values.iter().all(is_nan) {
-        return lit(false);
+        return lit(ScalarValue::Boolean(None));
     }
-    col(column).lt_eq(lit(f64::INFINITY)).and(expr)
+    guard_finite(&[col(column)], expr)
+}
+
+/// `CASE WHEN <every column> <= +inf THEN expr END`: `expr`, or NULL when a column is NaN.
+///
+/// NULL rather than `false` so the guard stays UNKNOWN beneath `NOT` and `OR`, where a residual
+/// can put it and a pushed conjunct cannot.
+fn guard_finite(columns: &[Expr], expr: Expr) -> Expr {
+    let Some(finite) = columns
+        .iter()
+        .map(|column| column.clone().lt_eq(lit(f64::INFINITY)))
+        .reduce(Expr::and)
+    else {
+        return expr;
+    };
+    Expr::Case(Case::new(
+        None,
+        vec![(Box::new(finite), Box::new(expr))],
+        None,
+    ))
+}
+
+/// Give a planned residual the semantics the pushed half already has.
+///
+/// The residual is planned from text with no knowledge of column types, so the two `DataFusion`
+/// divergences from the reference are corrected here, on the planned `Expr`: every comparison
+/// or `IN` that reads a `Float64` column goes through [`guard_finite`], and a literal `LIKE`
+/// pattern goes through [`literal_backslashes`]. One implementation each, shared with
+/// [`predicate_to_expr`].
+fn harden_residual(expr: Expr, schema: &DFSchema) -> Result<Expr, DataFusionError> {
+    Ok(expr.transform_up(|node| harden_node(node, schema))?.data)
+}
+
+fn harden_node(node: Expr, schema: &DFSchema) -> Result<Transformed<Expr>, DataFusionError> {
+    if let Expr::Like(ref like) = node
+        && like.escape_char.is_none()
+        && let Some(pattern) = like.pattern.as_literal()
+    {
+        let doubled = literal_backslashes(pattern);
+        if doubled != *pattern {
+            return Ok(Transformed::yes(Expr::Like(Like::new(
+                like.negated,
+                like.expr.clone(),
+                Box::new(lit(doubled)),
+                like.escape_char,
+                like.case_insensitive,
+            ))));
+        }
+        return Ok(Transformed::no(node));
+    }
+    if !is_comparison(&node) {
+        return Ok(Transformed::no(node));
+    }
+    let floats = float_columns(&node, schema)?;
+    if floats.is_empty() {
+        return Ok(Transformed::no(node));
+    }
+    Ok(Transformed::yes(guard_finite(&floats, node)))
+}
+
+/// A binary comparison or an `IN` list.
+fn is_comparison(node: &Expr) -> bool {
+    const COMPARISONS: [Operator; 6] = [
+        Operator::Eq,
+        Operator::NotEq,
+        Operator::Lt,
+        Operator::LtEq,
+        Operator::Gt,
+        Operator::GtEq,
+    ];
+    if let Expr::BinaryExpr(ref binary) = *node {
+        return COMPARISONS.contains(&binary.op);
+    }
+    matches!(*node, Expr::InList(_))
+}
+
+/// The `Float64` columns an expression reads, sorted so the plan is deterministic.
+fn float_columns(node: &Expr, schema: &DFSchema) -> Result<Vec<Expr>, DataFusionError> {
+    let mut floats = Vec::new();
+    for column in node.column_refs() {
+        if *schema.data_type(column)? == DataType::Float64 {
+            floats.push(column.clone());
+        }
+    }
+    floats.sort();
+    Ok(floats.into_iter().map(Expr::Column).collect())
 }
 
 /// A `LIKE` pattern with its backslashes made literal.
