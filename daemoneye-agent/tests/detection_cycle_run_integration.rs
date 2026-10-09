@@ -522,3 +522,126 @@ fn a_collector_with_no_heartbeat_record_contributes_no_health() {
     assert!(signals.heartbeat.is_empty());
     assert_eq!(signals.collection.len(), 1);
 }
+
+// --- R22: cycle metrics -------------------------------------------------------------------------
+
+const METRIC_FIELDS: [&str; 7] = [
+    "rules_evaluated",
+    "matches",
+    "degraded_rules",
+    "rows_scanned",
+    "batches",
+    "evaluation_ms",
+    "max_pattern_latency_ms",
+];
+
+fn count_lines(lines: &[&str], level: &str, needle: &str) -> usize {
+    lines
+        .iter()
+        .filter(|line| line.contains(level) && line.contains(needle))
+        .count()
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn metrics_one_cycle_over_two_rules_emits_exactly_one_info_event_with_all_seven_fields() {
+    let fx = default_fx();
+    put(
+        &fx,
+        vec![
+            record(BASE_MS, 10, "nc"),
+            record(BASE_MS + 1, 11, "nc"),
+            record(BASE_MS + 2, 12, "bash"),
+        ],
+    );
+    load(&fx, "r1", NC_RULE).await;
+    load(&fx, "r2", "SELECT name FROM processes WHERE name = 'bash'").await;
+
+    let result = cycle(&fx, WIDE).await;
+
+    assert_eq!(result.evaluations.len(), 2);
+    logs_assert(|lines: &[&str]| {
+        let mut events = lines
+            .iter()
+            .filter(|line| line.contains("INFO") && line.contains("rules_evaluated"));
+        let (Some(event), None) = (events.next(), events.next()) else {
+            return Err("expected exactly one cycle-level info event".to_owned());
+        };
+        if let Some(missing) = METRIC_FIELDS.iter().find(|field| !event.contains(*field)) {
+            return Err(format!("cycle event is missing field {missing}"));
+        }
+        for expected in ["rules_evaluated=2", "matches=3", "degraded_rules=0"] {
+            if !event.contains(expected) {
+                return Err(format!("cycle event lacks {expected}"));
+            }
+        }
+        Ok(())
+    });
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn metrics_each_rule_gets_a_debug_event_and_no_cycle_level_field_leaks_into_it() {
+    let fx = default_fx();
+    put(&fx, vec![record(BASE_MS, 10, "nc")]);
+    load(&fx, "r1", NC_RULE).await;
+    load(&fx, "r2", NC_RULE).await;
+
+    cycle(&fx, WIDE).await;
+
+    logs_assert(|lines: &[&str]| {
+        let per_rule = count_lines(lines, "DEBUG", "degraded=false");
+        if per_rule != 2 {
+            return Err("expected one debug event per rule".to_owned());
+        }
+        let leaked = count_lines(lines, "DEBUG", "rules_evaluated");
+        if leaked != 0 {
+            return Err("a per-rule event carries a cycle-level field".to_owned());
+        }
+        Ok(())
+    });
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn metrics_a_degraded_rule_warns_once_naming_the_rule_and_its_reason() {
+    let fx = default_fx();
+    put(&fx, vec![record(BASE_MS, 10, "nc")]);
+    load(&fx, "r1", NC_RULE).await;
+    let signals = build_signals(
+        PROCMOND_COLLECTOR_ID,
+        Err("rpc down".to_owned()),
+        Some(CollectorHealth::Healthy),
+        IngestSnapshot::default(),
+    );
+
+    run_detection_cycle(&fx.cell, &fx.executor, WIDE, &signals).await;
+
+    logs_assert(|lines: &[&str]| {
+        let warned = count_lines(lines, "WARN", "CollectorUnavailable");
+        let naming_rule = count_lines(lines, "WARN", "r1");
+        let cycle_line = count_lines(lines, "INFO", "degraded_rules=1");
+        if warned != 1 || naming_rule != 1 || cycle_line != 1 {
+            return Err(
+                "expected one warn naming r1 and CollectorUnavailable, degraded_rules=1".to_owned(),
+            );
+        }
+        Ok(())
+    });
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn metrics_a_cycle_with_no_rules_emits_no_cycle_event() {
+    let fx = default_fx();
+
+    cycle(&fx, WIDE).await;
+
+    logs_assert(|lines: &[&str]| {
+        if count_lines(lines, "INFO", "rules_evaluated") == 0 {
+            Ok(())
+        } else {
+            Err("an empty cycle must not report metrics".to_owned())
+        }
+    });
+}

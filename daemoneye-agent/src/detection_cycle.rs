@@ -18,14 +18,15 @@ use daemoneye_lib::detection::execution::completeness::{
 };
 use daemoneye_lib::detection::execution::derive::CycleWindow;
 use daemoneye_lib::detection::execution::executor::{LatencyReport, RuleEvaluation, RuleExecutor};
-use daemoneye_lib::models::{Alert, ProcessRecord};
+use daemoneye_lib::models::{Alert, CompletenessStatus, ProcessRecord};
 use daemoneye_lib::storage::ingest::{IngestError, IngestHandle, IngestRecord, SequenceGap};
 use daemoneye_lib::storage::{EventStore, StorageError};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, MutexGuard};
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 /// The collector id the agent files procmond's rows under.
 pub const PROCMOND_COLLECTOR_ID: &str = "procmond";
@@ -234,7 +235,9 @@ pub async fn run_detection_cycle(
     }
 
     // Scope 2 (no lock): the executor holds no guard, so a scan of any length blocks nothing.
+    let started = Instant::now();
     let outcome = executor.evaluate(&runnable, window, signals).await;
+    let elapsed = started.elapsed();
     let reports = outcome.reports;
     let evaluations = outcome.evaluations;
 
@@ -242,6 +245,8 @@ pub async fn run_detection_cycle(
     // here because everything after is cloning alerts, which needs no engine. A report is applied
     // before the check so a rule that breached in this very cycle is dropped too.
     let keep = apply_outcome(&mut *engine.lock().await, &reports, &evaluations);
+
+    log_cycle(&evaluations, &reports, elapsed);
 
     let mut alerts = Vec::new();
     let mut dropped = 0_usize;
@@ -257,6 +262,58 @@ pub async fn run_detection_cycle(
         evaluations,
         dropped_after_reeligibility: dropped,
     }
+}
+
+/// Milliseconds in `duration`, saturating at `u64::MAX`.
+fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Report what the cycle did (R22): one `info` event for the cycle, one `debug` per rule, and a
+/// `warn` for each rule whose evaluation was degraded. Every value is extracted into a binding
+/// before its macro, so no `.await` or borrow sits inside a `tracing` call.
+fn log_cycle(evaluations: &[RuleEvaluation], reports: &[LatencyReport], elapsed: Duration) {
+    let (mut matches, mut degraded_rules, mut rows_scanned, mut batches) =
+        (0_usize, 0_usize, 0_u64, 0_u64);
+    for evaluation in evaluations {
+        let rule_matches = evaluation.alerts.len();
+        let rule_degraded = evaluation.completeness.status() == CompletenessStatus::Degraded;
+        let rule_id = evaluation.rule_id.as_str();
+        let rule_batches = evaluation.scan.batches;
+        let reasons = evaluation.completeness.reasons();
+        debug!(
+            rule_id,
+            matches = rule_matches,
+            batches = rule_batches,
+            degraded = rule_degraded,
+            reasons = ?reasons,
+            "rule evaluated",
+        );
+        if rule_degraded {
+            warn!(rule_id, reasons = ?reasons, "rule evaluation degraded");
+            degraded_rules = degraded_rules.saturating_add(1);
+        }
+        matches = matches.saturating_add(rule_matches);
+        rows_scanned = rows_scanned.saturating_add(evaluation.scan.rows_read);
+        batches = batches.saturating_add(rule_batches);
+    }
+    let rules_evaluated = evaluations.len();
+    let evaluation_ms = millis(elapsed);
+    let max_pattern_latency_ms = reports
+        .iter()
+        .map(|report| millis(report.observed))
+        .max()
+        .unwrap_or(0);
+    info!(
+        rules_evaluated,
+        matches,
+        degraded_rules,
+        rows_scanned,
+        batches,
+        evaluation_ms,
+        max_pattern_latency_ms,
+        "detection cycle evaluated",
+    );
 }
 
 /// Apply one cycle's latency reports and decide which evaluations still count (synchronous, so

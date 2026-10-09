@@ -540,3 +540,61 @@ async fn a_row_too_large_to_batch_is_counted_not_silently_dropped() {
     assert_eq!(evaluation.scan.table, "processes");
     assert_eq!(evaluation.alerts.len(), 2);
 }
+
+// --- explain (R23) -------------------------------------------------------------------------------
+
+/// Everything this crate's `prepare` plans with `name = 'nc'` pushed down and a `REGEXP` left over
+/// as the residual; the residual is what must keep a `FilterExec` above the scan.
+const RESIDUAL_RULE: &str =
+    "SELECT pid FROM processes WHERE name = 'nc' AND command_line REGEXP 'x+y'";
+
+async fn explained(window: CycleWindow) -> String {
+    let mut fx = fixture(config());
+    put(&fx, rows_named("nc", 3));
+    load(&mut fx, "r1", RESIDUAL_RULE);
+    let rules = fx.engine.runnable_rules();
+    executor(&fx).explain(&rules[0], window).await.unwrap()
+}
+
+#[tokio::test]
+async fn explain_a_rule_with_a_residual_names_the_scan_a_filter_and_the_fetch_bound() {
+    let text = explained(WIDE).await;
+
+    assert!(text.contains("BucketScanExec"));
+    assert!(text.contains("FilterExec"));
+    assert!(text.contains("fetch="));
+}
+
+#[tokio::test]
+async fn explain_a_window_that_excludes_every_bucket_plans_an_empty_scan() {
+    // Rows sit at hour 10; the window is hours 50..60, so every bucket is pruned.
+    let text = explained(CycleWindow {
+        after_ms: 50 * HOUR,
+        through_ms: 60 * HOUR,
+    })
+    .await;
+
+    assert!(text.contains("EmptyExec"));
+    assert!(!text.contains("BucketScanExec"));
+}
+
+#[tokio::test]
+async fn explain_describes_the_plan_that_evaluate_runs() {
+    let mut fx = fixture(config());
+    put(&fx, rows_named("nc", 3));
+    load(&mut fx, "r1", RESIDUAL_RULE);
+    let rules = fx.engine.runnable_rules();
+    let exec = executor(&fx);
+
+    let first = exec.explain(&rules[0], WIDE).await.unwrap();
+    let second = exec.explain(&rules[0], WIDE).await.unwrap();
+    let outcome = exec.evaluate(&rules, WIDE, &healthy()).await;
+
+    assert_eq!(first, second, "explain is deterministic");
+    assert!(only(&outcome).failure.is_none());
+    assert!(
+        first.contains("BucketScanExec"),
+        "the scan explain names is the one evaluate reads"
+    );
+    assert!(only(&outcome).scan.batches > 0);
+}

@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use datafusion::arrow::array::{Array, RecordBatch};
+use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::common::cast::{as_string_array, as_uint64_array};
 use datafusion::error::{DataFusionError, Result as DfResult};
 use datafusion::execution::context::SessionContext;
@@ -210,6 +211,21 @@ impl RuleExecutor {
             outcome.reports.extend(reports);
         }
         outcome
+    }
+
+    /// The `DataFusion` physical plan `evaluate` would run for `rule` over `window`, as text (R23).
+    ///
+    /// Built by the same `prepare` as `evaluate`, so it describes the plan that runs and cannot
+    /// drift from it. It plans only; no row is read.
+    ///
+    /// # Errors
+    ///
+    /// The `DataFusion` error if the plan cannot be built or explained.
+    pub async fn explain(&self, rule: &RunnableRule, window: CycleWindow) -> DfResult<String> {
+        let sink = Arc::new(LatencySink::with_threshold(rule.pattern_latency_threshold));
+        let (frame, _counters) = self.prepare(rule, window, &sink)?;
+        let batches = frame.explain(false, false)?.collect().await?;
+        Ok(pretty_format_batches(&batches)?.to_string())
     }
 
     async fn evaluate_rule(
