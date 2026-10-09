@@ -186,19 +186,32 @@ pub fn predicate_to_expr(state: &SessionState, predicate: &Predicate) -> Result<
         if values.is_empty() {
             return Err(bad("IN needs at least one value"));
         }
-        return Ok(col(column).in_list(values.into_iter().map(lit).collect(), false));
+        return Ok(with_nan_guard(
+            column,
+            &values,
+            col(column).in_list(
+                values
+                    .iter()
+                    .filter(|value| !is_nan(value))
+                    .cloned()
+                    .map(lit)
+                    .collect(),
+                false,
+            ),
+        ));
     }
     let [value] = <[ScalarValue; 1]>::try_from(values)
         .map_err(|_wrong_arity| bad("this operation takes exactly one value"))?;
+    let guarded = value.clone();
     let operand = lit(value);
-    Ok(match op {
+    let expr = match op {
         PredicateOp::Eq => col(column).eq(operand),
         PredicateOp::Ne => col(column).not_eq(operand),
         PredicateOp::Lt => col(column).lt(operand),
         PredicateOp::Le => col(column).lt_eq(operand),
         PredicateOp::Gt => col(column).gt(operand),
         PredicateOp::Ge => col(column).gt_eq(operand),
-        PredicateOp::Like => col(column).like(operand),
+        PredicateOp::Like => col(column).like(lit(literal_backslashes(&guarded))),
         PredicateOp::Regexp => state
             .scalar_functions()
             .get(REGEXP_FUNCTION)
@@ -209,7 +222,44 @@ pub fn predicate_to_expr(state: &SessionState, predicate: &Predicate) -> Result<
                 column: column.to_owned(),
             });
         }
-    })
+    };
+    Ok(with_nan_guard(column, &[guarded], expr))
+}
+
+/// Whether a scalar is a floating-point NaN.
+const fn is_nan(value: &ScalarValue) -> bool {
+    matches!(*value, ScalarValue::Float64(Some(number)) if number.is_nan())
+}
+
+/// Make NaN UNKNOWN under every comparison, as the conformance reference does.
+///
+/// `DataFusion` orders floats totally, so `NaN = NaN` is true and `NaN` sorts above every number;
+/// the reference (and so every collector certified against it) treats NaN as SQL does, as
+/// unordered. A literal NaN can match nothing. A NaN *column value* is excluded by requiring the
+/// column to be `<= +inf`, which under the total order only NaN fails. Non-float predicates pass
+/// through untouched.
+fn with_nan_guard(column: &str, values: &[ScalarValue], expr: Expr) -> Expr {
+    if !values
+        .iter()
+        .any(|value| matches!(*value, ScalarValue::Float64(_)))
+    {
+        return expr;
+    }
+    if values.iter().all(is_nan) {
+        return lit(false);
+    }
+    col(column).lt_eq(lit(f64::INFINITY)).and(expr)
+}
+
+/// A `LIKE` pattern with its backslashes made literal.
+///
+/// `DataFusion`'s `LIKE` treats `\` as an escape; the reference has no `ESCAPE` clause, so a
+/// backslash matches a backslash. Doubling each one makes the engine's escape rule a no-op.
+fn literal_backslashes(pattern: &ScalarValue) -> ScalarValue {
+    if let ScalarValue::Utf8(Some(ref text)) = *pattern {
+        return ScalarValue::Utf8(Some(text.replace('\\', "\\\\")));
+    }
+    pattern.clone()
 }
 
 /// The scalar a proto literal carries, or `None` when the oneof is unset.
