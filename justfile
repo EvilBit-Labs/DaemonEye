@@ -269,6 +269,16 @@ bench-database:
 bench-detection:
     @{{ mise_exec }} cargo bench -p daemoneye-lib --bench detection_engine
 
+# U9 / KTD15: full-retention memory characterization. Not a CI gate (GOTCHAS 3.1). Release profile
+# (the shipped profile), one test per process, `--test-threads 1`; prints the numbers for the record.
+[group('bench')]
+[unix]
+measure-detection-memory:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{ mise_exec }} cargo nextest run -p daemoneye-lib --all-features --cargo-profile release --test detection_execution_memory --run-ignored ignored-only --no-capture --test-threads 1 -E 'test(build_fixtures)'
+    {{ mise_exec }} cargo nextest run -p daemoneye-lib --all-features --cargo-profile release --test detection_execution_memory --run-ignored ignored-only --no-capture --test-threads 1 -E 'not test(build_fixtures)'
+
 [group('bench')]
 bench-ipc:
     @{{ mise_exec }} cargo bench -p daemoneye-lib --bench ipc_communication
