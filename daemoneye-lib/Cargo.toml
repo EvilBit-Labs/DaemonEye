@@ -26,7 +26,14 @@ default = ["process-collection", "detection-engine", "alerting", "ipc", "fuzzy-h
 
 # Component features
 process-collection = []
-detection-engine = ["sqlparser", "dep:datafusion", "dep:lru", "dep:parking_lot", "dep:regex", "dep:subtle"]
+detection-engine = [
+    "sqlparser",
+    "dep:datafusion",
+    "dep:lru",
+    "dep:parking_lot",
+    "dep:regex",
+    "dep:subtle",
+]
 alerting = []
 kernel-monitoring = []
 network-correlation = []
@@ -73,23 +80,37 @@ datafusion = { workspace = true, optional = true }
 # Configuration management
 dirs = { workspace = true }
 figment = { workspace = true }
-unidirs = { workspace = true }
 
 # Futures utilities
 futures = { workspace = true }
 futures-util = { workspace = true }
 
+# Optional: non-cryptographic fuzzy (ssdeep/CTPH) hashing for binary-change detection
+fuzzyhash = { workspace = true, optional = true }
+
 # IPC communication
 interprocess = { workspace = true }
+
+# Bounded LRU cache for compiled detection regexes
+lru = { workspace = true, optional = true }
+
+# Sync-only mutex for the posting-list page cache
+parking_lot = { workspace = true, optional = true }
+postcard = { workspace = true }
 
 # Protocol Buffers support
 prost = { workspace = true }
 prost-types = { workspace = true }
+
+# Shared bounded hash-result cache (inline path + triggered path share one instance)
+quick_cache = { workspace = true }
 rand = { workspace = true }
 
 # Database
 redb = { workspace = true }
-postcard = { workspace = true }
+
+# Regex compilation for REGEXP detection patterns
+regex = { workspace = true, optional = true }
 rs_merkle = { workspace = true }
 # Core dependencies used by all components
 serde = { workspace = true }
@@ -100,21 +121,6 @@ sha2 = { workspace = true }
 
 # Optional: additional cryptographic hash backends for integrity verification
 sha3 = { workspace = true, optional = true }
-
-# Optional: non-cryptographic fuzzy (ssdeep/CTPH) hashing for binary-change detection
-fuzzyhash = { workspace = true, optional = true }
-
-# Shared bounded hash-result cache (inline path + triggered path share one instance)
-quick_cache = { workspace = true }
-
-# Bounded LRU cache for compiled detection regexes
-lru = { workspace = true, optional = true }
-
-# Sync-only mutex for the posting-list page cache
-parking_lot = { workspace = true, optional = true }
-
-# Regex compilation for REGEXP detection patterns
-regex = { workspace = true, optional = true }
 
 # SQL parsing and validation
 sqlparser = { workspace = true, optional = true }
@@ -133,6 +139,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
+unidirs = { workspace = true }
 
 # UUID support
 uuid = { workspace = true }
@@ -141,16 +148,16 @@ uuid = { workspace = true }
 prost-build = { workspace = true }
 
 [dev-dependencies]
-# cache_metrics makes redb count cache evictions, which the page-cache wiring test observes.
-redb = { workspace = true, features = ["cache_metrics"] }
 assert_cmd = { workspace = true }
-criterion = { workspace = true }
+criterion = { workspace = true, features = ["async_tokio"] }
 # `test` enables figment::Jail, the only way to exercise environment-variable overrides without
 # std::env::set_var, which is unsafe under Rust 2024 and forbidden workspace-wide.
 figment = { workspace = true, features = ["test"] }
 insta = { workspace = true }
 predicates = { workspace = true }
 proptest = { workspace = true }
+# cache_metrics makes redb count cache evictions, which the page-cache wiring test observes.
+redb = { workspace = true, features = ["cache_metrics"] }
 # `no-env-filter`: the default filter admits only the test crate's own events, which would hide
 # the library logs the detection tests assert on.
 tracing-test = { workspace = true, features = ["no-env-filter"] }

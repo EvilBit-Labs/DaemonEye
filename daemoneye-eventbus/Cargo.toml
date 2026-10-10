@@ -6,26 +6,28 @@ authors.workspace = true
 description = "Cross-platform IPC event bus for DaemonEye monitoring system"
 license.workspace = true
 repository.workspace = true
-keywords = [ "ipc", "eventbus", "pubsub", "monitoring", "cross-platform" ]
-categories = [
-    "asynchronous",
-    "network-programming",
-    "os::unix-apis",
-    "os::windows-apis",
-]
+keywords = ["ipc", "eventbus", "pubsub", "monitoring", "cross-platform"]
+categories = ["asynchronous", "network-programming", "os::unix-apis", "os::windows-apis"]
 
 [lib]
 name = "daemoneye_eventbus"
 path = "src/lib.rs"
 
+[features]
+default        = ["cross-platform"]
+cross-platform = ["interprocess"]
+freebsd        = []
+high-load      = ["tokio/rt-multi-thread"]
+
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-postcard = { workspace = true }
 blake3 = { workspace = true }
 dashmap = { workspace = true }
 interprocess = { workspace = true, optional = true }
+postcard = { workspace = true }
 rand = { workspace = true }
+regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -43,21 +45,20 @@ tokio = { workspace = true, features = [
 toml = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
-regex = { workspace = true }
 
-[features]
-default        = [ "cross-platform" ]
-cross-platform = [ "interprocess" ]
-freebsd        = [  ]
-high-load      = [ "tokio/rt-multi-thread" ]
+# Off Unix the spawn-token directory is rooted at the account's own local application-data
+# directory, which is where its owner-only ACL comes from. Unix uses the socket directory and an
+# explicit mode instead, so this is not pulled in there.
+[target.'cfg(not(unix))'.dependencies]
+dirs = { workspace = true }
+
+[target.'cfg(target_os = "freebsd")'.dependencies]
+nix = { version = "0.31.2", features = ["socket"] }
 
 [target.'cfg(unix)'.dependencies]
 # `user` is for `geteuid`: the spawn-token directory check compares the directory's owner to this
 # process's effective uid, and the workspace forbids the `unsafe` a raw syscall would need.
-nix = { version = "0.31.2", features = [ "signal", "process", "user" ] }
-
-[target.'cfg(target_os = "freebsd")'.dependencies]
-nix = { version = "0.31.2", features = [ "socket" ] }
+nix = { version = "0.31.2", features = ["signal", "process", "user"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
@@ -66,8 +67,8 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [dev-dependencies]
-criterion  = { workspace = true, features = [ "html_reports" ] }
-insta      = { workspace = true, features = [ "yaml" ] }
+criterion  = { workspace = true, features = ["html_reports"] }
+insta      = { workspace = true, features = ["yaml"] }
 tempfile   = { workspace = true }
 tokio-test = { workspace = true }
 
@@ -85,9 +86,3 @@ harness = false
 
 [lints]
 workspace = true
-
-# Off Unix the spawn-token directory is rooted at the account's own local application-data
-# directory, which is where its owner-only ACL comes from. Unix uses the socket directory and an
-# explicit mode instead, so this is not pulled in there.
-[target.'cfg(not(unix))'.dependencies]
-dirs = { workspace = true }

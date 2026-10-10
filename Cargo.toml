@@ -14,10 +14,7 @@ resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
-authors = [
-    "UncleSp1d3r <unclespid3r@evilbitlabs.io>",
-    "DaemonEye Contributors"
-]
+authors = ["UncleSp1d3r <unclespid3r@evilbitlabs.io>", "DaemonEye Contributors"]
 license = "Apache-2.0"
 keywords = ["security", "monitoring", "process", "detection"]
 categories = ["security"]
@@ -128,8 +125,6 @@ prost-types = "0.14.4"
 # holds authoritative hash results so a silent upstream change here
 # could affect integrity decisions.
 quick_cache = "=0.7.0"
-# Exact-pinned: constant-time primitive; a version bump must be reviewed, not absorbed.
-subtle = { version = "=2.6.1", default-features = false }
 rand = "0.10.2"
 
 # Database and storage
@@ -147,6 +142,8 @@ sha2 = "0.11.0"
 # silently under a caret update. See AGENTS.md "Pin security-critical deps".
 sha3 = "=0.12.0"
 sqlparser = { version = "0.62.0", features = ["visitor"] }
+# Exact-pinned: constant-time primitive; a version bump must be reviewed, not absorbed.
+subtle = { version = "=2.6.1", default-features = false }
 
 sysinfo = "0.39.6"
 tempfile = "3.27.0"

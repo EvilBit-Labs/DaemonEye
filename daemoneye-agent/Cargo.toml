@@ -31,11 +31,11 @@ test-only = []
 anyhow      = { workspace = true }
 async-trait = { workspace = true }
 clap        = { workspace = true }
+collector-core     = { workspace = true }
+daemoneye-eventbus = { workspace = true }
 
 # Internal library
 daemoneye-lib      = { workspace = true }
-daemoneye-eventbus = { workspace = true }
-collector-core     = { workspace = true }
 
 serde      = { workspace = true }
 serde_json = { workspace = true }
@@ -50,14 +50,14 @@ uuid               = { workspace = true }
 prost-build = { workspace = true }
 
 [dev-dependencies]
-# Self-dependency so cargo enables `test-only` when building this crate's own test targets.
-daemoneye-agent = { path = ".", features = ["test-only"] }
 
 assert_cmd = { workspace = true }
 chrono     = { workspace = true }
+# Self-dependency so cargo enables `test-only` when building this crate's own test targets.
+daemoneye-agent = { path = ".", features = ["test-only"] }
 insta      = { workspace = true }
-redb       = { workspace = true }
 predicates = { workspace = true }
+redb       = { workspace = true }
 tempfile   = { workspace = true }
 # `no-env-filter` so a test sees the library's own log lines, not only this crate's.
 tracing-test = { workspace = true, features = ["no-env-filter"] }

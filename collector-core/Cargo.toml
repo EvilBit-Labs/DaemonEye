@@ -15,16 +15,13 @@ exclude.workspace      = true
 readme                 = "README.md"
 
 [features]
-default = [  ]
+default = []
 
 [dependencies]
 
 # Error handling
 anyhow      = { workspace = true }
 async-trait = { workspace = true }
-
-# Binary serialization
-postcard = { workspace = true }
 
 # Bitflags for capabilities
 bitflags = { workspace = true }
@@ -36,14 +33,20 @@ cap-std    = { workspace = true }
 # Event bus integration
 daemoneye-eventbus = { workspace = true }
 
-# Hostname validation (RFC 1123)
-hostname-validator = { workspace = true }
-
 # IPC integration
 daemoneye-lib = { workspace = true }
 futures       = { workspace = true }
 
+# Hostname validation (RFC 1123)
+hostname-validator = { workspace = true }
+
 parking_lot = { workspace = true }
+
+# Binary serialization
+postcard = { workspace = true }
+
+# Random number generation
+rand = { workspace = true }
 
 # Serialization
 serde      = { workspace = true }
@@ -56,23 +59,20 @@ sqlparser = { workspace = true }
 tempfile  = { workspace = true }
 thiserror = { workspace = true }
 # Core async runtime and utilities
-tokio = { workspace = true, features = [ "sync", "time", "rt", "macros" ] }
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 
 # Logging
 tracing = { workspace = true }
-
-# Random number generation
-rand = { workspace = true }
 
 # UUID generation
 uuid = { workspace = true }
 
 [dev-dependencies]
 anyhow             = { workspace = true }
-postcard           = { workspace = true }
-criterion          = { workspace = true, features = [ "html_reports" ] }
+criterion          = { workspace = true, features = ["html_reports"] }
 daemoneye-eventbus = { workspace = true }
 futures            = { workspace = true }
+postcard           = { workspace = true }
 proptest           = { workspace = true }
 prost              = { workspace = true }
 rand               = { workspace = true }
