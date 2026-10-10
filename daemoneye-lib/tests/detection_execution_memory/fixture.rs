@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use daemoneye_lib::config::DetectionConfig;
+use daemoneye_lib::config::{DatabaseConfig, DetectionConfig};
 use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::detection::catalog::verify_spawn_token;
 use daemoneye_lib::models::{AlertSeverity, DetectionRule, ProcessRecord};
@@ -117,9 +117,19 @@ fn ingest(records: impl Iterator<Item = (u64, ProcessRecord)>) -> Vec<IngestReco
         .collect()
 }
 
-/// Write the 168-bucket retention store at `path`, one `put_batch` per bucket.
-pub fn build_retention_store(path: &Path) {
-    let store = EventStore::new(path).unwrap();
+/// `DatabaseConfig::page_cache_bytes` for a cache of `page_cache_mb`.
+pub fn cache_bytes(page_cache_mb: usize) -> usize {
+    DatabaseConfig {
+        page_cache_mb,
+        ..DatabaseConfig::default()
+    }
+    .page_cache_bytes()
+}
+
+/// Write the 168-bucket retention store at `path`, one `put_batch` per bucket, through a redb
+/// page cache of `page_cache_mb` (the write path shares it).
+pub fn build_retention_store(path: &Path, page_cache_mb: usize) {
+    let store = EventStore::new_with_page_cache(path, cache_bytes(page_cache_mb)).unwrap();
     for bucket in 0..FULL_BUCKETS {
         let first = bucket.saturating_mul(ROWS_PER_BUCKET);
         let rows = (0..ROWS_PER_BUCKET).map(|i| (first.saturating_add(i), row(bucket, i)));
@@ -207,8 +217,13 @@ pub const RULES: [(&str, &str); 3] = [
 pub const FULL_SCAN_ID: &str = "full-scan";
 
 /// An engine with [`RULES`] loaded, and the store it reads.
-pub fn engine_over(path: &Path, config: &DetectionConfig) -> (Arc<EventStore>, DetectionEngine) {
-    let store = Arc::new(EventStore::open(path).unwrap());
+pub fn engine_over(
+    path: &Path,
+    config: &DetectionConfig,
+    page_cache_mb: usize,
+) -> (Arc<EventStore>, DetectionEngine) {
+    let store =
+        Arc::new(EventStore::open_with_page_cache(path, cache_bytes(page_cache_mb)).unwrap());
     let mut engine = DetectionEngine::with_config(config);
     let token = "a".repeat(64);
     let verified = verify_spawn_token("procmond", Some(&token), Some(&token)).unwrap();

@@ -81,6 +81,56 @@ pub struct DatabaseConfig {
     pub max_size_mb: Option<u64>,
     /// Enable database encryption
     pub encryption_enabled: bool,
+    /// redb page cache, in MiB. Range [`DatabaseConfig::PAGE_CACHE_MB_MIN`] to
+    /// [`DatabaseConfig::PAGE_CACHE_MB_MAX`].
+    ///
+    /// Bounds the resident memory a scan can accumulate from the event store: redb's own default
+    /// is 1 GiB, so left alone, resident memory tracks the bytes a scan touches rather than any
+    /// executor setting (T6 U9 measurement). The `_MAX` is redb's default, so the ceiling never
+    /// permits more than the unconfigured behaviour; the `_MIN` keeps a few pages of working set
+    /// per scan partition. A smaller cache trades memory for disk reads and so for scan latency.
+    #[serde(default = "default_page_cache_mb")]
+    pub page_cache_mb: usize,
+}
+
+/// Serde default for [`DatabaseConfig::page_cache_mb`], so a file written before it existed loads.
+const fn default_page_cache_mb() -> usize {
+    DatabaseConfig::PAGE_CACHE_MB_DEFAULT
+}
+
+impl DatabaseConfig {
+    /// Chosen from the sweep in `docs/decisions/2026-10-08-t6-full-retention-memory.md`: the
+    /// lowest worst-case peak and smallest latency cost among the sizes that remove the
+    /// bucket-count growth. A judgement among noisy options, not a measured optimum.
+    pub const PAGE_CACHE_MB_DEFAULT: usize = 32;
+    /// A floor that still holds a working set of pages for a scan.
+    pub const PAGE_CACHE_MB_MIN: usize = 4;
+    /// redb's own default, 1 GiB.
+    pub const PAGE_CACHE_MB_MAX: usize = 1024;
+
+    /// The configured cache in bytes, for `redb::Builder::set_cache_size`.
+    #[must_use]
+    pub const fn page_cache_bytes(&self) -> usize {
+        self.page_cache_mb.saturating_mul(1024 * 1024)
+    }
+
+    /// Check `page_cache_mb` against its range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::ValidationError`] when out of range; never clamps.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let (min, max) = (Self::PAGE_CACHE_MB_MIN, Self::PAGE_CACHE_MB_MAX);
+        if !(min..=max).contains(&self.page_cache_mb) {
+            return Err(ConfigError::ValidationError {
+                message: format!(
+                    "database.page_cache_mb must be between {min} and {max}, got {}",
+                    self.page_cache_mb
+                ),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Alerting configuration.
@@ -531,6 +581,7 @@ impl Default for DatabaseConfig {
             retention_days: 30,
             max_size_mb: None,
             encryption_enabled: false,
+            page_cache_mb: Self::PAGE_CACHE_MB_DEFAULT,
         }
     }
 }
@@ -1012,6 +1063,7 @@ impl Config {
         // --- Detection bounds validation ---
 
         config.detection.validate()?;
+        config.database.validate()?;
 
         // --- Path traversal validation ---
 
@@ -1753,6 +1805,11 @@ use_tls = false
             toml::from_str(toml_str).expect("Failed to parse TOML with complex sink config");
 
         assert_eq!(config.alerting.sinks.len(), 2);
+        // A file written before `page_cache_mb` existed still loads, at the default.
+        assert_eq!(
+            config.database.page_cache_mb,
+            DatabaseConfig::PAGE_CACHE_MB_DEFAULT
+        );
 
         // Verify broker configuration
         assert_eq!(config.broker.socket_path, "/tmp/test-broker.sock");
@@ -2218,5 +2275,42 @@ enabled = true
 
         // When loading, it should be normalized to DAEMONEYE_AGENT_ prefix
         // This is implicitly tested through the load() method
+    }
+
+    #[test]
+    fn page_cache_mb_is_range_checked_at_both_ends() {
+        let with = |page_cache_mb| DatabaseConfig {
+            page_cache_mb,
+            ..DatabaseConfig::default()
+        };
+        assert!(DatabaseConfig::default().validate().is_ok());
+        assert!(with(DatabaseConfig::PAGE_CACHE_MB_MIN).validate().is_ok());
+        assert!(with(DatabaseConfig::PAGE_CACHE_MB_MAX).validate().is_ok());
+        assert!(
+            with(DatabaseConfig::PAGE_CACHE_MB_MIN.saturating_sub(1))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            with(DatabaseConfig::PAGE_CACHE_MB_MAX.saturating_add(1))
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn page_cache_bytes_converts_mib() {
+        let config = DatabaseConfig {
+            page_cache_mb: 3,
+            ..DatabaseConfig::default()
+        };
+        assert_eq!(config.page_cache_bytes(), 3 * 1024 * 1024);
+    }
+
+    #[test]
+    fn config_validate_rejects_an_out_of_range_page_cache() {
+        let mut config = Config::default();
+        config.database.page_cache_mb = 0;
+        assert!(config.validate().is_err());
     }
 }

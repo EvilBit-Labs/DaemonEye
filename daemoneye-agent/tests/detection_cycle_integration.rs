@@ -281,7 +281,10 @@ fn a_schema_mismatch_names_the_rebuild_path() {
     let path = dir.path().join("old.redb");
     write_old_schema(&path);
 
-    let message = open_event_store(&path).err().unwrap().to_string();
+    let message = open_event_store(&path, &daemoneye_lib::config::DatabaseConfig::default())
+        .err()
+        .unwrap()
+        .to_string();
 
     assert!(message.contains("schema version 999"));
     assert!(message.contains("storage::schema::migrate"));

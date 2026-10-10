@@ -15,13 +15,15 @@
 
 #[path = "detection_execution_memory/fixture.rs"]
 mod fixture;
+#[path = "detection_execution_memory/footprint.rs"]
+mod footprint;
 #[path = "detection_execution_memory/rss.rs"]
 mod rss;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use daemoneye_lib::config::DetectionConfig;
+use daemoneye_lib::config::{DatabaseConfig, DetectionConfig};
 use daemoneye_lib::detection::execution::completeness::{
     CollectorHealth, CycleSignals, IngestSnapshot,
 };
@@ -30,12 +32,16 @@ use daemoneye_lib::detection::execution::executor::{CycleOutcome, RuleEvaluation
 use fixture::{
     BASE_MS, FULL_BUCKETS, FULL_SCAN_ID, HALF_BUCKETS, HOUR_MS, MAX_SIZE_ROWS, ROWS_PER_BUCKET,
 };
-use rss::{Sampler, SysinfoReader};
+use footprint::FootprintReader;
+use rss::{RssReader, Sampler, SysinfoReader};
 
 /// Cycles per run unless `DETECTION_MEMORY_CYCLES` says otherwise (development only).
-const DEFAULT_CYCLES: usize = 300;
-/// A back-half trend this large, in bytes, is a climb rather than allocator noise.
-const PLATEAU_SLACK_BYTES: u64 = 4 * 1024 * 1024;
+///
+/// Resident size takes about 900 cycles to flatten, so a shorter run reports the warm-up ramp
+/// rather than the plateau. See the decision record's "Plateau" section.
+const DEFAULT_CYCLES: usize = 1_500;
+/// Reported blocks of the per-cycle series, enough to show the staircase without the full trace.
+const SERIES_BLOCKS: usize = 10;
 /// The lowered batch size for the batch run: below the 9,000-row bucket, above the floor.
 const LOWERED_BATCH_SIZE: usize = 2_048;
 const LOWERED_PARTITIONS: usize = 2;
@@ -57,6 +63,14 @@ fn cycles() -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_CYCLES)
+}
+
+/// The redb page cache for a run: `DETECTION_MEMORY_PAGE_CACHE_MB` if set, else the shipped default.
+fn page_cache_mb() -> usize {
+    std::env::var("DETECTION_MEMORY_PAGE_CACHE_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DatabaseConfig::PAGE_CACHE_MB_DEFAULT)
 }
 
 fn mib(bytes: u64) -> f64 {
@@ -108,16 +122,29 @@ fn quarter(series: &[u64], n: usize) -> &[u64] {
         .unwrap_or(&[])
 }
 
-/// The series' back half must not climb: the last quarter's median stays within slack of the
-/// third's. Returns both medians for the record.
-fn assert_plateau(series: &[u64]) -> (u64, u64) {
-    let third = median(quarter(series, 2));
-    let fourth = median(quarter(series, 3));
-    assert!(
-        fourth <= third.saturating_add(PLATEAU_SLACK_BYTES),
-        "RSS climbed across the back half of the cycles"
-    );
-    (third, fourth)
+/// The medians of the series' third and fourth quarters.
+fn plateau_medians(series: &[u64]) -> (u64, u64) {
+    (median(quarter(series, 2)), median(quarter(series, 3)))
+}
+
+/// The median of each of [`SERIES_BLOCKS`] equal blocks of `series`, in MiB, as text.
+///
+/// This is the shape of the series, reported rather than asserted on. Resident size rises as a
+/// staircase whose treads lengthen, and a single 4-6 MiB step can land anywhere; no threshold over
+/// one process's memory separates that from a slow leak within a run length worth paying for. The
+/// assertions that can fail here are the validity ones -- rows read, match counts, bucket
+/// coverage, the plan's partitioning, and the sampler's refusal to report a zero.
+fn series_blocks(series: &[u64]) -> String {
+    if series.is_empty() {
+        return "n/a".to_owned();
+    }
+    let block = series.len().saturating_div(SERIES_BLOCKS).max(1);
+    (0..series.len())
+        .step_by(block)
+        .filter_map(|i| series.get(i..i.saturating_add(block).min(series.len())))
+        .map(|b| format!("{:.0}", mib(median(b))))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn percentile(sorted: &[Duration], pct: usize) -> Duration {
@@ -150,7 +177,7 @@ fn partitions_in(plan: &str) -> String {
 async fn measure(shape: Shape) {
     let buckets = shape.hi.saturating_sub(shape.lo);
     let win = window(shape.lo, shape.hi);
-    let (store, engine) = fixture::engine_over(&retention_path(), &shape.config);
+    let (store, engine) = fixture::engine_over(&retention_path(), &shape.config, page_cache_mb());
     let rules = engine.runnable_rules();
     let exec = RuleExecutor::new(store, engine.regex_cache(), &shape.config).unwrap();
     let full_rule = rules
@@ -165,13 +192,22 @@ async fn measure(shape: Shape) {
 
     let mut sampler = Sampler::start(SysinfoReader::new().unwrap(), SysinfoReader::new().unwrap());
     let baseline = sampler.sample().unwrap();
-    let (mut latencies, mut series) = (Vec::new(), Vec::new());
+    // Live footprint beside RSS, where the host can report it (macOS) and the operator asks:
+    // see footprint.rs. Opt-in because spawning `footprint` every 20 ms perturbs the allocator
+    // enough to move the RSS peak, so a footprint run is a diagnostic, not the record.
+    let mut live = std::env::var_os("DETECTION_MEMORY_FOOTPRINT")
+        .and_then(|_| FootprintReader::new().read().ok())
+        .map(|_| Sampler::start(FootprintReader::new(), FootprintReader::new()));
+    let (mut latencies, mut series, mut live_series) = (Vec::new(), Vec::new(), Vec::new());
     let mut batches = 0;
     for cycle in 0..cycles() {
         let started = Instant::now();
         let outcome = exec.evaluate(&rules, win, &healthy()).await;
         latencies.push(started.elapsed());
         series.push(sampler.sample().unwrap());
+        if let Some(footprint) = live.as_mut() {
+            live_series.push(footprint.sample().unwrap());
+        }
         if cycle == 0 {
             batches = check_first_cycle(
                 &outcome,
@@ -182,20 +218,33 @@ async fn measure(shape: Shape) {
         }
     }
     let peak = sampler.finish().expect("a trustworthy RSS trace");
+    let live_peak = live.map(|l| l.finish().expect("a trustworthy footprint trace"));
 
+    if std::env::var_os("DETECTION_MEMORY_TRACE").is_some() {
+        let trace: Vec<String> = series.iter().map(|b| format!("{:.0}", mib(*b))).collect();
+        eprintln!(
+            "TRACE {} rss_mib_per_cycle={}",
+            shape.label,
+            trace.join(",")
+        );
+    }
     latencies.sort_unstable();
-    let (third, fourth) = assert_plateau(&series);
+    let (third, fourth) = plateau_medians(&series);
+    let (rss_blocks, live_blocks) = (series_blocks(&series), series_blocks(&live_series));
     let per_bucket = batches.checked_div(buckets).unwrap_or(0);
     eprintln!(
-        "RUN {} | buckets={buckets} partitions_cfg={} batch_size={} cycles={} | baseline_mib={:.2} \
-         peak_mib={:.2} | p50_ms={:.2} max_ms={:.2} | batches_per_bucket={per_bucket} \
-         repartition={has_repartition} | q3_median_mib={:.2} q4_median_mib={:.2} | scan: {}",
+        "RUN {} | page_cache_mb={} buckets={buckets} partitions_cfg={} batch_size={} cycles={} | baseline_mib={:.2} \
+         peak_mib={:.2} peak_footprint_mib={} | p50_ms={:.2} max_ms={:.2} | batches_per_bucket={per_bucket} \
+         repartition={has_repartition} | q3_median_mib={:.2} q4_median_mib={:.2} | \
+         rss_mib_blocks={rss_blocks} footprint_mib_blocks={live_blocks} | scan: {}",
         shape.label,
+        page_cache_mb(),
         shape.config.executor_target_partitions,
         shape.config.executor_batch_size,
         series.len(),
         mib(baseline),
         mib(peak),
+        live_peak.map_or_else(|| "n/a".to_owned(), |b| format!("{:.2}", mib(b))),
         percentile(&latencies, 50).as_secs_f64() * 1000.0,
         latencies.last().copied().unwrap_or_default().as_secs_f64() * 1000.0,
         mib(third),
@@ -269,7 +318,15 @@ fn build_fixtures() {
     for path in [retention_path(), max_size_path()] {
         let _removed = std::fs::remove_file(path);
     }
-    fixture::build_retention_store(&retention_path());
+    let started = Instant::now();
+    fixture::build_retention_store(&retention_path(), page_cache_mb());
+    let rows = FULL_BUCKETS.saturating_mul(ROWS_PER_BUCKET);
+    let secs = started.elapsed().as_secs_f64();
+    eprintln!(
+        "BUILD page_cache_mb={} rows={rows} secs={secs:.1} rows_per_sec={:.0}",
+        page_cache_mb(),
+        f64::from(u32::try_from(rows).unwrap_or(u32::MAX)) / secs,
+    );
     fixture::build_max_size_store(&max_size_path());
     for path in [retention_path(), max_size_path()] {
         let bytes = std::fs::metadata(&path).unwrap().len();
@@ -358,7 +415,7 @@ async fn run_5_default_single_bucket_production_shape() {
 #[ignore = "measurement; run via `just measure-detection-memory`"]
 async fn run_6_max_size_rows_close_batches_on_the_byte_bound() {
     let config = base_config();
-    let (store, engine) = fixture::engine_over(&max_size_path(), &config);
+    let (store, engine) = fixture::engine_over(&max_size_path(), &config, page_cache_mb());
     let rules = engine.runnable_rules();
     let exec = RuleExecutor::new(store, engine.regex_cache(), &config).unwrap();
     let mut sampler = Sampler::start(SysinfoReader::new().unwrap(), SysinfoReader::new().unwrap());
@@ -392,8 +449,9 @@ async fn run_6_max_size_rows_close_batches_on_the_byte_bound() {
         "batches closed on the byte bound, not the row bound"
     );
     eprintln!(
-        "RUN max-size | rows={MAX_SIZE_ROWS} row_bytes~{} batch_max_bytes={} batches={batches} \
+        "RUN max-size | page_cache_mb={} rows={MAX_SIZE_ROWS} row_bytes~{} batch_max_bytes={} batches={batches} \
          row_bound_would_give={row_bound_batches} | peak_mib={:.2}",
+        page_cache_mb(),
         fixture::MAX_COMMAND_LINE_BYTES,
         config.executor_batch_max_bytes,
         mib(peak),

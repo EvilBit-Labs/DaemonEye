@@ -277,7 +277,7 @@ measure-detection-memory:
     #!/usr/bin/env bash
     set -euo pipefail
     {{ mise_exec }} cargo nextest run -p daemoneye-lib --all-features --cargo-profile release --test detection_execution_memory --run-ignored ignored-only --no-capture --test-threads 1 -E 'test(build_fixtures)'
-    {{ mise_exec }} cargo nextest run -p daemoneye-lib --all-features --cargo-profile release --test detection_execution_memory --run-ignored ignored-only --no-capture --test-threads 1 -E 'not test(build_fixtures)'
+    {{ mise_exec }} cargo nextest run -p daemoneye-lib --all-features --cargo-profile release --test detection_execution_memory --run-ignored ignored-only --no-capture --test-threads 1 --no-fail-fast -E 'not test(build_fixtures)'
 
 [group('bench')]
 bench-ipc:

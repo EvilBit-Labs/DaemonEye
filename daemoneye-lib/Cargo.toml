@@ -141,6 +141,8 @@ uuid = { workspace = true }
 prost-build = { workspace = true }
 
 [dev-dependencies]
+# cache_metrics makes redb count cache evictions, which the page-cache wiring test observes.
+redb = { workspace = true, features = ["cache_metrics"] }
 assert_cmd = { workspace = true }
 criterion = { workspace = true }
 # `test` enables figment::Jail, the only way to exercise environment-variable overrides without

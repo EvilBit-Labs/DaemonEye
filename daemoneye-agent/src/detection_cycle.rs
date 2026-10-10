@@ -164,9 +164,13 @@ pub fn persist_alerts(store: &EventStore, alerts: &[Alert]) -> usize {
 ///
 /// # Errors
 ///
-/// Any [`StorageError`] opening the store; a schema mismatch names the rebuild path.
-pub fn open_event_store(path: &Path) -> Result<EventStore, anyhow::Error> {
-    EventStore::new(path).map_err(|error| {
+/// Any [`StorageError`] opening the store (redb's page cache is capped at
+/// `database.page_cache_mb`); a schema mismatch names the rebuild path.
+pub fn open_event_store(
+    path: &Path,
+    database: &daemoneye_lib::config::DatabaseConfig,
+) -> Result<EventStore, anyhow::Error> {
+    EventStore::new_configured(path, database).map_err(|error| {
         if let &StorageError::SchemaVersionMismatch { found, expected } = &error {
             return anyhow::anyhow!(
                 "event store at {} has schema version {found}, this binary expects {expected}; \

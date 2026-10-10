@@ -74,7 +74,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut telemetry = telemetry::TelemetryCollector::new("daemoneye-agent".to_owned());
 
     // Initialize the event store and the ingest pipeline that writes into it.
-    let event_store = std::sync::Arc::new(open_event_store(&config.database.path)?);
+    let event_store =
+        std::sync::Arc::new(open_event_store(&config.database.path, &config.database)?);
     let ingest_handle = ingest::spawn(std::sync::Arc::clone(&event_store), IngestConfig::default());
     // One above the last ordinal committed, so a restart never reuses a sequence the stored
     // watermark would discard as already delivered.

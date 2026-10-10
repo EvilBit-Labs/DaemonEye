@@ -24,6 +24,8 @@ mod error;
 mod index;
 pub mod ingest;
 pub mod mrc;
+#[cfg(test)]
+mod page_cache_tests;
 /// Bounded LRU cache of closed-bucket posting lists (R12, KTD8).
 ///
 /// Gated on `detection-engine` with the `lru` dependency it wraps.
@@ -46,6 +48,7 @@ pub use schema::{
     SignerError,
 };
 
+use crate::config::DatabaseConfig;
 use crate::models::{Alert, DetectionRule, ProcessRecord, SystemInfo};
 use bucket::{
     bucket_id, bucket_table_name, choose_granularity, parse_bucket_name, retention_cutoff,
@@ -70,6 +73,9 @@ use std::{
 
 /// redb table type for a process-event bucket: `(ts_ms, seq)` → versioned bytes.
 type EventTable<'a> = TableDefinition<'a, TsSeqKey, &'static [u8]>;
+
+/// Bytes in a MiB, for converting the configured page cache.
+const MIB: usize = 1024 * 1024;
 
 /// `ingest_watermarks` — collector id → highest committed `source_seq`.
 const WATERMARK_TABLE: TableDefinition<'static, &str, u64> =
@@ -180,35 +186,65 @@ impl EventStore {
     /// Default MRC rebuild window: 30 minutes, in milliseconds (§11.7.7).
     const DEFAULT_MRC_WINDOW_MS: u64 = 1_800_000;
 
-    /// Create (or open) the event store at `path`.
+    /// Create (or open) the event store at `path` with the default page cache.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let db_path = path.as_ref();
-        ensure_db_dir(db_path)?;
-        let db =
-            Database::create(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
-                path: db_path.to_path_buf(),
-                source,
-            })?;
-        let retention_ms = Self::DEFAULT_RETENTION_MS;
-        let store = Self {
-            db,
-            granularity_ms: choose_granularity(retention_ms),
-            retention_ms,
-            mrc_window_ms: Self::DEFAULT_MRC_WINDOW_MS,
-        };
-        store.classify_and_init()?;
-        Ok(store)
+        Self::new_with_page_cache(
+            path,
+            DatabaseConfig::PAGE_CACHE_MB_DEFAULT.saturating_mul(MIB),
+        )
     }
 
-    /// Open an existing event store at `path`.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
+    /// Create (or open) the event store at `path`, capping redb's page cache at `cache_bytes`.
+    pub fn new_with_page_cache<P: AsRef<Path>>(
+        path: P,
+        cache_bytes: usize,
+    ) -> Result<Self, StorageError> {
         let db_path = path.as_ref();
         ensure_db_dir(db_path)?;
-        let db =
-            Database::open(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
+        let db = Database::builder()
+            .set_cache_size(cache_bytes)
+            .create(db_path)
+            .map_err(|source| StorageError::DatabaseCreationFailed {
                 path: db_path.to_path_buf(),
                 source,
             })?;
+        Self::from_database(db)
+    }
+
+    /// Create (or open) the event store at `path` with the page cache `database` configures.
+    pub fn new_configured<P: AsRef<Path>>(
+        path: P,
+        database: &DatabaseConfig,
+    ) -> Result<Self, StorageError> {
+        Self::new_with_page_cache(path, database.page_cache_bytes())
+    }
+
+    /// Open an existing event store at `path` with the default page cache.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
+        Self::open_with_page_cache(
+            path,
+            DatabaseConfig::PAGE_CACHE_MB_DEFAULT.saturating_mul(MIB),
+        )
+    }
+
+    /// Open an existing event store at `path`, capping redb's page cache at `cache_bytes`.
+    pub fn open_with_page_cache<P: AsRef<Path>>(
+        path: P,
+        cache_bytes: usize,
+    ) -> Result<Self, StorageError> {
+        let db_path = path.as_ref();
+        ensure_db_dir(db_path)?;
+        let db = Database::builder()
+            .set_cache_size(cache_bytes)
+            .open(db_path)
+            .map_err(|source| StorageError::DatabaseCreationFailed {
+                path: db_path.to_path_buf(),
+                source,
+            })?;
+        Self::from_database(db)
+    }
+
+    fn from_database(db: Database) -> Result<Self, StorageError> {
         let retention_ms = Self::DEFAULT_RETENTION_MS;
         let store = Self {
             db,
