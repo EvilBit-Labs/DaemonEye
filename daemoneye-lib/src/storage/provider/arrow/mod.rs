@@ -210,7 +210,8 @@ pub fn epoch_seconds(time: SystemTime) -> Option<i64> {
     }
 }
 
-const fn arrow_type(column_type: ColumnType) -> Option<DataType> {
+/// The Arrow type a declared column type is read as.
+pub(crate) const fn arrow_type(column_type: ColumnType) -> Option<DataType> {
     match column_type {
         ColumnType::String => Some(DataType::Utf8),
         ColumnType::Int => Some(DataType::Int64),

@@ -240,6 +240,35 @@ async fn capped_run(matching_rows: u32) -> RuleEvaluation {
     only(&run(&fx).await).clone()
 }
 
+/// The gates refuse what they can name; the executor's planner refuses the rest at load, so a
+/// registered function over a column of the wrong type never reaches a cycle.
+#[test]
+fn a_rule_the_executor_cannot_plan_is_refused_at_load() {
+    let mut fx = fixture(config());
+    let unplannable = DetectionRule::new(
+        "r1".to_owned(),
+        "Rule r1".to_owned(),
+        "executor fixture".to_owned(),
+        "SELECT pid FROM processes WHERE length(pid) > 0".to_owned(),
+        "test".to_owned(),
+        AlertSeverity::High,
+    );
+    let error = fx.engine.load_rule(unplannable).unwrap_err();
+    assert!(
+        error.to_string().contains("cannot plan"),
+        "expected the load-time planning refusal, got {error}"
+    );
+    assert!(fx.engine.runnable_rules().is_empty());
+
+    // The control: the same function over a string column loads and runs.
+    load(
+        &mut fx,
+        "r2",
+        "SELECT pid FROM processes WHERE length(name) > 0",
+    );
+    assert_eq!(fx.engine.runnable_rules().len(), 1);
+}
+
 #[tokio::test]
 async fn a_rule_past_its_deadline_is_degraded_as_a_resource_limit() {
     let mut fx = fixture(config());

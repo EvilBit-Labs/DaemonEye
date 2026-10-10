@@ -90,6 +90,13 @@ pub enum PlanError {
         /// The literal as the rule wrote it.
         literal: String,
     },
+    /// The executor's session could not plan the rule over the catalog's declared shape, so it
+    /// would fail on every cycle (a function over a column of the wrong type, for example).
+    #[error("the executor cannot plan this rule: {message}")]
+    Unplannable {
+        /// The planner's diagnostic.
+        message: String,
+    },
 }
 
 /// A rule lowered into the half a collector evaluates and the half the agent keeps (R13).
@@ -421,6 +428,7 @@ const fn comparison_op(op: &BinaryOperator) -> Option<PredicateOp> {
 #[allow(clippy::wildcard_enum_match_arm)]
 fn identifier_name(expr: &Expr) -> Option<String> {
     match *expr {
+        Expr::Nested(ref inner) => identifier_name(inner),
         Expr::Identifier(ref ident) => Some(ident.value.clone()),
         Expr::CompoundIdentifier(ref parts) => parts.last().map(|ident| ident.value.clone()),
         _ => None,

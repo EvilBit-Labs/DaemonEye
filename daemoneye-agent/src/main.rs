@@ -484,8 +484,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 // Commit this cycle's rows before anything evaluates them. A cycle that collected
-                // nothing consumes no ordinal, so the next one stays contiguous for the watermark.
-                let mut window = next_window(previous_high_water_ms, previous_high_water_ms);
+                // nothing consumes no ordinal, so the next one stays contiguous for the watermark;
+                // it still evaluates whatever is stored up to now, so rows left behind by a crash
+                // or a withheld mark are caught up without waiting for a new collection.
+                let now_ms = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX));
+                let mut window = next_window(previous_high_water_ms, previous_high_water_ms.max(now_ms));
                 let mut sequence_gaps = Vec::new();
                 let mut ingest_failure = None;
                 match next_ordinal {

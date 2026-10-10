@@ -691,6 +691,7 @@ fn a_mismatched_literal_is_refused_on_either_side_of_the_comparison() {
     for sql in [
         "SELECT cpu_usage FROM processes WHERE cpu_usage = 'x'",
         "SELECT cpu_usage FROM processes WHERE 'x' = cpu_usage",
+        "SELECT cpu_usage FROM processes WHERE 'x' = (cpu_usage)",
         "SELECT cpu_usage FROM processes WHERE 'x' < cpu_usage OR cpu_usage > 1",
     ] {
         let error = plan_rule(&catalog, &cache, &rule(sql), 3).unwrap_err();

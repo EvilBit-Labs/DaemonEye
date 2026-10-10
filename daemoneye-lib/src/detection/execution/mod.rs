@@ -65,6 +65,7 @@
 
 pub mod completeness;
 pub mod derive;
+pub mod dry_run;
 pub mod executor;
 pub mod functions;
 pub mod regexp;

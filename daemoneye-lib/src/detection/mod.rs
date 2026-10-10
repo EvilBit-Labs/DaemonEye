@@ -230,6 +230,14 @@ impl DetectionEngine {
             return Ok(());
         };
         let compiled = plan_rule(&self.catalog, &self.patterns, rule, self.max_subquery_depth)?;
+        // The executor's own planner has the last word: what the gates above cannot name, it
+        // refuses here, once, instead of on every cycle.
+        if let Some(table) = self.catalog.table(&compiled.plan().table) {
+            execution::dry_run::check_plannable(&compiled, table, Arc::clone(&self.patterns))
+                .map_err(|error| PlanError::Unplannable {
+                    message: error.to_string(),
+                })?;
+        }
         self.health
             .track(rule_id, compiled.references().iter().cloned());
 
