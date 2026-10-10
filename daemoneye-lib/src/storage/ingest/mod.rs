@@ -1,4 +1,4 @@
-//! Single-writer group-commit ingest pipeline (T3 · U5).
+//! Single-writer group-commit ingest pipeline.
 //!
 //! A bounded [`tokio::sync::mpsc`] channel feeds a dedicated writer task that
 //! batches records — up to `batch_records` or `batch_window`, whichever comes
@@ -23,8 +23,8 @@
 //! so callers and tests can assert the mechanism ran, not just the outcome.
 //!
 //! The writer interface (submit → durable group commit → per-collector
-//! watermark) is the stable contract T6 builds on; the tokio-task internals are
-//! swappable behind it.
+//! watermark) is the stable contract; the tokio-task internals are swappable
+//! behind it.
 
 use crate::models::ProcessRecord;
 use crate::storage::EventStore;
@@ -37,8 +37,9 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tracing::warn;
 
-/// Bits of a `source_seq` that index a record within its epoch.
-const EPOCH_SHIFT: u32 = 32;
+/// Bits of a `source_seq` that index a record within its epoch; the agent packs its cycle
+/// ordinal above them, so the two must agree on this one constant.
+pub const EPOCH_SHIFT: u32 = 32;
 
 /// Size of one epoch of `source_seq` values.
 const EPOCH_SIZE: u64 = 1 << EPOCH_SHIFT;
@@ -374,8 +375,11 @@ fn observe_sequence(
                 });
             }
         }
-        let entry = running.entry(rec.collector_id.clone()).or_insert(0);
-        *entry = (*entry).max(rec.source_seq);
+        if let Some(seen) = running.get_mut(&rec.collector_id) {
+            *seen = (*seen).max(rec.source_seq);
+        } else {
+            running.insert(rec.collector_id.clone(), rec.source_seq);
+        }
     }
     running
 }

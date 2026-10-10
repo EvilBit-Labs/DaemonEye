@@ -2,8 +2,7 @@
 
 use std::cmp::Ordering;
 
-/// A primary key `(ts_ms, seq)`.
-pub(super) type Key = (u64, u32);
+pub(super) use crate::storage::read::Key;
 
 /// Keys present in both ascending lists, ascending.
 pub(super) fn intersect_sorted(a: &[Key], b: &[Key]) -> Vec<Key> {

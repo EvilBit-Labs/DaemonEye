@@ -1,4 +1,4 @@
-//! The agent's half of a detection cycle (T6 · U12, U13): ingest what was collected, load the
+//! The agent's half of a detection cycle: ingest what was collected, load the
 //! rules that were persisted, evaluate them through the executor, persist the alerts that were
 //! delivered.
 //!
@@ -19,7 +19,9 @@ use daemoneye_lib::detection::execution::completeness::{
 use daemoneye_lib::detection::execution::derive::CycleWindow;
 use daemoneye_lib::detection::execution::executor::{LatencyReport, RuleEvaluation, RuleExecutor};
 use daemoneye_lib::models::{Alert, CompletenessStatus, ProcessRecord};
-use daemoneye_lib::storage::ingest::{IngestError, IngestHandle, IngestRecord, SequenceGap};
+use daemoneye_lib::storage::ingest::{
+    EPOCH_SHIFT, IngestError, IngestHandle, IngestRecord, SequenceGap,
+};
 use daemoneye_lib::storage::{EventStore, StorageError};
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -30,9 +32,6 @@ use tracing::{debug, info, warn};
 
 /// The collector id the agent files procmond's rows under.
 pub const PROCMOND_COLLECTOR_ID: &str = "procmond";
-
-/// Bits of `source_seq` below the cycle ordinal.
-const ORDINAL_SHIFT: u32 = 32;
 
 /// What one cycle's ingest did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +64,7 @@ pub enum CycleIngestError {
 }
 
 fn source_seq(cycle_ordinal: u32, row_index: u32) -> u64 {
-    (u64::from(cycle_ordinal) << ORDINAL_SHIFT) | u64::from(row_index)
+    (u64::from(cycle_ordinal) << EPOCH_SHIFT) | u64::from(row_index)
 }
 
 /// Submit one cycle's rows and wait for them to commit.
@@ -115,7 +114,7 @@ pub fn next_cycle_ordinal(store: &EventStore, collector_id: &str) -> Result<u32,
     let Some(mark) = marks.get(collector_id) else {
         return Ok(0);
     };
-    let committed = u32::try_from(mark.checked_shr(ORDINAL_SHIFT).unwrap_or(0))
+    let committed = u32::try_from(mark.checked_shr(EPOCH_SHIFT).unwrap_or(0))
         .map_err(|_overflow| CycleIngestError::OrdinalExhausted)?;
     committed
         .checked_add(1)
@@ -145,10 +144,10 @@ pub fn load_persisted_rules(
     Ok(loaded)
 }
 
-/// Persist every alert.
+/// Persist every alert, returning how many were stored.
 ///
-/// The completeness marker is then readable later without a second write path. A failure to store one alert is logged with its id and does not stop the rest. Returns how many
-/// were stored.
+/// Storing the alert keeps its completeness marker readable later without a second write path. A
+/// failure on one alert is logged with its id and does not stop the rest.
 pub fn persist_alerts(store: &EventStore, alerts: &[Alert]) -> usize {
     let mut stored = 0_usize;
     for alert in alerts {
@@ -201,7 +200,7 @@ impl EngineCell for Mutex<DetectionEngine> {
 }
 
 /// What one detection cycle produced.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CycleResult {
     /// The alerts of every evaluation whose rule was still eligible afterwards.
     pub alerts: Vec<Alert>,
@@ -213,7 +212,7 @@ pub struct CycleResult {
     pub dropped_after_reeligibility: usize,
 }
 
-/// Evaluate every eligible rule over `window` (KTD7, R8, R20).
+/// Evaluate every eligible rule over `window` (R8, R20).
 ///
 /// The engine lock is taken in three separate scopes and never held across an `.await`
 /// (`clippy::await_holding_lock` is the compile-time proof). Alerts are returned only for
@@ -231,11 +230,7 @@ pub async fn run_detection_cycle(
         guard.runnable_rules()
     };
     if runnable.is_empty() {
-        return CycleResult {
-            alerts: Vec::new(),
-            evaluations: Vec::new(),
-            dropped_after_reeligibility: 0,
-        };
+        return CycleResult::default();
     }
 
     // Scope 2 (no lock): the executor holds no guard, so a scan of any length blocks nothing.

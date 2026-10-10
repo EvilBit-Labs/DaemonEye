@@ -109,19 +109,13 @@ const fn str_of(value: &ScalarValue) -> Option<&str> {
 
 fn term_for(column: &str, value: &ScalarValue) -> Option<IndexTerm> {
     let as_u32 = || int_of(value).and_then(|v| u32::try_from(v).ok());
-    if column == "pid" {
-        return as_u32().map(IndexTerm::Pid);
+    match column {
+        "pid" => as_u32().map(IndexTerm::Pid),
+        "ppid" => as_u32().map(IndexTerm::Ppid),
+        "name" => str_of(value).map(IndexTerm::name),
+        "executable_hash" => str_of(value).and_then(IndexTerm::exe_hash),
+        _ => None,
     }
-    if column == "ppid" {
-        return as_u32().map(IndexTerm::Ppid);
-    }
-    if column == "name" {
-        return str_of(value).map(IndexTerm::name);
-    }
-    if column == "executable_hash" {
-        return str_of(value).and_then(IndexTerm::exe_hash);
-    }
-    None
 }
 
 /// Everything `scan` takes from its filters: a time window and index term sets to intersect.

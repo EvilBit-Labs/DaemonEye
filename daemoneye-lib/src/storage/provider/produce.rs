@@ -5,15 +5,12 @@
 //! byte bound. No lock or transaction is held across an `.await`: there is no `.await` here.
 
 use super::arrow::{ArrowEncodeError, encode};
-use super::filters::PushedFilters;
 use super::keyset::{Key, intersect_sorted, union_sorted};
 use super::scan::ScanPlan;
-use super::{ScanCounters, ScanLimits};
 use crate::models::ProcessRecord;
-use crate::storage::postings_cache::{Postings, PostingsCache};
+use crate::storage::StorageError;
+use crate::storage::postings_cache::Postings;
 use crate::storage::read::{BucketReader, KeyedRecord};
-use crate::storage::{EventStore, StorageError};
-use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use std::sync::Arc;
@@ -78,32 +75,15 @@ struct Pending {
     bytes: usize,
 }
 
-/// One partition's work, cloned out of the plan so it can move onto the blocking thread.
+/// One partition's work: the shared plan plus the buckets this partition reads.
 pub(super) struct PartitionJob {
-    store: Arc<EventStore>,
-    cache: Arc<PostingsCache>,
-    table_schema: SchemaRef,
-    projection: Option<Vec<usize>>,
-    filters: PushedFilters,
+    plan: Arc<ScanPlan>,
     buckets: Vec<u64>,
-    limits: ScanLimits,
-    now_bucket: u64,
-    counters: Arc<ScanCounters>,
 }
 
 impl PartitionJob {
-    pub(super) fn new(plan: &ScanPlan, buckets: Vec<u64>) -> Self {
-        Self {
-            store: Arc::clone(&plan.store),
-            cache: Arc::clone(&plan.cache),
-            table_schema: Arc::clone(&plan.table_schema),
-            projection: plan.projection.clone(),
-            filters: plan.filters.clone(),
-            buckets,
-            limits: plan.limits,
-            now_bucket: plan.now_bucket,
-            counters: Arc::clone(&plan.counters),
-        }
+    pub(super) const fn new(plan: Arc<ScanPlan>, buckets: Vec<u64>) -> Self {
+        Self { plan, buckets }
     }
 
     /// Read the run and send batches; a dropped receiver ends the run quietly.
@@ -115,7 +95,7 @@ impl PartitionJob {
     }
 
     fn drive(&self, tx: &Sender<Result<RecordBatch>>) -> Result<(), Stop> {
-        let reader = self.store.open_read()?;
+        let reader = self.plan.store.open_read()?;
         let mut pending = Pending::default();
         for &bucket in &self.buckets {
             self.read_bucket(&reader, bucket, &mut pending, tx)?;
@@ -124,7 +104,7 @@ impl PartitionJob {
     }
 
     fn chunk_rows(&self) -> usize {
-        self.limits.batch_size.min(READ_CHUNK_ROWS)
+        self.plan.limits.batch_size.min(READ_CHUNK_ROWS)
     }
 
     fn read_bucket(
@@ -134,9 +114,9 @@ impl PartitionJob {
         pending: &mut Pending,
         tx: &Sender<Result<RecordBatch>>,
     ) -> Result<(), Stop> {
-        let (start, end) = (self.filters.start_ms(), self.filters.end_ms());
+        let (start, end) = (self.plan.filters.start_ms(), self.plan.filters.end_ms());
         let chunk_rows = self.chunk_rows();
-        if self.filters.term_sets().is_empty() {
+        if self.plan.filters.term_sets().is_empty() {
             let mut after = None;
             loop {
                 let chunk = reader.range_chunk(bucket, start, end, after, chunk_rows)?;
@@ -161,13 +141,14 @@ impl PartitionJob {
     /// Posting-list intersection for `bucket`, clamped to the time window (R12).
     fn candidate_keys(&self, reader: &BucketReader, bucket: u64) -> Result<Vec<Key>, Stop> {
         let mut acc: Option<Vec<Key>> = None;
-        for set in self.filters.term_sets() {
+        for set in self.plan.filters.term_sets() {
             let lists = set
                 .iter()
                 .map(|&term| {
                     let key = (term.kind(), bucket, term.as_u128());
-                    self.cache
-                        .get_or_load(key, self.now_bucket, || reader.postings(bucket, term))
+                    self.plan
+                        .cache
+                        .get_or_load(key, self.plan.now_bucket, || reader.postings(bucket, term))
                 })
                 .collect::<Result<Vec<Postings>, StorageError>>()?;
             let slices: Vec<&[Key]> = lists.iter().map(AsRef::as_ref).collect();
@@ -185,7 +166,7 @@ impl PartitionJob {
                 break;
             }
         }
-        let (start, end) = (self.filters.start_ms(), self.filters.end_ms());
+        let (start, end) = (self.plan.filters.start_ms(), self.plan.filters.end_ms());
         let mut keys = acc.unwrap_or_default();
         keys.retain(|&(ts_ms, _)| ts_ms >= start && ts_ms < end);
         Ok(keys)
@@ -201,20 +182,20 @@ impl PartitionJob {
             return Err(Stop::Closed);
         }
         for (_key, record) in chunk {
-            self.counters.add_rows_read(1);
+            self.plan.counters.add_rows_read(1);
             let size = estimated_row_bytes(&record);
-            if size > self.limits.batch_max_bytes {
-                self.counters.add_oversized(1);
+            if size > self.plan.limits.batch_max_bytes {
+                self.plan.counters.add_oversized(1);
                 continue;
             }
             if !pending.rows.is_empty()
-                && pending.bytes.saturating_add(size) > self.limits.batch_max_bytes
+                && pending.bytes.saturating_add(size) > self.plan.limits.batch_max_bytes
             {
                 self.flush(pending, tx)?;
             }
             pending.bytes = pending.bytes.saturating_add(size);
             pending.rows.push(record);
-            if pending.rows.len() >= self.limits.batch_size {
+            if pending.rows.len() >= self.plan.limits.batch_size {
                 self.flush(pending, tx)?;
             }
         }
@@ -226,8 +207,12 @@ impl PartitionJob {
         if rows.is_empty() {
             return Ok(());
         }
-        let batch = encode(&rows, &self.table_schema, self.projection.as_deref())?;
-        self.counters.add_batch();
+        let batch = encode(
+            &rows,
+            &self.plan.table_schema,
+            self.plan.projection.as_deref(),
+        )?;
+        self.plan.counters.add_batch();
         tx.blocking_send(Ok(batch)).map_err(|_closed| Stop::Closed)
     }
 }

@@ -99,7 +99,7 @@ pub enum ProviderError {
 
 /// What the scans of one provider have read, cumulative across scans.
 ///
-/// This is the seam U10's completeness fold reads: after draining a rule's stream, a non-zero
+/// This is the seam the completeness fold reads: after draining a rule's stream, a non-zero
 /// [`ScanCounters::oversized_rows`] means the evaluation skipped rows too large to batch and must
 /// be degraded with `CompletenessReason::ResourceLimit` naming [`ScanCounters::table`]. A
 /// provider is built per evaluation, so the counts are per evaluation.

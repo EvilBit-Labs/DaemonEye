@@ -21,13 +21,12 @@ use sqlparser::ast::{
     BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, ObjectName,
     Select, SelectItem, SetExpr, Statement, TableFactor, Value, Visit, Visitor,
 };
-use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
 use std::ops::ControlFlow;
 
 use crate::detection::catalog::{SchemaCatalog, UnknownReference};
 use crate::detection::regex_cache::{RegexCache, compile_rule_patterns};
-use crate::detection_bounds::{PUSHDOWN_TASK_TTL, SQL_PARSER_RECURSION_LIMIT};
+use crate::detection::sql_validation::parse_statements;
+use crate::detection_bounds::PUSHDOWN_TASK_TTL;
 use crate::models::rule::{DetectionRule, RuleError};
 use crate::proto::{ColumnType, Literal, Predicate, PredicateOp, PushdownPlan, literal};
 
@@ -238,12 +237,8 @@ fn ttl_millis() -> u64 {
 
 /// Parse the rule's SQL into exactly one statement.
 fn parse_single_select(sql: &str) -> Result<Statement, PlanError> {
-    let dialect = GenericDialect {};
-    let mut statements = Parser::new(&dialect)
-        .with_recursion_limit(SQL_PARSER_RECURSION_LIMIT)
-        .try_with_sql(sql)
-        .and_then(|mut parser| parser.parse_statements())
-        .map_err(|error| PlanError::Parse(error.to_string()))?;
+    let mut statements =
+        parse_statements(sql).map_err(|error| PlanError::Parse(error.to_string()))?;
     if statements.len() != 1 {
         return Err(PlanError::NotASelect);
     }

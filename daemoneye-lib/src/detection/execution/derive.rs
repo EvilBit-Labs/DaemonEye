@@ -29,11 +29,9 @@ use sqlparser::ast::{
     Expr as SqlExpr, FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments, Ident,
     ObjectName, SetExpr, Statement, UnaryOperator, Value, VisitMut, VisitorMut,
 };
-use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
 
 use crate::detection::planner::CompiledRule;
-use crate::detection_bounds::SQL_PARSER_RECURSION_LIMIT;
+use crate::detection::sql_validation::parse_statements;
 use crate::proto::{Literal, Predicate, PredicateOp, PushdownPlan, literal};
 
 /// The time column every catalog table carries, in `Int64` milliseconds.
@@ -389,11 +387,7 @@ fn parse_selection(fragment: &str) -> Result<SqlExpr, DeriveError> {
         message: message.to_owned(),
     };
     let sql = format!("SELECT 1 FROM t WHERE {fragment}");
-    let parsed = Parser::new(&GenericDialect {})
-        .with_recursion_limit(SQL_PARSER_RECURSION_LIMIT)
-        .try_with_sql(&sql)
-        .and_then(|mut parser| parser.parse_statements())
-        .map_err(|error| parse_error(&error.to_string()))?;
+    let parsed = parse_statements(&sql).map_err(|error| parse_error(&error.to_string()))?;
     let mut statements = parsed.into_iter();
     let (Some(Statement::Query(query)), None) = (statements.next(), statements.next()) else {
         return Err(parse_error("not exactly one query"));

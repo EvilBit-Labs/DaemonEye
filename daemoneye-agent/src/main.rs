@@ -9,6 +9,8 @@ use daemoneye_lib::detection::execution::completeness::IngestSnapshot;
 use daemoneye_lib::detection::execution::executor::RuleExecutor;
 use daemoneye_lib::storage::ingest::{self, IngestConfig};
 use daemoneye_lib::{alerting, config, detection_bounds, telemetry};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, error, info, warn};
 
@@ -74,9 +76,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut telemetry = telemetry::TelemetryCollector::new("daemoneye-agent".to_owned());
 
     // Initialize the event store and the ingest pipeline that writes into it.
-    let event_store =
-        std::sync::Arc::new(open_event_store(&config.database.path, &config.database)?);
-    let ingest_handle = ingest::spawn(std::sync::Arc::clone(&event_store), IngestConfig::default());
+    let event_store = Arc::new(open_event_store(&config.database.path, &config.database)?);
+    let ingest_handle = ingest::spawn(Arc::clone(&event_store), IngestConfig::default());
     // One above the last ordinal committed, so a restart never reuses a sequence the stored
     // watermark would discard as already delivered.
     let mut next_ordinal = Some(next_cycle_ordinal(&event_store, PROCMOND_COLLECTOR_ID)?);
@@ -269,7 +270,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The detection engine the admission gate already feeds. It is *not* constructed here: a
     // second engine would leave this one's catalog empty forever, so every rule would defer under
     // R18 and never plan, with nothing to see in the logs.
-    let detection_engine = std::sync::Arc::clone(broker_manager.detection_engine());
+    let detection_engine = Arc::clone(broker_manager.detection_engine());
 
     // Reload every persisted rule; a rejected one is logged with its id and does not stop startup.
     let mut startup_engine = detection_engine.lock().await;
@@ -277,7 +278,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // One executor for the process, sharing the engine's compiled-pattern cache so a pattern the
     // planner validated is not compiled twice.
     let executor = RuleExecutor::new(
-        std::sync::Arc::clone(&event_store),
+        Arc::clone(&event_store),
         startup_engine.regex_cache(),
         &config.detection,
     )?;
@@ -525,7 +526,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let saturation_now = ingest_handle
                     .metrics()
                     .saturation_alerts
-                    .load(std::sync::atomic::Ordering::Relaxed);
+                    .load(Ordering::Relaxed);
                 let heartbeat = broker_manager.collector_heartbeat_health(PROCMOND_COLLECTOR_ID).await;
                 let signals = build_signals(
                     PROCMOND_COLLECTOR_ID,

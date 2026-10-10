@@ -88,9 +88,6 @@ pub struct DetectionEngine {
     /// Shared with the executor, which compiles no patterns of its own: the plan and the run see
     /// one cache, so a pattern compiled at load is the one matched at execution.
     patterns: Arc<RegexCache>,
-    /// The configuration this engine was built from, so everything the executor is sized by comes
-    /// from the same validated source as the bounds enforced at load.
-    config: DetectionConfig,
     /// Which load of each rule is current (ADR-0012); the only issuer of `Generation`.
     generations: Generations,
     /// Live pushdown tasks and when each was last confirmed on its collector (R16).
@@ -124,7 +121,6 @@ impl DetectionEngine {
             catalog: SchemaCatalog::new(),
             health: RuleHealthRegistry::new(),
             patterns: Arc::new(RegexCache::new()),
-            config: config.clone(),
             generations: Generations::default(),
             tasks: TaskRenewalLedger::new(),
             max_subquery_depth: config.max_subquery_depth,
@@ -132,15 +128,6 @@ impl DetectionEngine {
             rejections: RejectionLog::new(),
             last_evaluations: BTreeMap::new(),
         }
-    }
-
-    /// The configuration this engine was built with.
-    ///
-    /// The executor is sized from it: the match cap, the session's partitions, batch size and
-    /// pool, the provider's scan limits and the posting cache's bounds.
-    #[must_use]
-    pub const fn config(&self) -> &DetectionConfig {
-        &self.config
     }
 
     /// The regex cache plan-time compilation fills, shared so the executor matches with the very

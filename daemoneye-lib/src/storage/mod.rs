@@ -34,8 +34,7 @@ pub mod postings_cache;
 /// `DataFusion` `TableProvider` over the event store (ADR-0006, KTD2).
 ///
 /// Gated on `detection-engine` so `storage` stays buildable without the
-/// execution engine. Declared from this unit onward so the feature gate is
-/// exercised by CI before any provider code exists.
+/// execution engine.
 #[cfg(feature = "detection-engine")]
 pub mod provider;
 pub mod read;
@@ -48,7 +47,7 @@ pub use schema::{
     SignerError,
 };
 
-use crate::config::DatabaseConfig;
+use crate::config::{DatabaseConfig, MIB};
 use crate::models::{Alert, DetectionRule, ProcessRecord, SystemInfo};
 use bucket::{
     bucket_id, bucket_table_name, choose_granularity, parse_bucket_name, retention_cutoff,
@@ -73,9 +72,6 @@ use std::{
 
 /// redb table type for a process-event bucket: `(ts_ms, seq)` → versioned bytes.
 type EventTable<'a> = TableDefinition<'a, TsSeqKey, &'static [u8]>;
-
-/// Bytes in a MiB, for converting the configured page cache.
-const MIB: usize = 1024 * 1024;
 
 /// `ingest_watermarks` — collector id → highest committed `source_seq`.
 const WATERMARK_TABLE: TableDefinition<'static, &str, u64> =

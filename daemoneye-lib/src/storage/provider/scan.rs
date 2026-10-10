@@ -49,7 +49,7 @@ pub(super) struct ScanPlan {
 /// `(ts_ms, seq)` within a partition and unspecified across partitions.
 #[derive(Debug)]
 pub struct BucketScanExec {
-    plan: ScanPlan,
+    plan: Arc<ScanPlan>,
     schema: SchemaRef,
     properties: Arc<PlanProperties>,
 }
@@ -63,7 +63,7 @@ impl BucketScanExec {
             Boundedness::Bounded,
         );
         Self {
-            plan,
+            plan: Arc::new(plan),
             schema: projected,
             properties: Arc::new(properties),
         }
@@ -77,7 +77,7 @@ impl BucketScanExec {
 
     /// Counters shared with the provider that planned this scan.
     #[must_use]
-    pub const fn counters(&self) -> &Arc<ScanCounters> {
+    pub fn counters(&self) -> &Arc<ScanCounters> {
         &self.plan.counters
     }
 }
@@ -142,7 +142,7 @@ impl ExecutionPlan for BucketScanExec {
                 self.plan.runs.len()
             )));
         };
-        let job = PartitionJob::new(&self.plan, buckets.clone());
+        let job = PartitionJob::new(Arc::clone(&self.plan), buckets.clone());
         let mut builder =
             RecordBatchReceiverStreamBuilder::new(Arc::clone(&self.schema), STREAM_CAPACITY);
         let tx = builder.tx();

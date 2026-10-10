@@ -8,7 +8,7 @@
 //! The mutex is `parking_lot`'s and is sync-only: it is never held while the loader runs, and
 //! `get_or_load` is deliberately not `async`.
 
-use super::read::IndexKind;
+use super::read::{IndexKind, Key};
 use crate::config::DetectionConfig;
 use lru::LruCache;
 use parking_lot::Mutex;
@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub type PostingsKey = (IndexKind, u64, u128);
 
 /// One posting list: `(ts_ms, seq)` pointers into a bucket's event table.
-pub type Postings = Arc<[(u64, u32)]>;
+pub type Postings = Arc<[Key]>;
 
 /// A bounded, exact-LRU cache of closed-bucket posting lists.
 #[derive(Debug)]
@@ -79,7 +79,7 @@ impl PostingsCache {
         &self,
         key: PostingsKey,
         now_bucket: u64,
-        loader: impl FnOnce() -> Result<Vec<(u64, u32)>, E>,
+        loader: impl FnOnce() -> Result<Vec<Key>, E>,
     ) -> Result<Postings, E> {
         if key.1 >= now_bucket {
             self.bypassed_open.fetch_add(1, Ordering::Relaxed);

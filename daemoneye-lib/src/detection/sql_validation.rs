@@ -20,7 +20,7 @@ use sqlparser::ast::{
     Visit as _, Visitor,
 };
 use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
+use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Span;
 use std::ops::ControlFlow;
 
@@ -48,14 +48,9 @@ const MAX_JOINS: usize = 4;
 /// assert!(validate_detection_sql("DROP TABLE processes", 3).is_err());
 /// ```
 pub fn validate_detection_sql(sql: &str, max_subquery_depth: u32) -> Result<(), SqlRejection> {
-    let dialect = GenericDialect {};
-    let statements = Parser::new(&dialect)
-        .with_recursion_limit(SQL_PARSER_RECURSION_LIMIT)
-        .try_with_sql(sql)
-        .and_then(|mut parser| parser.parse_statements())
-        .map_err(|error| SqlRejection::ParseFailed {
-            message: error.to_string(),
-        })?;
+    let statements = parse_statements(sql).map_err(|error| SqlRejection::ParseFailed {
+        message: error.to_string(),
+    })?;
 
     // `first()` rather than a slice pattern: a slice pattern on `&[Statement]` trips
     // `clippy::pattern_type_mismatch`, and the length check has to be explicit anyway.
@@ -85,6 +80,21 @@ pub fn validate_detection_sql(sql: &str, max_subquery_depth: u32) -> Result<(), 
         ControlFlow::Continue(()) => Ok(()),
         ControlFlow::Break(rejection) => Err(*rejection),
     }
+}
+
+/// Parse `sql` with the one dialect and recursion limit every rule reader shares.
+///
+/// The validator, the planner and the executor's residual re-parse all go through here, so none
+/// can accept a statement another would read differently.
+///
+/// # Errors
+///
+/// The parser's own error.
+pub(crate) fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParserError> {
+    Parser::new(&GenericDialect {})
+        .with_recursion_limit(SQL_PARSER_RECURSION_LIMIT)
+        .try_with_sql(sql)
+        .and_then(|mut parser| parser.parse_statements())
 }
 
 /// The leading SQL keyword of a statement, for naming a rejected statement kind to an operator.

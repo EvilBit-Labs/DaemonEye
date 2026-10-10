@@ -31,6 +31,7 @@ use datafusion::logical_expr::{
 
 use crate::detection::execution::regexp::{LatencySink, RegexpUdf};
 use crate::detection::regex_cache::RegexCache;
+use crate::integrity::bytes_to_hex;
 
 /// Names registered by [`allowlisted_udfs`], including the `match` alias, sorted.
 pub const ALLOWLISTED_UDF_NAMES: &[&str] =
@@ -193,20 +194,12 @@ fn hex_kernel(arrays: &[ArrayRef]) -> Result<ArrayRef> {
     let binary = as_binary(arg(arrays, 0, "hex")?)?;
     let out: StringArray = as_binary_array(&binary)?
         .iter()
-        .map(|cell| cell.map(encode_hex))
+        .map(|cell| cell.map(bytes_to_hex))
         .collect();
     Ok(Arc::new(out))
 }
 
 const HEX_RADIX: u32 = 16;
-
-fn encode_hex(bytes: &[u8]) -> String {
-    let digit = |nibble: u8| char::from_digit(u32::from(nibble), HEX_RADIX).unwrap_or('0');
-    bytes
-        .iter()
-        .flat_map(|byte| [digit(byte >> 4), digit(byte & 0x0f)])
-        .collect()
-}
 
 /// One byte from two ASCII hex digits, either case; `None` for anything else.
 fn hex_pair(high_digit: u8, low_digit: u8) -> Option<u8> {

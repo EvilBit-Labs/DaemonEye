@@ -5,7 +5,6 @@
 //! one `RecordBatch`, is timed as a whole, and is recorded against its pattern text.
 
 use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -77,16 +76,10 @@ impl LatencySink {
             .per_pattern
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        match guard.entry(pattern.to_owned()) {
-            Entry::Occupied(mut slot) => {
-                if elapsed > *slot.get() {
-                    slot.insert(elapsed);
-                }
-            }
-            Entry::Vacant(slot) => {
-                slot.insert(elapsed);
-            }
-        }
+        guard
+            .entry(pattern.to_owned())
+            .and_modify(|worst| *worst = (*worst).max(elapsed))
+            .or_insert(elapsed);
     }
 
     /// Take everything recorded so far, leaving the sink empty.

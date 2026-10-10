@@ -53,11 +53,7 @@ pub const METADATA_KEY_FILE_EXISTS: &str = "daemoneye.file_exists";
 /// `"false"`, so an unparseable value falls back to the caller's default rather
 /// than silently reading as `false`.
 fn metadata_flag(metadata: &std::collections::HashMap<String, String>, key: &str) -> Option<bool> {
-    match metadata.get(key)?.as_str() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
-    }
+    metadata.get(key)?.parse().ok()
 }
 
 impl ProtoProcessRecord {
@@ -675,7 +671,7 @@ mod tests {
 
     #[test]
     fn accessible_and_file_exists_survive_a_proto_round_trip() {
-        // U4 taught `From<ProtoProcessRecord>` to store these two flags in
+        // `From<ProtoProcessRecord>` stores these two flags in
         // metadata. The reverse direction previously hardcoded `accessible: true`,
         // which was merely uninformative while the native model carried nothing —
         // but became wrong the moment the native model held the real value, since
@@ -714,7 +710,7 @@ mod tests {
 
     #[test]
     fn a_natively_built_record_keeps_the_historical_conversion_defaults() {
-        // No metadata keys, so the pre-U4 defaults still apply: `accessible` is
+        // No metadata keys, so the conversion defaults apply: `accessible` is
         // optimistic and `file_exists` is the executable-path approximation.
         let bare = NativeProcessRecord::new(7, "bare".to_owned());
         let proto = ProtoProcessRecord::from(bare);

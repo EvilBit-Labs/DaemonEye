@@ -1,4 +1,4 @@
-//! Bucket-at-a-time read primitives (T6 · U2).
+//! Bucket-at-a-time read primitives.
 //!
 //! The `DataFusion` provider reads one time bucket per partition, under one redb
 //! MVCC snapshot, instead of materialising a window through
@@ -19,7 +19,10 @@ use redb::{MultimapTableDefinition, ReadOnlyTable, ReadableDatabase};
 use std::ops::Bound;
 
 /// A primary key `(ts_ms, seq)` paired with its decoded row.
-pub type KeyedRecord = ((u64, u32), crate::models::ProcessRecord);
+pub type KeyedRecord = (Key, crate::models::ProcessRecord);
+
+/// A primary key `(ts_ms, seq)`.
+pub type Key = (u64, u32);
 
 /// Which secondary index a posting list belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,19 +128,14 @@ impl BucketReader {
         bucket_id: u64,
         start_ms: u64,
         end_ms: u64,
-        after: Option<(u64, u32)>,
+        after: Option<Key>,
         limit: usize,
     ) -> Result<Vec<KeyedRecord>, StorageError> {
         let lower_key = (start_ms, 0_u32);
         let upper_key = (end_ms, 0_u32);
-        let lower = match after {
-            Some(key) if key >= lower_key => Bound::Excluded(key),
-            _ => Bound::Included(lower_key),
-        };
-        let starts_at = match lower {
-            Bound::Included(key) | Bound::Excluded(key) => key,
-            Bound::Unbounded => lower_key,
-        };
+        let resume = after.filter(|key| *key >= lower_key);
+        let lower = resume.map_or(Bound::Included(lower_key), Bound::Excluded);
+        let starts_at = resume.unwrap_or(lower_key);
         if limit == 0 || starts_at >= upper_key {
             return Ok(Vec::new());
         }
@@ -158,11 +156,7 @@ impl BucketReader {
     /// Ascending `(ts_ms, seq)` postings for `term` in `bucket_id`; empty if the
     /// index table is absent. A plain read: hash-keyed indexes can return
     /// candidates that do not match, so callers verify against the row.
-    pub fn postings(
-        &self,
-        bucket_id: u64,
-        term: IndexTerm,
-    ) -> Result<Vec<(u64, u32)>, StorageError> {
+    pub fn postings(&self, bucket_id: u64, term: IndexTerm) -> Result<Vec<Key>, StorageError> {
         let found = match term {
             IndexTerm::Pid(v) => {
                 self.collect_postings(u32_index_def(&pid_index_name(bucket_id)), v)
@@ -182,11 +176,7 @@ impl BucketReader {
 
     /// Rows for `keys` in `bucket_id`, in input order (duplicates repeat);
     /// keys absent from this bucket are skipped.
-    pub fn fetch(
-        &self,
-        bucket_id: u64,
-        keys: &[(u64, u32)],
-    ) -> Result<Vec<KeyedRecord>, StorageError> {
+    pub fn fetch(&self, bucket_id: u64, keys: &[Key]) -> Result<Vec<KeyedRecord>, StorageError> {
         let Some(table) = self.event_table(bucket_id)? else {
             return Ok(Vec::new());
         };
@@ -217,7 +207,7 @@ impl BucketReader {
         &self,
         def: MultimapTableDefinition<'a, K, TsSeqKey>,
         term: K::SelfType<'a>,
-    ) -> Result<Option<Vec<(u64, u32)>>, StorageError> {
+    ) -> Result<Option<Vec<Key>>, StorageError> {
         let idx = match self.txn.open_multimap_table(def) {
             Ok(idx) => idx,
             Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
@@ -253,7 +243,7 @@ mod tests {
             .unwrap();
     }
 
-    fn keys(rows: &[KeyedRecord]) -> Vec<(u64, u32)> {
+    fn keys(rows: &[KeyedRecord]) -> Vec<Key> {
         rows.iter().map(|&(key, _)| key).collect()
     }
 

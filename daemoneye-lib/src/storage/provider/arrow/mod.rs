@@ -19,6 +19,7 @@ use datafusion::arrow::array::{
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -122,7 +123,7 @@ impl Col {
             // Absent (or unreadable): false when the column cannot be null, else NULL.
             _ => (!field.is_nullable()).then_some(false),
         };
-        let strings = |f: &dyn Fn(&ProcessRecord) -> Option<String>| -> ArrayRef {
+        let strings = |f: &dyn for<'r> Fn(&'r ProcessRecord) -> Option<Cow<'r, str>>| -> ArrayRef {
             Arc::new(records.iter().map(f).collect::<StringArray>())
         };
         Ok(match self {
@@ -138,15 +139,13 @@ impl Col {
                     .map(|r| r.ppid.map(|p| u64::from(p.raw())))
                     .collect::<UInt64Array>(),
             ),
-            Self::Name => strings(&|r| Some(r.name.clone())),
-            Self::ExecutablePath => strings(&|r| {
-                r.executable_path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().into_owned())
-            }),
-            Self::CommandLine => strings(&|r| r.command_line.clone()),
-            Self::ExecutableHash => strings(&|r| r.executable_hash.clone()),
-            Self::UserId => strings(&|r| r.user_id.map(|u| u.to_string())),
+            Self::Name => strings(&|r| Some(Cow::Borrowed(r.name.as_str()))),
+            Self::ExecutablePath => {
+                strings(&|r| r.executable_path.as_ref().map(|p| p.to_string_lossy()))
+            }
+            Self::CommandLine => strings(&|r| r.command_line.as_deref().map(Cow::Borrowed)),
+            Self::ExecutableHash => strings(&|r| r.executable_hash.as_deref().map(Cow::Borrowed)),
+            Self::UserId => strings(&|r| r.user_id.map(|u| Cow::Owned(u.to_string()))),
             Self::StartTime => {
                 let secs = records
                     .iter()

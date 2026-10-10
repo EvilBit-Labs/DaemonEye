@@ -86,12 +86,15 @@ pub struct DatabaseConfig {
     ///
     /// Bounds the resident memory a scan can accumulate from the event store: redb's own default
     /// is 1 GiB, so left alone, resident memory tracks the bytes a scan touches rather than any
-    /// executor setting (T6 U9 measurement). The `_MAX` is redb's default, so the ceiling never
+    /// executor setting (`docs/decisions/2026-10-08-t6-full-retention-memory.md`). The `_MAX` is redb's default, so the ceiling never
     /// permits more than the unconfigured behaviour; the `_MIN` keeps a few pages of working set
     /// per scan partition. A smaller cache trades memory for disk reads and so for scan latency.
     #[serde(default = "default_page_cache_mb")]
     pub page_cache_mb: usize,
 }
+
+/// Bytes in a MiB, for the page cache and the executor's byte bounds.
+pub(crate) const MIB: usize = 1024 * 1024;
 
 /// Serde default for [`DatabaseConfig::page_cache_mb`], so a file written before it existed loads.
 const fn default_page_cache_mb() -> usize {
@@ -111,7 +114,7 @@ impl DatabaseConfig {
     /// The configured cache in bytes, for `redb::Builder::set_cache_size`.
     #[must_use]
     pub const fn page_cache_bytes(&self) -> usize {
-        self.page_cache_mb.saturating_mul(1024 * 1024)
+        self.page_cache_mb.saturating_mul(MIB)
     }
 
     /// Check `page_cache_mb` against its range.
@@ -120,16 +123,12 @@ impl DatabaseConfig {
     ///
     /// Returns [`ConfigError::ValidationError`] when out of range; never clamps.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        let (min, max) = (Self::PAGE_CACHE_MB_MIN, Self::PAGE_CACHE_MB_MAX);
-        if !(min..=max).contains(&self.page_cache_mb) {
-            return Err(ConfigError::ValidationError {
-                message: format!(
-                    "database.page_cache_mb must be between {min} and {max}, got {}",
-                    self.page_cache_mb
-                ),
-            });
-        }
-        Ok(())
+        check_range(
+            "database.page_cache_mb",
+            &self.page_cache_mb,
+            &Self::PAGE_CACHE_MB_MIN,
+            &Self::PAGE_CACHE_MB_MAX,
+        )
     }
 }
 
@@ -303,50 +302,50 @@ impl DetectionConfig {
     /// rejected, never clamped: an operator who asked for something unsupported should hear so.
     pub fn validate(&self) -> Result<(), ConfigError> {
         check_range(
-            "max_subquery_depth",
+            "detection.max_subquery_depth",
             &self.max_subquery_depth,
             &Self::MAX_SUBQUERY_DEPTH_MIN,
             &Self::MAX_SUBQUERY_DEPTH_MAX,
         )?;
         check_range(
-            "pattern_latency_threshold_ms",
+            "detection.pattern_latency_threshold_ms",
             &self.pattern_latency_threshold_ms,
             &Self::PATTERN_LATENCY_THRESHOLD_MS_MIN,
             &Self::PATTERN_LATENCY_THRESHOLD_MS_MAX,
         )?;
         check_range(
-            "max_matches_per_rule",
+            "detection.max_matches_per_rule",
             &self.max_matches_per_rule,
             &Self::MAX_MATCHES_PER_RULE_MIN,
             &Self::MAX_MATCHES_PER_RULE_MAX,
         )?;
         check_range(
-            "executor_target_partitions",
+            "detection.executor_target_partitions",
             &self.executor_target_partitions,
             &Self::EXECUTOR_TARGET_PARTITIONS_MIN,
             &Self::EXECUTOR_TARGET_PARTITIONS_MAX,
         )?;
         check_range(
-            "executor_batch_size",
+            "detection.executor_batch_size",
             &self.executor_batch_size,
             &Self::EXECUTOR_BATCH_SIZE_MIN,
             &Self::EXECUTOR_BATCH_SIZE_MAX,
         )?;
         self.validate_batch_max_bytes()?;
         check_range(
-            "executor_memory_pool_bytes",
+            "detection.executor_memory_pool_bytes",
             &self.executor_memory_pool_bytes,
             &Self::EXECUTOR_MEMORY_POOL_BYTES_MIN,
             &Self::EXECUTOR_MEMORY_POOL_BYTES_MAX,
         )?;
         check_range(
-            "posting_cache_max_entries",
+            "detection.posting_cache_max_entries",
             &self.posting_cache_max_entries,
             &Self::POSTING_CACHE_MAX_ENTRIES_MIN,
             &Self::POSTING_CACHE_MAX_ENTRIES_MAX,
         )?;
         check_range(
-            "posting_cache_max_postings",
+            "detection.posting_cache_max_postings",
             &self.posting_cache_max_postings,
             &Self::POSTING_CACHE_MAX_POSTINGS_MIN,
             &Self::POSTING_CACHE_MAX_POSTINGS_MAX,
@@ -367,7 +366,7 @@ impl DetectionConfig {
             });
         }
         check_range(
-            "executor_batch_max_bytes",
+            "detection.executor_batch_max_bytes",
             &self.executor_batch_max_bytes,
             &Self::EXECUTOR_BATCH_MAX_BYTES_MIN,
             &Self::EXECUTOR_BATCH_MAX_BYTES_MAX,
@@ -375,14 +374,14 @@ impl DetectionConfig {
     }
 }
 
-/// Reject `value` outside `min..=max`, naming the field and both bounds.
+/// Reject `value` outside `min..=max`, naming the dotted field and both bounds.
 fn check_range<T>(field: &str, value: &T, min: &T, max: &T) -> Result<(), ConfigError>
 where
     T: PartialOrd + std::fmt::Display,
 {
     if *value < *min || *value > *max {
         return Err(ConfigError::ValidationError {
-            message: format!("detection.{field} must be between {min} and {max}, got {value}"),
+            message: format!("{field} must be between {min} and {max}, got {value}"),
         });
     }
     Ok(())

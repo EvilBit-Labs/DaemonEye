@@ -1,9 +1,8 @@
 //! The single eligibility site: which rules may run, and under which generation (KTD6, R8).
 //!
-//! Whether a rule runs was once decided independently by the old `execute_rules`, `is_rule_covered` and
-//! the planner, each reading a different subset of the three places a verdict lives (`enabled`,
-//! the compiled-plan map, rule health). `DetectionEngine::is_eligible` is now the only
-//! statement of the policy, and everything that gates work on it calls it:
+//! A verdict lives in three places (`enabled`, the compiled-plan map, rule health).
+//! `DetectionEngine::is_eligible` is the only statement of how they combine, and everything that
+//! gates work on it calls it:
 //! [`DetectionEngine::runnable_rules`], [`DetectionEngine::is_runnable`], and
 //! `is_rule_covered` in `task_renewal`. A new reader of eligibility must call it too, not re-derive
 //! it; the table in [`super::execution`] lists every reader reconciled against it.
