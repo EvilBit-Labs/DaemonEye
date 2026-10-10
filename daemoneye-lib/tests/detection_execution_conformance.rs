@@ -197,7 +197,8 @@ async fn null_axis_agrees_with_reference() {
     assert_axis_agrees(ConformanceAxis::Null, 32).await;
 }
 
-/// A catalog whose one table has the single column `c` of `column_type`, nothing advertised.
+/// A catalog whose one table has the single column `c` of `column_type`, every operation
+/// advertised and conformance-passed, so a lowered literal shows up as a pushed predicate.
 fn catalog_with(column_type: ColumnType) -> SchemaCatalog {
     let token = "a".repeat(64);
     let verified = verify_spawn_token("procmond", Some(&token), Some(&token)).unwrap();
@@ -214,14 +215,27 @@ fn catalog_with(column_type: ColumnType) -> SchemaCatalog {
                         name: COLUMN.to_owned(),
                         column_type: i32::from(column_type),
                         nullable: true,
-                        supported_ops: Vec::new(),
+                        supported_ops: OPS.iter().copied().map(i32::from).collect(),
                     }],
                 }],
                 conformance_results: Vec::new(),
             },
         )
         .unwrap();
+    for op in OPS {
+        catalog.record_conformance_pass("procmond", "processes", COLUMN, op);
+    }
     catalog
+}
+
+/// The typed literal a numeric column lowers `42` into.
+fn lowered_literal(column_type: ColumnType) -> literal::Value {
+    match column_type {
+        ColumnType::Int => literal::Value::IntValue(42),
+        ColumnType::Uint => literal::Value::UintValue(42),
+        ColumnType::Float => literal::Value::FloatValue(42.0),
+        _ => panic!("only a numeric column lowers an integer literal"),
+    }
 }
 
 /// The case's literal as a rule would write it.
@@ -298,10 +312,22 @@ fn coercion_axis_is_refused_by_the_planner() {
                     .iter()
                     .all(|value| matches!(*value, literal::Value::StringValue(_)));
                 match plan_rule(&catalog, &cache, &rule, 3) {
-                    Ok(_) => {
+                    Ok(compiled) => {
                         assert!(
                             numeric_column && integer_literal,
                             "`{sql}` loaded against {column_type:?}"
+                        );
+                        let pushed: Vec<&literal::Value> = compiled
+                            .plan()
+                            .predicates
+                            .iter()
+                            .flat_map(|predicate| predicate.values.iter())
+                            .filter_map(|value| value.value.as_ref())
+                            .collect();
+                        assert_eq!(
+                            pushed,
+                            vec![&lowered_literal(column_type)],
+                            "`{sql}` must push the literal typed as the column"
                         );
                         lowered += 1;
                     }

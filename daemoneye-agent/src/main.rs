@@ -318,16 +318,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // The previous cycle's high-water mark: the exclusive start of the next cycle's window (R3).
     // A restart resumes from the mark the last completed cycle recorded, so rows committed before
-    // a crash but never evaluated are not skipped; a store with no mark starts at now, so rows an
-    // earlier run already evaluated are not re-alerted.
-    let now_ms = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or_default()
-        });
+    // a crash but never evaluated are not skipped. No mark means nothing is known to have been
+    // evaluated: a crash between the first commit and the first mark leaves rows behind, and a
+    // window from zero reaches them. A store with no rows pays nothing for it.
     let mut previous_high_water_ms = event_store
         .evaluated_through_ms(PROCMOND_COLLECTOR_ID)?
-        .unwrap_or(now_ms);
+        .unwrap_or(0);
 
     // Session-scoped ssdeep binary-change tracker (R2 AC7). Holds the last
     // ssdeep digest per executable path so a similarity drop versus the
@@ -544,7 +540,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         failure: ingest_failure,
                     },
                 );
-                previous_high_water_ms = window.through_ms;
                 let cycle = run_detection_cycle(&*detection_engine, &executor, window, &signals).await;
                 if cycle.dropped_after_reeligibility > 0 {
                     warn!(
@@ -580,8 +575,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         "Some alerts were not persisted; the evaluated mark stays, so a restart re-evaluates this window"
                     );
                 }
-                // The cycle is complete once every alert is stored: a restart resumes from here.
-                if stored_alerts == alerts.len()
+                // The cycle is complete once every alert is stored: a restart resumes from here, and
+                // so does the next cycle, whose window covers this one again until every alert of it
+                // is stored (at least once, ADR-0014).
+                let persisted = stored_alerts == alerts.len();
+                previous_high_water_ms = if persisted { window.through_ms } else { window.after_ms };
+                if persisted
                     && window.after_ms != window.through_ms
                     && let Err(e) = event_store.set_evaluated_through_ms(PROCMOND_COLLECTOR_ID, window.through_ms)
                 {

@@ -519,7 +519,7 @@ fn check_literal_types(
         return Ok(());
     };
     match visit_expressions(selection, |expr| {
-        let Some((column, _op, values)) = predicate_shape(expr) else {
+        let Some((column, values)) = literal_comparison(expr) else {
             return ControlFlow::Continue(());
         };
         let Ok(descriptor) = catalog.resolve_reference(table, &column) else {
@@ -542,6 +542,26 @@ fn check_literal_types(
         ControlFlow::Continue(()) => Ok(()),
         ControlFlow::Break(error) => Err(error),
     }
+}
+
+/// The column and literal operands of a comparison, whichever side the column is on.
+///
+/// `predicate_shape` reads only `column op literal`, which is the shape the planner pushes; the
+/// type gate must also see `literal op column`, or `'1' = pid` loads while `pid = '1'` refuses.
+fn literal_comparison(expr: &Expr) -> Option<(String, Vec<&Expr>)> {
+    if let Some((column, _op, values)) = predicate_shape(expr) {
+        return Some((column, values));
+    }
+    let Expr::BinaryOp {
+        ref left,
+        ref op,
+        ref right,
+    } = *expr
+    else {
+        return None;
+    };
+    comparison_op(op)?;
+    Some((identifier_name(right)?, vec![&**left]))
 }
 
 /// A string, number or boolean literal: the kinds a column type is declared against.

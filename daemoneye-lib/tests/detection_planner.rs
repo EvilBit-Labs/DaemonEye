@@ -680,6 +680,36 @@ fn a_subquery_over_a_second_registered_table_is_refused_as_multiple_tables() {
     );
 }
 
+/// The literal type gate reads both operand orders: `DataFusion` coerces a comparison
+/// symmetrically, so a reversed `'x' = cpu_usage` would otherwise load while `cpu_usage = 'x'`
+/// refuses.
+#[test]
+fn a_mismatched_literal_is_refused_on_either_side_of_the_comparison() {
+    let catalog = both_verified_catalog();
+    let cache = RegexCache::new();
+
+    for sql in [
+        "SELECT cpu_usage FROM processes WHERE cpu_usage = 'x'",
+        "SELECT cpu_usage FROM processes WHERE 'x' = cpu_usage",
+        "SELECT cpu_usage FROM processes WHERE 'x' < cpu_usage OR cpu_usage > 1",
+    ] {
+        let error = plan_rule(&catalog, &cache, &rule(sql), 3).unwrap_err();
+        assert!(
+            matches!(error, PlanError::LiteralTypeMismatch { ref column, ref literal, .. }
+                if column == "cpu_usage" && literal == "'x'"),
+            "expected the literal type refusal for `{sql}`, got {error:?}"
+        );
+    }
+    // The control: the same shapes with a literal of the column's kind load.
+    for sql in [
+        "SELECT cpu_usage FROM processes WHERE cpu_usage = 1",
+        "SELECT cpu_usage FROM processes WHERE 1 = cpu_usage",
+    ] {
+        plan_rule(&catalog, &cache, &rule(sql), 3)
+            .unwrap_or_else(|error| panic!("`{sql}` must load, got {error:?}"));
+    }
+}
+
 /// Every reference resolves, so the only thing wrong is that the executor cannot run it: the
 /// residual is planned against a session with no table registered by name.
 #[test]
