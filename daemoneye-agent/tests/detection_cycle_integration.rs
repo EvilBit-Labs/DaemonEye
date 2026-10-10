@@ -61,6 +61,7 @@ async fn ingest_cycle_is_visible_the_instant_it_returns() {
 
     let outcome = ingest_cycle(&handle, PROCMOND_COLLECTOR_ID, 0, &rows)
         .await
+        .into_result()
         .unwrap();
     assert_eq!(fx.store.event_count().unwrap(), 10);
 
@@ -76,9 +77,11 @@ async fn redelivering_a_cycle_is_discarded_and_counted() {
     let rows = processes(10, BASE_MS);
     ingest_cycle(&handle, PROCMOND_COLLECTOR_ID, 0, &rows)
         .await
+        .into_result()
         .unwrap();
     let again = ingest_cycle(&handle, PROCMOND_COLLECTOR_ID, 0, &rows)
         .await
+        .into_result()
         .unwrap();
 
     assert_eq!(fx.store.event_count().unwrap(), 10);
@@ -99,6 +102,7 @@ async fn consecutive_cycles_are_not_gaps_but_a_skipped_cycle_is() {
     let handle = pipeline(&fx);
     let first = ingest_cycle(&handle, PROCMOND_COLLECTOR_ID, 0, &processes(3, BASE_MS))
         .await
+        .into_result()
         .unwrap();
     let second = ingest_cycle(
         &handle,
@@ -107,6 +111,7 @@ async fn consecutive_cycles_are_not_gaps_but_a_skipped_cycle_is() {
         &processes(3, BASE_MS + 100),
     )
     .await
+    .into_result()
     .unwrap();
     assert!(first.gaps.is_empty() && second.gaps.is_empty());
 
@@ -117,6 +122,7 @@ async fn consecutive_cycles_are_not_gaps_but_a_skipped_cycle_is() {
         &processes(3, BASE_MS + 200),
     )
     .await
+    .into_result()
     .unwrap();
     assert_eq!(skipped.gaps.len(), 1);
     let gap = skipped.gaps.first().unwrap();
@@ -151,6 +157,7 @@ async fn a_restart_resumes_above_the_stored_ordinal_and_its_rows_land() {
             &processes(4, BASE_MS),
         )
         .await
+        .into_result()
         .unwrap();
     }
     before.flush_and_stop().await;
@@ -167,6 +174,7 @@ async fn a_restart_resumes_above_the_stored_ordinal_and_its_rows_land() {
         &processes(4, BASE_MS + 1_000),
     )
     .await
+    .into_result()
     .unwrap();
 
     assert_eq!(fx.store.event_count().unwrap(), rows_before + 4);
@@ -179,6 +187,7 @@ async fn a_restart_resumes_above_the_stored_ordinal_and_its_rows_land() {
     // The same rows under a prior ordinal are what the stored watermark discards.
     ingest_cycle(&after, PROCMOND_COLLECTOR_ID, 2, &processes(4, BASE_MS))
         .await
+        .into_result()
         .unwrap();
     assert_eq!(
         after.metrics().duplicates_discarded.load(Ordering::Relaxed),
@@ -316,7 +325,14 @@ fn open_event_store_applies_the_configured_page_cache() {
 fn a_failed_ingest_consumes_its_ordinal_and_carries_the_failure() {
     use daemoneye_agent::detection_cycle::{CycleIngestError, IngestOutcome, ingest_step};
 
-    let failed = ingest_step(7, 1_000, Err(CycleIngestError::TooManyRows));
+    let nothing_submitted = IngestOutcome {
+        high_water_ms: 0,
+        low_water_ms: u64::MAX,
+        submitted: 0,
+        gaps: Vec::new(),
+        failure: Some(CycleIngestError::TooManyRows),
+    };
+    let failed = ingest_step(7, 1_000, nothing_submitted);
     assert_eq!(failed.next_ordinal, Some(8));
     assert_eq!(
         failed.window,
@@ -334,12 +350,13 @@ fn a_failed_ingest_consumes_its_ordinal_and_carries_the_failure() {
     let committed = ingest_step(
         7,
         1_000,
-        Ok(IngestOutcome {
+        IngestOutcome {
             high_water_ms: 2_500,
             low_water_ms: 1_001,
             submitted: 3,
             gaps: Vec::new(),
-        }),
+            failure: None,
+        },
     );
     assert_eq!(committed.next_ordinal, Some(8));
     assert_eq!(committed.window, next_window(1_000, 2_500));
@@ -350,16 +367,44 @@ fn a_failed_ingest_consumes_its_ordinal_and_carries_the_failure() {
     let stepped_back = ingest_step(
         8,
         2_500,
-        Ok(IngestOutcome {
+        IngestOutcome {
             high_water_ms: 2_600,
             low_water_ms: 2_000,
             submitted: 2,
             gaps: Vec::new(),
-        }),
+            failure: None,
+        },
     );
     assert_eq!(stepped_back.window, next_window(1_999, 2_600));
+
+    // A flush that fails after an earlier batch committed: the mark stays, but the window still
+    // reaches back to the lowest row submitted, because a committed batch may hold it.
+    let partly_committed = ingest_step(
+        9,
+        2_600,
+        IngestOutcome {
+            high_water_ms: 2_700,
+            low_water_ms: 2_550,
+            submitted: 2,
+            gaps: Vec::new(),
+            failure: Some(CycleIngestError::TooManyRows),
+        },
+    );
+    assert_eq!(partly_committed.window, next_window(2_549, 2_600));
+    assert!(partly_committed.failure.is_some());
     assert_eq!(
-        ingest_step(u32::MAX, 0, Err(CycleIngestError::TooManyRows)).next_ordinal,
+        ingest_step(
+            u32::MAX,
+            0,
+            IngestOutcome {
+                high_water_ms: 0,
+                low_water_ms: u64::MAX,
+                submitted: 0,
+                gaps: Vec::new(),
+                failure: Some(CycleIngestError::TooManyRows),
+            },
+        )
+        .next_ordinal,
         None
     );
 }

@@ -42,11 +42,6 @@ pub enum CompletenessReason {
         /// The error ingest reported.
         error: String,
     },
-    /// Ingest hit backpressure this cycle.
-    Shed {
-        /// How many times the channel was found full.
-        discarded: u64,
-    },
     /// A gap in a collector's `source_seq`: rows between the two values were never ingested.
     SequenceGapDetected {
         /// The collector whose sequence skipped.
@@ -171,8 +166,8 @@ mod tests {
 
     use super::*;
 
-    fn shed() -> CompletenessReason {
-        CompletenessReason::Shed { discarded: 2 }
+    fn one_reason() -> CompletenessReason {
+        CompletenessReason::ResultCapped { cap: 2 }
     }
 
     #[test]
@@ -185,9 +180,9 @@ mod tests {
 
     #[test]
     fn degraded_with_a_reason_is_degraded_and_keeps_it() {
-        let completeness = Completeness::degraded(vec![shed()]).unwrap();
+        let completeness = Completeness::degraded(vec![one_reason()]).unwrap();
         assert_eq!(completeness.status(), CompletenessStatus::Degraded);
-        assert_eq!(completeness.reasons(), [shed()]);
+        assert_eq!(completeness.reasons(), [one_reason()]);
     }
 
     #[test]
@@ -204,7 +199,7 @@ mod tests {
             Completeness::complete()
         );
         assert_eq!(
-            Completeness::from_reasons(vec![shed()]).status(),
+            Completeness::from_reasons(vec![one_reason()]).status(),
             CompletenessStatus::Degraded
         );
     }
@@ -217,7 +212,7 @@ mod tests {
 
     #[test]
     fn a_crafted_payload_cannot_claim_complete_with_reasons() {
-        let payload = r#"{"status":"Complete","reasons":[{"Shed":{"discarded":1}}]}"#;
+        let payload = r#"{"status":"Complete","reasons":[{"ResultCapped":{"cap":1}}]}"#;
         assert!(serde_json::from_str::<Completeness>(payload).is_err());
     }
 
@@ -235,9 +230,11 @@ mod tests {
         .unwrap();
         assert!(postcard::from_bytes::<Completeness>(&bad).is_err());
 
-        let good =
-            Completeness::degraded(vec![shed(), CompletenessReason::ResultCapped { cap: 3 }])
-                .unwrap();
+        let good = Completeness::degraded(vec![
+            one_reason(),
+            CompletenessReason::ResultCapped { cap: 3 },
+        ])
+        .unwrap();
         let bytes = postcard::to_allocvec(&good).unwrap();
         assert_eq!(postcard::from_bytes::<Completeness>(&bytes).unwrap(), good);
     }

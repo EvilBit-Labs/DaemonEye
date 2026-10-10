@@ -33,8 +33,11 @@ use tracing::{debug, info, warn};
 /// The collector id the agent files procmond's rows under.
 pub const PROCMOND_COLLECTOR_ID: &str = "procmond";
 
-/// What one cycle's ingest did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What one cycle's ingest did, whether or not it finished.
+///
+/// The bounds cover every row submitted before a failure too: a batch committed before a later
+/// flush failure holds rows the next window must still reach.
+#[derive(Debug)]
 pub struct IngestOutcome {
     /// The largest `collection_time` (ms) submitted; `0` when nothing was.
     pub high_water_ms: u64,
@@ -42,8 +45,39 @@ pub struct IngestOutcome {
     pub low_water_ms: u64,
     /// How many rows were submitted (before the watermark discarded any).
     pub submitted: usize,
-    /// Sequence gaps the writer saw since the previous flush.
+    /// Sequence gaps the writer saw since the previous flush; empty after a failure.
     pub gaps: Vec<SequenceGap>,
+    /// Why the cycle's rows are not all durable, when they are not.
+    pub failure: Option<CycleIngestError>,
+}
+
+impl IngestOutcome {
+    const fn empty() -> Self {
+        Self {
+            high_water_ms: 0,
+            low_water_ms: u64::MAX,
+            submitted: 0,
+            gaps: Vec::new(),
+            failure: None,
+        }
+    }
+
+    fn failed(mut self, error: CycleIngestError) -> Self {
+        self.failure = Some(error);
+        self
+    }
+
+    /// The outcome as a `Result`, for a caller that has no use for a failed cycle's bounds.
+    ///
+    /// # Errors
+    ///
+    /// The failure the outcome carries.
+    pub fn into_result(self) -> Result<Self, CycleIngestError> {
+        match self.failure {
+            Some(error) => Err(error),
+            None => Ok(self),
+        }
+    }
 }
 
 /// Why a cycle's rows could not be ingested.
@@ -83,28 +117,40 @@ pub async fn ingest_cycle(
     collector_id: &str,
     cycle_ordinal: u32,
     records: &[ProcessRecord],
-) -> Result<IngestOutcome, CycleIngestError> {
-    let mut high_water_ms = 0_u64;
-    let mut low_water_ms = u64::MAX;
+) -> IngestOutcome {
+    let mut outcome = IngestOutcome::empty();
     for (index, record) in records.iter().enumerate() {
-        let row_index = u32::try_from(index).map_err(|_overflow| CycleIngestError::TooManyRows)?;
-        let row = IngestRecord::new(
-            collector_id,
-            source_seq(cycle_ordinal, row_index),
-            row_index,
-            record.clone(),
-        )?;
-        high_water_ms = high_water_ms.max(row.ts_ms());
-        low_water_ms = low_water_ms.min(row.ts_ms());
-        handle.submit(row).await?;
+        let row = match ingest_row(collector_id, cycle_ordinal, index, record) {
+            Ok(row) => row,
+            Err(error) => return outcome.failed(error),
+        };
+        outcome.high_water_ms = outcome.high_water_ms.max(row.ts_ms());
+        outcome.low_water_ms = outcome.low_water_ms.min(row.ts_ms());
+        outcome.submitted = outcome.submitted.saturating_add(1);
+        if let Err(error) = handle.submit(row).await {
+            return outcome.failed(error.into());
+        }
     }
-    let report = handle.flush().await?;
-    Ok(IngestOutcome {
-        high_water_ms,
-        low_water_ms,
-        submitted: records.len(),
-        gaps: report.gaps,
-    })
+    match handle.flush().await {
+        Ok(report) => outcome.gaps = report.gaps,
+        Err(error) => outcome.failure = Some(error.into()),
+    }
+    outcome
+}
+
+fn ingest_row(
+    collector_id: &str,
+    cycle_ordinal: u32,
+    index: usize,
+    record: &ProcessRecord,
+) -> Result<IngestRecord, CycleIngestError> {
+    let row_index = u32::try_from(index).map_err(|_overflow| CycleIngestError::TooManyRows)?;
+    Ok(IngestRecord::new(
+        collector_id,
+        source_seq(cycle_ordinal, row_index),
+        row_index,
+        record.clone(),
+    )?)
 }
 
 /// What a cycle carries forward from its ingest attempt.
@@ -117,7 +163,8 @@ pub struct IngestStep {
     /// The window this cycle evaluates. Its `through_ms` is the highest `collection_time` now
     /// committed, unchanged by a failure. Its `after_ms` is the previous mark, unless a row was
     /// stamped at or before it (a clock step-back): then the window reaches back to that row, and
-    /// the rows in the overlap are evaluated again rather than never (ADR-0014).
+    /// the rows in the overlap are evaluated again rather than never (ADR-0014). A failed cycle
+    /// reaches back too, because a batch committed before the failure may hold that row.
     pub window: CycleWindow,
     /// Gaps the writer saw since the previous flush.
     pub gaps: Vec<SequenceGap>,
@@ -130,25 +177,22 @@ pub struct IngestStep {
 pub fn ingest_step(
     ordinal: u32,
     previous_high_water_ms: u64,
-    result: Result<IngestOutcome, CycleIngestError>,
+    outcome: IngestOutcome,
 ) -> IngestStep {
-    let next_ordinal = ordinal.checked_add(1);
-    match result {
-        Ok(outcome) => IngestStep {
-            next_ordinal,
-            window: CycleWindow {
-                after_ms: previous_high_water_ms.min(outcome.low_water_ms.saturating_sub(1)),
-                through_ms: previous_high_water_ms.max(outcome.high_water_ms),
-            },
-            gaps: outcome.gaps,
-            failure: None,
+    // The mark advances only over rows known to be committed.
+    let through_ms = if outcome.failure.is_some() {
+        previous_high_water_ms
+    } else {
+        previous_high_water_ms.max(outcome.high_water_ms)
+    };
+    IngestStep {
+        next_ordinal: ordinal.checked_add(1),
+        window: CycleWindow {
+            after_ms: previous_high_water_ms.min(outcome.low_water_ms.saturating_sub(1)),
+            through_ms,
         },
-        Err(error) => IngestStep {
-            next_ordinal,
-            window: next_window(previous_high_water_ms, previous_high_water_ms),
-            gaps: Vec::new(),
-            failure: Some(error.to_string()),
-        },
+        gaps: outcome.gaps,
+        failure: outcome.failure.map(|error| error.to_string()),
     }
 }
 

@@ -72,9 +72,24 @@ pub enum PlanError {
     CommonTableExpression,
     /// The rule contains a subquery, which the executor cannot run.
     #[error(
-        "the executor cannot run a subquery: the derived SQL sees only the rule's own table, so          this rule is refused at load rather than failing on every cycle"
+        "the executor cannot run a subquery: the derived SQL sees only the rule's own table, so \
+         this rule is refused at load rather than failing on every cycle"
     )]
     Subquery,
+    /// A literal whose kind is not the column's declared type; there is no coercion in either
+    /// direction (the conformance reference's `Coercion` axis).
+    #[error(
+        "`{column}` is declared {expected}, so the literal `{literal}` cannot compare against it; \
+         there is no coercion in either direction"
+    )]
+    LiteralTypeMismatch {
+        /// The column compared.
+        column: String,
+        /// The column's declared type, in words.
+        expected: &'static str,
+        /// The literal as the rule wrote it.
+        literal: String,
+    },
 }
 
 /// A rule lowered into the half a collector evaluates and the half the agent keeps (R13).
@@ -203,6 +218,7 @@ pub fn plan_rule(
     if has_subquery(&statement) {
         return Err(PlanError::Subquery);
     }
+    check_literal_types(catalog, &table, select)?;
 
     // R14 first: only top-level conjuncts are candidates, decided without consulting the catalog.
     let conjuncts = select
@@ -486,6 +502,73 @@ fn collect_identifiers<N: Visit>(node: &N) -> BTreeSet<String> {
         return collector.names;
     };
     collector.names
+}
+
+/// Refuse a `column op literal` anywhere in `WHERE` whose literal is not of the column's kind.
+///
+/// `lower_conjunct` only *declines* such a conjunct into the residual, where `DataFusion` would
+/// coerce it (`pid = '1'` reads the string as a number). The conformance reference refuses every
+/// coercion, so the planner does too. A number on a numeric column is lowered into the column's
+/// own type and is not a coercion; `NULL` and non-literal operands are not judged here.
+fn check_literal_types(
+    catalog: &SchemaCatalog,
+    table: &str,
+    select: &Select,
+) -> Result<(), PlanError> {
+    let Some(ref selection) = select.selection else {
+        return Ok(());
+    };
+    match visit_expressions(selection, |expr| {
+        let Some((column, _op, values)) = predicate_shape(expr) else {
+            return ControlFlow::Continue(());
+        };
+        let Ok(descriptor) = catalog.resolve_reference(table, &column) else {
+            return ControlFlow::Continue(());
+        };
+        let Ok(column_type) = ColumnType::try_from(descriptor.column_type) else {
+            return ControlFlow::Continue(());
+        };
+        values
+            .iter()
+            .find(|value| is_scalar_literal(value) && lower_literal(value, column_type).is_none())
+            .map_or(ControlFlow::Continue(()), |literal| {
+                ControlFlow::Break(PlanError::LiteralTypeMismatch {
+                    column,
+                    expected: column_type_name(column_type),
+                    literal: literal.to_string(),
+                })
+            })
+    }) {
+        ControlFlow::Continue(()) => Ok(()),
+        ControlFlow::Break(error) => Err(error),
+    }
+}
+
+/// A string, number or boolean literal: the kinds a column type is declared against.
+#[allow(clippy::wildcard_enum_match_arm)]
+const fn is_scalar_literal(expr: &Expr) -> bool {
+    match *expr {
+        Expr::Value(ref spanned) => matches!(
+            spanned.value,
+            Value::Number(..)
+                | Value::SingleQuotedString(_)
+                | Value::DoubleQuotedString(_)
+                | Value::Boolean(_)
+        ),
+        _ => false,
+    }
+}
+
+/// The declared type in words, for a refusal an operator reads.
+const fn column_type_name(column_type: ColumnType) -> &'static str {
+    match column_type {
+        ColumnType::String => "a string",
+        ColumnType::Int => "an integer",
+        ColumnType::Uint => "an unsigned integer",
+        ColumnType::Float => "a float",
+        ColumnType::Bool => "a boolean",
+        ColumnType::Unspecified => "of an unspecified type",
+    }
 }
 
 /// Whether any expression in the statement is, or contains, a subquery.

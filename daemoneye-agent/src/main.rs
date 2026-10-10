@@ -10,7 +10,6 @@ use daemoneye_lib::detection::execution::executor::RuleExecutor;
 use daemoneye_lib::storage::ingest::{self, IngestConfig};
 use daemoneye_lib::{alerting, config, detection_bounds, telemetry};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, error, info, warn};
 
@@ -329,8 +328,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut previous_high_water_ms = event_store
         .evaluated_through_ms(PROCMOND_COLLECTOR_ID)?
         .unwrap_or(now_ms);
-    // Ingest's saturation counter at the end of the previous cycle, to report the delta.
-    let mut last_saturation_alerts = 0_u64;
 
     // Session-scoped ssdeep binary-change tracker (R2 AC7). Holds the last
     // ssdeep digest per executable path so a similarity drop versus the
@@ -537,22 +534,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Evaluate every eligible rule over what this cycle added to the store.
                 let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_owned());
-                let saturation_now = ingest_handle
-                    .metrics()
-                    .saturation_alerts
-                    .load(Ordering::Relaxed);
                 let heartbeat = broker_manager.collector_heartbeat_health(PROCMOND_COLLECTOR_ID).await;
                 let signals = build_signals(
                     PROCMOND_COLLECTOR_ID,
                     collection,
                     heartbeat,
                     IngestSnapshot {
-                        saturation_delta: saturation_now.saturating_sub(last_saturation_alerts),
                         sequence_gaps,
                         failure: ingest_failure,
                     },
                 );
-                last_saturation_alerts = saturation_now;
                 previous_high_water_ms = window.through_ms;
                 let cycle = run_detection_cycle(&*detection_engine, &executor, window, &signals).await;
                 if cycle.dropped_after_reeligibility > 0 {
@@ -583,10 +574,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // Every delivered alert is also stored, so its completeness marker is readable later.
                 let stored_alerts = persist_alerts(&event_store, &alerts);
                 if stored_alerts != alerts.len() {
-                    warn!(stored = stored_alerts, total = alerts.len(), "Some alerts were not persisted");
+                    warn!(
+                        stored = stored_alerts,
+                        total = alerts.len(),
+                        "Some alerts were not persisted; the evaluated mark stays, so a restart re-evaluates this window"
+                    );
                 }
-                // The cycle is complete once its alerts are stored: a restart resumes from here.
-                if window.after_ms != window.through_ms
+                // The cycle is complete once every alert is stored: a restart resumes from here.
+                if stored_alerts == alerts.len()
+                    && window.after_ms != window.through_ms
                     && let Err(e) = event_store.set_evaluated_through_ms(PROCMOND_COLLECTOR_ID, window.through_ms)
                 {
                     warn!(error = %e, "Evaluated-through mark was not recorded; a restart may re-evaluate this window");

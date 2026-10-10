@@ -281,22 +281,6 @@ async fn completeness_sequence_gap_degrades_only_the_gapped_collectors_table() {
 }
 
 #[tokio::test]
-async fn completeness_ingest_backpressure_sheds_with_the_discarded_count() {
-    let mut fx = fixture(config());
-    put_named(&fx, "bash", 1);
-    load(&mut fx, "r1", "SELECT pid FROM processes WHERE name = 'nc'");
-    let mut signals = healthy();
-    signals.ingest.saturation_delta = 2;
-
-    let outcome = run_with(&fx, &signals).await;
-
-    assert_eq!(
-        only(&outcome).completeness.reasons(),
-        [CompletenessReason::Shed { discarded: 2 }]
-    );
-}
-
-#[tokio::test]
 async fn completeness_execution_error_follows_the_collector_reasons_in_a_stable_order() {
     let mut fx = fixture(config());
     put_named(&fx, "nc", 2);

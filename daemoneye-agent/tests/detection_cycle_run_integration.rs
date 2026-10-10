@@ -223,6 +223,7 @@ async fn a_persisted_rule_alerts_once_per_row_across_cycles_and_again_for_a_new_
     let rows = vec![record(base, 10, "nc"), record(base + 1, 11, "bash")];
     let first = ingest_cycle(&pipeline, PROCMOND_COLLECTOR_ID, 0, &rows)
         .await
+        .into_result()
         .unwrap();
     let mark = first.high_water_ms;
     let one = cycle(&fx, next_window(base - 1, mark)).await;
@@ -240,6 +241,7 @@ async fn a_persisted_rule_alerts_once_per_row_across_cycles_and_again_for_a_new_
     let later = vec![record(base + 5_000, 12, "nc")];
     let third = ingest_cycle(&pipeline, PROCMOND_COLLECTOR_ID, 1, &later)
         .await
+        .into_result()
         .unwrap();
     let three = cycle(&fx, next_window(mark, third.high_water_ms)).await;
     assert_eq!(alert_pids(&three), vec![12]);
@@ -477,7 +479,6 @@ async fn an_ingest_sequence_gap_reaches_the_evaluation() {
         Ok(()),
         HeartbeatStatus::Healthy,
         IngestSnapshot {
-            saturation_delta: 0,
             sequence_gaps: vec![gap],
             failure: None,
         },

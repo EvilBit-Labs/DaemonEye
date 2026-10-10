@@ -45,8 +45,6 @@ pub use crate::storage::ingest::SequenceGap;
 /// What ingest did this cycle, as deltas since the previous cycle.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IngestSnapshot {
-    /// Growth of `IngestMetrics::saturation_alerts`.
-    pub saturation_delta: u64,
     /// Gaps detected this cycle.
     pub sequence_gaps: Vec<SequenceGap>,
     /// Why this cycle's rows were not committed, when they were not. Every rule's window may then
@@ -153,11 +151,6 @@ impl CompletenessTracker {
                     observed_seq: gap.observed_seq,
                 }),
         );
-        if signals.ingest.saturation_delta > 0 {
-            reasons.push(CompletenessReason::Shed {
-                discarded: signals.ingest.saturation_delta,
-            });
-        }
         if let Some(ref error) = signals.ingest.failure {
             reasons.push(CompletenessReason::IngestFailed {
                 error: error.clone(),
@@ -318,16 +311,6 @@ mod tests {
         );
         s.collection.insert("other".to_owned(), Err("x".to_owned()));
         assert_eq!(fold(&s), Completeness::complete());
-    }
-
-    #[test]
-    fn a_saturation_delta_of_two_sheds_two() {
-        let mut s = signals();
-        s.ingest.saturation_delta = 2;
-        assert_eq!(
-            fold(&s).reasons(),
-            [CompletenessReason::Shed { discarded: 2 }]
-        );
     }
 
     #[test]

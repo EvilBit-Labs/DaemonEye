@@ -7,8 +7,8 @@
 //! `derive.rs`, never in the reference.
 //!
 //! One test per `ConformanceAxis`, so a failure is named by the test that failed. Cases the
-//! reference `Refuses` are static plan defects the planner rejects before any row exists; there is
-//! no executor outcome to compare and they are counted separately.
+//! reference `Refuses` are static plan defects: the `Coercion` axis runs them through the real
+//! planner and requires the refusal, and the other axes count them without an executor outcome.
 #![cfg(feature = "detection-engine")]
 // `ColumnType`, `literal::Value` and the outcome enum are `#[non_exhaustive]` to this crate, so a
 // wildcard arm is mandatory and `wildcard_enum_match_arm` cannot be satisfied.
@@ -22,12 +22,18 @@
 use std::sync::Arc;
 
 use daemoneye_lib::detection::RegexCache;
+use daemoneye_lib::detection::catalog::{SchemaCatalog, verify_spawn_token};
 use daemoneye_lib::detection::conformance::{
     ConformanceAxis, ConformanceCase, ConformanceOutcome, cases_for, reference_outcome,
 };
 use daemoneye_lib::detection::execution::derive::predicate_to_expr;
 use daemoneye_lib::detection::execution::session::{ExecutorRuntime, LatencySink, session_state};
-use daemoneye_lib::proto::{ColumnType, Literal, Predicate, PredicateOp, literal};
+use daemoneye_lib::detection::planner::{PlanError, plan_rule};
+use daemoneye_lib::models::{AlertSeverity, DetectionRule};
+use daemoneye_lib::proto::{
+    ColumnDescriptor, ColumnType, Literal, Predicate, PredicateOp, SchemaDescriptor,
+    TableDescriptor, literal,
+};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
@@ -191,14 +197,135 @@ async fn null_axis_agrees_with_reference() {
     assert_axis_agrees(ConformanceAxis::Null, 32).await;
 }
 
-#[tokio::test]
-async fn coercion_axis_agrees_with_reference() {
-    // Every coercion case is a static plan defect: the reference refuses it and the planner
-    // rejects it before a row exists, so there is no executor outcome to compare. `DataFusion`
-    // itself would coerce these silently, which is why that refusal is load-bearing.
-    let tally = compare_axis(ConformanceAxis::Coercion, reference_outcome).await;
-    assert_eq!(tally.exercised, 0, "a coercion case produced an outcome");
-    assert!(tally.refused >= 200, "too few coercion refusals counted");
+/// A catalog whose one table has the single column `c` of `column_type`, nothing advertised.
+fn catalog_with(column_type: ColumnType) -> SchemaCatalog {
+    let token = "a".repeat(64);
+    let verified = verify_spawn_token("procmond", Some(&token), Some(&token)).unwrap();
+    let mut catalog = SchemaCatalog::new();
+    catalog
+        .register(
+            &verified,
+            SchemaDescriptor {
+                collector_id: "procmond".to_owned(),
+                descriptor_version: "v1".to_owned(),
+                tables: vec![TableDescriptor {
+                    name: "processes".to_owned(),
+                    columns: vec![ColumnDescriptor {
+                        name: COLUMN.to_owned(),
+                        column_type: i32::from(column_type),
+                        nullable: true,
+                        supported_ops: Vec::new(),
+                    }],
+                }],
+                conformance_results: Vec::new(),
+            },
+        )
+        .unwrap();
+    catalog
+}
+
+/// The case's literal as a rule would write it.
+fn sql_literal(value: &literal::Value) -> String {
+    match *value {
+        literal::Value::StringValue(ref text) => format!("'{text}'"),
+        literal::Value::IntValue(number) => number.to_string(),
+        literal::Value::UintValue(number) => number.to_string(),
+        literal::Value::FloatValue(number) => format!("{number:?}"),
+        literal::Value::BoolValue(flag) => if flag { "TRUE" } else { "FALSE" }.to_owned(),
+        literal::Value::NullValue(_) => "NULL".to_owned(),
+        _ => panic!("the corpus holds no other literal kind"),
+    }
+}
+
+/// The case's predicate as a rule would write it.
+fn sql_predicate(case: &ConformanceCase) -> String {
+    let literals: Vec<String> = case.literals.iter().map(sql_literal).collect();
+    let first = literals.first().cloned().unwrap_or_default();
+    match case.op {
+        PredicateOp::Eq => format!("{COLUMN} = {first}"),
+        PredicateOp::Ne => format!("{COLUMN} <> {first}"),
+        PredicateOp::Lt => format!("{COLUMN} < {first}"),
+        PredicateOp::Le => format!("{COLUMN} <= {first}"),
+        PredicateOp::Gt => format!("{COLUMN} > {first}"),
+        PredicateOp::Ge => format!("{COLUMN} >= {first}"),
+        PredicateOp::In => format!("{COLUMN} IN ({})", literals.join(", ")),
+        PredicateOp::Like => format!("{COLUMN} LIKE {first}"),
+        PredicateOp::Regexp => format!("{COLUMN} REGEXP {first}"),
+        _ => panic!("OPS names every operation the corpus uses"),
+    }
+}
+
+/// Every coercion case is a static plan defect, so the comparison is with the planner, not the
+/// executor: the rule must refuse to load. One class is not a coercion in SQL: an integer
+/// literal on a numeric column is lowered into the column's own type before anything is pushed
+/// or run, so there is nothing for the agent and a collector to coerce differently. `42.0` on an
+/// integer column still refuses (lossy), as does every kind crossing.
+#[test]
+fn coercion_axis_is_refused_by_the_planner() {
+    let cache = RegexCache::new();
+    let (mut refused, mut lowered) = (0_usize, 0_usize);
+    for column_type in COLUMN_TYPES {
+        let catalog = catalog_with(column_type);
+        for op in OPS {
+            for case in
+                cases_for(column_type, true, op).filter(|c| c.axis == ConformanceAxis::Coercion)
+            {
+                assert_eq!(reference_outcome(case), ConformanceOutcome::Refuses);
+                let sql = format!(
+                    "SELECT {COLUMN} FROM processes WHERE {}",
+                    sql_predicate(case)
+                );
+                let rule = DetectionRule::new(
+                    "coercion".to_owned(),
+                    "Coercion".to_owned(),
+                    "Coercion case".to_owned(),
+                    sql.clone(),
+                    "test".to_owned(),
+                    AlertSeverity::Low,
+                );
+                let numeric_column = matches!(
+                    column_type,
+                    ColumnType::Int | ColumnType::Uint | ColumnType::Float
+                );
+                let integer_literal = case.literals.iter().all(|value| {
+                    matches!(
+                        *value,
+                        literal::Value::IntValue(_) | literal::Value::UintValue(_)
+                    )
+                });
+                let string_literal = case
+                    .literals
+                    .iter()
+                    .all(|value| matches!(*value, literal::Value::StringValue(_)));
+                match plan_rule(&catalog, &cache, &rule, 3) {
+                    Ok(_) => {
+                        assert!(
+                            numeric_column && integer_literal,
+                            "`{sql}` loaded against {column_type:?}"
+                        );
+                        lowered += 1;
+                    }
+                    // A non-string REGEXP pattern is refused by the pattern collector first; the
+                    // refusal is the same fact (the operand is not a string literal).
+                    Err(PlanError::NonLiteralPattern { .. })
+                        if op == PredicateOp::Regexp && !string_literal =>
+                    {
+                        refused += 1;
+                    }
+                    Err(PlanError::LiteralTypeMismatch { ref column, .. }) => {
+                        assert_eq!(column, COLUMN);
+                        refused += 1;
+                    }
+                    Err(other) => panic!("`{sql}` against {column_type:?}: unexpected {other:?}"),
+                }
+            }
+        }
+    }
+    assert!(refused >= 100, "too few coercion cases refused: {refused}");
+    assert!(
+        lowered > 0,
+        "no integer literal was lowered into a numeric column"
+    );
 }
 
 #[tokio::test]
