@@ -76,7 +76,7 @@ The cause decides how the rule recovers. A dropped reference or an expired task 
 
 ### Completeness marker
 
-A value carried by every evaluation and every alert saying whether the rule saw everything it was meant to: `Complete`, or `Degraded` with at least one concrete reason (a collector failure or missed heartbeat, ingest shedding, a sequence gap, a resource limit, the match cap, an execution error). The two cannot be mixed: a degraded marker with no reason, or a complete one with reasons, cannot be built or deserialized. Zero matches under `Degraded` means "could not fully evaluate", not "no match". There is deliberately no default, because a defaulted marker would claim `Complete` for a run that examined nothing.
+A value carried by every evaluation and every alert saying whether the rule saw everything it was meant to: `Complete`, or `Degraded` with at least one concrete reason (a collector failure or missed heartbeat, an ingest failure, ingest shedding, a sequence gap, a resource limit, the match cap, an execution error). The two cannot be mixed: a degraded marker with no reason, or a complete one with reasons, cannot be built or deserialized. Zero matches under `Degraded` means "could not fully evaluate", not "no match". There is deliberately no default, because a defaulted marker would claim `Complete` for a run that examined nothing.
 
 ### Evaluation window
 
