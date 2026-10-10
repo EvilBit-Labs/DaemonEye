@@ -24,6 +24,20 @@ mod error;
 mod index;
 pub mod ingest;
 pub mod mrc;
+#[cfg(test)]
+mod page_cache_tests;
+/// Bounded LRU cache of closed-bucket posting lists (R12, KTD8).
+///
+/// Gated on `detection-engine` with the `lru` dependency it wraps.
+#[cfg(feature = "detection-engine")]
+pub mod postings_cache;
+/// `DataFusion` `TableProvider` over the event store (ADR-0006, KTD2).
+///
+/// Gated on `detection-engine` so `storage` stays buildable without the
+/// execution engine.
+#[cfg(feature = "detection-engine")]
+pub mod provider;
+pub mod read;
 mod records;
 pub mod schema;
 
@@ -33,6 +47,7 @@ pub use schema::{
     SignerError,
 };
 
+use crate::config::{DatabaseConfig, MIB};
 use crate::models::{Alert, DetectionRule, ProcessRecord, SystemInfo};
 use bucket::{
     bucket_id, bucket_table_name, choose_granularity, parse_bucket_name, retention_cutoff,
@@ -45,14 +60,48 @@ use index::{
 use ingest::IngestRecord;
 use mrc::MrcMap;
 use redb::{
-    Database, MultimapTable, ReadTransaction, ReadableDatabase, ReadableTableMetadata, Table,
-    TableDefinition, TableHandle,
+    Database, MultimapTable, ReadTransaction, ReadableDatabase, ReadableTable,
+    ReadableTableMetadata, Table, TableDefinition, TableHandle,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, io, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs, io,
+    path::Path,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 /// redb table type for a process-event bucket: `(ts_ms, seq)` → versioned bytes.
 type EventTable<'a> = TableDefinition<'a, TsSeqKey, &'static [u8]>;
+
+/// `ingest_watermarks` — collector id → highest committed `source_seq`.
+const WATERMARK_TABLE: TableDefinition<'static, &str, u64> =
+    TableDefinition::new("ingest_watermarks");
+
+/// `detection_cursor` — collector id → the `collection_time` (ms) through which rules have
+/// evaluated that collector's rows. Written after a cycle's alerts are stored, read at startup.
+const CURSOR_TABLE: TableDefinition<'static, &str, u64> = TableDefinition::new("detection_cursor");
+
+/// Raise each batch collector's stored watermark to the batch maximum, inside
+/// the write transaction that carries the rows.
+fn persist_watermarks(
+    txn: &redb::WriteTransaction,
+    records: &[IngestRecord],
+) -> Result<(), StorageError> {
+    let mut batch_max: HashMap<&str, u64> = HashMap::new();
+    for rec in records {
+        let entry = batch_max.entry(rec.collector_id()).or_insert(0);
+        *entry = (*entry).max(rec.source_seq());
+    }
+    let mut table = txn.open_table(WATERMARK_TABLE)?;
+    for (collector, mark) in batch_max {
+        let stored = table.get(collector)?.map(|guard| guard.value());
+        if stored.is_none_or(|current| current < mark) {
+            table.insert(collector, mark)?;
+        }
+    }
+    Ok(())
+}
 
 /// Build the redb table definition for a bucket table name.
 const fn bucket_def(name: &str) -> EventTable<'_> {
@@ -111,8 +160,19 @@ fn collect_bucket_ids(txn: &ReadTransaction) -> Result<Vec<u64>, StorageError> {
 /// codecs; secondary indexes (U4), the single-writer ingest pipeline (U5/U6),
 /// the read handle + MRC (U7), and the signed schema-rebuild path (U8) build on
 /// this foundation.
+///
+/// `Debug` is derived because `TableProvider` and `ExecutionPlan` both require it
+/// of whatever a provider holds. It is safe to derive here only because
+/// `redb::Database`'s own `Debug` is opaque — it renders as `Database`, with no
+/// file path — so nothing in this struct locates the store on disk. A field added
+/// later that does would start leaking through every plan `explain` and
+/// `DataFusion` error message; `event_store_debug_reports_bucketing_without_locating_the_store`
+/// is the guard that fails when one is.
+#[derive(Debug)]
 pub struct EventStore {
     db: Database,
+    /// The page cache the database was opened with, for callers that need to show their wiring.
+    page_cache_bytes: usize,
     /// Bucket granularity in milliseconds (hourly by default; coarsens to daily
     /// for long retention windows so the live-bucket count stays bounded).
     granularity_ms: u64,
@@ -120,6 +180,9 @@ pub struct EventStore {
     retention_ms: u64,
     /// Recent window (ms) the in-memory MRC parent map is rebuilt from on start.
     mrc_window_ms: u64,
+    /// Writes that landed in a bucket already closed at write time (a clock step-back). Folded
+    /// into the postings-cache key, so a cached list for that bucket is reloaded, not served stale.
+    closed_bucket_writes: AtomicU64,
 }
 
 impl EventStore {
@@ -129,41 +192,55 @@ impl EventStore {
     /// Default MRC rebuild window: 30 minutes, in milliseconds (§11.7.7).
     const DEFAULT_MRC_WINDOW_MS: u64 = 1_800_000;
 
-    /// Create (or open) the event store at `path`.
+    /// Create (or open) the event store at `path` with the default page cache.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let db_path = path.as_ref();
-        ensure_db_dir(db_path)?;
-        let db =
-            Database::create(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
-                path: db_path.to_path_buf(),
-                source,
-            })?;
-        let retention_ms = Self::DEFAULT_RETENTION_MS;
-        let store = Self {
-            db,
-            granularity_ms: choose_granularity(retention_ms),
-            retention_ms,
-            mrc_window_ms: Self::DEFAULT_MRC_WINDOW_MS,
-        };
-        store.classify_and_init()?;
-        Ok(store)
+        Self::new_with_page_cache(path, default_page_cache_bytes())
     }
 
-    /// Open an existing event store at `path`.
+    /// Create (or open) the event store at `path`, capping redb's page cache at `cache_bytes`.
+    pub fn new_with_page_cache<P: AsRef<Path>>(
+        path: P,
+        cache_bytes: usize,
+    ) -> Result<Self, StorageError> {
+        Self::from_database(create_database(path.as_ref(), cache_bytes)?, cache_bytes)
+    }
+
+    /// Create (or open) the event store at `path` with the page cache `database` configures.
+    pub fn new_configured<P: AsRef<Path>>(
+        path: P,
+        database: &DatabaseConfig,
+    ) -> Result<Self, StorageError> {
+        Self::new_with_page_cache(path, database.page_cache_bytes())
+    }
+
+    /// Open an existing event store at `path` with the default page cache.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let db_path = path.as_ref();
-        ensure_db_dir(db_path)?;
-        let db =
-            Database::open(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
-                path: db_path.to_path_buf(),
-                source,
-            })?;
+        Self::open_with_page_cache(path, default_page_cache_bytes())
+    }
+
+    /// Open an existing event store at `path`, capping redb's page cache at `cache_bytes`.
+    pub fn open_with_page_cache<P: AsRef<Path>>(
+        path: P,
+        cache_bytes: usize,
+    ) -> Result<Self, StorageError> {
+        Self::from_database(open_database(path.as_ref(), cache_bytes)?, cache_bytes)
+    }
+
+    /// The page-cache cap this store was opened with.
+    #[must_use]
+    pub const fn page_cache_bytes(&self) -> usize {
+        self.page_cache_bytes
+    }
+
+    fn from_database(db: Database, page_cache_bytes: usize) -> Result<Self, StorageError> {
         let retention_ms = Self::DEFAULT_RETENTION_MS;
         let store = Self {
             db,
+            page_cache_bytes,
             granularity_ms: choose_granularity(retention_ms),
             retention_ms,
             mrc_window_ms: Self::DEFAULT_MRC_WINDOW_MS,
+            closed_bucket_writes: AtomicU64::new(0),
         };
         store.classify_and_init()?;
         Ok(store)
@@ -227,7 +304,27 @@ impl EventStore {
         drop(base);
 
         txn.commit()?;
+        self.note_write(id);
         Ok(())
+    }
+
+    /// Count a committed write into a bucket that was already closed, so the postings cache
+    /// stops serving the list it holds for that bucket.
+    fn note_write(&self, bucket: u64) {
+        let open = u64::try_from(chrono::Utc::now().timestamp_millis())
+            .ok()
+            .and_then(|now_ms| now_ms.checked_div(self.granularity_ms))
+            .unwrap_or(0);
+        if bucket < open {
+            self.closed_bucket_writes.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// How many committed writes landed in a bucket that was already closed; a postings-cache
+    /// key carries this so a late write invalidates the lists cached before it.
+    #[must_use]
+    pub fn closed_bucket_writes(&self) -> u64 {
+        self.closed_bucket_writes.load(Ordering::Relaxed)
     }
 
     /// Group-commit a batch of records in a single write transaction — the
@@ -242,7 +339,7 @@ impl EventStore {
         }
         let mut by_bucket: BTreeMap<u64, Vec<&IngestRecord>> = BTreeMap::new();
         for rec in records {
-            let id = bucket_id(rec.ts_ms, self.granularity_ms)?;
+            let id = bucket_id(rec.ts_ms(), self.granularity_ms)?;
             by_bucket.entry(id).or_default().push(rec);
         }
         let txn = self.db.begin_write()?;
@@ -259,8 +356,8 @@ impl EventStore {
                     &mut name_idx,
                     Some(&mut ppid_idx),
                     Some(&mut exe_idx),
-                    (rec.ts_ms, rec.seq),
-                    &rec.record,
+                    (rec.ts_ms(), rec.seq()),
+                    rec.record(),
                 )?;
             }
             drop(exe_idx);
@@ -268,6 +365,59 @@ impl EventStore {
             drop(ppid_idx);
             drop(pid_idx);
             drop(base);
+        }
+        persist_watermarks(&txn, records)?;
+        txn.commit()?;
+        if let Some(&oldest) = by_bucket.keys().next() {
+            self.note_write(oldest);
+        }
+        Ok(())
+    }
+
+    /// The per-collector ingest watermarks (highest committed `source_seq`),
+    /// committed in the same transaction as the rows they cover. The ingest
+    /// pipeline seeds itself from these so its idempotency gate survives a restart.
+    pub fn ingest_watermarks(&self) -> Result<HashMap<String, u64>, StorageError> {
+        let txn = self.db.begin_read()?;
+        let table = match txn.open_table(WATERMARK_TABLE) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(HashMap::new()),
+            Err(err) => return Err(err.into()),
+        };
+        let mut marks = HashMap::new();
+        for entry in table.iter()? {
+            let (collector, mark) = entry?;
+            marks.insert(collector.value().to_owned(), mark.value());
+        }
+        Ok(marks)
+    }
+
+    /// The `collection_time` (ms) through which rules have evaluated `collector_id`'s rows, if a
+    /// completed cycle has recorded one.
+    pub fn evaluated_through_ms(&self, collector_id: &str) -> Result<Option<u64>, StorageError> {
+        let txn = self.db.begin_read()?;
+        let table = match txn.open_table(CURSOR_TABLE) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        Ok(table.get(collector_id)?.map(|guard| guard.value()))
+    }
+
+    /// Record that rules have evaluated `collector_id`'s rows through `through_ms`, so a restart
+    /// resumes its first window there instead of at the current time. Never moves backwards.
+    pub fn set_evaluated_through_ms(
+        &self,
+        collector_id: &str,
+        through_ms: u64,
+    ) -> Result<(), StorageError> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(CURSOR_TABLE)?;
+            let stored = table.get(collector_id)?.map(|guard| guard.value());
+            if stored.is_none_or(|current| current < through_ms) {
+                table.insert(collector_id, through_ms)?;
+            }
         }
         txn.commit()?;
         Ok(())
@@ -506,6 +656,39 @@ impl EventStore {
 
 /// Validates that the directory containing the database file exists and is accessible.
 /// This provides platform-agnostic error messages before attempting to open the database.
+/// redb's page cache when nothing configures one: `DatabaseConfig::PAGE_CACHE_MB_DEFAULT`, not
+/// redb's own 1 GiB. Every open in this crate goes through here or takes an explicit cap.
+pub(crate) const fn default_page_cache_bytes() -> usize {
+    DatabaseConfig::PAGE_CACHE_MB_DEFAULT.saturating_mul(MIB)
+}
+
+/// Create (or open) the redb file at `db_path`, capping its page cache at `cache_bytes`.
+pub(crate) fn create_database(
+    db_path: &Path,
+    cache_bytes: usize,
+) -> Result<Database, StorageError> {
+    ensure_db_dir(db_path)?;
+    Database::builder()
+        .set_cache_size(cache_bytes)
+        .create(db_path)
+        .map_err(|source| StorageError::DatabaseCreationFailed {
+            path: db_path.to_path_buf(),
+            source,
+        })
+}
+
+/// Open the existing redb file at `db_path`, capping its page cache at `cache_bytes`.
+pub(crate) fn open_database(db_path: &Path, cache_bytes: usize) -> Result<Database, StorageError> {
+    ensure_db_dir(db_path)?;
+    Database::builder()
+        .set_cache_size(cache_bytes)
+        .open(db_path)
+        .map_err(|source| StorageError::DatabaseCreationFailed {
+            path: db_path.to_path_buf(),
+            source,
+        })
+}
+
 fn ensure_db_dir(db_path: &Path) -> Result<(), StorageError> {
     if let Some(dir) = db_path.parent() {
         match fs::metadata(dir) {
@@ -617,40 +800,20 @@ pub struct DatabaseManager {
 }
 
 impl DatabaseManager {
-    /// Create a new database manager.
+    /// Create a new database manager, with the default page cache.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let db_path = path.as_ref();
-
-        // Platform-agnostic preflight directory checks
-        ensure_db_dir(db_path)?;
-
-        // Create the database, mapping errors to friendly messages
-        let db =
-            Database::create(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
-                path: db_path.to_path_buf(),
-                source,
-            })?;
-
-        let manager = Self { db };
+        let manager = Self {
+            db: create_database(path.as_ref(), default_page_cache_bytes())?,
+        };
         manager.initialize_schema()?;
         Ok(manager)
     }
 
-    /// Open an existing database.
+    /// Open an existing database, with the default page cache.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let db_path = path.as_ref();
-
-        // Platform-agnostic preflight directory checks
-        ensure_db_dir(db_path)?;
-
-        // Open the database, mapping errors to friendly messages
-        let db =
-            Database::open(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
-                path: db_path.to_path_buf(),
-                source,
-            })?;
-
-        Ok(Self { db })
+        Ok(Self {
+            db: open_database(path.as_ref(), default_page_cache_bytes())?,
+        })
     }
 
     /// Initialize the database schema.
@@ -821,7 +984,7 @@ pub struct DatabaseStats {
 #[allow(clippy::expect_used, clippy::let_underscore_must_use)]
 mod tests {
     use super::*;
-    use crate::models::AlertSeverity;
+    use crate::models::{AlertSeverity, Completeness};
     use tempfile::tempdir;
 
     #[test]
@@ -830,6 +993,38 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let _manager = DatabaseManager::new(&db_path).expect("Failed to create database manager");
         assert!(db_path.exists());
+    }
+
+    /// `Debug` prints the bucketing parameters and nothing that locates the store
+    /// on disk. A physical plan is rendered by `RuleExecutor::explain` and by
+    /// `DataFusion`'s own error text, both of which print whatever the provider
+    /// holds, so a store path reaching `Debug` would publish deployment topology
+    /// through an error message. Asserting the absence is what makes a later
+    /// `derive(Debug)`, or a `db` field added to this impl, fail here instead of
+    /// silently widening what a plan prints.
+    #[test]
+    fn event_store_debug_reports_bucketing_without_locating_the_store() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let marker = "topology-marker";
+        let db_path = temp_dir.path().join(format!("{marker}.redb"));
+        let store = EventStore::new(&db_path).expect("create event store");
+
+        let rendered = format!("{store:?}");
+
+        assert!(rendered.starts_with("EventStore"), "names the type");
+        assert!(rendered.contains("granularity_ms"), "reports granularity");
+        assert!(rendered.contains("retention_ms"), "reports retention");
+        assert!(rendered.contains("mrc_window_ms"), "reports mrc window");
+        // The two absence assertions are the point of the test.
+        assert!(
+            !rendered.contains(marker),
+            "Debug must not print the store file name"
+        );
+        let dir = temp_dir.path().display().to_string();
+        assert!(
+            !rendered.contains(&dir),
+            "Debug must not print the store directory"
+        );
     }
 
     #[test]
@@ -1117,21 +1312,15 @@ mod tests {
             Some("abcdef0123456789abcdef0123456789ffffffffffffffffffffffffffffffff".to_owned());
         let late = ProcessRecord::new(22, "late".to_owned());
 
+        let at = |mut record: ProcessRecord, ts_ms: u64| {
+            record.collection_time =
+                chrono::DateTime::from_timestamp_millis(i64::try_from(ts_ms).expect("ts fits i64"))
+                    .expect("valid timestamp");
+            record
+        };
         let batch = vec![
-            IngestRecord {
-                collector_id: "c".to_owned(),
-                source_seq: 1,
-                ts_ms: base,
-                seq: 1,
-                record: early,
-            },
-            IngestRecord {
-                collector_id: "c".to_owned(),
-                source_seq: 2,
-                ts_ms: next,
-                seq: 2,
-                record: late,
-            },
+            IngestRecord::new("c", 1, 1, at(early, base)).expect("early record"),
+            IngestRecord::new("c", 2, 2, at(late, next)).expect("late record"),
         ];
         store.put_batch(&batch).expect("put batch");
 
@@ -1334,6 +1523,7 @@ mod tests {
             "apache -> bash",
             "apache-bash-spawn",
             proc,
+            Completeness::complete(),
         );
         writer.store_alert(&alert).expect("store alert");
         drop(writer);
@@ -1606,6 +1796,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         // Test that store_alert doesn't panic (currently stubbed)
@@ -1903,7 +2094,41 @@ mod tests {
         let cloned_status = status.clone();
         assert_eq!(status, cloned_status);
     }
-}
 
-// TODO: Implement redb Value trait implementations in Task 8
-// For now, just focus on getting the basic structure compiling for Task 1
+    /// The evaluated-through mark is absent on a fresh store, round-trips, never moves backwards,
+    /// and survives a reopen, which is what a restart reads.
+    #[test]
+    fn evaluated_through_mark_round_trips_and_only_advances() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("cursor.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        assert_eq!(
+            store.evaluated_through_ms("procmond").expect("read mark"),
+            None
+        );
+
+        store
+            .set_evaluated_through_ms("procmond", 5_000)
+            .expect("set mark");
+        store
+            .set_evaluated_through_ms("procmond", 4_000)
+            .expect("set mark");
+        assert_eq!(
+            store.evaluated_through_ms("procmond").expect("read mark"),
+            Some(5_000)
+        );
+        assert_eq!(
+            store.evaluated_through_ms("other").expect("read mark"),
+            None
+        );
+        drop(store);
+
+        let reopened = EventStore::open(&db_path).expect("reopen store");
+        assert_eq!(
+            reopened
+                .evaluated_through_ms("procmond")
+                .expect("read mark"),
+            Some(5_000)
+        );
+    }
+}

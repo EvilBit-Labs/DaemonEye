@@ -195,7 +195,7 @@ impl ProcessCollector {
 **SQL Security Implementation**:
 
 - **AST Validation**: Parse SQL queries using AST validation to prevent injection attacks[^14]
-- **Function Whitelist**: Only allow SELECT statements with approved functions (COUNT, SUM, AVG, MIN, MAX, LENGTH, SUBSTR, datetime functions)[^19]
+- **Function Allowlist**: Only allow SELECT statements whose function calls are on the allowlist (`hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`); aggregates are refused[^19]
 - **Prepared Statements**: Use prepared statements with read-only database connections[^15]
 - **Timeout Protection**: Complete within 30 seconds or timeout with appropriate logging[^16]
 - **Audit Logging**: Reject forbidden constructs and log attempts for audit purposes[^18]
@@ -1526,7 +1526,7 @@ For additional technical details, refer to the [API Reference](api-reference.htm
 
 [^18]: Requirement 3.5: Reject forbidden constructs and log attempts for audit purposes
 
-[^19]: Requirement 3.2: Only allow SELECT statements with approved functions (COUNT, SUM, AVG, MIN, MAX, LENGTH, SUBSTR, datetime functions)
+[^19]: Requirement 3.2: Only allow SELECT statements whose function calls are on the allowlist (`hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`)
 
 [^20]: Requirement 8.1: Execute user-provided SQL queries with parameterization and prepared statements
 

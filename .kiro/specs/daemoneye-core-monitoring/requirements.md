@@ -55,7 +55,7 @@ Decided 2026-06-09 to sequence solo-maintainer effort toward OSS v1.0.0:
 #### Acceptance Criteria
 
 1. WHEN loading detection rules THEN the system SHALL parse and validate SQL queries using AST validation (sqlparser) to prevent injection attacks
-2. WHEN validating SQL THEN the system SHALL only allow SELECT statements with approved functions (COUNT, SUM, AVG, MIN, MAX, LENGTH, SUBSTR, datetime functions)
+2. WHEN validating SQL THEN the system SHALL only allow SELECT statements whose function calls are on the allowlist in `daemoneye-lib/src/detection/allowlist.rs` (`hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`); aggregates are refused until windowed aggregation ships (spec §13.5)
 3. WHEN executing queries THEN the system SHALL execute only the derived, load-time-validated query representation against a read-only view of the event store; the original SQL dialect SHALL never reach the execution layer
 4. WHEN a detection rule executes THEN the system SHALL complete within 30 seconds or timeout with appropriate logging
 5. WHEN SQL contains forbidden constructs THEN the system SHALL reject the query and log the attempt for audit purposes

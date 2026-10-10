@@ -1,7 +1,15 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use daemoneye_lib::{alerting, config, detection_bounds, storage, telemetry};
+use daemoneye_agent::detection_cycle::{
+    PROCMOND_COLLECTOR_ID, build_signals, ingest_cycle, ingest_step, load_persisted_rules,
+    next_cycle_ordinal, next_window, open_event_store, persist_alerts, run_detection_cycle,
+};
+use daemoneye_lib::detection::execution::completeness::IngestSnapshot;
+use daemoneye_lib::detection::execution::executor::RuleExecutor;
+use daemoneye_lib::storage::ingest::{self, IngestConfig};
+use daemoneye_lib::{alerting, config, detection_bounds, telemetry};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, error, info, warn};
 
@@ -66,8 +74,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize telemetry
     let mut telemetry = telemetry::TelemetryCollector::new("daemoneye-agent".to_owned());
 
-    // Initialize database
-    let _db_manager = storage::DatabaseManager::new(&config.database.path)?;
+    // Initialize the event store and the ingest pipeline that writes into it.
+    let event_store = Arc::new(open_event_store(&config.database.path, &config.database)?);
+    let ingest_handle = ingest::spawn(Arc::clone(&event_store), IngestConfig::default());
+    // One above the last ordinal committed, so a restart never reuses a sequence the stored
+    // watermark would discard as already delivered.
+    let mut next_ordinal = Some(next_cycle_ordinal(&event_store, PROCMOND_COLLECTOR_ID)?);
 
     // Initialize embedded EventBus broker
     let broker_manager =
@@ -257,11 +269,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // The detection engine the admission gate already feeds. It is *not* constructed here: a
     // second engine would leave this one's catalog empty forever, so every rule would defer under
     // R18 and never plan, with nothing to see in the logs.
-    let detection_engine = std::sync::Arc::clone(broker_manager.detection_engine());
+    let detection_engine = Arc::clone(broker_manager.detection_engine());
 
-    // TODO(#006): Load detection rules from the database via `storage::DatabaseManager::get_all_rules`
-    // once the redb storage layer is implemented (Task 8). Until then, the detection engine starts
-    // with no rules loaded. Rules should be persisted through the database and reloaded on startup.
+    // Reload every persisted rule; a rejected one is logged with its id and does not stop startup.
+    let mut startup_engine = detection_engine.lock().await;
+    let loaded = load_persisted_rules(&event_store, &mut startup_engine)?;
+    // One executor for the process, sharing the engine's compiled-pattern cache so a pattern the
+    // planner validated is not compiled twice.
+    let executor = RuleExecutor::new(
+        Arc::clone(&event_store),
+        startup_engine.regex_cache(),
+        &config.detection,
+    )?;
+    drop(startup_engine);
+    info!(loaded_rules = loaded, "Loaded persisted detection rules");
 
     // Initialize alert manager
     let mut alert_manager = alerting::AlertManager::new();
@@ -294,6 +315,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Main loop task
     let mut iteration: u64 = 0;
+
+    // The previous cycle's high-water mark: the exclusive start of the next cycle's window (R3).
+    // A restart resumes from the mark the last completed cycle recorded, so rows committed before
+    // a crash but never evaluated are not skipped; a store with no mark starts at now, so rows an
+    // earlier run already evaluated are not re-alerted.
+    let now_ms = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or_default()
+        });
+    let mut previous_high_water_ms = event_store
+        .evaluated_through_ms(PROCMOND_COLLECTOR_ID)?
+        .unwrap_or(now_ms);
 
     // Session-scoped ssdeep binary-change tracker (R2 AC7). Holds the last
     // ssdeep digest per executable path so a similarity drop versus the
@@ -414,6 +448,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // does not carry these flags.
                 let mut integrity_alert_batch: Vec<daemoneye_lib::models::Alert> = Vec::new();
 
+                let mut collection: Result<(), String> = Ok(());
                 let processes = match broker_manager.execute_task_rpc("procmond", task).await {
                     Ok(result) => {
                         if result.success {
@@ -432,27 +467,92 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 .map(Into::into)
                                 .collect()
                         } else {
+                            let message = result
+                                .error_message
+                                .as_deref()
+                                .unwrap_or("Unknown error")
+                                .to_owned();
                             warn!(
-                                error = %result.error_message.as_deref().unwrap_or("Unknown error"),
+                                error = %message,
                                 "Procmond returned error during process enumeration via RPC"
                             );
+                            collection = Err(message);
                             Vec::new()
                         }
                     }
                     Err(e) => {
                         warn!(error = %e, "Failed to collect processes from procmond via RPC");
+                        collection = Err(e.to_string());
                         Vec::new()
                     }
                 };
 
-                // Execute detection rules against collected processes
+                // Commit this cycle's rows before anything evaluates them. A cycle that collected
+                // nothing consumes no ordinal, so the next one stays contiguous for the watermark.
+                let mut window = next_window(previous_high_water_ms, previous_high_water_ms);
+                let mut sequence_gaps = Vec::new();
+                let mut ingest_failure = None;
+                match next_ordinal {
+                    Some(ordinal) if !processes.is_empty() => {
+                        let ingested = ingest_cycle(
+                            &ingest_handle,
+                            PROCMOND_COLLECTOR_ID,
+                            ordinal,
+                            &processes,
+                        )
+                        .await;
+                        let step = ingest_step(ordinal, previous_high_water_ms, ingested);
+                        if let Some(ref error) = step.failure {
+                            error!(error = %error, "Ingest failed; this cycle's rows are not durable");
+                            telemetry.record_error();
+                        } else {
+                            debug!(
+                                submitted = processes.len(),
+                                through_ms = step.window.through_ms,
+                                gaps = step.gaps.len(),
+                                "Ingested cycle"
+                            );
+                        }
+                        if step.window.after_ms < previous_high_water_ms {
+                            warn!(
+                                after_ms = step.window.after_ms,
+                                mark_ms = previous_high_water_ms,
+                                "Rows were stamped at or before the evaluated mark; the window reaches back and re-evaluates the overlap"
+                            );
+                        }
+                        next_ordinal = step.next_ordinal;
+                        window = step.window;
+                        sequence_gaps = step.gaps;
+                        ingest_failure = step.failure;
+                    }
+                    Some(_) => {}
+                    None => {
+                        error!("Cycle ordinals exhausted; collected rows are not being stored");
+                        ingest_failure = Some("cycle ordinal space exhausted".to_owned());
+                    }
+                }
+
+                // Evaluate every eligible rule over what this cycle added to the store.
                 let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_owned());
-                let mut alerts = {
-                    // Scoped so the engine lock is released before the alert-delivery awaits
-                    // below; the admission gate takes the same lock on every registration.
-                    let engine = detection_engine.lock().await;
-                    engine.execute_rules(&processes)
-                };
+                let heartbeat = broker_manager.collector_heartbeat_health(PROCMOND_COLLECTOR_ID).await;
+                let signals = build_signals(
+                    PROCMOND_COLLECTOR_ID,
+                    collection,
+                    heartbeat,
+                    IngestSnapshot {
+                        sequence_gaps,
+                        failure: ingest_failure,
+                    },
+                );
+                previous_high_water_ms = window.through_ms;
+                let cycle = run_detection_cycle(&*detection_engine, &executor, window, &signals).await;
+                if cycle.dropped_after_reeligibility > 0 {
+                    warn!(
+                        dropped = cycle.dropped_after_reeligibility,
+                        "Rules changed while they ran; their results were dropped"
+                    );
+                }
+                let mut alerts = cycle.alerts;
                 // Fold in integrity-signal alerts so they share the dedup,
                 // rate-limit, and delivery path of detection-rule alerts.
                 alerts.extend(integrity_alert_batch);
@@ -470,6 +570,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                             telemetry.record_error();
                         }
                     }
+                }
+                // Every delivered alert is also stored, so its completeness marker is readable later.
+                let stored_alerts = persist_alerts(&event_store, &alerts);
+                if stored_alerts != alerts.len() {
+                    warn!(
+                        stored = stored_alerts,
+                        total = alerts.len(),
+                        "Some alerts were not persisted; the evaluated mark stays, so a restart re-evaluates this window"
+                    );
+                }
+                // The cycle is complete once every alert is stored: a restart resumes from here.
+                if stored_alerts == alerts.len()
+                    && window.after_ms != window.through_ms
+                    && let Err(e) = event_store.set_evaluated_through_ms(PROCMOND_COLLECTOR_ID, window.through_ms)
+                {
+                    warn!(error = %e, "Evaluated-through mark was not recorded; a restart may re-evaluate this window");
                 }
                 let detection_duration = detection_timer.finish();
                 telemetry.record_operation(detection_duration);
@@ -541,6 +657,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = broker_result {
         error!(error = %e, "Failed to shutdown embedded broker gracefully");
     }
+
+    // After the broker, so nothing is still submitting; commits whatever is queued.
+    ingest_handle.flush_and_stop().await;
 
     #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
     {

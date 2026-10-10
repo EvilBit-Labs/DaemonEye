@@ -306,26 +306,32 @@ fn input_nested_past_the_parser_recursion_limit_fails_as_a_parse_error() {
 
 // --- Property: no non-allowlisted identifier reaches a lowering path --------------------------
 
-/// The allowlist only governs constructs that reach the gate as `Expr::Function`.
+/// Function-like syntax that parses to its own `Expr` variant is refused at load, by name.
 ///
-/// `SUBSTR`/`SUBSTRING`, `CAST`, `TRIM`, `POSITION` and `EXTRACT` are parsed by `sqlparser` into
-/// their own dedicated `Expr` variants, so they never consult the allowlist and listing them there
-/// would be decoration. That is a property of the parser, not of this crate, so it is pinned here:
-/// if a future `sqlparser` release reclassifies any of them as an ordinary function call, they
-/// would start being rejected as unlisted, silently breaking rules that use them. This test fails
-/// at that moment instead.
+/// `SUBSTR`/`SUBSTRING`, `TRIM`, `POSITION`, `EXTRACT`, `CEIL` and `FLOOR` never reach the
+/// allowlist as `Expr::Function`, and the executor registers no implementation behind them, so
+/// without this gate a rule using one would load and then fail on every cycle. The rejection is
+/// the same one an unlisted function gets, naming the construct.
+///
+/// `CAST` is not here: R27 refuses it by its own gate
+/// (`a_cast_is_refused_at_load_naming_the_construct_seen`).
 #[test]
-fn parser_level_constructs_do_not_reach_the_function_allowlist() {
-    for sql in [
-        "SELECT substr(name, 1, 3) FROM processes",
-        "SELECT SUBSTRING(name FROM 1 FOR 3) FROM processes",
-        "SELECT cast(pid AS TEXT) FROM processes",
-        "SELECT trim(name) FROM processes",
+fn parser_level_function_syntax_is_refused_at_load() {
+    for (sql, construct) in [
+        ("SELECT substr(name, 1, 3) FROM processes", "SUBSTRING"),
+        (
+            "SELECT SUBSTRING(name FROM 1 FOR 3) FROM processes",
+            "SUBSTRING",
+        ),
+        ("SELECT trim(name) FROM processes", "TRIM"),
+        ("SELECT position('a' IN name) FROM processes", "POSITION"),
+        ("SELECT ceil(cpu_usage) FROM processes", "CEIL"),
+        ("SELECT floor(cpu_usage) FROM processes", "FLOOR"),
     ] {
+        let error = rule_with(sql).validate_sql().unwrap_err().to_string();
         assert!(
-            rule_with(sql).validate_sql().is_ok(),
-            "{sql} must load: it is a parser-level construct, not a function call the allowlist \
-             governs. A sqlparser change reclassifying it as Expr::Function would land here."
+            error.contains(&format!("`{construct}`")),
+            "{sql} must be refused naming {construct}, got: {error}"
         );
     }
 }
@@ -455,4 +461,84 @@ fn an_ordinary_rule_with_no_extra_clause_still_loads() {
     // plain SELECT: gating on the variant rather than its contents would refuse every rule.
     accept("SELECT pid FROM processes WHERE pid = 1");
     accept("SELECT p.name, p.pid FROM processes p WHERE p.name LIKE '%test%'");
+}
+
+// --- R27: casts are refused at load, by construct ---------------------------------------------
+
+/// Each cast spelling parses to its own AST node and never reaches the function allowlist, so the
+/// assertion is on `CastNotAllowed` and its `construct`: a parse error or an allowlist hit would
+/// also refuse the rule and prove nothing about this gate.
+#[test]
+fn a_cast_is_refused_at_load_naming_the_construct_seen() {
+    for (sql, construct) in [
+        (
+            "SELECT pid FROM processes WHERE CAST(name AS INT) = 1",
+            "CAST",
+        ),
+        (
+            "SELECT pid FROM processes WHERE TRY_CAST(name AS INT) = 1",
+            "TRY_CAST",
+        ),
+        (
+            "SELECT pid FROM processes WHERE SAFE_CAST(name AS INT) = 1",
+            "SAFE_CAST",
+        ),
+        ("SELECT pid FROM processes WHERE name::INT = 1", "::"),
+        (
+            "SELECT pid FROM processes WHERE start_time > DATE '2020-01-01'",
+            "typed string literal",
+        ),
+    ] {
+        let rejection = reject(sql);
+        let SqlRejection::CastNotAllowed { construct: named } = rejection else {
+            panic!("expected the cast gate to fire for {sql}, got {rejection:?}");
+        };
+        assert_eq!(named, construct, "wrong construct named for {sql}");
+    }
+}
+
+#[test]
+fn a_cast_nested_in_a_subquery_or_projection_is_still_refused() {
+    for sql in [
+        "SELECT CAST(pid AS TEXT) FROM processes",
+        "SELECT pid FROM processes WHERE pid IN (SELECT pid FROM processes WHERE name::TEXT = 'x')",
+    ] {
+        assert!(
+            matches!(reject(sql), SqlRejection::CastNotAllowed { .. }),
+            "{sql}"
+        );
+    }
+}
+
+/// The control: a rule with no cast is not caught by the new gate.
+#[test]
+fn a_rule_with_no_cast_still_loads() {
+    accept("SELECT pid FROM processes WHERE pid = 1 AND name = 'bash'");
+}
+
+/// The operators that spell a regular-expression match outside `REGEXP` are refused at load,
+/// naming the operator: they would reach `DataFusion`'s own kernel, which neither bounds the
+/// program through the `RegexCache` nor times it for the latency guard.
+#[test]
+fn regex_operators_outside_regexp_are_refused_naming_the_operator() {
+    for (sql, operator) in [
+        ("SELECT pid FROM processes WHERE name ~ '^b'", "~"),
+        ("SELECT pid FROM processes WHERE name ~* '^b'", "~*"),
+        ("SELECT pid FROM processes WHERE name !~ '^b'", "!~"),
+        ("SELECT pid FROM processes WHERE name !~* '^b'", "!~*"),
+        (
+            "SELECT pid FROM processes WHERE name SIMILAR TO 'b%'",
+            "SIMILAR TO",
+        ),
+    ] {
+        let rejection = reject(sql);
+        assert!(
+            matches!(rejection, SqlRejection::OperatorNotAllowed { operator: seen, .. } if seen == operator),
+            "{sql} must be refused naming {operator}, got {rejection:?}"
+        );
+    }
+    // The bounded path is untouched, in all three of its spellings.
+    accept("SELECT pid FROM processes WHERE name REGEXP '^b'");
+    accept("SELECT pid FROM processes WHERE name RLIKE '^b'");
+    accept("SELECT pid FROM processes WHERE regexp(name, '^b')");
 }

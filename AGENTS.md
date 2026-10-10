@@ -143,7 +143,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 - **Privilege Separation**: Only procmond runs elevated when necessary
 - **IPC**: Protobuf over Unix sockets/named pipes with CRC32 validation
 - **No Inbound Network**: Outbound-only for alert delivery
-- **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only \[Implemented: rule load-time validation; rule execution engine is a placeholder — see `detection/mod.rs`\]
+- **SQL Injection Prevention**: AST validation with sqlparser, prepared statements only \[Implemented: rule load-time validation, and `RuleExecutor` runs rules over DataFusion — see `detection/execution/`\]
 
 ---
 
@@ -226,7 +226,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 
 - Least privilege: Components run with minimal permissions
 - Automatic privilege drop after initialization
-- SQL injection prevention: AST validation at rule load time [Implemented]; SQL-based rule execution \[Planned — engine currently uses pattern matching, see `detection/mod.rs`\]. Pipeline is two-phase: sqlparser lowers the custom dialect (spec §4.10) at rule-compile time into (a) protobuf collection tasks and (b) derived standard SQL; the runtime executor only sees the derived SQL, never the original dialect.
+- SQL injection prevention: AST validation at rule load time [Implemented]; SQL-based rule execution \[Implemented: `RuleExecutor` over DataFusion, see `detection/execution/`\]. Pipeline is two-phase: sqlparser lowers the custom dialect (spec §4.10) at rule-compile time into (a) protobuf collection tasks and (b) derived standard SQL; the runtime executor only sees the derived SQL, never the original dialect.
 - Credentials: Environment variables or OS keychain, never hardcoded
 - No inbound network: Outbound-only for alerts
 - Audit trail: BLAKE3 hash-chained audit ledger [Implemented]; Merkle tree inclusion proofs \[In Progress — `generate_inclusion_proof()` returns empty vec, see `crypto.rs`\]
@@ -236,7 +236,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 - SLSA Level 3 provenance, Cosign signatures [Planned]
 - Merkle tree with inclusion proofs \[In Progress — chain hashing implemented; inclusion proof generation stubbed in `crypto.rs`\]
 - Sandboxed detection engine (read-only DB) [Planned]
-- Query whitelist (SELECT only with approved functions) [Implemented for rule validation; not yet enforced at execution time]
+- Query whitelist (SELECT only with approved functions) \[Implemented: the load-time allowlist refuses any other function call, and the executor registers only those seven functions (`hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`), replacing DataFusion's defaults. Function-like syntax that parses to its own AST node (`SUBSTR`, `TRIM`, `POSITION`, ...) is refused at load by variant, so nothing loads that the executor cannot run\]
 
 > Fleet-level transport security (mTLS between host agents and upstream aggregators) is handled in the commercial tiers, not in this repo.
 
@@ -278,7 +278,7 @@ Use `checked_*`, `saturating_*`, or explicit `wrapping_*` for security-sensitive
 - Validate early, reject with actionable errors
 - Use typed parsers over regex
 - Length limits on all variable-length inputs (Unix socket-path limit: [GOTCHAS.md](GOTCHAS.md) §4.1)
-- SQL: AST validation with `sqlparser` \[Implemented at rule load time; execution-time enforcement is [Planned]\]
+- SQL: AST validation with `sqlparser` \[Implemented at rule load time; at execution the session registers only the allowlisted functions, see `detection/execution/session.rs`\]
 
 ### Newtype Safety
 
@@ -304,6 +304,8 @@ Use newtypes for domain constraints (ports vs PIDs vs timestamps). Implement `Tr
 | DB Writes      | > 1,000 records/sec             |
 | Alert Latency  | < 100ms per rule                |
 | Query Response | Sub-second for 100k+ events/min |
+
+These are targets for a reference host, not hard bounds. Resident memory in particular scales with the deployment: a large, busy server may sit higher and a constrained embedded or SCADA endpoint lower. Size the tunables that govern it to the host rather than treating the number as a pass/fail gate.
 
 ### Resource Management
 

@@ -378,9 +378,10 @@ impl DetectionEngine {
         ids
     }
 
-    /// Whether a rule is still loaded, enabled and planned.
-    fn is_rule_covered(&self, rule_id: &str) -> bool {
-        self.compiled.contains_key(rule_id)
-            && self.rules.get(rule_id).is_some_and(|rule| rule.enabled)
+    /// Whether a rule is still loaded, enabled, planned and not latched: the engine's one
+    /// eligibility predicate, shared with `runnable_rules` so a task is kept alive for exactly the
+    /// rules the executor may run.
+    pub(super) fn is_rule_covered(&self, rule_id: &str) -> bool {
+        self.is_eligible(rule_id)
     }
 }

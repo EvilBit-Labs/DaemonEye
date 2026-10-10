@@ -112,7 +112,7 @@ impl AlertSink for StdoutSink {
     ///
     /// ```no_run
     /// use daemoneye_lib::alerting::{AlertSink, StdoutSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
     ///
     /// let sink = StdoutSink::new("stdout-test".to_owned(), OutputFormat::Human);
     /// let alert = Alert::new(
@@ -121,6 +121,7 @@ impl AlertSink for StdoutSink {
     ///     "Example",
     ///     "rule-1",
     ///     ProcessRecord::new(1, "proc".to_owned()),
+    ///     Completeness::complete(),
     /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let res = rt.block_on(async { sink.send(&alert).await }).unwrap();
@@ -138,7 +139,11 @@ impl AlertSink for StdoutSink {
             ),
             OutputFormat::Csv => format!(
                 "{},{},{},{},{}",
-                alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
+                alert.id,
+                alert.severity,
+                csv_field(&alert.detection_rule_id),
+                csv_field(&alert.title),
+                csv_field(&alert.description)
             ),
         };
 
@@ -188,7 +193,7 @@ impl AlertSink for FileSink {
     ///
     /// ```no_run
     /// use daemoneye_lib::alerting::{AlertSink, FileSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
     /// use std::path::PathBuf;
     ///
     /// let path = PathBuf::from("/tmp/daemoneye-alerts.log");
@@ -199,6 +204,7 @@ impl AlertSink for FileSink {
     ///     "Desc",
     ///     "rule-1",
     ///     ProcessRecord::new(1, "proc".to_owned()),
+    ///     Completeness::complete(),
     /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let _ = rt.block_on(async { sink.send(&alert).await }).unwrap();
@@ -215,7 +221,11 @@ impl AlertSink for FileSink {
             ),
             OutputFormat::Csv => format!(
                 "{},{},{},{},{}",
-                alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
+                alert.id,
+                alert.severity,
+                csv_field(&alert.detection_rule_id),
+                csv_field(&alert.title),
+                csv_field(&alert.description)
             ),
         };
 
@@ -483,11 +493,14 @@ impl AlertManager {
     ///
     /// ```no_run
     /// use daemoneye_lib::alerting::{AlertManager, AlertSink, StdoutSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
     ///
     /// let mut mgr = AlertManager::new();
     /// mgr.add_sink(Box::new(StdoutSink::new("s".to_owned(), OutputFormat::Json)));
-    /// let alert = Alert::new(AlertSeverity::Low, "Title", "Desc", "rule-1", ProcessRecord::new(1, "proc".to_owned()));
+    /// let alert = Alert::new(
+    ///     AlertSeverity::Low, "Title", "Desc", "rule-1",
+    ///     ProcessRecord::new(1, "proc".to_owned()), Completeness::complete(),
+    /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let first = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
     /// let second = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
@@ -646,6 +659,12 @@ impl HealthSummary {
     }
 }
 
+/// `field` quoted for a CSV cell: wrapped in double quotes with any inner quote doubled, so a
+/// comma or quote inside it cannot shift the columns.
+fn csv_field(field: &str) -> String {
+    format!("\"{}\"", field.replace('"', "\"\""))
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -656,7 +675,15 @@ impl HealthSummary {
 )]
 mod tests {
     use super::*;
-    use crate::models::{AlertSeverity, ProcessRecord};
+    use crate::models::{AlertSeverity, Completeness, ProcessRecord};
+
+    /// A title carrying a comma or a quote stays one CSV cell.
+    #[test]
+    fn csv_fields_are_quoted_and_inner_quotes_doubled() {
+        assert_eq!(csv_field("plain"), "\"plain\"");
+        assert_eq!(csv_field("a,b"), "\"a,b\"");
+        assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
 
     #[tokio::test]
     async fn test_stdout_sink() {
@@ -668,6 +695,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         let result = sink.send(&alert).await.expect("Failed to send alert");
@@ -687,6 +715,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         let results = manager
@@ -716,6 +745,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         // Send the same alert twice

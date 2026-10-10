@@ -13,12 +13,14 @@
 
 use std::time::{Duration, SystemTime};
 
+use tracing_test::traced_test;
+
 use daemoneye_lib::config::DetectionConfig;
 use daemoneye_lib::detection::catalog::{VerifiedRegistration, verify_spawn_token};
 use daemoneye_lib::detection::rule_health::{RuleHealth, UnhealthyCause};
-use daemoneye_lib::detection::{DetectionEngine, DetectionEngineError};
+use daemoneye_lib::detection::{DetectionEngine, DetectionEngineError, Generation};
 use daemoneye_lib::detection_bounds::{PUSHDOWN_TASK_RENEWAL_INTERVAL, PUSHDOWN_TASK_TTL};
-use daemoneye_lib::models::{AlertSeverity, DetectionRule, ProcessRecord};
+use daemoneye_lib::models::{AlertSeverity, DetectionRule};
 use daemoneye_lib::proto::{
     ColumnDescriptor, ColumnType, PredicateOp, SchemaDescriptor, TableDescriptor,
 };
@@ -90,6 +92,17 @@ fn engine_with_issued_task(start: SystemTime) -> DetectionEngine {
     engine
 }
 
+/// The generation `runnable_rules` issues for `rule-1`. The only way to obtain one: the type has
+/// no public constructor, so a test cannot invent a generation any more than production can.
+fn generation_of(engine: &DetectionEngine) -> Generation {
+    engine
+        .runnable_rules()
+        .iter()
+        .find(|runnable| runnable.rule.id.raw() == "rule-1")
+        .expect("rule-1 must be runnable to have a generation")
+        .generation
+}
+
 /// The reason text of a rule's current `Unhealthy` health, panicking on any other state — used
 /// only after a test has already asserted the rule is unhealthy for a specific reason.
 fn unhealthy_reason(engine: &DetectionEngine, rule_id: &str) -> String {
@@ -129,8 +142,9 @@ fn with_config_carries_the_configured_threshold_and_new_reports_the_default() {
 fn a_breaching_observation_disables_the_rule_removes_its_plan_and_stops_its_task() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
 
-    let breached = engine.observe_pattern_latency("rule-1", Duration::from_millis(11));
+    let breached = engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11));
     assert!(
         breached,
         "11 ms against a 10 ms default threshold breaches it"
@@ -206,8 +220,9 @@ fn a_breaching_observation_disables_the_rule_removes_its_plan_and_stops_its_task
 fn an_observation_at_the_threshold_changes_nothing() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
 
-    let breached = engine.observe_pattern_latency("rule-1", Duration::from_millis(10));
+    let breached = engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(10));
     assert!(!breached, "an observation at the threshold is not a breach");
 
     assert!(engine.get_rule("rule-1").expect("rule tracked").enabled);
@@ -221,11 +236,13 @@ fn an_observation_at_the_threshold_changes_nothing() {
 fn a_second_breach_on_an_already_disabled_rule_leaves_the_reason_byte_identical() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
 
-    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+    assert!(engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11)));
     let first_reason = unhealthy_reason(&engine, "rule-1");
 
-    let second_breach = engine.observe_pattern_latency("rule-1", Duration::from_millis(15));
+    let second_breach =
+        engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(15));
     assert!(
         second_breach,
         "the observation itself still breached the threshold"
@@ -240,8 +257,12 @@ fn a_second_breach_on_an_already_disabled_rule_leaves_the_reason_byte_identical(
 /// A rule id the engine does not hold changes nothing and is not tracked afterward.
 #[test]
 fn an_unknown_rule_id_changes_nothing() {
+    // A generation can only come from `runnable_rules`, so borrow a real one from an engine that
+    // does hold a rule; the engine under test holds nothing and must refuse it.
+    let generation = generation_of(&engine_with_issued_task(SystemTime::UNIX_EPOCH));
     let mut engine = DetectionEngine::new();
-    let breached = engine.observe_pattern_latency("does-not-exist", Duration::from_millis(999));
+    let breached =
+        engine.observe_pattern_latency("does-not-exist", generation, Duration::from_millis(999));
     assert!(!breached);
     assert_eq!(engine.rule_health("does-not-exist"), None);
 }
@@ -251,8 +272,9 @@ fn an_unknown_rule_id_changes_nothing() {
 fn only_reloading_the_rule_restores_it_after_a_latency_breach() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
 
-    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+    assert!(engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11)));
     let reason_before = unhealthy_reason(&engine, "rule-1");
 
     let result = engine.set_rule_enabled("rule-1", true);
@@ -291,8 +313,9 @@ fn only_reloading_the_rule_restores_it_after_a_latency_breach() {
 fn a_new_collectors_first_registration_does_not_re_heal_a_latency_disabled_rule() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
 
-    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+    assert!(engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11)));
     let reason_before = unhealthy_reason(&engine, "rule-1");
 
     engine
@@ -367,6 +390,7 @@ fn a_task_expiry_reference_failure_is_still_re_healed_by_a_later_registration() 
 fn an_operator_disabled_still_healthy_rule_still_loses_its_plan_and_health_on_breach() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
 
     engine
         .set_rule_enabled("rule-1", false)
@@ -377,7 +401,7 @@ fn an_operator_disabled_still_healthy_rule_still_loses_its_plan_and_health_on_br
     );
     assert_eq!(engine.rule_health("rule-1"), Some(&RuleHealth::Healthy));
 
-    let breached = engine.observe_pattern_latency("rule-1", Duration::from_millis(11));
+    let breached = engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11));
     assert!(
         breached,
         "11 ms against a 10 ms default threshold breaches it"
@@ -399,6 +423,11 @@ fn an_operator_disabled_still_healthy_rule_still_loses_its_plan_and_health_on_br
 /// `deferred`, which plans the rule for the first time and calls `RuleHealthRegistry::track`.
 #[test]
 fn a_breach_on_a_deferred_rule_survives_the_registration_that_drains_it() {
+    // A deferred rule has no plan, so `runnable_rules` never lists it and no executor could
+    // report on it. The defence-in-depth path is still worth pinning, so the generation is the
+    // one an identically-loaded sibling engine issues for its planned rule (both are the first
+    // load of `rule-1`).
+    let generation = generation_of(&engine_with_issued_task(SystemTime::UNIX_EPOCH));
     let mut engine = DetectionEngine::new();
     engine.load_rule(rule(true)).unwrap();
     assert_eq!(engine.deferred_rule_ids(), ["rule-1"]);
@@ -408,7 +437,7 @@ fn a_breach_on_a_deferred_rule_survives_the_registration_that_drains_it() {
         "an untracked deferred rule has no health yet"
     );
 
-    let breached = engine.observe_pattern_latency("rule-1", Duration::from_millis(11));
+    let breached = engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11));
     assert!(breached);
     assert!(!engine.get_rule("rule-1").expect("rule tracked").enabled);
 
@@ -431,13 +460,11 @@ fn a_breach_on_a_deferred_rule_survives_the_registration_that_drains_it() {
     );
 }
 
-/// P1-C: after a breach, re-enabling must be refused outright, and `execute_rules` must not alert
-/// for the rule while it stays disabled. This does *not* exercise `execute_rules`' own
-/// `resists_auto_recovery` gate — the refused enable leaves `enabled == false`, so the pre-existing
-/// `if !rule.enabled { continue; }` check short-circuits before that gate is ever reached. The
-/// `resists_auto_recovery` gate in `execute_rules` is what
-/// `a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled` actually exercises, via a
-/// recoverable cause that leaves `enabled == true`.
+/// P1-C: after a breach, re-enabling must be refused outright, and the rule must not be runnable
+/// while it stays disabled. The refused enable leaves `enabled == false`, so this does *not*
+/// reach the predicate's `resists_auto_recovery` clause; the breach also removed the plan, which
+/// is a second reason the rule is absent. The health clause is what
+/// `a_task_expired_rule_is_not_evaluated_until_it_is_re_planned` reaches via a recoverable cause.
 #[test]
 fn a_breached_rule_refuses_re_enable_and_produces_no_alerts() {
     let mut engine = DetectionEngine::new();
@@ -455,8 +482,9 @@ fn a_breached_rule_refuses_re_enable_and_produces_no_alerts() {
     );
     high_cpu_rule.enabled = true;
     engine.load_rule(high_cpu_rule).unwrap();
+    let generation = generation_of(&engine);
 
-    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+    assert!(engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11)));
 
     let result = engine.set_rule_enabled("rule-1", true);
     assert!(
@@ -468,12 +496,9 @@ fn a_breached_rule_refuses_re_enable_and_produces_no_alerts() {
         "a refused enable must not flip the flag"
     );
 
-    let mut process = ProcessRecord::new(1234, "hog".to_owned());
-    process.cpu_usage = Some(95.0);
-    let alerts = engine.execute_rules(&[process]);
     assert!(
-        alerts.is_empty(),
-        "a latency-disabled rule must not alert even though its category would otherwise match"
+        engine.runnable_rules().is_empty(),
+        "a latency-disabled rule must not be handed to the executor"
     );
 }
 
@@ -484,6 +509,7 @@ fn a_breached_rule_refuses_re_enable_and_produces_no_alerts() {
 fn a_latency_breach_on_a_task_expired_rule_overrides_and_then_resists_re_heal() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
 
     let expired = engine.renewal_cycle(start + PUSHDOWN_TASK_TTL);
     assert_eq!(expired.expired_rules(), ["rule-1"]);
@@ -495,7 +521,7 @@ fn a_latency_breach_on_a_task_expired_rule_overrides_and_then_resists_re_heal() 
         })
     ));
 
-    let breached = engine.observe_pattern_latency("rule-1", Duration::from_millis(11));
+    let breached = engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11));
     assert!(breached);
     let reason = unhealthy_reason(&engine, "rule-1");
     assert!(
@@ -527,8 +553,9 @@ fn a_same_collectors_re_registration_that_touches_the_table_does_not_re_heal_a_l
  {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
 
-    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+    assert!(engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11)));
     let reason_before = unhealthy_reason(&engine, "rule-1");
 
     // Same collector identity re-registering with an extra column on the same table: this
@@ -564,33 +591,29 @@ fn a_same_collectors_re_registration_that_touches_the_table_does_not_re_heal_a_l
     );
 }
 
-/// The recoverable-cause path through `execute_rules`' own `resists_auto_recovery` gate, which no
-/// other test in this file reaches. A task-expired rule keeps `enabled == true` — expiry never
-/// touches it — unlike the P1-C test above, whose refused enable leaves `enabled == false` and
-/// short-circuits on the earlier `if !rule.enabled` check. Here the gate is genuinely evaluated.
-/// Broadening it to match any `Unhealthy` cause (the natural-looking simplification of dropping
-/// the `resists_auto_recovery()` guard) would pass every other test in this file, since none of
-/// them reach a rule that is `Unhealthy` yet still `enabled == true` — and would silently stop
-/// alerting for every rule whose pushed task merely lapsed on transient IPC loss, a detection
-/// blackout for a condition that isn't even the rule's fault.
+/// A pushed task that lapsed (transient IPC loss) removes the rule's plan, so the executor is not
+/// handed the rule until it is planned again.
+///
+/// This replaced `a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled`, which asserted
+/// the opposite. The category placeholder it exercised interpreted `metadata.category` and never
+/// needed a plan, so a rule whose pushed half lapsed kept alerting. `DataFusion` executes the
+/// rule's compiled SQL, and `renewal_cycle` removes the plan on expiry, so there is nothing to
+/// run: `runnable_rules` omits the rule (and `execute_rules` is gone). What still holds is that
+/// expiry is recoverable: it never touches `enabled`, `set_rule_enabled(true)` is not refused (a
+/// latency breach would be), and the health verdict is the non-latching `TaskExpiry`.
 #[test]
-fn a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled() {
+fn a_task_expired_rule_is_not_evaluated_until_it_is_re_planned() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = DetectionEngine::new();
     engine
         .register_collector(&verified("procmond"), descriptor())
         .unwrap();
-
-    let mut high_cpu_rule = DetectionRule::new(
-        "rule-1".to_owned(),
-        "Test Rule".to_owned(),
-        "Pattern latency test rule".to_owned(),
-        "SELECT cpu_usage FROM processes WHERE cpu_usage > 80".to_owned(),
-        "high_cpu".to_owned(),
-        AlertSeverity::Medium,
+    engine.load_rule(rule(true)).unwrap();
+    assert_eq!(
+        engine.runnable_rules().len(),
+        1,
+        "runnable before the task lapses"
     );
-    high_cpu_rule.enabled = true;
-    engine.load_rule(high_cpu_rule).unwrap();
     assert_eq!(
         engine.renewal_cycle(start).due().len(),
         1,
@@ -612,16 +635,11 @@ fn a_task_expired_rule_still_alerts_locally_and_can_be_re_enabled() {
     );
     assert!(
         engine.get_rule("rule-1").expect("rule tracked").enabled,
-        "expiry never touches enabled -- this is what actually exercises execute_rules' gate"
+        "expiry never touches enabled"
     );
-
-    let mut process = ProcessRecord::new(1234, "hog".to_owned());
-    process.cpu_usage = Some(95.0);
-    let alerts = engine.execute_rules(&[process]);
-    assert_eq!(
-        alerts.len(),
-        1,
-        "a recoverable cause (TaskExpiry) must not stop local alerting"
+    assert!(
+        engine.runnable_rules().is_empty(),
+        "a rule with no compiled plan has no SQL to execute"
     );
 
     assert!(
@@ -670,9 +688,10 @@ fn set_rule_enabled_on_an_unknown_id_returns_execution_error() {
 fn a_fractional_millisecond_observation_is_not_truncated_in_the_reason() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
 
     let observed = Duration::from_micros(10_400); // 10.4ms, strictly over the 10ms default
-    assert!(engine.observe_pattern_latency("rule-1", observed));
+    assert!(engine.observe_pattern_latency("rule-1", generation, observed));
 
     let reason = unhealthy_reason(&engine, "rule-1");
     assert!(
@@ -688,12 +707,113 @@ fn a_fractional_millisecond_observation_is_not_truncated_in_the_reason() {
 fn removing_a_latency_breached_rule_leaves_no_health_row() {
     let start = SystemTime::UNIX_EPOCH;
     let mut engine = engine_with_issued_task(start);
-    assert!(engine.observe_pattern_latency("rule-1", Duration::from_millis(11)));
+    let generation = generation_of(&engine);
+    assert!(engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11)));
 
     assert!(engine.remove_rule("rule-1").is_some());
     assert_eq!(
         engine.rule_health("rule-1"),
         None,
         "removal must forget the rule's health row"
+    );
+}
+
+/// AE3 (ADR-0012): a report measured against a superseded instance is discarded before it can
+/// touch the fresh one. All four consequences are asserted, because the dangerous failure is a
+/// stale report that returns `false` yet still flips `enabled`, drops the plan or marks health.
+#[test]
+#[traced_test]
+fn a_report_for_a_superseded_generation_is_discarded_and_logged() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+    let stale = generation_of(&engine);
+    let health_before = engine.rule_health("rule-1").cloned();
+
+    engine.load_rule(rule(true)).unwrap();
+    let fresh = generation_of(&engine);
+    assert_ne!(stale, fresh, "a reload must issue a new generation");
+    assert_eq!(stale.to_string(), "1");
+    assert_eq!(fresh.to_string(), "2");
+
+    let breached = engine.observe_pattern_latency("rule-1", stale, Duration::from_millis(500));
+
+    assert!(!breached, "a stale report must return false");
+    assert!(
+        engine.get_rule("rule-1").expect("rule tracked").enabled,
+        "a stale report must not disable the fresh instance"
+    );
+    assert!(
+        engine.compiled_rule("rule-1").is_some(),
+        "a stale report must not drop the fresh instance's plan"
+    );
+    assert_eq!(
+        engine.rule_health("rule-1").cloned(),
+        health_before,
+        "a stale report must not mark the fresh instance unhealthy"
+    );
+    assert!(
+        engine
+            .runnable_rules()
+            .iter()
+            .any(|r| r.generation == fresh),
+        "the fresh instance must still be runnable"
+    );
+    assert!(
+        logs_contain("pattern latency report for a superseded rule instance discarded"),
+        "the discard is logged"
+    );
+    assert!(
+        logs_contain("reported_generation=1") && logs_contain("current_generation=2"),
+        "the log names both generations"
+    );
+
+    assert!(
+        engine.observe_pattern_latency("rule-1", fresh, Duration::from_millis(500)),
+        "the same measurement against the current generation still breaches"
+    );
+}
+
+/// Removing a rule retires its generation: a report for it is discarded, not applied to a
+/// later rule that happens to reuse the id.
+#[test]
+fn a_removed_rules_generation_does_not_apply_to_a_reloaded_rule() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+    let before_removal = generation_of(&engine);
+
+    assert!(engine.remove_rule("rule-1").is_some());
+    engine.load_rule(rule(true)).unwrap();
+    let after_reload = generation_of(&engine);
+    assert_ne!(before_removal, after_reload);
+
+    assert!(!engine.observe_pattern_latency("rule-1", before_removal, Duration::from_millis(500)));
+    assert!(engine.get_rule("rule-1").expect("rule tracked").enabled);
+    assert_eq!(engine.rule_health("rule-1"), Some(&RuleHealth::Healthy));
+}
+
+/// After a breach nothing makes the rule runnable except a reload, which issues a new
+/// generation: the reader that matters is `runnable_rules`, not the fields the guard wrote.
+#[test]
+fn a_breached_rule_is_not_runnable_until_it_is_reloaded() {
+    let start = SystemTime::UNIX_EPOCH;
+    let mut engine = engine_with_issued_task(start);
+    let generation = generation_of(&engine);
+    assert!(engine.is_runnable("rule-1", generation));
+
+    assert!(engine.observe_pattern_latency("rule-1", generation, Duration::from_millis(11)));
+    assert!(engine.runnable_rules().is_empty());
+    assert!(!engine.is_runnable("rule-1", generation));
+    assert!(engine.set_rule_enabled("rule-1", true).is_err());
+    assert!(
+        engine.runnable_rules().is_empty(),
+        "a refused enable must leave the rule unrunnable"
+    );
+
+    engine.load_rule(rule(true)).unwrap();
+    let reloaded = generation_of(&engine);
+    assert!(engine.is_runnable("rule-1", reloaded));
+    assert!(
+        !engine.is_runnable("rule-1", generation),
+        "the breached instance's generation stays dead after the reload"
     );
 }

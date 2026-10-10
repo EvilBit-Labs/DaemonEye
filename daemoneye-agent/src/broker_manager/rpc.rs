@@ -23,6 +23,17 @@ impl BrokerManager {
         })
     }
 
+    /// The registry's heartbeat health for `collector_id`; `None` when the registry is not up or
+    /// the collector never registered.
+    pub async fn collector_heartbeat_health(
+        &self,
+        collector_id: &str,
+    ) -> Option<daemoneye_lib::detection::execution::completeness::CollectorHealth> {
+        let registry = self.registry().await.ok()?;
+        let status = registry.heartbeat_status(collector_id).await?;
+        Some(status.collector_health())
+    }
+
     pub(super) fn map_registry_error(error: RegistryError) -> RegistrationError {
         match error {
             RegistryError::AlreadyRegistered(id) => RegistrationError::AlreadyRegistered(id),

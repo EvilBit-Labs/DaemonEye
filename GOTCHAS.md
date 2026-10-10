@@ -81,6 +81,13 @@ Per AGENTS.md rule 01, merges are performed by a human maintainer via Mergify (t
 
 ssdeep / CTPH is a non-cryptographic binary-change signal — **never** add it as a `HashAlgorithm` variant in `MultiAlgorithmHasher`. `HashResult.hashes` enforces a cryptographic-only invariant (`is_cryptographically_secure`, 64-hex-char length). ssdeep lives on its own path (`daemoneye-lib/src/integrity/fuzzy.rs`) and is carried as a dedicated field, not as an identity hash.
 
+### 4.3 redb Defaults to a 1 GiB Page Cache, and macOS RSS Overstates What It Holds
+
+`EventStore` used to open redb with `Database::create`, which sets a **1 GiB** read cache. Resident memory then tracked the bytes a scan touched (358 MiB at 168 buckets, 207 MiB at 84) and no `DetectionConfig` knob reached it. It is now `database.page_cache_mb`.
+
+- **RSS is the wrong peak on macOS.** `malloc` marks freed pages reusable and leaves them resident. `footprint -p <pid>` reports them as "Reclaimable" and excludes them from its `Footprint:` total. Runs at a 4 MiB cache showed 200-290 MiB of RSS over a ~50 MiB footprint, bimodally, with `Malloc Small` reclaimable at 138-218 MiB. Set `DETECTION_MEMORY_FOOTPRINT=1` for the live number, but note the sampler perturbs the RSS peak, so use it as a diagnostic, not the record.
+- Full write-up and the part still unexplained: [`docs/decisions/2026-10-08-t6-full-retention-memory.md`](docs/decisions/2026-10-08-t6-full-retention-memory.md).
+
 ## 5. Clippy & Rustdoc Lint Traps
 
 `cargo clippy -- -D warnings` runs with pedantic/nursery/restriction lints enabled; these specific traps fail the build in non-obvious ways (never silence with `#[allow]` unless justified — `08. Never remove clippy restrictions`):

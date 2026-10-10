@@ -81,6 +81,55 @@ pub struct DatabaseConfig {
     pub max_size_mb: Option<u64>,
     /// Enable database encryption
     pub encryption_enabled: bool,
+    /// redb page cache, in MiB. Range [`DatabaseConfig::PAGE_CACHE_MB_MIN`] to
+    /// [`DatabaseConfig::PAGE_CACHE_MB_MAX`].
+    ///
+    /// Bounds the resident memory a scan can accumulate from the event store: redb's own default
+    /// is 1 GiB, so left alone, resident memory tracks the bytes a scan touches rather than any
+    /// executor setting (`docs/decisions/2026-10-08-t6-full-retention-memory.md`). The `_MAX` is redb's default, so the ceiling never
+    /// permits more than the unconfigured behaviour; the `_MIN` keeps a few pages of working set
+    /// per scan partition. A smaller cache trades memory for disk reads and so for scan latency.
+    #[serde(default = "default_page_cache_mb")]
+    pub page_cache_mb: usize,
+}
+
+/// Bytes in a MiB, for the page cache and the executor's byte bounds.
+pub(crate) const MIB: usize = 1024 * 1024;
+
+/// Serde default for [`DatabaseConfig::page_cache_mb`], so a file written before it existed loads.
+const fn default_page_cache_mb() -> usize {
+    DatabaseConfig::PAGE_CACHE_MB_DEFAULT
+}
+
+impl DatabaseConfig {
+    /// Chosen from the sweep in `docs/decisions/2026-10-08-t6-full-retention-memory.md`: the
+    /// lowest worst-case peak and smallest latency cost among the sizes that remove the
+    /// bucket-count growth. A judgement among noisy options, not a measured optimum.
+    pub const PAGE_CACHE_MB_DEFAULT: usize = 32;
+    /// A floor that still holds a working set of pages for a scan.
+    pub const PAGE_CACHE_MB_MIN: usize = 4;
+    /// redb's own default, 1 GiB.
+    pub const PAGE_CACHE_MB_MAX: usize = 1024;
+
+    /// The configured cache in bytes, for `redb::Builder::set_cache_size`.
+    #[must_use]
+    pub const fn page_cache_bytes(&self) -> usize {
+        self.page_cache_mb.saturating_mul(MIB)
+    }
+
+    /// Check `page_cache_mb` against its range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::ValidationError`] when out of range; never clamps.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        check_range(
+            "database.page_cache_mb",
+            &self.page_cache_mb,
+            &Self::PAGE_CACHE_MB_MIN,
+            &Self::PAGE_CACHE_MB_MAX,
+        )
+    }
 }
 
 /// Alerting configuration.
@@ -96,12 +145,54 @@ pub struct AlertingConfig {
     pub recent_threshold_seconds: u64,
 }
 
-/// Detection rule-load configuration.
+/// Detection configuration: the rule-load bounds, the per-cycle match cap, and the sizing of the
+/// `DataFusion` executor.
 ///
-/// Only the two values the Product Contract declares tunable live here. Every other detection
-/// bound is a fixed constant in [`crate::detection_bounds`], because each of those backs a
-/// guarantee that would not survive being made configurable.
+/// The Product Contract declares two values tunable, `max_subquery_depth` and
+/// `pattern_latency_threshold_ms`. Seven more are tunable because the 100 MiB resident figure is a
+/// deployment-sized target, not a fixed invariant: a large busy server may need the ceiling higher
+/// and a small SCADA endpoint lower, so the knobs that determine memory are operator-configurable,
+/// each defaulting to the constant in [`crate::detection_bounds`] that the default deployment is
+/// measured against. There is deliberately **no** memory-target field: nothing in the daemon
+/// measures its own resident set in production, so a configured target would be a number nothing
+/// checks, a guard that does not guard. The target lives in the measurement record and the
+/// operator docs.
+///
+/// Every field is range-checked by [`DetectionConfig::validate`] and every `_MAX` is chosen so the
+/// guarantee its default constant backs still holds at the ceiling:
+///
+/// - `executor_batch_size`: a `REGEXP` pattern is timed once per batch (ADR-0011), so the batch is
+///   the granularity of the latency guard. The ceiling keeps one batch's worst-case matching cost
+///   from outgrowing that granularity; the floor stops per-batch fixed cost dominating throughput.
+/// - `executor_batch_max_bytes`: bounds a batch's estimated decoded size independently of its row
+///   count. The floor is the assumed worst-case row ([`DetectionConfig::ASSUMED_WORST_CASE_ROW_BYTES`]),
+///   because a smaller bound would exclude every row and turn the rare oversized-row carve-out into
+///   a rule that fires on all of them. That floor rests on an **assumption**, documented there.
+/// - `executor_memory_pool_bytes`: the `GreedyMemoryPool` the session reserves from. It is not an
+///   incidental-bookkeeping allowance. The physical optimizer inserts a `RepartitionExec` whenever
+///   the scan supplies fewer partitions than `executor_target_partitions`, and a normal cycle's
+///   window sits inside one bucket, so that operator is present on **every** cycle; it reserves
+///   batch-sized memory and attempts a spill the disabled disk manager refuses. A pool smaller
+///   than that reservation fails the evaluation as a degraded resource error, every cycle. The
+///   floor here is a sanity floor, not a working one: the reservation is not yet sized against
+///   `executor_batch_size`, so an operator shrinking the pool must also test their own rules.
+///   `executor_target_partitions = 1` removes the repartition at the cost of parallelism.
+/// - `executor_target_partitions`: partitions multiply per-batch memory, so the ceiling bounds the
+///   multiplier.
+/// - `posting_cache_max_entries` and `posting_cache_max_postings`: the cache is bounded by count,
+///   never bytes, and their product is its worst case, `size_of::<(u64, u32)>()` = 16 bytes per
+///   posting (12 of payload, 4 of padding). At the defaults that is 4 MiB; at both ceilings
+///   (2,048 x 4,096) it is **128 MiB**, stated in
+///   [`crate::detection_bounds::POSTING_CACHE_CEILING_BYTES`] and pinned by a compile-time assert,
+///   the same way `REGEX_CACHE_MAX_BYTES` documents the regex cache. An operator configuring both
+///   ceilings is choosing a large deployment on purpose. Like that constant, it is a product, not
+///   a measured resident bound.
+/// - `max_matches_per_rule`: the per-rule per-cycle alert cap.
+///
+/// Fields absent from a config file take their defaults, so a file written before these existed
+/// still loads.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct DetectionConfig {
     /// Maximum subquery nesting depth accepted in a detection rule.
     ///
@@ -115,12 +206,38 @@ pub struct DetectionConfig {
     /// Validated and carried into `DetectionEngine` as a `Duration` at construction.
     /// `DetectionEngine::observe_pattern_latency` is the consequence enforced against it: a
     /// pattern execution reported over this budget disables the rule that owns it and marks it
-    /// unhealthy. Nothing observes pattern latency yet — that is T6's work, which needs the
-    /// `DataFusion` executor; this value is only the budget it will be measured against. Valid
-    /// range is [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN`] to
+    /// unhealthy. Valid range is [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN`] to
     /// [`DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX`]. Milliseconds are stored as an
     /// integer so that [`Config`] can keep deriving [`Eq`].
     pub pattern_latency_threshold_ms: u64,
+    /// Most alerts one rule may produce in one cycle; the executor stops at one more than this and
+    /// degrades the evaluation with the cap as the reason. Range
+    /// [`DetectionConfig::MAX_MATCHES_PER_RULE_MIN`] to [`DetectionConfig::MAX_MATCHES_PER_RULE_MAX`].
+    pub max_matches_per_rule: u32,
+    /// Partitions `DataFusion` may fan a plan over. Range
+    /// [`DetectionConfig::EXECUTOR_TARGET_PARTITIONS_MIN`] to
+    /// [`DetectionConfig::EXECUTOR_TARGET_PARTITIONS_MAX`].
+    pub executor_target_partitions: usize,
+    /// Rows per `RecordBatch`, and so the granularity of the latency guard. Range
+    /// [`DetectionConfig::EXECUTOR_BATCH_SIZE_MIN`] to [`DetectionConfig::EXECUTOR_BATCH_SIZE_MAX`].
+    pub executor_batch_size: usize,
+    /// Estimated decoded bytes a scan batch may hold. Range
+    /// [`DetectionConfig::EXECUTOR_BATCH_MAX_BYTES_MIN`] (the assumed worst-case row, R28) to
+    /// [`DetectionConfig::EXECUTOR_BATCH_MAX_BYTES_MAX`].
+    pub executor_batch_max_bytes: usize,
+    /// Capacity of the executor's `GreedyMemoryPool`, in bytes. See the type docs: the
+    /// `RepartitionExec` every normal cycle plans reserves from this pool. Range
+    /// [`DetectionConfig::EXECUTOR_MEMORY_POOL_BYTES_MIN`] to
+    /// [`DetectionConfig::EXECUTOR_MEMORY_POOL_BYTES_MAX`].
+    pub executor_memory_pool_bytes: usize,
+    /// Closed-bucket posting lists the page cache retains. Range
+    /// [`DetectionConfig::POSTING_CACHE_MAX_ENTRIES_MIN`] to
+    /// [`DetectionConfig::POSTING_CACHE_MAX_ENTRIES_MAX`].
+    pub posting_cache_max_entries: usize,
+    /// Longest posting list the page cache will retain. Range
+    /// [`DetectionConfig::POSTING_CACHE_MAX_POSTINGS_MIN`] to
+    /// [`DetectionConfig::POSTING_CACHE_MAX_POSTINGS_MAX`].
+    pub posting_cache_max_postings: usize,
 }
 
 impl DetectionConfig {
@@ -135,10 +252,144 @@ impl DetectionConfig {
     /// Largest accepted per-pattern latency threshold. One minute is already far past the point
     /// where a pattern should have disabled its rule.
     pub const PATTERN_LATENCY_THRESHOLD_MS_MAX: u64 = 60_000;
+    /// Smallest per-rule match cap; zero would make every matching rule degrade.
+    pub const MAX_MATCHES_PER_RULE_MIN: u32 = 1;
+    /// Largest per-rule match cap.
+    pub const MAX_MATCHES_PER_RULE_MAX: u32 = 100_000;
+    /// A floor that still scans correctly, just sequentially.
+    pub const EXECUTOR_TARGET_PARTITIONS_MIN: usize = 1;
+    /// Above the core count of any deployment this is measured against.
+    pub const EXECUTOR_TARGET_PARTITIONS_MAX: usize = 32;
+    /// Below this, per-batch fixed overhead dominates throughput.
+    pub const EXECUTOR_BATCH_SIZE_MIN: usize = 128;
+    /// Short of the point where one batch's worst-case pattern-matching cost outgrows the
+    /// per-batch granularity the latency guard is built on.
+    pub const EXECUTOR_BATCH_SIZE_MAX: usize = 65_536;
+    /// The size of one maximally-sized row's estimated decoded encoding, **assumed**, not derived.
+    ///
+    /// This is the floor R28 enforces on `executor_batch_max_bytes`, and it rests on an
+    /// assumption nothing in the workspace enforces: that `command_line` is bounded by the IPC
+    /// transport's 1 MiB frame. No length cap on `command_line` exists in the collector, proto,
+    /// ingest or store path, and nothing shows the event-bus ingest path shares that frame limit.
+    /// The only enforced cap on a row's text is `MAX_EXECUTABLE_PATH_LEN` (4,096) on
+    /// `executable_path`. The figure is the measured estimate for a row of a 255-byte name, a
+    /// 4,096-byte path, a 64-byte hash and a 1 MiB `command_line`. If `command_line` is ever
+    /// capped, or is found uncapped upstream, this number must be revisited: a row larger than it
+    /// is excluded from every batch and degrades the evaluation that would have read it.
+    pub const ASSUMED_WORST_CASE_ROW_BYTES: usize = 1_053_119;
+    /// R28's floor, as a range bound.
+    pub const EXECUTOR_BATCH_MAX_BYTES_MIN: usize = Self::ASSUMED_WORST_CASE_ROW_BYTES;
+    /// A sanity ceiling rather than an operative one.
+    pub const EXECUTOR_BATCH_MAX_BYTES_MAX: usize = 256 * 1024 * 1024;
+    /// A sanity floor, not a working one; see the type docs.
+    pub const EXECUTOR_MEMORY_POOL_BYTES_MIN: usize = 1024;
+    /// One GiB.
+    pub const EXECUTOR_MEMORY_POOL_BYTES_MAX: usize = 1024 * 1024 * 1024;
+    /// The cache must hold at least one list to be a cache.
+    pub const POSTING_CACHE_MAX_ENTRIES_MIN: usize = 1;
+    /// With the postings ceiling, bounds the cache's worst case at 128 MiB.
+    pub const POSTING_CACHE_MAX_ENTRIES_MAX: usize = 2_048;
+    /// A list of at least one posting is cacheable at all.
+    pub const POSTING_CACHE_MAX_POSTINGS_MIN: usize = 1;
+    /// With the entries ceiling, bounds the cache's worst case at 128 MiB.
+    pub const POSTING_CACHE_MAX_POSTINGS_MAX: usize = 4_096;
+
+    /// Check every field against its range, and the cross-field floor R28 sets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::ValidationError`] naming the first field out of range. Values are
+    /// rejected, never clamped: an operator who asked for something unsupported should hear so.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        check_range(
+            "detection.max_subquery_depth",
+            &self.max_subquery_depth,
+            &Self::MAX_SUBQUERY_DEPTH_MIN,
+            &Self::MAX_SUBQUERY_DEPTH_MAX,
+        )?;
+        check_range(
+            "detection.pattern_latency_threshold_ms",
+            &self.pattern_latency_threshold_ms,
+            &Self::PATTERN_LATENCY_THRESHOLD_MS_MIN,
+            &Self::PATTERN_LATENCY_THRESHOLD_MS_MAX,
+        )?;
+        check_range(
+            "detection.max_matches_per_rule",
+            &self.max_matches_per_rule,
+            &Self::MAX_MATCHES_PER_RULE_MIN,
+            &Self::MAX_MATCHES_PER_RULE_MAX,
+        )?;
+        check_range(
+            "detection.executor_target_partitions",
+            &self.executor_target_partitions,
+            &Self::EXECUTOR_TARGET_PARTITIONS_MIN,
+            &Self::EXECUTOR_TARGET_PARTITIONS_MAX,
+        )?;
+        check_range(
+            "detection.executor_batch_size",
+            &self.executor_batch_size,
+            &Self::EXECUTOR_BATCH_SIZE_MIN,
+            &Self::EXECUTOR_BATCH_SIZE_MAX,
+        )?;
+        self.validate_batch_max_bytes()?;
+        check_range(
+            "detection.executor_memory_pool_bytes",
+            &self.executor_memory_pool_bytes,
+            &Self::EXECUTOR_MEMORY_POOL_BYTES_MIN,
+            &Self::EXECUTOR_MEMORY_POOL_BYTES_MAX,
+        )?;
+        check_range(
+            "detection.posting_cache_max_entries",
+            &self.posting_cache_max_entries,
+            &Self::POSTING_CACHE_MAX_ENTRIES_MIN,
+            &Self::POSTING_CACHE_MAX_ENTRIES_MAX,
+        )?;
+        check_range(
+            "detection.posting_cache_max_postings",
+            &self.posting_cache_max_postings,
+            &Self::POSTING_CACHE_MAX_POSTINGS_MIN,
+            &Self::POSTING_CACHE_MAX_POSTINGS_MAX,
+        )
+    }
+
+    /// R28: a batch byte bound below one worst-case row excludes every row.
+    fn validate_batch_max_bytes(&self) -> Result<(), ConfigError> {
+        let floor = Self::ASSUMED_WORST_CASE_ROW_BYTES;
+        if self.executor_batch_max_bytes < floor {
+            return Err(ConfigError::ValidationError {
+                message: format!(
+                    "detection.executor_batch_max_bytes must be at least {floor}, the assumed \
+                     worst-case row size (see DetectionConfig::ASSUMED_WORST_CASE_ROW_BYTES), \
+                     got {}",
+                    self.executor_batch_max_bytes
+                ),
+            });
+        }
+        check_range(
+            "detection.executor_batch_max_bytes",
+            &self.executor_batch_max_bytes,
+            &Self::EXECUTOR_BATCH_MAX_BYTES_MIN,
+            &Self::EXECUTOR_BATCH_MAX_BYTES_MAX,
+        )
+    }
+}
+
+/// Reject `value` outside `min..=max`, naming the dotted field and both bounds.
+fn check_range<T>(field: &str, value: &T, min: &T, max: &T) -> Result<(), ConfigError>
+where
+    T: PartialOrd + std::fmt::Display,
+{
+    if *value < *min || *value > *max {
+        return Err(ConfigError::ValidationError {
+            message: format!("{field} must be between {min} and {max}, got {value}"),
+        });
+    }
+    Ok(())
 }
 
 impl Default for DetectionConfig {
-    /// Defaults are the values the requirements state: depth 3 and a 10ms latency threshold.
+    /// Defaults are the values the requirements state, and for the executor the constants in
+    /// [`crate::detection_bounds`].
     ///
     /// # Examples
     ///
@@ -147,11 +398,19 @@ impl Default for DetectionConfig {
     /// let cfg = DetectionConfig::default();
     /// assert_eq!(cfg.max_subquery_depth, 3);
     /// assert_eq!(cfg.pattern_latency_threshold_ms, 10);
+    /// assert_eq!(cfg.max_matches_per_rule, 1_000);
     /// ```
     fn default() -> Self {
         Self {
             max_subquery_depth: 3,
             pattern_latency_threshold_ms: 10,
+            max_matches_per_rule: crate::detection_bounds::MAX_MATCHES_PER_RULE_DEFAULT,
+            executor_target_partitions: crate::detection_bounds::EXECUTOR_TARGET_PARTITIONS,
+            executor_batch_size: crate::detection_bounds::EXECUTOR_BATCH_SIZE,
+            executor_batch_max_bytes: crate::detection_bounds::EXECUTOR_BATCH_MAX_BYTES,
+            executor_memory_pool_bytes: crate::detection_bounds::EXECUTOR_MEMORY_POOL_BYTES,
+            posting_cache_max_entries: crate::detection_bounds::POSTING_CACHE_MAX_ENTRIES,
+            posting_cache_max_postings: crate::detection_bounds::POSTING_CACHE_MAX_POSTINGS,
         }
     }
 }
@@ -321,6 +580,7 @@ impl Default for DatabaseConfig {
             retention_days: 30,
             max_size_mb: None,
             encryption_enabled: false,
+            page_cache_mb: Self::PAGE_CACHE_MB_DEFAULT,
         }
     }
 }
@@ -765,10 +1025,6 @@ impl Config {
         const BATCH_SIZE_MAX: usize = 10_000;
         const RETENTION_DAYS_MIN: u32 = 1;
         const RETENTION_DAYS_MAX: u32 = 3_650;
-        const DEPTH_MIN: u32 = DetectionConfig::MAX_SUBQUERY_DEPTH_MIN;
-        const DEPTH_MAX: u32 = DetectionConfig::MAX_SUBQUERY_DEPTH_MAX;
-        const LATENCY_MIN: u64 = DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MIN;
-        const LATENCY_MAX: u64 = DetectionConfig::PATTERN_LATENCY_THRESHOLD_MS_MAX;
 
         let config = self;
 
@@ -805,27 +1061,8 @@ impl Config {
 
         // --- Detection bounds validation ---
 
-        if config.detection.max_subquery_depth < DEPTH_MIN
-            || config.detection.max_subquery_depth > DEPTH_MAX
-        {
-            return Err(ConfigError::ValidationError {
-                message: format!(
-                    "detection.max_subquery_depth must be between {DEPTH_MIN} and {DEPTH_MAX}, got {}",
-                    config.detection.max_subquery_depth
-                ),
-            });
-        }
-
-        if config.detection.pattern_latency_threshold_ms < LATENCY_MIN
-            || config.detection.pattern_latency_threshold_ms > LATENCY_MAX
-        {
-            return Err(ConfigError::ValidationError {
-                message: format!(
-                    "detection.pattern_latency_threshold_ms must be between {LATENCY_MIN} and {LATENCY_MAX}, got {}",
-                    config.detection.pattern_latency_threshold_ms
-                ),
-            });
-        }
+        config.detection.validate()?;
+        config.database.validate()?;
 
         // --- Path traversal validation ---
 
@@ -1567,6 +1804,11 @@ use_tls = false
             toml::from_str(toml_str).expect("Failed to parse TOML with complex sink config");
 
         assert_eq!(config.alerting.sinks.len(), 2);
+        // A file written before `page_cache_mb` existed still loads, at the default.
+        assert_eq!(
+            config.database.page_cache_mb,
+            DatabaseConfig::PAGE_CACHE_MB_DEFAULT
+        );
 
         // Verify broker configuration
         assert_eq!(config.broker.socket_path, "/tmp/test-broker.sock");
@@ -2032,5 +2274,42 @@ enabled = true
 
         // When loading, it should be normalized to DAEMONEYE_AGENT_ prefix
         // This is implicitly tested through the load() method
+    }
+
+    #[test]
+    fn page_cache_mb_is_range_checked_at_both_ends() {
+        let with = |page_cache_mb| DatabaseConfig {
+            page_cache_mb,
+            ..DatabaseConfig::default()
+        };
+        assert!(DatabaseConfig::default().validate().is_ok());
+        assert!(with(DatabaseConfig::PAGE_CACHE_MB_MIN).validate().is_ok());
+        assert!(with(DatabaseConfig::PAGE_CACHE_MB_MAX).validate().is_ok());
+        assert!(
+            with(DatabaseConfig::PAGE_CACHE_MB_MIN.saturating_sub(1))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            with(DatabaseConfig::PAGE_CACHE_MB_MAX.saturating_add(1))
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn page_cache_bytes_converts_mib() {
+        let config = DatabaseConfig {
+            page_cache_mb: 3,
+            ..DatabaseConfig::default()
+        };
+        assert_eq!(config.page_cache_bytes(), 3 * 1024 * 1024);
+    }
+
+    #[test]
+    fn config_validate_rejects_an_out_of_range_page_cache() {
+        let mut config = Config::default();
+        config.database.page_cache_mb = 0;
+        assert!(config.validate().is_err());
     }
 }

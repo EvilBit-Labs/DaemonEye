@@ -38,135 +38,57 @@ flowchart LR
 
 ### Phase 2: Data Collection & Analysis
 
-1. **Process Collection**: procmond executes the protobuf tasks to collect process data
-2. **Data Storage**: Collected data is stored in the redb event store
-3. **SQL Execution**: The **derived standard SQL** (produced by Phase 1 lowering — never the original custom dialect) is executed via an Apache DataFusion `SessionContext` whose catalog is populated by redb-backed per-collector `TableProvider` implementations (ADR-0006). `redb` itself has no SQL engine; DataFusion owns physical execution while the TableProviders push filter and projection predicates down into redb scans.
-4. **Alert Generation**: Detection results trigger alert generation and delivery
+1. **Process Collection**: procmond executes the protobuf tasks to collect process data and the agent stores it in the redb event store.
+2. **Per-cycle evaluation window**: each detection cycle evaluates a rule against the rows that cycle's window covers, the half-open interval `(after_ms, through_ms]` of `collection_time` between the previous cycle's high-water mark and this one's (ADR-0014). Consecutive windows tile the timeline, so a row is evaluated by one cycle and a match is not re-alerted on the next while `collection_time` is monotonic; a row stamped at or before the mark (a clock step-back) widens the next window down to it, and the rows in that overlap are evaluated again rather than never. Evaluation is at least once, never zero times. A window normally falls inside one hourly bucket, and detection reads buckets one at a time (ADR-0008). The mark of the last cycle whose alerts were stored is persisted (`detection_cursor`), so a restart resumes its first window there rather than skipping rows committed before the crash; a store with no mark starts at the current time.
+3. **SQL Execution**: the **derived standard SQL** (produced by Phase 1 lowering, never the original custom dialect) runs through an Apache DataFusion `SessionContext` whose catalog is populated by redb-backed `TableProvider` implementations (ADR-0006). The providers push filters and projections into redb scans and report them as `Inexact`, so DataFusion always re-checks every row (ADR-0013).
+4. **Completeness**: every evaluation and every alert carries a completeness marker, `Complete` or `Degraded` with the reasons (a failed collection or heartbeat, ingest shedding, a sequence gap, a resource limit, the match cap, an execution error). A `Degraded` evaluation with zero matches means the rule could not be fully evaluated, not that nothing matched.
+5. **Match cap**: a rule raises at most `detection.max_matches_per_rule` alerts per cycle (default 1,000). The executor stops one match past the cap, keeps the first `cap`, and marks the evaluation `Degraded` with the cap as the reason.
+6. **Alert Generation**: results trigger alert generation and delivery.
+
+#### Dialect and extension policy
+
+- `REGEXP` as an infix operator and the `match()`/`regexp()` calls are DaemonEye extensions. They are rewritten to one function before execution.
+- A rule may call exactly seven functions: `hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`. The executor registers only those, replacing DataFusion's default function set, so a DataFusion function outside the list is not available.
+- Every other accepted expression (comparisons, boolean logic, `IN`, `LIKE`, `NULL` handling) uses standard DataFusion SQL semantics, with two deliberate exceptions that keep the residual half in step with the pushed half: a NaN `Float64` is UNKNOWN under every comparison, `BETWEEN` and `IN` (DataFusion's total float order would make `NaN = NaN` true), and `LIKE` has no escape character, so a backslash in the pattern is a literal (DataFusion would read `\_` as an escaped underscore).
+- The load-time check refuses function-like syntax that parses to its own node (`SUBSTR`, `TRIM`, `POSITION`, `EXTRACT`, `CEIL`, `FLOOR`) by variant, and casts by their own gate, so nothing loads that the executor cannot run. See the [SQL Dialect Reference](sql-dialect-reference.md).
+
+### Sizing the executor
+
+The memory figures below come from `docs/decisions/2026-10-08-t6-full-retention-memory.md`, measured on macos/aarch64 in the release profile. Linux and Windows are unmeasured, and two runs of the same configuration differed by up to 25 MiB, so read each figure as a sample.
+
+**The 100 MiB resident figure is a goal for a deployment sized like the reference host, not a pass/fail gate.** A large, busy server may need more, and a constrained embedded or SCADA endpoint can run leaner. Size these fields to the host.
+
+| Field                                    | Default                | Effect on resident memory                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `database.page_cache_mb`                 | 32 (range 4-1024)      | The dominant knob. redb's own default is 1 GiB. At that default, peak RSS at 168 buckets was 359 MiB against 207 MiB at 84, so memory tracked the data scanned. At 32 MiB the two overlap at 118-149 MiB. Smaller saves memory and costs scan latency: +14% at 32 MiB and +27% at 4 MiB on the full-retention shape, nothing measurable on the production shape. |
+| `detection.executor_target_partitions`   | 4 (range 1-32)         | Lower is smaller. 4 to 2 moved peak RSS from 120-146 to 92-111 MiB at about 1.7x the p50 latency. Decode memory for a cycle is roughly `executor_target_partitions` x 2 x `executor_batch_max_bytes`, and it sits outside `executor_memory_pool_bytes`.                                                                                                          |
+| `detection.executor_batch_size`          | 8192 (range 128-65536) | Lower is smaller. 8192 to 2048 moved peak RSS to 100-120 MiB with no p50 cost, the cheaper of the two ways to shrink the full-retention shape. It is also the granularity of the pattern-latency check.                                                                                                                                                          |
+| `detection.executor_batch_max_bytes`     | 4 MiB                  | Caps the estimated decoded bytes in one batch, so rows with large command lines close a batch early. It is a term in the decode-memory estimate above.                                                                                                                                                                                                           |
+| `detection.executor_memory_pool_bytes`   | 32 MiB                 | A ceiling on what DataFusion reserves, not on what the process holds. The decode memory above is outside it. Too small a pool makes a multi-partition plan fail where a one-partition plan succeeds.                                                                                                                                                             |
+| `detection.posting_cache_max_entries`    | 256                    | Count bound on cached posting lists. With `posting_cache_max_postings` (default 1024) the default worst case is 4 MiB. Both at their ceilings (2048 and 4096) reach 128 MiB.                                                                                                                                                                                     |
+| `detection.posting_cache_max_postings`   | 1024                   | Longest list retained. A longer list is read live and never cached.                                                                                                                                                                                                                                                                                              |
+| `detection.max_matches_per_rule`         | 1,000                  | Bounds the alerts one rule produces per cycle. It limits output, not scan memory.                                                                                                                                                                                                                                                                                |
+| `detection.pattern_latency_threshold_ms` | 10                     | A time budget, not a memory setting. A breach disables the rule that owns the pattern.                                                                                                                                                                                                                                                                           |
+
+Two findings stay open.
+
+- **Production shape: inside the goal.** One bucket per cycle, which is what the per-cycle window produces, peaked at about 33 MiB with a p50 of 3.0 ms, at every page cache size tried.
+- **Full-retention shape: outside both.** A window spanning 84 to 168 buckets reached 118-149 MiB RSS with a 132 MiB live footprint and a p50 of 157-164 ms, missing both the memory goal and the 100 ms per-rule latency budget. Production does not run this shape. Ad-hoc wide-window queries and catch-up after an outage can.
 
 ## Supported SQL Dialect
 
-DaemonEye supports a **restricted SQL dialect** optimized for process monitoring and security. The dialect is based on SQLite syntax with specific limitations and extensions.
+A rule is one `SELECT` over one table with a `WHERE` of comparisons, `AND`/`OR`/`NOT`, `LIKE`, `IN`, `BETWEEN`, `IS NULL` and exactly seven functions: `hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`. Everything else, named or not, is refused when the rule is loaded, and the rejection names the construct. Aggregates, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, `DISTINCT`, `JOIN`, CTEs, set operations and casts are all refused; so is function-like syntax such as `SUBSTR` and `TRIM` that parses to its own grammar rule rather than a function call.
 
-### Allowed SQL Constructs
-
-#### Basic Queries
+The full gate list, the reasons, the column table and worked patterns are in the [SQL Dialect Reference](sql-dialect-reference.md).
 
 ```sql
--- Simple SELECT queries
+-- Equality, served by the name index
 SELECT * FROM processes WHERE name = 'suspicious-process';
 
--- Aggregations
-SELECT COUNT(*) as process_count, name
+-- An index-served predicate narrows the rows the residual LIKE reads
+SELECT pid, name, command_line
 FROM processes
-GROUP BY name
-HAVING COUNT(*) > 10;
-
--- Joins (when applicable)
-SELECT p.name, p.pid, s.start_time
-FROM processes p
-JOIN scans s ON p.scan_id = s.id;
-```
-
-#### Supported Functions
-
-**String Functions** (useful for process data analysis):
-
-```sql
--- String length analysis
-SELECT name, LENGTH(command_line) as cmd_length
-FROM processes
-WHERE LENGTH(command_line) > 100;
-
--- Substring extraction
-SELECT name, SUBSTR(executable_path, 1, 10) as path_prefix
-FROM processes
-WHERE executable_path IS NOT NULL;
-
--- Pattern matching
-SELECT * FROM processes
-WHERE name LIKE '%suspicious%'
-   OR executable_path LIKE '/tmp/%';
-
--- String search
-SELECT * FROM processes
-WHERE INSTR(command_line, 'malicious') > 0;
-```
-
-**Encoding Functions** (useful for hash analysis):
-
-```sql
--- Hexadecimal encoding/decoding
-SELECT name, HEX(executable_hash) as hash_hex
-FROM processes
-WHERE executable_hash IS NOT NULL;
-
--- Binary data analysis
-SELECT name, UNHEX(executable_hash) as hash_binary
-FROM processes
-WHERE LENGTH(executable_hash) = 64; -- SHA-256 length
-```
-
-**Mathematical Functions**:
-
-```sql
--- Numeric analysis
-SELECT name, cpu_usage, memory_usage
-FROM processes
-WHERE cpu_usage > 50.0
-   OR memory_usage > 1073741824; -- 1GB
-```
-
-### Banned SQL Constructs
-
-#### Security-Critical Functions
-
-```sql
--- These functions are banned for security reasons:
--- load_extension() - SQLite extension loading
--- eval() - Code evaluation
--- exec() - Command execution
--- system() - System calls
--- shell() - Shell execution
-```
-
-#### File System Operations
-
-```sql
--- These functions are not applicable to process monitoring:
--- readfile() - File reading
--- writefile() - File writing
--- edit() - File editing
-```
-
-#### Complex Pattern Matching
-
-```sql
--- These functions are complex to translate to IPC tasks:
--- glob() - Glob patterns
--- regexp() - Regular expressions (performance concerns)
--- match() - Pattern matching
-```
-
-#### Mathematical Functions (Not Applicable)
-
-```sql
--- These functions are not useful for process monitoring:
--- abs() - Absolute value
--- random() - Random numbers
--- randomblob() - Random binary data
-```
-
-#### Formatting Functions (Not Applicable)
-
-```sql
--- These functions are not useful for process monitoring:
--- quote() - SQL quoting
--- printf() - String formatting
--- format() - String formatting
--- char() - Character conversion
--- unicode() - Unicode functions
--- soundex() - Soundex algorithm
--- difference() - String difference
+WHERE name = 'bash' AND command_line LIKE '%nc -l%';
 ```
 
 ## Process Data Schema
@@ -178,27 +100,19 @@ The `processes` namespace contains comprehensive process information:
 ```sql
 -- Core process information (illustrative; see virtual-schema model above)
 CREATE TABLE processes (
-    id INTEGER PRIMARY KEY,
-    scan_id INTEGER NOT NULL,
-    collection_time INTEGER NOT NULL,
-    pid INTEGER NOT NULL,
-    ppid INTEGER,
+    pid INTEGER NOT NULL,         -- unsigned
+    ppid INTEGER,                 -- unsigned
     name TEXT NOT NULL,
     executable_path TEXT,
     command_line TEXT,
     start_time INTEGER,
     cpu_usage REAL,
-    memory_usage INTEGER,
-    status TEXT,
-    executable_hash TEXT,        -- SHA-256 hash in hex format
-    hash_algorithm TEXT,         -- Usually 'sha256'
-    user_id INTEGER,
-    group_id INTEGER,
-    accessible BOOLEAN,
-    file_exists BOOLEAN,
-    environment_vars TEXT,        -- JSON string of environment variables
-    metadata TEXT,               -- JSON string of additional metadata
-    platform_data TEXT          -- JSON string of platform-specific data
+    memory_usage INTEGER,         -- unsigned
+    executable_hash TEXT,         -- SHA-256 hash in hex format
+    user_id TEXT,
+    accessible BOOLEAN NOT NULL,
+    file_exists BOOLEAN NOT NULL,
+    collection_time INTEGER NOT NULL
 );
 ```
 
@@ -222,8 +136,7 @@ WHERE name LIKE '%suspicious%'
 SELECT pid, name, cpu_usage, memory_usage, command_line
 FROM processes
 WHERE cpu_usage > 80.0
-   OR memory_usage > 2147483648  -- 2GB
-ORDER BY memory_usage DESC;
+   OR memory_usage > 2147483648;  -- 2GB
 ```
 
 ### Hash-Based Detection
@@ -251,14 +164,14 @@ WHERE command_line LIKE '%nc -l%'           -- Netcat listener
    OR LENGTH(command_line) > 1000;         -- Unusually long commands
 ```
 
-### Environment Variable Analysis
+### Argument Analysis
 
 ```sql
--- Detect processes with suspicious environment variables
-SELECT pid, name, environment_vars
+-- Detect a credential-dumping flag passed on the command line
+SELECT pid, name, command_line
 FROM processes
-WHERE environment_vars LIKE '%SUSPICIOUS_VAR%'
-   OR environment_vars LIKE '%MALWARE_CONFIG%';
+WHERE command_line LIKE '%--password%'
+   OR command_line LIKE '%sekurlsa%';
 ```
 
 ### Path-Based Detection
@@ -276,89 +189,26 @@ WHERE executable_path LIKE '/tmp/%'
 
 ## Performance Considerations
 
-### Query Optimization
-
-- **Indexing**: Time-based indexes are automatically created for efficient querying
-- **Batch Processing**: Large result sets are processed in batches to prevent memory issues
-- **Query Timeouts**: All queries have configurable timeouts to prevent system hangs
-
-### Resource Limits
-
-- **Memory Usage**: Queries are limited to prevent excessive memory consumption
-- **CPU Usage**: Complex queries are throttled to maintain system performance
-- **Result Size**: Large result sets are paginated to prevent memory exhaustion
+- **Pushdown and indexes**: a `column op literal` predicate the collector advertises is pushed down; function calls and negations are residuals the agent evaluates over the rows the pushed half admitted. Equality and range predicates on `pid` and `name` are served by per-bucket posting lists; a `LIKE` on `command_line` reads every row in the window. Lead with an indexable predicate.
+- **Windows**: each cycle evaluates only the rows stored since the previous cycle's high-water mark ([ADR-0014](../../adr/0014-a-cycle-evaluates-its-own-window.md)); a rule never rescans retention.
+- **Bounds**: the executor's memory pool, batch size, partition count and match cap are the `detection.*` fields in [Sizing the executor](#sizing-the-executor); a rule that trips `max_matches_per_rule` is truncated and its alert marked partial.
+- **Latency guard**: a measured pattern execution over `detection.pattern_latency_threshold_ms` disables the rule until an operator reloads it.
 
 ## Security Considerations
 
-### SQL Injection Prevention
-
-- **AST Validation**: All SQL is parsed and validated before execution
-- **Prepared Statements**: All queries use parameterized statements
-- **Function Whitelist**: Only approved functions are allowed
-- **Sandboxed Execution**: Queries run in read-only database connections
-
-### Data Privacy
-
-- **Field Masking**: Sensitive fields can be masked in logs and exports
-- **Command Line Redaction**: Command lines can be redacted for privacy
-- **Access Control**: Database access is restricted by component
-
-## Best Practices
-
-### Writing Effective Detection Rules
-
-1. **Use Specific Patterns**: Avoid overly broad patterns that generate false positives
-2. **Leverage Hash Detection**: Use executable hashes for precise malware detection
-3. **Combine Multiple Criteria**: Use multiple conditions to reduce false positives
-4. **Test Thoroughly**: Validate rules against known good and bad processes
-
-### Performance Optimization
-
-1. **Use Indexes**: Leverage time-based and field-based indexes
-2. **Limit Result Sets**: Use LIMIT clauses for large queries
-3. **Avoid Complex Joins**: Keep queries simple and focused
-4. **Monitor Resource Usage**: Watch for queries that consume excessive resources
-
-### Security Guidelines
-
-1. **Validate Input**: Always validate user-provided SQL fragments
-2. **Use Parameterized Queries**: Never concatenate user input into SQL
-3. **Review Function Usage**: Ensure only approved functions are used
-4. **Monitor Query Performance**: Watch for queries that might indicate attacks
+- **AST validation**: every rule is parsed with `sqlparser` and checked against the gates in the [SQL Dialect Reference](sql-dialect-reference.md) at load; the executor sees only the derived standard SQL, never the operator's text.
+- **Function allowlist**: the executor registers exactly the seven allowlisted functions and replaces DataFusion's default registry, so nothing outside the allowlist exists to call.
+- **Read-only**: the executor reads the event store through a `TableProvider`; it has no write path.
+- **Privacy**: command lines are masked by default in logs and exports.
 
 ## Troubleshooting
 
-### Common Issues
-
-**Query Syntax Errors**:
-
-- Check SQL syntax against supported dialect
-- Ensure all functions are in the allowed list
-- Verify table and column names
-
-**Performance Issues**:
-
-- Add appropriate indexes
-- Simplify complex queries
-- Use LIMIT clauses for large result sets
-
-**Security Violations**:
-
-- Review banned function usage
-- Check for SQL injection attempts
-- Validate input parameters
-
-### Debugging Queries
-
-```sql
--- Use EXPLAIN to understand query execution
-EXPLAIN SELECT * FROM processes WHERE name LIKE '%test%';
-
--- Check query performance
-SELECT COUNT(*) as total_processes FROM processes;
-SELECT COUNT(*) as recent_processes FROM processes
-WHERE collection_time > (strftime('%s', 'now') - 3600) * 1000;
-```
+- **"not on the detection function allowlist"**: the rule names a function outside the seven, or uses `SUBSTR`/`TRIM`-style syntax. Rewrite with `LIKE`, `INSTR` or `REGEXP`.
+- **"the planner cannot lower ..."**: drop the `ORDER BY`, `LIMIT`, `GROUP BY` or `DISTINCT` it names; narrow with predicates instead.
+- **"must read exactly one table"**: remove the `JOIN`; a rule reads one table.
+- **Unknown column**: compare against the column table in the dialect reference; the illustrative DDL above matches it.
+- **A rule stopped alerting**: check its health. A latency breach or a collector descriptor change that removed a column it names marks it unhealthy; reload it after fixing the pattern.
+- **Plan inspection**: `RuleExecutor::explain` returns the DataFusion physical plan the rule would run, which shows whether a predicate was pushed down or left residual.
 
 ## Future Enhancements
 

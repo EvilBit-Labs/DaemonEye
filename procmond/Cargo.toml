@@ -32,17 +32,17 @@ path = "src/main.rs"
 # Core dependencies
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-postcard = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-crc32c = { workspace = true }
 
 # Internal libraries
 collector-core = { workspace = true }
+crc32c = { workspace = true }
 daemoneye-eventbus = { workspace = true }
 daemoneye-lib = { workspace = true }
 
 futures = { workspace = true }
+postcard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
@@ -53,12 +53,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
-
-# Platform-specific dependencies
-[target.'cfg(unix)'.dependencies]
-# libc exposes O_NOFOLLOW / ELOOP for TOCTOU-safe exe open in hash_pass.
-libc = { workspace = true }
-uzers = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # macOS Security Framework
@@ -75,6 +69,12 @@ windows = { workspace = true }
 windows-service = { workspace = true }
 # winreg for safe Windows registry access
 winreg = { workspace = true }
+
+# Platform-specific dependencies
+[target.'cfg(unix)'.dependencies]
+# libc exposes O_NOFOLLOW / ELOOP for TOCTOU-safe exe open in hash_pass.
+libc = { workspace = true }
+uzers = { workspace = true }
 # Additional process utilities for Windows
 # Note: psutil-rs and perfmon-rs would be added here when available
 # For now, we use sysinfo + windows-rs for comprehensive Windows process monitoring
