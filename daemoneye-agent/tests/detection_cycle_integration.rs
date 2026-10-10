@@ -290,3 +290,21 @@ fn a_schema_mismatch_names_the_rebuild_path() {
     assert!(message.contains("storage::schema::migrate"));
     assert!(message.contains("signed bundle"));
 }
+
+/// The agent opens the store with the page cache its config names, not the default.
+#[test]
+fn open_event_store_applies_the_configured_page_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = daemoneye_lib::config::DatabaseConfig {
+        page_cache_mb: 4,
+        ..daemoneye_lib::config::DatabaseConfig::default()
+    };
+
+    let store = open_event_store(&dir.path().join("sized.redb"), &database).unwrap();
+
+    assert_eq!(store.page_cache_bytes(), database.page_cache_bytes());
+    assert_ne!(
+        store.page_cache_bytes(),
+        daemoneye_lib::config::DatabaseConfig::default().page_cache_bytes()
+    );
+}

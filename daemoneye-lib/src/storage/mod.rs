@@ -170,6 +170,8 @@ fn collect_bucket_ids(txn: &ReadTransaction) -> Result<Vec<u64>, StorageError> {
 #[derive(Debug)]
 pub struct EventStore {
     db: Database,
+    /// The page cache the database was opened with, for callers that need to show their wiring.
+    page_cache_bytes: usize,
     /// Bucket granularity in milliseconds (hourly by default; coarsens to daily
     /// for long retention windows so the live-bucket count stays bounded).
     granularity_ms: u64,
@@ -188,10 +190,7 @@ impl EventStore {
 
     /// Create (or open) the event store at `path` with the default page cache.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        Self::new_with_page_cache(
-            path,
-            DatabaseConfig::PAGE_CACHE_MB_DEFAULT.saturating_mul(MIB),
-        )
+        Self::new_with_page_cache(path, default_page_cache_bytes())
     }
 
     /// Create (or open) the event store at `path`, capping redb's page cache at `cache_bytes`.
@@ -199,16 +198,7 @@ impl EventStore {
         path: P,
         cache_bytes: usize,
     ) -> Result<Self, StorageError> {
-        let db_path = path.as_ref();
-        ensure_db_dir(db_path)?;
-        let db = Database::builder()
-            .set_cache_size(cache_bytes)
-            .create(db_path)
-            .map_err(|source| StorageError::DatabaseCreationFailed {
-                path: db_path.to_path_buf(),
-                source,
-            })?;
-        Self::from_database(db)
+        Self::from_database(create_database(path.as_ref(), cache_bytes)?, cache_bytes)
     }
 
     /// Create (or open) the event store at `path` with the page cache `database` configures.
@@ -221,10 +211,7 @@ impl EventStore {
 
     /// Open an existing event store at `path` with the default page cache.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        Self::open_with_page_cache(
-            path,
-            DatabaseConfig::PAGE_CACHE_MB_DEFAULT.saturating_mul(MIB),
-        )
+        Self::open_with_page_cache(path, default_page_cache_bytes())
     }
 
     /// Open an existing event store at `path`, capping redb's page cache at `cache_bytes`.
@@ -232,22 +219,20 @@ impl EventStore {
         path: P,
         cache_bytes: usize,
     ) -> Result<Self, StorageError> {
-        let db_path = path.as_ref();
-        ensure_db_dir(db_path)?;
-        let db = Database::builder()
-            .set_cache_size(cache_bytes)
-            .open(db_path)
-            .map_err(|source| StorageError::DatabaseCreationFailed {
-                path: db_path.to_path_buf(),
-                source,
-            })?;
-        Self::from_database(db)
+        Self::from_database(open_database(path.as_ref(), cache_bytes)?, cache_bytes)
     }
 
-    fn from_database(db: Database) -> Result<Self, StorageError> {
+    /// The page-cache cap this store was opened with.
+    #[must_use]
+    pub const fn page_cache_bytes(&self) -> usize {
+        self.page_cache_bytes
+    }
+
+    fn from_database(db: Database, page_cache_bytes: usize) -> Result<Self, StorageError> {
         let retention_ms = Self::DEFAULT_RETENTION_MS;
         let store = Self {
             db,
+            page_cache_bytes,
             granularity_ms: choose_granularity(retention_ms),
             retention_ms,
             mrc_window_ms: Self::DEFAULT_MRC_WINDOW_MS,
@@ -612,6 +597,39 @@ impl EventStore {
 
 /// Validates that the directory containing the database file exists and is accessible.
 /// This provides platform-agnostic error messages before attempting to open the database.
+/// redb's page cache when nothing configures one: `DatabaseConfig::PAGE_CACHE_MB_DEFAULT`, not
+/// redb's own 1 GiB. Every open in this crate goes through here or takes an explicit cap.
+pub(crate) const fn default_page_cache_bytes() -> usize {
+    DatabaseConfig::PAGE_CACHE_MB_DEFAULT.saturating_mul(MIB)
+}
+
+/// Create (or open) the redb file at `db_path`, capping its page cache at `cache_bytes`.
+pub(crate) fn create_database(
+    db_path: &Path,
+    cache_bytes: usize,
+) -> Result<Database, StorageError> {
+    ensure_db_dir(db_path)?;
+    Database::builder()
+        .set_cache_size(cache_bytes)
+        .create(db_path)
+        .map_err(|source| StorageError::DatabaseCreationFailed {
+            path: db_path.to_path_buf(),
+            source,
+        })
+}
+
+/// Open the existing redb file at `db_path`, capping its page cache at `cache_bytes`.
+pub(crate) fn open_database(db_path: &Path, cache_bytes: usize) -> Result<Database, StorageError> {
+    ensure_db_dir(db_path)?;
+    Database::builder()
+        .set_cache_size(cache_bytes)
+        .open(db_path)
+        .map_err(|source| StorageError::DatabaseCreationFailed {
+            path: db_path.to_path_buf(),
+            source,
+        })
+}
+
 fn ensure_db_dir(db_path: &Path) -> Result<(), StorageError> {
     if let Some(dir) = db_path.parent() {
         match fs::metadata(dir) {
@@ -723,40 +741,20 @@ pub struct DatabaseManager {
 }
 
 impl DatabaseManager {
-    /// Create a new database manager.
+    /// Create a new database manager, with the default page cache.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let db_path = path.as_ref();
-
-        // Platform-agnostic preflight directory checks
-        ensure_db_dir(db_path)?;
-
-        // Create the database, mapping errors to friendly messages
-        let db =
-            Database::create(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
-                path: db_path.to_path_buf(),
-                source,
-            })?;
-
-        let manager = Self { db };
+        let manager = Self {
+            db: create_database(path.as_ref(), default_page_cache_bytes())?,
+        };
         manager.initialize_schema()?;
         Ok(manager)
     }
 
-    /// Open an existing database.
+    /// Open an existing database, with the default page cache.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let db_path = path.as_ref();
-
-        // Platform-agnostic preflight directory checks
-        ensure_db_dir(db_path)?;
-
-        // Open the database, mapping errors to friendly messages
-        let db =
-            Database::open(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
-                path: db_path.to_path_buf(),
-                source,
-            })?;
-
-        Ok(Self { db })
+        Ok(Self {
+            db: open_database(path.as_ref(), default_page_cache_bytes())?,
+        })
     }
 
     /// Initialize the database schema.

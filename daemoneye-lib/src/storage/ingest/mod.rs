@@ -449,6 +449,31 @@ mod tests {
         (dir, Arc::new(store))
     }
 
+    /// A failed group commit is reported by the next flush, once, with that interval's gaps
+    /// dropped rather than reported as if they had been committed.
+    #[test]
+    fn a_failed_commit_turns_the_next_flush_into_an_error_once() {
+        let mut state = WriterState {
+            commit_failed: true,
+            pending_gaps: vec![SequenceGap {
+                collector_id: "c".to_owned(),
+                expected_seq: 1,
+                observed_seq: 3,
+            }],
+            ..WriterState::default()
+        };
+
+        assert!(matches!(
+            state.answer_flush(),
+            Err(IngestError::CommitFailed)
+        ));
+        let after = state.answer_flush().expect("the failure was reported once");
+        assert!(
+            after.gaps.is_empty(),
+            "the failed interval's gaps were not carried forward"
+        );
+    }
+
     #[tokio::test]
     async fn group_commit_batches_many_records_into_one_commit() {
         let (_dir, store) = store_at("group.redb");

@@ -151,6 +151,6 @@ This builds the fixtures under `target/tmp/detection-memory/` (about 566 MiB, gi
 - **Whether the RSS steps stop.** 1,500 cycles is the longest run.
 - **Cold-cache latency.** The fixture is in the OS file cache throughout.
 - **Linux and Windows.** Allocator behaviour, page-cache behaviour and RSS accounting differ by OS.
-- **Other redb opens.** `storage::schema` (the export and rebuild path) still opens redb with the 1 GiB default; it runs offline, not per cycle.
+- **Other redb opens.** Every open in the crate now goes through one capped helper (`storage::schema`, `DatabaseManager`, and so the CLI, at the 32 MiB default). Those paths' latency at the smaller cache is unmeasured; none runs per cycle.
 - **Concurrent ingest.** Nothing wrote to the store during the scans.
 - **Rule mix.** Three rule shapes only; no aggregation, join or `REGEXP`.
