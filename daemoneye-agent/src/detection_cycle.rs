@@ -102,6 +102,45 @@ pub async fn ingest_cycle(
     })
 }
 
+/// What a cycle carries forward from its ingest attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IngestStep {
+    /// The ordinal the next cycle uses. A failed cycle still consumes its ordinal: a batch of it
+    /// may have committed and raised the watermark, and a retry under the same ordinal would have
+    /// its fresh rows discarded as duplicates.
+    pub next_ordinal: Option<u32>,
+    /// The highest `collection_time` now committed; unchanged by a failure.
+    pub high_water_ms: u64,
+    /// Gaps the writer saw since the previous flush.
+    pub gaps: Vec<SequenceGap>,
+    /// Why this cycle's rows are not durable, when they are not.
+    pub failure: Option<String>,
+}
+
+/// Fold one cycle's ingest result into what the next cycle and this cycle's completeness need.
+#[must_use]
+pub fn ingest_step(
+    ordinal: u32,
+    previous_high_water_ms: u64,
+    result: Result<IngestOutcome, CycleIngestError>,
+) -> IngestStep {
+    let next_ordinal = ordinal.checked_add(1);
+    match result {
+        Ok(outcome) => IngestStep {
+            next_ordinal,
+            high_water_ms: previous_high_water_ms.max(outcome.high_water_ms),
+            gaps: outcome.gaps,
+            failure: None,
+        },
+        Err(error) => IngestStep {
+            next_ordinal,
+            high_water_ms: previous_high_water_ms,
+            gaps: Vec::new(),
+            failure: Some(error.to_string()),
+        },
+    }
+}
+
 /// The ordinal the next cycle should use: one above the last one committed for `collector_id`,
 /// or `0` for a store that has none.
 ///
@@ -186,8 +225,8 @@ pub fn open_event_store(
 /// Where the agent keeps its [`DetectionEngine`]: a lock it can be asked for.
 ///
 /// The production implementation is the `tokio::sync::Mutex` itself. It is a trait so a test can
-/// count acquisitions and interleave a reload between two of them, which is the only way to
-/// observe the three lock scopes of [`run_detection_cycle`] from outside.
+/// count acquisitions and interleave a reload between the two of them, which is the only way to
+/// observe the lock scopes of [`run_detection_cycle`] from outside.
 pub trait EngineCell: Sync {
     /// Wait for the engine.
     fn lock(&self) -> impl Future<Output = MutexGuard<'_, DetectionEngine>> + Send;
@@ -214,8 +253,8 @@ pub struct CycleResult {
 
 /// Evaluate every eligible rule over `window` (R8, R20).
 ///
-/// The engine lock is taken in three separate scopes and never held across an `.await`
-/// (`clippy::await_holding_lock` is the compile-time proof). Alerts are returned only for
+/// The engine lock is taken twice, around a lock-free evaluation, and never held across an
+/// `.await` (`clippy::await_holding_lock` is the compile-time proof). Alerts are returned only for
 /// evaluations whose rule and generation are still eligible after execution.
 pub async fn run_detection_cycle(
     engine: &impl EngineCell,
@@ -240,9 +279,9 @@ pub async fn run_detection_cycle(
     let reports = outcome.reports;
     let evaluations = outcome.evaluations;
 
-    // Scope 3 (the second lock): apply the latency reports, then ask the one eligibility predicate again. It ends
-    // here because everything after is cloning alerts, which needs no engine. A report is applied
-    // before the check so a rule that breached in this very cycle is dropped too.
+    // Scope 3 (the second lock): apply the latency reports, then ask the one eligibility predicate
+    // again. It ends here because everything after is cloning alerts, which needs no engine. A
+    // report is applied before the check so a rule that breached in this very cycle is dropped too.
     let keep = apply_outcome(&mut *engine.lock().await, &reports, &evaluations);
 
     log_cycle(&evaluations, &reports, elapsed);

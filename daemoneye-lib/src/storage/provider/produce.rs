@@ -116,39 +116,49 @@ impl PartitionJob {
     ) -> Result<(), Stop> {
         let (start, end) = (self.plan.filters.start_ms(), self.plan.filters.end_ms());
         let chunk_rows = self.chunk_rows();
+        let max_bytes = self.plan.limits.batch_max_bytes;
         if self.plan.filters.term_sets().is_empty() {
             let mut after = None;
             loop {
-                let chunk = reader.range_chunk(bucket, start, end, after, chunk_rows)?;
+                let chunk = reader.range_chunk(bucket, start, end, after, chunk_rows, max_bytes)?;
                 let Some(&(last, _)) = chunk.last() else {
                     return Ok(());
                 };
                 after = Some(last);
-                let is_full = chunk.len() == chunk_rows;
                 self.admit_all(chunk, pending, tx)?;
-                if !is_full {
-                    return Ok(());
-                }
             }
         }
         let keys = self.candidate_keys(reader, bucket)?;
         for window in keys.chunks(chunk_rows) {
-            self.admit_all(reader.fetch(bucket, window)?, pending, tx)?;
+            let mut rest = window;
+            while !rest.is_empty() {
+                let (rows, consumed) = reader.fetch(bucket, rest, max_bytes)?;
+                self.admit_all(rows, pending, tx)?;
+                rest = rest.get(consumed.max(1)..).unwrap_or_default();
+            }
         }
         Ok(())
     }
 
     /// Posting-list intersection for `bucket`, clamped to the time window (R12).
     fn candidate_keys(&self, reader: &BucketReader, bucket: u64) -> Result<Vec<Key>, Stop> {
+        let (start, end) = (self.plan.filters.start_ms(), self.plan.filters.end_ms());
         let mut acc: Option<Vec<Key>> = None;
         for set in self.plan.filters.term_sets() {
             let lists = set
                 .iter()
                 .map(|&term| {
                     let key = (term.kind(), bucket, term.as_u128());
-                    self.plan
-                        .cache
-                        .get_or_load(key, self.plan.now_bucket, || reader.postings(bucket, term))
+                    let now_bucket = self.plan.now_bucket;
+                    self.plan.cache.get_or_load(key, now_bucket, || {
+                        // An open bucket is read live every cycle, so read only the window's
+                        // postings; a closed bucket's whole list is what the cache keeps.
+                        if bucket >= now_bucket {
+                            reader.postings_in(bucket, term, start, end)
+                        } else {
+                            reader.postings(bucket, term)
+                        }
+                    })
                 })
                 .collect::<Result<Vec<Postings>, StorageError>>()?;
             let slices: Vec<&[Key]> = lists.iter().map(AsRef::as_ref).collect();
@@ -166,7 +176,6 @@ impl PartitionJob {
                 break;
             }
         }
-        let (start, end) = (self.plan.filters.start_ms(), self.plan.filters.end_ms());
         let mut keys = acc.unwrap_or_default();
         keys.retain(|&(ts_ms, _)| ts_ms >= start && ts_ms < end);
         Ok(keys)

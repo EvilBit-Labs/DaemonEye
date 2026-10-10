@@ -37,6 +37,11 @@ pub enum CompletenessReason {
         /// The error it reported.
         error: String,
     },
+    /// This cycle's rows were not committed, so the window may be missing rows.
+    IngestFailed {
+        /// The error ingest reported.
+        error: String,
+    },
     /// Ingest hit backpressure this cycle.
     Shed {
         /// How many times the channel was found full.

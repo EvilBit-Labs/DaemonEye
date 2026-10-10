@@ -362,14 +362,29 @@ fn derive_refuses_a_literal_with_no_value() {
 #[tokio::test]
 async fn derive_a_null_literal_matches_no_row_as_sql_null_does() {
     let c = ctx();
-    let provider = Arc::new(mem_table(&named_rows(&[(1, "bash", 10)])));
+    // An empty name is the literal a NULL could silently degrade into; it must not match either.
+    let provider: Arc<dyn datafusion::datasource::TableProvider> =
+        Arc::new(mem_table(&named_rows(&[(1, "bash", 10), (2, "", 11)])));
+    let control = predicate("name", PredicateOp::Eq, vec![string_literal("bash")]);
+    let expr = predicate_to_expr(&c.state(), &control).unwrap();
+    let df = c
+        .read_table(Arc::clone(&provider))
+        .unwrap()
+        .filter(expr)
+        .unwrap();
+    assert_eq!(
+        pids(df).await,
+        vec![1],
+        "the control literal matches its row"
+    );
+
     let null = Literal {
         value: Some(LiteralValue::NullValue(true)),
     };
-    let expr =
+    let null_expr =
         predicate_to_expr(&c.state(), &predicate("name", PredicateOp::Eq, vec![null])).unwrap();
-    let df = c.read_table(provider).unwrap().filter(expr).unwrap();
-    assert!(pids_or_empty(df).await.is_empty());
+    let null_df = c.read_table(provider).unwrap().filter(null_expr).unwrap();
+    assert!(pids_or_empty(null_df).await.is_empty());
 }
 
 async fn pids_or_empty(df: datafusion::prelude::DataFrame) -> Vec<u64> {

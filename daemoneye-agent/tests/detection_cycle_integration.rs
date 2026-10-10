@@ -308,3 +308,68 @@ fn open_event_store_applies_the_configured_page_cache() {
         daemoneye_lib::config::DatabaseConfig::default().page_cache_bytes()
     );
 }
+
+/// A failed ingest still consumes its ordinal and reports why, so a retry cannot alias a
+/// partially committed sequence space and the cycle's evaluations are degraded rather than
+/// reported complete over rows that were never stored.
+#[test]
+fn a_failed_ingest_consumes_its_ordinal_and_carries_the_failure() {
+    use daemoneye_agent::detection_cycle::{CycleIngestError, IngestOutcome, ingest_step};
+
+    let failed = ingest_step(7, 1_000, Err(CycleIngestError::TooManyRows));
+    assert_eq!(failed.next_ordinal, Some(8));
+    assert_eq!(
+        failed.high_water_ms, 1_000,
+        "nothing durable, so the window does not move"
+    );
+    assert!(failed.gaps.is_empty());
+    assert!(
+        failed
+            .failure
+            .as_deref()
+            .is_some_and(|e| e.contains("32-bit row index"))
+    );
+
+    let committed = ingest_step(
+        7,
+        1_000,
+        Ok(IngestOutcome {
+            high_water_ms: 2_500,
+            submitted: 3,
+            gaps: Vec::new(),
+        }),
+    );
+    assert_eq!(committed.next_ordinal, Some(8));
+    assert_eq!(committed.high_water_ms, 2_500);
+    assert_eq!(committed.failure, None);
+    assert_eq!(
+        ingest_step(u32::MAX, 0, Err(CycleIngestError::TooManyRows)).next_ordinal,
+        None
+    );
+}
+
+/// The restart cursor the agent seeds its first window from is written by the store and read
+/// back after a reopen.
+#[test]
+fn the_evaluated_through_mark_survives_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cursor.redb");
+    let store = open_event_store(&path, &daemoneye_lib::config::DatabaseConfig::default()).unwrap();
+    assert_eq!(
+        store.evaluated_through_ms(PROCMOND_COLLECTOR_ID).unwrap(),
+        None
+    );
+    store
+        .set_evaluated_through_ms(PROCMOND_COLLECTOR_ID, 42_000)
+        .unwrap();
+    drop(store);
+
+    let reopened =
+        open_event_store(&path, &daemoneye_lib::config::DatabaseConfig::default()).unwrap();
+    assert_eq!(
+        reopened
+            .evaluated_through_ms(PROCMOND_COLLECTOR_ID)
+            .unwrap(),
+        Some(42_000)
+    );
+}

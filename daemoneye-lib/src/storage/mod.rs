@@ -77,6 +77,10 @@ type EventTable<'a> = TableDefinition<'a, TsSeqKey, &'static [u8]>;
 const WATERMARK_TABLE: TableDefinition<'static, &str, u64> =
     TableDefinition::new("ingest_watermarks");
 
+/// `detection_cursor` — collector id → the `collection_time` (ms) through which rules have
+/// evaluated that collector's rows. Written after a cycle's alerts are stored, read at startup.
+const CURSOR_TABLE: TableDefinition<'static, &str, u64> = TableDefinition::new("detection_cursor");
+
 /// Raise each batch collector's stored watermark to the batch maximum, inside
 /// the write transaction that carries the rows.
 fn persist_watermarks(
@@ -358,6 +362,37 @@ impl EventStore {
             marks.insert(collector.value().to_owned(), mark.value());
         }
         Ok(marks)
+    }
+
+    /// The `collection_time` (ms) through which rules have evaluated `collector_id`'s rows, if a
+    /// completed cycle has recorded one.
+    pub fn evaluated_through_ms(&self, collector_id: &str) -> Result<Option<u64>, StorageError> {
+        let txn = self.db.begin_read()?;
+        let table = match txn.open_table(CURSOR_TABLE) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        Ok(table.get(collector_id)?.map(|guard| guard.value()))
+    }
+
+    /// Record that rules have evaluated `collector_id`'s rows through `through_ms`, so a restart
+    /// resumes its first window there instead of at the current time. Never moves backwards.
+    pub fn set_evaluated_through_ms(
+        &self,
+        collector_id: &str,
+        through_ms: u64,
+    ) -> Result<(), StorageError> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(CURSOR_TABLE)?;
+            let stored = table.get(collector_id)?.map(|guard| guard.value());
+            if stored.is_none_or(|current| current < through_ms) {
+                table.insert(collector_id, through_ms)?;
+            }
+        }
+        txn.commit()?;
+        Ok(())
     }
 
     /// All process records whose `pid` matches, across every live bucket, via
@@ -2031,7 +2066,41 @@ mod tests {
         let cloned_status = status.clone();
         assert_eq!(status, cloned_status);
     }
-}
 
-// TODO: Implement redb Value trait implementations in Task 8
-// For now, just focus on getting the basic structure compiling for Task 1
+    /// The evaluated-through mark is absent on a fresh store, round-trips, never moves backwards,
+    /// and survives a reopen, which is what a restart reads.
+    #[test]
+    fn evaluated_through_mark_round_trips_and_only_advances() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("cursor.redb");
+        let store = EventStore::new(&db_path).expect("create event store");
+        assert_eq!(
+            store.evaluated_through_ms("procmond").expect("read mark"),
+            None
+        );
+
+        store
+            .set_evaluated_through_ms("procmond", 5_000)
+            .expect("set mark");
+        store
+            .set_evaluated_through_ms("procmond", 4_000)
+            .expect("set mark");
+        assert_eq!(
+            store.evaluated_through_ms("procmond").expect("read mark"),
+            Some(5_000)
+        );
+        assert_eq!(
+            store.evaluated_through_ms("other").expect("read mark"),
+            None
+        );
+        drop(store);
+
+        let reopened = EventStore::open(&db_path).expect("reopen store");
+        assert_eq!(
+            reopened
+                .evaluated_through_ms("procmond")
+                .expect("read mark"),
+            Some(5_000)
+        );
+    }
+}

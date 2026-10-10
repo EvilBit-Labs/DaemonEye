@@ -598,3 +598,13 @@ async fn explain_describes_the_plan_that_evaluate_runs() {
     );
     assert!(only(&outcome).scan.batches > 0);
 }
+
+/// A process names itself, and the alert sinks are line-delimited: control characters in the
+/// name are escaped before they reach a title or description.
+#[test]
+fn printable_escapes_control_characters_and_keeps_the_rest() {
+    use daemoneye_lib::detection::execution::executor::printable;
+    assert_eq!(printable("bash"), "bash");
+    assert_eq!(printable("a\nb\rc\td"), "a\\nb\\rc\\td");
+    assert_eq!(printable("\u{fc}n\u{ef}code,ok"), "\u{fc}n\u{ef}code,ok");
+}

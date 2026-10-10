@@ -49,6 +49,9 @@ pub struct IngestSnapshot {
     pub saturation_delta: u64,
     /// Gaps detected this cycle.
     pub sequence_gaps: Vec<SequenceGap>,
+    /// Why this cycle's rows were not committed, when they were not. Every rule's window may then
+    /// be missing rows, so every evaluation is degraded by it.
+    pub failure: Option<String>,
 }
 
 /// Everything the agent observed about one cycle, keyed by collector id.
@@ -155,6 +158,11 @@ impl CompletenessTracker {
                 discarded: signals.ingest.saturation_delta,
             });
         }
+        if let Some(ref error) = signals.ingest.failure {
+            reasons.push(CompletenessReason::IngestFailed {
+                error: error.clone(),
+            });
+        }
         reasons.extend(execution_reasons);
         Completeness::from_reasons(reasons)
     }
@@ -228,6 +236,25 @@ mod tests {
 
     fn fold(signals: &CycleSignals) -> Completeness {
         CompletenessTracker::new(signals).for_rule("procmond", "processes", Vec::new())
+    }
+
+    /// A cycle whose rows were never committed is degraded for every rule, so its zero matches
+    /// cannot be read as a no-match.
+    #[test]
+    fn an_ingest_failure_degrades_every_evaluation_naming_the_error() {
+        let mut failed = signals();
+        failed.ingest.failure = Some("commit failed".to_owned());
+
+        let completeness = fold(&failed);
+
+        assert_eq!(completeness.status(), CompletenessStatus::Degraded);
+        assert_eq!(
+            completeness.reasons(),
+            [CompletenessReason::IngestFailed {
+                error: "commit failed".to_owned()
+            }]
+        );
+        assert_eq!(fold(&signals()).status(), CompletenessStatus::Complete);
     }
 
     fn scan(oversized_rows: u64) -> ScanTotals {

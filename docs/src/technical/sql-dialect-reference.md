@@ -30,7 +30,7 @@ A rule may call exactly seven functions: `hex`, `instr`, `length`, `like`, `matc
 
 Infix `MATCH` does not parse in this dialect; write it as a function call.
 
-Syntax that looks like a function call but is its own grammar rule is refused at load by the same gate: `SUBSTR`/`SUBSTRING`, `TRIM`, `POSITION`, `EXTRACT`, `CEIL`, `FLOOR`, `OVERLAY`, `CONVERT`. `CAST`, `TRY_CAST`, `SAFE_CAST` and `::` are refused as casts.
+Syntax that looks like a function call but is its own grammar rule is refused at load by the same gate: `SUBSTR`/`SUBSTRING`, `TRIM`, `POSITION`, `EXTRACT`, `CEIL`, `FLOOR`, `OVERLAY`, `CONVERT`. `CAST`, `TRY_CAST`, `SAFE_CAST` and `::` are refused as casts. The regular-expression operators `~`, `~*`, `!~`, `!~*` and `SIMILAR TO` are refused by name: only `REGEXP` (or its `RLIKE` spelling) runs through the bounded, latency-timed path.
 
 ## Refused Constructs
 

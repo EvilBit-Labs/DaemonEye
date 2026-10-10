@@ -671,12 +671,8 @@ mod tests {
 
     #[test]
     fn accessible_and_file_exists_survive_a_proto_round_trip() {
-        // `From<ProtoProcessRecord>` stores these two flags in
-        // metadata. The reverse direction previously hardcoded `accessible: true`,
-        // which was merely uninformative while the native model carried nothing —
-        // but became wrong the moment the native model held the real value, since
-        // a `false` would be silently reported back as `true`. Writing new state
-        // means auditing every reader of it, and this conversion is one.
+        // Both flags are stored in metadata by `From<ProtoProcessRecord>`; the reverse
+        // conversion must read them back, not default them.
         let original = ProtoProcessRecord {
             accessible: false,
             file_exists: false,

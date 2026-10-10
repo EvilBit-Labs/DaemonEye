@@ -54,8 +54,9 @@
 //!
 //! * A rule with no plan (deferred under R18, task-expired, reference-broken) is not evaluated:
 //!   there is no SQL to execute without one. A test pins that a task-expired rule is not run.
-//! * `load_rule` is not called outside `daemoneye-lib`, so no production path loads rules into the
-//!   agent's engine yet.
+//! * `load_rule` is reached in production by the agent's startup reload
+//!   (`detection_cycle::load_persisted_rules`); every rule that reaches the engine passes through
+//!   it, so it is the one writer that issues a generation.
 //! * A generation cannot be a per-rule counter that restarts on removal: a report for a removed
 //!   rule would match a later rule of the same id. Generations come from one engine-wide counter.
 //! * `runnable_rules` can list fewer rules than the predicate accepts in exactly one case, an

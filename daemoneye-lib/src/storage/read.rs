@@ -121,8 +121,11 @@ pub struct BucketReader {
 
 impl BucketReader {
     /// Up to `limit` rows of `bucket_id` with `ts_ms` in `[start_ms, end_ms)`,
-    /// ascending, strictly after `after` when given. A missing bucket, an empty
-    /// range, `limit == 0`, or an `after` at or past the end yield no rows.
+    /// ascending, strictly after `after` when given, stopping early once the
+    /// rows' encoded size reaches `max_bytes` (the first row is always taken, so
+    /// an oversized row still reaches the caller that excludes it). A missing
+    /// bucket, an empty range, `limit == 0`, or an `after` at or past the end
+    /// yield no rows.
     pub fn range_chunk(
         &self,
         bucket_id: u64,
@@ -130,6 +133,7 @@ impl BucketReader {
         end_ms: u64,
         after: Option<Key>,
         limit: usize,
+        max_bytes: usize,
     ) -> Result<Vec<KeyedRecord>, StorageError> {
         let lower_key = (start_ms, 0_u32);
         let upper_key = (end_ms, 0_u32);
@@ -143,12 +147,18 @@ impl BucketReader {
             return Ok(Vec::new());
         };
         let mut out = Vec::new();
+        let mut bytes = 0_usize;
         for entry in table
             .range((lower, Bound::Excluded(upper_key)))?
             .take(limit)
         {
             let (key, value) = entry?;
-            out.push((key.value(), decode_value(value.value())?));
+            let raw = value.value();
+            if !out.is_empty() && bytes.saturating_add(raw.len()) > max_bytes {
+                break;
+            }
+            bytes = bytes.saturating_add(raw.len());
+            out.push((key.value(), decode_value(raw)?));
         }
         Ok(out)
     }
@@ -159,34 +169,77 @@ impl BucketReader {
     pub fn postings(&self, bucket_id: u64, term: IndexTerm) -> Result<Vec<Key>, StorageError> {
         let found = match term {
             IndexTerm::Pid(v) => {
-                self.collect_postings(u32_index_def(&pid_index_name(bucket_id)), v)
+                self.collect_postings(u32_index_def(&pid_index_name(bucket_id)), v, None)
             }
             IndexTerm::Ppid(v) => {
-                self.collect_postings(u32_index_def(&ppid_index_name(bucket_id)), v)
+                self.collect_postings(u32_index_def(&ppid_index_name(bucket_id)), v, None)
             }
             IndexTerm::Name(h) => {
-                self.collect_postings(hash_index_def(&name_index_name(bucket_id)), h)
+                self.collect_postings(hash_index_def(&name_index_name(bucket_id)), h, None)
             }
             IndexTerm::ExeHash(h) => {
-                self.collect_postings(hash_index_def(&exe_index_name(bucket_id)), h)
+                self.collect_postings(hash_index_def(&exe_index_name(bucket_id)), h, None)
             }
         };
         found.map(Option::unwrap_or_default)
     }
 
-    /// Rows for `keys` in `bucket_id`, in input order (duplicates repeat);
-    /// keys absent from this bucket are skipped.
-    pub fn fetch(&self, bucket_id: u64, keys: &[Key]) -> Result<Vec<KeyedRecord>, StorageError> {
+    /// The postings of [`Self::postings`] whose `ts_ms` lies in `[start_ms, end_ms)`, read from
+    /// the end of the list so an open bucket costs the window's postings, not the hour's.
+    pub fn postings_in(
+        &self,
+        bucket_id: u64,
+        term: IndexTerm,
+        start_ms: u64,
+        end_ms: u64,
+    ) -> Result<Vec<Key>, StorageError> {
+        let window = Some((start_ms, end_ms));
+        let found = match term {
+            IndexTerm::Pid(v) => {
+                self.collect_postings(u32_index_def(&pid_index_name(bucket_id)), v, window)
+            }
+            IndexTerm::Ppid(v) => {
+                self.collect_postings(u32_index_def(&ppid_index_name(bucket_id)), v, window)
+            }
+            IndexTerm::Name(h) => {
+                self.collect_postings(hash_index_def(&name_index_name(bucket_id)), h, window)
+            }
+            IndexTerm::ExeHash(h) => {
+                self.collect_postings(hash_index_def(&exe_index_name(bucket_id)), h, window)
+            }
+        };
+        found.map(Option::unwrap_or_default)
+    }
+
+    /// Rows for a prefix of `keys` in `bucket_id`, in input order (duplicates
+    /// repeat), with how many keys were consumed. Keys absent from this bucket
+    /// are consumed and skipped. Consumption stops early once the rows' encoded
+    /// size reaches `max_bytes`; the first key is always consumed, so a caller
+    /// that loops over the remainder always advances.
+    pub fn fetch(
+        &self,
+        bucket_id: u64,
+        keys: &[Key],
+        max_bytes: usize,
+    ) -> Result<(Vec<KeyedRecord>, usize), StorageError> {
         let Some(table) = self.event_table(bucket_id)? else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), keys.len()));
         };
         let mut out = Vec::with_capacity(keys.len());
+        let mut bytes = 0_usize;
+        let mut consumed = 0_usize;
         for &key in keys {
             if let Some(value) = table.get(key)? {
-                out.push((key, decode_value(value.value())?));
+                let raw = value.value();
+                if !out.is_empty() && bytes.saturating_add(raw.len()) > max_bytes {
+                    break;
+                }
+                bytes = bytes.saturating_add(raw.len());
+                out.push((key, decode_value(raw)?));
             }
+            consumed = consumed.saturating_add(1);
         }
-        Ok(out)
+        Ok((out, consumed))
     }
 
     fn event_table(
@@ -203,10 +256,13 @@ impl BucketReader {
         }
     }
 
+    /// Every posting for `term`, or with `window` only those in `[start, end)`, walked from the
+    /// end of the ascending list so the walk stops at the window's start.
     fn collect_postings<'a, K: redb::Key + 'static>(
         &self,
         def: MultimapTableDefinition<'a, K, TsSeqKey>,
         term: K::SelfType<'a>,
+        window: Option<(u64, u64)>,
     ) -> Result<Option<Vec<Key>>, StorageError> {
         let idx = match self.txn.open_multimap_table(def) {
             Ok(idx) => idx,
@@ -214,9 +270,23 @@ impl BucketReader {
             Err(other) => return Err(other.into()),
         };
         let mut out = Vec::new();
-        for posting in idx.get(term)? {
-            out.push(posting?.value());
+        let Some((start_ms, end_ms)) = window else {
+            for posting in idx.get(term)? {
+                out.push(posting?.value());
+            }
+            return Ok(Some(out));
+        };
+        for posting in idx.get(term)?.rev() {
+            let key = posting?.value();
+            if key.0 >= end_ms {
+                continue;
+            }
+            if key.0 < start_ms {
+                break;
+            }
+            out.push(key);
         }
+        out.reverse();
         Ok(Some(out))
     }
 }
@@ -267,15 +337,15 @@ mod tests {
         let (start, end) = (t0 + 1_000, t0 + 1_000 + 20 * 10);
         let rd = st.open_read().unwrap();
 
-        let c1 = rd.range_chunk(id, start, end, None, 8).unwrap();
+        let c1 = rd.range_chunk(id, start, end, None, 8, usize::MAX).unwrap();
         let c2 = rd
-            .range_chunk(id, start, end, c1.last().map(|x| x.0), 8)
+            .range_chunk(id, start, end, c1.last().map(|x| x.0), 8, usize::MAX)
             .unwrap();
         let c3 = rd
-            .range_chunk(id, start, end, c2.last().map(|x| x.0), 8)
+            .range_chunk(id, start, end, c2.last().map(|x| x.0), 8, usize::MAX)
             .unwrap();
         let c4 = rd
-            .range_chunk(id, start, end, c3.last().map(|x| x.0), 8)
+            .range_chunk(id, start, end, c3.last().map(|x| x.0), 8, usize::MAX)
             .unwrap();
 
         let all: Vec<_> = [c1, c2, c3].iter().flat_map(|chunk| keys(chunk)).collect();
@@ -294,12 +364,28 @@ mod tests {
             put(&st, t0 + u64::from(i), i, i, "p");
         }
         let rd = st.open_read().unwrap();
-        let c1 = rd.range_chunk(BASE_HOUR, t0, t0 + 20, None, 8).unwrap();
+        let c1 = rd
+            .range_chunk(BASE_HOUR, t0, t0 + 20, None, 8, usize::MAX)
+            .unwrap();
         let c2 = rd
-            .range_chunk(BASE_HOUR, t0, t0 + 20, c1.last().map(|x| x.0), 8)
+            .range_chunk(
+                BASE_HOUR,
+                t0,
+                t0 + 20,
+                c1.last().map(|x| x.0),
+                8,
+                usize::MAX,
+            )
             .unwrap();
         let c3 = rd
-            .range_chunk(BASE_HOUR, t0, t0 + 20, c2.last().map(|x| x.0), 8)
+            .range_chunk(
+                BASE_HOUR,
+                t0,
+                t0 + 20,
+                c2.last().map(|x| x.0),
+                8,
+                usize::MAX,
+            )
             .unwrap();
         assert_eq!((c1.len(), c2.len(), c3.len()), (8, 8, 4));
     }
@@ -313,38 +399,38 @@ mod tests {
         let rd = st.open_read().unwrap();
         let id = BASE_HOUR;
         assert!(
-            rd.range_chunk(id, t0, t0 + 100, None, 0)
+            rd.range_chunk(id, t0, t0 + 100, None, 0, usize::MAX)
                 .unwrap()
                 .is_empty(),
             "limit 0"
         );
         assert!(
-            rd.range_chunk(id + 7, t0, t0 + 100, None, 8)
+            rd.range_chunk(id + 7, t0, t0 + 100, None, 8, usize::MAX)
                 .unwrap()
                 .is_empty(),
             "missing bucket"
         );
         assert!(
-            rd.range_chunk(id, t0 + 100, t0, None, 8)
+            rd.range_chunk(id, t0 + 100, t0, None, 8, usize::MAX)
                 .unwrap()
                 .is_empty(),
             "inverted range"
         );
         assert!(
-            rd.range_chunk(id, t0, t0 + 100, Some((t0 + 5, u32::MAX)), 8)
+            rd.range_chunk(id, t0, t0 + 100, Some((t0 + 5, u32::MAX)), 8, usize::MAX)
                 .unwrap()
                 .is_empty(),
             "after = last key, seq MAX"
         );
         assert!(
-            rd.range_chunk(id, t0, t0 + 100, Some((t0 + 90_000, 0)), 8)
+            rd.range_chunk(id, t0, t0 + 100, Some((t0 + 90_000, 0)), 8, usize::MAX)
                 .unwrap()
                 .is_empty(),
             "after past end"
         );
         // after below the window start is clamped, not an error or a row outside the window.
         let rows = rd
-            .range_chunk(id, t0 + 5, t0 + 100, Some((0, 0)), 8)
+            .range_chunk(id, t0 + 5, t0 + 100, Some((0, 0)), 8, usize::MAX)
             .unwrap();
         assert_eq!(keys(&rows), vec![(t0 + 5, 1), (t0 + 5, u32::MAX)]);
     }
@@ -439,12 +525,100 @@ mod tests {
                     (t0 + 3, 3),
                     (other + 1, 1),
                 ],
+                usize::MAX,
             )
             .unwrap();
-        assert_eq!(keys(&got), vec![(t0 + 2, 2), (t0 + 1, 1), (t0 + 2, 2)]);
-        assert_eq!(got.get(1).map(|row| row.1.name.as_str()), Some("a"));
-        assert!(rd.fetch(BASE_HOUR + 50, &[(t0 + 1, 1)]).unwrap().is_empty());
-        assert!(rd.fetch(BASE_HOUR, &[]).unwrap().is_empty());
+        assert_eq!(keys(&got.0), vec![(t0 + 2, 2), (t0 + 1, 1), (t0 + 2, 2)]);
+        assert_eq!(got.1, 5, "every key was consumed");
+        assert_eq!(got.0.get(1).map(|row| row.1.name.as_str()), Some("a"));
+        let (rows, consumed) = rd
+            .fetch(BASE_HOUR + 50, &[(t0 + 1, 1)], usize::MAX)
+            .unwrap();
+        assert!(rows.is_empty());
+        assert_eq!(consumed, 1, "a missing bucket consumes its keys");
+        assert!(rd.fetch(BASE_HOUR, &[], usize::MAX).unwrap().0.is_empty());
+    }
+
+    /// The byte budget closes a chunk before the row that would overflow it, so a run of large
+    /// rows is decoded a budget at a time rather than `limit` rows at a time; one row is always
+    /// taken so an oversized row still reaches the caller that excludes it.
+    #[test]
+    fn chunks_stop_at_the_byte_budget_and_fetch_reports_what_it_consumed() {
+        let (_d, st) = open_store();
+        let t0 = BASE_HOUR * HOURLY_MS;
+        for i in 0..6_u32 {
+            put(&st, t0 + u64::from(i), i, i, &"n".repeat(4_000));
+        }
+        let rd = st.open_read().unwrap();
+        let one_row = rd.range_chunk(BASE_HOUR, t0, t0 + 100, None, 8, 1).unwrap();
+        assert_eq!(
+            one_row.len(),
+            1,
+            "a budget below one row still yields the first row"
+        );
+        let budget = rd
+            .range_chunk(BASE_HOUR, t0, t0 + 100, None, 8, 9_000)
+            .unwrap();
+        assert_eq!(
+            budget.len(),
+            2,
+            "two 4,000-byte-plus rows fit a 9,000-byte budget, three do not"
+        );
+        let mut after = None;
+        let mut seen = 0;
+        loop {
+            let chunk = rd
+                .range_chunk(BASE_HOUR, t0, t0 + 100, after, 8, 9_000)
+                .unwrap();
+            let Some(&(last, _)) = chunk.last() else {
+                break;
+            };
+            after = Some(last);
+            seen += chunk.len();
+        }
+        assert_eq!(seen, 6, "resuming on the budget boundary reaches every row");
+
+        let all: Vec<Key> = (0..6_u32).map(|i| (t0 + u64::from(i), i)).collect();
+        let (rows, consumed) = rd.fetch(BASE_HOUR, &all, 9_000).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(consumed, 2, "fetch stops consuming keys at the budget");
+        let (one, one_consumed) = rd.fetch(BASE_HOUR, &all, 1).unwrap();
+        assert_eq!((one.len(), one_consumed), (1, 1));
+    }
+
+    /// An open bucket's postings are read from the window's end backwards, so the result is the
+    /// window's slice of the full list and nothing before it is visited.
+    #[test]
+    fn postings_in_is_the_window_slice_of_postings() {
+        let (_d, st) = open_store();
+        let t0 = BASE_HOUR * HOURLY_MS;
+        for i in 0..10_u32 {
+            put(&st, t0 + u64::from(i) * 10, i, 7, "bash");
+        }
+        let rd = st.open_read().unwrap();
+        let all = rd.postings(BASE_HOUR, IndexTerm::Pid(7)).unwrap();
+        assert_eq!(all.len(), 10);
+        let window = rd
+            .postings_in(BASE_HOUR, IndexTerm::Pid(7), t0 + 30, t0 + 70)
+            .unwrap();
+        let expected: Vec<Key> = all
+            .iter()
+            .copied()
+            .filter(|&(ts, _)| ts >= t0 + 30 && ts < t0 + 70)
+            .collect();
+        assert_eq!(window, expected);
+        assert_eq!(window.len(), 4, "[30, 70) holds 30, 40, 50 and 60");
+        assert!(
+            rd.postings_in(BASE_HOUR, IndexTerm::Pid(7), t0 + 500, t0 + 600)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            rd.postings_in(BASE_HOUR, IndexTerm::Pid(8), t0, t0 + 100)
+                .unwrap()
+                .is_empty(),
+            "an absent term is empty, not an error"
+        );
     }
 
     #[test]
@@ -482,14 +656,17 @@ mod tests {
         let rd = st.open_read().unwrap();
         put(&st, t0 + 2, 2, 2, "b");
         assert_eq!(
-            keys(&rd.range_chunk(BASE_HOUR, t0, t0 + 100, None, 10).unwrap()),
+            keys(
+                &rd.range_chunk(BASE_HOUR, t0, t0 + 100, None, 10, usize::MAX)
+                    .unwrap()
+            ),
             vec![(t0 + 1, 1)]
         );
         assert_eq!(
             keys(
                 &st.open_read()
                     .unwrap()
-                    .range_chunk(BASE_HOUR, t0, t0 + 100, None, 10)
+                    .range_chunk(BASE_HOUR, t0, t0 + 100, None, 10, usize::MAX)
                     .unwrap()
             )
             .len(),

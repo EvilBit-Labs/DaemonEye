@@ -139,7 +139,11 @@ impl AlertSink for StdoutSink {
             ),
             OutputFormat::Csv => format!(
                 "{},{},{},{},{}",
-                alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
+                alert.id,
+                alert.severity,
+                csv_field(&alert.detection_rule_id),
+                csv_field(&alert.title),
+                csv_field(&alert.description)
             ),
         };
 
@@ -217,7 +221,11 @@ impl AlertSink for FileSink {
             ),
             OutputFormat::Csv => format!(
                 "{},{},{},{},{}",
-                alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
+                alert.id,
+                alert.severity,
+                csv_field(&alert.detection_rule_id),
+                csv_field(&alert.title),
+                csv_field(&alert.description)
             ),
         };
 
@@ -651,6 +659,12 @@ impl HealthSummary {
     }
 }
 
+/// `field` quoted for a CSV cell: wrapped in double quotes with any inner quote doubled, so a
+/// comma or quote inside it cannot shift the columns.
+fn csv_field(field: &str) -> String {
+    format!("\"{}\"", field.replace('"', "\"\""))
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -662,6 +676,14 @@ impl HealthSummary {
 mod tests {
     use super::*;
     use crate::models::{AlertSeverity, Completeness, ProcessRecord};
+
+    /// A title carrying a comma or a quote stays one CSV cell.
+    #[test]
+    fn csv_fields_are_quoted_and_inner_quotes_doubled() {
+        assert_eq!(csv_field("plain"), "\"plain\"");
+        assert_eq!(csv_field("a,b"), "\"a,b\"");
+        assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
 
     #[tokio::test]
     async fn test_stdout_sink() {

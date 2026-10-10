@@ -2,8 +2,8 @@
 
 use clap::Parser;
 use daemoneye_agent::detection_cycle::{
-    PROCMOND_COLLECTOR_ID, build_signals, ingest_cycle, load_persisted_rules, next_cycle_ordinal,
-    next_window, open_event_store, persist_alerts, run_detection_cycle,
+    PROCMOND_COLLECTOR_ID, build_signals, ingest_cycle, ingest_step, load_persisted_rules,
+    next_cycle_ordinal, next_window, open_event_store, persist_alerts, run_detection_cycle,
 };
 use daemoneye_lib::detection::execution::completeness::IngestSnapshot;
 use daemoneye_lib::detection::execution::executor::RuleExecutor;
@@ -318,12 +318,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut iteration: u64 = 0;
 
     // The previous cycle's high-water mark: the exclusive start of the next cycle's window (R3).
-    // Rows already stored when the agent starts belong to an earlier run and are not re-alerted.
-    let mut previous_high_water_ms = SystemTime::now()
+    // A restart resumes from the mark the last completed cycle recorded, so rows committed before
+    // a crash but never evaluated are not skipped; a store with no mark starts at now, so rows an
+    // earlier run already evaluated are not re-alerted.
+    let now_ms = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |elapsed| {
             u64::try_from(elapsed.as_millis()).unwrap_or_default()
         });
+    let mut previous_high_water_ms = event_store
+        .evaluated_through_ms(PROCMOND_COLLECTOR_ID)?
+        .unwrap_or(now_ms);
     // Ingest's saturation counter at the end of the previous cycle, to report the delta.
     let mut last_saturation_alerts = 0_u64;
 
@@ -489,6 +494,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // nothing consumes no ordinal, so the next one stays contiguous for the watermark.
                 let mut ingested_high_water_ms = previous_high_water_ms;
                 let mut sequence_gaps = Vec::new();
+                let mut ingest_failure = None;
                 match next_ordinal {
                     Some(ordinal) if !processes.is_empty() => {
                         let ingested = ingest_cycle(
@@ -498,27 +504,28 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                             &processes,
                         )
                         .await;
-                        match ingested {
-                            Ok(outcome) => {
-                                next_ordinal = ordinal.checked_add(1);
-                                ingested_high_water_ms =
-                                    ingested_high_water_ms.max(outcome.high_water_ms);
-                                debug!(
-                                    submitted = outcome.submitted,
-                                    high_water_ms = outcome.high_water_ms,
-                                    gaps = outcome.gaps.len(),
-                                    "Ingested cycle"
-                                );
-                                sequence_gaps = outcome.gaps;
-                            }
-                            Err(e) => {
-                                error!(error = %e, "Ingest failed; this cycle's rows are not durable");
-                                telemetry.record_error();
-                            }
+                        let step = ingest_step(ordinal, previous_high_water_ms, ingested);
+                        if let Some(ref error) = step.failure {
+                            error!(error = %error, "Ingest failed; this cycle's rows are not durable");
+                            telemetry.record_error();
+                        } else {
+                            debug!(
+                                submitted = processes.len(),
+                                high_water_ms = step.high_water_ms,
+                                gaps = step.gaps.len(),
+                                "Ingested cycle"
+                            );
                         }
+                        next_ordinal = step.next_ordinal;
+                        ingested_high_water_ms = step.high_water_ms;
+                        sequence_gaps = step.gaps;
+                        ingest_failure = step.failure;
                     }
                     Some(_) => {}
-                    None => error!("Cycle ordinals exhausted; collected rows are not being stored"),
+                    None => {
+                        error!("Cycle ordinals exhausted; collected rows are not being stored");
+                        ingest_failure = Some("cycle ordinal space exhausted".to_owned());
+                    }
                 }
 
                 // Evaluate every eligible rule over what this cycle added to the store.
@@ -535,6 +542,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     IngestSnapshot {
                         saturation_delta: saturation_now.saturating_sub(last_saturation_alerts),
                         sequence_gaps,
+                        failure: ingest_failure,
                     },
                 );
                 last_saturation_alerts = saturation_now;
@@ -570,6 +578,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let stored_alerts = persist_alerts(&event_store, &alerts);
                 if stored_alerts != alerts.len() {
                     warn!(stored = stored_alerts, total = alerts.len(), "Some alerts were not persisted");
+                }
+                // The cycle is complete once its alerts are stored: a restart resumes from here.
+                if window.after_ms != window.through_ms
+                    && let Err(e) = event_store.set_evaluated_through_ms(PROCMOND_COLLECTOR_ID, window.through_ms)
+                {
+                    warn!(error = %e, "Evaluated-through mark was not recorded; a restart may re-evaluate this window");
                 }
                 let detection_duration = detection_timer.finish();
                 telemetry.record_operation(detection_duration);

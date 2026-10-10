@@ -480,13 +480,27 @@ fn hits_from_batch(batch: &RecordBatch, take: usize) -> DfResult<Vec<Hit>> {
 /// One alert for `hit`. The title names the process, because the deduplication key is built from
 /// it and one title for every match would collapse a rule's matches into one alert downstream.
 fn alert_for(rule: &DetectionRule, hit: &Hit, completeness: &Completeness) -> Alert {
-    let (pid, name) = (hit.pid, &hit.name);
+    let (pid, name) = (hit.pid, printable(&hit.name));
     Alert::new(
         rule.severity,
         format!("{}: {name} (pid {pid})", rule.name),
         format!("Process {name} (pid {pid}) matched rule {}", rule.name),
         rule.id.raw().to_owned(),
-        ProcessRecord::new(pid, name.clone()),
+        ProcessRecord::new(pid, hit.name.clone()),
         completeness.clone(),
     )
+}
+
+/// `text` with every control character escaped. A process chooses its own name, and the alert
+/// sinks are line- and comma-delimited, so an unescaped newline would forge a second alert.
+pub fn printable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }

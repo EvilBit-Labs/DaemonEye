@@ -515,3 +515,30 @@ fn a_cast_nested_in_a_subquery_or_projection_is_still_refused() {
 fn a_rule_with_no_cast_still_loads() {
     accept("SELECT pid FROM processes WHERE pid = 1 AND name = 'bash'");
 }
+
+/// The operators that spell a regular-expression match outside `REGEXP` are refused at load,
+/// naming the operator: they would reach `DataFusion`'s own kernel, which neither bounds the
+/// program through the `RegexCache` nor times it for the latency guard.
+#[test]
+fn regex_operators_outside_regexp_are_refused_naming_the_operator() {
+    for (sql, operator) in [
+        ("SELECT pid FROM processes WHERE name ~ '^b'", "~"),
+        ("SELECT pid FROM processes WHERE name ~* '^b'", "~*"),
+        ("SELECT pid FROM processes WHERE name !~ '^b'", "!~"),
+        ("SELECT pid FROM processes WHERE name !~* '^b'", "!~*"),
+        (
+            "SELECT pid FROM processes WHERE name SIMILAR TO 'b%'",
+            "SIMILAR TO",
+        ),
+    ] {
+        let rejection = reject(sql);
+        assert!(
+            matches!(rejection, SqlRejection::OperatorNotAllowed { operator: seen, .. } if seen == operator),
+            "{sql} must be refused naming {operator}, got {rejection:?}"
+        );
+    }
+    // The bounded path is untouched, in all three of its spellings.
+    accept("SELECT pid FROM processes WHERE name REGEXP '^b'");
+    accept("SELECT pid FROM processes WHERE name RLIKE '^b'");
+    accept("SELECT pid FROM processes WHERE regexp(name, '^b')");
+}

@@ -479,6 +479,7 @@ async fn an_ingest_sequence_gap_reaches_the_evaluation() {
         IngestSnapshot {
             saturation_delta: 0,
             sequence_gaps: vec![gap],
+            failure: None,
         },
     )
     .await;
