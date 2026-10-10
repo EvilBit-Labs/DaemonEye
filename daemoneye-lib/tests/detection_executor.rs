@@ -269,6 +269,63 @@ fn a_rule_the_executor_cannot_plan_is_refused_at_load() {
     assert_eq!(fx.engine.runnable_rules().len(), 1);
 }
 
+/// Load-time planning runs over exactly the provider's schema, so a descriptor the provider
+/// cannot serve (here: no `collection_time`, which every window predicate reads) refuses its
+/// rules at load rather than on every cycle.
+#[test]
+fn a_rule_over_a_descriptor_the_provider_cannot_serve_is_refused_at_load() {
+    let mut engine = DetectionEngine::with_config(&config());
+    let token = "a".repeat(64);
+    let verified = verify_spawn_token("procmond", Some(&token), Some(&token)).unwrap();
+    let mut without_time = schema();
+    without_time.tables[0]
+        .columns
+        .retain(|column| column.name != "collection_time");
+    engine.register_collector(&verified, without_time).unwrap();
+    let rule = DetectionRule::new(
+        "r1".to_owned(),
+        "Rule r1".to_owned(),
+        "executor fixture".to_owned(),
+        "SELECT pid FROM processes WHERE name = 'nc'".to_owned(),
+        "test".to_owned(),
+        AlertSeverity::High,
+    );
+    let error = engine.load_rule(rule).unwrap_err();
+    assert!(
+        error.to_string().contains("collection_time"),
+        "expected the refusal to name the missing window column, got {error}"
+    );
+}
+
+/// A replacement the executor cannot plan is rejected while the rule it would have replaced
+/// keeps running under its own generation.
+#[test]
+fn a_rejected_reload_leaves_the_existing_rule_running() {
+    let mut fx = fixture(config());
+    load(&mut fx, "r1", "SELECT pid FROM processes WHERE name = 'nc'");
+    let before = fx.engine.runnable_rules();
+    assert_eq!(before.len(), 1);
+
+    let unplannable = DetectionRule::new(
+        "r1".to_owned(),
+        "Rule r1".to_owned(),
+        "executor fixture".to_owned(),
+        "SELECT pid FROM processes WHERE length(pid) > 0".to_owned(),
+        "test".to_owned(),
+        AlertSeverity::High,
+    );
+    assert!(fx.engine.load_rule(unplannable).is_err());
+
+    let after = fx.engine.runnable_rules();
+    assert_eq!(
+        after.len(),
+        1,
+        "the working rule must survive a rejected reload"
+    );
+    assert_eq!(after[0].generation, before[0].generation);
+    assert_eq!(after[0].rule.sql_query, before[0].rule.sql_query);
+}
+
 #[tokio::test]
 async fn a_rule_past_its_deadline_is_degraded_as_a_resource_limit() {
     let mut fx = fixture(config());

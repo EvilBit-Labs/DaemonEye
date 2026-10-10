@@ -84,9 +84,9 @@ fn a_dropped_column_leaves_only_the_rule_that_filters_on_it_unhealthy() {
     // Arrange
     let mut catalog = SchemaCatalog::new();
     let mut rules = RuleHealthRegistry::new();
-    rules.track("needs-cmdline", [("processes", "cmdline")]);
+    rules.track("needs-cmdline", [("processes", "command_line")]);
     rules.track("needs-name", [("processes", "name")]);
-    let initial = register(&mut catalog, &["name", "cmdline"]);
+    let initial = register(&mut catalog, &["name", "command_line"]);
     let _first = rules.revalidate(&catalog, &initial);
 
     // Act: the collector restarts without `cmdline`.
@@ -107,8 +107,8 @@ fn a_dropped_column_leaves_only_the_rule_that_filters_on_it_unhealthy() {
 fn an_unhealthy_rule_names_the_reference_that_stopped_resolving() {
     let mut catalog = SchemaCatalog::new();
     let mut rules = RuleHealthRegistry::new();
-    rules.track("needs-cmdline", [("processes", "cmdline")]);
-    let initial = register(&mut catalog, &["cmdline"]);
+    rules.track("needs-cmdline", [("processes", "command_line")]);
+    let initial = register(&mut catalog, &["command_line"]);
     let _first = rules.revalidate(&catalog, &initial);
 
     let narrowed = register(&mut catalog, &["name"]);
@@ -116,7 +116,9 @@ fn an_unhealthy_rule_names_the_reference_that_stopped_resolving() {
 
     let health = rules.health("needs-cmdline").unwrap();
     match *health {
-        RuleHealth::Unhealthy { ref reason, .. } => assert!(reason.contains("cmdline"), "{reason}"),
+        RuleHealth::Unhealthy { ref reason, .. } => {
+            assert!(reason.contains("command_line"), "{reason}")
+        }
         RuleHealth::Healthy | RuleHealth::Unknown => panic!("rule should be unhealthy"),
         ref other => panic!("rule should be unhealthy, was {other:?}"),
     }
@@ -169,9 +171,11 @@ fn revalidation_takes_the_plan_away_from_the_rule_it_marks_unhealthy() {
     let mut engine = DetectionEngine::new();
     let verified = verify_spawn_token("procmond", Some(&token()), Some(&token())).unwrap();
     engine
-        .register_collector(&verified, descriptor(&["name", "cmdline"]))
+        .register_collector(&verified, descriptor(&["name", "command_line"]))
         .unwrap();
-    engine.load_rule(rule("needs-cmdline", "cmdline")).unwrap();
+    engine
+        .load_rule(rule("needs-cmdline", "command_line"))
+        .unwrap();
     engine.load_rule(rule("needs-name", "name")).unwrap();
     assert!(engine.compiled_rule("needs-cmdline").is_some());
 

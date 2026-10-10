@@ -173,9 +173,9 @@ fn an_unknown_reference_error_names_the_reference() {
     assert!(table_error.to_string().contains("network.connections"));
 
     let column_error = catalog
-        .resolve_reference("processes", "cmdline")
+        .resolve_reference("processes", "command_line")
         .unwrap_err();
-    assert!(column_error.to_string().contains("cmdline"));
+    assert!(column_error.to_string().contains("command_line"));
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn re_registration_reports_the_columns_a_descriptor_dropped() {
                 "procmond",
                 vec![
                     column("name", &[PredicateOp::Eq]),
-                    column("cmdline", &[PredicateOp::Eq]),
+                    column("command_line", &[PredicateOp::Eq]),
                 ],
             ),
         )
@@ -224,7 +224,7 @@ fn re_registration_reports_the_columns_a_descriptor_dropped() {
     assert!(
         change
             .removed_references()
-            .contains(&("processes".to_owned(), "cmdline".to_owned()))
+            .contains(&("processes".to_owned(), "command_line".to_owned()))
     );
 }
 

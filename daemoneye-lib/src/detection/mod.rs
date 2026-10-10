@@ -229,15 +229,26 @@ impl DetectionEngine {
         let Some(rule) = self.rules.get(rule_id) else {
             return Ok(());
         };
+        let compiled = self.plan(rule)?;
+        self.record_plan(rule_id, compiled);
+        Ok(())
+    }
+
+    /// Lower `rule` against the catalog and let the executor's own planner have the last word:
+    /// what the load-time gates cannot name, it refuses here, once, instead of on every cycle.
+    fn plan(&self, rule: &DetectionRule) -> Result<CompiledRule, PlanError> {
         let compiled = plan_rule(&self.catalog, &self.patterns, rule, self.max_subquery_depth)?;
-        // The executor's own planner has the last word: what the gates above cannot name, it
-        // refuses here, once, instead of on every cycle.
         if let Some(table) = self.catalog.table(&compiled.plan().table) {
             execution::dry_run::check_plannable(&compiled, table, Arc::clone(&self.patterns))
                 .map_err(|error| PlanError::Unplannable {
                     message: error.to_string(),
                 })?;
         }
+        Ok(compiled)
+    }
+
+    /// Record a fresh plan and its references, unless the rule's health resists auto-recovery.
+    fn record_plan(&mut self, rule_id: &str, compiled: CompiledRule) {
         self.health
             .track(rule_id, compiled.references().iter().cloned());
 
@@ -246,11 +257,10 @@ impl DetectionEngine {
             .health(rule_id)
             .is_some_and(RuleHealth::resists_auto_recovery);
         if resists {
-            return Ok(());
+            return;
         }
 
         let _previous = self.compiled.insert(rule_id.to_owned(), compiled);
-        Ok(())
     }
 
     /// Record a first-load rejection and take the rule back out of the engine (R17).
@@ -304,10 +314,28 @@ impl DetectionEngine {
         }
 
         let rule_id = rule.id.raw().to_owned();
+        // A reload is planned before it replaces anything: a replacement the executor cannot plan
+        // is rejected while the rule it would have replaced keeps running. Against an empty
+        // catalog there is nothing to plan against yet, and the rule waits (R18).
+        let planned = if self.catalog.is_empty() {
+            None
+        } else {
+            match self.plan(&rule) {
+                Ok(compiled) => Some(compiled),
+                Err(error) => {
+                    let message = error.to_string();
+                    self.rejections
+                        .record(RejectionReason::rule_other(&rule_id, &message));
+                    return Err(DetectionEngineError::PlanRejected(message));
+                }
+            }
+        };
         let _previous = self.rules.insert(rule_id.clone(), rule);
-        // Issued here, after validation and before planning, so every path that can leave this
-        // rule planned, deferred or rejected has already superseded the previous load's reports.
+        // Issued here, after validation and planning, so every path that can leave this rule
+        // planned or deferred has already superseded the previous load's reports; the previous
+        // instance's last evaluation goes with them.
         self.generations.issue(&rule_id);
+        let _stale = self.last_evaluations.remove(&rule_id);
         // Task identifiers are derived from the rule, so a reload looks identical to the ledger and
         // would keep renewing the superseded predicate for up to a full TTL. Drop the tracked tasks
         // and let the next renewal cycle issue from the new plan.
@@ -320,15 +348,9 @@ impl DetectionEngine {
         self.health.forget(&rule_id);
 
         // R18: no rule is judged against an empty catalog. It waits, it is not dropped.
-        if self.catalog.is_empty() {
-            self.deferred.push(rule_id);
-            return Ok(());
-        }
-
-        if let Err(error) = self.plan_and_record(&rule_id) {
-            let message = error.to_string();
-            self.reject_rule(&rule_id, &message);
-            return Err(DetectionEngineError::PlanRejected(message));
+        match planned {
+            Some(compiled) => self.record_plan(&rule_id, compiled),
+            None => self.deferred.push(rule_id),
         }
         Ok(())
     }

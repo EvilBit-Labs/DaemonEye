@@ -430,11 +430,14 @@ async fn completeness_last_evaluation_is_kept_per_rule_and_dropped_with_the_rule
         ..EvaluationSummary::of(evaluation)
     };
     load(&mut fx, "r1", "SELECT pid FROM processes WHERE name = 'nc'");
+    assert!(
+        fx.engine.last_evaluation("r1").is_none(),
+        "a reload drops the previous instance's summary; the new instance has not run"
+    );
     fx.engine.record_evaluation(stale);
-    assert_eq!(
-        fx.engine.last_evaluation("r1").map(|s| s.alert_count),
-        Some(0),
-        "a result for a superseded generation does not replace the kept one"
+    assert!(
+        fx.engine.last_evaluation("r1").is_none(),
+        "a result for a superseded generation does not revive a summary"
     );
 
     fx.engine.remove_rule("r1");

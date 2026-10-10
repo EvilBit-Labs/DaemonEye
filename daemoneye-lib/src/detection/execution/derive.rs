@@ -35,8 +35,7 @@ use crate::detection::sql_validation::parse_statements;
 use crate::proto::{Literal, Predicate, PredicateOp, PushdownPlan, literal};
 
 /// The time column every catalog table carries, in `Int64` milliseconds.
-/// The column every derived plan filters its window on.
-pub(super) const TIME_COLUMN: &str = "collection_time";
+const TIME_COLUMN: &str = "collection_time";
 
 /// The regular-expression UDF's registered name.
 const REGEXP_FUNCTION: &str = "regexp";
@@ -85,11 +84,11 @@ pub enum DeriveError {
     /// registered in the session.
     #[error("{0}")]
     Plan(#[from] DataFusionError),
-    /// A catalog column whose declared type has no Arrow type to plan against.
-    #[error("column `{column}` has an unspecified or unknown declared type")]
-    UnknownColumnType {
-        /// The column.
-        column: String,
+    /// The provider cannot build the table's schema from the catalog descriptor.
+    #[error("the executor cannot read this table: {message}")]
+    Schema {
+        /// The provider's diagnostic.
+        message: String,
     },
 }
 
