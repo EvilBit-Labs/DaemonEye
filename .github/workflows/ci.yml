@@ -23,6 +23,11 @@ env:
     CARGO_TERM_COLOR: always
     CI: true
     GITHUB_ACTIONS: true
+    # A fresh runner never reuses an incremental cache, and every test binary that links
+    # DataFusion carries hundreds of MB of type debuginfo the runner's disk cannot hold.
+    # Line tables keep file:line backtraces; the rest of the debuginfo is dropped in CI only.
+    CARGO_INCREMENTAL: "0"
+    CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
     quality:
@@ -59,6 +64,10 @@ jobs:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Free runner disk for the DataFusion test binaries
+              if: runner.os == 'Linux'
+              run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
 
             - name: Run tests (all features)
               run: mise x -- cargo nextest run --profile ci --all-features
@@ -112,6 +121,10 @@ jobs:
                   github_token: ${{ secrets.GITHUB_TOKEN }}
 
             # Run tests and build the release binary
+            - name: Free runner disk for the DataFusion test binaries
+              if: runner.os == 'Linux'
+              run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+
             - name: Run tests (all features)
               run: mise x -- cargo nextest run --profile ci --all-features
             - name: Build release
@@ -132,6 +145,10 @@ jobs:
                   install: true
                   cache: true
                   github_token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Free runner disk for the DataFusion test binaries
+              if: runner.os == 'Linux'
+              run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
 
             - name: Generate coverage
               run: mise x -- cargo llvm-cov --all-features --no-report
