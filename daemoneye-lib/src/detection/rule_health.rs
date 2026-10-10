@@ -10,7 +10,7 @@
 //!
 //! [`ReplanOutcome::to_replan`] is the list of rule identifiers whose *pushed half* must be
 //! recomputed. U6 cannot recompute it, because the planner that lowers a rule into a pushdown plan
-//! plus a residual is U7's work and does not exist yet. So this module stops at the boundary: it
+//! plus a residual is a separate component. So this module stops at the boundary: it
 //! establishes which rules still validate and therefore need re-planning, and which no longer do
 //! and must not have a task re-issued. U7 consumes `to_replan()` and calls the planner for each
 //! identifier in it; U11 re-issues the resulting tasks. Nothing here silently no-ops — a rule that

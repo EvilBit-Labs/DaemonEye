@@ -1,8 +1,7 @@
 //! The latency threshold's fail-closed consequence: T6 measures, this disables (R2, R3, R8).
 //!
-//! T6 owns observing how long a compiled pattern actually takes to run against real rows — that
-//! needs the `DataFusion` executor, which does not exist yet. This engine owns the budget and
-//! what happens when a measurement busts it.
+//! `RuleExecutor` observes how long a compiled pattern actually takes to run against real rows.
+//! This engine owns the budget and what happens when a measurement busts it.
 //! [`DetectionEngine::observe_pattern_latency`] is the single entry point T6 calls with an
 //! already-measured [`Duration`]; nothing in this module executes a pattern or starts a timer.
 //!

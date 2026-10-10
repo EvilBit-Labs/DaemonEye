@@ -254,7 +254,7 @@ All collectors MUST implement regex pattern matching with the following specific
 
 **Default Configuration:**
 
-- **Per-Pattern Latency:** 10ms default (configurable via `detection.pattern_latency_threshold_ms`; validated and carried into the engine at construction. The disable consequence is `DetectionEngine::observe_pattern_latency`; observation of pattern execution against real rows is T6's work)
+- **Per-Pattern Latency:** 10ms default (configurable via `detection.pattern_latency_threshold_ms`; validated and carried into the engine at construction. The disable consequence is `DetectionEngine::observe_pattern_latency`; `RuleExecutor` times each pattern per `RecordBatch` and reports it to that entry point)
 - **Compilation Timeout:** Not configurable — no config field exists for it. A linear-time engine bounds compilation by program size rather than by wall clock, so there is no timeout to set and no way to interrupt a build in progress; the enforced bound is the fixed per-pattern compiled-program size limit described under Memory Limit below.
 - **Memory Limit:** 256KiB of compiled program per pattern against a 64-entry compiled-pattern cache, plus a 256KiB per-search lazy-DFA cache ceiling — these three are **fixed constants, not configuration**: `REGEX_SIZE_LIMIT_BYTES`, `REGEX_CACHE_MAX_ENTRIES`, and `REGEX_DFA_SIZE_LIMIT_BYTES` in `daemoneye-lib/src/detection_bounds.rs`, which is their authority
 
@@ -264,8 +264,25 @@ The per-pattern limit and the 64-entry cache count are a single decision, not tw
 
 ```yaml
 detection:
-  # Validated and carried at config load; no pattern latency is observed against it yet.
+  # Per-pattern latency budget; a breach disables the rule that owns the pattern.
   pattern_latency_threshold_ms: 10
+  # Alerts one rule may raise in one cycle; the executor stops one past it and degrades the evaluation.
+  max_matches_per_rule: 1000
+  # Partitions DataFusion may fan a plan over (1-32). Lowering it lowers peak memory and raises latency.
+  executor_target_partitions: 4
+  # Rows per RecordBatch (128-65536), and so the granularity of the latency guard.
+  executor_batch_size: 8192
+  # Estimated decoded bytes in one scan batch (4 MiB; floor is the assumed worst-case row).
+  executor_batch_max_bytes: 4194304
+  # Capacity of the executor's GreedyMemoryPool (32 MiB). A reservation ceiling, not a resident-set bound.
+  executor_memory_pool_bytes: 33554432
+  # Closed-bucket posting lists the cache retains (1-2048), and the longest list it will retain (1-4096).
+  posting_cache_max_entries: 256
+  posting_cache_max_postings: 1024
+
+database:
+  # redb page cache in MiB (4-1024). The dominant knob for resident memory; redb's own default is 1024.
+  page_cache_mb: 32
 ```
 
 There is no `detection.regex` section. The memory bounds above are fixed constants rather than configuration, and the remaining knobs an earlier draft of this example showed — `compilation_timeout_ms`, `enable_precompilation` and a `monitoring` block — have no backing field. Nothing rejects unknown keys, so a config naming them parses and is silently discarded; they are listed here only so a reader who has seen them knows they do nothing.
@@ -1521,7 +1538,7 @@ Partition by time, use fixed-width keys, build selective secondary indexes, and 
 
 **Targeted Caching:**
 
-- **Posting-List Page Cache:** Tiny LRU (64–256 MB) keyed by `(index, bucket, term)` → compressed list of `(ts,seq)`
+- **Posting-List Page Cache:** Small LRU bounded by **count, not bytes** (`detection.posting_cache_max_entries` lists, each at most `detection.posting_cache_max_postings` postings; defaults 256 and 1024), keyed by `(index, bucket, term)` → list of `(ts,seq)`. The default worst case is 4 MiB and the configurable ceilings multiply out to 128 MiB, each asserted at compile time in `daemoneye-lib/src/detection_bounds.rs`
   - Only cache lists we actually intersect often (name, exe_hash, top 1k pids)
 - **Parent Map (MRC):** `pid → {ppid, parent_name, start_time}` in lock-free map, rebuilt on start from last K minutes
   - Parent/child join becomes one lookup; obliterates most common join cost
@@ -1551,7 +1568,7 @@ Partition by time, use fixed-width keys, build selective secondary indexes, and 
 
 - `partition_kind = hourly` if > ~2M events/day; else daily
 - `writer_batch_records = 2,000`, `writer_batch_ms = 7`
-- `posting_cache_bytes = 128MiB`
+- `posting_cache_max_entries = 256`, `posting_cache_max_postings = 1024` (a count bound, not a byte budget; see `daemoneye-lib/src/detection_bounds.rs`)
 - `mrc_window = 30m`, rebuild on start within 2–5s
 - `join_cardinality_cap = 100k keys`, `rows_per_key_cap = 64`
 - `idx_budget_per_table = 6`

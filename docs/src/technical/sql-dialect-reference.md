@@ -2,14 +2,17 @@
 
 ## Allowed Functions
 
+A rule may call exactly seven functions: `hex`, `instr`, `length`, `like`, `match`, `regexp` and `unhex`. Any other function call is refused at rule load.
+
+That check applies to function-call syntax only. `substr`/`substring`, `cast`, `trim`, `position`, `extract`, `ceil` and `floor` parse into their own syntax-tree nodes and never reach it, so **a rule using one is accepted at load but fails at execution**: the executor registers only the seven functions above, and no `substr` implementation exists to run. Do not use them.
+
 ### String Functions
 
-| Function                     | Description             | Example                            |
-| ---------------------------- | ----------------------- | ---------------------------------- |
-| `LENGTH(str)`                | String length           | `LENGTH(command_line)`             |
-| `SUBSTR(str, start, length)` | Substring extraction    | `SUBSTR(executable_path, 1, 10)`   |
-| `INSTR(str, substr)`         | Find substring position | `INSTR(command_line, 'malicious')` |
-| `LIKE pattern`               | Pattern matching        | `name LIKE '%suspicious%'`         |
+| Function             | Description             | Example                            |
+| -------------------- | ----------------------- | ---------------------------------- |
+| `LENGTH(str)`        | String length           | `LENGTH(command_line)`             |
+| `INSTR(str, substr)` | Find substring position | `INSTR(command_line, 'malicious')` |
+| `LIKE pattern`       | Pattern matching        | `name LIKE '%suspicious%'`         |
 
 ### Encoding Functions
 
@@ -172,7 +175,7 @@ SELECT * FROM processes WHERE name LIKE '%test%' AND collection_time > ?;
 WHERE name = 'process' AND pid > 1000;
 
 -- Avoid: Complex nested operations
-WHERE LENGTH(SUBSTR(command_line, 1, 100)) > 50;
+WHERE LENGTH(command_line) > INSTR(command_line, '/') + 50;
 ```
 
 ## Security Best Practices

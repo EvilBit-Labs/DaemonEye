@@ -9,7 +9,7 @@
 //! # Units
 //!
 //! `length` and `instr` both count **characters** (Unicode scalar values), not bytes, so
-//! `substr(x, instr(x, '/'))` and `length(x)` agree on a non-ASCII value. This is the convention
+//! `instr(x, '/')` and `length(x)` count in the same unit, so a position from one is valid against the other on a non-ASCII value. This is the convention
 //! of `SQLite`, `MySQL` and `PostgreSQL`; a byte offset would be meaningless to a rule author who
 //! cannot see the encoding. Every function returns NULL for a NULL operand.
 

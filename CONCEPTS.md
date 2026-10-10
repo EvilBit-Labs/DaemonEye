@@ -73,3 +73,15 @@ The per-operation check that a collector's evaluation of a pushdown operation ma
 A rule the agent has stopped trusting to run correctly. The usual cause is a collector re-registering with a descriptor that dropped a table or column the rule references, but a pushdown task expiring without renewal and a regex pattern exceeding its latency threshold both mark a rule unhealthy too. The rule is surfaced to the operator through daemoneye-cli rather than being silently dropped or left to match nothing.
 
 The cause decides how the rule recovers. A dropped reference or an expired task is answered by the catalog, so a later registration that actually revalidates the rule — a first registration, or one whose change touches the rule's tables — re-validates and re-plans it on its own; an identical re-registration produces no change and re-heals nothing. A latency breach is not answered by the catalog at all: nothing about the schema speaks to how long a pattern takes to run, so that verdict survives re-validation, re-planning, and re-enabling, and only reloading the rule clears it. A latency-breached rule is also disabled, which the other two causes leave untouched.
+
+### Completeness marker
+
+A value carried by every evaluation and every alert saying whether the rule saw everything it was meant to: `Complete`, or `Degraded` with at least one concrete reason (a collector failure or missed heartbeat, ingest shedding, a sequence gap, a resource limit, the match cap, an execution error). The two cannot be mixed: a degraded marker with no reason, or a complete one with reasons, cannot be built or deserialized. Zero matches under `Degraded` means "could not fully evaluate", not "no match". There is deliberately no default, because a defaulted marker would claim `Complete` for a run that examined nothing.
+
+### Evaluation window
+
+The half-open interval of `collection_time`, `(after_ms, through_ms]`, that one detection cycle evaluates each rule against: the previous cycle's high-water mark, exclusive, to this cycle's, inclusive. Consecutive windows tile the timeline, so a row is evaluated by exactly one cycle. A window normally sits inside one time bucket; a window spanning many buckets (a wide ad-hoc query or catch-up after an outage) is the full-retention shape, which costs far more memory and time.
+
+### Rule generation
+
+An engine-unique number issued each time a rule is loaded, naming that load of the rule. A rule id survives a reload, so a latency report carries the generation of the instance it measured and the engine discards it if the rule has since been reloaded. Only the engine can issue one; a caller cannot construct it.

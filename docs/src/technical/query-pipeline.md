@@ -38,10 +38,42 @@ flowchart LR
 
 ### Phase 2: Data Collection & Analysis
 
-1. **Process Collection**: procmond executes the protobuf tasks to collect process data
-2. **Data Storage**: Collected data is stored in the redb event store
-3. **SQL Execution**: The **derived standard SQL** (produced by Phase 1 lowering — never the original custom dialect) is executed via an Apache DataFusion `SessionContext` whose catalog is populated by redb-backed per-collector `TableProvider` implementations (ADR-0006). `redb` itself has no SQL engine; DataFusion owns physical execution while the TableProviders push filter and projection predicates down into redb scans.
-4. **Alert Generation**: Detection results trigger alert generation and delivery
+1. **Process Collection**: procmond executes the protobuf tasks to collect process data and the agent stores it in the redb event store.
+2. **Per-cycle evaluation window**: each detection cycle evaluates a rule against the rows that cycle's window covers, the half-open interval `(after_ms, through_ms]` of `collection_time` between the previous cycle's high-water mark and this one's (ADR-0014). Consecutive windows tile the timeline, so a row is evaluated by exactly one cycle and a match is not re-alerted on the next. A window normally falls inside one hourly bucket, and detection reads buckets one at a time (ADR-0008).
+3. **SQL Execution**: the **derived standard SQL** (produced by Phase 1 lowering, never the original custom dialect) runs through an Apache DataFusion `SessionContext` whose catalog is populated by redb-backed `TableProvider` implementations (ADR-0006). The providers push filters and projections into redb scans and report them as `Inexact`, so DataFusion always re-checks every row (ADR-0013).
+4. **Completeness**: every evaluation and every alert carries a completeness marker, `Complete` or `Degraded` with the reasons (a failed collection or heartbeat, ingest shedding, a sequence gap, a resource limit, the match cap, an execution error). A `Degraded` evaluation with zero matches means the rule could not be fully evaluated, not that nothing matched.
+5. **Match cap**: a rule raises at most `detection.max_matches_per_rule` alerts per cycle (default 1,000). The executor stops one match past the cap, keeps the first `cap`, and marks the evaluation `Degraded` with the cap as the reason.
+6. **Alert Generation**: results trigger alert generation and delivery.
+
+#### Dialect and extension policy
+
+- `REGEXP` as an infix operator and the `match()`/`regexp()` calls are DaemonEye extensions. They are rewritten to one function before execution.
+- A rule may call exactly seven functions: `hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`. The executor registers only those, replacing DataFusion's default function set, so a DataFusion function outside the list is not available.
+- Every other accepted expression (comparisons, boolean logic, `IN`, `LIKE`, `NULL` handling) uses standard DataFusion SQL semantics unchanged.
+- The load-time check covers function-call syntax only. `SUBSTR`, `CAST`, `TRIM`, `POSITION`, `EXTRACT`, `CEIL` and `FLOOR` parse into their own syntax nodes, are accepted at load, and fail at execution. See the [SQL Dialect Reference](sql-dialect-reference.md).
+
+### Sizing the executor
+
+The memory figures below come from `docs/decisions/2026-10-08-t6-full-retention-memory.md`, measured on macos/aarch64 in the release profile. Linux and Windows are unmeasured, and two runs of the same configuration differed by up to 25 MiB, so read each figure as a sample.
+
+**The 100 MiB resident figure is a goal for a deployment sized like the reference host, not a pass/fail gate.** A large, busy server may need more, and a constrained embedded or SCADA endpoint can run leaner. Size these fields to the host.
+
+| Field                                    | Default                | Effect on resident memory                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `database.page_cache_mb`                 | 32 (range 4-1024)      | The dominant knob. redb's own default is 1 GiB. At that default, peak RSS at 168 buckets was 359 MiB against 207 MiB at 84, so memory tracked the data scanned. At 32 MiB the two overlap at 118-149 MiB. Smaller saves memory and costs scan latency: +14% at 32 MiB and +27% at 4 MiB on the full-retention shape, nothing measurable on the production shape. |
+| `detection.executor_target_partitions`   | 4 (range 1-32)         | Lower is smaller. 4 to 2 moved peak RSS from 120-146 to 92-111 MiB at about 1.7x the p50 latency. Decode memory for a cycle is roughly `executor_target_partitions` x 2 x `executor_batch_max_bytes`, and it sits outside `executor_memory_pool_bytes`.                                                                                                          |
+| `detection.executor_batch_size`          | 8192 (range 128-65536) | Lower is smaller. 8192 to 2048 moved peak RSS to 100-120 MiB with no p50 cost, the cheaper of the two ways to shrink the full-retention shape. It is also the granularity of the pattern-latency check.                                                                                                                                                          |
+| `detection.executor_batch_max_bytes`     | 4 MiB                  | Caps the estimated decoded bytes in one batch, so rows with large command lines close a batch early. It is a term in the decode-memory estimate above.                                                                                                                                                                                                           |
+| `detection.executor_memory_pool_bytes`   | 32 MiB                 | A ceiling on what DataFusion reserves, not on what the process holds. The decode memory above is outside it. Too small a pool makes a multi-partition plan fail where a one-partition plan succeeds.                                                                                                                                                             |
+| `detection.posting_cache_max_entries`    | 256                    | Count bound on cached posting lists. With `posting_cache_max_postings` (default 1024) the default worst case is 4 MiB. Both at their ceilings (2048 and 4096) reach 128 MiB.                                                                                                                                                                                     |
+| `detection.posting_cache_max_postings`   | 1024                   | Longest list retained. A longer list is read live and never cached.                                                                                                                                                                                                                                                                                              |
+| `detection.max_matches_per_rule`         | 1,000                  | Bounds the alerts one rule produces per cycle. It limits output, not scan memory.                                                                                                                                                                                                                                                                                |
+| `detection.pattern_latency_threshold_ms` | 10                     | A time budget, not a memory setting. A breach disables the rule that owns the pattern.                                                                                                                                                                                                                                                                           |
+
+Two findings stay open.
+
+- **Production shape: inside the goal.** One bucket per cycle, which is what the per-cycle window produces, peaked at about 33 MiB with a p50 of 3.0 ms, at every page cache size tried.
+- **Full-retention shape: outside both.** A window spanning 84 to 168 buckets reached 118-149 MiB RSS with a 132 MiB live footprint and a p50 of 157-164 ms, missing both the memory goal and the 100 ms per-rule latency budget. Production does not run this shape. Ad-hoc wide-window queries and catch-up after an outage can.
 
 ## Supported SQL Dialect
 
@@ -61,10 +93,11 @@ FROM processes
 GROUP BY name
 HAVING COUNT(*) > 10;
 
--- Joins (when applicable)
-SELECT p.name, p.pid, s.start_time
-FROM processes p
-JOIN scans s ON p.scan_id = s.id;
+-- Self-join on the parent link: a shell spawned by a web server
+SELECT child.pid, child.name, parent.name AS parent_name
+FROM processes child
+JOIN processes parent ON child.ppid = parent.pid
+WHERE parent.name = 'httpd' AND child.name IN ('sh', 'bash');
 ```
 
 #### Supported Functions
@@ -178,27 +211,19 @@ The `processes` namespace contains comprehensive process information:
 ```sql
 -- Core process information (illustrative; see virtual-schema model above)
 CREATE TABLE processes (
-    id INTEGER PRIMARY KEY,
-    scan_id INTEGER NOT NULL,
-    collection_time INTEGER NOT NULL,
-    pid INTEGER NOT NULL,
-    ppid INTEGER,
+    pid INTEGER NOT NULL,         -- unsigned
+    ppid INTEGER,                 -- unsigned
     name TEXT NOT NULL,
     executable_path TEXT,
     command_line TEXT,
     start_time INTEGER,
     cpu_usage REAL,
-    memory_usage INTEGER,
-    status TEXT,
-    executable_hash TEXT,        -- SHA-256 hash in hex format
-    hash_algorithm TEXT,         -- Usually 'sha256'
-    user_id INTEGER,
-    group_id INTEGER,
-    accessible BOOLEAN,
-    file_exists BOOLEAN,
-    environment_vars TEXT,        -- JSON string of environment variables
-    metadata TEXT,               -- JSON string of additional metadata
-    platform_data TEXT          -- JSON string of platform-specific data
+    memory_usage INTEGER,         -- unsigned
+    executable_hash TEXT,         -- SHA-256 hash in hex format
+    user_id TEXT,
+    accessible BOOLEAN NOT NULL,
+    file_exists BOOLEAN NOT NULL,
+    collection_time INTEGER NOT NULL
 );
 ```
 
@@ -251,14 +276,14 @@ WHERE command_line LIKE '%nc -l%'           -- Netcat listener
    OR LENGTH(command_line) > 1000;         -- Unusually long commands
 ```
 
-### Environment Variable Analysis
+### Argument Analysis
 
 ```sql
--- Detect processes with suspicious environment variables
-SELECT pid, name, environment_vars
+-- Detect a credential-dumping flag passed on the command line
+SELECT pid, name, command_line
 FROM processes
-WHERE environment_vars LIKE '%SUSPICIOUS_VAR%'
-   OR environment_vars LIKE '%MALWARE_CONFIG%';
+WHERE command_line LIKE '%--password%'
+   OR command_line LIKE '%sekurlsa%';
 ```
 
 ### Path-Based Detection
