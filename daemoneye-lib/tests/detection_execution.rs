@@ -328,34 +328,6 @@ async fn session_pool_error_needs_a_repartition_and_vanishes_at_one_partition() 
     assert!(many.is_err());
 }
 
-/// The other half of `parser_level_constructs_do_not_reach_the_function_allowlist`.
-///
-/// `SUBSTR`, `SUBSTRING` and `TRIM` parse into their own `sqlparser` variants, so the load-time
-/// allowlist never sees them and a rule using one loads. The session registers exactly
-/// [`ALLOWED_SQL_FUNCTIONS`] and replaces `DataFusion`'s defaults, so there is no implementation
-/// behind them and the rule fails when it runs instead. Operator docs state that asymmetry
-/// (`docs/src/technical/sql-dialect-reference.md`); this is what makes the statement checkable,
-/// and it fails if either side of it moves.
-#[tokio::test]
-async fn parser_level_constructs_load_but_have_no_implementation() {
-    let h = harness(names(&["bash"]));
-    for sql in [
-        "SELECT pid FROM processes WHERE substr(name, 1, 3) = 'bas'",
-        "SELECT pid FROM processes WHERE SUBSTRING(name FROM 1 FOR 3) = 'bas'",
-        "SELECT pid FROM processes WHERE trim(name) = 'bash'",
-    ] {
-        assert!(
-            run(&h, sql).await.is_err(),
-            "{sql} loads but must not execute: no implementation is registered for it"
-        );
-    }
-    // The contrast: an allowlisted function over the same column does execute.
-    let ok = run(&h, "SELECT pid FROM processes WHERE length(name) = 4")
-        .await
-        .unwrap();
-    assert_eq!(ok.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
-}
-
 // --- R7: sink and measurement site -------------------------------------------------------------
 
 #[tokio::test]

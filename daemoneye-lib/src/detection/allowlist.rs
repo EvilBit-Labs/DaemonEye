@@ -5,11 +5,11 @@
 //! found the denylist first would take it for the authoritative gate and a function omitted from
 //! it would look deliberately permitted.
 //!
-//! The list governs `sqlparser`'s `Expr::Function` call sites only. Several SQL constructs that
-//! *look* like function calls parse into dedicated AST nodes instead and therefore never reach
-//! this gate: `SUBSTR`/`SUBSTRING` become `Expr::Substring`, and `CAST`, `TRIM`, `POSITION`,
-//! `EXTRACT`, `CEIL` and `FLOOR` each have their own variant. Adding those names here would be
-//! decoration, so they are deliberately absent.
+//! The list governs `sqlparser`'s `Expr::Function` call sites. Constructs that *look* like
+//! function calls but parse into dedicated AST nodes (`SUBSTR`/`SUBSTRING`, `TRIM`, `POSITION`,
+//! `EXTRACT`, `CEIL`, `FLOOR`, ...) never reach it; `sql_validation::function_construct` refuses
+//! those by variant, and `CAST` has its own gate. Adding their names here would be decoration, so
+//! they are deliberately absent.
 
 /// Functions a detection rule may call, lowercase and sorted for bisection and review.
 ///

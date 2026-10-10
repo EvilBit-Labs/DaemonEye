@@ -1862,7 +1862,7 @@ We use the **SQLite dialect** as implemented in `sqlparser`. Reasons:
 ### 11.2 Constraints
 
 - **Allowed Statements:** `SELECT` only.
-- **Allowed Functions:** the `ALLOWED_SQL_FUNCTIONS` allowlist in `daemoneye-lib/src/detection/allowlist.rs` — `hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`. Membership is the control, so anything absent (`load_extension`, `readfile`, `system`, `random`, `printf`, …) is refused at rule load and there is no companion denylist to consult. `substr`, `cast`, `trim`, `position`, `extract`, `ceil` and `floor` parse into dedicated AST nodes and never reach the function gate.
+- **Allowed Functions:** the `ALLOWED_SQL_FUNCTIONS` allowlist in `daemoneye-lib/src/detection/allowlist.rs` — `hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`. Membership is the control, so anything absent (`load_extension`, `readfile`, `system`, `random`, `printf`, …) is refused at rule load and there is no companion denylist to consult. `substr`, `trim`, `position`, `extract`, `ceil`, `floor`, `overlay` and `convert` parse into dedicated AST nodes and never reach the function gate; `sql_validation` refuses them by variant with the same rejection, and `cast` by its own.
 - **Aggregates:** refused at rule load. `avg`, `count`, `max`, `min` and `sum` are absent from the allowlist because the planner cannot compute an aggregate — a projected `count(pid)` would lower to the bare column `pid`, returning rows where a count was asked for — and `GROUP BY`/`HAVING` are refused by the clause gate for the same reason (R17: a rule that cannot be lowered is rejected, with no fallback). Windowed aggregation is T6 work; see §13.5.
 - **Security:** AST validation enforces constraints before execution.
 

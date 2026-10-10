@@ -306,28 +306,32 @@ fn input_nested_past_the_parser_recursion_limit_fails_as_a_parse_error() {
 
 // --- Property: no non-allowlisted identifier reaches a lowering path --------------------------
 
-/// The allowlist only governs constructs that reach the gate as `Expr::Function`.
+/// Function-like syntax that parses to its own `Expr` variant is refused at load, by name.
 ///
-/// `SUBSTR`/`SUBSTRING`, `CAST`, `TRIM`, `POSITION` and `EXTRACT` are parsed by `sqlparser` into
-/// their own dedicated `Expr` variants, so they never consult the allowlist and listing them there
-/// would be decoration. That is a property of the parser, not of this crate, so it is pinned here:
-/// if a future `sqlparser` release reclassifies any of them as an ordinary function call, they
-/// would start being rejected as unlisted, silently breaking rules that use them. This test fails
-/// at that moment instead.
+/// `SUBSTR`/`SUBSTRING`, `TRIM`, `POSITION`, `EXTRACT`, `CEIL` and `FLOOR` never reach the
+/// allowlist as `Expr::Function`, and the executor registers no implementation behind them, so
+/// without this gate a rule using one would load and then fail on every cycle. The rejection is
+/// the same one an unlisted function gets, naming the construct.
 ///
-/// `CAST` is no longer in the loading list: it is the one of these R27 refuses, by its own gate
+/// `CAST` is not here: R27 refuses it by its own gate
 /// (`a_cast_is_refused_at_load_naming_the_construct_seen`).
 #[test]
-fn parser_level_constructs_do_not_reach_the_function_allowlist() {
-    for sql in [
-        "SELECT substr(name, 1, 3) FROM processes",
-        "SELECT SUBSTRING(name FROM 1 FOR 3) FROM processes",
-        "SELECT trim(name) FROM processes",
+fn parser_level_function_syntax_is_refused_at_load() {
+    for (sql, construct) in [
+        ("SELECT substr(name, 1, 3) FROM processes", "SUBSTRING"),
+        (
+            "SELECT SUBSTRING(name FROM 1 FOR 3) FROM processes",
+            "SUBSTRING",
+        ),
+        ("SELECT trim(name) FROM processes", "TRIM"),
+        ("SELECT position('a' IN name) FROM processes", "POSITION"),
+        ("SELECT ceil(cpu_usage) FROM processes", "CEIL"),
+        ("SELECT floor(cpu_usage) FROM processes", "FLOOR"),
     ] {
+        let error = rule_with(sql).validate_sql().unwrap_err().to_string();
         assert!(
-            rule_with(sql).validate_sql().is_ok(),
-            "{sql} must load: it is a parser-level construct, not a function call the allowlist \
-             governs. A sqlparser change reclassifying it as Expr::Function would land here."
+            error.contains(&format!("`{construct}`")),
+            "{sql} must be refused naming {construct}, got: {error}"
         );
     }
 }

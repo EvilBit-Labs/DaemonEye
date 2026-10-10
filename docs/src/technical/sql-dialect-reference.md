@@ -1,149 +1,96 @@
 # SQL Dialect Quick Reference
 
+A detection rule is one `SELECT` over one table. It is parsed with `sqlparser`, checked against the gates below when it is loaded, lowered into a pushed-down half (predicates and a projection the collector evaluates) plus a residual the agent evaluates, and run by the executor every collection cycle. Anything a gate refuses never loads, never runs and never alerts; the rejection names the construct.
+
+## Shape
+
+```sql
+SELECT <columns or *>
+FROM processes
+WHERE <predicate>;
+```
+
+- **One table.** A rule reads exactly one table. `JOIN` of any kind, including a self-join, is refused by the planner.
+- **`WHERE` predicates:** comparisons (`=`, `<>`, `<`, `<=`, `>`, `>=`), `AND`, `OR`, `NOT`, `LIKE`, `IN (<literals>)`, `BETWEEN`, `IS NULL` / `IS NOT NULL`, and the seven functions below.
+- **Literals** are plain strings and numbers. There are no parameters: a rule is a complete statement.
+
 ## Allowed Functions
 
-A rule may call exactly seven functions: `hex`, `instr`, `length`, `like`, `match`, `regexp` and `unhex`. Any other function call is refused at rule load.
+A rule may call exactly seven functions: `hex`, `instr`, `length`, `like`, `match`, `regexp` and `unhex`. Any other function call is refused at rule load, naming the function. Names are not case-sensitive.
 
-That check applies to function-call syntax only. `substr`/`substring`, `cast`, `trim`, `position`, `extract`, `ceil` and `floor` parse into their own syntax-tree nodes and never reach it, so **a rule using one is accepted at load but fails at execution**: the executor registers only the seven functions above, and no `substr` implementation exists to run. Do not use them.
+| Function              | Description                                                                          | Example                            |
+| --------------------- | ------------------------------------------------------------------------------------ | ---------------------------------- |
+| `LENGTH(str)`         | String length                                                                        | `LENGTH(command_line) > 1000`      |
+| `INSTR(str, substr)`  | Position of a substring, 0 if absent                                                 | `INSTR(command_line, 'nc -l') > 0` |
+| `str LIKE pattern`    | SQL wildcard match (`%`, `_`)                                                        | `name LIKE '%suspicious%'`         |
+| `str REGEXP pattern`  | Regular-expression match; `REGEXP(str, pattern)` is the same test as a function call | `name REGEXP '^svc[0-9]+$'`        |
+| `MATCH(str, pattern)` | Pattern match, function form                                                         | `MATCH(command_line, 'nc -l')`     |
+| `HEX(data)`           | Bytes to hexadecimal                                                                 | `HEX(executable_hash)`             |
+| `UNHEX(hex)`          | Hexadecimal to bytes                                                                 | `UNHEX('deadbeef')`                |
 
-### String Functions
+Infix `MATCH` does not parse in this dialect; write it as a function call.
 
-| Function             | Description             | Example                            |
-| -------------------- | ----------------------- | ---------------------------------- |
-| `LENGTH(str)`        | String length           | `LENGTH(command_line)`             |
-| `INSTR(str, substr)` | Find substring position | `INSTR(command_line, 'malicious')` |
-| `LIKE pattern`       | Pattern matching        | `name LIKE '%suspicious%'`         |
+Syntax that looks like a function call but is its own grammar rule is refused at load by the same gate: `SUBSTR`/`SUBSTRING`, `TRIM`, `POSITION`, `EXTRACT`, `CEIL`, `FLOOR`, `OVERLAY`, `CONVERT`. `CAST`, `TRY_CAST`, `SAFE_CAST` and `::` are refused as casts.
 
-### Encoding Functions
+## Refused Constructs
 
-| Function     | Description              | Example                |
-| ------------ | ------------------------ | ---------------------- |
-| `HEX(data)`  | Convert to hexadecimal   | `HEX(executable_hash)` |
-| `UNHEX(hex)` | Convert from hexadecimal | `UNHEX('deadbeef')`    |
+| Construct                                       | Why                                                                                                                                                                                                                                                 |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `COUNT`, `SUM`, `AVG`, `MAX`, `MIN`             | The planner lowers a rule to predicates and a projection; it cannot compute an aggregate. A projected `COUNT(pid)` would lower to the bare column `pid` and return rows where a count was asked for, so it is refused rather than answered wrongly. |
+| `GROUP BY`, `HAVING`                            | Same reason.                                                                                                                                                                                                                                        |
+| `ORDER BY`, `LIMIT`, `DISTINCT`, `TOP`, `FETCH` | The plan has no representation for them: `LIMIT 1` would compile to "every match". Narrow with predicates instead.                                                                                                                                  |
+| `JOIN`                                          | One table per rule.                                                                                                                                                                                                                                 |
+| `WITH` (CTE), set operations, `VALUES`          | A rule is one plain `SELECT`.                                                                                                                                                                                                                       |
+| Table-valued functions in `FROM`                | No collector serves one; `SELECT * FROM readfile('/etc/passwd')` is refused at the `FROM`.                                                                                                                                                          |
+| Any statement other than `SELECT`               | `INSERT`, `UPDATE`, `DELETE`, `DROP`, `PRAGMA`, ... are refused by leading keyword.                                                                                                                                                                 |
 
-### Pattern Matching Functions
-
-| Function              | Description                           | Example                        |
-| --------------------- | ------------------------------------- | ------------------------------ |
-| `REGEXP pattern`      | Regular-expression matching (infix)   | `name REGEXP '^svc[0-9]+$'`    |
-| `MATCH(str, pattern)` | Pattern matching (function-call form) | `MATCH(command_line, 'nc -l')` |
-
-Infix `MATCH` does not parse in this dialect — write it as a function call, as shown.
-
-## Refused: Aggregate Functions
-
-`COUNT`, `SUM`, `AVG`, `MAX` and `MIN` are **not allowed**. A rule that calls one is refused when it is loaded, with the offending function named — it never runs and never alerts.
-
-A rule is lowered into a pushed-down half (predicates and a projection the collector evaluates) plus a residual the agent evaluates. An aggregate is neither a predicate nor a column, so the planner has no way to compute one: a projected `COUNT(pid)` would lower to the bare column `pid`, and the rule would return rows where you asked for a count. Refusing at load is the point — a rule that cannot be lowered is rejected outright rather than silently answering the wrong question. `GROUP BY` and `HAVING` are refused for the same reason, as are `ORDER BY`, `LIMIT` and `DISTINCT`.
-
-## Banned Functions
-
-### Security-Critical (Always Banned)
-
-- `load_extension()` - SQLite extension loading
-- `eval()` - Code evaluation
-- `exec()` - Command execution
-- `system()` - System calls
-- `shell()` - Shell execution
-
-### File System Operations (Not Applicable)
-
-- `readfile()` - File reading
-- `writefile()` - File writing
-- `edit()` - File editing
-
-### Complex Pattern Matching (Performance Concerns)
-
-- `glob()` - Glob patterns
-
-### Mathematical Functions (Not Applicable)
-
-- `abs()` - Absolute value
-- `random()` - Random numbers
-- `randomblob()` - Random binary data
-
-### Formatting Functions (Not Applicable)
-
-- `quote()` - SQL quoting
-- `printf()` - String formatting
-- `format()` - String formatting
-- `char()` - Character conversion
-- `unicode()` - Unicode functions
-- `soundex()` - Soundex algorithm
-- `difference()` - String difference
+Functions that are not on the allowlist are not "banned" by name; they are absent, which is the same refusal. `load_extension`, `readfile`, `system`, `random`, `printf` and every other function fall out the same way.
 
 ## Process Data Schema
 
-```sql
--- Core process information
-CREATE TABLE processes (
-    id INTEGER PRIMARY KEY,
-    scan_id INTEGER NOT NULL,
-    collection_time INTEGER NOT NULL,
-    pid INTEGER NOT NULL,
-    ppid INTEGER,
-    name TEXT NOT NULL,
-    executable_path TEXT,
-    command_line TEXT,
-    start_time INTEGER,
-    cpu_usage REAL,
-    memory_usage INTEGER,
-    status TEXT,
-    executable_hash TEXT,        -- SHA-256 hash in hex format
-    hash_algorithm TEXT,         -- Usually 'sha256'
-    user_id INTEGER,
-    group_id INTEGER,
-    accessible BOOLEAN,
-    file_exists BOOLEAN,
-    environment_vars TEXT,        -- JSON string of environment variables
-    metadata TEXT,               -- JSON string of additional metadata
-    platform_data TEXT          -- JSON string of platform-specific data
-);
-```
+The `processes` columns a rule may name (the illustrative DDL in [query-pipeline.md](query-pipeline.md#process-data-schema) matches this list):
 
-## Common Query Patterns
+| Column            | Type    | Notes                        |
+| ----------------- | ------- | ---------------------------- |
+| `pid`             | integer | unsigned                     |
+| `ppid`            | integer | unsigned, nullable           |
+| `name`            | text    |                              |
+| `executable_path` | text    | nullable                     |
+| `command_line`    | text    | nullable                     |
+| `start_time`      | integer | nullable, epoch milliseconds |
+| `cpu_usage`       | real    | nullable                     |
+| `memory_usage`    | integer | unsigned, nullable           |
+| `executable_hash` | text    | SHA-256 hex, nullable        |
+| `user_id`         | text    | nullable                     |
+| `accessible`      | boolean |                              |
+| `file_exists`     | boolean |                              |
+| `collection_time` | integer | epoch milliseconds           |
 
-### Basic Detection
+## Common Patterns
 
 ```sql
 -- Find processes by name
 SELECT * FROM processes WHERE name = 'suspicious-process';
 
--- Find processes with pattern matching
+-- Pattern match
 SELECT * FROM processes WHERE name LIKE '%malware%';
-```
 
-### Resource Analysis
+-- Resource thresholds
+SELECT * FROM processes WHERE cpu_usage > 80.0 OR memory_usage > 2147483648;
 
-```sql
--- High CPU usage
-SELECT * FROM processes WHERE cpu_usage > 80.0;
-
--- High memory usage
-SELECT * FROM processes WHERE memory_usage > 2147483648; -- 2GB
-```
-
-### Hash-Based Detection
-
-```sql
--- Known malicious hashes
+-- Known hashes
 SELECT * FROM processes
-WHERE executable_hash = 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef';
-```
+WHERE executable_hash IN (
+    'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef',
+    'f1e2d3c4b5a6978012345678901234567890abcdef1234567890abcdef'
+);
 
-### Command Line Analysis
-
-```sql
--- Suspicious command patterns
+-- Command-line analysis
 SELECT * FROM processes
-WHERE command_line LIKE '%nc -l%'     -- Netcat listener
-   OR command_line LIKE '%wget%'      -- Download tools
-   OR LENGTH(command_line) > 1000;   -- Unusually long commands
-```
+WHERE command_line LIKE '%nc -l%'
+   OR command_line LIKE '%wget%'
+   OR LENGTH(command_line) > 1000;
 
-### Path-Based Detection
-
-```sql
 -- Suspicious executable locations
 SELECT * FROM processes
 WHERE executable_path LIKE '/tmp/%'
@@ -151,53 +98,8 @@ WHERE executable_path LIKE '/tmp/%'
    OR executable_path IS NULL;
 ```
 
-## Performance Tips
+## Performance
 
-### Use Indexes
-
-- Time-based queries: `WHERE collection_time > ?`
-- Process ID queries: `WHERE pid = ?`
-- Name queries: `WHERE name = ?`
-
-### Keep Result Sets Small
-
-`LIMIT` is refused at rule load — the planner has no representation for it, so the pushed-down half would ignore it. Narrow the result set with predicates instead.
-
-```sql
--- Narrow with predicates, not LIMIT
-SELECT * FROM processes WHERE name LIKE '%test%' AND collection_time > ?;
-```
-
-### Avoid Complex Operations
-
-```sql
--- Good: Simple conditions
-WHERE name = 'process' AND pid > 1000;
-
--- Avoid: Complex nested operations
-WHERE LENGTH(command_line) > INSTR(command_line, '/') + 50;
-```
-
-## Security Best Practices
-
-### Use Parameterized Queries
-
-```sql
--- Good: Parameterized
-SELECT * FROM processes WHERE name = ?;
-
--- Bad: String concatenation
-SELECT * FROM processes WHERE name = '" + user_input + "';
-```
-
-### Validate Input
-
-- Always validate user-provided SQL fragments
-- Use only approved functions
-- Check for banned function usage
-
-### Monitor Performance
-
-- Watch for queries that consume excessive resources
-- Use query timeouts
-- Monitor memory usage
+- A predicate of the shape `column op literal` (comparisons, `LIKE`, `IN`, infix `REGEXP`) on a column whose collector advertises and conformance-passed that operation is pushed down to the collector. Everything else, including every function call and any negated `LIKE`/`IN`/`REGEXP`, is a residual the agent evaluates over the rows the pushed half admitted, so lead with a pushable predicate and keep the pattern narrow.
+- Equality and range predicates on `pid` and `name` are served by an index; a `LIKE` on `command_line` reads every row in the cycle's window.
+- A rule whose pattern exceeds `detection.pattern_latency_threshold_ms` on a measured execution is disabled until it is reloaded; see [query-pipeline.md](query-pipeline.md#sizing-the-executor) for the executor's knobs.

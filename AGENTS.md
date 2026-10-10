@@ -236,7 +236,7 @@ The dashed line to "External tiers" indicates that `daemoneye-agent`'s outbound 
 - SLSA Level 3 provenance, Cosign signatures [Planned]
 - Merkle tree with inclusion proofs \[In Progress — chain hashing implemented; inclusion proof generation stubbed in `crypto.rs`\]
 - Sandboxed detection engine (read-only DB) [Planned]
-- Query whitelist (SELECT only with approved functions) \[Implemented: the load-time allowlist refuses any other function call, and the executor registers only those seven functions (`hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`), replacing DataFusion's defaults. Syntax that parses into its own AST node, such as `SUBSTR`, passes the load-time check and then fails at execution\]
+- Query whitelist (SELECT only with approved functions) \[Implemented: the load-time allowlist refuses any other function call, and the executor registers only those seven functions (`hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`), replacing DataFusion's defaults. Function-like syntax that parses to its own AST node (`SUBSTR`, `TRIM`, `POSITION`, ...) is refused at load by variant, so nothing loads that the executor cannot run\]
 
 > Fleet-level transport security (mTLS between host agents and upstream aggregators) is handled in the commercial tiers, not in this repo.
 

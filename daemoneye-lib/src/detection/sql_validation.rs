@@ -166,6 +166,12 @@ impl Visitor for SqlGate {
         if let Some(construct) = cast_construct(expr) {
             return ControlFlow::Break(Box::new(SqlRejection::CastNotAllowed { construct }));
         }
+        if let Some(construct) = function_construct(expr) {
+            return ControlFlow::Break(Box::new(SqlRejection::FunctionNotAllowed {
+                function: construct.to_owned(),
+                position: span_start(expr.span()),
+            }));
+        }
         let Expr::Function(ref function) = *expr else {
             return ControlFlow::Continue(());
         };
@@ -195,6 +201,85 @@ fn cast_construct(expr: &Expr) -> Option<&'static str> {
         });
     }
     matches!(*expr, Expr::TypedString(_)).then_some("typed string literal")
+}
+
+/// The spelling of a function-like node the executor has no implementation for, if `expr` is one.
+///
+/// These spell like calls but parse to their own `Expr` variants, so the allowlist never sees
+/// them, and the executor registers nothing behind them: a rule using one would load and then
+/// fail on every cycle. Refusing here names the construct to the operator at load instead, through
+/// the same rejection an unlisted function gets.
+///
+/// Exhaustive on purpose (KTD8): a variant a future `sqlparser` adds has to be placed in one arm
+/// or the other rather than loading by default.
+const fn function_construct(expr: &Expr) -> Option<&'static str> {
+    match *expr {
+        Expr::Substring { .. } => Some("SUBSTRING"),
+        Expr::Trim { .. } => Some("TRIM"),
+        Expr::Position { .. } => Some("POSITION"),
+        Expr::Extract { .. } => Some("EXTRACT"),
+        Expr::Ceil { .. } => Some("CEIL"),
+        Expr::Floor { .. } => Some("FLOOR"),
+        Expr::Overlay { .. } => Some("OVERLAY"),
+        Expr::Convert { .. } => Some("CONVERT"),
+        Expr::MatchAgainst { .. } => Some("MATCH AGAINST"),
+        Expr::Struct { .. } => Some("STRUCT"),
+        Expr::Dictionary(_) => Some("a dictionary literal"),
+        Expr::Map(_) => Some("MAP"),
+        Expr::Array(_) => Some("ARRAY"),
+        Expr::Lambda(_) => Some("a lambda"),
+        // Casts have their own gate; the rest are references, literals, operators, or subqueries
+        // the depth gate counts.
+        Expr::Cast { .. }
+        | Expr::TypedString(_)
+        | Expr::Function(_)
+        | Expr::Identifier(_)
+        | Expr::CompoundIdentifier(_)
+        | Expr::CompoundFieldAccess { .. }
+        | Expr::JsonAccess { .. }
+        | Expr::IsFalse(_)
+        | Expr::IsNotFalse(_)
+        | Expr::IsTrue(_)
+        | Expr::IsNotTrue(_)
+        | Expr::IsNull(_)
+        | Expr::IsNotNull(_)
+        | Expr::IsUnknown(_)
+        | Expr::IsNotUnknown(_)
+        | Expr::IsDistinctFrom(..)
+        | Expr::IsNotDistinctFrom(..)
+        | Expr::IsNormalized { .. }
+        | Expr::InList { .. }
+        | Expr::InSubquery { .. }
+        | Expr::InUnnest { .. }
+        | Expr::Between { .. }
+        | Expr::BinaryOp { .. }
+        | Expr::Like { .. }
+        | Expr::ILike { .. }
+        | Expr::SimilarTo { .. }
+        | Expr::RLike { .. }
+        | Expr::AnyOp { .. }
+        | Expr::AllOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::AtTimeZone { .. }
+        | Expr::Collate { .. }
+        | Expr::Nested(_)
+        | Expr::Value(_)
+        | Expr::Prefixed { .. }
+        | Expr::Case { .. }
+        | Expr::Exists { .. }
+        | Expr::Subquery(_)
+        | Expr::GroupingSets(_)
+        | Expr::Cube(_)
+        | Expr::Rollup(_)
+        | Expr::Tuple(_)
+        | Expr::Named { .. }
+        | Expr::Interval(_)
+        | Expr::Wildcard(_)
+        | Expr::QualifiedWildcard(..)
+        | Expr::OuterJoin(_)
+        | Expr::Prior(_)
+        | Expr::MemberOf(_) => None,
+    }
 }
 
 /// Require a query body to be a `SELECT` and check the structural bounds on it.

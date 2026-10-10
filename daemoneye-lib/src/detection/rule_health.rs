@@ -1,24 +1,15 @@
 //! Rule health, and the re-validation pass a descriptor change triggers (R12).
 //!
 //! When a collector registers for the first time, or re-registers with a changed descriptor, every
-//! enabled rule that reaches the affected tables has to be looked at again. This module does the
-//! half that can be done today: it re-checks each rule's table and column references against the
-//! current catalog (R11) and marks the ones that no longer resolve unhealthy rather than dropping
-//! them.
+//! enabled rule that reaches the affected tables has to be looked at again. This module re-checks
+//! each rule's table and column references against the current catalog (R11) and marks the ones
+//! that no longer resolve unhealthy rather than dropping them.
 //!
-//! # The seam U7 fills
-//!
-//! [`ReplanOutcome::to_replan`] is the list of rule identifiers whose *pushed half* must be
-//! recomputed. U6 cannot recompute it, because the planner that lowers a rule into a pushdown plan
-//! plus a residual is a separate component. So this module stops at the boundary: it
-//! establishes which rules still validate and therefore need re-planning, and which no longer do
-//! and must not have a task re-issued. U7 consumes `to_replan()` and calls the planner for each
-//! identifier in it; U11 re-issues the resulting tasks. Nothing here silently no-ops — a rule that
-//! stops validating is moved to [`RuleHealth::Unhealthy`] and *excluded* from `to_replan()`, which
-//! is the observable consequence AE6 asks for.
-//!
-//! Surfacing unhealthy rules to an operator is T10's CLI work. This module owns the state, not the
-//! presentation.
+//! It stops at the planner's boundary. [`ReplanOutcome::to_replan`] lists the rules that still
+//! validate and whose pushed half must be recomputed; `DetectionEngine::register_collector` runs
+//! the planner over that list and re-issues the resulting tasks. A rule that stops validating is
+//! moved to [`RuleHealth::Unhealthy`] and *excluded* from `to_replan()`, so no task is re-issued
+//! for it. Surfacing unhealthy rules to an operator is the CLI's job; this module owns the state.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -115,7 +106,7 @@ pub struct ReplanOutcome {
 }
 
 impl ReplanOutcome {
-    /// Rules that still validate and whose pushed half U7 must recompute.
+    /// Rules that still validate and whose pushed half the planner must recompute.
     #[must_use]
     pub fn to_replan(&self) -> &[String] {
         &self.to_replan

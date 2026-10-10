@@ -50,7 +50,7 @@ flowchart LR
 - `REGEXP` as an infix operator and the `match()`/`regexp()` calls are DaemonEye extensions. They are rewritten to one function before execution.
 - A rule may call exactly seven functions: `hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`. The executor registers only those, replacing DataFusion's default function set, so a DataFusion function outside the list is not available.
 - Every other accepted expression (comparisons, boolean logic, `IN`, `LIKE`, `NULL` handling) uses standard DataFusion SQL semantics unchanged.
-- The load-time check covers function-call syntax only. `SUBSTR`, `CAST`, `TRIM`, `POSITION`, `EXTRACT`, `CEIL` and `FLOOR` parse into their own syntax nodes, are accepted at load, and fail at execution. See the [SQL Dialect Reference](sql-dialect-reference.md).
+- The load-time check refuses function-like syntax that parses to its own node (`SUBSTR`, `TRIM`, `POSITION`, `EXTRACT`, `CEIL`, `FLOOR`) by variant, and casts by their own gate, so nothing loads that the executor cannot run. See the [SQL Dialect Reference](sql-dialect-reference.md).
 
 ### Sizing the executor
 
@@ -77,129 +77,18 @@ Two findings stay open.
 
 ## Supported SQL Dialect
 
-DaemonEye supports a **restricted SQL dialect** optimized for process monitoring and security. The dialect is based on SQLite syntax with specific limitations and extensions.
+A rule is one `SELECT` over one table with a `WHERE` of comparisons, `AND`/`OR`/`NOT`, `LIKE`, `IN`, `BETWEEN`, `IS NULL` and exactly seven functions: `hex`, `instr`, `length`, `like`, `match`, `regexp`, `unhex`. Everything else, named or not, is refused when the rule is loaded, and the rejection names the construct. Aggregates, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, `DISTINCT`, `JOIN`, CTEs, set operations and casts are all refused; so is function-like syntax such as `SUBSTR` and `TRIM` that parses to its own grammar rule rather than a function call.
 
-### Allowed SQL Constructs
-
-#### Basic Queries
+The full gate list, the reasons, the column table and worked patterns are in the [SQL Dialect Reference](sql-dialect-reference.md).
 
 ```sql
--- Simple SELECT queries
+-- Equality, served by the name index
 SELECT * FROM processes WHERE name = 'suspicious-process';
 
--- Aggregations
-SELECT COUNT(*) as process_count, name
+-- An index-served predicate narrows the rows the residual LIKE reads
+SELECT pid, name, command_line
 FROM processes
-GROUP BY name
-HAVING COUNT(*) > 10;
-
--- Self-join on the parent link: a shell spawned by a web server
-SELECT child.pid, child.name, parent.name AS parent_name
-FROM processes child
-JOIN processes parent ON child.ppid = parent.pid
-WHERE parent.name = 'httpd' AND child.name IN ('sh', 'bash');
-```
-
-#### Supported Functions
-
-**String Functions** (useful for process data analysis):
-
-```sql
--- String length analysis
-SELECT name, LENGTH(command_line) as cmd_length
-FROM processes
-WHERE LENGTH(command_line) > 100;
-
--- Substring extraction
-SELECT name, SUBSTR(executable_path, 1, 10) as path_prefix
-FROM processes
-WHERE executable_path IS NOT NULL;
-
--- Pattern matching
-SELECT * FROM processes
-WHERE name LIKE '%suspicious%'
-   OR executable_path LIKE '/tmp/%';
-
--- String search
-SELECT * FROM processes
-WHERE INSTR(command_line, 'malicious') > 0;
-```
-
-**Encoding Functions** (useful for hash analysis):
-
-```sql
--- Hexadecimal encoding/decoding
-SELECT name, HEX(executable_hash) as hash_hex
-FROM processes
-WHERE executable_hash IS NOT NULL;
-
--- Binary data analysis
-SELECT name, UNHEX(executable_hash) as hash_binary
-FROM processes
-WHERE LENGTH(executable_hash) = 64; -- SHA-256 length
-```
-
-**Mathematical Functions**:
-
-```sql
--- Numeric analysis
-SELECT name, cpu_usage, memory_usage
-FROM processes
-WHERE cpu_usage > 50.0
-   OR memory_usage > 1073741824; -- 1GB
-```
-
-### Banned SQL Constructs
-
-#### Security-Critical Functions
-
-```sql
--- These functions are banned for security reasons:
--- load_extension() - SQLite extension loading
--- eval() - Code evaluation
--- exec() - Command execution
--- system() - System calls
--- shell() - Shell execution
-```
-
-#### File System Operations
-
-```sql
--- These functions are not applicable to process monitoring:
--- readfile() - File reading
--- writefile() - File writing
--- edit() - File editing
-```
-
-#### Complex Pattern Matching
-
-```sql
--- These functions are complex to translate to IPC tasks:
--- glob() - Glob patterns
--- regexp() - Regular expressions (performance concerns)
--- match() - Pattern matching
-```
-
-#### Mathematical Functions (Not Applicable)
-
-```sql
--- These functions are not useful for process monitoring:
--- abs() - Absolute value
--- random() - Random numbers
--- randomblob() - Random binary data
-```
-
-#### Formatting Functions (Not Applicable)
-
-```sql
--- These functions are not useful for process monitoring:
--- quote() - SQL quoting
--- printf() - String formatting
--- format() - String formatting
--- char() - Character conversion
--- unicode() - Unicode functions
--- soundex() - Soundex algorithm
--- difference() - String difference
+WHERE name = 'bash' AND command_line LIKE '%nc -l%';
 ```
 
 ## Process Data Schema
@@ -247,8 +136,7 @@ WHERE name LIKE '%suspicious%'
 SELECT pid, name, cpu_usage, memory_usage, command_line
 FROM processes
 WHERE cpu_usage > 80.0
-   OR memory_usage > 2147483648  -- 2GB
-ORDER BY memory_usage DESC;
+   OR memory_usage > 2147483648;  -- 2GB
 ```
 
 ### Hash-Based Detection
@@ -301,89 +189,26 @@ WHERE executable_path LIKE '/tmp/%'
 
 ## Performance Considerations
 
-### Query Optimization
-
-- **Indexing**: Time-based indexes are automatically created for efficient querying
-- **Batch Processing**: Large result sets are processed in batches to prevent memory issues
-- **Query Timeouts**: All queries have configurable timeouts to prevent system hangs
-
-### Resource Limits
-
-- **Memory Usage**: Queries are limited to prevent excessive memory consumption
-- **CPU Usage**: Complex queries are throttled to maintain system performance
-- **Result Size**: Large result sets are paginated to prevent memory exhaustion
+- **Pushdown and indexes**: a `column op literal` predicate the collector advertises is pushed down; function calls and negations are residuals the agent evaluates over the rows the pushed half admitted. Equality and range predicates on `pid` and `name` are served by per-bucket posting lists; a `LIKE` on `command_line` reads every row in the window. Lead with an indexable predicate.
+- **Windows**: each cycle evaluates only the rows stored since the previous cycle's high-water mark ([ADR-0014](../../adr/0014-a-cycle-evaluates-its-own-window.md)); a rule never rescans retention.
+- **Bounds**: the executor's memory pool, batch size, partition count and match cap are the `detection.*` fields in [Sizing the executor](#sizing-the-executor); a rule that trips `max_matches_per_rule` is truncated and its alert marked partial.
+- **Latency guard**: a measured pattern execution over `detection.pattern_latency_threshold_ms` disables the rule until an operator reloads it.
 
 ## Security Considerations
 
-### SQL Injection Prevention
-
-- **AST Validation**: All SQL is parsed and validated before execution
-- **Prepared Statements**: All queries use parameterized statements
-- **Function Whitelist**: Only approved functions are allowed
-- **Sandboxed Execution**: Queries run in read-only database connections
-
-### Data Privacy
-
-- **Field Masking**: Sensitive fields can be masked in logs and exports
-- **Command Line Redaction**: Command lines can be redacted for privacy
-- **Access Control**: Database access is restricted by component
-
-## Best Practices
-
-### Writing Effective Detection Rules
-
-1. **Use Specific Patterns**: Avoid overly broad patterns that generate false positives
-2. **Leverage Hash Detection**: Use executable hashes for precise malware detection
-3. **Combine Multiple Criteria**: Use multiple conditions to reduce false positives
-4. **Test Thoroughly**: Validate rules against known good and bad processes
-
-### Performance Optimization
-
-1. **Use Indexes**: Leverage time-based and field-based indexes
-2. **Limit Result Sets**: Use LIMIT clauses for large queries
-3. **Avoid Complex Joins**: Keep queries simple and focused
-4. **Monitor Resource Usage**: Watch for queries that consume excessive resources
-
-### Security Guidelines
-
-1. **Validate Input**: Always validate user-provided SQL fragments
-2. **Use Parameterized Queries**: Never concatenate user input into SQL
-3. **Review Function Usage**: Ensure only approved functions are used
-4. **Monitor Query Performance**: Watch for queries that might indicate attacks
+- **AST validation**: every rule is parsed with `sqlparser` and checked against the gates in the [SQL Dialect Reference](sql-dialect-reference.md) at load; the executor sees only the derived standard SQL, never the operator's text.
+- **Function allowlist**: the executor registers exactly the seven allowlisted functions and replaces DataFusion's default registry, so nothing outside the allowlist exists to call.
+- **Read-only**: the executor reads the event store through a `TableProvider`; it has no write path.
+- **Privacy**: command lines are masked by default in logs and exports.
 
 ## Troubleshooting
 
-### Common Issues
-
-**Query Syntax Errors**:
-
-- Check SQL syntax against supported dialect
-- Ensure all functions are in the allowed list
-- Verify table and column names
-
-**Performance Issues**:
-
-- Add appropriate indexes
-- Simplify complex queries
-- Use LIMIT clauses for large result sets
-
-**Security Violations**:
-
-- Review banned function usage
-- Check for SQL injection attempts
-- Validate input parameters
-
-### Debugging Queries
-
-```sql
--- Use EXPLAIN to understand query execution
-EXPLAIN SELECT * FROM processes WHERE name LIKE '%test%';
-
--- Check query performance
-SELECT COUNT(*) as total_processes FROM processes;
-SELECT COUNT(*) as recent_processes FROM processes
-WHERE collection_time > (strftime('%s', 'now') - 3600) * 1000;
-```
+- **"not on the detection function allowlist"**: the rule names a function outside the seven, or uses `SUBSTR`/`TRIM`-style syntax. Rewrite with `LIKE`, `INSTR` or `REGEXP`.
+- **"the planner cannot lower ..."**: drop the `ORDER BY`, `LIMIT`, `GROUP BY` or `DISTINCT` it names; narrow with predicates instead.
+- **"must read exactly one table"**: remove the `JOIN`; a rule reads one table.
+- **Unknown column**: compare against the column table in the dialect reference; the illustrative DDL above matches it.
+- **A rule stopped alerting**: check its health. A latency breach or a collector descriptor change that removed a column it names marks it unhealthy; reload it after fixing the pattern.
+- **Plan inspection**: `RuleExecutor::explain` returns the DataFusion physical plan the rule would run, which shows whether a predicate was pushed down or left residual.
 
 ## Future Enhancements
 
