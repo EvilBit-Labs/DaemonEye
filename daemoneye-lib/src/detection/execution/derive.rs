@@ -324,7 +324,7 @@ fn is_comparison(node: &Expr) -> bool {
     if let Expr::BinaryExpr(ref binary) = *node {
         return COMPARISONS.contains(&binary.op);
     }
-    matches!(*node, Expr::InList(_))
+    matches!(*node, Expr::InList(_) | Expr::Between(_))
 }
 
 /// The `Float64` columns an expression reads, sorted so the plan is deterministic.

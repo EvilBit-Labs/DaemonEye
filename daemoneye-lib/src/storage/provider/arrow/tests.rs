@@ -319,10 +319,18 @@ fn fractional_pre_epoch_start_time_floors() {
 
 #[test]
 fn start_time_beyond_i64_seconds_is_an_error() {
-    // How far before the epoch a `SystemTime` can sit is platform-defined, so both
-    // outcomes assert. A bare early return here would make this test pass while
-    // checking nothing on any platform that cannot represent the value, and CI is a
-    // three-OS matrix. (Representable on macOS aarch64, where the first branch runs.)
+    // Every platform represents a day before the epoch, and it must encode as negative seconds.
+    let day_before = UNIX_EPOCH
+        .checked_sub(Duration::from_hours(24))
+        .expect("a day before the epoch is representable");
+    assert_eq!(epoch_seconds(day_before), Some(-86_400));
+    let mut near = ProcessRecord::new(1, "p".to_owned());
+    near.start_time = Some(day_before);
+    assert!(encode(&[near], &schema(), Some(&[5])).is_ok());
+
+    // How far before the epoch a `SystemTime` can sit is platform-defined: Windows stops at
+    // 1601, so the out-of-range value exists only where this branch runs (macOS, Linux). The
+    // assertions above carry the test where it does not.
     if let Some(far) = UNIX_EPOCH.checked_sub(Duration::new(i64::MAX.unsigned_abs() + 1, 0)) {
         assert_eq!(epoch_seconds(far), None);
         let mut r = ProcessRecord::new(1, "p".to_owned());
@@ -331,16 +339,6 @@ fn start_time_beyond_i64_seconds_is_an_error() {
             encode(&[r], &schema(), Some(&[5])),
             Err(ArrowEncodeError::StartTimeOutOfRange)
         ));
-    } else {
-        // The out-of-range case is unreachable here, so assert the boundary that
-        // is: the furthest representable pre-epoch instant still encodes.
-        let near = UNIX_EPOCH
-            .checked_sub(Duration::new(1_u64 << 62, 0))
-            .expect("2^62 seconds before the epoch is representable");
-        assert!(epoch_seconds(near).is_some());
-        let mut r = ProcessRecord::new(1, "p".to_owned());
-        r.start_time = Some(near);
-        assert!(encode(&[r], &schema(), Some(&[5])).is_ok());
     }
 }
 

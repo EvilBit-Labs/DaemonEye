@@ -47,7 +47,9 @@ use super::codec::TsSeqKey;
 
 /// On-disk schema version understood by this binary. Bump only when the stored
 /// value format changes incompatibly — the rebuild path handles the transition.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// 2: `Alert` gained `completeness`, so a version-1 store's alerts no longer decode.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Bundle envelope format version (the manifest framing), independent of
 /// [`SCHEMA_VERSION`] so the archive format can evolve on its own axis.

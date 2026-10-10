@@ -27,10 +27,10 @@ use crate::detection::regex_cache::RegexCache;
 ///
 /// A sink built [`with_threshold`](Self::with_threshold) also latches a breach: once any recorded
 /// batch exceeds the threshold, [`RegexpUdf`] refuses its next invocation with a [`LatencyAbort`].
-/// That is ADR-0011's "bounded by one batch" delivered at the scan-batch boundary, where the UDF
-/// is called once per scan batch. The in-flight batch is always finished, because `regex` has no
-/// cancellation and abandoning a match would keep burning the CPU the budget protects; the next
-/// batch is what is refused. A sink from [`Default`] has no threshold and never latches.
+/// That is ADR-0011's "bounded by one batch per partition" delivered at the scan-batch boundary,
+/// where the UDF is called once per scan batch. Every partition's in-flight batch is finished,
+/// because `regex` has no cancellation and abandoning a match would keep burning the CPU the
+/// budget protects; the next batch on each partition is what is refused. A sink from [`Default`] has no threshold and never latches.
 #[derive(Debug, Default)]
 pub struct LatencySink {
     per_pattern: Mutex<BTreeMap<String, Duration>>,

@@ -38,6 +38,8 @@ pub const PROCMOND_COLLECTOR_ID: &str = "procmond";
 pub struct IngestOutcome {
     /// The largest `collection_time` (ms) submitted; `0` when nothing was.
     pub high_water_ms: u64,
+    /// The smallest `collection_time` (ms) submitted; `u64::MAX` when nothing was.
+    pub low_water_ms: u64,
     /// How many rows were submitted (before the watermark discarded any).
     pub submitted: usize,
     /// Sequence gaps the writer saw since the previous flush.
@@ -83,6 +85,7 @@ pub async fn ingest_cycle(
     records: &[ProcessRecord],
 ) -> Result<IngestOutcome, CycleIngestError> {
     let mut high_water_ms = 0_u64;
+    let mut low_water_ms = u64::MAX;
     for (index, record) in records.iter().enumerate() {
         let row_index = u32::try_from(index).map_err(|_overflow| CycleIngestError::TooManyRows)?;
         let row = IngestRecord::new(
@@ -92,11 +95,13 @@ pub async fn ingest_cycle(
             record.clone(),
         )?;
         high_water_ms = high_water_ms.max(row.ts_ms());
+        low_water_ms = low_water_ms.min(row.ts_ms());
         handle.submit(row).await?;
     }
     let report = handle.flush().await?;
     Ok(IngestOutcome {
         high_water_ms,
+        low_water_ms,
         submitted: records.len(),
         gaps: report.gaps,
     })
@@ -109,8 +114,11 @@ pub struct IngestStep {
     /// may have committed and raised the watermark, and a retry under the same ordinal would have
     /// its fresh rows discarded as duplicates.
     pub next_ordinal: Option<u32>,
-    /// The highest `collection_time` now committed; unchanged by a failure.
-    pub high_water_ms: u64,
+    /// The window this cycle evaluates. Its `through_ms` is the highest `collection_time` now
+    /// committed, unchanged by a failure. Its `after_ms` is the previous mark, unless a row was
+    /// stamped at or before it (a clock step-back): then the window reaches back to that row, and
+    /// the rows in the overlap are evaluated again rather than never (ADR-0014).
+    pub window: CycleWindow,
     /// Gaps the writer saw since the previous flush.
     pub gaps: Vec<SequenceGap>,
     /// Why this cycle's rows are not durable, when they are not.
@@ -128,13 +136,16 @@ pub fn ingest_step(
     match result {
         Ok(outcome) => IngestStep {
             next_ordinal,
-            high_water_ms: previous_high_water_ms.max(outcome.high_water_ms),
+            window: CycleWindow {
+                after_ms: previous_high_water_ms.min(outcome.low_water_ms.saturating_sub(1)),
+                through_ms: previous_high_water_ms.max(outcome.high_water_ms),
+            },
             gaps: outcome.gaps,
             failure: None,
         },
         Err(error) => IngestStep {
             next_ordinal,
-            high_water_ms: previous_high_water_ms,
+            window: next_window(previous_high_water_ms, previous_high_water_ms),
             gaps: Vec::new(),
             failure: Some(error.to_string()),
         },

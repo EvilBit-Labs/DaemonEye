@@ -4,7 +4,7 @@
 
 use chrono::{TimeZone, Utc};
 use daemoneye_agent::detection_cycle::{
-    PROCMOND_COLLECTOR_ID, ingest_cycle, load_persisted_rules, next_cycle_ordinal,
+    PROCMOND_COLLECTOR_ID, ingest_cycle, load_persisted_rules, next_cycle_ordinal, next_window,
     open_event_store, persist_alerts,
 };
 use daemoneye_lib::detection::DetectionEngine;
@@ -319,7 +319,8 @@ fn a_failed_ingest_consumes_its_ordinal_and_carries_the_failure() {
     let failed = ingest_step(7, 1_000, Err(CycleIngestError::TooManyRows));
     assert_eq!(failed.next_ordinal, Some(8));
     assert_eq!(
-        failed.high_water_ms, 1_000,
+        failed.window,
+        next_window(1_000, 1_000),
         "nothing durable, so the window does not move"
     );
     assert!(failed.gaps.is_empty());
@@ -335,13 +336,28 @@ fn a_failed_ingest_consumes_its_ordinal_and_carries_the_failure() {
         1_000,
         Ok(IngestOutcome {
             high_water_ms: 2_500,
+            low_water_ms: 1_001,
             submitted: 3,
             gaps: Vec::new(),
         }),
     );
     assert_eq!(committed.next_ordinal, Some(8));
-    assert_eq!(committed.high_water_ms, 2_500);
+    assert_eq!(committed.window, next_window(1_000, 2_500));
     assert_eq!(committed.failure, None);
+
+    // A row stamped at or before the mark (a clock step-back) is not skipped: the window reaches
+    // back to it, re-evaluating the overlap rather than never evaluating the row.
+    let stepped_back = ingest_step(
+        8,
+        2_500,
+        Ok(IngestOutcome {
+            high_water_ms: 2_600,
+            low_water_ms: 2_000,
+            submitted: 2,
+            gaps: Vec::new(),
+        }),
+    );
+    assert_eq!(stepped_back.window, next_window(1_999, 2_600));
     assert_eq!(
         ingest_step(u32::MAX, 0, Err(CycleIngestError::TooManyRows)).next_ordinal,
         None

@@ -182,6 +182,13 @@ pub const EXECUTOR_TARGET_PARTITIONS: usize = 4;
 /// close on the row bound.
 pub const EXECUTOR_BATCH_MAX_BYTES: usize = 4 * 1024 * 1024;
 
+/// Wall-clock deadline for one rule's evaluation in one cycle (R3.4).
+///
+/// Checked at batch boundaries and while waiting for the next batch, so a stuck stream or a
+/// catch-up scan over many buckets ends as a `ResourceLimit` degradation instead of running on.
+/// The batch in flight finishes, as under ADR-0011.
+pub const EXECUTOR_RULE_DEADLINE: Duration = Duration::from_secs(30);
+
 const _: () = assert!(
     EXECUTOR_MEMORY_POOL_BYTES > 0
         && EXECUTOR_BATCH_SIZE > 0

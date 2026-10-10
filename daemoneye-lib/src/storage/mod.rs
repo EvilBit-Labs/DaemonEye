@@ -68,6 +68,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs, io,
     path::Path,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 /// redb table type for a process-event bucket: `(ts_ms, seq)` → versioned bytes.
@@ -179,6 +180,9 @@ pub struct EventStore {
     retention_ms: u64,
     /// Recent window (ms) the in-memory MRC parent map is rebuilt from on start.
     mrc_window_ms: u64,
+    /// Writes that landed in a bucket already closed at write time (a clock step-back). Folded
+    /// into the postings-cache key, so a cached list for that bucket is reloaded, not served stale.
+    closed_bucket_writes: AtomicU64,
 }
 
 impl EventStore {
@@ -236,6 +240,7 @@ impl EventStore {
             granularity_ms: choose_granularity(retention_ms),
             retention_ms,
             mrc_window_ms: Self::DEFAULT_MRC_WINDOW_MS,
+            closed_bucket_writes: AtomicU64::new(0),
         };
         store.classify_and_init()?;
         Ok(store)
@@ -299,7 +304,27 @@ impl EventStore {
         drop(base);
 
         txn.commit()?;
+        self.note_write(id);
         Ok(())
+    }
+
+    /// Count a committed write into a bucket that was already closed, so the postings cache
+    /// stops serving the list it holds for that bucket.
+    fn note_write(&self, bucket: u64) {
+        let open = u64::try_from(chrono::Utc::now().timestamp_millis())
+            .ok()
+            .and_then(|now_ms| now_ms.checked_div(self.granularity_ms))
+            .unwrap_or(0);
+        if bucket < open {
+            self.closed_bucket_writes.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// How many committed writes landed in a bucket that was already closed; a postings-cache
+    /// key carries this so a late write invalidates the lists cached before it.
+    #[must_use]
+    pub fn closed_bucket_writes(&self) -> u64 {
+        self.closed_bucket_writes.load(Ordering::Relaxed)
     }
 
     /// Group-commit a batch of records in a single write transaction — the
@@ -343,6 +368,9 @@ impl EventStore {
         }
         persist_watermarks(&txn, records)?;
         txn.commit()?;
+        if let Some(&oldest) = by_bucket.keys().next() {
+            self.note_write(oldest);
+        }
         Ok(())
     }
 

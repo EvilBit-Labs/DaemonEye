@@ -148,7 +148,7 @@ impl PartitionJob {
             let lists = set
                 .iter()
                 .map(|&term| {
-                    let key = (term.kind(), bucket, term.as_u128());
+                    let key = (term.kind(), bucket, term.as_u128(), self.plan.generation);
                     let now_bucket = self.plan.now_bucket;
                     self.plan.cache.get_or_load(key, now_bucket, || {
                         // An open bucket is read live every cycle, so read only the window's

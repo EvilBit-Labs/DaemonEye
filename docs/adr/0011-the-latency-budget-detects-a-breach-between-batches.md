@@ -12,7 +12,7 @@ The distinction matters because the two readings give the guard different jobs. 
 
 The budget is a **breach detector, checked at `RecordBatch` boundaries**. A pattern reported over budget disables its rule before the next batch is evaluated. No match, row, or batch in progress is interrupted.
 
-The overrun an operator pays for a breach is therefore bounded by one batch, not by one scan and not by one match.
+The overrun an operator pays for a breach is therefore bounded by one batch per partition (`executor_target_partitions`, default 4, each finishing the batch it has in flight), not by one scan and not by one match.
 
 ## Alternatives Considered
 
@@ -39,7 +39,7 @@ The overrun an operator pays for a breach is therefore bounded by one batch, not
 ### Positive
 
 - The checkpoint is free. A batch boundary is a place the stream already yields, so stopping needs no cancellation primitive and no extra thread.
-- The bound is statable without measuring anything: one batch. That matters in a repository whose standing learning is that an unmeasurable ceiling is not a bound.
+- The bound is statable without measuring anything: one batch per partition. That matters in a repository whose standing learning is that an unmeasurable ceiling is not a bound.
 - A linear-time engine with a bounded program and DFA already bounds a single evaluation, so the thing left unbounded was the *repetition*, and repetition is exactly what a batch-boundary check stops.
 
 ### Negative

@@ -278,7 +278,7 @@ Use `checked_*`, `saturating_*`, or explicit `wrapping_*` for security-sensitive
 - Validate early, reject with actionable errors
 - Use typed parsers over regex
 - Length limits on all variable-length inputs (Unix socket-path limit: [GOTCHAS.md](GOTCHAS.md) §4.1)
-- SQL: AST validation with `sqlparser` \[Implemented at rule load time; execution-time enforcement is [Planned]\]
+- SQL: AST validation with `sqlparser` \[Implemented at rule load time; at execution the session registers only the allowlisted functions, see `detection/execution/session.rs`\]
 
 ### Newtype Safety
 

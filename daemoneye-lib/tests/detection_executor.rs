@@ -24,7 +24,7 @@ use daemoneye_lib::detection::execution::derive::CycleWindow;
 use daemoneye_lib::detection::execution::executor::{
     CycleOutcome, EvaluationFailure, RuleEvaluation, RuleExecutor,
 };
-use daemoneye_lib::models::{AlertSeverity, DetectionRule, ProcessRecord};
+use daemoneye_lib::models::{AlertSeverity, CompletenessReason, DetectionRule, ProcessRecord};
 use daemoneye_lib::proto::{ColumnDescriptor, ColumnType, SchemaDescriptor, TableDescriptor};
 use daemoneye_lib::storage::EventStore;
 use daemoneye_lib::storage::ingest::IngestRecord;
@@ -238,6 +238,34 @@ async fn capped_run(matching_rows: u32) -> RuleEvaluation {
     put(&fx, rows_named("nc", matching_rows));
     load(&mut fx, "r1", "SELECT pid FROM processes WHERE name = 'nc'");
     only(&run(&fx).await).clone()
+}
+
+#[tokio::test]
+async fn a_rule_past_its_deadline_is_degraded_as_a_resource_limit() {
+    let mut fx = fixture(config());
+    put(&fx, rows_named("nc", 5));
+    load(&mut fx, "r1", "SELECT pid FROM processes WHERE name = 'nc'");
+
+    let outcome = executor(&fx)
+        .with_rule_deadline(std::time::Duration::ZERO)
+        .evaluate(&fx.engine.runnable_rules(), WIDE, &healthy())
+        .await;
+
+    let evaluation = only(&outcome);
+    assert!(
+        evaluation
+            .completeness
+            .reasons()
+            .iter()
+            .any(|reason| matches!(
+                *reason,
+                CompletenessReason::ResourceLimit { ref detail } if detail.contains("deadline")
+            )),
+        "a zero deadline must degrade the evaluation, got {:?}",
+        evaluation.completeness
+    );
+    // The batch in flight still finishes, so whatever it yielded is kept, never more.
+    assert!(alert_pids(evaluation).len() <= 5);
 }
 
 #[tokio::test]

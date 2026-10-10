@@ -10,7 +10,7 @@
 //!    breaches, the UDF finishes it and refuses the next with a `LatencyAbort`, which `evaluate`
 //!    turns into `stopped_on_latency`. This holds for selective rules, whose filter yields nothing
 //!    between scan batches. The executor also checks after every *yielded* batch, as a second line
-//!    for rules that yield (ADR-0011: bounded by one batch, not by one scan).
+//!    for rules that yield (ADR-0011: bounded by one batch per partition, not by one scan).
 //! 2. **After `evaluate`, by the caller.** The [`LatencyReport`]s in [`CycleOutcome`] are applied
 //!    through `DetectionEngine::observe_pattern_latency`, which disables the rule for future cycles.
 //!
@@ -19,7 +19,7 @@
 //! only reached through the provider's own scan.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use datafusion::arrow::array::{Array, RecordBatch};
 use datafusion::arrow::util::pretty::pretty_format_batches;
@@ -27,6 +27,7 @@ use datafusion::common::cast::{as_string_array, as_uint64_array};
 use datafusion::error::{DataFusionError, Result as DfResult};
 use datafusion::execution::context::SessionContext;
 use futures_util::StreamExt;
+use tokio::time::timeout;
 use tracing::{Instrument, info_span, warn};
 
 use crate::config::DetectionConfig;
@@ -39,6 +40,7 @@ use crate::detection::execution::session::{
     ExecutorRuntime, LatencySink, session_state_from_config,
 };
 use crate::detection::{Generation, RegexCache, RunnableRule};
+use crate::detection_bounds::EXECUTOR_RULE_DEADLINE;
 use crate::models::{Alert, Completeness, DetectionRule, ProcessRecord};
 use crate::proto::PushdownPlan;
 use crate::storage::EventStore;
@@ -108,6 +110,12 @@ pub enum EvaluationFailure {
 }
 
 impl EvaluationFailure {
+    fn deadline(deadline: Duration) -> Self {
+        Self::ResourceLimit(format!(
+            "rule execution exceeded its {deadline:?} deadline; remaining batches were not read"
+        ))
+    }
+
     fn from_error(error: &DataFusionError) -> Self {
         let message = error.to_string();
         if matches!(*error.find_root(), DataFusionError::ResourcesExhausted(_)) {
@@ -163,6 +171,8 @@ pub struct RuleExecutor {
     postings: Arc<PostingsCache>,
     runtime: ExecutorRuntime,
     config: DetectionConfig,
+    /// Wall-clock bound on one rule's evaluation; [`EXECUTOR_RULE_DEADLINE`] unless overridden.
+    rule_deadline: Duration,
 }
 
 impl RuleExecutor {
@@ -182,7 +192,15 @@ impl RuleExecutor {
             postings: Arc::new(PostingsCache::from_config(config)),
             runtime: ExecutorRuntime::from_config(config)?,
             config: config.clone(),
+            rule_deadline: EXECUTOR_RULE_DEADLINE,
         })
+    }
+
+    /// The same executor with a different per-rule deadline.
+    #[must_use]
+    pub const fn with_rule_deadline(mut self, deadline: Duration) -> Self {
+        self.rule_deadline = deadline;
+        self
     }
 
     /// Evaluate `rules` in order over the rows stored in `window`.
@@ -248,7 +266,19 @@ impl RuleExecutor {
             Ok(stream) => stream,
             Err(error) => return run.finish_failed(&error, tracker),
         };
-        while let Some(next) = stream.next().await {
+        // The deadline is checked while waiting for a batch and after each one; the batch in
+        // flight finishes, as the latency guard's does (ADR-0011).
+        let started = Instant::now();
+        loop {
+            let remaining = self.rule_deadline.saturating_sub(started.elapsed());
+            let next = match timeout(remaining, stream.next()).await {
+                Ok(Some(next)) => next,
+                Ok(None) => break,
+                Err(_elapsed) => {
+                    run.failure = Some(EvaluationFailure::deadline(self.rule_deadline));
+                    break;
+                }
+            };
             match next.and_then(|batch| run.take_rows(&batch, self.config.max_matches_per_rule)) {
                 Ok(()) => {}
                 Err(error) if LatencyAbort::is_in(&error) => {
@@ -262,6 +292,10 @@ impl RuleExecutor {
             }
             run.note_batch(take_reports(&sink, runnable));
             if run.result_capped.is_some() || run.stopped_on_latency {
+                break;
+            }
+            if started.elapsed() >= self.rule_deadline {
+                run.failure = Some(EvaluationFailure::deadline(self.rule_deadline));
                 break;
             }
         }

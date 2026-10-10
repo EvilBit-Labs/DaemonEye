@@ -680,22 +680,24 @@ fn a_subquery_over_a_second_registered_table_is_refused_as_multiple_tables() {
     );
 }
 
+/// Every reference resolves, so the only thing wrong is that the executor cannot run it: the
+/// residual is planned against a session with no table registered by name.
 #[test]
-fn a_subquery_over_the_outer_table_itself_still_plans() {
+fn a_subquery_over_the_outer_table_itself_is_refused_as_unrunnable() {
     let catalog = both_verified_catalog();
     let cache = RegexCache::new();
 
-    let compiled = plan_rule(
-        &catalog,
-        &cache,
-        &rule(
-            "SELECT cpu_usage FROM processes WHERE cpu_usage IN (SELECT cpu_usage FROM processes)",
-        ),
-        3,
-    )
-    .unwrap();
-
-    assert_eq!(compiled.plan().table, "processes");
+    for sql in [
+        "SELECT cpu_usage FROM processes WHERE cpu_usage IN (SELECT cpu_usage FROM processes)",
+        "SELECT cpu_usage FROM processes WHERE EXISTS (SELECT 1 FROM processes)",
+        "SELECT cpu_usage FROM processes WHERE cpu_usage > (SELECT cpu_usage FROM processes)",
+    ] {
+        let error = plan_rule(&catalog, &cache, &rule(sql), 3).unwrap_err();
+        assert!(
+            matches!(error, PlanError::Subquery),
+            "expected the subquery refusal for `{sql}`, got {error:?}"
+        );
+    }
 }
 
 // --- R5/R6: the function spelling of REGEXP compiles at load --------------------------------

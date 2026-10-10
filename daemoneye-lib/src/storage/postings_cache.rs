@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Cache key: index, bucket id, term widened to `u128` (`IndexTerm::kind` / `as_u128`).
-pub type PostingsKey = (IndexKind, u64, u128);
+pub type PostingsKey = (IndexKind, u64, u128, u64);
 
 /// One posting list: `(ts_ms, seq)` pointers into a bucket's event table.
 pub type Postings = Arc<[Key]>;
@@ -154,7 +154,7 @@ mod tests {
     const NOW: u64 = 100;
 
     fn key(term: u128) -> PostingsKey {
-        (IndexKind::Name, 5, term)
+        (IndexKind::Name, 5, term, 0)
     }
 
     fn list(n: usize) -> Vec<(u64, u32)> {
@@ -192,7 +192,7 @@ mod tests {
     fn open_bucket_always_loads_and_never_stores() {
         let cache = PostingsCache::new(4, 8);
         let calls = Cell::new(0);
-        let open = (IndexKind::Pid, NOW, 9);
+        let open = (IndexKind::Pid, NOW, 9, 0);
         load(&cache, open, NOW, 2, &calls);
         load(&cache, open, NOW, 2, &calls);
         assert_eq!(calls.get(), 2);
@@ -204,7 +204,7 @@ mod tests {
     fn bucket_after_now_is_also_treated_as_open() {
         let cache = PostingsCache::new(4, 8);
         let calls = Cell::new(0);
-        load(&cache, (IndexKind::Pid, NOW + 1, 1), NOW, 1, &calls);
+        load(&cache, (IndexKind::Pid, NOW + 1, 1, 0), NOW, 1, &calls);
         assert_eq!(cache.bypassed_open(), 1);
         assert!(cache.is_empty());
     }
@@ -312,10 +312,10 @@ mod tests {
     fn keys_differing_in_any_component_do_not_collide() {
         let cache = PostingsCache::new(8, 8);
         let calls = Cell::new(0);
-        load(&cache, (IndexKind::Pid, 1, 7), NOW, 1, &calls);
-        load(&cache, (IndexKind::Ppid, 1, 7), NOW, 1, &calls);
-        load(&cache, (IndexKind::Pid, 2, 7), NOW, 1, &calls);
-        load(&cache, (IndexKind::Pid, 1, 8), NOW, 1, &calls);
+        load(&cache, (IndexKind::Pid, 1, 7, 0), NOW, 1, &calls);
+        load(&cache, (IndexKind::Ppid, 1, 7, 0), NOW, 1, &calls);
+        load(&cache, (IndexKind::Pid, 2, 7, 0), NOW, 1, &calls);
+        load(&cache, (IndexKind::Pid, 1, 8, 0), NOW, 1, &calls);
         assert_eq!(calls.get(), 4);
     }
 

@@ -437,7 +437,7 @@ fn datafusion_pool_size(runtime: &datafusion::execution::runtime_env::RuntimeEnv
 #[test]
 fn the_postings_cache_takes_the_configured_bounds() {
     let cache = PostingsCache::from_config(&non_default_config());
-    let key = |term| (daemoneye_lib::storage::read::IndexKind::Pid, 1, term);
+    let key = |term| (daemoneye_lib::storage::read::IndexKind::Pid, 1, term, 0);
 
     let long: Result<_, ()> = cache.get_or_load(key(1), 10, || Ok(vec![(1, 1), (2, 2), (3, 3)]));
     assert_eq!(long.unwrap().len(), 3);

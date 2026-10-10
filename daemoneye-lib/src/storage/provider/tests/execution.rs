@@ -267,6 +267,25 @@ async fn provider_caches_closed_bucket_postings_and_reads_the_open_bucket_live()
 }
 
 #[tokio::test]
+async fn provider_reloads_a_closed_bucket_list_after_a_late_write_into_it() {
+    let fx = fixture();
+    put_all(&fx, vec![(10 * HOUR, record(10 * HOUR, 5, "bash"))]);
+    let p = provider(&fx);
+    let before = plan_for(&p, None, &[col("pid").eq(lit(5_u64))]).await;
+    assert_eq!(rows(&run(before).await), 1);
+
+    // A clock step-back lands a row in the closed bucket after its list was cached.
+    put_all(&fx, vec![(10 * HOUR + 1, record(10 * HOUR + 1, 5, "bash"))]);
+    let after = plan_for(&p, None, &[col("pid").eq(lit(5_u64))]).await;
+    assert_eq!(
+        rows(&run(after).await),
+        2,
+        "the cached list must not hide the late row"
+    );
+    assert_eq!(fx.cache.misses(), 2);
+}
+
+#[tokio::test]
 async fn provider_clamps_rows_to_the_time_window_inside_a_bucket() {
     let fx = fixture();
     put_all(

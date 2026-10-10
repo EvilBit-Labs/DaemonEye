@@ -80,7 +80,7 @@ A value carried by every evaluation and every alert saying whether the rule saw 
 
 ### Evaluation window
 
-The half-open interval of `collection_time`, `(after_ms, through_ms]`, that one detection cycle evaluates each rule against: the previous cycle's high-water mark, exclusive, to this cycle's, inclusive. Consecutive windows tile the timeline, so a row is evaluated by exactly one cycle, and the last completed cycle's mark is persisted so a restart resumes from it. A window normally sits inside one time bucket; a window spanning many buckets (a wide ad-hoc query or catch-up after an outage) is the full-retention shape, which costs far more memory and time.
+The half-open interval of `collection_time`, `(after_ms, through_ms]`, that one detection cycle evaluates each rule against: the previous cycle's high-water mark, exclusive, to this cycle's, inclusive. Consecutive windows tile the timeline, so a row is evaluated by one cycle while `collection_time` is monotonic; a row stamped at or before the mark widens the next window down to it and the overlap is evaluated again (at least once, never zero times). The last completed cycle's mark is persisted so a restart resumes from it. A window normally sits inside one time bucket; a window spanning many buckets (a wide ad-hoc query or catch-up after an outage) is the full-retention shape, which costs far more memory and time.
 
 ### Rule generation
 

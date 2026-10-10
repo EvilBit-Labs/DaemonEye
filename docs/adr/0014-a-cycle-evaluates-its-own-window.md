@@ -10,7 +10,7 @@ Run over everything, a row that matched in one cycle matches again in every cycl
 
 ## Decision
 
-A cycle evaluates each rule against the half-open interval of `collection_time` it covers, `(after_ms, through_ms]`, where `after_ms` is the previous cycle's high-water mark and `through_ms` is this cycle's. Consecutive windows tile the timeline, so a row is seen by exactly one cycle.
+A cycle evaluates each rule against the half-open interval of `collection_time` it covers, `(after_ms, through_ms]`, where `after_ms` is the previous cycle's high-water mark and `through_ms` is this cycle's. Consecutive windows tile the timeline, so a row is seen by one cycle while `collection_time` is monotonic. A row stamped at or before the mark (a clock step-back) widens the next window down to it, and the rows in the overlap are evaluated again: a row is evaluated at least once, never zero times.
 
 ## Alternatives Considered
 
@@ -31,7 +31,7 @@ A cycle evaluates each rule against the half-open interval of `collection_time` 
 ### Positive
 
 - A cycle's cost follows the rows it added. Under the production shape, where a window sits inside one bucket, the characterization measures about 33 MiB and a p50 of 3.0 ms.
-- A matching row alerts once.
+- A matching row alerts at least once: exactly once while the clock is monotonic and the agent stays up. A crash between storing a cycle's alerts and persisting its mark re-evaluates that window on restart, and a clock step-back re-evaluates the overlap; `deduplication_key` is what a sink dedups on.
 
 ### Negative
 

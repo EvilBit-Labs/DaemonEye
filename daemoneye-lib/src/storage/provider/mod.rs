@@ -297,6 +297,7 @@ impl TableProvider for EventStoreTableProvider {
             runs,
             limits: self.limits,
             now_bucket: self.open_bucket_id(),
+            generation: self.store.closed_bucket_writes(),
             counters: Arc::clone(&self.counters),
         };
         Ok(Arc::new(BucketScanExec::new(plan, projected)))

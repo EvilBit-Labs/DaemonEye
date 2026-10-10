@@ -196,6 +196,26 @@ async fn residual_nan_is_unknown_under_in() {
 }
 
 #[tokio::test]
+async fn residual_nan_is_unknown_under_between() {
+    // `BETWEEN` plans to its own node, not a `BinaryExpr`; under a total float order NaN would
+    // fall outside every range and `NOT BETWEEN` would admit it.
+    let (inside, half) = run(&catalog(&[], &[]), "cpu_usage BETWEEN 0 AND 50", &CPU_ROWS).await;
+    assert_eq!(half, RESIDUAL);
+    assert_eq!(inside, vec![3]);
+    let (outside, _) = run(
+        &catalog(&[], &[]),
+        "cpu_usage NOT BETWEEN 0 AND 50",
+        &CPU_ROWS,
+    )
+    .await;
+    assert_eq!(
+        outside,
+        vec![1],
+        "NaN is UNKNOWN, so NOT BETWEEN does not admit it"
+    );
+}
+
+#[tokio::test]
 async fn residual_nan_stays_unknown_beneath_not_and_or() {
     let (negated, half) = run(&catalog(&[], &[]), "NOT (cpu_usage > 90)", &CPU_ROWS).await;
     assert_eq!(half, RESIDUAL);

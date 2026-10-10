@@ -40,6 +40,8 @@ pub(super) struct ScanPlan {
     pub(super) limits: ScanLimits,
     /// First bucket id that is still open at plan time.
     pub(super) now_bucket: u64,
+    /// The store's closed-bucket write count at plan time; part of every postings-cache key.
+    pub(super) generation: u64,
     pub(super) counters: Arc<ScanCounters>,
 }
 

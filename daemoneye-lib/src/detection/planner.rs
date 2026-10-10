@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 
 use sqlparser::ast::{
     BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, ObjectName,
-    Select, SelectItem, SetExpr, Statement, TableFactor, Value, Visit, Visitor,
+    Select, SelectItem, SetExpr, Statement, TableFactor, Value, Visit, Visitor, visit_expressions,
 };
 use std::ops::ControlFlow;
 
@@ -70,6 +70,11 @@ pub enum PlanError {
          against the catalog table its CTE shadows"
     )]
     CommonTableExpression,
+    /// The rule contains a subquery, which the executor cannot run.
+    #[error(
+        "the executor cannot run a subquery: the derived SQL sees only the rule's own table, so          this rule is refused at load rather than failing on every cycle"
+    )]
+    Subquery,
 }
 
 /// A rule lowered into the half a collector evaluates and the half the agent keeps (R13).
@@ -192,6 +197,12 @@ pub fn plan_rule(
         .to_owned();
 
     let references = resolve_all_references(catalog, &statement, &table)?;
+
+    // The references above resolve, but the executor plans the residual against a session that
+    // registers no table by name, so a subquery fails at `create_logical_expr` on every cycle.
+    if has_subquery(&statement) {
+        return Err(PlanError::Subquery);
+    }
 
     // R14 first: only top-level conjuncts are candidates, decided without consulting the catalog.
     let conjuncts = select
@@ -475,6 +486,20 @@ fn collect_identifiers<N: Visit>(node: &N) -> BTreeSet<String> {
         return collector.names;
     };
     collector.names
+}
+
+/// Whether any expression in the statement is, or contains, a subquery.
+fn has_subquery(statement: &Statement) -> bool {
+    visit_expressions(statement, |expr| {
+        if matches!(
+            *expr,
+            Expr::Subquery(_) | Expr::InSubquery { .. } | Expr::Exists { .. }
+        ) {
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    })
+    .is_break()
 }
 
 /// Every table the statement names, the outer `FROM` and every subquery alike (R11).

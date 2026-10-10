@@ -492,7 +492,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Commit this cycle's rows before anything evaluates them. A cycle that collected
                 // nothing consumes no ordinal, so the next one stays contiguous for the watermark.
-                let mut ingested_high_water_ms = previous_high_water_ms;
+                let mut window = next_window(previous_high_water_ms, previous_high_water_ms);
                 let mut sequence_gaps = Vec::new();
                 let mut ingest_failure = None;
                 match next_ordinal {
@@ -511,13 +511,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             debug!(
                                 submitted = processes.len(),
-                                high_water_ms = step.high_water_ms,
+                                through_ms = step.window.through_ms,
                                 gaps = step.gaps.len(),
                                 "Ingested cycle"
                             );
                         }
+                        if step.window.after_ms < previous_high_water_ms {
+                            warn!(
+                                after_ms = step.window.after_ms,
+                                mark_ms = previous_high_water_ms,
+                                "Rows were stamped at or before the evaluated mark; the window reaches back and re-evaluates the overlap"
+                            );
+                        }
                         next_ordinal = step.next_ordinal;
-                        ingested_high_water_ms = step.high_water_ms;
+                        window = step.window;
                         sequence_gaps = step.gaps;
                         ingest_failure = step.failure;
                     }
@@ -546,8 +553,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     },
                 );
                 last_saturation_alerts = saturation_now;
-                let window = next_window(previous_high_water_ms, ingested_high_water_ms);
-                previous_high_water_ms = ingested_high_water_ms;
+                previous_high_water_ms = window.through_ms;
                 let cycle = run_detection_cycle(&*detection_engine, &executor, window, &signals).await;
                 if cycle.dropped_after_reeligibility > 0 {
                     warn!(
