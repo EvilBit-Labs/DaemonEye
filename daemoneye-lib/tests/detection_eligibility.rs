@@ -31,12 +31,20 @@ fn descriptor() -> SchemaDescriptor {
         descriptor_version: "v1".to_owned(),
         tables: vec![TableDescriptor {
             name: "processes".to_owned(),
-            columns: vec![ColumnDescriptor {
-                name: "cpu_usage".to_owned(),
-                column_type: i32::from(ColumnType::Int),
-                nullable: false,
-                supported_ops: vec![i32::from(PredicateOp::Gt)],
-            }],
+            columns: vec![
+                ColumnDescriptor {
+                    name: "collection_time".to_owned(),
+                    column_type: i32::from(ColumnType::Int),
+                    nullable: false,
+                    supported_ops: Vec::new(),
+                },
+                ColumnDescriptor {
+                    name: "cpu_usage".to_owned(),
+                    column_type: i32::from(ColumnType::Float),
+                    nullable: false,
+                    supported_ops: vec![i32::from(PredicateOp::Gt)],
+                },
+            ],
         }],
         conformance_results: Vec::new(),
     }

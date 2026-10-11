@@ -33,12 +33,20 @@ fn descriptor() -> SchemaDescriptor {
         descriptor_version: "v1".to_owned(),
         tables: vec![TableDescriptor {
             name: "processes".to_owned(),
-            columns: vec![ColumnDescriptor {
-                name: "cpu_usage".to_owned(),
-                column_type: i32::from(ColumnType::Int),
-                nullable: false,
-                supported_ops: ops.iter().copied().map(i32::from).collect(),
-            }],
+            columns: vec![
+                ColumnDescriptor {
+                    name: "collection_time".to_owned(),
+                    column_type: i32::from(ColumnType::Int),
+                    nullable: false,
+                    supported_ops: Vec::new(),
+                },
+                ColumnDescriptor {
+                    name: "cpu_usage".to_owned(),
+                    column_type: i32::from(ColumnType::Float),
+                    nullable: false,
+                    supported_ops: ops.iter().copied().map(i32::from).collect(),
+                },
+            ],
         }],
         conformance_results: Vec::new(),
     }
@@ -259,7 +267,7 @@ fn two_column_descriptor() -> SchemaDescriptor {
         .collect();
     descriptor.tables[0].columns.push(ColumnDescriptor {
         name: "memory_usage".to_owned(),
-        column_type: i32::from(ColumnType::Int),
+        column_type: i32::from(ColumnType::Uint),
         nullable: false,
         supported_ops: ops,
     });

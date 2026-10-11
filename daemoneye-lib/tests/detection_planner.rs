@@ -32,6 +32,17 @@ fn verified(collector_id: &str) -> VerifiedRegistration {
     verify_spawn_token(collector_id, Some(&token()), Some(&token())).unwrap()
 }
 
+/// A column of the type the encoder really produces for it, for descriptors an engine loads
+/// rules against: the load-time dry run plans over the provider's schema.
+fn float_column(name: &str, ops: &[PredicateOp]) -> ColumnDescriptor {
+    ColumnDescriptor {
+        name: name.to_owned(),
+        column_type: i32::from(ColumnType::Float),
+        nullable: false,
+        supported_ops: ops.iter().copied().map(i32::from).collect(),
+    }
+}
+
 fn int_column(name: &str, ops: &[PredicateOp]) -> ColumnDescriptor {
     ColumnDescriptor {
         name: name.to_owned(),
@@ -47,7 +58,10 @@ fn descriptor(columns: Vec<ColumnDescriptor>) -> SchemaDescriptor {
         descriptor_version: "v1".to_owned(),
         tables: vec![TableDescriptor {
             name: "processes".to_owned(),
-            columns,
+            // Every provider carries the window column; a rule an engine loads is planned over it.
+            columns: std::iter::once(int_column("collection_time", &[]))
+                .chain(columns)
+                .collect(),
         }],
         conformance_results: Vec::new(),
     }
@@ -173,7 +187,7 @@ fn an_advertised_but_unverified_operation_is_treated_as_unverified() {
     catalog
         .register(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 
@@ -387,7 +401,7 @@ fn a_rule_naming_an_unregistered_table_fails_first_load_and_stays_out_of_the_ena
     engine
         .register_collector(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 
@@ -417,7 +431,7 @@ fn a_rule_loaded_before_any_collector_registers_is_deferred_and_planned_on_regis
     engine
         .register_collector(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 
@@ -438,7 +452,7 @@ fn a_deferred_rule_that_cannot_be_planned_is_rejected_on_the_drain_not_marked_un
     engine
         .register_collector(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 
@@ -511,7 +525,7 @@ fn a_rule_planned_against_a_live_catalog_reports_healthy() {
     engine
         .register_collector(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 

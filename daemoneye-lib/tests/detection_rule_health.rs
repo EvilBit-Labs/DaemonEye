@@ -27,15 +27,20 @@ fn descriptor(columns: &[&str]) -> SchemaDescriptor {
         descriptor_version: "v1".to_owned(),
         tables: vec![TableDescriptor {
             name: "processes".to_owned(),
-            columns: columns
-                .iter()
-                .map(|name| ColumnDescriptor {
-                    name: (*name).to_owned(),
-                    column_type: i32::from(ColumnType::String),
-                    nullable: false,
-                    supported_ops: vec![i32::from(PredicateOp::Eq)],
-                })
-                .collect(),
+            // The window column every derived plan reads, then the test's own string columns.
+            columns: std::iter::once(ColumnDescriptor {
+                name: "collection_time".to_owned(),
+                column_type: i32::from(ColumnType::Int),
+                nullable: false,
+                supported_ops: Vec::new(),
+            })
+            .chain(columns.iter().map(|name| ColumnDescriptor {
+                name: (*name).to_owned(),
+                column_type: i32::from(ColumnType::String),
+                nullable: false,
+                supported_ops: vec![i32::from(PredicateOp::Eq)],
+            }))
+            .collect(),
         }],
         conformance_results: Vec::new(),
     }
