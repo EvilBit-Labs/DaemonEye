@@ -170,6 +170,49 @@ pub struct IngestStep {
     pub gaps: Vec<SequenceGap>,
     /// Why this cycle's rows are not durable, when they are not.
     pub failure: Option<String>,
+    /// The furthest `collection_time` this attempt may have committed, whether or not it finished:
+    /// what a [`CarriedFailure`] must outlast.
+    pub rows_through_ms: u64,
+}
+
+/// An ingest failure that outlives its cycle.
+///
+/// A flush can fail after earlier batches of the same attempt committed. The mark does not move,
+/// so a later window evaluates those rows, and that window is as incomplete as the failed cycle
+/// was: rows of the attempt that never committed are missing from it. The failure is therefore
+/// carried, and every window that starts before the attempt's furthest row is degraded by it,
+/// until one reaches that row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarriedFailure {
+    /// The furthest `collection_time` the failed attempt may have committed.
+    pub rows_through_ms: u64,
+    /// The failure as the cycle reported it.
+    pub error: String,
+}
+
+impl CarriedFailure {
+    /// The failure `step` leaves behind, if it failed; otherwise what was carried before.
+    #[must_use]
+    pub fn after(previous: Option<Self>, step: &IngestStep) -> Option<Self> {
+        step.failure.as_ref().map_or(previous, |error| {
+            Some(Self {
+                rows_through_ms: step.rows_through_ms,
+                error: error.clone(),
+            })
+        })
+    }
+
+    /// Whether `window` may hold rows of the failed attempt, so its evaluations are degraded.
+    #[must_use]
+    pub const fn degrades(&self, window: CycleWindow) -> bool {
+        window.after_ms < self.rows_through_ms
+    }
+
+    /// Whether `window` reaches the attempt's furthest row, after which nothing is left to carry.
+    #[must_use]
+    pub const fn is_settled_by(&self, window: CycleWindow) -> bool {
+        window.through_ms >= self.rows_through_ms
+    }
 }
 
 /// Fold one cycle's ingest result into what the next cycle and this cycle's completeness need.
@@ -193,6 +236,7 @@ pub fn ingest_step(
         },
         gaps: outcome.gaps,
         failure: outcome.failure.map(|error| error.to_string()),
+        rows_through_ms: previous_high_water_ms.max(outcome.high_water_ms),
     }
 }
 

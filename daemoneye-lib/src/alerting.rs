@@ -10,7 +10,7 @@
 //! - Rate limiting and deduplication
 //! - Health monitoring for all sinks
 
-use crate::models::Alert;
+use crate::models::{Alert, Completeness};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -131,21 +131,7 @@ impl AlertSink for StdoutSink {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 
-        let output = match self.format {
-            OutputFormat::Json => serde_json::to_string_pretty(alert)?,
-            OutputFormat::Human => format!(
-                "[{}] {} - {}: {}",
-                alert.severity, alert.detection_rule_id, alert.title, alert.description
-            ),
-            OutputFormat::Csv => format!(
-                "{},{},{},{},{}",
-                alert.id,
-                alert.severity,
-                csv_field(&alert.detection_rule_id),
-                csv_field(&alert.title),
-                csv_field(&alert.description)
-            ),
-        };
+        let output = render_alert(&self.format, alert)?;
 
         println!("{output}");
 
@@ -213,21 +199,7 @@ impl AlertSink for FileSink {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 
-        let output = match self.format {
-            OutputFormat::Json => serde_json::to_string_pretty(alert)?,
-            OutputFormat::Human => format!(
-                "[{}] {} - {}: {}",
-                alert.severity, alert.detection_rule_id, alert.title, alert.description
-            ),
-            OutputFormat::Csv => format!(
-                "{},{},{},{},{}",
-                alert.id,
-                alert.severity,
-                csv_field(&alert.detection_rule_id),
-                csv_field(&alert.title),
-                csv_field(&alert.description)
-            ),
-        };
+        let output = render_alert(&self.format, alert)?;
 
         std::fs::OpenOptions::new()
             .create(true)
@@ -661,6 +633,46 @@ impl HealthSummary {
 
 /// `field` quoted for a CSV cell: wrapped in double quotes with any inner quote doubled, so a
 /// comma or quote inside it cannot shift the columns.
+/// One alert in `format`.
+///
+/// Every format carries the completeness marker: an operator reading Human or CSV output must be
+/// able to tell a complete detection from a degraded one, as the JSON reader can.
+fn render_alert(format: &OutputFormat, alert: &Alert) -> Result<String, AlertingError> {
+    Ok(match *format {
+        OutputFormat::Json => serde_json::to_string_pretty(alert)?,
+        OutputFormat::Human => format!(
+            "[{}] {} - {}: {} [{}]",
+            alert.severity,
+            alert.detection_rule_id,
+            alert.title,
+            alert.description,
+            completeness_text(&alert.completeness)
+        ),
+        OutputFormat::Csv => format!(
+            "{},{},{},{},{},{}",
+            alert.id,
+            alert.severity,
+            csv_field(&alert.detection_rule_id),
+            csv_field(&alert.title),
+            csv_field(&alert.description),
+            csv_field(&completeness_text(&alert.completeness))
+        ),
+    })
+}
+
+/// `complete`, or `degraded: <reason>; <reason>`.
+fn completeness_text(completeness: &Completeness) -> String {
+    if completeness.reasons().is_empty() {
+        return "complete".to_owned();
+    }
+    let reasons: Vec<String> = completeness
+        .reasons()
+        .iter()
+        .map(|reason| format!("{reason:?}"))
+        .collect();
+    format!("degraded: {}", reasons.join("; "))
+}
+
 fn csv_field(field: &str) -> String {
     format!("\"{}\"", field.replace('"', "\"\""))
 }
@@ -676,6 +688,53 @@ fn csv_field(field: &str) -> String {
 mod tests {
     use super::*;
     use crate::models::{AlertSeverity, Completeness, ProcessRecord};
+
+    /// Human and CSV output carry the completeness marker, as JSON does through the field.
+    #[test]
+    fn human_and_csv_output_carry_the_completeness_marker() {
+        use crate::models::{AlertSeverity, CompletenessReason, ProcessRecord};
+        let degraded = Completeness::degraded(vec![CompletenessReason::ResultCapped { cap: 3 }])
+            .expect("one reason");
+        let alert = Alert::new(
+            AlertSeverity::High,
+            "Capped",
+            "more matches than the cap",
+            "rule-1",
+            ProcessRecord::new(1, "proc".to_owned()),
+            degraded,
+        );
+        let complete = Alert::new(
+            AlertSeverity::High,
+            "Plain",
+            "a match",
+            "rule-1",
+            ProcessRecord::new(1, "proc".to_owned()),
+            Completeness::complete(),
+        );
+
+        let human = render_alert(&OutputFormat::Human, &alert).expect("renders");
+        assert!(
+            human.ends_with("[degraded: ResultCapped { cap: 3 }]"),
+            "{human}"
+        );
+        assert!(
+            render_alert(&OutputFormat::Human, &complete)
+                .expect("renders")
+                .ends_with("[complete]")
+        );
+
+        let csv = render_alert(&OutputFormat::Csv, &alert).expect("renders");
+        assert_eq!(csv.matches(',').count(), 5, "six columns");
+        assert!(
+            csv.ends_with(",\"degraded: ResultCapped { cap: 3 }\""),
+            "{csv}"
+        );
+        assert!(
+            render_alert(&OutputFormat::Csv, &complete)
+                .expect("renders")
+                .ends_with(",\"complete\"")
+        );
+    }
 
     /// A title carrying a comma or a quote stays one CSV cell.
     #[test]

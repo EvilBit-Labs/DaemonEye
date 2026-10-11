@@ -2,8 +2,9 @@
 
 use clap::Parser;
 use daemoneye_agent::detection_cycle::{
-    PROCMOND_COLLECTOR_ID, build_signals, ingest_cycle, ingest_step, load_persisted_rules,
-    next_cycle_ordinal, next_window, open_event_store, persist_alerts, run_detection_cycle,
+    CarriedFailure, PROCMOND_COLLECTOR_ID, build_signals, ingest_cycle, ingest_step,
+    load_persisted_rules, next_cycle_ordinal, next_window, open_event_store, persist_alerts,
+    run_detection_cycle,
 };
 use daemoneye_lib::detection::execution::completeness::IngestSnapshot;
 use daemoneye_lib::detection::execution::executor::RuleExecutor;
@@ -321,6 +322,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // a crash but never evaluated are not skipped. No mark means nothing is known to have been
     // evaluated: a crash between the first commit and the first mark leaves rows behind, and a
     // window from zero reaches them. A store with no rows pays nothing for it.
+    // An ingest failure outlives its cycle until a window reaches the attempt's furthest row.
+    let mut carried_failure_from_previous_cycle: Option<CarriedFailure> = None;
     let mut previous_high_water_ms = event_store
         .evaluated_through_ms(PROCMOND_COLLECTOR_ID)?
         .unwrap_or(0);
@@ -493,6 +496,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let mut window = next_window(previous_high_water_ms, previous_high_water_ms.max(now_ms));
                 let mut sequence_gaps = Vec::new();
                 let mut ingest_failure = None;
+                let mut carried_failure = carried_failure_from_previous_cycle.take();
                 match next_ordinal {
                     Some(ordinal) if !processes.is_empty() => {
                         let ingested = ingest_cycle(
@@ -523,6 +527,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         next_ordinal = step.next_ordinal;
                         window = step.window;
+                        carried_failure = CarriedFailure::after(carried_failure, &step);
                         sequence_gaps = step.gaps;
                         ingest_failure = step.failure;
                     }
@@ -532,6 +537,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         ingest_failure = Some("cycle ordinal space exhausted".to_owned());
                     }
                 }
+
+                // A failure carried from an earlier cycle degrades every window that may hold rows of
+                // the attempt it came from, and is dropped once a window reaches its furthest row.
+                if let Some(ref carried) = carried_failure
+                    && carried.degrades(window)
+                    && ingest_failure.is_none()
+                {
+                    ingest_failure = Some(carried.error.clone());
+                }
+                carried_failure_from_previous_cycle =
+                    carried_failure.filter(|carried| !carried.is_settled_by(window));
 
                 // Evaluate every eligible rule over what this cycle added to the store.
                 let detection_timer = telemetry::PerformanceTimer::start("detection_execution".to_owned());

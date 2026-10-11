@@ -4,8 +4,8 @@
 
 use chrono::{TimeZone, Utc};
 use daemoneye_agent::detection_cycle::{
-    PROCMOND_COLLECTOR_ID, ingest_cycle, load_persisted_rules, next_cycle_ordinal, next_window,
-    open_event_store, persist_alerts,
+    CarriedFailure, PROCMOND_COLLECTOR_ID, ingest_cycle, load_persisted_rules, next_cycle_ordinal,
+    next_window, open_event_store, persist_alerts,
 };
 use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::models::{
@@ -392,6 +392,22 @@ fn a_failed_ingest_consumes_its_ordinal_and_carries_the_failure() {
     );
     assert_eq!(partly_committed.window, next_window(2_549, 2_600));
     assert!(partly_committed.failure.is_some());
+    assert_eq!(partly_committed.rows_through_ms, 2_700);
+
+    // The failure is carried: every window that starts before the attempt's furthest row is
+    // degraded by it, and the first window reaching that row settles it.
+    let carried = CarriedFailure::after(None, &partly_committed).expect("a failure is carried");
+    assert_eq!(carried.rows_through_ms, 2_700);
+    assert!(carried.degrades(next_window(2_600, 2_600)));
+    assert!(!carried.is_settled_by(next_window(2_600, 2_600)));
+    assert!(carried.degrades(next_window(2_600, 2_800)));
+    assert!(carried.is_settled_by(next_window(2_600, 2_800)));
+    assert!(!carried.degrades(next_window(2_800, 2_900)));
+    assert_eq!(
+        CarriedFailure::after(Some(carried.clone()), &committed),
+        Some(carried),
+        "a clean cycle keeps carrying an earlier failure"
+    );
     assert_eq!(
         ingest_step(
             u32::MAX,
