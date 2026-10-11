@@ -123,10 +123,11 @@ fn insert_record(
     name_idx: &mut MultimapTable<'_, u128, TsSeqKey>,
     ppid_idx: Option<&mut MultimapTable<'_, u32, TsSeqKey>>,
     exe_idx: Option<&mut MultimapTable<'_, u128, TsSeqKey>>,
-    key: (u64, u32),
+    wanted: (u64, u32),
     record: &ProcessRecord,
 ) -> Result<(), StorageError> {
     let bytes = encode_value(record)?;
+    let key = free_key(base, wanted)?;
     base.insert(key, bytes.as_slice())?;
     pid_idx.insert(record.pid.raw(), key)?;
     name_idx.insert(name_hash128(&record.name), key)?;
@@ -141,6 +142,33 @@ fn insert_record(
         index.insert(prefix, key)?;
     }
     Ok(())
+}
+
+/// `key` unless a row already holds it, then the next sequence above the highest stored at that
+/// millisecond.
+///
+/// `seq` is the cycle's row index, so two cycles stamped the same millisecond (a clock step-back
+/// landing on an earlier scan's timestamp) would otherwise overwrite each other's rows. Sequences
+/// at a millisecond only grow, so one above the highest is always free.
+fn free_key(
+    base: &Table<'_, TsSeqKey, &'static [u8]>,
+    key: (u64, u32),
+) -> Result<(u64, u32), StorageError> {
+    if base.get(key)?.is_none() {
+        return Ok(key);
+    }
+    let (ts_ms, _seq) = key;
+    let highest = base
+        .range((ts_ms, 0)..=(ts_ms, u32::MAX))?
+        .next_back()
+        .transpose()?
+        .map_or(0, |(stored, _value)| stored.value().1);
+    let next = highest
+        .checked_add(1)
+        .ok_or_else(|| StorageError::Overflow {
+            context: "event key sequence at one millisecond".to_owned(),
+        })?;
+    Ok((ts_ms, next))
 }
 
 /// Collect the live process-event bucket ids from a read transaction, ascending.
@@ -1296,6 +1324,31 @@ mod tests {
     /// time buckets and checks the postings themselves, not just the row count —
     /// the single-event tests cover routing, but nothing covered the batch
     /// path's index writes.
+    /// Two batches stamped the same millisecond (a clock step-back landing on an earlier scan's
+    /// timestamp) carry the same cycle-local row indexes; both batches' rows must survive.
+    #[test]
+    fn two_batches_stamped_the_same_millisecond_keep_every_row() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = EventStore::new(dir.path().join("same-ms.redb")).expect("create event store");
+        let ts = 1_700_000_000_000_u64;
+        let batch = |ordinal: u64| -> Vec<IngestRecord> {
+            (0..3_u32)
+                .map(|row| {
+                    let mut record = ProcessRecord::new(1, format!("p{ordinal}-{row}"));
+                    record.collection_time =
+                        chrono::DateTime::from_timestamp_millis(i64::try_from(ts).expect("fits"))
+                            .expect("valid");
+                    IngestRecord::new("c", (ordinal << 32) | u64::from(row), row, record)
+                        .expect("record")
+                })
+                .collect()
+        };
+        store.put_batch(&batch(0)).expect("first batch");
+        store.put_batch(&batch(1)).expect("second batch");
+
+        assert_eq!(store.event_count().expect("count"), 6);
+    }
+
     #[test]
     fn event_store_batch_indexes_every_record_across_buckets() {
         let temp_dir = tempdir().expect("Failed to create temp dir");

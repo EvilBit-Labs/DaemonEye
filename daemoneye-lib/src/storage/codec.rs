@@ -6,7 +6,8 @@
 //!    encoding of `(ts_ms: u64, seq: u32)` plus 4 reserved bytes (per spec
 //!    §11.7.8 `RowKey`). Big-endian layout makes a raw byte comparison equal a
 //!    numeric comparison, so [`redb::Key::compare`] is a cheap slice compare.
-//!    The key is unique (via `seq`) and roughly time-ordered, not globally
+//!    The key is unique (via `seq`: the cycle's row index, or one above the highest stored
+//!    at that millisecond when a row already holds it) and roughly time-ordered, not globally
 //!    strictly increasing — a clock step-back stores the true `ts_ms` without
 //!    violating uniqueness.
 //!
