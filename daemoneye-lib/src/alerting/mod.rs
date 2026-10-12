@@ -10,8 +10,10 @@
 //! - Rate limiting and deduplication
 //! - Health monitoring for all sinks
 
+pub mod config;
 pub mod reliability;
 
+pub use config::{CredentialResolver, ResolvedSink, SinkSpec};
 pub use reliability::{
     BreakerState, CircuitBreaker, DeliveryError, DeliveryErrorClass, Permit, RetryPolicy,
 };
@@ -237,6 +239,7 @@ impl AlertSink for FileSink {
 
 /// Output format enumeration with string parsing support.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum OutputFormat {
     Json,
@@ -269,84 +272,8 @@ impl std::fmt::Display for OutputFormat {
     }
 }
 
-/// Configuration for creating alert sinks.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SinkConfig {
-    /// Sink name
-    pub name: String,
-    /// Sink type
-    pub sink_type: String,
-    /// Output format
-    pub format: OutputFormat,
-    /// Additional configuration
-    pub config: HashMap<String, String>,
-}
-
-impl SinkConfig {
-    /// Create a new sink configuration.
-    pub fn new(
-        name: impl Into<String>,
-        sink_type: impl Into<String>,
-        format: OutputFormat,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            sink_type: sink_type.into(),
-            format,
-            config: HashMap::new(),
-        }
-    }
-
-    /// Add a configuration parameter.
-    #[must_use]
-    pub fn with_config(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.config.insert(key.into(), value.into());
-        self
-    }
-}
-
-/// Factory for creating alert sinks based on configuration.
+/// Placeholder for sink construction, which lands with the sinks themselves.
 pub struct AlertSinkFactory;
-
-impl AlertSinkFactory {
-    /// Create an alert sink from configuration.
-    pub fn create_sink(config: SinkConfig) -> Result<Box<dyn AlertSink>, AlertingError> {
-        match config.sink_type.as_str() {
-            "stdout" => {
-                let sink = StdoutSink::new(config.name, config.format);
-                Ok(Box::new(sink))
-            }
-            "file" => {
-                let file_path = config
-                    .config
-                    .get("path")
-                    .ok_or_else(|| {
-                        AlertingError::ConfigurationError(
-                            "File path is required for file sink".to_owned(),
-                        )
-                    })?
-                    .clone();
-
-                let sink = FileSink::new(config.name, file_path.into(), config.format);
-                Ok(Box::new(sink))
-            }
-            _ => Err(AlertingError::UnknownSinkType {
-                sink_type: config.sink_type,
-            }),
-        }
-    }
-
-    /// Create multiple sinks from a list of configurations.
-    pub fn create_sinks(
-        configs: Vec<SinkConfig>,
-    ) -> Result<Vec<Box<dyn AlertSink>>, AlertingError> {
-        let mut sinks = Vec::new();
-        for config in configs {
-            sinks.push(Self::create_sink(config)?);
-        }
-        Ok(sinks)
-    }
-}
 
 /// Alert manager for coordinating delivery to multiple sinks.
 pub struct AlertManager {
@@ -367,30 +294,9 @@ impl AlertManager {
         }
     }
 
-    /// Create an alert manager with sinks from configurations.
-    pub fn from_configs(configs: Vec<SinkConfig>) -> Result<Self, AlertingError> {
-        let sinks = AlertSinkFactory::create_sinks(configs)?;
-        Ok(Self {
-            sinks,
-            dedup_window_seconds: 300,
-            max_alerts_per_minute: None,
-            recent_alerts: std::collections::HashMap::new(),
-        })
-    }
-
     /// Add an alert sink.
     pub fn add_sink(&mut self, sink: Box<dyn AlertSink>) {
         self.sinks.push(sink);
-    }
-
-    /// Add multiple sinks from configurations.
-    pub fn add_sinks_from_configs(
-        &mut self,
-        configs: Vec<SinkConfig>,
-    ) -> Result<(), AlertingError> {
-        let sinks = AlertSinkFactory::create_sinks(configs)?;
-        self.sinks.extend(sinks);
-        Ok(())
     }
 
     /// Set the deduplication window.
@@ -849,46 +755,6 @@ mod tests {
         assert!("invalid".parse::<OutputFormat>().is_err());
     }
 
-    #[test]
-    fn test_sink_config_creation() {
-        let config =
-            SinkConfig::new("test-sink", "stdout", OutputFormat::Json).with_config("level", "info");
-
-        assert_eq!(config.name, "test-sink");
-        assert_eq!(config.sink_type, "stdout");
-        assert_eq!(config.format, OutputFormat::Json);
-        assert_eq!(config.config.get("level"), Some(&"info".to_owned()));
-    }
-
-    #[test]
-    fn test_alert_sink_factory() {
-        let config = SinkConfig::new("test-sink", "stdout", OutputFormat::Json);
-        let sink = AlertSinkFactory::create_sink(config).expect("Failed to create alert sink");
-        assert_eq!(sink.name(), "test-sink");
-    }
-
-    #[test]
-    fn test_alert_sink_factory_unknown_type() {
-        let config = SinkConfig::new("test-sink", "unknown", OutputFormat::Json);
-        let result = AlertSinkFactory::create_sink(config);
-        assert!(result.is_err());
-        if let Err(AlertingError::UnknownSinkType { sink_type }) = result {
-            assert_eq!(sink_type, "unknown");
-        } else {
-            assert!(
-                false,
-                "Expected UnknownSinkType error in test_alert_sink_factory_unknown_type, got non-UnknownSinkType result"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn test_alert_manager_from_configs() {
-        let configs = vec![SinkConfig::new("stdout", "stdout", OutputFormat::Json)];
-        let manager = AlertManager::from_configs(configs).expect("Failed to create alert manager");
-        assert_eq!(manager.get_sinks().len(), 1);
-    }
-
     #[tokio::test]
     async fn test_health_summary() {
         let mut manager = AlertManager::new();
@@ -986,29 +852,6 @@ mod tests {
             let error_string = format!("{}", error);
             assert!(!error_string.is_empty());
         }
-    }
-
-    #[test]
-    fn test_sink_config_with_config() {
-        let mut config = SinkConfig::new("test", "stdout", OutputFormat::Json);
-        config = config.with_config("key1", "value1");
-        config = config.with_config("key2", "value2");
-
-        assert_eq!(config.config.get("key1"), Some(&"value1".to_owned()));
-        assert_eq!(config.config.get("key2"), Some(&"value2".to_owned()));
-    }
-
-    #[test]
-    fn test_sink_config_serialization() {
-        let config =
-            SinkConfig::new("test", "stdout", OutputFormat::Json).with_config("level", "info");
-
-        let json = serde_json::to_string(&config).expect("Failed to serialize sink config");
-        let deserialized: SinkConfig =
-            serde_json::from_str(&json).expect("Failed to deserialize sink config");
-        assert_eq!(config.name, deserialized.name);
-        assert_eq!(config.sink_type, deserialized.sink_type);
-        assert_eq!(config.format, deserialized.format);
     }
 
     #[tokio::test]
