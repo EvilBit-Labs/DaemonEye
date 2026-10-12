@@ -4,10 +4,10 @@
 
 use chrono::{TimeZone, Utc};
 use daemoneye_agent::detection_cycle::{
-    CarriedFailure, PROCMOND_COLLECTOR_ID, enqueue_alerts, ingest_cycle, load_persisted_rules,
+    CarriedFailure, PROCMOND_COLLECTOR_ID, enrich_and_enqueue, ingest_cycle, load_persisted_rules,
     next_cycle_ordinal, next_window, open_event_store,
 };
-use daemoneye_lib::alerting::{AlertManager, NoopPublisher};
+use daemoneye_lib::alerting::{AlertManager, EnrichContext, NoopPublisher};
 use daemoneye_lib::config::AlertingConfig;
 use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::models::{
@@ -24,6 +24,13 @@ const BASE_MS: u64 = 36_000_000;
 struct Fx {
     _dir: TempDir,
     store: Arc<EventStore>,
+}
+
+fn ctx() -> EnrichContext {
+    EnrichContext {
+        hostname: "test-host".to_owned(),
+        agent_version: "0.0.0".to_owned(),
+    }
 }
 
 fn fx() -> Fx {
@@ -281,7 +288,10 @@ async fn persisted_alerts_keep_their_completeness() {
     .await
     .unwrap();
 
-    assert_eq!(enqueue_alerts(&manager, &alerts).await, 2);
+    assert_eq!(
+        enrich_and_enqueue(&fx.store, &manager, &alerts, &ctx()).await,
+        2
+    );
 
     let stored = fx.store.get_all_alerts().unwrap();
     assert_eq!(stored.len(), 2);

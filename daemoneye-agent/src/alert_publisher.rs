@@ -8,6 +8,7 @@ use daemoneye_lib::alerting::{AlertManager, AlertPublisher, PublishError};
 use daemoneye_lib::alerting::{ExternalAlert, IncludeFlags};
 use daemoneye_lib::models::Alert;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -81,6 +82,21 @@ impl WakeSubscriber {
         if let Err(error) = self.broker.unsubscribe(self.id).await {
             tracing::warn!(%error, "alert wake unsubscribe failed");
         }
+    }
+}
+
+/// Stop alert delivery ahead of the bus.
+///
+/// Workers get `drain` to finish in-flight sends (the rest stay `Retrying` for the next start),
+/// then the wake subscription is dropped. The caller shuts the broker down afterwards.
+pub async fn shutdown_alert_delivery(
+    manager: &AlertManager,
+    wake: Option<WakeSubscriber>,
+    drain: Duration,
+) {
+    manager.shutdown(drain).await;
+    if let Some(subscriber) = wake {
+        subscriber.shutdown().await;
     }
 }
 

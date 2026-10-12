@@ -2,10 +2,11 @@
 
 use clap::Parser;
 use daemoneye_agent::alert_publisher::{self, BrokerPublisher, spawn_wake_subscriber};
+use daemoneye_agent::alert_sinks::build_sinks;
 use daemoneye_agent::detection_cycle::{
-    CarriedFailure, PROCMOND_COLLECTOR_ID, build_signals, enqueue_alerts, ingest_cycle,
-    ingest_step, load_persisted_rules, next_cycle_ordinal, next_window, open_event_store,
-    run_detection_cycle,
+    CarriedFailure, MS_PER_DAY, PROCMOND_COLLECTOR_ID, RETENTION_SWEEP, build_signals,
+    enrich_and_enqueue, ingest_cycle, ingest_step, load_persisted_rules, next_cycle_ordinal,
+    next_window, open_event_store, run_detection_cycle, run_retention_sweep,
 };
 use daemoneye_lib::detection::execution::completeness::IngestSnapshot;
 use daemoneye_lib::detection::execution::executor::RuleExecutor;
@@ -304,13 +305,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         warn!("Event bus unavailable; stored alerts will not be published");
         Arc::new(alerting::NoopPublisher)
     };
+    // Refuses startup when an enabled sink names a credential variable that is unset or empty.
+    daemoneye_sinks::ensure_crypto_provider();
+    let alert_sinks = build_sinks(&config.alerting, &alerting::CredentialResolver::from_env())?;
+    let enrich_context = alerting::EnrichContext {
+        hostname: sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_owned()),
+        agent_version: env!("CARGO_PKG_VERSION").to_owned(),
+    };
+    let retention_ms = u64::from(config.database.retention_days).saturating_mul(MS_PER_DAY);
+    let mut last_retention_sweep = Instant::now();
     let alert_manager = Arc::new(
         alerting::AlertManager::start(
             Arc::clone(&event_store),
-            vec![Box::new(alerting::StdoutSink::new(
-                "stdout".to_owned(),
-                alerting::OutputFormat::Json,
-            ))],
+            alert_sinks,
             &config.alerting,
             alert_publisher,
             alert_cancel_rx,
@@ -607,7 +614,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     info!(count = alerts.len(), "Generated alerts");
                 }
                 // Every alert is stored with its delivery rows, so its completeness marker is readable later.
-                let stored_alerts = enqueue_alerts(&alert_manager, &alerts).await;
+                let stored_alerts = enrich_and_enqueue(&event_store, &alert_manager, &alerts, &enrich_context).await;
                 if stored_alerts != alerts.len() {
                     warn!(
                         stored = stored_alerts,
@@ -631,9 +638,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Update telemetry with rough resource usage snapshot (placeholder zeros for now)
                 telemetry.update_resource_usage(0.0, 0);
+                if last_retention_sweep.elapsed() >= RETENTION_SWEEP {
+                    last_retention_sweep = Instant::now();
+                    let sweep_store = Arc::clone(&event_store);
+                    match tokio::task::spawn_blocking(move || run_retention_sweep(&sweep_store, now_ms, retention_ms)).await {
+                        Ok(Ok((buckets, delivery_rows))) => {
+                            info!(buckets, delivery_rows, "Retention sweep complete");
+                        }
+                        Ok(Err(e)) => warn!(error = %e, "Retention sweep failed"),
+                        Err(e) => warn!(error = %e, "Retention sweep task failed"),
+                    }
+                }
                 if iteration.is_multiple_of(10) { // periodic health check every 10 iterations
                     let h = telemetry.health_check();
                     info!(status=%h.status, "Telemetry health check");
+                    log_delivery_health(&alert_manager);
 
                     // Check broker health
                     let broker_health = broker_manager.health_check().await;
@@ -685,11 +704,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Alert workers first: in-flight sends finish (or stay `Retrying`) before the bus goes.
     info!("Shutting down alert delivery");
-    alert_manager.shutdown(alerting::SHUTDOWN_DRAIN).await;
+    alert_publisher::shutdown_alert_delivery(
+        &alert_manager,
+        wake_subscriber,
+        alerting::SHUTDOWN_DRAIN,
+    )
+    .await;
     drop(alert_cancel);
-    if let Some(subscriber) = wake_subscriber {
-        subscriber.shutdown().await;
-    }
 
     // Gracefully shutdown both services in parallel
     info!("Shutting down IPC server and embedded EventBus broker");
@@ -713,4 +734,24 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("daemoneye-agent shutdown complete.")
     };
     Ok(())
+}
+
+/// Log the alert delivery roll-up: aggregate, per-sink breaker and dead-letter counts, store and
+/// publish failures (R23).
+fn log_delivery_health(manager: &alerting::AlertManager) {
+    let health = manager.health();
+    let aggregate = format!("{:?}", health.aggregate);
+    let (store_failures, publish_failures) = (health.store_failures, health.publish_failures);
+    info!(
+        aggregate,
+        store_failures, publish_failures, "Alert delivery health"
+    );
+    for sink in &health.sinks {
+        let (name, breaker) = (sink.name.as_str(), format!("{:?}", sink.breaker));
+        let (dead_letters, delivered) = (sink.dead_letters, sink.delivered);
+        info!(
+            sink = name,
+            breaker, dead_letters, delivered, "Alert sink health"
+        );
+    }
 }
