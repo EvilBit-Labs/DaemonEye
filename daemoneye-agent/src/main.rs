@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
+use daemoneye_agent::alert_publisher::{self, BrokerPublisher, spawn_wake_subscriber};
 use daemoneye_agent::detection_cycle::{
     CarriedFailure, PROCMOND_COLLECTOR_ID, build_signals, enqueue_alerts, ingest_cycle,
     ingest_step, load_persisted_rules, next_cycle_ordinal, next_window, open_event_store,
@@ -287,17 +288,40 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Alert delivery: one worker per sink over the event store's outbox.
     let (alert_cancel, alert_cancel_rx) = tokio::sync::watch::channel(false);
-    let alert_manager = alerting::AlertManager::start(
-        Arc::clone(&event_store),
-        vec![Box::new(alerting::StdoutSink::new(
-            "stdout".to_owned(),
-            alerting::OutputFormat::Json,
-        ))],
-        &config.alerting,
-        Arc::new(alerting::NoopPublisher),
-        alert_cancel_rx,
-    )
-    .await?;
+    let alert_broker = broker_manager
+        .event_bus()
+        .lock()
+        .await
+        .as_ref()
+        .map(|bus| Arc::clone(bus.broker()));
+    let alert_publisher: Arc<dyn alerting::AlertPublisher> = if let Some(ref broker) = alert_broker
+    {
+        Arc::new(BrokerPublisher::new(
+            Arc::clone(broker),
+            alert_publisher::masked_projection,
+        ))
+    } else {
+        warn!("Event bus unavailable; stored alerts will not be published");
+        Arc::new(alerting::NoopPublisher)
+    };
+    let alert_manager = Arc::new(
+        alerting::AlertManager::start(
+            Arc::clone(&event_store),
+            vec![Box::new(alerting::StdoutSink::new(
+                "stdout".to_owned(),
+                alerting::OutputFormat::Json,
+            ))],
+            &config.alerting,
+            alert_publisher,
+            alert_cancel_rx,
+        )
+        .await?,
+    );
+    let wake_subscriber = if let Some(broker) = alert_broker {
+        Some(spawn_wake_subscriber(broker, Arc::clone(&alert_manager)).await?)
+    } else {
+        None
+    };
 
     // Indicate startup success before entering main loop
     #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
@@ -663,6 +687,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     info!("Shutting down alert delivery");
     alert_manager.shutdown(alerting::SHUTDOWN_DRAIN).await;
     drop(alert_cancel);
+    if let Some(subscriber) = wake_subscriber {
+        subscriber.shutdown().await;
+    }
 
     // Gracefully shutdown both services in parallel
     info!("Shutting down IPC server and embedded EventBus broker");

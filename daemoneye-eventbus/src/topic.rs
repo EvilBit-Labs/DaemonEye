@@ -518,6 +518,9 @@ impl TopicRegistry {
         );
         self.access_control
             .insert("events.+.metadata".to_owned(), TopicAccessLevel::Restricted);
+        // Stored alerts reach in-process subscribers only, never transport clients.
+        self.access_control
+            .insert("events.alert.new".to_owned(), TopicAccessLevel::Restricted);
 
         // Privileged topics (authenticated only)
         self.access_control.insert(
@@ -620,6 +623,15 @@ impl TopicRegistry {
 
         // Default to restricted access
         TopicAccessLevel::Restricted
+    }
+
+    /// Whether `pattern` matches any exact topic the registry lists as restricted
+    pub fn pattern_matches_restricted(&self, pattern: &TopicPattern) -> bool {
+        self.access_control
+            .iter()
+            .filter(|&(_, level)| *level == TopicAccessLevel::Restricted)
+            .filter_map(|(name, _)| Topic::new(name).ok())
+            .any(|topic| pattern.matches(&topic))
     }
 
     /// Get all publishers for a component
@@ -848,5 +860,20 @@ mod tests {
         // Test subscriber and topic counts
         assert_eq!(matcher.get_subscriber_count(), 3);
         assert_eq!(matcher.get_topic_count(), 1); // Only one topic has stats
+    }
+
+    #[test]
+    fn alert_topic_is_valid_and_restricted_and_bare_alerts_is_rejected() {
+        assert!(Topic::new("alerts").is_err());
+        assert!(Topic::new("events.alert.new").is_ok());
+        assert_eq!(
+            TopicRegistry::new().get_access_level("events.alert.new"),
+            TopicAccessLevel::Restricted
+        );
+        let registry = TopicRegistry::new();
+        let all = TopicPattern::new("events.#").unwrap();
+        let process = TopicPattern::new("events.process.#").unwrap();
+        assert!(registry.pattern_matches_restricted(&all));
+        assert!(!registry.pattern_matches_restricted(&process));
     }
 }

@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod alert_publisher;
 pub mod broker_manager;
 pub mod collector_admission;
 pub mod collector_config;

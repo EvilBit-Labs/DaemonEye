@@ -60,6 +60,20 @@ pub mod process {
     }
 }
 
+/// Event topics for stored alerts (in-process subscribers only)
+pub mod alert {
+    /// A stored alert, published as its serialised projection
+    pub const NEW: &str = "events.alert.new";
+
+    /// Wildcard pattern for all alert events
+    pub const ALL: &str = "events.alert.#";
+
+    /// Get all alert event topics
+    pub fn all_topics() -> Vec<&'static str> {
+        vec![NEW]
+    }
+}
+
 /// Event topics for network monitoring (future extension)
 pub mod network {
     /// Network connection events
@@ -1080,5 +1094,12 @@ mod tests {
         let topic2 = TopicHierarchy::validate_topic(health::HEARTBEAT).unwrap();
         assert!(pattern.matches(&topic1));
         assert!(pattern.matches(&topic2));
+    }
+
+    #[test]
+    fn alert_new_is_listed_in_alert_topics() {
+        assert!(alert::all_topics().contains(&alert::NEW));
+        assert_eq!(alert::NEW, "events.alert.new");
+        assert!(Topic::new(alert::NEW).is_ok());
     }
 }
