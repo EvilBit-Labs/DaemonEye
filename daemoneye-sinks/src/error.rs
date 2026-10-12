@@ -7,7 +7,7 @@ use daemoneye_lib::alerting::{DeliveryError, DeliveryErrorClass};
 use std::error::Error as StdError;
 
 /// Whether a rustls error means the peer's certificate was not accepted.
-const fn is_certificate_error(error: &rustls::Error) -> bool {
+pub const fn is_certificate_error(error: &rustls::Error) -> bool {
     matches!(
         *error,
         rustls::Error::InvalidCertificate(_) | rustls::Error::NoCertificatesPresented
@@ -15,7 +15,7 @@ const fn is_certificate_error(error: &rustls::Error) -> bool {
 }
 
 /// The first rustls error in `error`'s source chain, if any.
-fn tls_cause<'a>(error: &'a (dyn StdError + 'static)) -> Option<&'a rustls::Error> {
+pub fn tls_cause<'a>(error: &'a (dyn StdError + 'static)) -> Option<&'a rustls::Error> {
     let mut current = Some(error);
     while let Some(err) = current {
         if let Some(found) = err.downcast_ref::<rustls::Error>() {
@@ -59,4 +59,19 @@ pub fn classify_reqwest(error: &reqwest::Error) -> DeliveryError {
         };
     }
     transient(DeliveryErrorClass::Io)
+}
+
+/// Classify a failed TLS handshake or stream error.
+pub fn classify_tls_io(error: &std::io::Error) -> DeliveryError {
+    if let Some(tls) = tls_cause(error) {
+        return if is_certificate_error(tls) {
+            DeliveryError::tls_verification()
+        } else {
+            DeliveryError::Transient {
+                class: DeliveryErrorClass::Tls,
+                retry_after: None,
+            }
+        };
+    }
+    DeliveryError::from(std::io::Error::from(error.kind()))
 }

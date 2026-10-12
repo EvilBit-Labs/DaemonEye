@@ -6,12 +6,18 @@
 
 #![forbid(unsafe_code)]
 
+mod email;
 mod error;
+mod syslog;
 mod webhook;
 
 use daemoneye_lib::alerting::{AlertSink, AlertingError, ResolvedSink, SinkBuilder, SinkSpec};
 use daemoneye_lib::config::DeliveryConfig;
 
+pub use email::EmailSink;
+#[doc(hidden)]
+pub use email::TlsKind;
+pub use syslog::SyslogSink;
 pub use webhook::WebhookSink;
 
 /// The [`SinkBuilder`] the agent registers for webhook, syslog and email sinks.
@@ -30,12 +36,8 @@ impl SinkBuilder for NetworkSinkBuilder {
     ) -> Result<Box<dyn AlertSink>, AlertingError> {
         match resolved.spec {
             SinkSpec::Webhook(_) => Ok(Box::new(WebhookSink::new(resolved, delivery)?)),
-            SinkSpec::Syslog(_) => Err(AlertingError::ConfigurationError(
-                "syslog sink lands in a later unit".to_owned(),
-            )),
-            SinkSpec::Email(_) => Err(AlertingError::ConfigurationError(
-                "email sink lands in a later unit".to_owned(),
-            )),
+            SinkSpec::Syslog(_) => Ok(Box::new(SyslogSink::new(resolved, delivery)?)),
+            SinkSpec::Email(_) => Ok(Box::new(EmailSink::new(resolved, delivery)?)),
             _ => Err(AlertingError::ConfigurationError(
                 "not a network sink".to_owned(),
             )),

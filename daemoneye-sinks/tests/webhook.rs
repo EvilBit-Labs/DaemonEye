@@ -312,7 +312,7 @@ async fn health_check_uses_head() {
 }
 
 #[test]
-fn builder_builds_webhook_and_refuses_unbuilt_types() {
+fn builder_builds_webhook_and_syslog_sinks() {
     let built = AlertSinkFactory::build(
         &resolved(spec("http://127.0.0.1:1/hook".to_owned())),
         &delivery(),
@@ -344,5 +344,5 @@ fn builder_builds_webhook_and_refuses_unbuilt_types() {
         &delivery(),
         Some(&NetworkSinkBuilder),
     );
-    assert!(matches!(result, Err(AlertingError::ConfigurationError(_))));
+    assert_eq!(result.unwrap().name(), "sys");
 }

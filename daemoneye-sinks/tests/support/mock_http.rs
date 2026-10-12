@@ -78,6 +78,11 @@ pub struct TestPki {
 
 impl TestPki {
     pub fn generate() -> Self {
+        Self::generate_for(&["localhost", "127.0.0.1"])
+    }
+
+    /// Like [`Self::generate`], with a leaf valid only for `names`.
+    pub fn generate_for(names: &[&str]) -> Self {
         let ca_key = rcgen::KeyPair::generate().expect("ca key");
         let mut ca_params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
         ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -87,9 +92,10 @@ impl TestPki {
         let ca = ca_params.self_signed(&ca_key).expect("ca cert");
 
         let leaf_key = rcgen::KeyPair::generate().expect("leaf key");
-        let leaf_params =
-            rcgen::CertificateParams::new(vec!["localhost".to_owned(), "127.0.0.1".to_owned()])
-                .expect("leaf params");
+        let leaf_params = rcgen::CertificateParams::new(
+            names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>(),
+        )
+        .expect("leaf params");
         let leaf = leaf_params
             .signed_by(&leaf_key, &ca, &ca_key)
             .expect("leaf cert");
@@ -107,7 +113,7 @@ impl TestPki {
         path
     }
 
-    fn acceptor(&self) -> TlsAcceptor {
+    pub fn acceptor(&self) -> TlsAcceptor {
         let cert = rustls::pki_types::CertificateDer::from(self.leaf_der.clone());
         let key = rustls::pki_types::PrivateKeyDer::try_from(self.key_der.clone()).expect("key");
         let config = rustls::ServerConfig::builder()
