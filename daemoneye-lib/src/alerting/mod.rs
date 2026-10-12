@@ -10,6 +10,12 @@
 //! - Rate limiting and deduplication
 //! - Health monitoring for all sinks
 
+pub mod reliability;
+
+pub use reliability::{
+    BreakerState, CircuitBreaker, DeliveryError, DeliveryErrorClass, Permit, RetryPolicy,
+};
+
 use crate::models::{Alert, Completeness};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
