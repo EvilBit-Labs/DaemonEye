@@ -36,6 +36,8 @@ daemoneye-eventbus = { workspace = true }
 
 # Internal library
 daemoneye-lib      = { workspace = true }
+# Network alert sinks; the agent is the only crate allowed to link the TLS stack
+daemoneye-sinks    = { workspace = true }
 
 serde      = { workspace = true }
 serde_json = { workspace = true }
