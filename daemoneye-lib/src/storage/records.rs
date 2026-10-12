@@ -12,7 +12,7 @@
 //! The functions take a `&Database` and own a single transaction each; the
 //! [`super::EventStore`] facade methods delegate here.
 
-use crate::models::{Alert, DetectionRule};
+use crate::models::{Alert, DetectionRule, Uuid};
 use crate::storage::ScanMetadata;
 use crate::storage::codec::{decode_value, encode_value};
 use crate::storage::error::StorageError;
@@ -23,7 +23,20 @@ use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 const RULES_TABLE: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("detection_rules");
 
 /// `alerts` — alert uuid (string) → versioned `Alert`.
-const ALERTS_TABLE: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("alerts");
+pub(super) const ALERTS_TABLE: TableDefinition<'static, &str, &[u8]> =
+    TableDefinition::new("alerts");
+
+/// `alert_deliveries` — `"{sink}\u{1f}{alert_id}"` → versioned `DeliveryRecord`. Agent-owned.
+pub(super) const ALERT_DELIVERIES_TABLE: TableDefinition<'static, &str, &[u8]> =
+    TableDefinition::new("alert_deliveries");
+
+/// Separator between sink and alert id in a delivery key.
+pub(super) const DELIVERY_KEY_SEP: char = '\u{1f}';
+
+/// The `alert_deliveries` key for one sink and alert.
+pub(super) fn delivery_key(sink: &str, alert_id: Uuid) -> String {
+    format!("{sink}{DELIVERY_KEY_SEP}{alert_id}")
+}
 
 /// `scans` — scan id → versioned `ScanMetadata` (now carrying host identity, U9).
 const SCANS_TABLE: TableDefinition<'static, &str, &[u8]> = TableDefinition::new("scans");
@@ -46,7 +59,7 @@ fn put_record<T: serde::Serialize>(
 
 /// Point-lookup a record by key, decoding the version-tagged value. A
 /// not-yet-created table reads as "absent", not an error.
-fn get_record<T: serde::de::DeserializeOwned>(
+pub(super) fn get_record<T: serde::de::DeserializeOwned>(
     db: &Database,
     table: TableDefinition<'static, &str, &[u8]>,
     key: &str,
@@ -156,5 +169,38 @@ mod tests {
             get_rule(&db, "k").is_err(),
             "point lookup must surface the decode error"
         );
+    }
+
+    fn golden_record() -> crate::models::DeliveryRecord {
+        use crate::models::{AlertSeverity, DeliveryReason, DeliveryState};
+        crate::models::DeliveryRecord {
+            state: DeliveryState::DeadLettered,
+            reason: Some(DeliveryReason::Permanent),
+            severity: AlertSeverity::High,
+            attempts: 3,
+            redrives: 1,
+            last_error: Some("http_503".to_owned()),
+            enqueued_at_ms: 1000,
+            next_attempt_ms: 2000,
+            terminal_at_ms: Some(3000),
+            suppressed_by: Some(Uuid::from_u128(0x0102_0304_0506_0708_090a_0b0c_0d0e_0f10)),
+            deduplication_key: "k".to_owned(),
+        }
+    }
+
+    /// Pins the V1 wire format: a later field needs a codec V2 decoder, and these bytes keep decoding.
+    const GOLDEN_V1: [u8; 44] = [
+        0x01, 0x03, 0x01, 0x01, 0x02, 0x03, 0x01, 0x01, 0x08, 0x68, 0x74, 0x74, 0x70, 0x5f, 0x35,
+        0x30, 0x33, 0xe8, 0x07, 0xd0, 0x0f, 0x01, 0xb8, 0x17, 0x01, 0x10, 0x01, 0x02, 0x03, 0x04,
+        0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x01, 0x6b,
+    ];
+
+    #[test]
+    fn delivery_record_v1_encoding_is_pinned() {
+        let encoded = encode_value(&golden_record()).unwrap();
+        assert_eq!(encoded, GOLDEN_V1);
+
+        let decoded: crate::models::DeliveryRecord = decode_value(&GOLDEN_V1).unwrap();
+        assert_eq!(decoded, golden_record());
     }
 }

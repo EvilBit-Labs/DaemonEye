@@ -48,6 +48,9 @@ use super::codec::TsSeqKey;
 /// On-disk schema version understood by this binary. Bump only when the stored
 /// value format changes incompatibly — the rebuild path handles the transition.
 ///
+/// A new table needs no bump: it reads as empty until first written. A new field on an existing
+/// record needs a new codec version with its own decoder, never a schema bump.
+///
 /// 2: `Alert` gained `completeness`, so a version-1 store's alerts no longer decode.
 pub const SCHEMA_VERSION: u32 = 2;
 

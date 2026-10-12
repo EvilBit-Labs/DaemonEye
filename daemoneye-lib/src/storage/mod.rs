@@ -20,6 +20,7 @@
 
 mod bucket;
 mod codec;
+mod deliveries;
 mod error;
 mod index;
 pub mod ingest;
@@ -41,6 +42,9 @@ pub mod read;
 mod records;
 pub mod schema;
 
+pub use deliveries::{
+    Claimed, CompleteOutcome, DeliveryExpectation, EnqueueReport, OpenDeliveries,
+};
 pub use error::StorageError;
 pub use schema::{
     BundleManifest, BundleSigner, GapRecord, MigrationReport, SCHEMA_VERSION, SchemaClassification,
@@ -48,7 +52,7 @@ pub use schema::{
 };
 
 use crate::config::{DatabaseConfig, MIB};
-use crate::models::{Alert, DetectionRule, ProcessRecord, SystemInfo};
+use crate::models::{Alert, DeliveryRecord, DetectionRule, ProcessRecord, SystemInfo, Uuid};
 use bucket::{
     bucket_id, bucket_table_name, choose_granularity, parse_bucket_name, retention_cutoff,
 };
@@ -611,6 +615,103 @@ impl EventStore {
     /// Fetch an alert by its uuid string.
     pub fn get_alert(&self, id: &str) -> Result<Option<Alert>, StorageError> {
         records::get_alert(&self.db, id)
+    }
+
+    /// Write `alert` and one delivery row per sink in a single transaction.
+    ///
+    /// Writes nothing and returns [`EnqueueReport::AlreadyEnqueued`] when any `(sink, alert)`
+    /// row already exists. With `suppressed_by` set every row is a terminal duplicate of that
+    /// alert; otherwise a sink at `max_open_rows_per_sink` open rows dead-letters the new row
+    /// (`QueueFull`), unless the alert is High or Critical and a strictly lower-severity
+    /// `Pending` row can be displaced instead.
+    pub fn enqueue_alert(
+        &self,
+        alert: &Alert,
+        sinks: &[&str],
+        suppressed_by: Option<Uuid>,
+        max_open_rows_per_sink: usize,
+        now_ms: u64,
+    ) -> Result<EnqueueReport, StorageError> {
+        deliveries::enqueue_alert(
+            &self.db,
+            alert,
+            sinks,
+            suppressed_by,
+            max_open_rows_per_sink,
+            now_ms,
+        )
+    }
+
+    /// Fetch one delivery row in any state.
+    pub fn get_delivery(
+        &self,
+        sink: &str,
+        alert_id: Uuid,
+    ) -> Result<Option<DeliveryRecord>, StorageError> {
+        deliveries::get_delivery(&self.db, sink, alert_id)
+    }
+
+    /// Non-terminal rows of `sink`, oldest enqueue first; undecodable rows are counted.
+    pub fn open_deliveries(&self, sink: &str) -> Result<OpenDeliveries, StorageError> {
+        deliveries::open_deliveries(&self.db, sink)
+    }
+
+    /// Claim a `Pending` or `Retrying` row: `Retrying`, `attempts + 1`, `next_attempt_ms = now_ms`.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::DeliveryStale`] when the row is missing or not claimable.
+    pub fn claim(&self, sink: &str, alert_id: Uuid, now_ms: u64) -> Result<Claimed, StorageError> {
+        deliveries::claim(&self.db, sink, alert_id, now_ms)
+    }
+
+    /// Replace a row only if it still matches `expected`.
+    pub fn complete(
+        &self,
+        sink: &str,
+        alert_id: Uuid,
+        expected: DeliveryExpectation,
+        new: &DeliveryRecord,
+    ) -> Result<CompleteOutcome, StorageError> {
+        deliveries::complete(&self.db, sink, alert_id, expected, new)
+    }
+
+    /// Dead-lettered rows of `sink`, oldest terminal first.
+    pub fn dead_letters(&self, sink: &str) -> Result<Vec<(Uuid, DeliveryRecord)>, StorageError> {
+        deliveries::dead_letters(&self.db, sink)
+    }
+
+    /// Move up to `limit` of the oldest dead letters back to `Pending`; rows at `max_redrives`
+    /// stay dead-lettered with `RedrivesExhausted` and do not count toward `limit`.
+    pub fn redrive_batch(
+        &self,
+        sink: &str,
+        limit: usize,
+        max_redrives: u32,
+        now_ms: u64,
+    ) -> Result<usize, StorageError> {
+        deliveries::redrive_batch(&self.db, sink, limit, max_redrives, now_ms)
+    }
+
+    /// Remove dead letters of `sink` beyond `keep`, lowest severity then oldest first.
+    pub fn evict_dead_letters(&self, sink: &str, keep: usize) -> Result<usize, StorageError> {
+        deliveries::evict_dead_letters(&self.db, sink, keep)
+    }
+
+    /// Delete terminal rows (any sink) that went terminal more than `retention_ms` ago.
+    /// Alerts and non-terminal rows are never touched.
+    pub fn prune_deliveries(&self, now_ms: u64, retention_ms: u64) -> Result<usize, StorageError> {
+        deliveries::prune_deliveries(&self.db, now_ms, retention_ms)
+    }
+
+    /// `(deduplication_key, enqueued_at_ms)`, newest per key, for alerts enqueued within
+    /// `window_ms` that have at least one row that was not a suppressed duplicate.
+    pub fn seed_dedup_window(
+        &self,
+        now_ms: u64,
+        window_ms: u64,
+    ) -> Result<Vec<(String, u64)>, StorageError> {
+        deliveries::seed_dedup_window(&self.db, now_ms, window_ms)
     }
 
     /// Fetch every persisted alert.
