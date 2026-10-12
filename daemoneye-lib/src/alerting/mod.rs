@@ -17,6 +17,7 @@ pub mod enrich;
 mod factory;
 mod health;
 pub mod reliability;
+mod render;
 
 pub use config::{CredentialResolver, ResolvedSink, SinkSpec};
 pub use delivery::{
@@ -29,6 +30,7 @@ pub use health::{DeliveryAggregate, DeliveryHealth, SinkHealthSnapshot};
 pub use reliability::{
     BreakerState, CircuitBreaker, DeliveryError, DeliveryErrorClass, Permit, RetryPolicy,
 };
+pub use render::{ExternalAlert, IncludeFlags, sanitise_control};
 
 use crate::models::{Alert, Completeness};
 use async_trait::async_trait;

@@ -6,6 +6,43 @@
 
 #![forbid(unsafe_code)]
 
+mod error;
+mod webhook;
+
+use daemoneye_lib::alerting::{AlertSink, AlertingError, ResolvedSink, SinkBuilder, SinkSpec};
+use daemoneye_lib::config::DeliveryConfig;
+
+pub use webhook::WebhookSink;
+
+/// The [`SinkBuilder`] the agent registers for webhook, syslog and email sinks.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NetworkSinkBuilder;
+
+impl SinkBuilder for NetworkSinkBuilder {
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "SinkSpec is non_exhaustive; local specs never reach this builder"
+    )]
+    fn build(
+        &self,
+        resolved: &ResolvedSink,
+        delivery: &DeliveryConfig,
+    ) -> Result<Box<dyn AlertSink>, AlertingError> {
+        match resolved.spec {
+            SinkSpec::Webhook(_) => Ok(Box::new(WebhookSink::new(resolved, delivery)?)),
+            SinkSpec::Syslog(_) => Err(AlertingError::ConfigurationError(
+                "syslog sink lands in a later unit".to_owned(),
+            )),
+            SinkSpec::Email(_) => Err(AlertingError::ConfigurationError(
+                "email sink lands in a later unit".to_owned(),
+            )),
+            _ => Err(AlertingError::ConfigurationError(
+                "not a network sink".to_owned(),
+            )),
+        }
+    }
+}
+
 /// Install `ring` as the process-wide rustls crypto provider.
 ///
 /// Both `reqwest` and `lettre` read the process default; neither bundles a provider

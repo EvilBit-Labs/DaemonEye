@@ -139,6 +139,8 @@ prost-types = "0.14.4"
 # could affect integrity decisions.
 quick_cache = "=0.7.0"
 rand = "0.10.2"
+# Test-only: generates the throwaway CA the TLS sink tests trust; `ring` keeps aws-lc-rs out.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 # Exact-pinned: HTTP client for the webhook alert sink. `rustls-no-provider` (not
 # `rustls`, which hard-enables aws-lc-rs) plus the `ring` provider installed by the
 # agent; no HTTP/2, no system proxy, no charset decoding, no native-tls.
