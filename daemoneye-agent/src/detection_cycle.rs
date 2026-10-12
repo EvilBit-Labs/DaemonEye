@@ -1,6 +1,6 @@
 //! The agent's half of a detection cycle: ingest what was collected, load the
-//! rules that were persisted, evaluate them through the executor, persist the alerts that were
-//! delivered.
+//! rules that were persisted, evaluate them through the executor, enqueue the alerts for
+//! delivery.
 //!
 //! These are free functions over their dependencies so tests build them over a `tempfile` store.
 //!
@@ -12,6 +12,7 @@
 //! stored on its own: it is the high half of the watermark the event store commits with the rows,
 //! so it can never drift from the data it protects.
 
+use daemoneye_lib::alerting::{AlertManager, EnqueueOutcome};
 use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::detection::execution::completeness::{
     CollectorHealth, CycleSignals, EvaluationSummary, IngestSnapshot,
@@ -282,19 +283,27 @@ pub fn load_persisted_rules(
     Ok(loaded)
 }
 
-/// Persist every alert, returning how many were stored.
+/// Enqueue every alert for delivery, returning how many are durable.
 ///
-/// Storing the alert keeps its completeness marker readable later without a second write path. A
-/// failure on one alert is logged with its id and does not stop the rest.
-pub fn persist_alerts(store: &EventStore, alerts: &[Alert]) -> usize {
-    let mut stored = 0_usize;
+/// Enqueuing stores the alert (keeping its completeness marker readable later) and one delivery
+/// row per sink. An enqueued, already-enqueued or suppressed alert counts as persisted. One the
+/// store would not take is delivered once to the local sinks only, and does not count.
+pub async fn enqueue_alerts(manager: &AlertManager, alerts: &[Alert]) -> usize {
+    let mut persisted = 0_usize;
     for alert in alerts {
-        match store.store_alert(alert) {
-            Ok(()) => stored = stored.saturating_add(1),
-            Err(error) => warn!(alert_id = %alert.id, error = %error, "persisting an alert failed"),
+        match manager.enqueue(alert).await {
+            EnqueueOutcome::Enqueued
+            | EnqueueOutcome::AlreadyEnqueued
+            | EnqueueOutcome::SuppressedDuplicate { .. } => {
+                persisted = persisted.saturating_add(1);
+            }
+            EnqueueOutcome::NotPersisted | _ => {
+                warn!(alert_id = %alert.id, "alert not persisted; delivering to local sinks only");
+                manager.deliver_unpersisted(alert).await;
+            }
         }
     }
-    stored
+    persisted
 }
 
 /// Open the event store, turning a schema mismatch into an error that says how to recover.

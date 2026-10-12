@@ -434,7 +434,7 @@ pub(super) fn seed_dedup_window(
     db: &Database,
     now_ms: u64,
     window_ms: u64,
-) -> Result<Vec<(String, u64)>, StorageError> {
+) -> Result<Vec<(String, u64, Uuid)>, StorageError> {
     let cutoff = now_ms.saturating_sub(window_ms);
     // alert id -> (dedup key, enqueued_at_ms, has a row that was not suppressed)
     let mut alerts: BTreeMap<Uuid, (String, u64, bool)> = BTreeMap::new();
@@ -451,12 +451,17 @@ pub(super) fn seed_dedup_window(
             .or_insert_with(|| (row.deduplication_key.clone(), row.enqueued_at_ms, false));
         entry.2 |= live;
     }
-    let mut newest: BTreeMap<String, u64> = BTreeMap::new();
-    for (dedup_key, enqueued_at_ms, live) in alerts.into_values() {
+    let mut newest: BTreeMap<String, (u64, Uuid)> = BTreeMap::new();
+    for (id, (dedup_key, enqueued_at_ms, live)) in alerts {
         if live {
-            let slot = newest.entry(dedup_key).or_insert(enqueued_at_ms);
-            *slot = (*slot).max(enqueued_at_ms);
+            let slot = newest.entry(dedup_key).or_insert((enqueued_at_ms, id));
+            if enqueued_at_ms > slot.0 {
+                *slot = (enqueued_at_ms, id);
+            }
         }
     }
-    Ok(newest.into_iter().collect())
+    Ok(newest
+        .into_iter()
+        .map(|(key, (at_ms, id))| (key, at_ms, id))
+        .collect())
 }

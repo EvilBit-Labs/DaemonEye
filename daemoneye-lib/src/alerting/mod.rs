@@ -7,13 +7,25 @@
 //! - Factory pattern for creating alert sinks
 //! - Comprehensive error handling with specific error types
 //! - Concurrent alert delivery with proper error isolation
-//! - Rate limiting and deduplication
+//! - Durable outbox delivery with retry, circuit breaking and dead-lettering
+//! - Deduplication window and paced delivery
 //! - Health monitoring for all sinks
 
 pub mod config;
+mod delivery;
+pub mod enrich;
+mod factory;
+mod health;
 pub mod reliability;
 
 pub use config::{CredentialResolver, ResolvedSink, SinkSpec};
+pub use delivery::{
+    AlertManager, AlertPublisher, EnqueueOutcome, NoopPublisher, PublishError, REDRIVE_BATCH,
+    SHUTDOWN_DRAIN,
+};
+pub use enrich::{EnrichContext, enrich};
+pub use factory::{AlertSinkFactory, SinkBuilder};
+pub use health::{DeliveryAggregate, DeliveryHealth, SinkHealthSnapshot};
 pub use reliability::{
     BreakerState, CircuitBreaker, DeliveryError, DeliveryErrorClass, Permit, RetryPolicy,
 };
@@ -61,6 +73,10 @@ pub enum AlertingError {
 
     #[error("Unknown sink type: {sink_type}")]
     UnknownSinkType { sink_type: String },
+
+    /// A classified delivery failure from a sink.
+    #[error("Delivery failed: {0}")]
+    Delivery(#[from] DeliveryError),
 }
 
 /// Alert delivery result.
@@ -90,6 +106,17 @@ pub trait AlertSink: Send + Sync {
 
     /// Check if the sink is healthy.
     async fn health_check(&self) -> Result<(), AlertingError>;
+
+    /// Whether the sink stays on the host. Local sinks never trip a circuit breaker and receive
+    /// alerts the store could not persist.
+    fn is_local(&self) -> bool {
+        false
+    }
+
+    /// Whether the sink cannot confirm receipt, so a delivery is only a send.
+    fn is_fire_and_forget(&self) -> bool {
+        false
+    }
 }
 
 /// Standard output alert sink.
@@ -158,6 +185,10 @@ impl AlertSink for StdoutSink {
     async fn health_check(&self) -> Result<(), AlertingError> {
         // stdout is always available
         Ok(())
+    }
+
+    fn is_local(&self) -> bool {
+        true
     }
 }
 
@@ -235,6 +266,10 @@ impl AlertSink for FileSink {
             .open(&self.file_path)?;
         Ok(())
     }
+
+    fn is_local(&self) -> bool {
+        true
+    }
 }
 
 /// Output format enumeration with string parsing support.
@@ -269,245 +304,6 @@ impl std::fmt::Display for OutputFormat {
             Self::Human => write!(f, "human"),
             Self::Csv => write!(f, "csv"),
         }
-    }
-}
-
-/// Placeholder for sink construction, which lands with the sinks themselves.
-pub struct AlertSinkFactory;
-
-/// Alert manager for coordinating delivery to multiple sinks.
-pub struct AlertManager {
-    sinks: Vec<Box<dyn AlertSink>>,
-    dedup_window_seconds: u64,
-    max_alerts_per_minute: Option<u32>,
-    recent_alerts: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
-}
-
-impl AlertManager {
-    /// Create a new alert manager.
-    pub fn new() -> Self {
-        Self {
-            sinks: Vec::new(),
-            dedup_window_seconds: 300, // 5 minutes
-            max_alerts_per_minute: None,
-            recent_alerts: std::collections::HashMap::new(),
-        }
-    }
-
-    /// Add an alert sink.
-    pub fn add_sink(&mut self, sink: Box<dyn AlertSink>) {
-        self.sinks.push(sink);
-    }
-
-    /// Set the deduplication window.
-    pub const fn set_dedup_window(&mut self, seconds: u64) {
-        self.dedup_window_seconds = seconds;
-    }
-
-    /// Set the maximum alerts per minute rate limit.
-    pub const fn set_rate_limit(&mut self, max_per_minute: Option<u32>) {
-        self.max_alerts_per_minute = max_per_minute;
-    }
-
-    /// Send an alert to all configured sinks with improved error handling.
-    pub async fn send_alert(
-        &mut self,
-        alert: &Alert,
-    ) -> Result<Vec<DeliveryResult>, AlertingError> {
-        // Check deduplication
-        if self.is_duplicate(alert) {
-            return Ok(vec![]);
-        }
-
-        // Check rate limiting
-        if self.is_rate_limited() {
-            return Err(AlertingError::RateLimitExceeded(
-                "Alert rate limit exceeded".to_owned(),
-            ));
-        }
-
-        // Record the alert for deduplication
-        self.record_alert(alert);
-
-        // Send to all sinks in parallel with proper error isolation
-        let mut tasks = Vec::new();
-        for sink in &self.sinks {
-            let sink_ref = sink.as_ref();
-            let alert_clone = alert.clone();
-            let sink_name = sink.name().to_owned();
-            tasks.push(async move {
-                match sink_ref.send(&alert_clone).await {
-                    Ok(result) => Ok((sink_name, result)),
-                    Err(e) => Err((sink_name, e)),
-                }
-            });
-        }
-
-        let results = futures::future::join_all(tasks).await;
-        let mut delivery_results = Vec::new();
-        let mut errors = Vec::new();
-
-        for result in results {
-            match result {
-                Ok((_sink_name, delivery_result)) => {
-                    delivery_results.push(delivery_result);
-                }
-                Err((sink_name, error)) => {
-                    errors.push((sink_name, error));
-                }
-            }
-        }
-
-        // Log errors but don't fail the entire operation
-        if !errors.is_empty() {
-            for (sink_name, error) in errors {
-                eprintln!("Alert delivery failed for sink {sink_name}: {error}");
-            }
-        }
-
-        Ok(delivery_results)
-    }
-
-    /// Returns true if the given alert's deduplication key was seen within the manager's deduplication window.
-    ///
-    /// This checks `recent_alerts` for `alert.deduplication_key` and compares the stored timestamp to
-    /// the current time using `dedup_window_seconds`.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use daemoneye_lib::alerting::{AlertManager, AlertSink, StdoutSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
-    ///
-    /// let mut mgr = AlertManager::new();
-    /// mgr.add_sink(Box::new(StdoutSink::new("s".to_owned(), OutputFormat::Json)));
-    /// let alert = Alert::new(
-    ///     AlertSeverity::Low, "Title", "Desc", "rule-1",
-    ///     ProcessRecord::new(1, "proc".to_owned()), Completeness::complete(),
-    /// );
-    /// let rt = tokio::runtime::Runtime::new().unwrap();
-    /// let first = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
-    /// let second = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
-    /// assert!(first.len() >= 0);
-    /// assert_eq!(second.len(), 0); // duplicate suppressed
-    /// ```
-    fn is_duplicate(&self, alert: &Alert) -> bool {
-        self.recent_alerts
-            .get(&alert.deduplication_key)
-            .is_some_and(|last_seen| {
-                let now = chrono::Utc::now();
-                let time_diff = now.signed_duration_since(*last_seen);
-                time_diff.num_seconds()
-                    < i64::try_from(self.dedup_window_seconds).unwrap_or(i64::MAX)
-            })
-    }
-
-    /// Check if we're rate limited.
-    #[allow(clippy::arithmetic_side_effects)]
-    fn is_rate_limited(&self) -> bool {
-        self.max_alerts_per_minute.is_some_and(|max_per_minute| {
-            let now = chrono::Utc::now();
-            let one_minute_ago = now
-                .checked_sub_signed(chrono::Duration::minutes(1))
-                .unwrap_or(now);
-
-            let recent_count = self
-                .recent_alerts
-                .values()
-                .filter(|&&timestamp| timestamp > one_minute_ago)
-                .count();
-
-            recent_count >= usize::try_from(max_per_minute).unwrap_or(usize::MAX)
-        })
-    }
-
-    /// Record the given alert for deduplication and rate-limiting.
-    ///
-    /// Inserts or updates the alert's `deduplication_key` in the manager's
-    /// `recent_alerts` map with the current UTC timestamp. When the map grows
-    /// beyond 1000 entries this function prunes entries older than one hour to
-    /// bound memory usage.
-    ///
-    /// This is used by the sending pipeline to (1) detect duplicates within the
-    /// configured deduplication window and (2) help enforce rate limits.
-    ///
-    /// # Examples
-    ///
-    /// ```text
-    /// // Internal helper used by AlertManager; prefer using `send_alert` which records alerts automatically.
-    /// ```
-    fn record_alert(&mut self, alert: &Alert) {
-        self.recent_alerts
-            .insert(alert.deduplication_key.clone(), chrono::Utc::now());
-
-        // Clean up old entries periodically
-        if self.recent_alerts.len() > 1000 {
-            #[allow(clippy::arithmetic_side_effects)]
-            let cutoff = chrono::Utc::now()
-                .checked_sub_signed(chrono::Duration::hours(1))
-                .unwrap_or_else(chrono::Utc::now);
-            self.recent_alerts
-                .retain(|_, &mut timestamp| timestamp > cutoff);
-        }
-    }
-
-    /// Get all configured sinks.
-    pub fn get_sinks(&self) -> &[Box<dyn AlertSink>] {
-        &self.sinks
-    }
-
-    /// Perform health checks on all sinks with detailed error reporting.
-    pub async fn health_check(&self) -> HashMap<String, Result<(), AlertingError>> {
-        let mut results = HashMap::new();
-
-        for sink in &self.sinks {
-            let sink_name = sink.name().to_owned();
-            let health_result =
-                sink.health_check()
-                    .await
-                    .map_err(|e| AlertingError::HealthCheckFailed {
-                        sink: sink_name.clone(),
-                        error: e.to_string(),
-                    });
-            results.insert(sink_name, health_result);
-        }
-
-        results
-    }
-
-    /// Get health status summary for all sinks.
-    pub async fn health_summary(&self) -> HealthSummary {
-        let health_results = self.health_check().await;
-        let total_sinks = health_results.len();
-        let healthy_sinks = health_results
-            .values()
-            .filter(|result| result.is_ok())
-            .count();
-        let unhealthy_sinks = total_sinks.saturating_sub(healthy_sinks);
-
-        let details = health_results
-            .into_iter()
-            .map(|(sink_name, result)| {
-                let status = match result {
-                    Ok(()) => "healthy".to_owned(),
-                    Err(e) => format!("unhealthy: {e}"),
-                };
-                (sink_name, status)
-            })
-            .collect();
-
-        HealthSummary {
-            total_sinks,
-            healthy_sinks,
-            unhealthy_sinks,
-            details,
-        }
-    }
-}
-
-impl Default for AlertManager {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -673,66 +469,6 @@ mod tests {
         assert_eq!(result.sink_name, "test");
     }
 
-    #[tokio::test]
-    async fn test_alert_manager() {
-        let mut manager = AlertManager::new();
-        let stdout_sink = Box::new(StdoutSink::new("stdout".to_owned(), OutputFormat::Json));
-        manager.add_sink(stdout_sink);
-
-        let process = ProcessRecord::new(1234, "test-process".to_owned());
-        let alert = Alert::new(
-            AlertSeverity::High,
-            "Test Alert",
-            "This is a test alert",
-            "test-rule",
-            process,
-            Completeness::complete(),
-        );
-
-        let results = manager
-            .send_alert(&alert)
-            .await
-            .expect("Failed to send alert");
-        assert_eq!(results.len(), 1);
-        assert_eq!(
-            results
-                .first()
-                .expect("Expected at least one result")
-                .sink_name,
-            "stdout"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_deduplication() {
-        let mut manager = AlertManager::new();
-        let stdout_sink = Box::new(StdoutSink::new("stdout".to_owned(), OutputFormat::Json));
-        manager.add_sink(stdout_sink);
-
-        let process = ProcessRecord::new(1234, "test-process".to_owned());
-        let alert = Alert::new(
-            AlertSeverity::High,
-            "Test Alert",
-            "This is a test alert",
-            "test-rule",
-            process,
-            Completeness::complete(),
-        );
-
-        // Send the same alert twice
-        let results1 = manager
-            .send_alert(&alert)
-            .await
-            .expect("Failed to send first alert");
-        let results2 = manager
-            .send_alert(&alert)
-            .await
-            .expect("Failed to send second alert");
-
-        assert_eq!(results1.len(), 1);
-        assert_eq!(results2.len(), 0); // Should be deduplicated
-    }
-
     #[test]
     fn test_output_format_parsing() {
         assert_eq!(
@@ -753,20 +489,6 @@ mod tests {
             OutputFormat::Csv
         );
         assert!("invalid".parse::<OutputFormat>().is_err());
-    }
-
-    #[tokio::test]
-    async fn test_health_summary() {
-        let mut manager = AlertManager::new();
-        let stdout_sink = Box::new(StdoutSink::new("stdout".to_owned(), OutputFormat::Json));
-        manager.add_sink(stdout_sink);
-
-        let summary = manager.health_summary().await;
-        assert_eq!(summary.total_sinks, 1);
-        assert_eq!(summary.healthy_sinks, 1);
-        assert_eq!(summary.unhealthy_sinks, 0);
-        assert!(summary.is_all_healthy());
-        assert_eq!(summary.health_percentage(), 100.0);
     }
 
     #[test]
@@ -852,36 +574,5 @@ mod tests {
             let error_string = format!("{}", error);
             assert!(!error_string.is_empty());
         }
-    }
-
-    #[tokio::test]
-    async fn test_alert_manager_empty() {
-        let manager = AlertManager::new();
-        assert_eq!(manager.get_sinks().len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_alert_manager_multiple_sinks() {
-        let mut manager = AlertManager::new();
-        let sink1 = Box::new(StdoutSink::new("sink1".to_owned(), OutputFormat::Json));
-        let sink2 = Box::new(StdoutSink::new("sink2".to_owned(), OutputFormat::Human));
-        manager.add_sink(sink1);
-        manager.add_sink(sink2);
-
-        assert_eq!(manager.get_sinks().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_alert_manager_health_summary_multiple_sinks() {
-        let mut manager = AlertManager::new();
-        let sink1 = Box::new(StdoutSink::new("sink1".to_owned(), OutputFormat::Json));
-        let sink2 = Box::new(StdoutSink::new("sink2".to_owned(), OutputFormat::Human));
-        manager.add_sink(sink1);
-        manager.add_sink(sink2);
-
-        let summary = manager.health_summary().await;
-        assert_eq!(summary.total_sinks, 2);
-        assert_eq!(summary.healthy_sinks, 2);
-        assert_eq!(summary.unhealthy_sinks, 0);
     }
 }

@@ -503,5 +503,8 @@ fn seed_returns_keys_with_a_live_row_and_skips_all_suppressed_and_stale_alerts()
 
     let seeded = store.seed_dedup_window(1_000, 500).unwrap();
 
-    assert_eq!(seeded, vec![(delivered.deduplication_key, 900)]);
+    assert_eq!(
+        seeded,
+        vec![(delivered.deduplication_key, 900, delivered.id)]
+    );
 }

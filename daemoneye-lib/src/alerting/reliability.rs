@@ -4,6 +4,7 @@
 //! caller owns synchronisation. Time comes from `tokio::time` so tests run
 //! under paused time.
 
+pub use crate::models::DeliveryErrorClass;
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -15,41 +16,6 @@ const MAX_BACKOFF_SHIFT: u32 = 31;
 const SMTP_AUTH_FAILED: u16 = 535;
 const HTTP_REQUEST_TIMEOUT: u16 = 408;
 const HTTP_TOO_MANY_REQUESTS: u16 = 429;
-
-/// What went wrong, without free text. Safe to log and serialise.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum DeliveryErrorClass {
-    Connect,
-    Timeout,
-    Tls,
-    TlsVerification,
-    HttpStatus(u16),
-    SmtpStatus(u16),
-    Protocol,
-    Io,
-    Payload,
-    Recipient,
-    Auth,
-}
-
-impl fmt::Display for DeliveryErrorClass {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Self::Connect => f.write_str("connect"),
-            Self::Timeout => f.write_str("timeout"),
-            Self::Tls => f.write_str("tls"),
-            Self::TlsVerification => f.write_str("tls verification"),
-            Self::HttpStatus(code) => write!(f, "http status {code}"),
-            Self::SmtpStatus(code) => write!(f, "smtp status {code}"),
-            Self::Protocol => f.write_str("protocol"),
-            Self::Io => f.write_str("io"),
-            Self::Payload => f.write_str("payload"),
-            Self::Recipient => f.write_str("recipient"),
-            Self::Auth => f.write_str("auth"),
-        }
-    }
-}
 
 /// Outcome of a failed delivery attempt.
 ///
@@ -189,7 +155,7 @@ impl RetryPolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub enum BreakerState {
     Closed,

@@ -175,6 +175,20 @@ fn free_key(
     Ok((ts_ms, next))
 }
 
+/// Epoch milliseconds of a record's start, falling back to its collection time when the start is
+/// unknown. Pre-epoch values clamp to 0.
+#[must_use]
+pub fn effective_start_ms(record: &ProcessRecord) -> u64 {
+    record.start_time.map_or_else(
+        || u64::try_from(record.collection_time.timestamp_millis()).unwrap_or(0),
+        |start| {
+            start
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        },
+    )
+}
+
 /// Collect the live process-event bucket ids from a read transaction, ascending.
 fn collect_bucket_ids(txn: &ReadTransaction) -> Result<Vec<u64>, StorageError> {
     let mut ids: Vec<u64> = txn
@@ -477,6 +491,36 @@ impl EventStore {
         Ok(out)
     }
 
+    /// The newest record for `pid` whose effective start ([`effective_start_ms`]) is not later
+    /// than `not_after_ms`, or `None`. Scans buckets newest-first and stops at the first hit, so
+    /// a recycled pid cannot name a process that started after `not_after_ms`.
+    pub fn latest_by_pid(
+        &self,
+        pid: u32,
+        not_after_ms: u64,
+    ) -> Result<Option<ProcessRecord>, StorageError> {
+        let txn = self.db.begin_read()?;
+        for id in collect_bucket_ids(&txn)?.into_iter().rev() {
+            let idx = match txn.open_multimap_table(u32_index_def(&pid_index_name(id))) {
+                Ok(idx) => idx,
+                Err(redb::TableError::TableDoesNotExist(_)) => continue,
+                Err(other) => return Err(other.into()),
+            };
+            let base = txn.open_table(bucket_def(&bucket_table_name(id)))?;
+            for posting in idx.get(pid)?.rev() {
+                let key = posting?.value();
+                let Some(guard) = base.get(key)? else {
+                    continue;
+                };
+                let record: ProcessRecord = decode_value(guard.value())?;
+                if effective_start_ms(&record) <= not_after_ms {
+                    return Ok(Some(record));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// All process records whose `name` matches, across every live bucket. The
     /// `idx:name` index is keyed by a 128-bit hash, so each candidate posting is
     /// verified against the primary row's exact name before inclusion — this is
@@ -704,13 +748,13 @@ impl EventStore {
         deliveries::prune_deliveries(&self.db, now_ms, retention_ms)
     }
 
-    /// `(deduplication_key, enqueued_at_ms)`, newest per key, for alerts enqueued within
+    /// `(deduplication_key, enqueued_at_ms, alert_id)`, newest per key, for alerts enqueued within
     /// `window_ms` that have at least one row that was not a suppressed duplicate.
     pub fn seed_dedup_window(
         &self,
         now_ms: u64,
         window_ms: u64,
-    ) -> Result<Vec<(String, u64)>, StorageError> {
+    ) -> Result<Vec<(String, u64, Uuid)>, StorageError> {
         deliveries::seed_dedup_window(&self.db, now_ms, window_ms)
     }
 

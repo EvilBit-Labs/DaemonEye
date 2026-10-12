@@ -12,7 +12,7 @@ pub mod rule;
 // Re-export the main types for convenience
 pub use alert::{Alert, AlertContext, AlertError, AlertId, AlertSeverity};
 pub use completeness::{Completeness, CompletenessError, CompletenessReason, CompletenessStatus};
-pub use delivery::{DeliveryReason, DeliveryRecord, DeliveryState};
+pub use delivery::{DeliveryErrorClass, DeliveryReason, DeliveryRecord, DeliveryState};
 pub use process::{ProcessError, ProcessId, ProcessRecord, ProcessStatus, SystemInfo};
 pub use rule::{DetectionRule, RuleError, RuleId, RuleMetadata};
 

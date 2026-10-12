@@ -2,8 +2,8 @@
 
 use clap::Parser;
 use daemoneye_agent::detection_cycle::{
-    CarriedFailure, PROCMOND_COLLECTOR_ID, build_signals, ingest_cycle, ingest_step,
-    load_persisted_rules, next_cycle_ordinal, next_window, open_event_store, persist_alerts,
+    CarriedFailure, PROCMOND_COLLECTOR_ID, build_signals, enqueue_alerts, ingest_cycle,
+    ingest_step, load_persisted_rules, next_cycle_ordinal, next_window, open_event_store,
     run_detection_cycle,
 };
 use daemoneye_lib::detection::execution::completeness::IngestSnapshot;
@@ -285,13 +285,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     drop(startup_engine);
     info!(loaded_rules = loaded, "Loaded persisted detection rules");
 
-    // Initialize alert manager
-    let mut alert_manager = alerting::AlertManager::new();
-    let stdout_sink = Box::new(alerting::StdoutSink::new(
-        "stdout".to_owned(),
-        alerting::OutputFormat::Json,
-    ));
-    alert_manager.add_sink(stdout_sink);
+    // Alert delivery: one worker per sink over the event store's outbox.
+    let (alert_cancel, alert_cancel_rx) = tokio::sync::watch::channel(false);
+    let alert_manager = alerting::AlertManager::start(
+        Arc::clone(&event_store),
+        vec![Box::new(alerting::StdoutSink::new(
+            "stdout".to_owned(),
+            alerting::OutputFormat::Json,
+        ))],
+        &config.alerting,
+        Arc::new(alerting::NoopPublisher),
+        alert_cancel_rx,
+    )
+    .await?;
 
     // Indicate startup success before entering main loop
     #[allow(clippy::print_stdout, clippy::semicolon_if_nothing_returned)]
@@ -576,19 +582,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if !alerts.is_empty() {
                     info!(count = alerts.len(), "Generated alerts");
                 }
-                for alert in &alerts {
-                    match alert_manager.send_alert(alert).await {
-                        Ok(results) => {
-                            if results.is_empty() { warn!("Alert generated but no sinks succeeded"); }
-                        }
-                        Err(e) => {
-                            error!(error=?e, "Failed to deliver alert");
-                            telemetry.record_error();
-                        }
-                    }
-                }
-                // Every delivered alert is also stored, so its completeness marker is readable later.
-                let stored_alerts = persist_alerts(&event_store, &alerts);
+                // Every alert is stored with its delivery rows, so its completeness marker is readable later.
+                let stored_alerts = enqueue_alerts(&alert_manager, &alerts).await;
                 if stored_alerts != alerts.len() {
                     warn!(
                         stored = stored_alerts,
@@ -663,6 +658,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    // Alert workers first: in-flight sends finish (or stay `Retrying`) before the bus goes.
+    info!("Shutting down alert delivery");
+    alert_manager.shutdown(alerting::SHUTDOWN_DRAIN).await;
+    drop(alert_cancel);
 
     // Gracefully shutdown both services in parallel
     info!("Shutting down IPC server and embedded EventBus broker");

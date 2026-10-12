@@ -12,13 +12,15 @@
     clippy::missing_const_for_fn
 )]
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use daemoneye_lib::alerting::{AlertManager, AlertSink, DeliveryResult};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use daemoneye_lib::alerting::{AlertManager, AlertSink, DeliveryResult, NoopPublisher};
+use daemoneye_lib::config::AlertingConfig;
 use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord, ProcessStatus};
+use daemoneye_lib::storage::EventStore;
 use std::hint::black_box;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use tokio::sync::Mutex;
+use tokio::sync::watch;
 
 /// Mock alert sink for benchmarking
 #[derive(Debug, Clone)]
@@ -157,112 +159,106 @@ fn bench_alert_creation(c: &mut Criterion) {
     group.finish();
 }
 
+/// A started manager over a temp store; the guards keep the store and the cancellation alive.
+struct Rig {
+    _dir: tempfile::TempDir,
+    _cancel: watch::Sender<bool>,
+    manager: AlertManager,
+}
+
+fn start_rig(rt: &Runtime, sinks: &[MockAlertSink]) -> Rig {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(EventStore::new(dir.path().join("bench.redb")).unwrap());
+    let (cancel, cancel_rx) = watch::channel(false);
+    let boxed: Vec<Box<dyn AlertSink>> = sinks
+        .iter()
+        .map(|sink| Box::new(sink.clone()) as Box<dyn AlertSink>)
+        .collect();
+    let manager = rt
+        .block_on(AlertManager::start(
+            Arc::clone(&store),
+            boxed,
+            &AlertingConfig::default(),
+            Arc::new(NoopPublisher),
+            cancel_rx,
+        ))
+        .unwrap();
+    Rig {
+        _dir: dir,
+        _cancel: cancel,
+        manager,
+    }
+}
+
+/// An alert whose deduplication key is unique to `i`, so none is suppressed.
+fn alert_number(i: usize) -> Alert {
+    Alert::new(
+        AlertSeverity::Low,
+        format!("Alert {}", i),
+        format!("Alert message {}", i),
+        format!("rule_{}", i),
+        ProcessRecord::builder()
+            .pid_raw(i as u32)
+            .name(format!("process_{}", i))
+            .status(ProcessStatus::Running)
+            .build()
+            .unwrap(),
+        Completeness::complete(),
+    )
+}
+
 /// Benchmark alert manager operations
 fn bench_alert_manager_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("alert_manager_operations");
 
     let rt = Runtime::new().unwrap();
-
-    group.bench_function("create_alert_manager", |b| {
-        b.iter(|| {
-            let start = std::time::Instant::now();
-
-            let _sinks = [
-                Arc::new(MockAlertSink::new("sink1".to_string(), 0.9, 10)),
-                Arc::new(MockAlertSink::new("sink2".to_string(), 0.8, 15)),
-                Arc::new(MockAlertSink::new("sink3".to_string(), 0.95, 5)),
-            ];
-
-            let manager = AlertManager::new();
-            let duration = start.elapsed();
-
-            black_box((manager, duration))
-        });
-    });
-
-    // Create sink and register with manager
-    let sink = MockAlertSink::new("sink1".to_string(), 1.0, 10);
-    let mut manager = AlertManager::new();
-    manager.add_sink(Box::new(sink));
-    let alert = Alert::new(
-        AlertSeverity::High,
-        "Test alert",
-        "Test alert message",
-        "test_rule",
-        ProcessRecord::builder()
-            .pid_raw(1234)
-            .name("test_process".to_string())
-            .status(ProcessStatus::Running)
-            .build()
-            .unwrap(),
-        Completeness::complete(),
-    );
-
-    group.bench_function("send_alert_single_sink", |b| {
-        b.iter(|| {
-            let start = std::time::Instant::now();
-            let result = rt.block_on(manager.send_alert(&alert));
-            let duration = start.elapsed();
-            black_box((result, duration))
-        });
-    });
-
-    // Create sinks and register with manager
-    let sinks = [
+    let three = [
         MockAlertSink::new("sink1".to_string(), 0.9, 10),
         MockAlertSink::new("sink2".to_string(), 0.8, 15),
         MockAlertSink::new("sink3".to_string(), 0.95, 5),
     ];
-    let mut multi_manager = AlertManager::new();
-    for alert_sink in &sinks {
-        multi_manager.add_sink(Box::new(alert_sink.clone()));
-    }
-    let multi_alert = Alert::new(
-        AlertSeverity::High,
-        "Test alert",
-        "Test alert message",
-        "test_rule",
-        ProcessRecord::builder()
-            .pid_raw(1234)
-            .name("test_process".to_string())
-            .status(ProcessStatus::Running)
-            .build()
-            .unwrap(),
-        Completeness::complete(),
-    );
 
-    group.bench_function("send_alert_multiple_sinks", |b| {
+    group.bench_function("start_alert_manager", |b| {
         b.iter(|| {
             let start = std::time::Instant::now();
-            let result = rt.block_on(multi_manager.send_alert(&multi_alert));
-            let duration = start.elapsed();
-            black_box((result, duration))
+            let rig = start_rig(&rt, &three);
+            rt.block_on(rig.manager.shutdown(std::time::Duration::ZERO));
+            black_box(start.elapsed())
+        });
+    });
+
+    let single = start_rig(&rt, &three[..1]);
+    let mut single_count = 0_usize;
+    group.bench_function("enqueue_single_sink", |b| {
+        b.iter(|| {
+            single_count += 1;
+            let alert = alert_number(single_count);
+            let start = std::time::Instant::now();
+            let result = rt.block_on(single.manager.enqueue(&alert));
+            black_box((result, start.elapsed()))
+        });
+    });
+
+    let multi = start_rig(&rt, &three);
+    let mut multi_count = 0_usize;
+    group.bench_function("enqueue_multiple_sinks", |b| {
+        b.iter(|| {
+            multi_count += 1;
+            let alert = alert_number(multi_count);
+            let start = std::time::Instant::now();
+            let result = rt.block_on(multi.manager.enqueue(&alert));
+            black_box((result, start.elapsed()))
         });
     });
 
     group.finish();
 }
 
-/// Benchmark alert delivery with different sink configurations
+/// Benchmark enqueue cost with different sink counts
 fn bench_alert_delivery_configurations(c: &mut Criterion) {
     let mut group = c.benchmark_group("alert_delivery_configurations");
 
     let rt = Runtime::new().unwrap();
-    let alert = Alert::new(
-        AlertSeverity::High,
-        "Test alert",
-        "Test alert message",
-        "test_rule",
-        ProcessRecord::builder()
-            .pid_raw(1234)
-            .name("test_process".to_string())
-            .status(ProcessStatus::Running)
-            .build()
-            .unwrap(),
-        Completeness::complete(),
-    );
-
-    // Test with different numbers of sinks
     let sink_counts = vec![1, 3, 5, 10, 20];
 
     for sink_count in sink_counts {
@@ -270,7 +266,6 @@ fn bench_alert_delivery_configurations(c: &mut Criterion) {
             BenchmarkId::new("delivery_sinks", sink_count),
             &sink_count,
             |b, &sink_count| {
-                // Create sinks and register with manager
                 let sinks: Vec<_> = (0..sink_count)
                     .map(|i| {
                         MockAlertSink::new(
@@ -280,16 +275,15 @@ fn bench_alert_delivery_configurations(c: &mut Criterion) {
                         )
                     })
                     .collect();
-                let mut manager = AlertManager::new();
-                for sink in &sinks {
-                    manager.add_sink(Box::new(sink.clone()));
-                }
+                let rig = start_rig(&rt, &sinks);
+                let mut count = 0_usize;
 
                 b.iter(|| {
+                    count += 1;
+                    let alert = alert_number(count);
                     let start = std::time::Instant::now();
-                    let result = rt.block_on(manager.send_alert(&alert));
-                    let duration = start.elapsed();
-                    black_box((result, duration))
+                    let result = rt.block_on(rig.manager.enqueue(&alert));
+                    black_box((result, start.elapsed()))
                 });
             },
         );
@@ -298,26 +292,11 @@ fn bench_alert_delivery_configurations(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark alert delivery with different success rates
+/// Benchmark enqueue cost while sinks fail at different rates (workers retry in the background)
 fn bench_alert_delivery_success_rates(c: &mut Criterion) {
     let mut group = c.benchmark_group("alert_delivery_success_rates");
 
     let rt = Runtime::new().unwrap();
-    let alert = Alert::new(
-        AlertSeverity::High,
-        "Test alert",
-        "Test alert message",
-        "test_rule",
-        ProcessRecord::builder()
-            .pid_raw(1234)
-            .name("test_process".to_string())
-            .status(ProcessStatus::Running)
-            .build()
-            .unwrap(),
-        Completeness::complete(),
-    );
-
-    // Test with different success rates
     let success_rates = vec![0.5, 0.7, 0.8, 0.9, 0.95, 1.0];
 
     for success_rate in success_rates {
@@ -325,22 +304,20 @@ fn bench_alert_delivery_success_rates(c: &mut Criterion) {
             BenchmarkId::new("delivery_success_rate", (success_rate * 100.0) as u64),
             &success_rate,
             |b, &success_rate| {
-                // Create sinks and register with manager
                 let sinks = [
                     MockAlertSink::new("sink1".to_string(), success_rate, 10),
                     MockAlertSink::new("sink2".to_string(), success_rate, 15),
                     MockAlertSink::new("sink3".to_string(), success_rate, 5),
                 ];
-                let mut manager = AlertManager::new();
-                for sink in &sinks {
-                    manager.add_sink(Box::new(sink.clone()));
-                }
+                let rig = start_rig(&rt, &sinks);
+                let mut count = 0_usize;
 
                 b.iter(|| {
+                    count += 1;
+                    let alert = alert_number(count);
                     let start = std::time::Instant::now();
-                    let result = rt.block_on(manager.send_alert(&alert));
-                    let duration = start.elapsed();
-                    black_box((result, duration))
+                    let result = rt.block_on(rig.manager.enqueue(&alert));
+                    black_box((result, start.elapsed()))
                 });
             },
         );
@@ -354,103 +331,59 @@ fn bench_concurrent_alert_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_alert_processing");
 
     let rt = Runtime::new().unwrap();
+    let rig = start_rig(&rt, &[MockAlertSink::new("sink1".to_string(), 1.0, 5)]);
+    let manager = Arc::new(rig.manager);
+    let mut round = 0_usize;
 
-    // Create a single shared AlertManager instance
-    let manager = Arc::new(Mutex::new(AlertManager::new()));
-
-    // Create multiple alerts
-    let alerts: Vec<Alert> = (0..100)
-        .map(|i| {
-            Alert::new(
-                AlertSeverity::Medium,
-                format!("Alert {}", i),
-                format!("Alert message {}", i),
-                format!("rule_{}", i),
-                ProcessRecord::builder()
-                    .pid_raw(i as u32)
-                    .name(format!("process_{}", i))
-                    .status(ProcessStatus::Running)
-                    .build()
-                    .unwrap(),
-                Completeness::complete(),
-            )
-        })
-        .collect();
-
-    group.bench_function("concurrent_alert_sending", |b| {
+    group.bench_function("concurrent_alert_enqueue", |b| {
         b.iter(|| {
+            round += 1;
             let start = std::time::Instant::now();
-
-            // Send alerts concurrently using the shared AlertManager
             let results = rt.block_on(async {
-                let handles: Vec<_> = alerts
-                    .iter()
-                    .map(|alert| {
-                        let alert = alert.clone();
+                let handles: Vec<_> = (0..100)
+                    .map(|i| {
+                        let alert = alert_number(round * 100 + i);
                         let manager = Arc::clone(&manager);
-                        tokio::spawn(async move {
-                            let mut manager = manager.lock().await;
-                            manager.send_alert(&alert).await
-                        })
+                        tokio::spawn(async move { manager.enqueue(&alert).await })
                     })
                     .collect();
 
                 futures::future::join_all(handles).await
             });
-            let duration = start.elapsed();
-
-            black_box((results.len(), duration))
+            black_box((results.len(), start.elapsed()))
         });
     });
     group.finish();
 }
 
-/// Benchmark alert throughput
+/// Benchmark alert enqueue throughput
 fn bench_alert_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("alert_throughput");
 
     let rt = Runtime::new().unwrap();
-
-    // Test with different alert volumes
-    let alert_counts = vec![10, 100, 1000, 5000];
+    // Each enqueue is a durable commit, so the old in-memory volumes would run for minutes.
+    group.sample_size(10);
+    let alert_counts = vec![10, 100, 500];
 
     for alert_count in alert_counts {
         group.bench_with_input(
             BenchmarkId::new("throughput", alert_count),
             &alert_count,
             |b, &alert_count| {
-                // Create sinks and register with manager
                 let sinks = [
                     MockAlertSink::new("sink1".to_string(), 0.9, 5),
                     MockAlertSink::new("sink2".to_string(), 0.8, 8),
                 ];
-                let mut manager = AlertManager::new();
-                for sink in &sinks {
-                    manager.add_sink(Box::new(sink.clone()));
-                }
+                let rig = start_rig(&rt, &sinks);
+                let mut round = 0_usize;
 
                 b.iter(|| {
+                    round += 1;
                     let start = std::time::Instant::now();
-
-                    // Send alerts sequentially
                     for i in 0..alert_count {
-                        let alert = Alert::new(
-                            AlertSeverity::Low,
-                            format!("Alert {}", i),
-                            format!("Alert message {}", i),
-                            format!("rule_{}", i),
-                            ProcessRecord::builder()
-                                .pid_raw(i as u32)
-                                .name(format!("process_{}", i))
-                                .status(ProcessStatus::Running)
-                                .build()
-                                .unwrap(),
-                            Completeness::complete(),
-                        );
-
-                        let _ = rt.block_on(manager.send_alert(&alert));
+                        let alert = alert_number(round * 10_000 + i);
+                        let _ = rt.block_on(rig.manager.enqueue(&alert));
                     }
-
                     let duration = start.elapsed();
                     let throughput = alert_count as f64 / duration.as_secs_f64();
                     black_box((throughput, duration))
@@ -458,6 +391,43 @@ fn bench_alert_throughput(c: &mut Criterion) {
             },
         );
     }
+
+    group.finish();
+}
+
+/// Rows per second through the outbox: enqueue, claim and complete 1,000 alerts on one sink.
+fn bench_outbox_rows_per_second(c: &mut Criterion) {
+    use daemoneye_lib::models::DeliveryState;
+
+    const ALERTS: usize = 1_000;
+    const MAX_OPEN: usize = 10_000;
+    let mut group = c.benchmark_group("alert_outbox");
+    group.throughput(Throughput::Elements(ALERTS as u64));
+    group.sample_size(10);
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = EventStore::new(dir.path().join("outbox.redb")).unwrap();
+    let mut round = 0_usize;
+
+    group.bench_function("enqueue_claim_complete_1000", |b| {
+        b.iter(|| {
+            round += 1;
+            let now_ms = 1_000_u64;
+            for i in 0..ALERTS {
+                let alert = alert_number(round * ALERTS + i);
+                store
+                    .enqueue_alert(&alert, &["sink"], None, MAX_OPEN, now_ms)
+                    .unwrap();
+                let claimed = store.claim("sink", alert.id, now_ms).unwrap();
+                let mut done = claimed.record.clone();
+                done.state = DeliveryState::Delivered;
+                done.terminal_at_ms = Some(now_ms);
+                store
+                    .complete("sink", alert.id, claimed.expected, &done)
+                    .unwrap();
+            }
+        });
+    });
 
     group.finish();
 }
@@ -510,6 +480,62 @@ criterion_group!(
     bench_alert_delivery_success_rates,
     bench_concurrent_alert_processing,
     bench_alert_throughput,
+    bench_outbox_rows_per_second,
     bench_alert_serialization_performance
 );
-criterion_main!(benches);
+criterion_main!(benches, enrich_benches);
+
+/// Enrichment of a 16-deep ancestry chain, one record per hourly bucket, over 168 buckets.
+fn bench_enrich_16_deep_chain_over_168_buckets(c: &mut Criterion) {
+    use daemoneye_lib::alerting::{EnrichContext, enrich};
+    use daemoneye_lib::models::ProcessId;
+    use daemoneye_lib::storage::EventStore;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    const HOUR_MS: u64 = 3_600_000;
+    const BASE_HOUR: u64 = 1_000;
+    const BUCKETS: u64 = 168;
+    const DEPTH: u32 = 17;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = EventStore::new(dir.path().join("events.redb")).unwrap();
+    let mut child = None;
+    for k in 0..DEPTH {
+        let hour = BASE_HOUR + BUCKETS - 1 - u64::from(k) * 10;
+        let mut record = ProcessRecord::new(100 + k, format!("p{k}"));
+        record.ppid = (k + 1 < DEPTH).then(|| ProcessId::new(101 + k));
+        record.start_time = Some(UNIX_EPOCH + Duration::from_millis(hour * HOUR_MS));
+        store.put_event(hour * HOUR_MS, 0, &record).unwrap();
+        if k == 0 {
+            child = Some(record);
+        }
+    }
+    // Fill the remaining hourly buckets so the scan crosses all 168.
+    for offset in 0..BUCKETS {
+        let hour = BASE_HOUR + offset;
+        store
+            .put_event(
+                hour * HOUR_MS + 1,
+                0,
+                &ProcessRecord::new(9, "filler".to_owned()),
+            )
+            .unwrap();
+    }
+    let alert = Alert::new(
+        AlertSeverity::High,
+        "t",
+        "d",
+        "rule-1",
+        child.unwrap(),
+        Completeness::complete(),
+    );
+    let ctx = EnrichContext {
+        hostname: "bench-host".to_owned(),
+        agent_version: "0.0.0".to_owned(),
+    };
+    c.bench_function("enrich_16_deep_chain_over_168_buckets", |b| {
+        b.iter(|| black_box(enrich(&store, black_box(&alert), &ctx)));
+    });
+}
+
+criterion_group!(enrich_benches, bench_enrich_16_deep_chain_over_168_buckets);
