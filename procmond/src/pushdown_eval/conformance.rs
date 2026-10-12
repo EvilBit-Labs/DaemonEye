@@ -8,8 +8,8 @@
 //! every case that ran agreed with the agent's reference.
 //!
 //! A pass proves agreement with **that reference**, not with the executor that will evaluate the
-//! residual half. ADR-0006 makes Apache `DataFusion` that executor, T6 builds it, and it does not
-//! exist yet; when it lands, the reference has to be re-verified against it.
+//! residual half. ADR-0006 makes Apache `DataFusion` that executor, via `RuleExecutor`.
+//! `daemoneye-lib/tests/detection_execution_conformance.rs` re-verifies the reference against it.
 //!
 //! Some cases cannot be run at all. `pid` is a 32-bit field that cannot hold `u64::MAX`, and
 //! `command_line` models the empty string as SQL NULL, so a case naming either value is skipped

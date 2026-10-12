@@ -33,6 +33,29 @@ pub use self::{
     TaskType as ProtoTaskType,
 };
 
+/// `ProcessRecord.metadata` key under which the wire `accessible` flag rides (KTD12).
+///
+/// The Arrow encoder reads it back so the advertised `accessible` column is backed.
+/// Value is `"true"` or `"false"`; an absent key means the flag was never recorded.
+// ponytail: two flags through the string map because one reader (the Arrow encoder) needs them;
+// typed `ProcessRecord` fields once a second consumer appears, which touches every constructor
+// and builder across four crates.
+pub const METADATA_KEY_ACCESSIBLE: &str = "daemoneye.accessible";
+
+/// `ProcessRecord.metadata` key under which the wire `file_exists` flag rides (KTD12).
+///
+/// Same encoding and upgrade path as [`METADATA_KEY_ACCESSIBLE`].
+pub const METADATA_KEY_FILE_EXISTS: &str = "daemoneye.file_exists";
+
+/// Read one `METADATA_KEY_*` flag back out of a record's metadata map.
+///
+/// `None` when the key is absent or holds anything other than `"true"` or
+/// `"false"`, so an unparseable value falls back to the caller's default rather
+/// than silently reading as `false`.
+fn metadata_flag(metadata: &std::collections::HashMap<String, String>, key: &str) -> Option<bool> {
+    metadata.get(key)?.parse().ok()
+}
+
 impl ProtoProcessRecord {
     /// Decode [`Self::on_disk_state`], degrading an unrecognized wire value to
     /// [`OnDiskState::Unknown`].
@@ -71,11 +94,18 @@ impl From<NativeProcessRecord> for ProtoProcessRecord {
             executable_hash: native.executable_hash,
             hash_algorithm: native.hash_algorithm,
             user_id: native.user_id.map(|uid| uid.to_string()),
-            accessible: true, // Default to true, can be overridden by specific implementations
-            file_exists: has_executable_path, // Approximate - actual file existence check would be done elsewhere
+            // Read back what the forward conversion stored, so a
+            // proto -> native -> proto round trip does not flip a `false` to
+            // `true`. Absent keys keep the historical defaults: a record built
+            // natively (not from a proto) has never carried these signals, and
+            // `file_exists` is then still only the executable-path approximation.
+            accessible: metadata_flag(&native.metadata, METADATA_KEY_ACCESSIBLE).unwrap_or(true),
+            file_exists: metadata_flag(&native.metadata, METADATA_KEY_FILE_EXISTS)
+                .unwrap_or(has_executable_path),
             collection_time: native.collection_time.timestamp_millis(),
-            // The native model does not carry the per-process integrity signals;
-            // those originate on the procmond ProcessEvent -> proto path. Note
+            // The native model carries only the two flags above, under the
+            // `METADATA_KEY_*` keys; the remaining per-process integrity signals
+            // originate on the procmond ProcessEvent -> proto path. Note
             // on_disk_state is a symlink probe, not a hash — it is grouped with
             // the ssdeep fields only because they share that origin. Default
             // them here so this conversion stays lossless for the fields it owns.
@@ -120,7 +150,17 @@ impl From<ProtoProcessRecord> for NativeProcessRecord {
             user_id: proto.user_id.and_then(|uid| uid.parse().ok()),
             group_id: None, // Not available in protobuf version
             environment_vars: std::collections::HashMap::new(), // Not available in protobuf version
-            metadata: std::collections::HashMap::new(), // Not available in protobuf version
+            // Only the two flags the Arrow encoder reads ride here (KTD12).
+            metadata: std::collections::HashMap::from([
+                (
+                    METADATA_KEY_ACCESSIBLE.to_owned(),
+                    proto.accessible.to_string(),
+                ),
+                (
+                    METADATA_KEY_FILE_EXISTS.to_owned(),
+                    proto.file_exists.to_string(),
+                ),
+            ]),
         }
     }
 }
@@ -627,6 +667,59 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(real.on_disk_state_or_unknown(), OnDiskState::Mismatch);
+    }
+
+    #[test]
+    fn accessible_and_file_exists_survive_a_proto_round_trip() {
+        // Both flags are stored in metadata by `From<ProtoProcessRecord>`; the reverse
+        // conversion must read them back, not default them.
+        let original = ProtoProcessRecord {
+            accessible: false,
+            file_exists: false,
+            executable_path: Some("/bin/sh".to_owned()),
+            ..Default::default()
+        };
+
+        let native = NativeProcessRecord::from(original);
+        let back = ProtoProcessRecord::from(native);
+
+        assert!(
+            !back.accessible,
+            "a false accessible must not round-trip to true"
+        );
+        assert!(
+            !back.file_exists,
+            "a false file_exists must not round-trip to the executable-path guess"
+        );
+
+        // The true case must survive too, so the test cannot pass by always
+        // reporting false.
+        let truthy = ProtoProcessRecord {
+            accessible: true,
+            file_exists: true,
+            ..Default::default()
+        };
+        let back_true = ProtoProcessRecord::from(NativeProcessRecord::from(truthy));
+        assert!(back_true.accessible);
+        assert!(back_true.file_exists);
+    }
+
+    #[test]
+    fn a_natively_built_record_keeps_the_historical_conversion_defaults() {
+        // No metadata keys, so the conversion defaults apply: `accessible` is
+        // optimistic and `file_exists` is the executable-path approximation.
+        let bare = NativeProcessRecord::new(7, "bare".to_owned());
+        let proto = ProtoProcessRecord::from(bare);
+        assert!(proto.accessible);
+        assert!(
+            !proto.file_exists,
+            "no executable path means the guess is false"
+        );
+
+        let mut with_path = NativeProcessRecord::new(8, "withpath".to_owned());
+        with_path.executable_path = Some(std::path::PathBuf::from("/usr/bin/true"));
+        let proto = ProtoProcessRecord::from(with_path);
+        assert!(proto.file_exists, "an executable path makes the guess true");
     }
 
     #[test]

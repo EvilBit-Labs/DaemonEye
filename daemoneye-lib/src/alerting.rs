@@ -10,7 +10,7 @@
 //! - Rate limiting and deduplication
 //! - Health monitoring for all sinks
 
-use crate::models::Alert;
+use crate::models::{Alert, Completeness};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -112,7 +112,7 @@ impl AlertSink for StdoutSink {
     ///
     /// ```no_run
     /// use daemoneye_lib::alerting::{AlertSink, StdoutSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
     ///
     /// let sink = StdoutSink::new("stdout-test".to_owned(), OutputFormat::Human);
     /// let alert = Alert::new(
@@ -121,6 +121,7 @@ impl AlertSink for StdoutSink {
     ///     "Example",
     ///     "rule-1",
     ///     ProcessRecord::new(1, "proc".to_owned()),
+    ///     Completeness::complete(),
     /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let res = rt.block_on(async { sink.send(&alert).await }).unwrap();
@@ -130,17 +131,7 @@ impl AlertSink for StdoutSink {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 
-        let output = match self.format {
-            OutputFormat::Json => serde_json::to_string_pretty(alert)?,
-            OutputFormat::Human => format!(
-                "[{}] {} - {}: {}",
-                alert.severity, alert.detection_rule_id, alert.title, alert.description
-            ),
-            OutputFormat::Csv => format!(
-                "{},{},{},{},{}",
-                alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
-            ),
-        };
+        let output = render_alert(&self.format, alert)?;
 
         println!("{output}");
 
@@ -188,7 +179,7 @@ impl AlertSink for FileSink {
     ///
     /// ```no_run
     /// use daemoneye_lib::alerting::{AlertSink, FileSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
     /// use std::path::PathBuf;
     ///
     /// let path = PathBuf::from("/tmp/daemoneye-alerts.log");
@@ -199,6 +190,7 @@ impl AlertSink for FileSink {
     ///     "Desc",
     ///     "rule-1",
     ///     ProcessRecord::new(1, "proc".to_owned()),
+    ///     Completeness::complete(),
     /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let _ = rt.block_on(async { sink.send(&alert).await }).unwrap();
@@ -207,17 +199,7 @@ impl AlertSink for FileSink {
     async fn send(&self, alert: &Alert) -> Result<DeliveryResult, AlertingError> {
         let start_time = std::time::Instant::now();
 
-        let output = match self.format {
-            OutputFormat::Json => serde_json::to_string_pretty(alert)?,
-            OutputFormat::Human => format!(
-                "[{}] {} - {}: {}",
-                alert.severity, alert.detection_rule_id, alert.title, alert.description
-            ),
-            OutputFormat::Csv => format!(
-                "{},{},{},{},{}",
-                alert.id, alert.severity, alert.detection_rule_id, alert.title, alert.description
-            ),
-        };
+        let output = render_alert(&self.format, alert)?;
 
         std::fs::OpenOptions::new()
             .create(true)
@@ -483,11 +465,14 @@ impl AlertManager {
     ///
     /// ```no_run
     /// use daemoneye_lib::alerting::{AlertManager, AlertSink, StdoutSink, OutputFormat};
-    /// use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord};
+    /// use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord};
     ///
     /// let mut mgr = AlertManager::new();
     /// mgr.add_sink(Box::new(StdoutSink::new("s".to_owned(), OutputFormat::Json)));
-    /// let alert = Alert::new(AlertSeverity::Low, "Title", "Desc", "rule-1", ProcessRecord::new(1, "proc".to_owned()));
+    /// let alert = Alert::new(
+    ///     AlertSeverity::Low, "Title", "Desc", "rule-1",
+    ///     ProcessRecord::new(1, "proc".to_owned()), Completeness::complete(),
+    /// );
     /// let rt = tokio::runtime::Runtime::new().unwrap();
     /// let first = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
     /// let second = rt.block_on(async { mgr.send_alert(&alert).await }).unwrap();
@@ -646,6 +631,52 @@ impl HealthSummary {
     }
 }
 
+/// `field` quoted for a CSV cell: wrapped in double quotes with any inner quote doubled, so a
+/// comma or quote inside it cannot shift the columns.
+/// One alert in `format`.
+///
+/// Every format carries the completeness marker: an operator reading Human or CSV output must be
+/// able to tell a complete detection from a degraded one, as the JSON reader can.
+fn render_alert(format: &OutputFormat, alert: &Alert) -> Result<String, AlertingError> {
+    Ok(match *format {
+        OutputFormat::Json => serde_json::to_string_pretty(alert)?,
+        OutputFormat::Human => format!(
+            "[{}] {} - {}: {} [{}]",
+            alert.severity,
+            alert.detection_rule_id,
+            alert.title,
+            alert.description,
+            completeness_text(&alert.completeness)
+        ),
+        OutputFormat::Csv => format!(
+            "{},{},{},{},{},{}",
+            alert.id,
+            alert.severity,
+            csv_field(&alert.detection_rule_id),
+            csv_field(&alert.title),
+            csv_field(&alert.description),
+            csv_field(&completeness_text(&alert.completeness))
+        ),
+    })
+}
+
+/// `complete`, or `degraded: <reason>; <reason>`.
+fn completeness_text(completeness: &Completeness) -> String {
+    if completeness.reasons().is_empty() {
+        return "complete".to_owned();
+    }
+    let reasons: Vec<String> = completeness
+        .reasons()
+        .iter()
+        .map(|reason| format!("{reason:?}"))
+        .collect();
+    format!("degraded: {}", reasons.join("; "))
+}
+
+fn csv_field(field: &str) -> String {
+    format!("\"{}\"", field.replace('"', "\"\""))
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -656,7 +687,62 @@ impl HealthSummary {
 )]
 mod tests {
     use super::*;
-    use crate::models::{AlertSeverity, ProcessRecord};
+    use crate::models::{AlertSeverity, Completeness, ProcessRecord};
+
+    /// Human and CSV output carry the completeness marker, as JSON does through the field.
+    #[test]
+    fn human_and_csv_output_carry_the_completeness_marker() {
+        use crate::models::{AlertSeverity, CompletenessReason, ProcessRecord};
+        let degraded = Completeness::degraded(vec![CompletenessReason::ResultCapped { cap: 3 }])
+            .expect("one reason");
+        let alert = Alert::new(
+            AlertSeverity::High,
+            "Capped",
+            "more matches than the cap",
+            "rule-1",
+            ProcessRecord::new(1, "proc".to_owned()),
+            degraded,
+        );
+        let complete = Alert::new(
+            AlertSeverity::High,
+            "Plain",
+            "a match",
+            "rule-1",
+            ProcessRecord::new(1, "proc".to_owned()),
+            Completeness::complete(),
+        );
+
+        let human = render_alert(&OutputFormat::Human, &alert).expect("renders");
+        assert!(
+            human.ends_with("[degraded: ResultCapped { cap: 3 }]"),
+            "{human}"
+        );
+        assert!(
+            render_alert(&OutputFormat::Human, &complete)
+                .expect("renders")
+                .ends_with("[complete]")
+        );
+
+        let csv = render_alert(&OutputFormat::Csv, &alert).expect("renders");
+        assert_eq!(csv.matches(',').count(), 5, "six columns");
+        assert!(
+            csv.ends_with(",\"degraded: ResultCapped { cap: 3 }\""),
+            "{csv}"
+        );
+        assert!(
+            render_alert(&OutputFormat::Csv, &complete)
+                .expect("renders")
+                .ends_with(",\"complete\"")
+        );
+    }
+
+    /// A title carrying a comma or a quote stays one CSV cell.
+    #[test]
+    fn csv_fields_are_quoted_and_inner_quotes_doubled() {
+        assert_eq!(csv_field("plain"), "\"plain\"");
+        assert_eq!(csv_field("a,b"), "\"a,b\"");
+        assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
 
     #[tokio::test]
     async fn test_stdout_sink() {
@@ -668,6 +754,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         let result = sink.send(&alert).await.expect("Failed to send alert");
@@ -687,6 +774,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         let results = manager
@@ -716,6 +804,7 @@ mod tests {
             "This is a test alert",
             "test-rule",
             process,
+            Completeness::complete(),
         );
 
         // Send the same alert twice

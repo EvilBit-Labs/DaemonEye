@@ -597,7 +597,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_health_check_high_cpu_usage() {
+    async fn test_health_check_excessive_cpu_usage() {
         let mut collector = TelemetryCollector::new("test-component".to_owned());
 
         // Set high CPU usage (> 80%)

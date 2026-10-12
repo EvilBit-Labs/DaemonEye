@@ -5,11 +5,13 @@
 //!
 //! A passing vector proves the collector's evaluation of one operation agrees with
 //! [`reference_outcome`] on every corpus case that applies to it. It does **not** prove agreement
-//! with the executor that will evaluate the residual half. ADR-0006 makes Apache `DataFusion` that
-//! executor and T6 builds it; it does not exist yet, so this reference is the only thing there is
-//! to agree with. When T6 lands, the reference's NULL, coercion and collation behaviour has to be
-//! re-verified against `DataFusion`, and any divergence found there invalidates every pass recorded
-//! under this reference.
+//! with the executor that will evaluate the residual half on its own; that is
+//! `tests/detection_execution_conformance.rs` (R17), which runs every applicable case through the
+//! executor's `DataFusion` session over a one-row table and requires the same outcome as
+//! [`reference_outcome`]. Where the two disagreed, the executor was changed (`NaN` is UNKNOWN, and
+//! `LIKE` has no escape character) and the reference was not, so the certifications recorded
+//! under it stand. The `Coercion` axis is the exception: its cases are plan defects the planner
+//! refuses, so there is no executor outcome to compare.
 //!
 //! # Why the corpus lives here
 //!

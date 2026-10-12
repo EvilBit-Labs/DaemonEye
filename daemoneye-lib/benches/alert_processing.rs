@@ -14,7 +14,7 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use daemoneye_lib::alerting::{AlertManager, AlertSink, DeliveryResult};
-use daemoneye_lib::models::{Alert, AlertSeverity, ProcessRecord, ProcessStatus};
+use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord, ProcessStatus};
 use std::hint::black_box;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -93,6 +93,7 @@ fn bench_alert_creation(c: &mut Criterion) {
                 "Test alert message",
                 "test_rule",
                 process_record,
+                Completeness::complete(),
             );
 
             let duration = start.elapsed();
@@ -114,6 +115,7 @@ fn bench_alert_creation(c: &mut Criterion) {
             "Test alert message",
             "test_rule",
             process_record,
+            Completeness::complete(),
         );
 
         b.iter(|| {
@@ -139,6 +141,7 @@ fn bench_alert_creation(c: &mut Criterion) {
             "Test alert message",
             "test_rule",
             process_record,
+            Completeness::complete(),
         );
         let serialized = serde_json::to_string(&alert).unwrap();
 
@@ -192,6 +195,7 @@ fn bench_alert_manager_operations(c: &mut Criterion) {
             .status(ProcessStatus::Running)
             .build()
             .unwrap(),
+        Completeness::complete(),
     );
 
     group.bench_function("send_alert_single_sink", |b| {
@@ -224,6 +228,7 @@ fn bench_alert_manager_operations(c: &mut Criterion) {
             .status(ProcessStatus::Running)
             .build()
             .unwrap(),
+        Completeness::complete(),
     );
 
     group.bench_function("send_alert_multiple_sinks", |b| {
@@ -254,6 +259,7 @@ fn bench_alert_delivery_configurations(c: &mut Criterion) {
             .status(ProcessStatus::Running)
             .build()
             .unwrap(),
+        Completeness::complete(),
     );
 
     // Test with different numbers of sinks
@@ -308,6 +314,7 @@ fn bench_alert_delivery_success_rates(c: &mut Criterion) {
             .status(ProcessStatus::Running)
             .build()
             .unwrap(),
+        Completeness::complete(),
     );
 
     // Test with different success rates
@@ -365,6 +372,7 @@ fn bench_concurrent_alert_processing(c: &mut Criterion) {
                     .status(ProcessStatus::Running)
                     .build()
                     .unwrap(),
+                Completeness::complete(),
             )
         })
         .collect();
@@ -437,6 +445,7 @@ fn bench_alert_throughput(c: &mut Criterion) {
                                 .status(ProcessStatus::Running)
                                 .build()
                                 .unwrap(),
+                            Completeness::complete(),
                         );
 
                         let _ = rt.block_on(manager.send_alert(&alert));
@@ -477,6 +486,7 @@ fn bench_alert_serialization_performance(c: &mut Criterion) {
                             .status(ProcessStatus::Running)
                             .build()
                             .unwrap(),
+                        Completeness::complete(),
                     );
 
                     let start = std::time::Instant::now();

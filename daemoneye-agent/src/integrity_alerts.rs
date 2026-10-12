@@ -9,7 +9,7 @@
 
 use daemoneye_lib::integrity::fuzzy::{self, DEFAULT_SSDEEP_SIMILARITY_THRESHOLD, FuzzyConfig};
 use daemoneye_lib::models::process::ProcessRecord as NativeProcessRecord;
-use daemoneye_lib::models::{Alert, AlertSeverity};
+use daemoneye_lib::models::{Alert, AlertSeverity, Completeness};
 use daemoneye_lib::proto::{OnDiskState, ProcessRecord as ProtoProcessRecord};
 use std::collections::HashMap;
 
@@ -167,7 +167,14 @@ fn build_alert(
     description: String,
 ) -> Alert {
     let native: NativeProcessRecord = record.clone().into();
-    let mut alert = Alert::new(severity, title, description, rule_id, native);
+    let mut alert = Alert::new(
+        severity,
+        title,
+        description,
+        rule_id,
+        native,
+        Completeness::complete(),
+    );
     // The AlertManager dedup key defaults to `severity:rule_id:title`, which is
     // identical across processes for a shared integrity rule_id — distinct
     // affected executables in one scan would collapse to a single delivered

@@ -69,3 +69,8 @@ failure-output = "immediate-final"
 [profile.coverage.junit]
 path = "target/nextest/coverage/junit.xml"
 report-name = "daemoneye-coverage-tests"
+
+# The memory characterization runs hundreds of full-retention cycles per test (U9, KTD15).
+[[profile.default.overrides]]
+filter = 'binary(detection_execution_memory)'
+slow-timeout = { period = "600s", terminate-after = 12 }

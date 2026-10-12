@@ -27,15 +27,20 @@ fn descriptor(columns: &[&str]) -> SchemaDescriptor {
         descriptor_version: "v1".to_owned(),
         tables: vec![TableDescriptor {
             name: "processes".to_owned(),
-            columns: columns
-                .iter()
-                .map(|name| ColumnDescriptor {
-                    name: (*name).to_owned(),
-                    column_type: ColumnType::String,
-                    nullable: false,
-                    supported_ops: vec![PredicateOp::Eq],
-                })
-                .collect(),
+            // The window column every derived plan reads, then the test's own string columns.
+            columns: std::iter::once(ColumnDescriptor {
+                name: "collection_time".to_owned(),
+                column_type: ColumnType::Int,
+                nullable: false,
+                supported_ops: Vec::new(),
+            })
+            .chain(columns.iter().map(|name| ColumnDescriptor {
+                name: (*name).to_owned(),
+                column_type: ColumnType::String,
+                nullable: false,
+                supported_ops: vec![PredicateOp::Eq],
+            }))
+            .collect(),
         }],
         conformance_results: Vec::new(),
     }
@@ -276,7 +281,7 @@ async fn a_re_registration_dropping_a_column_leaves_only_the_rule_that_needs_it_
     // Arrange
     let dir = tempfile::tempdir().unwrap();
     let (store, engine, admission) = admission(&dir);
-    load_rule(&engine, "needs-cmdline", "cmdline").await;
+    load_rule(&engine, "needs-cmdline", "command_line").await;
     load_rule(&engine, "needs-name", "name").await;
 
     let _issued = store.issue("procmond").unwrap();
@@ -285,7 +290,7 @@ async fn a_re_registration_dropping_a_column_leaves_only_the_rule_that_needs_it_
         .admit(&request(
             "procmond",
             Some(token),
-            Some(descriptor(&["name", "cmdline"])),
+            Some(descriptor(&["name", "command_line"])),
         ))
         .await
         .unwrap();
@@ -362,7 +367,7 @@ async fn a_duplicate_registration_is_refused_without_moving_the_catalog() {
         .register(request(
             "procmond",
             Some(token),
-            Some(descriptor(&["name", "cmdline"])),
+            Some(descriptor(&["name", "command_line"])),
         ))
         .await
         .unwrap();
@@ -383,7 +388,7 @@ async fn a_duplicate_registration_is_refused_without_moving_the_catalog() {
     assert!(error.to_string().contains("already registered"), "{error}");
     assert_eq!(gates(&registry), [RegistrationGate::AlreadyRegistered]);
     assert!(
-        has_column(&engine, "processes", "cmdline").await,
+        has_column(&engine, "processes", "command_line").await,
         "a refused registration must not have narrowed the catalog"
     );
 }
@@ -394,7 +399,7 @@ async fn a_restarted_collector_re_registers_after_deregistration_and_replans_rul
     // collector restart implies.
     let dir = tempfile::tempdir().unwrap();
     let (store, engine, admission) = admission(&dir);
-    load_rule(&engine, "needs-cmdline", "cmdline").await;
+    load_rule(&engine, "needs-cmdline", "command_line").await;
     load_rule(&engine, "needs-name", "name").await;
     let registry = CollectorRegistry::with_admission(Arc::clone(&admission));
 
@@ -404,7 +409,7 @@ async fn a_restarted_collector_re_registers_after_deregistration_and_replans_rul
         .register(request(
             "procmond",
             Some(token),
-            Some(descriptor(&["name", "cmdline"])),
+            Some(descriptor(&["name", "command_line"])),
         ))
         .await
         .unwrap();
@@ -434,7 +439,7 @@ async fn a_restarted_collector_re_registers_after_deregistration_and_replans_rul
     // Assert: exactly the rule that filtered on the dropped column is unhealthy.
     assert!(is_unhealthy(&engine, "needs-cmdline").await);
     assert!(is_planned_and_not_unhealthy(&engine, "needs-name").await);
-    assert!(!has_column(&engine, "processes", "cmdline").await);
+    assert!(!has_column(&engine, "processes", "command_line").await);
 }
 
 #[tokio::test]

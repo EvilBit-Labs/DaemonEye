@@ -19,15 +19,14 @@ use std::collections::BTreeSet;
 
 use sqlparser::ast::{
     BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, ObjectName,
-    Select, SelectItem, SetExpr, Statement, TableFactor, Value, Visit, Visitor,
+    Select, SelectItem, SetExpr, Statement, TableFactor, Value, Visit, Visitor, visit_expressions,
 };
-use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
 use std::ops::ControlFlow;
 
 use crate::detection::catalog::{SchemaCatalog, UnknownReference};
 use crate::detection::regex_cache::{RegexCache, compile_rule_patterns};
-use crate::detection_bounds::{PUSHDOWN_TASK_TTL, SQL_PARSER_RECURSION_LIMIT};
+use crate::detection::sql_validation::parse_statements;
+use crate::detection_bounds::PUSHDOWN_TASK_TTL;
 use crate::models::rule::{DetectionRule, RuleError};
 use crate::proto::{ColumnType, Literal, Predicate, PredicateOp, PushdownPlan, literal};
 
@@ -71,6 +70,33 @@ pub enum PlanError {
          against the catalog table its CTE shadows"
     )]
     CommonTableExpression,
+    /// The rule contains a subquery, which the executor cannot run.
+    #[error(
+        "the executor cannot run a subquery: the derived SQL sees only the rule's own table, so \
+         this rule is refused at load rather than failing on every cycle"
+    )]
+    Subquery,
+    /// A literal whose kind is not the column's declared type; there is no coercion in either
+    /// direction (the conformance reference's `Coercion` axis).
+    #[error(
+        "`{column}` is declared {expected}, so the literal `{literal}` cannot compare against it; \
+         there is no coercion in either direction"
+    )]
+    LiteralTypeMismatch {
+        /// The column compared.
+        column: String,
+        /// The column's declared type, in words.
+        expected: &'static str,
+        /// The literal as the rule wrote it.
+        literal: String,
+    },
+    /// The executor's session could not plan the rule over the catalog's declared shape, so it
+    /// would fail on every cycle (a function over a column of the wrong type, for example).
+    #[error("the executor cannot plan this rule: {message}")]
+    Unplannable {
+        /// The planner's diagnostic.
+        message: String,
+    },
 }
 
 /// A rule lowered into the half a collector evaluates and the half the agent keeps (R13).
@@ -194,6 +220,13 @@ pub fn plan_rule(
 
     let references = resolve_all_references(catalog, &statement, &table)?;
 
+    // The references above resolve, but the executor plans the residual against a session that
+    // registers no table by name, so a subquery fails at `create_logical_expr` on every cycle.
+    if has_subquery(&statement) {
+        return Err(PlanError::Subquery);
+    }
+    check_literal_types(catalog, &table, select)?;
+
     // R14 first: only top-level conjuncts are candidates, decided without consulting the catalog.
     let conjuncts = select
         .selection
@@ -238,12 +271,8 @@ fn ttl_millis() -> u64 {
 
 /// Parse the rule's SQL into exactly one statement.
 fn parse_single_select(sql: &str) -> Result<Statement, PlanError> {
-    let dialect = GenericDialect {};
-    let mut statements = Parser::new(&dialect)
-        .with_recursion_limit(SQL_PARSER_RECURSION_LIMIT)
-        .try_with_sql(sql)
-        .and_then(|mut parser| parser.parse_statements())
-        .map_err(|error| PlanError::Parse(error.to_string()))?;
+    let mut statements =
+        parse_statements(sql).map_err(|error| PlanError::Parse(error.to_string()))?;
     if statements.len() != 1 {
         return Err(PlanError::NotASelect);
     }
@@ -399,6 +428,7 @@ const fn comparison_op(op: &BinaryOperator) -> Option<PredicateOp> {
 #[allow(clippy::wildcard_enum_match_arm)]
 fn identifier_name(expr: &Expr) -> Option<String> {
     match *expr {
+        Expr::Nested(ref inner) => identifier_name(inner),
         Expr::Identifier(ref ident) => Some(ident.value.clone()),
         Expr::CompoundIdentifier(ref parts) => parts.last().map(|ident| ident.value.clone()),
         _ => None,
@@ -480,6 +510,107 @@ fn collect_identifiers<N: Visit>(node: &N) -> BTreeSet<String> {
         return collector.names;
     };
     collector.names
+}
+
+/// Refuse a `column op literal` anywhere in `WHERE` whose literal is not of the column's kind.
+///
+/// `lower_conjunct` only *declines* such a conjunct into the residual, where `DataFusion` would
+/// coerce it (`pid = '1'` reads the string as a number). The conformance reference refuses every
+/// coercion, so the planner does too. A number on a numeric column is lowered into the column's
+/// own type and is not a coercion; `NULL` and non-literal operands are not judged here.
+fn check_literal_types(
+    catalog: &SchemaCatalog,
+    table: &str,
+    select: &Select,
+) -> Result<(), PlanError> {
+    let Some(ref selection) = select.selection else {
+        return Ok(());
+    };
+    match visit_expressions(selection, |expr| {
+        let Some((column, values)) = literal_comparison(expr) else {
+            return ControlFlow::Continue(());
+        };
+        let Ok(descriptor) = catalog.resolve_reference(table, &column) else {
+            return ControlFlow::Continue(());
+        };
+        let Ok(column_type) = ColumnType::try_from(descriptor.column_type) else {
+            return ControlFlow::Continue(());
+        };
+        values
+            .iter()
+            .find(|value| is_scalar_literal(value) && lower_literal(value, column_type).is_none())
+            .map_or(ControlFlow::Continue(()), |literal| {
+                ControlFlow::Break(PlanError::LiteralTypeMismatch {
+                    column,
+                    expected: column_type_name(column_type),
+                    literal: literal.to_string(),
+                })
+            })
+    }) {
+        ControlFlow::Continue(()) => Ok(()),
+        ControlFlow::Break(error) => Err(error),
+    }
+}
+
+/// The column and literal operands of a comparison, whichever side the column is on.
+///
+/// `predicate_shape` reads only `column op literal`, which is the shape the planner pushes; the
+/// type gate must also see `literal op column`, or `'1' = pid` loads while `pid = '1'` refuses.
+fn literal_comparison(expr: &Expr) -> Option<(String, Vec<&Expr>)> {
+    if let Some((column, _op, values)) = predicate_shape(expr) {
+        return Some((column, values));
+    }
+    let Expr::BinaryOp {
+        ref left,
+        ref op,
+        ref right,
+    } = *expr
+    else {
+        return None;
+    };
+    comparison_op(op)?;
+    Some((identifier_name(right)?, vec![&**left]))
+}
+
+/// A string, number or boolean literal: the kinds a column type is declared against.
+#[allow(clippy::wildcard_enum_match_arm)]
+const fn is_scalar_literal(expr: &Expr) -> bool {
+    match *expr {
+        Expr::Value(ref spanned) => matches!(
+            spanned.value,
+            Value::Number(..)
+                | Value::SingleQuotedString(_)
+                | Value::DoubleQuotedString(_)
+                | Value::Boolean(_)
+        ),
+        _ => false,
+    }
+}
+
+/// The declared type in words, for a refusal an operator reads.
+const fn column_type_name(column_type: ColumnType) -> &'static str {
+    match column_type {
+        ColumnType::String => "a string",
+        ColumnType::Int => "an integer",
+        ColumnType::Uint => "an unsigned integer",
+        ColumnType::Float => "a float",
+        ColumnType::Bool => "a boolean",
+        ColumnType::Unspecified => "of an unspecified type",
+    }
+}
+
+/// Whether any expression in the statement is, or contains, a subquery.
+fn has_subquery(statement: &Statement) -> bool {
+    visit_expressions(statement, |expr| {
+        if matches!(
+            *expr,
+            Expr::Subquery(_) | Expr::InSubquery { .. } | Expr::Exists { .. }
+        ) {
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    })
+    .is_break()
 }
 
 /// Every table the statement names, the outer `FROM` and every subquery alike (R11).

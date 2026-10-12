@@ -101,6 +101,28 @@ pub enum SqlRejection {
     #[error("SELECT statement must have a FROM clause")]
     MissingFrom,
 
+    /// The rule used a cast, which the function allowlist cannot see.
+    ///
+    /// `CAST`, `TRY_CAST`, `SAFE_CAST` and `::` parse to their own AST nodes rather than to
+    /// `Expr::Function`, so the allowlist (R4) never inspects them. A cast would hand the executor
+    /// an engine-defined coercion the rule never named, so it is refused at load.
+    #[error("{construct} is not allowed in a detection rule")]
+    CastNotAllowed {
+        /// The spelling seen: `CAST`, `TRY_CAST`, `SAFE_CAST`, `::` or `typed string literal`.
+        construct: &'static str,
+    },
+
+    /// An operator that would run a regular expression outside the bounded `REGEXP` path.
+    #[error(
+        "operator `{operator}` is not allowed in a detection rule; use REGEXP, whose pattern is bounded ({position})"
+    )]
+    OperatorNotAllowed {
+        /// The spelling seen: `~`, `~*`, `!~`, `!~*` or `SIMILAR TO`.
+        operator: &'static str,
+        /// Where the operator sits in the rule's SQL.
+        position: SqlPosition,
+    },
+
     /// The rule carried a clause the planner has no representation for.
     ///
     /// R17 admits a rule only when it lowers into collection tasks plus a residual. A clause the

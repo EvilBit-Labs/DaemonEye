@@ -16,11 +16,11 @@ use crate::detection::allowlist::is_allowed_sql_function;
 use crate::detection::rejection::{SqlPosition, SqlRejection};
 use crate::detection_bounds::SQL_PARSER_RECURSION_LIMIT;
 use sqlparser::ast::{
-    Expr, GroupByExpr, Query, Select, SetExpr, Spanned as _, Statement, TableFactor, Visit as _,
-    Visitor,
+    BinaryOperator, CastKind, Expr, GroupByExpr, Query, Select, SetExpr, Spanned as _, Statement,
+    TableFactor, Visit as _, Visitor,
 };
 use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
+use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Span;
 use std::ops::ControlFlow;
 
@@ -48,14 +48,9 @@ const MAX_JOINS: usize = 4;
 /// assert!(validate_detection_sql("DROP TABLE processes", 3).is_err());
 /// ```
 pub fn validate_detection_sql(sql: &str, max_subquery_depth: u32) -> Result<(), SqlRejection> {
-    let dialect = GenericDialect {};
-    let statements = Parser::new(&dialect)
-        .with_recursion_limit(SQL_PARSER_RECURSION_LIMIT)
-        .try_with_sql(sql)
-        .and_then(|mut parser| parser.parse_statements())
-        .map_err(|error| SqlRejection::ParseFailed {
-            message: error.to_string(),
-        })?;
+    let statements = parse_statements(sql).map_err(|error| SqlRejection::ParseFailed {
+        message: error.to_string(),
+    })?;
 
     // `first()` rather than a slice pattern: a slice pattern on `&[Statement]` trips
     // `clippy::pattern_type_mismatch`, and the length check has to be explicit anyway.
@@ -85,6 +80,21 @@ pub fn validate_detection_sql(sql: &str, max_subquery_depth: u32) -> Result<(), 
         ControlFlow::Continue(()) => Ok(()),
         ControlFlow::Break(rejection) => Err(*rejection),
     }
+}
+
+/// Parse `sql` with the one dialect and recursion limit every rule reader shares.
+///
+/// The validator, the planner and the executor's residual re-parse all go through here, so none
+/// can accept a statement another would read differently.
+///
+/// # Errors
+///
+/// The parser's own error.
+pub(crate) fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParserError> {
+    Parser::new(&GenericDialect {})
+        .with_recursion_limit(SQL_PARSER_RECURSION_LIMIT)
+        .try_with_sql(sql)
+        .and_then(|mut parser| parser.parse_statements())
 }
 
 /// The leading SQL keyword of a statement, for naming a rejected statement kind to an operator.
@@ -163,6 +173,21 @@ impl Visitor for SqlGate {
     }
 
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
+        if let Some(construct) = cast_construct(expr) {
+            return ControlFlow::Break(Box::new(SqlRejection::CastNotAllowed { construct }));
+        }
+        if let Some(construct) = function_construct(expr) {
+            return ControlFlow::Break(Box::new(SqlRejection::FunctionNotAllowed {
+                function: construct.to_owned(),
+                position: span_start(expr.span()),
+            }));
+        }
+        if let Some(operator) = regex_operator(expr) {
+            return ControlFlow::Break(Box::new(SqlRejection::OperatorNotAllowed {
+                operator,
+                position: span_start(expr.span()),
+            }));
+        }
         let Expr::Function(ref function) = *expr else {
             return ControlFlow::Continue(());
         };
@@ -174,6 +199,251 @@ impl Visitor for SqlGate {
             function: name,
             position: span_start(function.name.span()),
         }))
+    }
+}
+
+/// The spelling of a cast-like node, if `expr` is one (R27).
+///
+/// Casts parse to their own `Expr` variants, so the function allowlist never sees them. The
+/// `CastKind` match is exhaustive on purpose (KTD8): a spelling added by a future `sqlparser`
+/// must break the build rather than load.
+fn cast_construct(expr: &Expr) -> Option<&'static str> {
+    if let Expr::Cast { ref kind, .. } = *expr {
+        return Some(match *kind {
+            CastKind::Cast => "CAST",
+            CastKind::TryCast => "TRY_CAST",
+            CastKind::SafeCast => "SAFE_CAST",
+            CastKind::DoubleColon => "::",
+        });
+    }
+    matches!(*expr, Expr::TypedString(_)).then_some("typed string literal")
+}
+
+/// The spelling of an operator that would run a regular expression outside the bounded path.
+///
+/// `REGEXP` (and its `RLIKE` spelling) lowers to the `regexp` function, whose pattern must be a
+/// literal and compiles through the `RegexCache`, and whose batches the latency sink times. These
+/// spell a regular-expression match too but would reach `DataFusion`'s own kernel, which bounds
+/// nothing and reports nothing.
+///
+/// Exhaustive on purpose (KTD8): an operator a future `sqlparser` adds has to be placed in one
+/// arm or the other rather than loading by default.
+const fn regex_operator(expr: &Expr) -> Option<&'static str> {
+    match *expr {
+        Expr::BinaryOp { ref op, .. } => match *op {
+            BinaryOperator::Match => Some("MATCH (operator)"),
+            BinaryOperator::Regexp => Some("REGEXP (operator)"),
+            BinaryOperator::PGRegexMatch => Some("~"),
+            BinaryOperator::PGRegexIMatch => Some("~*"),
+            BinaryOperator::PGRegexNotMatch => Some("!~"),
+            BinaryOperator::PGRegexNotIMatch => Some("!~*"),
+            BinaryOperator::Plus
+            | BinaryOperator::Minus
+            | BinaryOperator::Multiply
+            | BinaryOperator::Divide
+            | BinaryOperator::Modulo
+            | BinaryOperator::StringConcat
+            | BinaryOperator::Gt
+            | BinaryOperator::Lt
+            | BinaryOperator::GtEq
+            | BinaryOperator::LtEq
+            | BinaryOperator::Spaceship
+            | BinaryOperator::Eq
+            | BinaryOperator::NotEq
+            | BinaryOperator::And
+            | BinaryOperator::Or
+            | BinaryOperator::Xor
+            | BinaryOperator::BitwiseOr
+            | BinaryOperator::BitwiseAnd
+            | BinaryOperator::BitwiseXor
+            | BinaryOperator::DuckIntegerDivide
+            | BinaryOperator::MyIntegerDivide
+            | BinaryOperator::Custom(_)
+            | BinaryOperator::PGBitwiseXor
+            | BinaryOperator::PGBitwiseShiftLeft
+            | BinaryOperator::PGBitwiseShiftRight
+            | BinaryOperator::PGExp
+            | BinaryOperator::PGOverlap
+            | BinaryOperator::PGLikeMatch
+            | BinaryOperator::PGILikeMatch
+            | BinaryOperator::PGNotLikeMatch
+            | BinaryOperator::PGNotILikeMatch
+            | BinaryOperator::PGStartsWith
+            | BinaryOperator::Arrow
+            | BinaryOperator::LongArrow
+            | BinaryOperator::HashArrow
+            | BinaryOperator::HashLongArrow
+            | BinaryOperator::AtAt
+            | BinaryOperator::AtArrow
+            | BinaryOperator::ArrowAt
+            | BinaryOperator::HashMinus
+            | BinaryOperator::AtQuestion
+            | BinaryOperator::Question
+            | BinaryOperator::QuestionAnd
+            | BinaryOperator::QuestionPipe
+            | BinaryOperator::PGCustomBinaryOperator(_)
+            | BinaryOperator::Overlaps
+            | BinaryOperator::DoubleHash
+            | BinaryOperator::LtDashGt
+            | BinaryOperator::AndLt
+            | BinaryOperator::AndGt
+            | BinaryOperator::LtLtPipe
+            | BinaryOperator::PipeGtGt
+            | BinaryOperator::AndLtPipe
+            | BinaryOperator::PipeAndGt
+            | BinaryOperator::LtCaret
+            | BinaryOperator::GtCaret
+            | BinaryOperator::QuestionHash
+            | BinaryOperator::QuestionDash
+            | BinaryOperator::QuestionDashPipe
+            | BinaryOperator::QuestionDoublePipe
+            | BinaryOperator::At
+            | BinaryOperator::TildeEq
+            | BinaryOperator::Assignment => None,
+        },
+        Expr::SimilarTo { .. } => Some("SIMILAR TO"),
+        // `REGEXP` and its `RLIKE` spelling both lower to the bounded `regexp` call; the rest are
+        // not operators.
+        Expr::Identifier(_)
+        | Expr::CompoundIdentifier(_)
+        | Expr::CompoundFieldAccess { .. }
+        | Expr::JsonAccess { .. }
+        | Expr::IsFalse(_)
+        | Expr::IsNotFalse(_)
+        | Expr::IsTrue(_)
+        | Expr::IsNotTrue(_)
+        | Expr::IsNull(_)
+        | Expr::IsNotNull(_)
+        | Expr::IsUnknown(_)
+        | Expr::IsNotUnknown(_)
+        | Expr::IsDistinctFrom(..)
+        | Expr::IsNotDistinctFrom(..)
+        | Expr::IsNormalized { .. }
+        | Expr::InList { .. }
+        | Expr::InSubquery { .. }
+        | Expr::InUnnest { .. }
+        | Expr::Between { .. }
+        | Expr::Like { .. }
+        | Expr::ILike { .. }
+        | Expr::AnyOp { .. }
+        | Expr::AllOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::Convert { .. }
+        | Expr::Cast { .. }
+        | Expr::AtTimeZone { .. }
+        | Expr::Extract { .. }
+        | Expr::Ceil { .. }
+        | Expr::Floor { .. }
+        | Expr::Position { .. }
+        | Expr::Substring { .. }
+        | Expr::Trim { .. }
+        | Expr::Overlay { .. }
+        | Expr::Collate { .. }
+        | Expr::Nested(_)
+        | Expr::Value(_)
+        | Expr::Prefixed { .. }
+        | Expr::TypedString(_)
+        | Expr::Function(_)
+        | Expr::Case { .. }
+        | Expr::Exists { .. }
+        | Expr::Subquery(_)
+        | Expr::GroupingSets(_)
+        | Expr::Cube(_)
+        | Expr::Rollup(_)
+        | Expr::Tuple(_)
+        | Expr::Struct { .. }
+        | Expr::Named { .. }
+        | Expr::Dictionary(_)
+        | Expr::Map(_)
+        | Expr::Array(_)
+        | Expr::Interval(_)
+        | Expr::MatchAgainst { .. }
+        | Expr::Wildcard(_)
+        | Expr::QualifiedWildcard(..)
+        | Expr::OuterJoin(_)
+        | Expr::Prior(_)
+        | Expr::Lambda(_)
+        | Expr::MemberOf(_)
+        | Expr::RLike { .. } => None,
+    }
+}
+
+/// The spelling of a function-like node the executor has no implementation for, if `expr` is one.
+///
+/// These spell like calls but parse to their own `Expr` variants, so the allowlist never sees
+/// them, and the executor registers nothing behind them: a rule using one would load and then
+/// fail on every cycle. Refusing here names the construct to the operator at load instead, through
+/// the same rejection an unlisted function gets.
+///
+/// Exhaustive on purpose (KTD8): a variant a future `sqlparser` adds has to be placed in one arm
+/// or the other rather than loading by default.
+const fn function_construct(expr: &Expr) -> Option<&'static str> {
+    match *expr {
+        Expr::Substring { .. } => Some("SUBSTRING"),
+        Expr::Trim { .. } => Some("TRIM"),
+        Expr::Position { .. } => Some("POSITION"),
+        Expr::Extract { .. } => Some("EXTRACT"),
+        Expr::Ceil { .. } => Some("CEIL"),
+        Expr::Floor { .. } => Some("FLOOR"),
+        Expr::Overlay { .. } => Some("OVERLAY"),
+        Expr::Convert { .. } => Some("CONVERT"),
+        Expr::MatchAgainst { .. } => Some("MATCH AGAINST"),
+        Expr::Struct { .. } => Some("STRUCT"),
+        Expr::Dictionary(_) => Some("a dictionary literal"),
+        Expr::Map(_) => Some("MAP"),
+        Expr::Array(_) => Some("ARRAY"),
+        Expr::Lambda(_) => Some("a lambda"),
+        // Casts have their own gate; the rest are references, literals, operators, or subqueries
+        // the depth gate counts.
+        Expr::Cast { .. }
+        | Expr::TypedString(_)
+        | Expr::Function(_)
+        | Expr::Identifier(_)
+        | Expr::CompoundIdentifier(_)
+        | Expr::CompoundFieldAccess { .. }
+        | Expr::JsonAccess { .. }
+        | Expr::IsFalse(_)
+        | Expr::IsNotFalse(_)
+        | Expr::IsTrue(_)
+        | Expr::IsNotTrue(_)
+        | Expr::IsNull(_)
+        | Expr::IsNotNull(_)
+        | Expr::IsUnknown(_)
+        | Expr::IsNotUnknown(_)
+        | Expr::IsDistinctFrom(..)
+        | Expr::IsNotDistinctFrom(..)
+        | Expr::IsNormalized { .. }
+        | Expr::InList { .. }
+        | Expr::InSubquery { .. }
+        | Expr::InUnnest { .. }
+        | Expr::Between { .. }
+        | Expr::BinaryOp { .. }
+        | Expr::Like { .. }
+        | Expr::ILike { .. }
+        | Expr::SimilarTo { .. }
+        | Expr::RLike { .. }
+        | Expr::AnyOp { .. }
+        | Expr::AllOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::AtTimeZone { .. }
+        | Expr::Collate { .. }
+        | Expr::Nested(_)
+        | Expr::Value(_)
+        | Expr::Prefixed { .. }
+        | Expr::Case { .. }
+        | Expr::Exists { .. }
+        | Expr::Subquery(_)
+        | Expr::GroupingSets(_)
+        | Expr::Cube(_)
+        | Expr::Rollup(_)
+        | Expr::Tuple(_)
+        | Expr::Named { .. }
+        | Expr::Interval(_)
+        | Expr::Wildcard(_)
+        | Expr::QualifiedWildcard(..)
+        | Expr::OuterJoin(_)
+        | Expr::Prior(_)
+        | Expr::MemberOf(_) => None,
     }
 }
 

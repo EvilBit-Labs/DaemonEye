@@ -612,7 +612,7 @@ impl HasherKind {
 ///
 /// Used instead of `format!("{:x}", ...)` because sha2 0.11 returns
 /// `hybrid_array::Array<u8, ...>` which does not implement `LowerHex`.
-fn bytes_to_hex(bytes: &[u8]) -> String {
+pub(crate) fn bytes_to_hex(bytes: &[u8]) -> String {
     const HEX_CHARS: [u8; 16] = *b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len().saturating_mul(2));
     for &b in bytes {

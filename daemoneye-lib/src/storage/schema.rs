@@ -36,6 +36,7 @@
 //! step or boot-looping.
 
 use crate::storage::error::StorageError;
+use crate::storage::{create_database, default_page_cache_bytes, open_database};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableHandle};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -46,7 +47,9 @@ use super::codec::TsSeqKey;
 
 /// On-disk schema version understood by this binary. Bump only when the stored
 /// value format changes incompatibly — the rebuild path handles the transition.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// 2: `Alert` gained `completeness`, so a version-1 store's alerts no longer decode.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Bundle envelope format version (the manifest framing), independent of
 /// [`SCHEMA_VERSION`] so the archive format can evolve on its own axis.
@@ -296,10 +299,7 @@ fn remove_marker(db_path: &Path) -> Result<(), StorageError> {
 /// manifest, and compute the gap start (oldest event `ts_ms`, schema-stable key
 /// codec). The handle is dropped before any file-level archive step.
 fn inspect_store(db_path: &Path) -> Result<(u32, Vec<String>, u64), StorageError> {
-    let db = Database::open(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
-        path: db_path.to_path_buf(),
-        source,
-    })?;
+    let db = open_database(db_path, default_page_cache_bytes())?;
     let from_version = match classify(&db)? {
         SchemaClassification::Mismatch { found, .. } => found,
         // inspect_store is only called on the mismatch path; treat first-init/match
@@ -537,10 +537,7 @@ fn enumerate_archived_partitions(
         source,
     })?;
     let result = (|| {
-        let db = Database::open(&temp).map_err(|source| StorageError::DatabaseCreationFailed {
-            path: temp.clone(),
-            source,
-        })?;
+        let db = open_database(&temp, default_page_cache_bytes())?;
         let rtxn = db.begin_read()?;
         let names: Vec<String> = rtxn
             .list_tables()?
@@ -557,10 +554,7 @@ fn enumerate_archived_partitions(
 /// a crash interrupted a prior reinit (the archived bundle holds the old data).
 fn reinit_store(db_path: &Path) -> Result<(), StorageError> {
     remove_if_exists(db_path)?;
-    let db = Database::create(db_path).map_err(|source| StorageError::DatabaseCreationFailed {
-        path: db_path.to_path_buf(),
-        source,
-    })?;
+    let db = create_database(db_path, default_page_cache_bytes())?;
     write_current_version(&db)?;
     Ok(())
 }

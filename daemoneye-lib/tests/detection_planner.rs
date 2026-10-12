@@ -32,6 +32,17 @@ fn verified(collector_id: &str) -> VerifiedRegistration {
     verify_spawn_token(collector_id, Some(&token()), Some(&token())).unwrap()
 }
 
+/// A column of the type the encoder really produces for it, for descriptors an engine loads
+/// rules against: the load-time dry run plans over the provider's schema.
+fn float_column(name: &str, ops: &[PredicateOp]) -> ColumnDescriptor {
+    ColumnDescriptor {
+        name: name.to_owned(),
+        column_type: i32::from(ColumnType::Float),
+        nullable: false,
+        supported_ops: ops.iter().copied().map(i32::from).collect(),
+    }
+}
+
 fn int_column(name: &str, ops: &[PredicateOp]) -> ColumnDescriptor {
     ColumnDescriptor {
         name: name.to_owned(),
@@ -47,7 +58,10 @@ fn descriptor(columns: Vec<ColumnDescriptor>) -> SchemaDescriptor {
         descriptor_version: "v1".to_owned(),
         tables: vec![TableDescriptor {
             name: "processes".to_owned(),
-            columns,
+            // Every provider carries the window column; a rule an engine loads is planned over it.
+            columns: std::iter::once(int_column("collection_time", &[]))
+                .chain(columns)
+                .collect(),
         }],
         conformance_results: Vec::new(),
     }
@@ -173,7 +187,7 @@ fn an_advertised_but_unverified_operation_is_treated_as_unverified() {
     catalog
         .register(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 
@@ -387,7 +401,7 @@ fn a_rule_naming_an_unregistered_table_fails_first_load_and_stays_out_of_the_ena
     engine
         .register_collector(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 
@@ -417,7 +431,7 @@ fn a_rule_loaded_before_any_collector_registers_is_deferred_and_planned_on_regis
     engine
         .register_collector(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 
@@ -438,7 +452,7 @@ fn a_deferred_rule_that_cannot_be_planned_is_rejected_on_the_drain_not_marked_un
     engine
         .register_collector(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 
@@ -511,7 +525,7 @@ fn a_rule_planned_against_a_live_catalog_reports_healthy() {
     engine
         .register_collector(
             &verified("procmond"),
-            descriptor(vec![int_column("cpu_usage", &[PredicateOp::Gt])]),
+            descriptor(vec![float_column("cpu_usage", &[PredicateOp::Gt])]),
         )
         .unwrap();
 
@@ -680,22 +694,55 @@ fn a_subquery_over_a_second_registered_table_is_refused_as_multiple_tables() {
     );
 }
 
+/// The literal type gate reads both operand orders: `DataFusion` coerces a comparison
+/// symmetrically, so a reversed `'x' = cpu_usage` would otherwise load while `cpu_usage = 'x'`
+/// refuses.
 #[test]
-fn a_subquery_over_the_outer_table_itself_still_plans() {
+fn a_mismatched_literal_is_refused_on_either_side_of_the_comparison() {
     let catalog = both_verified_catalog();
     let cache = RegexCache::new();
 
-    let compiled = plan_rule(
-        &catalog,
-        &cache,
-        &rule(
-            "SELECT cpu_usage FROM processes WHERE cpu_usage IN (SELECT cpu_usage FROM processes)",
-        ),
-        3,
-    )
-    .unwrap();
+    for sql in [
+        "SELECT cpu_usage FROM processes WHERE cpu_usage = 'x'",
+        "SELECT cpu_usage FROM processes WHERE 'x' = cpu_usage",
+        "SELECT cpu_usage FROM processes WHERE 'x' = (cpu_usage)",
+        "SELECT cpu_usage FROM processes WHERE 'x' < cpu_usage OR cpu_usage > 1",
+    ] {
+        let error = plan_rule(&catalog, &cache, &rule(sql), 3).unwrap_err();
+        assert!(
+            matches!(error, PlanError::LiteralTypeMismatch { ref column, ref literal, .. }
+                if column == "cpu_usage" && literal == "'x'"),
+            "expected the literal type refusal for `{sql}`, got {error:?}"
+        );
+    }
+    // The control: the same shapes with a literal of the column's kind load.
+    for sql in [
+        "SELECT cpu_usage FROM processes WHERE cpu_usage = 1",
+        "SELECT cpu_usage FROM processes WHERE 1 = cpu_usage",
+    ] {
+        plan_rule(&catalog, &cache, &rule(sql), 3)
+            .unwrap_or_else(|error| panic!("`{sql}` must load, got {error:?}"));
+    }
+}
 
-    assert_eq!(compiled.plan().table, "processes");
+/// Every reference resolves, so the only thing wrong is that the executor cannot run it: the
+/// residual is planned against a session with no table registered by name.
+#[test]
+fn a_subquery_over_the_outer_table_itself_is_refused_as_unrunnable() {
+    let catalog = both_verified_catalog();
+    let cache = RegexCache::new();
+
+    for sql in [
+        "SELECT cpu_usage FROM processes WHERE cpu_usage IN (SELECT cpu_usage FROM processes)",
+        "SELECT cpu_usage FROM processes WHERE EXISTS (SELECT 1 FROM processes)",
+        "SELECT cpu_usage FROM processes WHERE cpu_usage > (SELECT cpu_usage FROM processes)",
+    ] {
+        let error = plan_rule(&catalog, &cache, &rule(sql), 3).unwrap_err();
+        assert!(
+            matches!(error, PlanError::Subquery),
+            "expected the subquery refusal for `{sql}`, got {error:?}"
+        );
+    }
 }
 
 // --- R5/R6: the function spelling of REGEXP compiles at load --------------------------------

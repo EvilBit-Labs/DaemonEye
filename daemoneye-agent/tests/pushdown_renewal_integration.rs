@@ -93,12 +93,22 @@ fn descriptor() -> SchemaDescriptor {
         descriptor_version: "v1".to_owned(),
         tables: vec![TableDescriptor {
             name: "processes".to_owned(),
-            columns: vec![ColumnDescriptor {
-                name: "cpu_usage".to_owned(),
-                column_type: i32::from(ColumnType::Int),
-                nullable: false,
-                supported_ops: ops.iter().copied().map(i32::from).collect(),
-            }],
+            // The real column types: the executor plans every rule at load over the provider's
+            // schema, which also needs the window column.
+            columns: vec![
+                ColumnDescriptor {
+                    name: "collection_time".to_owned(),
+                    column_type: i32::from(ColumnType::Int),
+                    nullable: false,
+                    supported_ops: Vec::new(),
+                },
+                ColumnDescriptor {
+                    name: "cpu_usage".to_owned(),
+                    column_type: i32::from(ColumnType::Float),
+                    nullable: false,
+                    supported_ops: ops.iter().copied().map(i32::from).collect(),
+                },
+            ],
         }],
         conformance_results: Vec::new(),
     }

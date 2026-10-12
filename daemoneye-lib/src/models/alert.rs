@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::models::completeness::Completeness;
 use crate::models::process::ProcessRecord;
 
 /// Strongly-typed alert identifier.
@@ -253,6 +254,8 @@ pub struct Alert {
     pub deduplication_key: String,
     /// Alert context information
     pub context: AlertContext,
+    /// Whether the evaluation that raised this alert saw everything it was meant to (R14).
+    pub completeness: Completeness,
 }
 
 impl Alert {
@@ -262,15 +265,18 @@ impl Alert {
     /// - a freshly generated UUID (`id`),
     /// - `timestamp` set to the current system time,
     /// - `deduplication_key` built as `<severity>:<detection_rule_id>:<title>`,
-    /// - an empty `AlertContext`.
+    /// - an empty `AlertContext`,
+    /// - the given `completeness`: pass `Completeness::complete()` for an alert not raised by a
+    ///   rule evaluation.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use daemoneye_lib::models::alert::{Alert, AlertSeverity};
+    /// use daemoneye_lib::models::Completeness;
     /// use daemoneye_lib::models::process::ProcessRecord;
     /// let proc = ProcessRecord::new(1, "proc".to_owned());
-    /// let alert = Alert::new(AlertSeverity::High, "CPU spike", "High CPU usage observed", "rule-123", proc);
+    /// let alert = Alert::new(AlertSeverity::High, "CPU spike", "High CPU usage observed", "rule-123", proc, Completeness::complete());
     /// assert_eq!(alert.severity, AlertSeverity::High);
     /// assert!(alert.deduplication_key.contains("CPU spike"));
     /// ```
@@ -280,6 +286,7 @@ impl Alert {
         description: impl Into<String>,
         detection_rule_id: impl Into<String>,
         process_record: ProcessRecord,
+        completeness: Completeness,
     ) -> Self {
         let alert_title = title.into();
         let alert_description = description.into();
@@ -295,6 +302,7 @@ impl Alert {
             timestamp: SystemTime::now(),
             deduplication_key,
             context: AlertContext::new(),
+            completeness,
         }
     }
 
@@ -324,9 +332,10 @@ impl Alert {
     ///
     /// ```rust,ignore
     /// use daemoneye_lib::models::alert::{Alert, AlertSeverity};
+    /// use daemoneye_lib::models::Completeness;
     /// use daemoneye_lib::models::process::ProcessRecord;
     /// let process_record = ProcessRecord::default();
-    /// let alert = Alert::new(AlertSeverity::Low, "title", "desc", "rule-1", process_record)
+    /// let alert = Alert::new(AlertSeverity::Low, "title", "desc", "rule-1", process_record, Completeness::complete())
     ///     .with_tag("network");
     /// assert!(alert.context.tags.contains(&"network".to_owned()));
     /// ```
@@ -396,6 +405,7 @@ impl Alert {
     ///
     /// ```rust
     /// use daemoneye_lib::models::alert::{Alert, AlertSeverity};
+    /// use daemoneye_lib::models::Completeness;
     /// use daemoneye_lib::models::process::ProcessRecord;
     ///
     /// let alert = Alert::new(
@@ -404,6 +414,7 @@ impl Alert {
     ///     "Test Description".to_owned(),
     ///     "rule-001".to_owned(),
     ///     ProcessRecord::new(1234, "test-process".to_owned()),
+    ///     Completeness::complete(),
     /// );
     ///
     /// // Use default threshold (3600 seconds)
@@ -430,6 +441,7 @@ impl Alert {
     ///
     /// ```rust
     /// use daemoneye_lib::models::alert::{Alert, AlertSeverity};
+    /// use daemoneye_lib::models::Completeness;
     /// use daemoneye_lib::models::process::ProcessRecord;
     /// use daemoneye_lib::config::AlertingConfig;
     ///
@@ -439,6 +451,7 @@ impl Alert {
     ///     "Test Description".to_owned(),
     ///     "rule-001".to_owned(),
     ///     ProcessRecord::new(1234, "test-process".to_owned()),
+    ///     Completeness::complete(),
     /// );
     ///
     /// let config = AlertingConfig::default();
@@ -478,6 +491,7 @@ mod tests {
             "A potentially malicious process was detected",
             "rule-001",
             process.clone(),
+            Completeness::complete(),
         );
 
         assert_eq!(alert.severity, AlertSeverity::High);
@@ -500,6 +514,7 @@ mod tests {
             "Test description",
             "rule-001",
             process,
+            Completeness::complete(),
         )
         .with_tag("test")
         .with_source("test-system")
@@ -597,6 +612,7 @@ mod tests {
             "Test description",
             "rule-001",
             process,
+            Completeness::complete(),
         );
 
         // Alert should be recent (just created)
@@ -613,6 +629,7 @@ mod tests {
             "Test description".to_owned(),
             "rule-001".to_owned(),
             process,
+            Completeness::complete(),
         );
 
         // Should be recent with default threshold (3600 seconds)
@@ -637,6 +654,7 @@ mod tests {
             "Test description".to_owned(),
             "rule-001".to_owned(),
             process,
+            Completeness::complete(),
         );
 
         // Test with default config (3600 seconds)

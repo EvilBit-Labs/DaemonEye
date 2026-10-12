@@ -413,6 +413,20 @@ pub enum HeartbeatStatus {
 
 #[allow(dead_code)]
 impl HeartbeatStatus {
+    /// The detection library's view of this status. `Degraded` does not make an evaluation
+    /// incomplete; `Failed` does.
+    #[must_use]
+    pub const fn collector_health(
+        &self,
+    ) -> daemoneye_lib::detection::execution::completeness::CollectorHealth {
+        use daemoneye_lib::detection::execution::completeness::CollectorHealth;
+        match *self {
+            Self::Healthy => CollectorHealth::Healthy,
+            Self::Degraded { missed_count } => CollectorHealth::Degraded { missed_count },
+            Self::Failed { missed_count, .. } => CollectorHealth::Failed { missed_count },
+        }
+    }
+
     /// Returns true if the collector needs recovery action.
     #[must_use]
     pub const fn needs_recovery(&self) -> bool {

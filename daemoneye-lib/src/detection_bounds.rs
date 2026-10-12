@@ -1,7 +1,9 @@
 //! Fixed bounds for the detection rule-load pipeline.
 //!
-//! These values are deliberately **not** configuration fields. Each one backs a guarantee that
-//! only holds if the value cannot be changed at runtime: the regex memory ceiling is a product of
+//! These values are deliberately **not** configuration fields, except the executor and posting-cache
+//! defaults below, which are the *default values* of fields on `DetectionConfig` and are documented
+//! there. Each of the others backs a guarantee that only holds if the value cannot be changed at
+//! runtime: the regex memory ceiling is a product of
 //! two fixed numbers, and the descriptor bounds are the only thing standing between a hostile rule
 //! and unbounded allocation during validation.
 //!
@@ -72,6 +74,127 @@ const _: () = assert!(
 const _: () = assert!(
     REGEX_DFA_SIZE_LIMIT_BYTES * REGEX_CACHE_MAX_ENTRIES <= REGEX_CACHE_MAX_BYTES,
     "the DFA cache ceiling must also survive multiplication by the cache entry count"
+);
+
+// --- Posting-list cache bounds ------------------------------------------------------------------
+
+/// Default number of closed-bucket posting lists the page cache retains (R12).
+pub const POSTING_CACHE_MAX_ENTRIES: usize = 256;
+
+/// Default longest posting list, in postings, the page cache will retain (R12).
+///
+/// A longer list is served live from redb and never cached.
+pub const POSTING_CACHE_MAX_POSTINGS: usize = 1024;
+
+const _: () = assert!(
+    POSTING_CACHE_MAX_ENTRIES > 0 && POSTING_CACHE_MAX_POSTINGS > 0,
+    "the posting cache bounds must be non-zero"
+);
+
+/// Worst-case posting bytes the page cache can hold at its **default** bounds.
+///
+/// **This is a product, not a measurement.** It is [`POSTING_CACHE_MAX_ENTRIES`] ×
+/// [`POSTING_CACHE_MAX_POSTINGS`] × `size_of::<(u64, u32)>()` (16 bytes, the padded tuple; 12 of
+/// them are payload, so the payload alone is 3 MiB). It excludes the per-entry `Arc` and map
+/// overhead, and it bounds the *defaults* only: operator-configured values are bounded by their
+/// own ceilings, not by this constant.
+///
+/// The product currently *equals* this bound rather than fitting inside it, so raising either
+/// default is a build break by design: the assertion below is the review gate, not slack.
+pub const POSTING_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+const _: () = assert!(
+    POSTING_CACHE_MAX_ENTRIES * POSTING_CACHE_MAX_POSTINGS * size_of::<(u64, u32)>()
+        <= POSTING_CACHE_MAX_BYTES,
+    "posting cache entry count times list length times posting size must fit the stated product"
+);
+
+/// Worst case of the posting cache at **both** configurable ceilings, in bytes (128 MiB).
+///
+/// [`crate::config::DetectionConfig::POSTING_CACHE_MAX_ENTRIES_MAX`] x
+/// [`crate::config::DetectionConfig::POSTING_CACHE_MAX_POSTINGS_MAX`] x
+/// `size_of::<(u64, u32)>()` (16 bytes, the padded tuple). An earlier draft of the plan said 96
+/// MiB by counting 12 payload bytes per posting; the real element is 16. A product, not a
+/// measurement, and it excludes the per-entry `Arc` and map overhead. An operator configuring both
+/// ceilings is choosing a large deployment on purpose.
+pub const POSTING_CACHE_CEILING_BYTES: usize = 128 * 1024 * 1024;
+
+const _: () = assert!(
+    crate::config::DetectionConfig::POSTING_CACHE_MAX_ENTRIES_MAX
+        * crate::config::DetectionConfig::POSTING_CACHE_MAX_POSTINGS_MAX
+        * size_of::<(u64, u32)>()
+        == POSTING_CACHE_CEILING_BYTES,
+    "the posting cache's configured ceilings must multiply out to the stated worst case"
+);
+
+// --- Executor defaults --------------------------------------------------------------------------
+
+/// Default cap on alerts one rule may raise in one cycle (KTD14).
+pub const MAX_MATCHES_PER_RULE_DEFAULT: u32 = 1_000;
+
+/// Default byte capacity of the executor's `GreedyMemoryPool` (R6, KTD3).
+///
+/// **A ceiling on what `DataFusion` reserves, not on what the process holds.** The pool only sees
+/// allocations an operator registers with it. A filter or projection reserves nothing; the
+/// `RepartitionExec` the optimizer inserts to reach `EXECUTOR_TARGET_PARTITIONS` over a
+/// one-partition scan does, and is what exhausts a too-small pool. The store's row decode is
+/// bounded separately by R9. So this number is a default for an operator-configurable field, not
+/// a resident-set bound, and nothing here measures one.
+///
+/// A greedy pool, not a fair one: a fair pool divides memory across concurrent spillable operators,
+/// and this plan has none. Spilling is disabled outright, so exhausting the pool is a resource error
+/// that becomes a degraded reason, never a temp file.
+pub const EXECUTOR_MEMORY_POOL_BYTES: usize = 32 * 1024 * 1024;
+
+/// Default number of rows per `RecordBatch` the executor's session asks for (KTD14).
+///
+/// Also the granularity of the pattern-latency guard: a `REGEXP` pattern is timed once per batch,
+/// so a larger batch trades measurement precision for throughput. The configurable field is
+/// validated against a ceiling chosen to keep a single batch's worst-case matching cost from
+/// outgrowing that granularity.
+pub const EXECUTOR_BATCH_SIZE: usize = 8192;
+
+/// Default number of partitions `DataFusion` may fan a plan out over (KTD14).
+///
+/// Fixed rather than derived from the host's core count so a rule behaves the same on every
+/// deployment; partitions multiply per-batch memory, so this is also a memory-shaping knob.
+pub const EXECUTOR_TARGET_PARTITIONS: usize = 4;
+
+/// Default ceiling on the estimated decoded bytes in one scan `RecordBatch` (R9, KTD2).
+///
+/// Bounds a batch independently of [`EXECUTOR_BATCH_SIZE`]: a batch closes on whichever bound is
+/// hit first, so rows with large `command_line` or `executable_path` values yield short batches
+/// instead of an 8192-row one. A single row whose estimated size alone exceeds this is excluded
+/// and its evaluation is degraded, so it must stay above one maximally-sized row (R28's floor).
+///
+/// **The floor rests on an assumption, not an enforced cap.** `MAX_EXECUTABLE_PATH_LEN` (4096)
+/// caps `executable_path` where it is authenticated, but `command_line` has no length cap
+/// anywhere in the collector, proto, ingest or store path. The nearest bounds are the 1 MiB frame of
+/// the IPC transport (`IpcConfig::max_frame_bytes`, which the event-bus ingest path is not shown to
+/// share) and the host's argument-length limit. The worst row assumed is a
+/// 255-byte name, a 4096-byte path, a 64-byte hash and a 1 MiB `command_line`: measured at
+/// 1,053,119 estimated bytes (1,057,632 allocated by Arrow), so 4 MiB leaves about 4x headroom.
+/// R28's validation of this field in U8 inherits that assumption and must be revisited if
+/// `command_line` ever gains, or loses, an enforced cap.
+///
+/// It bounds the *estimate*; Arrow's string builders may allocate up to 2x that for a batch of
+/// large rows. The estimate over-counts typical rows, so 8192 ordinary rows (about 2 MiB) still
+/// close on the row bound.
+pub const EXECUTOR_BATCH_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// Wall-clock deadline for one rule's evaluation in one cycle (R3.4).
+///
+/// Checked at batch boundaries and while waiting for the next batch, so a stuck stream or a
+/// catch-up scan over many buckets ends as a `ResourceLimit` degradation instead of running on.
+/// The batch in flight finishes, as under ADR-0011.
+pub const EXECUTOR_RULE_DEADLINE: Duration = Duration::from_secs(30);
+
+const _: () = assert!(
+    EXECUTOR_MEMORY_POOL_BYTES > 0
+        && EXECUTOR_BATCH_SIZE > 0
+        && EXECUTOR_TARGET_PARTITIONS > 0
+        && EXECUTOR_BATCH_MAX_BYTES > 0,
+    "the executor defaults must be non-zero"
 );
 
 // --- Parser bounds ----------------------------------------------------------------------------
