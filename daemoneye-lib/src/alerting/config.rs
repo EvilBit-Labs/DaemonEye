@@ -407,7 +407,10 @@ pub fn host_of(authority: &str) -> &str {
 }
 
 fn is_loopback(host: &str) -> bool {
-    host.starts_with("127.") || host == "::1" || host.eq_ignore_ascii_case("localhost")
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 fn validate_syslog(s: &SyslogSpec) -> Result<(), ConfigError> {
@@ -449,6 +452,12 @@ fn validate_syslog(s: &SyslogSpec) -> Result<(), ConfigError> {
 fn validate_email(e: &EmailSpec) -> Result<(), ConfigError> {
     if e.to.is_empty() {
         return Err(invalid(&e.name, "to must list at least one recipient"));
+    }
+    if e.username_env.is_some() != e.password_env.is_some() {
+        return Err(invalid(
+            &e.name,
+            "username_env and password_env must be set together",
+        ));
     }
     Ok(())
 }

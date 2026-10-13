@@ -6,12 +6,13 @@
 //! and skipped, never fatal to its neighbours.
 
 use crate::models::{Alert, AlertSeverity, DeliveryReason, DeliveryRecord, DeliveryState, Uuid};
-use crate::storage::codec::{decode_value, encode_value};
+use crate::storage::codec::{VALUE_VERSION_V1, decode_value, encode_value};
 use crate::storage::error::StorageError;
 use crate::storage::records::{
     ALERT_DELIVERIES_TABLE, ALERTS_TABLE, DELIVERY_KEY_SEP, delivery_key, get_record,
 };
 use redb::{Database, ReadableDatabase, ReadableTable, Table};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 
 /// Exclusive upper bound of one sink's key prefix: the character after [`DELIVERY_KEY_SEP`].
@@ -95,42 +96,80 @@ fn decode_scanned(key: &str, bytes: &[u8]) -> Option<DeliveryRecord> {
     }
 }
 
-/// Every row of one sink (or of all sinks); `None` marks an undecodable row.
-fn scan<T: ReadableTable<&'static str, &'static [u8]>>(
+/// First field of [`DeliveryRecord`]; postcard is positional, so this decodes the state alone.
+#[derive(Deserialize)]
+struct StatePrefix {
+    state: DeliveryState,
+}
+
+/// The row's state without decoding the rest of it; `None` for an unreadable envelope or state.
+fn peek_state(bytes: &[u8]) -> Option<DeliveryState> {
+    let (version, payload) = bytes.split_first()?;
+    if *version != VALUE_VERSION_V1 {
+        return None;
+    }
+    postcard::take_from_bytes::<StatePrefix>(payload)
+        .ok()
+        .map(|(prefix, _rest)| prefix.state)
+}
+
+/// Half-open key range holding exactly one sink's rows.
+fn sink_range(name: &str) -> (String, String) {
+    (
+        format!("{name}{DELIVERY_KEY_SEP}"),
+        format!("{name}{DELIVERY_KEY_SEP_END}"),
+    )
+}
+
+/// Rows of one sink (or of all sinks) whose peeked state passes `keep`, fully decoded. Rows
+/// that fail `keep` are skipped undecoded; `None` marks a row whose state or body is unreadable.
+fn scan_where<T: ReadableTable<&'static str, &'static [u8]>>(
     table: &T,
     sink: Option<&str>,
+    keep: impl Fn(DeliveryState) -> bool,
 ) -> Result<Vec<ScannedRow>, StorageError> {
     let mut out = Vec::new();
+    let mut visit = |key: &str, bytes: &[u8]| match peek_state(bytes) {
+        Some(state) if !keep(state) => {}
+        Some(_) => out.push((key.to_owned(), decode_scanned(key, bytes))),
+        None => {
+            tracing::warn!(%key, "undecodable alert_deliveries row");
+            out.push((key.to_owned(), None));
+        }
+    };
     if let Some(name) = sink {
-        let start = format!("{name}{DELIVERY_KEY_SEP}");
-        let end = format!("{name}{DELIVERY_KEY_SEP_END}");
+        let (start, end) = sink_range(name);
         for entry in table.range(start.as_str()..end.as_str())? {
             let (key, value) = entry?;
-            out.push((
-                key.value().to_owned(),
-                decode_scanned(key.value(), value.value()),
-            ));
+            visit(key.value(), value.value());
         }
     } else {
         for entry in table.iter()? {
             let (key, value) = entry?;
-            out.push((
-                key.value().to_owned(),
-                decode_scanned(key.value(), value.value()),
-            ));
+            visit(key.value(), value.value());
         }
     }
     Ok(out)
 }
 
-fn open_rows(rows: &[ScannedRow]) -> usize {
-    rows.iter()
-        .filter(|row| {
-            row.1
-                .as_ref()
-                .is_some_and(|record| !record.state.is_terminal())
-        })
-        .count()
+/// Non-terminal rows of one sink, counted from the peeked state alone (no decode, no key copy).
+fn open_count<T: ReadableTable<&'static str, &'static [u8]>>(
+    table: &T,
+    sink: &str,
+) -> Result<usize, StorageError> {
+    let (start, end) = sink_range(sink);
+    let mut open = 0_usize;
+    for entry in table.range(start.as_str()..end.as_str())? {
+        let (_key, value) = entry?;
+        if peek_state(value.value()).is_some_and(|state| !state.is_terminal()) {
+            open = open.saturating_add(1);
+        }
+    }
+    Ok(open)
+}
+
+fn is_dead_lettered(state: DeliveryState) -> bool {
+    state == DeliveryState::DeadLettered
 }
 
 fn dead_lettered(rows: Vec<ScannedRow>) -> Vec<(String, DeliveryRecord)> {
@@ -195,8 +234,9 @@ fn place(
         record.suppressed_by = Some(survivor);
         record.terminal_at_ms = Some(now_ms);
     } else {
-        let existing = scan(rows, Some(sink))?;
-        if open_rows(&existing) >= max_open_rows {
+        // Full decode only when the cap is reached and a victim must be chosen.
+        if open_count(rows, sink)? >= max_open_rows {
+            let existing = scan_where(rows, Some(sink), |state| !state.is_terminal())?;
             displaced = displace(rows, &existing, alert.severity, now_ms)?;
             if displaced.is_none() {
                 record.dead_letter(DeliveryReason::QueueFull, now_ms);
@@ -251,11 +291,15 @@ pub(super) fn get_delivery(
     get_record(db, ALERT_DELIVERIES_TABLE, &delivery_key(sink, alert_id))
 }
 
-/// Read every row of `sink` (or of all sinks); a store without the table has none.
-fn read_rows(db: &Database, sink: Option<&str>) -> Result<Vec<ScannedRow>, StorageError> {
+/// Read the rows of `sink` (or of all sinks) whose state passes `keep`; a store without the table has none.
+fn read_rows(
+    db: &Database,
+    sink: Option<&str>,
+    keep: impl Fn(DeliveryState) -> bool,
+) -> Result<Vec<ScannedRow>, StorageError> {
     let rtxn = db.begin_read()?;
     match rtxn.open_table(ALERT_DELIVERIES_TABLE) {
-        Ok(table) => scan(&table, sink),
+        Ok(table) => scan_where(&table, sink, keep),
         Err(redb::TableError::TableDoesNotExist(_)) => Ok(Vec::new()),
         Err(err) => Err(err.into()),
     }
@@ -264,10 +308,9 @@ fn read_rows(db: &Database, sink: Option<&str>) -> Result<Vec<ScannedRow>, Stora
 pub(super) fn open_deliveries(db: &Database, sink: &str) -> Result<OpenDeliveries, StorageError> {
     let mut rows = Vec::new();
     let mut corrupt = 0_usize;
-    for (key, record) in read_rows(db, Some(sink))? {
+    for (key, record) in read_rows(db, Some(sink), |state| !state.is_terminal())? {
         match (alert_id_of(&key), record) {
-            (Some(id), Some(row)) if !row.state.is_terminal() => rows.push((id, row)),
-            (Some(_), Some(_)) => {}
+            (Some(id), Some(row)) => rows.push((id, row)),
             _ => corrupt = corrupt.saturating_add(1),
         }
     }
@@ -279,10 +322,11 @@ pub(super) fn dead_letters(
     db: &Database,
     sink: &str,
 ) -> Result<Vec<(Uuid, DeliveryRecord)>, StorageError> {
-    let mut out: Vec<(Uuid, DeliveryRecord)> = dead_lettered(read_rows(db, Some(sink))?)
-        .into_iter()
-        .filter_map(|(key, row)| alert_id_of(&key).map(|id| (id, row)))
-        .collect();
+    let mut out: Vec<(Uuid, DeliveryRecord)> =
+        dead_lettered(read_rows(db, Some(sink), is_dead_lettered)?)
+            .into_iter()
+            .filter_map(|(key, row)| alert_id_of(&key).map(|id| (id, row)))
+            .collect();
     out.sort_by_key(|entry| (entry.1.terminal_at_ms, entry.0));
     Ok(out)
 }
@@ -343,6 +387,7 @@ pub(super) fn redrive_batch(
     db: &Database,
     sink: &str,
     limit: usize,
+    max_open_rows: usize,
     max_redrives: u32,
     now_ms: u64,
 ) -> Result<usize, StorageError> {
@@ -350,7 +395,8 @@ pub(super) fn redrive_batch(
     let mut moved = 0_usize;
     {
         let mut table = wtxn.open_table(ALERT_DELIVERIES_TABLE)?;
-        let mut candidates = dead_lettered(scan(&table, Some(sink))?);
+        let capacity = max_open_rows.saturating_sub(open_count(&table, sink)?);
+        let mut candidates = dead_lettered(scan_where(&table, Some(sink), is_dead_lettered)?);
         candidates.sort_by(|a, b| (a.1.terminal_at_ms, &a.0).cmp(&(b.1.terminal_at_ms, &b.0)));
         for (key, mut row) in candidates {
             if moved >= limit {
@@ -361,6 +407,9 @@ pub(super) fn redrive_batch(
                     row.reason = Some(DeliveryReason::RedrivesExhausted);
                     put(&mut table, &key, &row)?;
                 }
+                continue;
+            }
+            if moved >= capacity {
                 continue;
             }
             row.state = DeliveryState::Pending;
@@ -386,7 +435,7 @@ pub(super) fn evict_dead_letters(
     let mut removed = 0_usize;
     {
         let mut table = wtxn.open_table(ALERT_DELIVERIES_TABLE)?;
-        let mut dead = dead_lettered(scan(&table, Some(sink))?);
+        let mut dead = dead_lettered(scan_where(&table, Some(sink), is_dead_lettered)?);
         dead.sort_by(|a, b| {
             (a.1.severity, a.1.terminal_at_ms, &a.0).cmp(&(b.1.severity, b.1.terminal_at_ms, &b.0))
         });
@@ -413,7 +462,7 @@ pub(super) fn prune_deliveries(
     let mut removed = 0_usize;
     {
         let mut table = wtxn.open_table(ALERT_DELIVERIES_TABLE)?;
-        for (key, record) in scan(&table, None)? {
+        for (key, record) in scan_where(&table, None, DeliveryState::is_terminal)? {
             let expired = record.is_some_and(|row| {
                 row.state.is_terminal() && row.terminal_at_ms.is_some_and(|at| at < cutoff)
             });
@@ -435,7 +484,7 @@ pub(super) fn seed_dedup_window(
     let cutoff = now_ms.saturating_sub(window_ms);
     // alert id -> (dedup key, enqueued_at_ms, has a row that was not suppressed)
     let mut alerts: BTreeMap<Uuid, (String, u64, bool)> = BTreeMap::new();
-    for (key, record) in read_rows(db, None)? {
+    for (key, record) in read_rows(db, None, |_state| true)? {
         let (Some(id), Some(row)) = (alert_id_of(&key), record) else {
             continue;
         };

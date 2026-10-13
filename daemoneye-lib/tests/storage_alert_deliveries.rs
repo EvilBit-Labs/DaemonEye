@@ -267,7 +267,7 @@ fn stale_write_back_is_rejected_after_a_redrive() {
         store.complete("s", a.id, dead_claim, &dead).unwrap(),
         CompleteOutcome::Written
     );
-    assert_eq!(store.redrive_batch("s", 10, 5, 200).unwrap(), 1);
+    assert_eq!(store.redrive_batch("s", 10, CAP, 5, 200).unwrap(), 1);
 
     let mut late = claimed.record.clone();
     late.state = DeliveryState::Delivered;
@@ -324,7 +324,7 @@ fn redrive_moves_only_the_oldest_dead_letters_up_to_the_limit() {
         dead_letter(&store, "s", a.id, t, 0);
     }
 
-    let moved = store.redrive_batch("s", 2, 5, 1000).unwrap();
+    let moved = store.redrive_batch("s", 2, CAP, 5, 1000).unwrap();
 
     assert_eq!(moved, 2);
     for idx in [1_usize, 3] {
@@ -352,7 +352,7 @@ fn redrive_skips_a_row_at_the_cap_and_marks_it_exhausted() {
     dead_letter(&store, "s", spent.id, 10, 5);
     dead_letter(&store, "s", fresh.id, 20, 0);
 
-    let moved = store.redrive_batch("s", 1, 5, 1000).unwrap();
+    let moved = store.redrive_batch("s", 1, CAP, 5, 1000).unwrap();
 
     assert_eq!(
         moved, 1,
@@ -507,4 +507,77 @@ fn seed_returns_keys_with_a_live_row_and_skips_all_suppressed_and_stale_alerts()
         seeded,
         vec![(delivered.deduplication_key, 900, delivered.id)]
     );
+}
+
+#[test]
+fn redrive_moves_only_the_remaining_open_capacity() {
+    let (_dir, _path, store) = open();
+    let open_cap = 3_usize;
+    for i in 0..open_cap {
+        let a = alert(AlertSeverity::Medium, &format!("open{i}"));
+        store.enqueue_alert(&a, &["s"], None, 100, 1).unwrap();
+    }
+    let dead: Vec<Alert> = (0..5)
+        .map(|i| alert(AlertSeverity::Medium, &format!("dead{i}")))
+        .collect();
+    for (i, a) in dead.iter().enumerate() {
+        enqueue(&store, a, &["s"], 1);
+        dead_letter(&store, "s", a.id, 10 + u64::try_from(i).unwrap(), 0);
+    }
+    // Claiming left the five dead rows terminal; the three pending rows fill the cap exactly.
+    assert_eq!(store.redrive_batch("s", 100, open_cap, 5, 500).unwrap(), 0);
+
+    let moved = store.redrive_batch("s", 100, open_cap + 2, 5, 500).unwrap();
+
+    assert_eq!(moved, 2, "only the two free slots may be refilled");
+    for a in &dead[..2] {
+        assert_eq!(state_of(&store, "s", a.id).state, DeliveryState::Pending);
+    }
+    for a in &dead[2..] {
+        assert_eq!(
+            state_of(&store, "s", a.id).state,
+            DeliveryState::DeadLettered
+        );
+    }
+}
+
+#[test]
+fn open_deliveries_returns_only_non_terminal_rows_and_counts_garbage_as_corrupt() {
+    let (_dir, path, store) = open();
+    let mix: Vec<Alert> = (0..4)
+        .map(|i| alert(AlertSeverity::Medium, &format!("m{i}")))
+        .collect();
+    for (i, a) in mix.iter().enumerate() {
+        enqueue(&store, a, &["s"], 1 + u64::try_from(i).unwrap());
+    }
+    mark_delivered(&store, "s", mix[0].id, 50);
+    dead_letter(&store, "s", mix[1].id, 60, 0);
+    store.claim("s", mix[2].id, 70).unwrap(); // Retrying; mix[3] stays Pending
+    assert_eq!(store.open_deliveries("s").unwrap().corrupt, 0);
+    let got: Vec<Uuid> = store
+        .open_deliveries("s")
+        .unwrap()
+        .rows
+        .iter()
+        .map(|entry| entry.0)
+        .collect();
+    assert_eq!(got, vec![mix[2].id, mix[3].id]);
+
+    drop(store);
+    let db = Database::open(&path).unwrap();
+    let txn = db.begin_write().unwrap();
+    let mut table = txn.open_table(DELIVERIES).unwrap();
+    let key = format!("s\u{1f}{}", Uuid::new_v4());
+    table
+        .insert(key.as_str(), [0x01_u8, 0xFF].as_slice())
+        .unwrap();
+    drop(table);
+    txn.commit().unwrap();
+    drop(db);
+    let reopened = EventStore::open(&path).unwrap();
+
+    let after = reopened.open_deliveries("s").unwrap();
+
+    assert_eq!(after.corrupt, 1);
+    assert_eq!(after.rows.len(), 2);
 }

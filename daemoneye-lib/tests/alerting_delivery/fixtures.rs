@@ -46,6 +46,7 @@ pub struct Entry {
 struct FakeState {
     script: VecDeque<Act>,
     default: Act,
+    healthy: bool,
     log: Vec<Entry>,
 }
 
@@ -64,6 +65,7 @@ impl Fake {
             state: Mutex::new(FakeState {
                 script: VecDeque::new(),
                 default,
+                healthy: true,
                 log: Vec::new(),
             }),
         })
@@ -79,6 +81,10 @@ impl Fake {
 
     pub fn set_default(&self, act: Act) {
         self.state.lock().unwrap().default = act;
+    }
+
+    pub fn set_healthy(&self, healthy: bool) {
+        self.state.lock().unwrap().healthy = healthy;
     }
 
     pub fn log(&self) -> Vec<Entry> {
@@ -127,7 +133,10 @@ impl AlertSink for Handle {
     }
 
     async fn health_check(&self) -> Result<(), AlertingError> {
-        Ok(())
+        if self.0.state.lock().unwrap().healthy {
+            return Ok(());
+        }
+        Err(DeliveryError::from_http_status(503, None).into())
     }
 
     fn is_local(&self) -> bool {

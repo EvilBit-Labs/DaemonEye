@@ -339,9 +339,12 @@ impl AlertManager {
         let now = self.shared.clock.now_ms();
         let max_redrives = self.shared.settings.dlq_max_redrives;
         let limit = self.shared.settings.dlq_max_rows.max(REDRIVE_BATCH);
+        let max_open_rows = self.shared.settings.max_open_rows;
         let moved = match self
             .shared
-            .blocking(move |store| store.redrive_batch(&name, limit, max_redrives, now))
+            .blocking(move |store| {
+                store.redrive_batch(&name, limit, max_open_rows, max_redrives, now)
+            })
             .await
         {
             Ok(moved) => moved,

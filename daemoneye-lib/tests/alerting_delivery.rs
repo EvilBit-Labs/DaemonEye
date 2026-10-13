@@ -1023,3 +1023,51 @@ async fn a_probe_that_cannot_load_its_alert_reopens_the_breaker() {
     );
     assert_eq!(net.attempts(), 1, "the sink only ever saw the tripwire");
 }
+
+/// A breaker whose last open row was dead-lettered has nothing to probe on: a health probe
+/// closes it after the cool-down, and the redrive still waits a further full cool-down.
+#[tokio::test(start_paused = true)]
+async fn a_stranded_breaker_recovers_by_health_probe_then_redrives() {
+    let net = Fake::new("net", false, Act::Transient);
+    net.set_healthy(false);
+    let r = rig(
+        vec![net.boxed()],
+        config(|c| {
+            c.delivery.max_attempts = 1;
+            c.delivery.breaker_failure_threshold = 1;
+            c.delivery.breaker_cooldown_secs = 30;
+        }),
+    )
+    .await;
+    let a = alert(HIGH, "a");
+    r.manager.enqueue(&a).await;
+    settle().await;
+    assert_eq!(
+        row(&r.store, "net", a.id).state,
+        DeliveryState::DeadLettered
+    );
+    assert_eq!(r.manager.health().sinks[0].breaker, BreakerState::Open);
+
+    run_for(36).await;
+    assert_eq!(r.manager.health().sinks[0].breaker, BreakerState::Open);
+    let dead = row(&r.store, "net", a.id);
+    assert_eq!(
+        (dead.state, dead.redrives),
+        (DeliveryState::DeadLettered, 0)
+    );
+
+    net.set_healthy(true);
+    net.set_default(Act::Ok);
+    run_for(36).await;
+    assert_eq!(r.manager.health().sinks[0].breaker, BreakerState::Closed);
+    assert_eq!(
+        row(&r.store, "net", a.id).redrives,
+        0,
+        "redrive waits a cool-down"
+    );
+
+    run_for(36).await;
+    let back = row(&r.store, "net", a.id);
+    assert_eq!((back.state, back.redrives), (DeliveryState::Delivered, 1));
+    assert_eq!(net.attempts(), 2, "probes are health checks, not sends");
+}

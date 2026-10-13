@@ -7,11 +7,14 @@ use daemoneye_lib::models::{Alert, AlertSeverity, CompletenessStatus};
 /// 32473 is the IANA private-enterprise number reserved for documentation.
 const SD_ID: &str = "daemoneye@32473";
 const DEFAULT_FACILITY: u8 = 3;
-const MAX_HOSTNAME: usize = 255;
+/// RFC 5424 allows 255, but truncation is permitted; 64 keeps the worst-case flagged line under
+/// the 480-byte `max_message_bytes` floor (about 461 bytes with every field at its cap).
+const MAX_HOSTNAME: usize = 64;
 const MAX_APP_NAME: usize = 48;
 const MAX_MSGID: usize = 32;
-/// Bounds each SD-PARAM value so the header stays well under the 480-byte size floor.
-const MAX_SD_VALUE_CHARS: usize = 64;
+/// Bounds each SD-PARAM value (up to twice that once escaped) so the flagged line fits the
+/// 480-byte size floor.
+const MAX_SD_VALUE_CHARS: usize = 48;
 const TRUNCATED_PARAM: &str = " truncated=\"1\"";
 
 /// Everything the formatter needs for one message.
@@ -165,5 +168,7 @@ pub(super) fn format_rfc5424(parts: &MessageParts<'_>) -> String {
     let budget = parts
         .max_bytes
         .saturating_sub(line(TRUNCATED_PARAM, "").len().saturating_add(1));
-    line(TRUNCATED_PARAM, fit(&msg, budget))
+    let truncated = line(TRUNCATED_PARAM, fit(&msg, budget));
+    // Backstop: the caps above keep this unreachable, but never exceed the datagram cap.
+    fit(&truncated, parts.max_bytes).to_owned()
 }

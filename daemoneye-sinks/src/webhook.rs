@@ -119,14 +119,11 @@ fn auth_header(
     }
 }
 
-fn build_client(
-    spec: &WebhookSpec,
-    delivery: &DeliveryConfig,
-) -> Result<reqwest::Client, AlertingError> {
+fn build_client(spec: &WebhookSpec) -> Result<reqwest::Client, AlertingError> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
-        .timeout(Duration::from_secs(delivery.attempt_timeout_secs));
+        .timeout(Duration::from_secs(spec.timeout_secs));
     if let Some(ref path) = spec.ca_file {
         let pem = std::fs::read(path)
             .map_err(|_unreadable| config_error("webhook ca_file cannot be read"))?;
@@ -167,7 +164,10 @@ impl WebhookSink {
     /// [`AlertingError::ConfigurationError`] when the spec is not a webhook, a credential
     /// is missing or not a valid header value, the URL does not parse, or the `ca_file`
     /// cannot be read. Messages never carry the URL or a credential.
-    pub fn new(resolved: &ResolvedSink, delivery: &DeliveryConfig) -> Result<Self, AlertingError> {
+    ///
+    /// The client timeout is the sink's `timeout_secs`; the worker's global attempt
+    /// timeout still caps each send from outside, so the smaller of the two applies.
+    pub fn new(resolved: &ResolvedSink, _delivery: &DeliveryConfig) -> Result<Self, AlertingError> {
         let SinkSpec::Webhook(ref spec) = resolved.spec else {
             return Err(config_error("not a webhook spec"));
         };
@@ -177,7 +177,7 @@ impl WebhookSink {
         Ok(Self {
             name: spec.name.clone(),
             url,
-            client: build_client(spec, delivery)?,
+            client: build_client(spec)?,
             auth: auth_header(spec, resolved)?,
             flags: IncludeFlags {
                 command_line: spec.include_command_line,

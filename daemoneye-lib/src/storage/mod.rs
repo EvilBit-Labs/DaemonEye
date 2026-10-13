@@ -726,16 +726,18 @@ impl EventStore {
         deliveries::dead_letters(&self.db, sink)
     }
 
-    /// Move up to `limit` of the oldest dead letters back to `Pending`; rows at `max_redrives`
-    /// stay dead-lettered with `RedrivesExhausted` and do not count toward `limit`.
+    /// Move up to `limit` of the oldest dead letters back to `Pending`, but never past
+    /// `max_open_rows` open rows on the sink (only the remaining open capacity moves). Rows at
+    /// `max_redrives` stay dead-lettered with `RedrivesExhausted` and do not count toward `limit`.
     pub fn redrive_batch(
         &self,
         sink: &str,
         limit: usize,
+        max_open_rows: usize,
         max_redrives: u32,
         now_ms: u64,
     ) -> Result<usize, StorageError> {
-        deliveries::redrive_batch(&self.db, sink, limit, max_redrives, now_ms)
+        deliveries::redrive_batch(&self.db, sink, limit, max_open_rows, max_redrives, now_ms)
     }
 
     /// Remove dead letters of `sink` beyond `keep`, lowest severity then oldest first.

@@ -86,6 +86,9 @@ impl SinkWorker {
         let Some(rows) = self.read_open().await else {
             return WORKER_TICK;
         };
+        if rows.is_empty() && self.probe_health().await {
+            return MIN_WAIT;
+        }
         let now = self.shared.clock.now_ms();
         let max_backoff_ms = millis(self.shared.settings.max_backoff);
         let mut next_due: Option<u64> = None;
@@ -130,6 +133,31 @@ impl SinkWorker {
         let permit = self.breaker.permit();
         lock(&self.runtime.stats).breaker = self.breaker.state();
         permit
+    }
+
+    /// With no open row to probe on, the breaker would stay open and strand the dead letters;
+    /// probe the sink's health once the cool-down is over. `true` when a probe ran.
+    async fn probe_health(&mut self) -> bool {
+        if self.permit() != Permit::AllowProbe {
+            return false;
+        }
+        let checked = tokio::time::timeout(
+            self.shared.settings.attempt_timeout,
+            self.runtime.sink.health_check(),
+        )
+        .await;
+        let verdict = match checked {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(AlertingError::Delivery(error))) => Err(error),
+            Ok(Err(_other)) => Err(DeliveryError::transient(DeliveryErrorClass::Connect)),
+            Err(_elapsed) => Err(DeliveryError::transient(DeliveryErrorClass::Timeout)),
+        };
+        match verdict {
+            Ok(()) | Err(DeliveryError::Permanent { .. }) => self.breaker.record_success(),
+            Err(ref error) => self.breaker.record_failure(error),
+        }
+        lock(&self.runtime.stats).breaker = self.breaker.state();
+        true
     }
 
     /// Wait for a pacing token; `false` when cancelled first.
@@ -178,8 +206,9 @@ impl SinkWorker {
         let name = self.runtime.name.clone();
         let now = self.shared.clock.now_ms();
         let max_redrives = self.shared.settings.dlq_max_redrives;
+        let max_open_rows = self.shared.settings.max_open_rows;
         let call = move |store: &crate::storage::EventStore| {
-            store.redrive_batch(&name, REDRIVE_BATCH, max_redrives, now)
+            store.redrive_batch(&name, REDRIVE_BATCH, max_open_rows, max_redrives, now)
         };
         match self.shared.blocking(call).await {
             Ok(moved) => moved,

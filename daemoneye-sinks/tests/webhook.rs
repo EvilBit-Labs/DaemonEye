@@ -177,8 +177,10 @@ async fn redirect_is_not_followed() {
 #[tokio::test]
 async fn hang_times_out_as_transient() {
     let server = MockHttp::start(vec![Response::Hang]).await;
+    let mut hook = spec(server.url("http"));
+    hook.timeout_secs = 1;
     let started = Instant::now();
-    let error = delivery_error(sink(spec(server.url("http"))).send(&alert()).await);
+    let error = delivery_error(sink(hook).send(&alert()).await);
     assert!(matches!(
         error,
         DeliveryError::Transient {
@@ -187,6 +189,39 @@ async fn hang_times_out_as_transient() {
         }
     ));
     assert!(started.elapsed() < Duration::from_secs(4));
+}
+
+#[tokio::test]
+async fn sink_timeout_secs_bounds_the_send_not_the_global_attempt_timeout() {
+    let server = MockHttp::start(vec![Response::Hang]).await;
+    let mut hook = spec(server.url("http"));
+    hook.timeout_secs = 1;
+    let long_attempt = DeliveryConfig {
+        attempt_timeout_secs: 10,
+        ..DeliveryConfig::default()
+    };
+    let sink = WebhookSink::new(&resolved(hook), &long_attempt).unwrap();
+    let started = Instant::now();
+    let error = delivery_error(sink.send(&alert()).await);
+    assert!(matches!(
+        error,
+        DeliveryError::Transient {
+            class: DeliveryErrorClass::Timeout,
+            ..
+        }
+    ));
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn longer_sink_timeout_secs_outlasts_the_wait() {
+    let server = MockHttp::start(vec![Response::Hang]).await;
+    let mut hook = spec(server.url("http"));
+    hook.timeout_secs = 10;
+    let sink = sink(hook);
+    let alert = alert();
+    let waited = tokio::time::timeout(Duration::from_secs(2), sink.send(&alert)).await;
+    assert!(waited.is_err(), "send ended before the sink timeout");
 }
 
 #[tokio::test]

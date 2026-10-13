@@ -174,6 +174,22 @@ fn off_host_plaintext_syslog_needs_opt_in() {
 }
 
 #[test]
+fn only_real_loopback_addresses_skip_the_plaintext_opt_in() {
+    let dns_lookalike = json!({"address": "127.example.com:514"});
+    assert!(failure(&syslog(&dns_lookalike)).contains("allow_plaintext"));
+    for address in [
+        "127.0.0.1:514",
+        "127.1.2.3:514",
+        "[::1]:514",
+        "localhost:514",
+    ] {
+        syslog(&json!({"address": address}))
+            .validate()
+            .unwrap_or_else(|e| panic!("{address} is loopback: {e}"));
+    }
+}
+
+#[test]
 fn syslog_message_size_range_is_enforced() {
     let msg = failure(&syslog(&json!({"max_message_bytes": 100})));
     assert!(msg.contains("max_message_bytes"), "{msg}");
@@ -212,6 +228,22 @@ fn email_needs_a_recipient() {
     let email = json!({"name": "mail", "host": "smtp.example", "from": "a@example", "to": []});
     let msg = failure(&with_sinks(vec![sink("email", true, email)]));
     assert!(msg.contains("to"), "{msg}");
+}
+
+#[test]
+fn email_auth_needs_both_variables_or_neither() {
+    let email = |extra: &Value| {
+        let base = json!({"name": "mail", "host": "smtp.example", "from": "a@example", "to": ["b@example"]});
+        with_sinks(vec![sink("email", true, merged(&base, extra))])
+    };
+    for half in [json!({"username_env": "U"}), json!({"password_env": "P"})] {
+        let msg = failure(&email(&half));
+        assert!(msg.contains("must be set together"), "{msg}");
+    }
+    email(&json!({"username_env": "U", "password_env": "P"}))
+        .validate()
+        .expect("both halves pass");
+    email(&json!({})).validate().expect("neither passes");
 }
 
 #[cfg(windows)]

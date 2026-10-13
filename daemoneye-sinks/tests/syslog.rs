@@ -279,6 +279,30 @@ async fn oversize_message_is_truncated_on_a_char_boundary_and_flagged() {
 }
 
 #[tokio::test]
+async fn worst_case_header_and_sd_still_fit_the_minimum_cap() {
+    const CAP: usize = 480;
+    let hostile = "\"\\]".repeat(85);
+    let mut alert = alert_with("t", &"d".repeat(2000));
+    alert.detection_rule_id = hostile.clone();
+    alert.deduplication_key = hostile.clone();
+    alert.context.data.insert("host".to_owned(), hostile);
+    let line = send_udp(
+        |s| {
+            s.max_message_bytes = CAP;
+            s.app_name = "a".repeat(100);
+        },
+        &alert,
+    )
+    .await;
+    assert!(line.len() <= CAP, "{} bytes over cap {CAP}", line.len());
+    let parsed = parse(&line);
+    assert_eq!(parsed.app.len(), 48);
+    assert_eq!(parsed.msgid, ALERT_ID.replace('-', ""));
+    assert_eq!(sd(&parsed, "truncated"), Some("1"));
+    assert_eq!(sd(&parsed, "pid"), Some("10"));
+}
+
+#[tokio::test]
 async fn udp_delivers_one_datagram_and_is_fire_and_forget() {
     let server = MockSyslog::udp().await;
     let sink = sink(spec(SyslogTransport::Udp, &server.address));
