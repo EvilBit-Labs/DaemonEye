@@ -34,6 +34,8 @@ fn metadata() -> serde_json::Value {
             "metadata",
             "--format-version",
             "1",
+            "--all-features",
+            "--locked",
             "--manifest-path",
             manifest,
         ])

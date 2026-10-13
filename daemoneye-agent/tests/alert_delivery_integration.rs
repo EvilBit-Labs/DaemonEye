@@ -185,20 +185,23 @@ async fn a_store_failure_delivers_once_to_local_sinks_marked_not_persisted() {
     manager.shutdown(SHUTDOWN_DRAIN).await;
 }
 
+/// AE4 control: the same logical alert raised again against a healthy store is enqueued and
+/// delivered, so the failed enqueue left no durable trace (the second manager is new, so this
+/// does not test in-memory dedup state; the lib suite covers that).
 #[tokio::test]
-async fn control_with_a_healthy_store_the_same_logical_alert_is_enqueued_not_suppressed() {
+async fn control_the_same_alert_raised_against_a_healthy_store_is_enqueued_and_delivered() {
     let dir = tempfile::tempdir().unwrap();
     let mock = MockHttp::start(Vec::new()).await;
     let out = dir.path().join("out.log");
     let config = alerting(vec![webhook_sink(&mock.url()), file_sink(&out)]);
-    let (store, next_cycle) = {
+    let (_healthy_dir, store, next_cycle) = {
         let broken = broken_alerts_store(dir.path());
         let (manager, _cancel) = start_manager(&broken, &config).await;
         let first = enrich_and_enqueue(&broken, &manager, &[alert("store-down")], &ctx()).await;
         assert_eq!(first, 0);
         manager.shutdown(SHUTDOWN_DRAIN).await;
-        let (_healthy_dir, healthy) = temp_store();
-        (healthy, alert("store-down"))
+        let (healthy_dir, healthy) = temp_store();
+        (healthy_dir, healthy, alert("store-down"))
     };
     let healthy_out = dir.path().join("healthy.log");
     let config = alerting(vec![webhook_sink(&mock.url()), file_sink(&healthy_out)]);
@@ -235,13 +238,18 @@ async fn control_with_a_healthy_store_the_same_logical_alert_is_enqueued_not_sup
 async fn a_row_left_retrying_by_shutdown_is_redelivered_with_the_same_identity_after_restart() {
     let dir = tempfile::tempdir().unwrap();
     let mock = MockHttp::start(vec![Response::Status(503)]).await;
+    // First manager: a jitter ceiling far above the shutdown window, so no second send can race it.
+    let mut slow = alerting(vec![webhook_sink(&mock.url())]);
+    slow.delivery.initial_backoff_ms = 30_000;
+    slow.delivery.max_backoff_secs = 60;
+    // Second manager: a 1 s cap makes the 30 s schedule count as due at once.
     let config = alerting(vec![webhook_sink(&mock.url())]);
     let (store, _keep) = {
         let (d, s) = temp_store();
         (s, d)
     };
     let raised = alert("restart-me");
-    let (first, cancel) = start_manager(&store, &config).await;
+    let (first, cancel) = start_manager(&store, &slow).await;
     assert_eq!(
         enrich_and_enqueue(&store, &first, std::slice::from_ref(&raised), &ctx()).await,
         1

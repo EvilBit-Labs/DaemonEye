@@ -86,7 +86,7 @@ pub struct DeliveryHealth {
 pub(super) struct GlobalStats {
     pub(super) store_failures: u64,
     pub(super) publish_failures: u64,
-    /// The latest store call failed.
+    /// A store call failed and no alert has been persisted since.
     pub(super) store_failing: bool,
 }
 

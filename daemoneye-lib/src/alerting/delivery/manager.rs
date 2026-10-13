@@ -221,7 +221,12 @@ impl AlertManager {
             })
             .await;
         let (report, evicted) = match stored {
-            Ok(done) => done,
+            Ok(done) => {
+                // Only a persisted alert proves the store is taking writes again; a worker's
+                // successful read says nothing about a broken alerts table.
+                lock(&self.shared.global).store_ok();
+                done
+            }
             Err(error) => {
                 error!(alert_id = %alert.id, %error, "alert was not persisted");
                 return EnqueueOutcome::NotPersisted;

@@ -201,6 +201,19 @@ impl AlertSink for StdoutSink {
     }
 }
 
+/// Runs blocking file I/O off the async workers so a stalled path cannot hold
+/// a runtime thread past the delivery timeout.
+async fn run_blocking_io<T, F>(op: F) -> Result<T, AlertingError>
+where
+    F: FnOnce() -> std::io::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::task::spawn_blocking(op).await {
+        Ok(result) => Ok(result?),
+        Err(join_error) => Err(AlertingError::IoError(std::io::Error::other(join_error))),
+    }
+}
+
 /// File output alert sink.
 pub struct FileSink {
     name: String,
@@ -249,11 +262,16 @@ impl AlertSink for FileSink {
 
         let output = render_alert(&self.format, alert)?;
 
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.file_path)?
-            .write_all(format!("{output}\n").as_bytes())?;
+        let path = self.file_path.clone();
+        let line = format!("{output}\n");
+        run_blocking_io(move || {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?
+                .write_all(line.as_bytes())
+        })
+        .await?;
 
         Ok(DeliveryResult::since(&self.name, start_time))
     }
@@ -264,10 +282,15 @@ impl AlertSink for FileSink {
 
     async fn health_check(&self) -> Result<(), AlertingError> {
         // Check if we can write to the file
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.file_path)?;
+        let path = self.file_path.clone();
+        run_blocking_io(move || {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map(drop)
+        })
+        .await?;
         Ok(())
     }
 

@@ -12,7 +12,7 @@
     clippy::missing_const_for_fn
 )]
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use daemoneye_lib::alerting::{AlertManager, AlertSink, DeliveryResult, NoopPublisher};
 use daemoneye_lib::config::AlertingConfig;
 use daemoneye_lib::models::{Alert, AlertSeverity, Completeness, ProcessRecord, ProcessStatus};
@@ -405,28 +405,34 @@ fn bench_outbox_rows_per_second(c: &mut Criterion) {
     group.throughput(Throughput::Elements(ALERTS as u64));
     group.sample_size(10);
 
-    let dir = tempfile::tempdir().unwrap();
-    let store = EventStore::new(dir.path().join("outbox.redb")).unwrap();
-    let mut round = 0_usize;
-
+    // A fresh store per iteration keeps the table size constant; `_dir` rides in the tuple so the
+    // directory outlives the store, and returning the tuple drops it outside the timed region.
     group.bench_function("enqueue_claim_complete_1000", |b| {
-        b.iter(|| {
-            round += 1;
-            let now_ms = 1_000_u64;
-            for i in 0..ALERTS {
-                let alert = alert_number(round * ALERTS + i);
-                store
-                    .enqueue_alert(&alert, &["sink"], None, MAX_OPEN, now_ms)
-                    .unwrap();
-                let claimed = store.claim("sink", alert.id, now_ms).unwrap();
-                let mut done = claimed.record.clone();
-                done.state = DeliveryState::Delivered;
-                done.terminal_at_ms = Some(now_ms);
-                store
-                    .complete("sink", alert.id, claimed.expected, &done)
-                    .unwrap();
-            }
-        });
+        b.iter_batched(
+            || {
+                let dir = tempfile::tempdir().unwrap();
+                let store = EventStore::new(dir.path().join("outbox.redb")).unwrap();
+                (dir, store)
+            },
+            |(dir, store)| {
+                let now_ms = 1_000_u64;
+                for i in 0..ALERTS {
+                    let alert = alert_number(i);
+                    store
+                        .enqueue_alert(&alert, &["sink"], None, MAX_OPEN, now_ms)
+                        .unwrap();
+                    let claimed = store.claim("sink", alert.id, now_ms).unwrap();
+                    let mut done = claimed.record.clone();
+                    done.state = DeliveryState::Delivered;
+                    done.terminal_at_ms = Some(now_ms);
+                    store
+                        .complete("sink", alert.id, claimed.expected, &done)
+                        .unwrap();
+                }
+                (dir, store)
+            },
+            BatchSize::PerIteration,
+        );
     });
 
     group.finish();

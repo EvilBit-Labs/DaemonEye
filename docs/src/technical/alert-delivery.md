@@ -1,6 +1,6 @@
 # Alert Delivery
 
-Every alert the agent raises is stored first and delivered from the stored record. One worker per configured sink retries transient failures, trips a circuit breaker when a sink stays down, parks what it cannot deliver in a dead-letter queue, and records every attempt in the `alert_deliveries` table. The detection cursor never waits for delivery ([ADR-0015](../../adr/0015-delivery-state-is-independent-of-the-detection-cursor.md)).
+An alert the agent raises is normally stored first and delivered from the stored record; if storing it fails, it is sent once to local sinks only and marked `not_persisted` (see Persistence and health). One worker per configured sink retries transient failures, trips a circuit breaker when a sink stays down, parks what it cannot deliver in a dead-letter queue, and records every attempt in the `alert_deliveries` table. The detection cursor never waits for delivery ([ADR-0015](../../adr/0015-delivery-state-is-independent-of-the-detection-cursor.md)).
 
 ## Sinks
 
@@ -62,7 +62,7 @@ A syslog line is RFC 5424 with the rule, pid, completeness and deduplication key
 
 ### Credentials and trust
 
-A credential is never written in configuration. Each `*_env` field names an environment variable, read once when the sink is built. An enabled sink whose variable is missing or empty refuses agent startup with an error naming the sink and the variable. Rotating a credential needs a restart.
+A credential is never written in configuration. Each `*_env` field names an environment variable, read once when the sink is built. An enabled sink whose variable is missing or empty refuses agent startup with an error naming the sink and the variable; an email sink must set `username_env` and `password_env` together or not at all. Rotating a credential needs a restart.
 
 TLS verification uses the operating system's trust store. A `ca_file` replaces that store for the sink; it must exist and hold at least one PEM certificate. There is no option to skip verification. A certificate failure, an HTTP 401 or 403, or an SMTP 535 marks the sink misconfigured, dead-letters the alert that exposed it and opens the breaker so nothing else is attempted until a probe succeeds.
 

@@ -157,9 +157,10 @@ impl Shared {
             Ok(inner) => inner.map_err(StoreCallError::from),
             Err(join) => Err(StoreCallError::from(join)),
         };
-        match result {
-            Err(ref error) if !error.is_stale() => lock(&self.global).store_failed(),
-            Ok(_) | Err(_) => lock(&self.global).store_ok(),
+        if let Err(ref error) = result
+            && !error.is_stale()
+        {
+            lock(&self.global).store_failed();
         }
         result
     }
