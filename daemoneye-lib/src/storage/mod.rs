@@ -42,6 +42,7 @@ pub mod read;
 mod records;
 pub mod schema;
 
+pub use bucket::DAILY_MS;
 pub use deliveries::{
     Claimed, CompleteOutcome, DeliveryExpectation, EnqueueReport, OpenDeliveries,
 };

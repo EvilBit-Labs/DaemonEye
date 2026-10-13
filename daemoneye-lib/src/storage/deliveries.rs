@@ -140,12 +140,6 @@ fn dead_lettered(rows: Vec<ScannedRow>) -> Vec<(String, DeliveryRecord)> {
         .collect()
 }
 
-const fn dead_letter(record: &mut DeliveryRecord, reason: DeliveryReason, now_ms: u64) {
-    record.state = DeliveryState::DeadLettered;
-    record.reason = Some(reason);
-    record.terminal_at_ms = Some(now_ms);
-}
-
 fn new_record(alert: &Alert, now_ms: u64) -> DeliveryRecord {
     DeliveryRecord {
         state: DeliveryState::Pending,
@@ -181,7 +175,7 @@ fn displace(
         return Ok(None);
     };
     let mut displaced = row.clone();
-    dead_letter(&mut displaced, DeliveryReason::QueueFull, now_ms);
+    displaced.dead_letter(DeliveryReason::QueueFull, now_ms);
     put(rows, key, &displaced)?;
     Ok(alert_id_of(key))
 }
@@ -205,7 +199,7 @@ fn place(
         if open_rows(&existing) >= max_open_rows {
             displaced = displace(rows, &existing, alert.severity, now_ms)?;
             if displaced.is_none() {
-                dead_letter(&mut record, DeliveryReason::QueueFull, now_ms);
+                record.dead_letter(DeliveryReason::QueueFull, now_ms);
             }
         }
     }
@@ -397,6 +391,9 @@ pub(super) fn evict_dead_letters(
             (a.1.severity, a.1.terminal_at_ms, &a.0).cmp(&(b.1.severity, b.1.terminal_at_ms, &b.0))
         });
         let excess = dead.len().saturating_sub(keep);
+        if excess == 0 {
+            return Ok(0);
+        }
         for (key, _) in dead.into_iter().take(excess) {
             table.remove(key.as_str())?;
             removed = removed.saturating_add(1);

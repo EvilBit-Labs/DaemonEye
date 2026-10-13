@@ -1,7 +1,7 @@
 //! Webhook sink: one HTTPS POST of the external projection per alert.
 
 use crate::ensure_crypto_provider;
-use crate::error::classify_reqwest;
+use crate::error::{HEALTH_TIMEOUT, classify_reqwest, config_error};
 use async_trait::async_trait;
 use daemoneye_lib::alerting::config::{WebhookAuth, WebhookSpec};
 use daemoneye_lib::alerting::{
@@ -14,7 +14,6 @@ use reqwest::header::{HeaderName, HeaderValue, RETRY_AFTER};
 use secrecy::{ExposeSecret, SecretString};
 use std::time::{Duration, Instant};
 
-const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RETRY_AFTER: Duration = Duration::from_hours(1);
 const MAX_KEY_HEADER_CHARS: usize = 256;
 const ALERT_ID_HEADER: &str = "x-daemoneye-alert-id";
@@ -36,10 +35,6 @@ impl std::fmt::Debug for WebhookSink {
             .field("name", &self.name)
             .finish_non_exhaustive()
     }
-}
-
-fn config_error(message: &str) -> AlertingError {
-    AlertingError::ConfigurationError(message.to_owned())
 }
 
 /// Standard padded base64; only for the basic-auth credential.
@@ -232,11 +227,7 @@ impl AlertSink for WebhookSink {
             .await
             .map_err(|error| classify_reqwest(&error.without_url()))?;
         judge(response)?;
-        Ok(DeliveryResult {
-            sink_name: self.name.clone(),
-            delivered_at: chrono::Utc::now(),
-            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        })
+        Ok(DeliveryResult::since(&self.name, started))
     }
 
     fn name(&self) -> &str {

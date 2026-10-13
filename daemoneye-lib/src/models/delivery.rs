@@ -111,3 +111,12 @@ pub struct DeliveryRecord {
     /// The alert's deduplication key, so the window can be re-seeded from rows alone.
     pub deduplication_key: String,
 }
+
+impl DeliveryRecord {
+    /// Abandon the row for `reason` at `now_ms`.
+    pub const fn dead_letter(&mut self, reason: DeliveryReason, now_ms: u64) {
+        self.state = DeliveryState::DeadLettered;
+        self.reason = Some(reason);
+        self.terminal_at_ms = Some(now_ms);
+    }
+}

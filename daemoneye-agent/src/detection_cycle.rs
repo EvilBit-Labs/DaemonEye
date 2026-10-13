@@ -286,8 +286,6 @@ pub fn load_persisted_rules(
 
 /// How often the agent sweeps expired buckets and terminal delivery rows.
 pub const RETENTION_SWEEP: Duration = Duration::from_hours(1);
-/// Milliseconds in one retention day.
-pub const MS_PER_DAY: u64 = 86_400_000;
 
 /// Enrich every alert, then enqueue it for delivery, returning how many are durable.
 ///

@@ -265,15 +265,6 @@ impl SinkSpec {
     }
 }
 
-impl TryFrom<&AlertSinkConfig> for SinkSpec {
-    type Error = ConfigError;
-
-    fn try_from(sink: &AlertSinkConfig) -> Result<Self, Self::Error> {
-        let label = name_of(sink).map_or_else(|| sink.sink_type.clone(), str::to_owned);
-        parse(sink).map_err(|message| invalid(&label, message))
-    }
-}
-
 fn name_of(sink: &AlertSinkConfig) -> Option<&str> {
     sink.config.get("name").and_then(serde_json::Value::as_str)
 }
@@ -405,7 +396,8 @@ fn check_webhook_url(url: &str) -> Result<bool, &'static str> {
 }
 
 /// Host part of `host`, `host:port` or `[v6]:port`.
-fn host_of(authority: &str) -> &str {
+/// The host part of `host:port`, without IPv6 brackets.
+pub fn host_of(authority: &str) -> &str {
     if let Some(inner) = authority.strip_prefix('[') {
         return inner.split_once(']').map_or(inner, |(host, _)| host);
     }

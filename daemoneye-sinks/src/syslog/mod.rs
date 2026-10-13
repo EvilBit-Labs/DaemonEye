@@ -4,10 +4,11 @@ mod format;
 mod transport;
 
 use crate::ensure_crypto_provider;
+use crate::error::config_error;
 use async_trait::async_trait;
 use daemoneye_lib::alerting::config::{SyslogSpec, SyslogTransport};
 use daemoneye_lib::alerting::{
-    AlertSink, AlertingError, DeliveryResult, IncludeFlags, ResolvedSink, SinkSpec,
+    AlertSink, AlertingError, DeliveryResult, IncludeFlags, ResolvedSink, SinkSpec, host_of,
 };
 use daemoneye_lib::config::DeliveryConfig;
 use daemoneye_lib::models::Alert;
@@ -38,18 +39,6 @@ impl std::fmt::Debug for SyslogSink {
             .field("name", &self.name)
             .finish_non_exhaustive()
     }
-}
-
-fn config_error(message: &str) -> AlertingError {
-    AlertingError::ConfigurationError(message.to_owned())
-}
-
-/// The host part of `host:port`, without IPv6 brackets.
-fn host_of(address: &str) -> &str {
-    let host = address
-        .rsplit_once(':')
-        .map_or(address, |(host, _port)| host);
-    host.trim_start_matches('[').trim_end_matches(']')
 }
 
 /// Trust anchors from `ca_file` when set (replacing the platform roots), else the platform.
@@ -152,11 +141,7 @@ impl AlertSink for SyslogSink {
             alert,
         });
         self.transport.send(&line, self.attempt_timeout).await?;
-        Ok(DeliveryResult {
-            sink_name: self.name.clone(),
-            delivered_at: chrono::Utc::now(),
-            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        })
+        Ok(DeliveryResult::since(&self.name, started))
     }
 
     fn name(&self) -> &str {

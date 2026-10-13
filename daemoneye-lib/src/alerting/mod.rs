@@ -19,7 +19,7 @@ mod health;
 pub mod reliability;
 mod render;
 
-pub use config::{CredentialResolver, ResolvedSink, SinkSpec};
+pub use config::{CredentialResolver, ResolvedSink, SinkSpec, host_of};
 pub use delivery::{
     AlertManager, AlertPublisher, EnqueueOutcome, NoopPublisher, PublishError, REDRIVE_BATCH,
     SHUTDOWN_DRAIN,
@@ -97,6 +97,18 @@ pub struct DeliveryResult {
     pub duration_ms: u64,
 }
 
+impl DeliveryResult {
+    /// A result for `sink_name` whose send began at `started`.
+    #[must_use]
+    pub fn since(sink_name: &str, started: std::time::Instant) -> Self {
+        Self {
+            sink_name: sink_name.to_owned(),
+            delivered_at: chrono::Utc::now(),
+            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        }
+    }
+}
+
 /// Alert sink trait for different delivery mechanisms.
 #[async_trait]
 pub trait AlertSink: Send + Sync {
@@ -172,12 +184,7 @@ impl AlertSink for StdoutSink {
 
         println!("{output}");
 
-        let duration = start_time.elapsed();
-        Ok(DeliveryResult {
-            sink_name: self.name.clone(),
-            delivered_at: chrono::Utc::now(),
-            duration_ms: u64::try_from(duration.as_millis()).unwrap_or(0),
-        })
+        Ok(DeliveryResult::since(&self.name, start_time))
     }
 
     fn name(&self) -> &str {
@@ -248,12 +255,7 @@ impl AlertSink for FileSink {
             .open(&self.file_path)?
             .write_all(format!("{output}\n").as_bytes())?;
 
-        let duration = start_time.elapsed();
-        Ok(DeliveryResult {
-            sink_name: self.name.clone(),
-            delivered_at: chrono::Utc::now(),
-            duration_ms: u64::try_from(duration.as_millis()).unwrap_or(0),
-        })
+        Ok(DeliveryResult::since(&self.name, start_time))
     }
 
     fn name(&self) -> &str {
@@ -341,8 +343,6 @@ impl HealthSummary {
     }
 }
 
-/// `field` quoted for a CSV cell: wrapped in double quotes with any inner quote doubled, so a
-/// comma or quote inside it cannot shift the columns.
 /// One alert in `format`.
 ///
 /// Every format carries the completeness marker: an operator reading Human or CSV output must be
@@ -383,6 +383,8 @@ fn completeness_text(completeness: &Completeness) -> String {
     format!("degraded: {}", reasons.join("; "))
 }
 
+/// `field` quoted for a CSV cell: wrapped in double quotes with any inner quote doubled, so a
+/// comma or quote inside it cannot shift the columns.
 fn csv_field(field: &str) -> String {
     format!("\"{}\"", field.replace('"', "\"\""))
 }

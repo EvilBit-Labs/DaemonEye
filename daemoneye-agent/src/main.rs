@@ -4,9 +4,9 @@ use clap::Parser;
 use daemoneye_agent::alert_publisher::{self, BrokerPublisher, spawn_wake_subscriber};
 use daemoneye_agent::alert_sinks::build_sinks;
 use daemoneye_agent::detection_cycle::{
-    CarriedFailure, MS_PER_DAY, PROCMOND_COLLECTOR_ID, RETENTION_SWEEP, build_signals,
-    enrich_and_enqueue, ingest_cycle, ingest_step, load_persisted_rules, next_cycle_ordinal,
-    next_window, open_event_store, run_detection_cycle, run_retention_sweep,
+    CarriedFailure, PROCMOND_COLLECTOR_ID, RETENTION_SWEEP, build_signals, enrich_and_enqueue,
+    ingest_cycle, ingest_step, load_persisted_rules, next_cycle_ordinal, next_window,
+    open_event_store, run_detection_cycle, run_retention_sweep,
 };
 use daemoneye_lib::detection::execution::completeness::IngestSnapshot;
 use daemoneye_lib::detection::execution::executor::RuleExecutor;
@@ -295,8 +295,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .as_ref()
         .map(|bus| Arc::clone(bus.broker()));
-    let alert_publisher: Arc<dyn alerting::AlertPublisher> = if let Some(ref broker) = alert_broker
-    {
+    let publisher: Arc<dyn alerting::AlertPublisher> = if let Some(ref broker) = alert_broker {
         Arc::new(BrokerPublisher::new(
             Arc::clone(broker),
             alert_publisher::masked_projection,
@@ -312,14 +311,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         hostname: sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_owned()),
         agent_version: env!("CARGO_PKG_VERSION").to_owned(),
     };
-    let retention_ms = u64::from(config.database.retention_days).saturating_mul(MS_PER_DAY);
+    let retention_ms =
+        u64::from(config.database.retention_days).saturating_mul(daemoneye_lib::storage::DAILY_MS);
     let mut last_retention_sweep = Instant::now();
     let alert_manager = Arc::new(
         alerting::AlertManager::start(
             Arc::clone(&event_store),
             alert_sinks,
             &config.alerting,
-            alert_publisher,
+            publisher,
             alert_cancel_rx,
         )
         .await?,

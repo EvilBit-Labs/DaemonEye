@@ -28,6 +28,16 @@ pub const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10);
 /// Dead letters moved back to `Pending` per automatic redrive.
 pub const REDRIVE_BATCH: usize = 100;
 
+/// Whole milliseconds in `duration`, saturating.
+pub(super) fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// `count` as a saturating `u64` counter.
+pub(super) fn to_u64(count: usize) -> u64 {
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
 /// A publisher could not hand an alert on.
 #[derive(Debug, Error)]
 #[error("alert publish failed: {0}")]
@@ -87,8 +97,7 @@ impl Clock {
     }
 
     pub(super) fn now_ms(&self) -> u64 {
-        let elapsed = u64::try_from(self.origin.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.epoch_ms.saturating_add(elapsed)
+        self.epoch_ms.saturating_add(millis(self.origin.elapsed()))
     }
 }
 

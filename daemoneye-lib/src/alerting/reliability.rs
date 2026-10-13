@@ -75,6 +75,14 @@ impl DeliveryError {
         }
     }
 
+    /// A retryable failure with no retry hint.
+    pub const fn transient(class: DeliveryErrorClass) -> Self {
+        Self::Transient {
+            class,
+            retry_after: None,
+        }
+    }
+
     /// Certificate verification failed; retrying cannot help.
     pub const fn tls_verification() -> Self {
         Self::Misconfigured {

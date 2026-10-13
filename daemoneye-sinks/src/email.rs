@@ -1,7 +1,7 @@
 //! Email sink: one plain-text SMTP message per alert, always over TLS.
 
 use crate::ensure_crypto_provider;
-use crate::error::{is_certificate_error, tls_cause};
+use crate::error::{HEALTH_TIMEOUT, is_certificate_error, tls_cause};
 use async_trait::async_trait;
 use daemoneye_lib::alerting::config::{EmailSpec, EmailTls};
 use daemoneye_lib::alerting::{
@@ -19,7 +19,6 @@ use secrecy::ExposeSecret;
 use std::error::Error as StdError;
 use std::time::{Duration, Instant};
 
-const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 const PAYLOAD_ERROR: DeliveryError = DeliveryError::Permanent {
     class: DeliveryErrorClass::Payload,
 };
@@ -180,10 +179,7 @@ impl EmailSink {
 
 /// Classify a failed SMTP exchange. Reply text is never read.
 fn classify_smtp(error: &lettre::transport::smtp::Error) -> DeliveryError {
-    let transient = |class| DeliveryError::Transient {
-        class,
-        retry_after: None,
-    };
+    let transient = DeliveryError::transient;
     if let Some(code) = error.status() {
         return DeliveryError::from_smtp_status(u16::from(code));
     }
@@ -229,11 +225,7 @@ impl AlertSink for EmailSink {
             .send(message)
             .await
             .map_err(|error| classify_smtp(&error))?;
-        Ok(DeliveryResult {
-            sink_name: self.name.clone(),
-            delivered_at: chrono::Utc::now(),
-            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        })
+        Ok(DeliveryResult::since(&self.name, started))
     }
 
     fn name(&self) -> &str {
@@ -243,17 +235,10 @@ impl AlertSink for EmailSink {
     async fn health_check(&self) -> Result<(), AlertingError> {
         let probe = tokio::time::timeout(HEALTH_TIMEOUT, self.transport.test_connection())
             .await
-            .map_err(|_elapsed| DeliveryError::Transient {
-                class: DeliveryErrorClass::Timeout,
-                retry_after: None,
-            })?;
+            .map_err(|_elapsed| DeliveryError::transient(DeliveryErrorClass::Timeout))?;
         match probe {
             Ok(true) => Ok(()),
-            Ok(false) => Err(DeliveryError::Transient {
-                class: DeliveryErrorClass::Connect,
-                retry_after: None,
-            }
-            .into()),
+            Ok(false) => Err(DeliveryError::transient(DeliveryErrorClass::Connect).into()),
             Err(error) => Err(classify_smtp(&error).into()),
         }
     }

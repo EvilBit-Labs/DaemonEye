@@ -3,7 +3,7 @@
 //! Stream transports connect lazily and drop the connection after any failure, so the
 //! next attempt reconnects.
 
-use crate::error::classify_tls_io;
+use crate::error::{HEALTH_TIMEOUT, classify_tls_io};
 use daemoneye_lib::alerting::{DeliveryError, DeliveryErrorClass};
 use rustls::pki_types::ServerName;
 use std::future::Future;
@@ -14,8 +14,6 @@ use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::Mutex;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
-
-pub(super) const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[allow(
     clippy::large_enum_variant,
@@ -41,10 +39,7 @@ pub(super) enum Transport {
 }
 
 const fn timeout_error() -> DeliveryError {
-    DeliveryError::Transient {
-        class: DeliveryErrorClass::Timeout,
-        retry_after: None,
-    }
+    DeliveryError::transient(DeliveryErrorClass::Timeout)
 }
 
 async fn within<T>(
@@ -176,7 +171,8 @@ impl Transport {
     }
 
     pub(super) async fn send(&self, line: &str, limit: Duration) -> Result<(), DeliveryError> {
-        let frame = format!("{} {line}", line.len());
+        // RFC 6587 octet counting; only the stream transports frame.
+        let octet_counted = |text: &str| format!("{} {text}", text.len());
         match *self {
             Self::Udp {
                 ref address,
@@ -190,7 +186,7 @@ impl Transport {
                     conn,
                     peer_closed,
                     dial(address, limit),
-                    frame.as_bytes(),
+                    octet_counted(line).as_bytes(),
                     limit,
                 )
                 .await
@@ -205,7 +201,7 @@ impl Transport {
                     conn,
                     |tls: &TlsStream<TcpStream>| peer_closed(tls.get_ref().0),
                     dial_tls(address, server_name, connector, limit),
-                    frame.as_bytes(),
+                    octet_counted(line).as_bytes(),
                     limit,
                 )
                 .await

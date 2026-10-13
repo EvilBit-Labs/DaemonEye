@@ -3,8 +3,16 @@
 //! Only the class survives: a `reqwest::Error` can carry the request URL and a reply
 //! fragment, so nothing from it is stored or rendered.
 
-use daemoneye_lib::alerting::{DeliveryError, DeliveryErrorClass};
+use daemoneye_lib::alerting::{AlertingError, DeliveryError, DeliveryErrorClass};
 use std::error::Error as StdError;
+use std::time::Duration;
+
+/// Longest a health probe waits.
+pub const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub fn config_error(message: &str) -> AlertingError {
+    AlertingError::ConfigurationError(message.to_owned())
+}
 
 /// Whether a rustls error means the peer's certificate was not accepted.
 pub const fn is_certificate_error(error: &rustls::Error) -> bool {
@@ -36,10 +44,7 @@ pub fn tls_cause<'a>(error: &'a (dyn StdError + 'static)) -> Option<&'a rustls::
 
 /// Classify a failed request.
 pub fn classify_reqwest(error: &reqwest::Error) -> DeliveryError {
-    let transient = |class| DeliveryError::Transient {
-        class,
-        retry_after: None,
-    };
+    let transient = DeliveryError::transient;
     if error.is_timeout() {
         return transient(DeliveryErrorClass::Timeout);
     }
@@ -67,10 +72,7 @@ pub fn classify_tls_io(error: &std::io::Error) -> DeliveryError {
         return if is_certificate_error(tls) {
             DeliveryError::tls_verification()
         } else {
-            DeliveryError::Transient {
-                class: DeliveryErrorClass::Tls,
-                retry_after: None,
-            }
+            DeliveryError::transient(DeliveryErrorClass::Tls)
         };
     }
     DeliveryError::from(std::io::Error::from(error.kind()))

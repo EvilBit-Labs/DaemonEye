@@ -1,7 +1,9 @@
 //! The handle the agent holds: enqueue, dedup window, health and shutdown.
 
 use super::worker::{SinkWorker, wait_cancelled};
-use super::{AlertPublisher, Clock, REDRIVE_BATCH, Settings, Shared, SinkRuntime, lock};
+use super::{
+    AlertPublisher, Clock, REDRIVE_BATCH, Settings, Shared, SinkRuntime, lock, millis, to_u64,
+};
 use crate::alerting::health::{
     DeliveryHealth, GlobalStats, SinkHealthSnapshot, SinkStats, aggregate,
 };
@@ -202,7 +204,7 @@ impl AlertManager {
     /// marked as suppressed duplicates, and does not extend the window.
     pub async fn enqueue(&self, alert: &Alert) -> EnqueueOutcome {
         let settings = &self.shared.settings;
-        let window_ms = u64::try_from(settings.dedup_window.as_millis()).unwrap_or(u64::MAX);
+        let window_ms = millis(settings.dedup_window);
         let now = self.shared.clock.now_ms();
         let suppressor = lock(&self.window).holder(&alert.deduplication_key, now, window_ms);
         let names: Vec<String> = self.sinks.iter().map(|sink| sink.name.clone()).collect();
@@ -413,10 +415,6 @@ const fn is_refused(state: DeliveryState) -> bool {
     matches!(state, DeliveryState::DeadLettered)
 }
 
-fn to_u64(count: usize) -> u64 {
-    u64::try_from(count).unwrap_or(u64::MAX)
-}
-
 /// Trim the dead letters of every sink that just dropped or displaced a row.
 fn evict_overflow(
     store: &EventStore,
@@ -487,7 +485,7 @@ fn build_runtimes(sinks: Vec<Box<dyn AlertSink>>) -> Result<Vec<Arc<SinkRuntime>
 
 async fn seed_window(shared: &Shared) -> Result<DedupWindow, AlertingError> {
     let now = shared.clock.now_ms();
-    let window_ms = u64::try_from(shared.settings.dedup_window.as_millis()).unwrap_or(u64::MAX);
+    let window_ms = millis(shared.settings.dedup_window);
     let seeded = shared
         .blocking(move |store| store.seed_dedup_window(now, window_ms))
         .await

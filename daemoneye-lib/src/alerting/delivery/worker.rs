@@ -1,7 +1,9 @@
 //! One worker per sink: claims rows, sends, writes the outcome back with compare-and-set.
 
 use super::bucket::TokenBucket;
-use super::{REDRIVE_BATCH, Shared, SinkRuntime, StoreCallError, WORKER_TICK, lock};
+use super::{
+    REDRIVE_BATCH, Shared, SinkRuntime, StoreCallError, WORKER_TICK, lock, millis, to_u64,
+};
 use crate::alerting::reliability::{
     BreakerState, CircuitBreaker, DeliveryError, DeliveryErrorClass, Permit, RetryPolicy,
 };
@@ -153,7 +155,7 @@ impl SinkWorker {
         {
             Ok(open) => {
                 let mut stats = lock(&self.runtime.stats);
-                stats.corrupt = u64::try_from(open.corrupt).unwrap_or(u64::MAX);
+                stats.corrupt = to_u64(open.corrupt);
                 let now = self.shared.clock.now_ms();
                 stats.oldest_pending_enqueue_ms = open
                     .rows
@@ -250,10 +252,8 @@ impl SinkWorker {
         if !probe {
             return;
         }
-        self.breaker.record_failure(&DeliveryError::Transient {
-            class: DeliveryErrorClass::Timeout,
-            retry_after: None,
-        });
+        self.breaker
+            .record_failure(&DeliveryError::transient(DeliveryErrorClass::Timeout));
         lock(&self.runtime.stats).breaker = self.breaker.state();
     }
 
@@ -261,7 +261,7 @@ impl SinkWorker {
         self.release_probe(probe);
         let now = self.shared.clock.now_ms();
         let mut row = claimed.record;
-        dead_letter(&mut row, DeliveryReason::AlertMissing, now);
+        row.dead_letter(DeliveryReason::AlertMissing, now);
         warn!(sink = %self.runtime.name, "alert row missing; dead-lettering its delivery");
         self.write_back(id, claimed.expected, row, true).await
     }
@@ -297,13 +297,13 @@ impl SinkWorker {
         };
         row.last_error = Some(error.class().clone());
         match *error {
-            DeliveryError::Permanent { .. } => dead_letter(row, DeliveryReason::Permanent, now),
+            DeliveryError::Permanent { .. } => row.dead_letter(DeliveryReason::Permanent, now),
             DeliveryError::Misconfigured { .. } => {
-                dead_letter(row, DeliveryReason::Misconfigured, now);
+                row.dead_letter(DeliveryReason::Misconfigured, now);
             }
             DeliveryError::Transient { retry_after, .. } => {
                 if row.attempts >= self.policy.max_attempts {
-                    dead_letter(row, DeliveryReason::AttemptsExhausted, now);
+                    row.dead_letter(DeliveryReason::AttemptsExhausted, now);
                     return true;
                 }
                 let delay = retry_after.map_or_else(
@@ -405,28 +405,16 @@ impl SinkWorker {
         {
             Ok(removed) => {
                 let mut stats = lock(&self.runtime.stats);
-                stats.evicted = stats
-                    .evicted
-                    .saturating_add(u64::try_from(removed).unwrap_or(0));
+                stats.evicted = stats.evicted.saturating_add(to_u64(removed));
             }
             Err(error) => error!(sink = %self.runtime.name, %error, "evicting dead letters failed"),
         }
     }
 }
 
-const fn dead_letter(row: &mut DeliveryRecord, reason: DeliveryReason, now: u64) {
-    row.state = DeliveryState::DeadLettered;
-    row.reason = Some(reason);
-    row.terminal_at_ms = Some(now);
-}
-
 /// Due now, or scheduled so far ahead that it can only be a clock or config change.
 const fn is_due(row: &DeliveryRecord, now: u64, max_backoff_ms: u64) -> bool {
     row.next_attempt_ms <= now || row.next_attempt_ms > now.saturating_add(max_backoff_ms)
-}
-
-fn millis(duration: Duration) -> u64 {
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 #[allow(
@@ -436,10 +424,7 @@ fn millis(duration: Duration) -> u64 {
 fn classify(
     sent: Result<Result<DeliveryResult, AlertingError>, Elapsed>,
 ) -> Result<(), DeliveryError> {
-    let transient = |class| DeliveryError::Transient {
-        class,
-        retry_after: None,
-    };
+    let transient = DeliveryError::transient;
     match sent {
         Err(_elapsed) => Err(transient(DeliveryErrorClass::Timeout)),
         Ok(Ok(_delivered)) => Ok(()),
