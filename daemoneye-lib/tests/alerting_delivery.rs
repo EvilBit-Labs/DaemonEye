@@ -947,3 +947,79 @@ fn the_factory_builds_local_sinks_and_needs_a_builder_for_network_ones() {
     let built = AlertSinkFactory::build(&resolved[2], &delivery, Some(&StubBuilder)).unwrap();
     assert_eq!(built.name(), "hook");
 }
+
+/// A probe whose alert cannot be loaded must not leave the breaker half-open forever: the
+/// breaker reopens, and the next cool-down probes again.
+#[tokio::test(start_paused = true)]
+async fn a_probe_that_cannot_load_its_alert_reopens_the_breaker() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("events.redb");
+    let unloadable = alert(HIGH, "unloadable");
+    {
+        let store = EventStore::new(&path).unwrap();
+        // Enqueued 20 s ahead so it is not due until after the breaker has opened.
+        store
+            .enqueue_alert(&unloadable, &["net"], None, 10, now_ms() + 20_000)
+            .unwrap();
+    }
+    {
+        let db = redb::Database::open(&path).unwrap();
+        let write = db.begin_write().unwrap();
+        let alerts: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("alerts");
+        write
+            .open_table(alerts)
+            .unwrap()
+            .insert(
+                unloadable.id.to_string().as_str(),
+                b"not an alert".as_slice(),
+            )
+            .unwrap();
+        write.commit().unwrap();
+    }
+    let store = Arc::new(EventStore::open(&path).unwrap());
+    assert!(
+        store.get_alert(&unloadable.id.to_string()).is_err(),
+        "precondition: the corrupt row must fail to load, not read as missing"
+    );
+
+    let net = Fake::new("net", false, Act::Transient);
+    let r = rig_over(
+        store,
+        vec![net.boxed()],
+        config(|c| {
+            c.delivery.max_attempts = 1;
+            c.delivery.breaker_failure_threshold = 1;
+            c.delivery.breaker_cooldown_secs = 30;
+        }),
+    )
+    .await;
+    let tripwire = alert(HIGH, "tripwire");
+    r.manager.enqueue(&tripwire).await;
+    settle().await;
+    assert_eq!(
+        row(&r.store, "net", tripwire.id).state,
+        DeliveryState::DeadLettered
+    );
+    assert_eq!(r.manager.health().sinks[0].breaker, BreakerState::Open);
+
+    run_for(36).await;
+    let probed = row(&r.store, "net", unloadable.id);
+    assert_eq!(
+        (probed.state, probed.attempts),
+        (DeliveryState::Retrying, 1),
+        "the probe claimed the unloadable row once"
+    );
+    assert_eq!(
+        r.manager.health().sinks[0].breaker,
+        BreakerState::Open,
+        "a probe that sent nothing reopens the breaker"
+    );
+
+    run_for(36).await;
+    assert_eq!(
+        row(&r.store, "net", unloadable.id).attempts,
+        2,
+        "the next cool-down probes again"
+    );
+    assert_eq!(net.attempts(), 1, "the sink only ever saw the tripwire");
+}

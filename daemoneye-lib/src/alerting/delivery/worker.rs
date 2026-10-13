@@ -222,6 +222,7 @@ impl SinkWorker {
             Ok(None) => return self.alert_missing(id, claimed, probe).await,
             Err(error) => {
                 error!(sink = %name, %error, "loading the alert failed");
+                self.release_probe(probe);
                 return Flow::Stop;
             }
         };
