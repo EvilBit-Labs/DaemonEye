@@ -8,6 +8,7 @@
 
 mod email;
 mod error;
+mod key;
 mod syslog;
 mod webhook;
 

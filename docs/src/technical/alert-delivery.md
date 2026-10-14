@@ -103,6 +103,8 @@ Delivery is at least once. A crash between a sink accepting an alert and the row
 | syslog  | MSGID (alert id without hyphens)    | `dedup` structured-data param  |
 | email   | `Message-ID` `<alert-id@daemoneye>` | `X-DaemonEye-Dedup-Key` header |
 
+A deduplication key is sent as is when it is printable ASCII (no `"`, `\\` or `]`) and fits the field: 96 bytes in syslog structured data, 256 in the webhook header. Any other key is sent as `sha256:` followed by the hex SHA-256 of the whole key, so distinct keys never share a wire value.
+
 Within the agent, a duplicate inside `alerting.dedup_window_seconds` of a persisted alert with the same deduplication key is stored with `suppressed_duplicate` rows and not sent. The window starts when the earlier alert's rows are written, not when a sink accepts it, and it is rebuilt at startup from stored alerts that have at least one non-suppressed delivery row (pending, retrying, delivered or dead-lettered).
 
 ## Persistence and health

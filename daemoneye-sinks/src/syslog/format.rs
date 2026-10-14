@@ -1,5 +1,6 @@
 //! RFC 5424 message formatting from the external projection.
 
+use crate::key::wire_key;
 use chrono::{DateTime, Utc};
 use daemoneye_lib::alerting::{ExternalAlert, IncludeFlags, sanitise_control};
 use daemoneye_lib::models::{Alert, AlertSeverity, CompletenessStatus};
@@ -156,7 +157,7 @@ pub(super) fn format_rfc5424(parts: &MessageParts<'_>) -> String {
         header_field(&external.id.replace('-', ""), MAX_MSGID),
     );
     let rule = sd_value(&external.rule_id);
-    let dedup = sd_value(&alert.deduplication_key);
+    let dedup = sd_value(&wire_key(&alert.deduplication_key, MAX_SD_VALUE_BYTES));
     let params = |with_rule: bool, with_dedup: bool| {
         let rule_param = if with_rule {
             format!(" rule=\"{rule}\"")

@@ -145,18 +145,16 @@ async fn stream_send<S: AsyncWrite + Unpin>(
     limit: Duration,
 ) -> Result<(), DeliveryError> {
     let mut guard = slot.lock().await;
-    if guard.as_ref().is_some_and(is_closed) {
-        *guard = None;
-    }
-    let stream = match guard.as_mut() {
+    let mut stream = match guard.take().filter(|stream| !is_closed(stream)) {
         Some(stream) => stream,
-        None => guard.insert(connect.await?),
+        None => connect.await?,
     };
-    let outcome = write_frame(stream, frame, limit).await;
-    if outcome.is_err() {
-        *guard = None;
-    }
-    outcome
+    // The stream is out of the slot while writing, so a cancelled or failed write drops it
+    // instead of leaving a partial frame on a cached connection.
+    write_frame(&mut stream, frame, limit).await?;
+    *guard = Some(stream);
+    drop(guard);
+    Ok(())
 }
 
 impl Transport {
@@ -231,5 +229,57 @@ impl Transport {
             #[cfg(unix)]
             Self::Unix { .. } => Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::stream_send;
+    use std::future::ready;
+    use std::io;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use std::time::Duration;
+    use tokio::io::AsyncWrite;
+    use tokio::sync::Mutex;
+
+    /// A stream whose writes never complete.
+    struct Stuck;
+
+    impl AsyncWrite for Stuck {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Pending
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_write_drops_the_cached_stream() {
+        let slot = Mutex::new(Some(Stuck));
+        let send = stream_send(
+            &slot,
+            |_stream| false,
+            ready(Ok(Stuck)),
+            b"frame",
+            Duration::from_mins(1),
+        );
+        tokio::select! {
+            result = send => panic!("write completed: {result:?}"),
+            () = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+        assert!(slot.lock().await.is_none());
     }
 }

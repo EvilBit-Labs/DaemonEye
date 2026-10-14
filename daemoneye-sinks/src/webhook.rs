@@ -2,6 +2,7 @@
 
 use crate::ensure_crypto_provider;
 use crate::error::{HEALTH_TIMEOUT, classify_reqwest, config_error};
+use crate::key::wire_key;
 use async_trait::async_trait;
 use daemoneye_lib::alerting::config::{WebhookAuth, WebhookSpec};
 use daemoneye_lib::alerting::{
@@ -221,7 +222,10 @@ impl AlertSink for WebhookSink {
         let response = self
             .request(reqwest::Method::POST)
             .header(ALERT_ID_HEADER, header_safe(&alert.id.to_string()))
-            .header(DEDUP_KEY_HEADER, header_safe(&alert.deduplication_key))
+            .header(
+                DEDUP_KEY_HEADER,
+                header_safe(&wire_key(&alert.deduplication_key, MAX_KEY_HEADER_CHARS)),
+            )
             .json(&ExternalAlert::project(alert, self.flags))
             .send()
             .await

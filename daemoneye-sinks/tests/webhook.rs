@@ -125,6 +125,34 @@ async fn delivers_with_auth_and_idempotency_headers() {
 }
 
 #[tokio::test]
+async fn an_oversized_or_non_ascii_dedup_key_travels_as_a_digest() {
+    let server = MockHttp::start(vec![
+        Response::Status(200, vec![]),
+        Response::Status(200, vec![]),
+    ])
+    .await;
+    let mut long = alert();
+    long.deduplication_key = "k".repeat(300);
+    let mut wide = alert();
+    wide.deduplication_key = "high:rule-1:caf\u{e9}".to_owned();
+    let sink = sink(spec(server.url("http")));
+    sink.send(&long).await.unwrap();
+    sink.send(&wide).await.unwrap();
+
+    let requests = server.requests();
+    let keys: Vec<&str> = requests
+        .iter()
+        .map(|request| request.header("x-daemoneye-dedup-key").unwrap())
+        .collect();
+    assert!(
+        keys.iter()
+            .all(|key| key.starts_with("sha256:") && key.len() == 71),
+        "{keys:?}"
+    );
+    assert_ne!(keys[0], keys[1]);
+}
+
+#[tokio::test]
 async fn command_line_travels_only_when_the_sink_opts_in() {
     let server = MockHttp::start(vec![]).await;
     let mut opted_in = spec(server.url("http"));

@@ -238,10 +238,8 @@ async fn hostile_fields_cannot_forge_a_record_or_break_the_sd_block() {
     assert_eq!(parsed.msgid, ALERT_ID.replace('-', ""));
     assert_eq!(parsed.sd.len(), 4, "{:?}", parsed.sd);
     assert_eq!(sd(&parsed, "rule"), Some("rule-1"));
-    assert_eq!(
-        sd(&parsed, "dedup"),
-        Some("high:rule-1:t<13>1 forged\"] [evil x=\"1\"]")
-    );
+    // A key carrying `"` or `]` travels as a digest, so nothing in it can close the SD block.
+    assert!(sd(&parsed, "dedup").unwrap().starts_with("sha256:"));
     assert!(!line.contains('\x07'));
 
     let clean = send_udp(|_| {}, &alert()).await;
@@ -322,16 +320,30 @@ async fn four_byte_chars_in_sd_values_and_host_cannot_break_the_minimum_cap() {
     );
     assert_eq!(sd(&parsed, "truncated"), Some("1"));
     assert_eq!(sd(&parsed, "pid"), Some("10"));
-    for key in ["rule", "dedup"] {
-        let value = sd(&parsed, key).unwrap();
-        // The 96-byte cap holds 24 four-byte chars; both params survive without the backstop.
-        eprintln!("DBG {key} {} {}", value.len(), line.len());
-        assert_eq!(value.len(), 96, "{key}");
-        assert!(
-            !value.is_empty() && value.chars().all(|c| c == '\u{1D11E}'),
-            "{key}"
-        );
-    }
+    // The 96-byte cap holds 24 four-byte chars; the rule survives without the backstop.
+    let rule = sd(&parsed, "rule").unwrap();
+    assert_eq!(rule.len(), 96);
+    assert!(rule.chars().all(|c| c == '\u{1D11E}'));
+    // A key that does not fit is sent as a digest of the whole key, never a prefix.
+    let dedup = sd(&parsed, "dedup").unwrap();
+    assert_eq!(dedup.len(), 71);
+    assert!(dedup.starts_with("sha256:"));
+}
+
+#[tokio::test]
+async fn long_dedup_keys_with_a_common_prefix_get_distinct_digests() {
+    let mut first = alert();
+    first.deduplication_key = "k".repeat(200);
+    let mut second = alert();
+    second.deduplication_key = format!("{}x", "k".repeat(200));
+    let a = sd(&parse(&send_udp(|_s| {}, &first).await), "dedup")
+        .unwrap()
+        .to_owned();
+    let b = sd(&parse(&send_udp(|_s| {}, &second).await), "dedup")
+        .unwrap()
+        .to_owned();
+    assert!(a.starts_with("sha256:") && b.starts_with("sha256:"));
+    assert_ne!(a, b);
 }
 
 #[tokio::test]
