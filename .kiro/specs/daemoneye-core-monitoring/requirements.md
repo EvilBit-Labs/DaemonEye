@@ -83,7 +83,7 @@ Decided 2026-06-09 to sequence solo-maintainer effort toward OSS v1.0.0:
 3. WHEN delivery fails repeatedly THEN the system SHALL retry with exponential backoff up to 3 attempts with maximum 60-second delay
 4. WHEN alerts cannot be delivered THEN the system SHALL store them in a dead letter queue for later processing
 5. WHEN delivering to multiple sinks THEN the system SHALL process them in parallel without blocking other deliveries
-6. WHEN alerts are generated THEN the system SHALL publish them to the embedded daemoneye-eventbus broker on the `events.alert.new` topic; configured alert sinks SHALL consume alerts from the broker for delivery, enabling multi-consumer dispatch
+6. WHEN alerts are generated THEN the system SHALL store them with one delivery row per configured sink in `alert_deliveries` and SHALL publish the masked projection to the embedded daemoneye-eventbus broker on the `events.alert.new` topic as fan-out and as a wake signal; sink workers SHALL deliver from the stored rows, never from the broker, so that delivery survives a broker drop (ADR-0015)
 
 ### Requirement 6
 

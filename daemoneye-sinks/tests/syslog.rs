@@ -304,6 +304,37 @@ async fn worst_case_header_and_sd_still_fit_the_minimum_cap() {
 }
 
 #[tokio::test]
+async fn four_byte_chars_in_sd_values_and_host_cannot_break_the_minimum_cap() {
+    const CAP: usize = 480;
+    let wide = "\u{1D11E}".repeat(255);
+    let mut alert = alert_with("t", &"d".repeat(2000));
+    alert.detection_rule_id = wide.clone();
+    alert.deduplication_key = wide.clone();
+    alert.context.data.insert("host".to_owned(), wide);
+    let line = send_udp(|s| s.max_message_bytes = CAP, &alert).await;
+    assert!(line.len() <= CAP, "{} bytes over cap {CAP}", line.len());
+    let parsed = parse(&line);
+    assert!(
+        parsed
+            .host
+            .chars()
+            .all(|c| c == '_' || c.is_ascii_graphic())
+    );
+    assert_eq!(sd(&parsed, "truncated"), Some("1"));
+    assert_eq!(sd(&parsed, "pid"), Some("10"));
+    for key in ["rule", "dedup"] {
+        let value = sd(&parsed, key).unwrap();
+        // The 96-byte cap holds 24 four-byte chars; both params survive without the backstop.
+        eprintln!("DBG {key} {} {}", value.len(), line.len());
+        assert_eq!(value.len(), 96, "{key}");
+        assert!(
+            !value.is_empty() && value.chars().all(|c| c == '\u{1D11E}'),
+            "{key}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn udp_delivers_one_datagram_and_is_fire_and_forget() {
     let server = MockSyslog::udp().await;
     let sink = sink(spec(SyslogTransport::Udp, &server.address));

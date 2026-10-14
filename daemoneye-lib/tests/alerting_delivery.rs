@@ -26,8 +26,8 @@ use daemoneye_lib::config::{AlertSinkConfig, AlertingConfig, DeliveryConfig};
 use daemoneye_lib::models::{AlertSeverity, DeliveryReason, DeliveryState, Uuid};
 use daemoneye_lib::storage::{CompleteOutcome, EventStore};
 use fixtures::{
-    Act, CountingPublisher, Fake, alert, alert_keyed, config, now_ms, rig, rig_over,
-    rig_publishing, row, run_for, settle, temp_store,
+    Act, CountingPublisher, Fake, StuckPublisher, alert, alert_keyed, config, now_ms, rig,
+    rig_over, rig_publishing, row, run_for, settle, temp_store,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -431,6 +431,30 @@ async fn a_publish_failure_is_counted_and_the_alert_still_delivers() {
     assert_eq!(bus.count(), 1);
     assert_eq!(r.manager.health().publish_failures, 1);
     assert_eq!(row(&r.store, "net", a.id).state, DeliveryState::Delivered);
+}
+
+/// ADR-0015: a stuck publisher must not hold the enqueue; the row still delivers.
+#[tokio::test(start_paused = true)]
+async fn enqueue_returns_while_the_publisher_is_stuck_and_the_row_delivers() {
+    let (_dir, store) = temp_store();
+    let net = Fake::new("net", false, Act::Ok);
+    let r = rig_publishing(
+        store,
+        vec![net.boxed()],
+        config(|_| {}),
+        Arc::new(StuckPublisher),
+    )
+    .await;
+
+    for i in 0..3 {
+        let a = alert(HIGH, &format!("a{i}"));
+        let outcome = tokio::time::timeout(Duration::from_secs(5), r.manager.enqueue(&a))
+            .await
+            .expect("enqueue waited on the publisher");
+        assert_eq!(outcome, EnqueueOutcome::Enqueued);
+        settle().await;
+        assert_eq!(row(&r.store, "net", a.id).state, DeliveryState::Delivered);
+    }
 }
 
 /// R13: unpersisted delivery reaches local sinks only, marked, and never touches the window.

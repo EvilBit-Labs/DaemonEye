@@ -236,6 +236,16 @@ impl AlertPublisher for CountingPublisher {
     }
 }
 
+/// Publishes never complete, like a saturated broker.
+pub struct StuckPublisher;
+
+#[async_trait]
+impl AlertPublisher for StuckPublisher {
+    async fn publish(&self, _alert: &Alert) -> Result<(), PublishError> {
+        std::future::pending().await
+    }
+}
+
 pub async fn rig_publishing(
     store: Arc<EventStore>,
     sinks: Vec<Box<dyn AlertSink>>,

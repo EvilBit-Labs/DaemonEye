@@ -726,6 +726,11 @@ impl EventStore {
         deliveries::dead_letters(&self.db, sink)
     }
 
+    /// Number of dead-lettered rows on `sink`, counted without decoding them.
+    pub fn dead_letter_count(&self, sink: &str) -> Result<usize, StorageError> {
+        deliveries::dead_letter_count(&self.db, sink)
+    }
+
     /// Move up to `limit` of the oldest dead letters back to `Pending`, but never past
     /// `max_open_rows` open rows on the sink (only the remaining open capacity moves). Rows at
     /// `max_redrives` stay dead-lettered with `RedrivesExhausted` and do not count toward `limit`.

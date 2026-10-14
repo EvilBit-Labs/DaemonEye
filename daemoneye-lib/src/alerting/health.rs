@@ -25,7 +25,7 @@ pub struct SinkHealthSnapshot {
     pub delivered: u64,
     /// Fraction of the last 100 attempts that succeeded; `1.0` before any attempt.
     pub success_rate: f64,
-    /// Rows this process dead-lettered.
+    /// Current dead-letter depth for the sink (seeded from the store at start).
     pub dead_letters: u64,
     /// Dead letters removed to hold the per-sink cap.
     pub evicted: u64,
@@ -152,6 +152,11 @@ impl SinkStats {
 
     pub(super) const fn dead_lettered(&mut self) {
         self.dead_letters = self.dead_letters.saturating_add(1);
+    }
+
+    /// `rows` left the dead-letter queue (redriven or evicted).
+    pub(super) const fn left_dead_letters(&mut self, rows: u64) {
+        self.dead_letters = self.dead_letters.saturating_sub(rows);
     }
 
     pub(super) fn success_rate(&self) -> f64 {

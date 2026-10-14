@@ -588,3 +588,26 @@ fn open_deliveries_returns_only_non_terminal_rows_and_counts_garbage_as_corrupt(
     assert_eq!(after.corrupt, 1);
     assert_eq!(after.rows.len(), 2);
 }
+
+#[test]
+fn dead_letter_count_counts_only_that_sinks_dead_letters() {
+    let (_dir, _path, store) = open();
+    assert_eq!(store.dead_letter_count("s").unwrap(), 0);
+    let alerts: Vec<Alert> = (0..4)
+        .map(|i| alert(AlertSeverity::Medium, &format!("t{i}")))
+        .collect();
+    for a in &alerts {
+        enqueue(&store, a, &["s", "other"], 1);
+    }
+    dead_letter(&store, "s", alerts[0].id, 10, 0);
+    dead_letter(&store, "s", alerts[1].id, 20, 0);
+    dead_letter(&store, "other", alerts[2].id, 30, 0);
+    mark_delivered(&store, "s", alerts[3].id, 40);
+
+    assert_eq!(store.dead_letter_count("s").unwrap(), 2);
+    assert_eq!(store.dead_letter_count("other").unwrap(), 1);
+
+    store.redrive_batch("s", 1, CAP, 5, 1000).unwrap();
+
+    assert_eq!(store.dead_letter_count("s").unwrap(), 1);
+}

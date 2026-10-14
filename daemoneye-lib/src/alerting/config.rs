@@ -406,6 +406,24 @@ pub fn host_of(authority: &str) -> &str {
         .map_or(authority, |(host, _)| host)
 }
 
+/// Checks `host:port` / `[v6]:port` shape without resolving DNS. An unbracketed
+/// IPv6 literal is rejected as ambiguous.
+fn is_host_port(address: &str) -> bool {
+    let (host, port) = if let Some(inner) = address.strip_prefix('[') {
+        match inner.split_once("]:") {
+            Some(parts) => parts,
+            None => return false,
+        }
+    } else {
+        match address.rsplit_once(':') {
+            Some((host, _)) if host.contains(':') => return false,
+            Some(parts) => parts,
+            None => return false,
+        }
+    };
+    !host.is_empty() && port.parse::<u16>().is_ok_and(|p| p != 0)
+}
+
 fn is_loopback(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
         || host
@@ -421,6 +439,12 @@ fn validate_syslog(s: &SyslogSpec) -> Result<(), ConfigError> {
         &SYSLOG_MESSAGE_BYTES_MIN,
         &SYSLOG_MESSAGE_BYTES_MAX,
     )?;
+    if s.transport != SyslogTransport::Unix && !is_host_port(&s.address) {
+        return Err(invalid(
+            name,
+            "address must be host:port with a port in 1..=65535",
+        ));
+    }
     match s.transport {
         SyslogTransport::Udp | SyslogTransport::Tcp => {
             if !s.allow_plaintext && !is_loopback(host_of(&s.address)) {

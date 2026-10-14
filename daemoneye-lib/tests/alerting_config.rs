@@ -190,6 +190,31 @@ fn only_real_loopback_addresses_skip_the_plaintext_opt_in() {
 }
 
 #[test]
+fn syslog_address_must_be_host_and_port() {
+    for bad in [
+        "localhost",
+        "localhost:not-a-port",
+        "localhost:0",
+        "localhost:65536",
+        ":514",
+        "::1:514",
+        "[::1]",
+    ] {
+        let msg = failure(&syslog(&json!({"address": bad})));
+        assert!(msg.contains("host:port"), "{bad}: {msg}");
+    }
+    for good in ["localhost:514", "[::1]:514"] {
+        syslog(&json!({"address": good}))
+            .validate()
+            .expect("valid address");
+    }
+    let tls = json!({"transport": "tls", "address": "siem.example.internal:6514"});
+    syslog(&tls).validate().expect("tls host:port");
+    let no_port = json!({"transport": "tls", "address": "siem.example.internal"});
+    assert!(failure(&syslog(&no_port)).contains("host:port"));
+}
+
+#[test]
 fn syslog_message_size_range_is_enforced() {
     let msg = failure(&syslog(&json!({"max_message_bytes": 100})));
     assert!(msg.contains("max_message_bytes"), "{msg}");

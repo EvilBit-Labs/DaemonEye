@@ -748,10 +748,25 @@ fn log_delivery_health(manager: &alerting::AlertManager) {
     );
     for sink in &health.sinks {
         let (name, breaker) = (sink.name.as_str(), format!("{:?}", sink.breaker));
-        let (dead_letters, delivered) = (sink.dead_letters, sink.delivered);
+        let last_error = sink.last_error.as_ref().map(ToString::to_string);
         info!(
             sink = name,
-            breaker, dead_letters, delivered, "Alert sink health"
+            breaker,
+            is_local = sink.is_local,
+            misconfigured = sink.misconfigured,
+            fire_and_forget = sink.fire_and_forget,
+            consecutive_failures = sink.consecutive_failures,
+            attempts = sink.attempts,
+            delivered = sink.delivered,
+            success_rate = sink.success_rate,
+            dead_letters = sink.dead_letters,
+            evicted = sink.evicted,
+            queue_full = sink.queue_full,
+            corrupt = sink.corrupt,
+            oldest_pending_age_ms = sink.oldest_pending_age_ms,
+            last_error,
+            last_success_ms = sink.last_success_ms,
+            "Alert sink health"
         );
     }
 }

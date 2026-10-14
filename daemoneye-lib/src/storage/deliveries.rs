@@ -168,6 +168,25 @@ fn open_count<T: ReadableTable<&'static str, &'static [u8]>>(
     Ok(open)
 }
 
+/// Dead-lettered rows of one sink, counted from the peeked state alone (no decode).
+pub(super) fn dead_letter_count(db: &Database, sink: &str) -> Result<usize, StorageError> {
+    let rtxn = db.begin_read()?;
+    let table = match rtxn.open_table(ALERT_DELIVERIES_TABLE) {
+        Ok(table) => table,
+        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(0),
+        Err(err) => return Err(err.into()),
+    };
+    let (start, end) = sink_range(sink);
+    let mut dead = 0_usize;
+    for entry in table.range(start.as_str()..end.as_str())? {
+        let (_key, value) = entry?;
+        if peek_state(value.value()).is_some_and(is_dead_lettered) {
+            dead = dead.saturating_add(1);
+        }
+    }
+    Ok(dead)
+}
+
 fn is_dead_lettered(state: DeliveryState) -> bool {
     state == DeliveryState::DeadLettered
 }

@@ -16,12 +16,15 @@ use rand::rngs::StdRng;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 use tracing::{error, warn};
 
 /// Dedup entries kept before expired ones are swept on insert.
 const WINDOW_SWEEP_AT: usize = 1024;
+
+/// Alerts waiting for the background publisher; a full queue drops the announcement, not the alert.
+const PUBLISH_QUEUE_CAPACITY: usize = 256;
 
 /// What happened to one alert handed to [`AlertManager::enqueue`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +70,7 @@ impl DedupWindow {
 pub struct AlertManager {
     shared: Arc<Shared>,
     sinks: Vec<Arc<SinkRuntime>>,
-    publisher: Arc<dyn AlertPublisher>,
+    publish_tx: mpsc::Sender<Alert>,
     window: Mutex<DedupWindow>,
     enqueue_gate: tokio::sync::Mutex<()>,
     stop: Arc<watch::Sender<bool>>,
@@ -189,10 +192,17 @@ impl AlertManager {
             );
             tasks.spawn(worker.run());
         }
+        let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_QUEUE_CAPACITY);
+        tasks.spawn(run_publisher(
+            Arc::clone(&shared),
+            publisher,
+            publish_rx,
+            stop_rx,
+        ));
         Ok(Self {
             shared,
             sinks: runtimes,
-            publisher,
+            publish_tx,
             window: Mutex::new(window),
             enqueue_gate: tokio::sync::Mutex::new(()),
             stop,
@@ -222,12 +232,10 @@ impl AlertManager {
             .shared
             .blocking(move |store| {
                 let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-                let report = store.enqueue_alert(&owned, &refs, suppressor, max_open, now)?;
-                let evicted = evict_overflow(store, &report, keep)?;
-                Ok((report, evicted))
+                store.enqueue_alert(&owned, &refs, suppressor, max_open, now)
             })
             .await;
-        let (report, evicted) = match stored {
+        let report = match stored {
             Ok(done) => {
                 // Only a persisted alert proves the store is taking writes again; a worker's
                 // successful read says nothing about a broken alerts table.
@@ -237,6 +245,19 @@ impl AlertManager {
             Err(error) => {
                 error!(alert_id = %alert.id, %error, "alert was not persisted");
                 return EnqueueOutcome::NotPersisted;
+            }
+        };
+        // The alert is durable now: a trim failure is a store-health problem, not a lost alert.
+        let trim_report = report.clone();
+        let evicted = match self
+            .shared
+            .blocking(move |store| evict_overflow(store, &trim_report, keep))
+            .await
+        {
+            Ok(evicted) => evicted,
+            Err(error) => {
+                error!(alert_id = %alert.id, %error, "dead-letter eviction failed after commit");
+                Vec::new()
             }
         };
         let rows = match report {
@@ -249,11 +270,11 @@ impl AlertManager {
         }
         lock(&self.window).record(&alert.deduplication_key, now, alert.id, now, window_ms);
         drop(gate);
-        if let Err(error) = self.publisher.publish(alert).await {
-            warn!(alert_id = %alert.id, %error, "alert publish failed");
+        self.wake_all();
+        if let Err(error) = self.publish_tx.try_send(alert.clone()) {
+            warn!(alert_id = %alert.id, %error, "alert publish queue refused the alert");
             lock(&self.shared.global).publish_failed();
         }
-        self.wake_all();
         EnqueueOutcome::Enqueued
     }
 
@@ -274,6 +295,7 @@ impl AlertManager {
             stats.queue_full = stats.queue_full.saturating_add(to_u64(dropped));
             stats.dead_letters = stats.dead_letters.saturating_add(to_u64(dropped));
             stats.evicted = stats.evicted.saturating_add(to_u64(removed));
+            stats.left_dead_letters(to_u64(removed));
         }
     }
 
@@ -527,5 +549,27 @@ async fn forward_cancel(
             }
         }
         () = wait_cancelled(&mut internal) => {}
+    }
+}
+
+/// Announce queued alerts until stopped; a failed publish is counted, never retried.
+async fn run_publisher(
+    shared: Arc<Shared>,
+    publisher: Arc<dyn AlertPublisher>,
+    mut queue: mpsc::Receiver<Alert>,
+    mut stop: watch::Receiver<bool>,
+) {
+    loop {
+        let alert = tokio::select! {
+            next = queue.recv() => match next {
+                Some(alert) => alert,
+                None => return,
+            },
+            () = wait_cancelled(&mut stop) => return,
+        };
+        if let Err(error) = publisher.publish(&alert).await {
+            warn!(alert_id = %alert.id, %error, "alert publish failed");
+            lock(&shared.global).publish_failed();
+        }
     }
 }

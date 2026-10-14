@@ -63,9 +63,17 @@ impl SinkWorker {
         }
     }
 
+    /// Seeds the dead-letter depth from the store, then redrives every batch the open-row cap
+    /// admits, local sinks included. A local sink has no breaker, so this startup drain is its
+    /// only automatic redrive; a network sink continues when its breaker recovers.
     pub(super) async fn run(mut self) {
         let runtime = Arc::clone(&self.runtime);
-        self.redrive_pending = self.redrive().await.remaining > 0 && !runtime.is_local;
+        self.seed_dead_letter_depth().await;
+        let mut report = self.redrive().await;
+        while report.moved > 0 && report.remaining > 0 && !self.is_cancelled() {
+            report = self.redrive().await;
+        }
+        self.redrive_pending = report.remaining > 0 && !runtime.is_local;
         while !self.is_cancelled() {
             let wait = self.pass().await;
             tokio::select! {
@@ -201,6 +209,18 @@ impl SinkWorker {
         }
     }
 
+    async fn seed_dead_letter_depth(&self) {
+        let name = self.runtime.name.clone();
+        match self
+            .shared
+            .blocking(move |store| store.dead_letter_count(&name))
+            .await
+        {
+            Ok(depth) => lock(&self.runtime.stats).dead_letters = to_u64(depth),
+            Err(error) => error!(sink = %self.runtime.name, %error, "counting dead letters failed"),
+        }
+    }
+
     /// Move one batch of dead letters back to `Pending`; the report says how many are left.
     async fn redrive(&self) -> RedriveReport {
         let name = self.runtime.name.clone();
@@ -211,7 +231,10 @@ impl SinkWorker {
             store.redrive_batch(&name, REDRIVE_BATCH, max_open_rows, max_redrives, now)
         };
         match self.shared.blocking(call).await {
-            Ok(report) => report,
+            Ok(report) => {
+                lock(&self.runtime.stats).left_dead_letters(to_u64(report.moved));
+                report
+            }
             Err(error) => {
                 error!(sink = %self.runtime.name, %error, "redrive failed");
                 RedriveReport {
@@ -438,6 +461,7 @@ impl SinkWorker {
             Ok(removed) => {
                 let mut stats = lock(&self.runtime.stats);
                 stats.evicted = stats.evicted.saturating_add(to_u64(removed));
+                stats.left_dead_letters(to_u64(removed));
             }
             Err(error) => error!(sink = %self.runtime.name, %error, "evicting dead letters failed"),
         }
