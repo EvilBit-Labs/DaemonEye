@@ -1,6 +1,6 @@
 //! The agent's half of a detection cycle: ingest what was collected, load the
-//! rules that were persisted, evaluate them through the executor, persist the alerts that were
-//! delivered.
+//! rules that were persisted, evaluate them through the executor, enqueue the alerts for
+//! delivery.
 //!
 //! These are free functions over their dependencies so tests build them over a `tempfile` store.
 //!
@@ -12,6 +12,7 @@
 //! stored on its own: it is the high half of the watermark the event store commits with the rows,
 //! so it can never drift from the data it protects.
 
+use daemoneye_lib::alerting::{AlertManager, EnqueueOutcome, EnrichContext, enrich};
 use daemoneye_lib::detection::DetectionEngine;
 use daemoneye_lib::detection::execution::completeness::{
     CollectorHealth, CycleSignals, EvaluationSummary, IngestSnapshot,
@@ -26,6 +27,7 @@ use daemoneye_lib::storage::{EventStore, StorageError};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, warn};
@@ -282,19 +284,67 @@ pub fn load_persisted_rules(
     Ok(loaded)
 }
 
-/// Persist every alert, returning how many were stored.
+/// How often the agent sweeps expired buckets and terminal delivery rows.
+pub const RETENTION_SWEEP: Duration = Duration::from_hours(1);
+
+/// Enrich every alert, then enqueue it for delivery, returning how many are durable.
 ///
-/// Storing the alert keeps its completeness marker readable later without a second write path. A
-/// failure on one alert is logged with its id and does not stop the rest.
-pub fn persist_alerts(store: &EventStore, alerts: &[Alert]) -> usize {
-    let mut stored = 0_usize;
-    for alert in alerts {
-        match store.store_alert(alert) {
-            Ok(()) => stored = stored.saturating_add(1),
-            Err(error) => warn!(alert_id = %alert.id, error = %error, "persisting an alert failed"),
+/// Enrichment reads the store synchronously, so the whole batch runs on one blocking thread;
+/// the enqueue awaits stay on the runtime. An enqueued, already-enqueued or suppressed alert
+/// counts as persisted. One the store would not take is delivered once to the local sinks only,
+/// and does not count.
+pub async fn enrich_and_enqueue(
+    store: &Arc<EventStore>,
+    manager: &AlertManager,
+    alerts: &[Alert],
+    ctx: &EnrichContext,
+) -> usize {
+    if alerts.is_empty() {
+        return 0;
+    }
+    let (blocking_store, batch, context) = (Arc::clone(store), alerts.to_vec(), ctx.clone());
+    let enriched = tokio::task::spawn_blocking(move || {
+        batch
+            .iter()
+            .map(|alert| enrich(&blocking_store, alert, &context))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_else(|error| {
+        warn!(%error, "alert enrichment task failed; enqueuing alerts unenriched");
+        alerts.to_vec()
+    });
+    let mut persisted = 0_usize;
+    for alert in &enriched {
+        match manager.enqueue(alert).await {
+            EnqueueOutcome::Enqueued
+            | EnqueueOutcome::AlreadyEnqueued
+            | EnqueueOutcome::SuppressedDuplicate { .. } => {
+                persisted = persisted.saturating_add(1);
+            }
+            EnqueueOutcome::NotPersisted | _ => {
+                warn!(alert_id = %alert.id, "alert not persisted; delivering to local sinks only");
+                manager.deliver_unpersisted(alert).await;
+            }
         }
     }
-    stored
+    persisted
+}
+
+/// Drop expired event buckets and prune terminal delivery rows older than `retention_ms`.
+/// Returns `(buckets_dropped, delivery_rows_pruned)`. Synchronous: call it from `spawn_blocking`.
+///
+/// # Errors
+///
+/// The first [`StorageError`] either step hits; the other step still runs first.
+pub fn run_retention_sweep(
+    store: &EventStore,
+    now_ms: u64,
+    retention_ms: u64,
+) -> anyhow::Result<(usize, usize)> {
+    let buckets = store.drop_expired(now_ms);
+    let rows = store.prune_deliveries(now_ms, retention_ms);
+    Ok((buckets?, rows?))
 }
 
 /// Open the event store, turning a schema mismatch into an error that says how to recover.

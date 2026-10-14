@@ -107,7 +107,7 @@ jobs:
                     # Note: macOS 12 (Monterey) testing would require custom runners
 
         runs-on: ${{ matrix.os }}
-        timeout-minutes: 45
+        timeout-minutes: 60
         needs: quality
         steps:
             - name: Checkout repository

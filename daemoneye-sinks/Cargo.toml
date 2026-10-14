@@ -1,0 +1,45 @@
+[package]
+name                   = "daemoneye-sinks"
+version.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+keywords.workspace     = true
+categories.workspace   = true
+rust-version.workspace = true
+repository.workspace   = true
+homepage.workspace     = true
+edition.workspace      = true
+description            = "Network alert sinks (webhook, syslog, email) for daemoneye-agent; the only crate that links the TLS stack"
+publish                = false
+exclude.workspace      = true
+readme                 = "README.md"
+
+# `ring` and `rustls-platform-verifier` are direct dependencies only so their
+# versions are pinned here; the sinks reach them through rustls, reqwest and lettre.
+[package.metadata.cargo-machete]
+ignored = ["ring", "rustls-platform-verifier"]
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+daemoneye-lib = { workspace = true }
+lettre = { workspace = true }
+reqwest = { workspace = true }
+ring = { workspace = true }
+rustls = { workspace = true }
+rustls-platform-verifier = { workspace = true }
+secrecy = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+rcgen = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time", "test-util"] }
+
+[lints]
+workspace = true

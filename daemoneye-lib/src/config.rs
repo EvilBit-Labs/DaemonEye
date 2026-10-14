@@ -143,6 +143,161 @@ pub struct AlertingConfig {
     pub max_alerts_per_minute: Option<u32>,
     /// Threshold in seconds for considering an alert as recent
     pub recent_threshold_seconds: u64,
+    /// Delivery retry, circuit-breaker and dead-letter bounds
+    #[serde(default)]
+    pub delivery: DeliveryConfig,
+}
+
+/// Alert delivery bounds, range-checked by [`DeliveryConfig::validate`]; absent fields take their
+/// defaults so a file written before this section existed still loads.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct DeliveryConfig {
+    /// Delivery attempts per alert, including the first.
+    pub max_attempts: u32,
+    /// Delay before the first retry, in milliseconds.
+    pub initial_backoff_ms: u64,
+    /// Ceiling on the retry delay, in seconds.
+    pub max_backoff_secs: u64,
+    /// Deadline for one delivery attempt, in seconds.
+    pub attempt_timeout_secs: u64,
+    /// Consecutive failures that open a sink's circuit breaker.
+    pub breaker_failure_threshold: u32,
+    /// Seconds an open breaker waits before probing.
+    pub breaker_cooldown_secs: u64,
+    /// Dead-letter rows kept per sink.
+    pub dlq_max_rows_per_sink: usize,
+    /// Undelivered (open) rows kept per sink.
+    pub max_open_rows_per_sink: usize,
+    /// Times a dead-lettered alert may be redriven.
+    pub dlq_max_redrives: u32,
+}
+
+impl DeliveryConfig {
+    /// Smallest attempt count.
+    pub const MAX_ATTEMPTS_MIN: u32 = 1;
+    /// Largest attempt count.
+    pub const MAX_ATTEMPTS_MAX: u32 = 10;
+    /// Smallest initial backoff.
+    pub const INITIAL_BACKOFF_MS_MIN: u64 = 100;
+    /// Largest initial backoff.
+    pub const INITIAL_BACKOFF_MS_MAX: u64 = 10_000;
+    /// Smallest backoff ceiling.
+    pub const MAX_BACKOFF_SECS_MIN: u64 = 1;
+    /// Largest backoff ceiling.
+    pub const MAX_BACKOFF_SECS_MAX: u64 = 60;
+    /// Smallest attempt deadline.
+    pub const ATTEMPT_TIMEOUT_SECS_MIN: u64 = 1;
+    /// Largest attempt deadline.
+    pub const ATTEMPT_TIMEOUT_SECS_MAX: u64 = 120;
+    /// Smallest breaker threshold.
+    pub const BREAKER_FAILURE_THRESHOLD_MIN: u32 = 1;
+    /// Largest breaker threshold.
+    pub const BREAKER_FAILURE_THRESHOLD_MAX: u32 = 100;
+    /// Smallest breaker cooldown.
+    pub const BREAKER_COOLDOWN_SECS_MIN: u64 = 1;
+    /// Largest breaker cooldown.
+    pub const BREAKER_COOLDOWN_SECS_MAX: u64 = 3_600;
+    /// Smallest per-sink row cap, shared by the dead-letter and open-row bounds.
+    pub const ROWS_PER_SINK_MIN: usize = 1;
+    /// Largest per-sink row cap, shared by the dead-letter and open-row bounds.
+    pub const ROWS_PER_SINK_MAX: usize = 1_000_000;
+    /// Smallest redrive count; zero disables redrive.
+    pub const DLQ_MAX_REDRIVES_MIN: u32 = 0;
+    /// Largest redrive count.
+    pub const DLQ_MAX_REDRIVES_MAX: u32 = 100;
+
+    /// Check every field against its range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::ValidationError`] naming the first field out of range; never clamps.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        check_range(
+            "alerting.delivery.max_attempts",
+            &self.max_attempts,
+            &Self::MAX_ATTEMPTS_MIN,
+            &Self::MAX_ATTEMPTS_MAX,
+        )?;
+        check_range(
+            "alerting.delivery.initial_backoff_ms",
+            &self.initial_backoff_ms,
+            &Self::INITIAL_BACKOFF_MS_MIN,
+            &Self::INITIAL_BACKOFF_MS_MAX,
+        )?;
+        check_range(
+            "alerting.delivery.max_backoff_secs",
+            &self.max_backoff_secs,
+            &Self::MAX_BACKOFF_SECS_MIN,
+            &Self::MAX_BACKOFF_SECS_MAX,
+        )?;
+        check_range(
+            "alerting.delivery.attempt_timeout_secs",
+            &self.attempt_timeout_secs,
+            &Self::ATTEMPT_TIMEOUT_SECS_MIN,
+            &Self::ATTEMPT_TIMEOUT_SECS_MAX,
+        )?;
+        check_range(
+            "alerting.delivery.breaker_failure_threshold",
+            &self.breaker_failure_threshold,
+            &Self::BREAKER_FAILURE_THRESHOLD_MIN,
+            &Self::BREAKER_FAILURE_THRESHOLD_MAX,
+        )?;
+        check_range(
+            "alerting.delivery.breaker_cooldown_secs",
+            &self.breaker_cooldown_secs,
+            &Self::BREAKER_COOLDOWN_SECS_MIN,
+            &Self::BREAKER_COOLDOWN_SECS_MAX,
+        )?;
+        check_range(
+            "alerting.delivery.dlq_max_rows_per_sink",
+            &self.dlq_max_rows_per_sink,
+            &Self::ROWS_PER_SINK_MIN,
+            &Self::ROWS_PER_SINK_MAX,
+        )?;
+        check_range(
+            "alerting.delivery.max_open_rows_per_sink",
+            &self.max_open_rows_per_sink,
+            &Self::ROWS_PER_SINK_MIN,
+            &Self::ROWS_PER_SINK_MAX,
+        )?;
+        check_range(
+            "alerting.delivery.dlq_max_redrives",
+            &self.dlq_max_redrives,
+            &Self::DLQ_MAX_REDRIVES_MIN,
+            &Self::DLQ_MAX_REDRIVES_MAX,
+        )
+    }
+}
+
+impl Default for DeliveryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            initial_backoff_ms: 1_000,
+            max_backoff_secs: 60,
+            attempt_timeout_secs: 10,
+            breaker_failure_threshold: 5,
+            breaker_cooldown_secs: 30,
+            dlq_max_rows_per_sink: 10_000,
+            max_open_rows_per_sink: 10_000,
+            dlq_max_redrives: 5,
+        }
+    }
+}
+
+impl AlertingConfig {
+    /// Check the delivery bounds and, with the `alerting` feature, every enabled sink.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::ValidationError`] naming the first offending field or sink.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        self.delivery.validate()?;
+        #[cfg(feature = "alerting")]
+        self.validate_sinks()?;
+        Ok(())
+    }
 }
 
 /// Detection configuration: the rule-load bounds, the per-cycle match cap, and the sizing of the
@@ -375,7 +530,7 @@ impl DetectionConfig {
 }
 
 /// Reject `value` outside `min..=max`, naming the dotted field and both bounds.
-fn check_range<T>(field: &str, value: &T, min: &T, max: &T) -> Result<(), ConfigError>
+pub(crate) fn check_range<T>(field: &str, value: &T, min: &T, max: &T) -> Result<(), ConfigError>
 where
     T: PartialOrd + std::fmt::Display,
 {
@@ -610,6 +765,7 @@ impl Default for AlertingConfig {
             dedup_window_seconds: 300,
             max_alerts_per_minute: None,
             recent_threshold_seconds: 3600,
+            delivery: DeliveryConfig::default(),
         }
     }
 }
@@ -1063,6 +1219,7 @@ impl Config {
 
         config.detection.validate()?;
         config.database.validate()?;
+        config.alerting.validate()?;
 
         // --- Path traversal validation ---
 
@@ -1093,7 +1250,10 @@ impl Config {
 
 impl ConfigLoader {
     /// Validate that a path does not contain `..` components (directory traversal).
-    fn validate_path_no_traversal(path: &std::path::Path, field: &str) -> Result<(), ConfigError> {
+    pub(crate) fn validate_path_no_traversal(
+        path: &std::path::Path,
+        field: &str,
+    ) -> Result<(), ConfigError> {
         use std::path::Component;
         for component in path.components() {
             if component == Component::ParentDir {
@@ -1113,12 +1273,20 @@ impl ConfigLoader {
     /// Unix domain socket paths are limited to 108 bytes on Linux and macOS (the `sun_path`
     /// field in `sockaddr_un` is 108 bytes including the NUL terminator).
     fn validate_socket_path(socket_path: &str) -> Result<(), ConfigError> {
+        Self::validate_socket_path_for("broker.socket_path", socket_path)
+    }
+
+    /// [`Self::validate_socket_path`] naming `field` in its errors.
+    pub(crate) fn validate_socket_path_for(
+        field: &str,
+        socket_path: &str,
+    ) -> Result<(), ConfigError> {
         // 108-byte sun_path limit minus 1 for the NUL terminator.
         const SOCKET_PATH_MAX_LEN: usize = 107;
 
         if socket_path.contains('\0') {
             return Err(ConfigError::ValidationError {
-                message: "broker.socket_path must not contain null bytes".to_owned(),
+                message: format!("{field} must not contain null bytes"),
             });
         }
 
@@ -1127,7 +1295,7 @@ impl ConfigLoader {
             if component == std::path::Component::ParentDir {
                 return Err(ConfigError::ValidationError {
                     message: format!(
-                        "broker.socket_path must not contain '..' (directory traversal): {socket_path}"
+                        "{field} must not contain '..' (directory traversal): {socket_path}"
                     ),
                 });
             }
@@ -1136,7 +1304,7 @@ impl ConfigLoader {
         if socket_path.len() > SOCKET_PATH_MAX_LEN {
             return Err(ConfigError::ValidationError {
                 message: format!(
-                    "broker.socket_path must not exceed {SOCKET_PATH_MAX_LEN} bytes (OS sun_path limit), got {} bytes: {socket_path}",
+                    "{field} must not exceed {SOCKET_PATH_MAX_LEN} bytes (OS sun_path limit), got {} bytes: {socket_path}",
                     socket_path.len()
                 ),
             });
@@ -2250,6 +2418,7 @@ enabled = true
             dedup_window_seconds: 600,
             max_alerts_per_minute: Some(100),
             recent_threshold_seconds: 7200,
+            delivery: DeliveryConfig::default(),
         };
 
         let json = serde_json::to_string(&original)
