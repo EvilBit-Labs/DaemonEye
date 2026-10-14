@@ -383,6 +383,16 @@ pub(super) fn complete(
     Ok(CompleteOutcome::Written)
 }
 
+/// Outcome of one [`redrive_batch`](super::EventStore::redrive_batch) call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RedriveReport {
+    /// Dead letters moved back to `Pending`.
+    pub moved: usize,
+    /// Dead letters still eligible (below the redrive cap) that were not moved, whether the
+    /// batch limit or the open-row capacity stopped them.
+    pub remaining: usize,
+}
+
 pub(super) fn redrive_batch(
     db: &Database,
     sink: &str,
@@ -390,18 +400,16 @@ pub(super) fn redrive_batch(
     max_open_rows: usize,
     max_redrives: u32,
     now_ms: u64,
-) -> Result<usize, StorageError> {
+) -> Result<RedriveReport, StorageError> {
     let wtxn = db.begin_write()?;
     let mut moved = 0_usize;
+    let mut remaining = 0_usize;
     {
         let mut table = wtxn.open_table(ALERT_DELIVERIES_TABLE)?;
         let capacity = max_open_rows.saturating_sub(open_count(&table, sink)?);
         let mut candidates = dead_lettered(scan_where(&table, Some(sink), is_dead_lettered)?);
         candidates.sort_by(|a, b| (a.1.terminal_at_ms, &a.0).cmp(&(b.1.terminal_at_ms, &b.0)));
         for (key, mut row) in candidates {
-            if moved >= limit {
-                break;
-            }
             if row.redrives >= max_redrives {
                 if row.reason != Some(DeliveryReason::RedrivesExhausted) {
                     row.reason = Some(DeliveryReason::RedrivesExhausted);
@@ -409,7 +417,8 @@ pub(super) fn redrive_batch(
                 }
                 continue;
             }
-            if moved >= capacity {
+            if moved >= limit || moved >= capacity {
+                remaining = remaining.saturating_add(1);
                 continue;
             }
             row.state = DeliveryState::Pending;
@@ -423,7 +432,7 @@ pub(super) fn redrive_batch(
         }
     }
     wtxn.commit()?;
-    Ok(moved)
+    Ok(RedriveReport { moved, remaining })
 }
 
 pub(super) fn evict_dead_letters(

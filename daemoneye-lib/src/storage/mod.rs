@@ -44,7 +44,7 @@ pub mod schema;
 
 pub use bucket::DAILY_MS;
 pub use deliveries::{
-    Claimed, CompleteOutcome, DeliveryExpectation, EnqueueReport, OpenDeliveries,
+    Claimed, CompleteOutcome, DeliveryExpectation, EnqueueReport, OpenDeliveries, RedriveReport,
 };
 pub use error::StorageError;
 pub use schema::{
@@ -729,6 +729,7 @@ impl EventStore {
     /// Move up to `limit` of the oldest dead letters back to `Pending`, but never past
     /// `max_open_rows` open rows on the sink (only the remaining open capacity moves). Rows at
     /// `max_redrives` stay dead-lettered with `RedrivesExhausted` and do not count toward `limit`.
+    /// The report's `remaining` counts eligible dead letters left behind.
     pub fn redrive_batch(
         &self,
         sink: &str,
@@ -736,7 +737,7 @@ impl EventStore {
         max_open_rows: usize,
         max_redrives: u32,
         now_ms: u64,
-    ) -> Result<usize, StorageError> {
+    ) -> Result<RedriveReport, StorageError> {
         deliveries::redrive_batch(&self.db, sink, limit, max_open_rows, max_redrives, now_ms)
     }
 

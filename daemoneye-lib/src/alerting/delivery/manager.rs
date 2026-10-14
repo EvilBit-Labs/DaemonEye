@@ -69,6 +69,7 @@ pub struct AlertManager {
     sinks: Vec<Arc<SinkRuntime>>,
     publisher: Arc<dyn AlertPublisher>,
     window: Mutex<DedupWindow>,
+    enqueue_gate: tokio::sync::Mutex<()>,
     stop: Arc<watch::Sender<bool>>,
     tasks: Mutex<JoinSet<()>>,
 }
@@ -193,6 +194,7 @@ impl AlertManager {
             sinks: runtimes,
             publisher,
             window: Mutex::new(window),
+            enqueue_gate: tokio::sync::Mutex::new(()),
             stop,
             tasks: Mutex::new(tasks),
         })
@@ -202,7 +204,12 @@ impl AlertManager {
     ///
     /// An alert inside the dedup window of the same `deduplication_key` is stored with its rows
     /// marked as suppressed duplicates, and does not extend the window.
+    ///
+    /// Concurrent calls are serialized from the dedup check through recording the window, so two
+    /// alerts with one key cannot both see no holder. The window is still recorded only after the
+    /// commit (ADR-0015).
     pub async fn enqueue(&self, alert: &Alert) -> EnqueueOutcome {
+        let gate = self.enqueue_gate.lock().await;
         let settings = &self.shared.settings;
         let window_ms = millis(settings.dedup_window);
         let now = self.shared.clock.now_ms();
@@ -241,6 +248,7 @@ impl AlertManager {
             return EnqueueOutcome::SuppressedDuplicate { by };
         }
         lock(&self.window).record(&alert.deduplication_key, now, alert.id, now, window_ms);
+        drop(gate);
         if let Err(error) = self.publisher.publish(alert).await {
             warn!(alert_id = %alert.id, %error, "alert publish failed");
             lock(&self.shared.global).publish_failed();
@@ -352,7 +360,7 @@ impl AlertManager {
             })
             .await
         {
-            Ok(moved) => moved,
+            Ok(report) => report.moved,
             Err(error) => {
                 error!(%sink, %error, "redrive failed");
                 0

@@ -281,6 +281,33 @@ impl TopicPattern {
         }
     }
 
+    /// Whether every topic `other` can match is also matched by `self`.
+    ///
+    /// A `#` on `self` covers whatever remains (including zero segments, as in
+    /// [`Self::matches`]); a `#` on `other` is covered only by a `#` on `self`.
+    /// Not symmetric.
+    pub fn contains(&self, other: &Self) -> bool {
+        let mut left = self.segments.iter();
+        let mut right = other.segments.iter();
+        loop {
+            let (next_l, next_r) = (left.next(), right.next());
+            if next_l == Some(&PatternSegment::MultiWildcard) {
+                return true;
+            }
+            let (Some(l), Some(r)) = (next_l, next_r) else {
+                return next_l.is_none() && next_r.is_none();
+            };
+            let covered = if matches!(l, PatternSegment::Literal(_)) {
+                l == r
+            } else {
+                *r != PatternSegment::MultiWildcard
+            };
+            if !covered {
+                return false;
+            }
+        }
+    }
+
     /// Check if this pattern matches a topic
     pub fn matches(&self, topic: &Topic) -> bool {
         self.matches_segments(&topic.segments)
@@ -660,6 +687,15 @@ impl TopicRegistry {
             .any(|restricted| pattern.overlaps(&restricted))
     }
 
+    /// Whether a registry entry marked `Public` covers every topic `pattern` can match
+    pub fn pattern_is_public(&self, pattern: &TopicPattern) -> bool {
+        self.access_control
+            .iter()
+            .filter(|&(_, level)| *level == TopicAccessLevel::Public)
+            .filter_map(|(name, _)| TopicPattern::new(name).ok())
+            .any(|public| public.contains(pattern))
+    }
+
     /// Get all publishers for a component
     pub fn get_publishers(&self, component: &str) -> Option<&HashSet<String>> {
         self.publishers.get(component)
@@ -943,6 +979,60 @@ mod tests {
         let miss = TopicPattern::new("events.process.+").unwrap();
         assert!(registry.pattern_matches_restricted(&hit));
         assert!(!registry.pattern_matches_restricted(&miss));
+    }
+
+    #[test]
+    fn contains_checks_coverage_not_overlap() {
+        let cases = [
+            ("a.b", "a.b", true),
+            ("a.b", "a.c", false),
+            ("a.+", "a.b", true),
+            ("a.b", "a.+", false),
+            ("a.+", "a.+", true),
+            ("a.#", "a.b.c", true),
+            ("a.#", "a", true),
+            ("a.#", "a.+.#", true),
+            ("#", "a.b", true),
+            ("a.+", "a.#", false),
+            ("a.+", "a.b.c", false),
+            ("a.b.c", "a.b", false),
+            ("a.b", "a.b.c", false),
+            ("events.+.anomaly", "events.process.anomaly", true),
+            ("events.+.anomaly", "events.process.lifecycle", false),
+        ];
+        for (outer, inner, expected) in cases {
+            let outer_pattern = TopicPattern::new(outer).unwrap();
+            let inner_pattern = TopicPattern::new(inner).unwrap();
+            assert_eq!(
+                outer_pattern.contains(&inner_pattern),
+                expected,
+                "{outer} contains {inner}"
+            );
+        }
+    }
+
+    #[test]
+    fn pattern_is_public_follows_default_registry() {
+        let registry = TopicRegistry::new();
+        for requested in [
+            "events.process.anomaly",
+            "events.+.anomaly",
+            "control.health.+",
+            "control.health.agent",
+        ] {
+            let pattern = TopicPattern::new(requested).unwrap();
+            assert!(registry.pattern_is_public(&pattern), "{requested}");
+        }
+        for requested in [
+            "events.#",
+            "events.process.new",
+            "control.agent.policy",
+            "control.+.config",
+            "events.+.+",
+        ] {
+            let pattern = TopicPattern::new(requested).unwrap();
+            assert!(!registry.pattern_is_public(&pattern), "{requested}");
+        }
     }
 
     #[test]

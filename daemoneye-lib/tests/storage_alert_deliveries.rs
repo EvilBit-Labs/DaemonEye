@@ -267,7 +267,7 @@ fn stale_write_back_is_rejected_after_a_redrive() {
         store.complete("s", a.id, dead_claim, &dead).unwrap(),
         CompleteOutcome::Written
     );
-    assert_eq!(store.redrive_batch("s", 10, CAP, 5, 200).unwrap(), 1);
+    assert_eq!(store.redrive_batch("s", 10, CAP, 5, 200).unwrap().moved, 1);
 
     let mut late = claimed.record.clone();
     late.state = DeliveryState::Delivered;
@@ -324,9 +324,9 @@ fn redrive_moves_only_the_oldest_dead_letters_up_to_the_limit() {
         dead_letter(&store, "s", a.id, t, 0);
     }
 
-    let moved = store.redrive_batch("s", 2, CAP, 5, 1000).unwrap();
+    let report = store.redrive_batch("s", 2, CAP, 5, 1000).unwrap();
 
-    assert_eq!(moved, 2);
+    assert_eq!((report.moved, report.remaining), (2, 3));
     for idx in [1_usize, 3] {
         let row = state_of(&store, "s", alerts[idx].id);
         assert_eq!(row.state, DeliveryState::Pending);
@@ -352,11 +352,12 @@ fn redrive_skips_a_row_at_the_cap_and_marks_it_exhausted() {
     dead_letter(&store, "s", spent.id, 10, 5);
     dead_letter(&store, "s", fresh.id, 20, 0);
 
-    let moved = store.redrive_batch("s", 1, CAP, 5, 1000).unwrap();
+    let report = store.redrive_batch("s", 1, CAP, 5, 1000).unwrap();
 
     assert_eq!(
-        moved, 1,
-        "an exhausted row must not consume the batch limit"
+        (report.moved, report.remaining),
+        (1, 0),
+        "an exhausted row must not consume the batch limit or count as remaining"
     );
     let row = state_of(&store, "s", spent.id);
     assert_eq!(row.state, DeliveryState::DeadLettered);
@@ -525,11 +526,14 @@ fn redrive_moves_only_the_remaining_open_capacity() {
         dead_letter(&store, "s", a.id, 10 + u64::try_from(i).unwrap(), 0);
     }
     // Claiming left the five dead rows terminal; the three pending rows fill the cap exactly.
-    assert_eq!(store.redrive_batch("s", 100, open_cap, 5, 500).unwrap(), 0);
+    let full = store.redrive_batch("s", 100, open_cap, 5, 500).unwrap();
+    assert_eq!((full.moved, full.remaining), (0, 5));
 
-    let moved = store.redrive_batch("s", 100, open_cap + 2, 5, 500).unwrap();
+    let report = store.redrive_batch("s", 100, open_cap + 2, 5, 500).unwrap();
 
-    assert_eq!(moved, 2, "only the two free slots may be refilled");
+    assert_eq!(report.moved, 2, "only the two free slots may be refilled");
+    assert_eq!(report.remaining, 3, "capacity-limited rows stay eligible");
+
     for a in &dead[..2] {
         assert_eq!(state_of(&store, "s", a.id).state, DeliveryState::Pending);
     }
@@ -539,6 +543,9 @@ fn redrive_moves_only_the_remaining_open_capacity() {
             DeliveryState::DeadLettered
         );
     }
+
+    let rest = store.redrive_batch("s", 100, open_cap + 5, 5, 600).unwrap();
+    assert_eq!((rest.moved, rest.remaining), (3, 0));
 }
 
 #[test]

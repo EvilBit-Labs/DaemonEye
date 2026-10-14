@@ -890,6 +890,102 @@ async fn a_healthy_sink_drains_all_dead_letters_over_successive_ticks() {
     }
 }
 
+/// A redrive that capacity cut short stays pending: the rows it left behind are redriven once the
+/// breaker has been closed a full cool-down, not stranded because fewer than a full batch moved.
+#[tokio::test(start_paused = true)]
+async fn a_capacity_limited_redrive_is_retried_after_the_cooldown() {
+    let (dir, store) = temp_store();
+    let down = Fake::new("net", false, Act::Transient);
+    let first = rig_over(
+        Arc::clone(&store),
+        vec![down.boxed()],
+        config(|c| {
+            c.delivery.max_attempts = 1;
+            c.delivery.breaker_failure_threshold = 100;
+        }),
+    )
+    .await;
+    for i in 0..4 {
+        first.manager.enqueue(&alert(HIGH, &format!("c{i}"))).await;
+    }
+    run_for(1).await;
+    let dead: Vec<Uuid> = first
+        .manager
+        .dead_letters("net")
+        .await
+        .into_iter()
+        .map(|d| d.0)
+        .collect();
+    assert_eq!(dead.len(), 4);
+    first.manager.shutdown(Duration::from_millis(100)).await;
+
+    let up = Fake::new("net", false, Act::Ok);
+    let second = rig_over(
+        store,
+        vec![up.boxed()],
+        config(|c| {
+            c.delivery.max_open_rows_per_sink = 2;
+            c.delivery.breaker_cooldown_secs = 30;
+        }),
+    )
+    .await;
+    settle().await;
+    let delivered = |r: &fixtures::Rig| {
+        dead.iter()
+            .filter(|id| row(&r.store, "net", **id).state == DeliveryState::Delivered)
+            .count()
+    };
+    assert_eq!(
+        delivered(&second),
+        2,
+        "startup redrive moves only the free capacity"
+    );
+
+    run_for(36).await;
+
+    for id in &dead {
+        let back = row(&second.store, "net", *id);
+        assert_eq!((back.state, back.redrives), (DeliveryState::Delivered, 1));
+    }
+    drop(dir);
+}
+
+// ---- concurrent enqueue -------------------------------------------------------------------
+
+/// Two alerts with one dedup key enqueued at once: exactly one is delivered, the other is
+/// suppressed. Without the enqueue gate both would pass the window check before either recorded.
+#[tokio::test(start_paused = true)]
+async fn concurrent_enqueues_with_one_dedup_key_deliver_once() {
+    let net = Fake::new("net", false, Act::Ok);
+    let r = rig(vec![net.boxed()], config(|_| {})).await;
+    let a = alert_keyed(HIGH, "a", "K");
+    let b = alert_keyed(HIGH, "b", "K");
+
+    let (first, second) = tokio::join!(r.manager.enqueue(&a), r.manager.enqueue(&b));
+
+    let (winner, loser) = match (first, second) {
+        (EnqueueOutcome::Enqueued, EnqueueOutcome::SuppressedDuplicate { by }) => {
+            assert_eq!(by, a.id);
+            (&a, &b)
+        }
+        (EnqueueOutcome::SuppressedDuplicate { by }, EnqueueOutcome::Enqueued) => {
+            assert_eq!(by, b.id);
+            (&b, &a)
+        }
+        other => panic!("expected one Enqueued and one SuppressedDuplicate, got {other:?}"),
+    };
+    settle().await;
+    assert_eq!(
+        row(&r.store, "net", winner.id).state,
+        DeliveryState::Delivered
+    );
+    assert_eq!(
+        row(&r.store, "net", loser.id).state,
+        DeliveryState::SuppressedDuplicate
+    );
+    assert_eq!(net.attempts(), 1);
+}
+
 // ---- factory ------------------------------------------------------------------------------
 
 struct StubBuilder;

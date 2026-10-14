@@ -28,6 +28,7 @@ use daemoneye_lib::config::DeliveryConfig;
 use daemoneye_lib::models::process::ProcessRecord;
 use daemoneye_lib::models::{Alert, AlertSeverity, Completeness};
 use daemoneye_sinks::{NetworkSinkBuilder, SyslogSink};
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::time::{Duration, UNIX_EPOCH};
 use support::mock_http::TestPki;

@@ -868,7 +868,11 @@ impl DaemoneyeBroker {
         Ok(())
     }
 
-    /// Subscribe a client to topic patterns; patterns matching a restricted topic are refused
+    /// Subscribe a client to topic patterns.
+    ///
+    /// Authorized positively: a pattern is accepted only when a `Public` registry
+    /// entry covers every topic it can match. Unregistered and `Privileged`
+    /// topics are therefore refused, as is anything overlapping a restricted entry.
     pub async fn subscribe_client(
         &self,
         client_id: &str,
@@ -876,7 +880,9 @@ impl DaemoneyeBroker {
     ) -> Result<()> {
         for pattern in &topic_patterns {
             let parsed = TopicPattern::new(pattern)?;
-            if self.topic_registry.pattern_matches_restricted(&parsed) {
+            if !self.topic_registry.pattern_is_public(&parsed)
+                || self.topic_registry.pattern_matches_restricted(&parsed)
+            {
                 return Err(EventBusError::AccessDenied {
                     pattern: pattern.clone(),
                 });
@@ -1488,7 +1494,7 @@ mod tests {
             let err = broker
                 .subscribe_client(
                     "any-client",
-                    vec!["events.process.new".to_owned(), pattern.to_owned()],
+                    vec!["events.process.anomaly".to_owned(), pattern.to_owned()],
                 )
                 .await
                 .expect_err(pattern);
@@ -1500,7 +1506,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transport_client_may_subscribe_to_unrestricted_topic() {
+    async fn transport_client_may_subscribe_to_public_topic() {
         let dir = tempfile::tempdir().unwrap();
         let sock = dir.path().join("b.sock");
         let sock = sock.to_str().unwrap();
@@ -1512,9 +1518,31 @@ mod tests {
             .unwrap();
 
         broker
-            .subscribe_client("c1", vec!["events.process.new".to_owned()])
+            .subscribe_client("c1", vec!["events.process.anomaly".to_owned()])
             .await
-            .expect("unrestricted pattern must be accepted");
+            .expect("public pattern must be accepted");
+    }
+
+    #[tokio::test]
+    async fn transport_client_is_refused_non_public_patterns() {
+        let broker = DaemoneyeBroker::new("/tmp/test-refuse-nonpublic.sock")
+            .await
+            .unwrap();
+        for pattern in [
+            "events.process.new",
+            "control.agent.policy",
+            "control.+.config",
+            "events.#",
+        ] {
+            let err = broker
+                .subscribe_client("any-client", vec![pattern.to_owned()])
+                .await
+                .expect_err(pattern);
+            assert!(
+                matches!(&err, EventBusError::AccessDenied { pattern: p } if p == pattern),
+                "{pattern}: {err:?}"
+            );
+        }
     }
 
     #[tokio::test]

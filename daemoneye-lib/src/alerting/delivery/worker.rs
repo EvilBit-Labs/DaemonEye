@@ -9,7 +9,7 @@ use crate::alerting::reliability::{
 };
 use crate::alerting::{AlertingError, DeliveryResult};
 use crate::models::{DeliveryReason, DeliveryRecord, DeliveryState, Uuid};
-use crate::storage::{Claimed, CompleteOutcome};
+use crate::storage::{Claimed, CompleteOutcome, RedriveReport};
 use rand::rngs::StdRng;
 use std::sync::Arc;
 use std::time::Duration;
@@ -65,7 +65,7 @@ impl SinkWorker {
 
     pub(super) async fn run(mut self) {
         let runtime = Arc::clone(&self.runtime);
-        self.redrive_pending = self.redrive().await == REDRIVE_BATCH && !runtime.is_local;
+        self.redrive_pending = self.redrive().await.remaining > 0 && !runtime.is_local;
         while !self.is_cancelled() {
             let wait = self.pass().await;
             tokio::select! {
@@ -201,8 +201,8 @@ impl SinkWorker {
         }
     }
 
-    /// Move one batch of dead letters back to `Pending`; returns how many moved.
-    async fn redrive(&self) -> usize {
+    /// Move one batch of dead letters back to `Pending`; the report says how many are left.
+    async fn redrive(&self) -> RedriveReport {
         let name = self.runtime.name.clone();
         let now = self.shared.clock.now_ms();
         let max_redrives = self.shared.settings.dlq_max_redrives;
@@ -211,10 +211,13 @@ impl SinkWorker {
             store.redrive_batch(&name, REDRIVE_BATCH, max_open_rows, max_redrives, now)
         };
         match self.shared.blocking(call).await {
-            Ok(moved) => moved,
+            Ok(report) => report,
             Err(error) => {
                 error!(sink = %self.runtime.name, %error, "redrive failed");
-                0
+                RedriveReport {
+                    moved: 0,
+                    remaining: 0,
+                }
             }
         }
     }
@@ -228,7 +231,7 @@ impl SinkWorker {
             return;
         };
         if since.elapsed() >= self.shared.settings.breaker_cooldown {
-            self.redrive_pending = self.redrive().await == REDRIVE_BATCH;
+            self.redrive_pending = self.redrive().await.remaining > 0;
         }
     }
 
