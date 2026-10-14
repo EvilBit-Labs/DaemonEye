@@ -231,8 +231,8 @@ fn ca_file_must_exist_parse_and_avoid_traversal() {
             "ok.pem",
             "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
         )?;
-        let dir = jail.directory().to_string_lossy().into_owned();
-        let at = |name: &str| json!({"ca_file": format!("{dir}/{name}")});
+        // Joined, not formatted: a verbatim Windows path treats `/` as part of the file name.
+        let at = |name: &str| json!({"ca_file": jail.directory().join(name).to_string_lossy()});
 
         assert!(failure(&webhook(&at("missing.pem"))).contains("ca_file"));
         assert!(failure(&webhook(&at("empty.pem"))).contains("certificate"));
